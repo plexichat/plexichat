@@ -1,0 +1,3 @@
+[submodule "src/utils/common-utils"]
+	path = src/utils/common-utils
+	url = https://gitlab.com/plexichat/common-utils
