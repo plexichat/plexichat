@@ -305,4 +305,4 @@ Run the comprehensive test suite:
 pytest src/tests/encryption/test_encryption.py -v
 ```
 
-The test suite includes 60+ tests covering all features and edge cases.
+The test suite includes 53 tests covering all features and edge cases.
