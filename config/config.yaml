@@ -3,22 +3,45 @@ application:
   name: PlexiChat
   version: 0.1.0
 authentication:
-  account_lockout:
-    lockout_duration_minutes: 15
+  accounts:
+    allow_registration: true
+    require_email_verification: false
+    max_bots_per_user: 5
+    username_min_length: 3
+    username_max_length: 32
+    username_pattern: "^[a-zA-Z0-9_]+$"
+  sessions:
+    token_bytes: 32
+    expire_hours: 168
+    max_per_user: 10
+    extend_on_activity: true
+    extend_threshold_hours: 24
+  security:
     max_failed_attempts: 5
-  jwt:
-    access_token_expire_minutes: 30
-    algorithm: HS256
-    refresh_token_expire_days: 7
-    secret_key: CHANGE_THIS_IN_PRODUCTION
+    lockout_duration_minutes: 15
+    require_2fa_for_sensitive_ops: false
+  totp:
+    enabled: true
+    issuer: PlexiChat
+    digits: 6
+    interval: 30
+    backup_code_count: 10
+    backup_code_length: 8
   password:
-    min_length: 8
-    require_digit: true
-    require_lowercase: true
-    require_special: true
+    min_length: 12
+    max_length: 128
     require_uppercase: true
-  session:
-    max_concurrent_sessions: 3
+    require_lowercase: true
+    require_digit: true
+    require_special: true
+  tracking:
+    track_devices: true
+    track_ips: true
+    notify_new_device: false
+    notify_new_ip: false
+  bots:
+    token_bytes: 48
+    require_owner_2fa: false
 database:
   connection_pool:
     max_connections: 10
