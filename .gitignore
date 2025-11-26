@@ -15,6 +15,7 @@ build/
 # Temp and logs
 temp/
 temp_test/
+temp_auth_test/
 logs/
 *.log
 *.log.zip
