@@ -75,3 +75,26 @@ logging:
   max_bytes: 10485760
   rotate: true
   zip_logs: true
+
+messaging:
+  # Message limits
+  max_message_length: 4000
+  max_group_participants: 100
+  message_preview_length: 100
+  
+  # Attachment limits
+  max_attachment_size: 10485760  # 10MB
+  max_attachments_per_message: 10
+  
+  # DM settings
+  dm_auto_create: true
+  
+  # Encryption
+  encrypt_messages: true
+  encrypt_attachments: true
+  
+  # Content filtering
+  content:
+    profanity_words: []
+    nsfw_patterns: []
+    default_filter_action: censor
