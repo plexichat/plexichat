@@ -1,5 +1,5 @@
 """
-Shared fixtures for presence tests.
+Shared fixtures for reaction tests.
 """
 
 import pytest
@@ -8,7 +8,6 @@ import sys
 import shutil
 import uuid
 
-# Setup paths
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 src_path = os.path.join(project_root, "src")
 common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
@@ -66,6 +65,14 @@ def get_test_config():
                 "require_owner_2fa": False,
             },
         },
+        "messaging": {
+            "max_message_length": 4000,
+            "max_group_participants": 100,
+            "max_attachment_size": 10485760,
+            "max_attachments_per_message": 10,
+            "dm_auto_create": True,
+            "encrypt_messages": False,
+        },
         "servers": {
             "max_servers_per_user": 100,
             "max_channels_per_server": 500,
@@ -78,9 +85,9 @@ def get_test_config():
             "role_name_max_length": 100,
             "invite_code_length": 8,
         },
-        "presence": {
-            "typing_timeout_ms": 10000,
-            "timeout_ms": 300000,
+        "reactions": {
+            "max_reactions_per_message": 20,
+            "max_users_per_reaction_page": 100,
         },
     }
 
@@ -88,7 +95,7 @@ def get_test_config():
 @pytest.fixture(scope="session")
 def test_env():
     """Setup test environment once per session."""
-    test_dir = "temp_presence_test"
+    test_dir = "temp_reactions_test"
 
     try:
         if os.path.exists(test_dir):
@@ -136,34 +143,35 @@ def db_and_modules(test_env, request):
 
     from src.core.database import Database
     from src.core import auth
+    from src.core import messaging
     from src.core import servers
     from src.core import relationships
-    from src.core import presence
+    from src.core import reactions
 
     db = Database()
     db.connect()
 
-    # Re-initialize auth
     auth._manager = None
     auth._setup_complete = False
     auth.setup(db)
 
-    # Re-initialize servers
+    messaging._manager = None
+    messaging._setup_complete = False
+    messaging.setup(db, auth)
+
     servers._manager = None
     servers._setup_complete = False
-    servers.setup(db, auth)
+    servers.setup(db, auth, messaging)
 
-    # Re-initialize relationships
     relationships._manager = None
     relationships._setup_complete = False
     relationships.setup(db, auth, servers)
 
-    # Re-initialize presence
-    presence._manager = None
-    presence._setup_complete = False
-    presence.setup(db, auth, relationships, servers)
+    reactions._manager = None
+    reactions._setup_complete = False
+    reactions.setup(db, messaging, servers, relationships)
 
-    yield db, auth, servers, relationships, presence
+    yield db, auth, messaging, servers, relationships, reactions
 
     db.close()
     gc.collect()
@@ -172,7 +180,7 @@ def db_and_modules(test_env, request):
 @pytest.fixture(scope="module")
 def base_users(db_and_modules):
     """Create base test users once per module."""
-    db, auth, servers, relationships, presence = db_and_modules
+    db, auth, messaging, servers, relationships, reactions = db_and_modules
 
     unique_id = uuid.uuid4().hex[:8]
 
@@ -194,26 +202,24 @@ def base_users(db_and_modules):
         password="TestPass123!"
     )
 
-    user4 = auth.register(
-        username=f"user4_{unique_id}",
-        email=f"user4_{unique_id}@example.com",
-        password="TestPass123!"
-    )
-
-    return user1, user2, user3, user4, auth, servers, relationships, presence
+    return user1, user2, user3, auth, messaging, servers, relationships, reactions
 
 
 @pytest.fixture
-def users(base_users):
-    """Get test users."""
-    user1, user2, user3, user4, auth, servers, relationships, presence = base_users
-    return user1, user2, user3, user4, presence
+def users_with_dm(base_users):
+    """Create users with a DM conversation and message."""
+    user1, user2, user3, auth, messaging, servers, relationships, reactions = base_users
+
+    dm = messaging.create_dm(user1.id, user2.id)
+    msg = messaging.send_message(user1.id, dm.id, "Test message for reactions")
+
+    return user1, user2, dm, msg, reactions
 
 
 @pytest.fixture
-def fresh_users(db_and_modules):
-    """Create fresh users for tests needing isolation."""
-    db, auth, servers, relationships, presence = db_and_modules
+def fresh_users_with_dm(db_and_modules):
+    """Create fresh users with DM for isolated tests."""
+    db, auth, messaging, servers, relationships, reactions = db_and_modules
 
     unique_id = uuid.uuid4().hex[:8]
 
@@ -229,88 +235,67 @@ def fresh_users(db_and_modules):
         password="TestPass123!"
     )
 
-    return user1, user2, presence
+    dm = messaging.create_dm(user1.id, user2.id)
+    msg = messaging.send_message(user1.id, dm.id, "Fresh test message")
 
-
-@pytest.fixture
-def friends_pair(db_and_modules):
-    """Create two users who are already friends."""
-    db, auth, servers, relationships, presence = db_and_modules
-
-    unique_id = uuid.uuid4().hex[:8]
-
-    user1 = auth.register(
-        username=f"friend1_{unique_id}",
-        email=f"friend1_{unique_id}@example.com",
-        password="TestPass123!"
-    )
-
-    user2 = auth.register(
-        username=f"friend2_{unique_id}",
-        email=f"friend2_{unique_id}@example.com",
-        password="TestPass123!"
-    )
-
-    # Make them friends
-    request = relationships.send_friend_request(user1.id, user2.id)
-    relationships.accept_friend_request(user2.id, request.id)
-
-    return user1, user2, relationships, presence
-
-
-@pytest.fixture
-def blocked_pair(db_and_modules):
-    """Create two users where one has blocked the other."""
-    db, auth, servers, relationships, presence = db_and_modules
-
-    unique_id = uuid.uuid4().hex[:8]
-
-    blocker = auth.register(
-        username=f"blocker_{unique_id}",
-        email=f"blocker_{unique_id}@example.com",
-        password="TestPass123!"
-    )
-
-    blocked = auth.register(
-        username=f"blocked_{unique_id}",
-        email=f"blocked_{unique_id}@example.com",
-        password="TestPass123!"
-    )
-
-    # Block the user
-    relationships.block_user(blocker.id, blocked.id)
-
-    return blocker, blocked, relationships, presence
+    return user1, user2, dm, msg, reactions, relationships
 
 
 @pytest.fixture
 def users_with_server(db_and_modules):
-    """Create users who share a server."""
-    db, auth, servers, relationships, presence = db_and_modules
+    """Create users with a server and channel."""
+    db, auth, messaging, servers, relationships, reactions = db_and_modules
 
     unique_id = uuid.uuid4().hex[:8]
 
-    user1 = auth.register(
-        username=f"srv1_{unique_id}",
-        email=f"srv1_{unique_id}@example.com",
+    owner = auth.register(
+        username=f"owner_{unique_id}",
+        email=f"owner_{unique_id}@example.com",
         password="TestPass123!"
     )
 
-    user2 = auth.register(
-        username=f"srv2_{unique_id}",
-        email=f"srv2_{unique_id}@example.com",
+    member = auth.register(
+        username=f"member_{unique_id}",
+        email=f"member_{unique_id}@example.com",
         password="TestPass123!"
     )
 
-    user3 = auth.register(
-        username=f"srv3_{unique_id}",
-        email=f"srv3_{unique_id}@example.com",
+    server = servers.create_server(owner.id, f"Test Server {unique_id}")
+    servers.add_member(server.id, member.id)
+
+    channel = servers.get_channels(owner.id, server.id)[0]
+
+    msg = servers.send_channel_message(owner.id, channel.id, "Server message for reactions")
+
+    return owner, member, server, channel, msg, servers, reactions
+
+
+@pytest.fixture
+def group_with_message(db_and_modules):
+    """Create a group conversation with a message."""
+    db, auth, messaging, servers, relationships, reactions = db_and_modules
+
+    unique_id = uuid.uuid4().hex[:8]
+
+    owner = auth.register(
+        username=f"grp_owner_{unique_id}",
+        email=f"grp_owner_{unique_id}@example.com",
         password="TestPass123!"
     )
 
-    # Create server and add members
-    server = servers.create_server(user1.id, f"Test Server {unique_id}")
-    servers.add_member(server.id, user2.id)
-    servers.add_member(server.id, user3.id)
+    member1 = auth.register(
+        username=f"grp_mem1_{unique_id}",
+        email=f"grp_mem1_{unique_id}@example.com",
+        password="TestPass123!"
+    )
 
-    return user1, user2, user3, server, servers, presence
+    member2 = auth.register(
+        username=f"grp_mem2_{unique_id}",
+        email=f"grp_mem2_{unique_id}@example.com",
+        password="TestPass123!"
+    )
+
+    group = messaging.create_group(owner.id, f"Test Group {unique_id}", [member1.id, member2.id])
+    msg = messaging.send_message(owner.id, group.id, "Group message for reactions")
+
+    return owner, member1, member2, group, msg, messaging, reactions
