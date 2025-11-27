@@ -178,10 +178,12 @@ class NotificationManager:
     def _get_role_members(self, role_id: int) -> List[int]:
         """Get all member IDs with a specific role."""
         rows = self._db.fetch_all(
-            "SELECT member_user_id FROM srv_member_roles WHERE role_id = ?",
+            """SELECT m.user_id FROM srv_member_roles mr
+               JOIN srv_members m ON mr.member_id = m.id
+               WHERE mr.role_id = ?""",
             (role_id,)
         )
-        return [row["member_user_id"] for row in rows]
+        return [row["user_id"] for row in rows]
 
     def _has_mention_everyone_permission(self, user_id: int, server_id: int, channel_id: int = None) -> bool:
         """Check if user has permission to use @everyone/@here."""
@@ -249,7 +251,7 @@ class NotificationManager:
                     if role and role["server_id"] != server_id:
                         m.valid = False
                         m.error = "Role not in this server"
-                    elif role and not bool(role.get("mentionable", 0)):
+                    elif role and not bool(role["mentionable"]):
                         if not self._servers or not self._servers.has_permission(
                             user_id, server_id, "roles.manage", channel_id
                         ):
@@ -290,7 +292,9 @@ class NotificationManager:
 
         user_roles = set()
         rows = self._db.fetch_all(
-            "SELECT role_id FROM srv_member_roles WHERE member_user_id = ?",
+            """SELECT mr.role_id FROM srv_member_roles mr
+               JOIN srv_members m ON mr.member_id = m.id
+               WHERE m.user_id = ?""",
             (user_id,)
         )
         for row in rows:
@@ -420,9 +424,8 @@ class NotificationManager:
             override = self.get_channel_override(user_id, channel_id)
             if override:
                 now = self._get_timestamp()
-                if override.muted_until and override.muted_until > now:
-                    return False
-                if override.level == NotificationLevel.MUTED:
+                is_mute_active = override.muted_until is None or override.muted_until > now
+                if override.level == NotificationLevel.MUTED and is_mute_active:
                     return False
                 if override.level == NotificationLevel.NOTHING:
                     return False
