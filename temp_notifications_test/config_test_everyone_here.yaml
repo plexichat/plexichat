@@ -32,8 +32,19 @@ authentication:
     interval: 30
     issuer: TestApp
 database:
-  path: temp_voice_test\test_test_join_leave.db
+  path: temp_notifications_test\test_test_everyone_here.db
   type: sqlite
+messaging:
+  dm_auto_create: true
+  encrypt_messages: false
+  max_attachment_size: 10485760
+  max_attachments_per_message: 10
+  max_group_participants: 100
+  max_message_length: 4000
+notifications:
+  content_preview_length: 100
+  max_feed_items: 100
+  max_notifications_per_page: 100
 presence:
   timeout_ms: 300000
   typing_timeout_ms: 10000
