@@ -1,0 +1,3 @@
+"""
+Presence module tests.
+"""

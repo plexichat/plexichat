@@ -1,0 +1,177 @@
+"""
+Reactions module - Zero-friction API for message reactions.
+
+Setup once in main.py, use anywhere via import.
+
+Usage:
+    # In main.py (setup once)
+    from src.core import reactions
+    reactions.setup(db, messaging, servers, relationships)
+
+    # In any other file (use directly)
+    from src.core import reactions
+    reaction = reactions.add_reaction(user_id=1, message_id=123, emoji="thumbsup")
+"""
+
+from typing import Optional, List
+
+from .models import (
+    Reaction,
+    ReactionCount,
+    ReactionUser,
+    MessageReactions,
+    CustomEmoji,
+)
+from .exceptions import (
+    ReactionError,
+    MessageNotFoundError,
+    ReactionNotFoundError,
+    ReactionExistsError,
+    InvalidEmojiError,
+    CustomEmojiNotFoundError,
+    ReactionLimitError,
+    PermissionDeniedError,
+    UserBlockedError,
+)
+
+__all__ = [
+    # Models
+    "Reaction",
+    "ReactionCount",
+    "ReactionUser",
+    "MessageReactions",
+    "CustomEmoji",
+    # Exceptions
+    "ReactionError",
+    "MessageNotFoundError",
+    "ReactionNotFoundError",
+    "ReactionExistsError",
+    "InvalidEmojiError",
+    "CustomEmojiNotFoundError",
+    "ReactionLimitError",
+    "PermissionDeniedError",
+    "UserBlockedError",
+    # Setup
+    "setup",
+    # Reaction operations
+    "add_reaction",
+    "remove_reaction",
+    "remove_all_reactions",
+    "remove_all_reactions_for_emoji",
+    "get_reaction",
+    "get_reactions",
+    "get_reaction_users",
+    "get_user_reactions",
+    # Custom emoji operations
+    "create_custom_emoji",
+    "delete_custom_emoji",
+    "get_custom_emoji",
+    "get_server_custom_emojis",
+]
+
+_manager = None
+_setup_complete = False
+
+
+def setup(db, messaging_module=None, servers_module=None, relationships_module=None):
+    """
+    Initialize the reactions module.
+
+    Args:
+        db: Database instance (must be connected)
+        messaging_module: Optional messaging module for message access
+        servers_module: Optional servers module for permission checks
+        relationships_module: Optional relationships module for block filtering
+    """
+    global _manager, _setup_complete
+
+    from .manager import ReactionManager
+
+    _manager = ReactionManager(db, messaging_module, servers_module, relationships_module)
+    _setup_complete = True
+
+
+def _get_manager():
+    """Get the manager instance, raising if not setup."""
+    if not _setup_complete or _manager is None:
+        raise RuntimeError(
+            "Reactions module not initialized. Call reactions.setup(db) first."
+        )
+    return _manager
+
+
+# === Reaction Operations ===
+
+
+def add_reaction(user_id: int, message_id: int, emoji: str) -> Reaction:
+    """Add a reaction to a message."""
+    return _get_manager().add_reaction(user_id, message_id, emoji)
+
+
+def remove_reaction(user_id: int, message_id: int, emoji: str) -> bool:
+    """Remove a reaction from a message."""
+    return _get_manager().remove_reaction(user_id, message_id, emoji)
+
+
+def remove_all_reactions(user_id: int, message_id: int) -> int:
+    """Remove all reactions from a message (moderator action)."""
+    return _get_manager().remove_all_reactions(user_id, message_id)
+
+
+def remove_all_reactions_for_emoji(user_id: int, message_id: int, emoji: str) -> int:
+    """Remove all reactions of a specific emoji from a message (moderator action)."""
+    return _get_manager().remove_all_reactions_for_emoji(user_id, message_id, emoji)
+
+
+def get_reaction(reaction_id: int) -> Optional[Reaction]:
+    """Get a reaction by ID."""
+    return _get_manager().get_reaction(reaction_id)
+
+
+def get_reactions(user_id: int, message_id: int) -> MessageReactions:
+    """Get all reactions on a message with counts."""
+    return _get_manager().get_reactions(user_id, message_id)
+
+
+def get_reaction_users(
+    user_id: int,
+    message_id: int,
+    emoji: str,
+    limit: int = 100,
+    after_user_id: Optional[int] = None
+) -> List[ReactionUser]:
+    """Get users who reacted with a specific emoji."""
+    return _get_manager().get_reaction_users(user_id, message_id, emoji, limit, after_user_id)
+
+
+def get_user_reactions(user_id: int, message_id: int) -> List[Reaction]:
+    """Get all reactions by a specific user on a message."""
+    return _get_manager().get_user_reactions(user_id, message_id)
+
+
+# === Custom Emoji Operations ===
+
+
+def create_custom_emoji(
+    user_id: int,
+    server_id: int,
+    name: str,
+    animated: bool = False
+) -> CustomEmoji:
+    """Create a custom emoji for a server."""
+    return _get_manager().create_custom_emoji(user_id, server_id, name, animated)
+
+
+def delete_custom_emoji(user_id: int, emoji_id: int) -> bool:
+    """Delete a custom emoji."""
+    return _get_manager().delete_custom_emoji(user_id, emoji_id)
+
+
+def get_custom_emoji(emoji_id: int) -> Optional[CustomEmoji]:
+    """Get a custom emoji by ID."""
+    return _get_manager().get_custom_emoji(emoji_id)
+
+
+def get_server_custom_emojis(server_id: int) -> List[CustomEmoji]:
+    """Get all custom emojis for a server."""
+    return _get_manager().get_server_custom_emojis(server_id)

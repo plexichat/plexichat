@@ -32,14 +32,16 @@ authentication:
     interval: 30
     issuer: TestApp
 database:
-  path: temp_messaging_test\test_test_pagination.db
+  path: temp_relationships_test\test_test_blocking.db
   type: sqlite
-messaging:
-  dm_auto_create: true
-  encrypt_attachments: false
-  encrypt_messages: false
-  max_attachment_size: 10485760
-  max_attachments_per_message: 10
-  max_group_participants: 100
-  max_message_length: 4000
-  message_preview_length: 100
+servers:
+  channel_name_max_length: 100
+  channel_name_min_length: 1
+  invite_code_length: 8
+  max_channels_per_server: 500
+  max_roles_per_server: 250
+  max_servers_per_user: 100
+  role_name_max_length: 100
+  role_name_min_length: 1
+  server_name_max_length: 100
+  server_name_min_length: 2
