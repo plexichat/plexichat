@@ -18,6 +18,9 @@ temp_test/
 temp_auth_test/
 temp_messaging_test/
 temp_servers_test/
+temp_relationships_test/
+temp_presence_test/
+temp_reactions_test/
 logs/
 *.log
 *.log.zip
