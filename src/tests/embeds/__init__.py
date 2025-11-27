@@ -1,0 +1,3 @@
+"""
+Embeds module tests.
+"""
