@@ -320,7 +320,7 @@ class ReactionManager:
                 )
         else:
             conv = self._get_conversation(msg["conversation_id"])
-            if conv and conv.get("owner_id") != user_id:
+            if conv and conv["owner_id"] != user_id:
                 participant = self._db.fetch_one(
                     "SELECT role FROM msg_participants WHERE conversation_id = ? AND user_id = ?",
                     (msg["conversation_id"], user_id)
@@ -379,7 +379,7 @@ class ReactionManager:
                 )
         else:
             conv = self._get_conversation(msg["conversation_id"])
-            if conv and conv.get("owner_id") != user_id:
+            if conv and conv["owner_id"] != user_id:
                 participant = self._db.fetch_one(
                     "SELECT role FROM msg_participants WHERE conversation_id = ? AND user_id = ?",
                     (msg["conversation_id"], user_id)
