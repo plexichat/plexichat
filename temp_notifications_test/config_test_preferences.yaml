@@ -1,0 +1,61 @@
+authentication:
+  accounts:
+    allow_registration: true
+    max_bots_per_user: 5
+    require_email_verification: false
+    username_max_length: 32
+    username_min_length: 3
+  bots:
+    require_owner_2fa: false
+    token_bytes: 48
+  password:
+    max_length: 128
+    min_length: 8
+    require_digit: true
+    require_lowercase: true
+    require_special: true
+    require_uppercase: true
+  security:
+    lockout_duration_minutes: 1
+    max_failed_attempts: 3
+  sessions:
+    expire_hours: 168
+    extend_on_activity: true
+    extend_threshold_hours: 24
+    max_per_user: 10
+    token_bytes: 32
+  totp:
+    backup_code_count: 5
+    backup_code_length: 8
+    digits: 6
+    enabled: true
+    interval: 30
+    issuer: TestApp
+database:
+  path: temp_notifications_test\test_test_preferences.db
+  type: sqlite
+messaging:
+  dm_auto_create: true
+  encrypt_messages: false
+  max_attachment_size: 10485760
+  max_attachments_per_message: 10
+  max_group_participants: 100
+  max_message_length: 4000
+notifications:
+  content_preview_length: 100
+  max_feed_items: 100
+  max_notifications_per_page: 100
+presence:
+  timeout_ms: 300000
+  typing_timeout_ms: 10000
+servers:
+  channel_name_max_length: 100
+  channel_name_min_length: 1
+  invite_code_length: 8
+  max_channels_per_server: 500
+  max_roles_per_server: 250
+  max_servers_per_user: 100
+  role_name_max_length: 100
+  role_name_min_length: 1
+  server_name_max_length: 100
+  server_name_min_length: 2
