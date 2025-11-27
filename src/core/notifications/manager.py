@@ -193,7 +193,10 @@ class NotificationManager:
         """Get online member IDs in a server."""
         if not self._presence:
             return self._get_server_members(server_id)
-        return self._presence.get_online_server_member_ids(server_id)
+        try:
+            return self._presence.get_online_server_members(0, server_id)
+        except Exception:
+            return self._get_server_members(server_id)
 
     # === Mention Parsing ===
 
@@ -246,7 +249,7 @@ class NotificationManager:
                     if role and role["server_id"] != server_id:
                         m.valid = False
                         m.error = "Role not in this server"
-                    elif role and not role.get("mentionable", 0):
+                    elif role and not bool(role.get("mentionable", 0)):
                         if not self._servers or not self._servers.has_permission(
                             user_id, server_id, "roles.manage", channel_id
                         ):
