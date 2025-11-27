@@ -163,6 +163,13 @@ class RelationshipManager:
         if reverse:
             return self.accept_friend_request(sender_id, reverse["id"])
 
+        # Delete any old non-pending requests to allow resending
+        self._db.execute(
+            """DELETE FROM rel_friend_requests 
+               WHERE sender_id = ? AND recipient_id = ? AND status != 'pending'""",
+            (sender_id, recipient_id)
+        )
+
         now = self._get_timestamp()
         request_id = self._generate_id()
 

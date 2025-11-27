@@ -15,7 +15,7 @@ class TestCustomEmojiFormat:
 
     def test_custom_emoji_format_detected(self, users_with_server):
         """Test custom emoji format is detected."""
-        owner, member, server, channel, msg, servers, reactions = users_with_server
+        owner, member, server, group, msg, servers, reactions = users_with_server
 
         emoji = reactions.create_custom_emoji(owner.id, server.id, "test_emoji")
 
@@ -27,7 +27,7 @@ class TestCustomEmojiFormat:
 
     def test_animated_custom_emoji_format(self, users_with_server):
         """Test animated custom emoji format."""
-        owner, member, server, channel, msg, servers, reactions = users_with_server
+        owner, member, server, group, msg, servers, reactions = users_with_server
 
         emoji = reactions.create_custom_emoji(owner.id, server.id, "animated_test", animated=True)
 
@@ -38,7 +38,7 @@ class TestCustomEmojiFormat:
 
     def test_invalid_custom_emoji_format(self, users_with_server):
         """Test invalid custom emoji format treated as unicode."""
-        owner, member, server, channel, msg, servers, reactions = users_with_server
+        owner, member, server, group, msg, servers, reactions = users_with_server
 
         reaction = reactions.add_reaction(owner.id, msg.id, "<:invalid>")
 

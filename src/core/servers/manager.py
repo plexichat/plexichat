@@ -31,6 +31,7 @@ from .models import (
     DEFAULT_EVERYONE_PERMISSIONS,
 )
 from .exceptions import (
+    ServerError,
     ServerNotFoundError,
     ServerAccessDeniedError,
     ChannelNotFoundError,

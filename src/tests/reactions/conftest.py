@@ -243,7 +243,7 @@ def fresh_users_with_dm(db_and_modules):
 
 @pytest.fixture
 def users_with_server(db_and_modules):
-    """Create users with a server and channel."""
+    """Create users with a server and a group conversation for testing."""
     db, auth, messaging, servers, relationships, reactions = db_and_modules
 
     unique_id = uuid.uuid4().hex[:8]
@@ -263,11 +263,10 @@ def users_with_server(db_and_modules):
     server = servers.create_server(owner.id, f"Test Server {unique_id}")
     servers.add_member(server.id, member.id)
 
-    channel = servers.get_channels(owner.id, server.id)[0]
+    group = messaging.create_group(owner.id, f"Server Group {unique_id}", [member.id])
+    msg = messaging.send_message(owner.id, group.id, "Server message for reactions")
 
-    msg = servers.send_channel_message(owner.id, channel.id, "Server message for reactions")
-
-    return owner, member, server, channel, msg, servers, reactions
+    return owner, member, server, group, msg, servers, reactions
 
 
 @pytest.fixture

@@ -140,8 +140,9 @@ class TestGetTypingUsers:
     def test_get_typing_users_different_channels(self, fresh_users):
         """Test that typing users are channel-specific."""
         user1, user2, presence = fresh_users
-        channel1 = 12345
-        channel2 = 67890
+        import random
+        channel1 = random.randint(1000000, 9999999)
+        channel2 = random.randint(10000000, 99999999)
 
         presence.start_typing(user1.id, channel1)
         presence.start_typing(user2.id, channel2)
@@ -185,9 +186,10 @@ class TestTypingMultipleUsers:
         """Test multiple users typing in same channel."""
         db, auth, servers, relationships, presence = db_and_modules
         import uuid
+        import random
 
         unique_id = uuid.uuid4().hex[:6]
-        channel_id = 12345
+        channel_id = random.randint(100000000, 999999999)
 
         users = []
         for i in range(5):
