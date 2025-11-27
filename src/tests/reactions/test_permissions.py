@@ -12,7 +12,7 @@ class TestServerPermissions:
 
     def test_owner_can_add_reaction(self, users_with_server):
         """Test server owner can add reactions."""
-        owner, member, server, channel, msg, servers, reactions = users_with_server
+        owner, member, server, group, msg, servers, reactions = users_with_server
 
         reaction = reactions.add_reaction(owner.id, msg.id, "owner_react")
 
@@ -20,7 +20,7 @@ class TestServerPermissions:
 
     def test_member_can_add_reaction(self, users_with_server):
         """Test member with permission can add reactions."""
-        owner, member, server, channel, msg, servers, reactions = users_with_server
+        owner, member, server, group, msg, servers, reactions = users_with_server
 
         reaction = reactions.add_reaction(member.id, msg.id, "member_react")
 
@@ -74,8 +74,8 @@ class TestModeratorActions:
     """Tests for moderator-only actions."""
 
     def test_owner_can_remove_all_reactions(self, users_with_server):
-        """Test server owner can remove all reactions."""
-        owner, member, server, channel, msg, servers, reactions = users_with_server
+        """Test group owner can remove all reactions."""
+        owner, member, server, group, msg, servers, reactions = users_with_server
 
         reactions.add_reaction(owner.id, msg.id, "mod_test1")
         reactions.add_reaction(member.id, msg.id, "mod_test1")
@@ -89,8 +89,8 @@ class TestModeratorActions:
         assert msg_reactions.total_count == 0
 
     def test_owner_can_remove_emoji_reactions(self, users_with_server):
-        """Test server owner can remove all reactions of specific emoji."""
-        owner, member, server, channel, msg, servers, reactions = users_with_server
+        """Test group owner can remove all reactions of specific emoji."""
+        owner, member, server, group, msg, servers, reactions = users_with_server
 
         reactions.add_reaction(owner.id, msg.id, "emoji_mod1")
         reactions.add_reaction(member.id, msg.id, "emoji_mod1")
@@ -107,7 +107,7 @@ class TestModeratorActions:
 
     def test_member_cannot_remove_all_reactions(self, users_with_server):
         """Test regular member cannot remove all reactions."""
-        owner, member, server, channel, msg, servers, reactions = users_with_server
+        owner, member, server, group, msg, servers, reactions = users_with_server
 
         reactions.add_reaction(owner.id, msg.id, "no_mod")
 
@@ -116,7 +116,7 @@ class TestModeratorActions:
 
     def test_member_cannot_remove_emoji_reactions(self, users_with_server):
         """Test regular member cannot remove all emoji reactions."""
-        owner, member, server, channel, msg, servers, reactions = users_with_server
+        owner, member, server, group, msg, servers, reactions = users_with_server
 
         reactions.add_reaction(owner.id, msg.id, "no_emoji_mod")
 

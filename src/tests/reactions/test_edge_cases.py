@@ -243,7 +243,7 @@ class TestDataIntegrity:
 
     def test_custom_emoji_id_preserved(self, users_with_server):
         """Test custom emoji ID is preserved correctly."""
-        owner, member, server, channel, msg, servers, reactions = users_with_server
+        owner, member, server, group, msg, servers, reactions = users_with_server
 
         emoji = reactions.create_custom_emoji(owner.id, server.id, "preserve_id")
         custom_str = f"<:preserve_id:{emoji.id}>"

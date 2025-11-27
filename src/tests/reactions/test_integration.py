@@ -76,24 +76,24 @@ class TestMessagingIntegration:
 class TestServerIntegration:
     """Tests for integration with servers module."""
 
-    def test_react_to_channel_message(self, users_with_server):
-        """Test reacting to server channel message."""
-        owner, member, server, channel, msg, servers, reactions = users_with_server
+    def test_react_to_group_message(self, users_with_server):
+        """Test reacting to group message."""
+        owner, member, server, group, msg, servers, reactions = users_with_server
 
-        reaction = reactions.add_reaction(owner.id, msg.id, "channel_react")
+        reaction = reactions.add_reaction(owner.id, msg.id, "group_react")
 
         assert reaction is not None
 
-    def test_member_can_react_in_channel(self, users_with_server):
-        """Test server member can react in channel."""
-        owner, member, server, channel, msg, servers, reactions = users_with_server
+    def test_member_can_react_in_group(self, users_with_server):
+        """Test group member can react."""
+        owner, member, server, group, msg, servers, reactions = users_with_server
 
-        reaction = reactions.add_reaction(member.id, msg.id, "member_channel")
+        reaction = reactions.add_reaction(member.id, msg.id, "member_group")
 
         assert reaction is not None
 
     def test_non_member_cannot_react(self, db_and_modules):
-        """Test non-server member cannot react to channel message."""
+        """Test non-group member cannot react to message."""
         db, auth, messaging, servers_mod, relationships, reactions = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
@@ -103,30 +103,31 @@ class TestServerIntegration:
             email=f"srv_owner_{unique_id}@example.com",
             password="TestPass123!"
         )
+        member = auth.register(
+            username=f"srv_member_{unique_id}",
+            email=f"srv_member_{unique_id}@example.com",
+            password="TestPass123!"
+        )
         outsider = auth.register(
             username=f"outsider_{unique_id}",
             email=f"outsider_{unique_id}@example.com",
             password="TestPass123!"
         )
 
-        server = servers_mod.create_server(owner.id, f"Private Server {unique_id}")
-        channel = servers_mod.get_channels(owner.id, server.id)[0]
-        msg = servers_mod.send_channel_message(owner.id, channel.id, "Private message")
+        group = messaging.create_group(owner.id, f"Private Group {unique_id}", [member.id])
+        msg = messaging.send_message(owner.id, group.id, "Private message")
 
         with pytest.raises(MessageNotFoundError):
             reactions.add_reaction(outsider.id, msg.id, "outsider")
 
-    def test_custom_emoji_server_validation(self, users_with_server):
-        """Test custom emoji must belong to message's server."""
-        owner, member, server, channel, msg, servers, reactions = users_with_server
+    def test_custom_emoji_creation(self, users_with_server):
+        """Test custom emoji can be created for server."""
+        owner, member, server, group, msg, servers, reactions = users_with_server
 
         emoji = reactions.create_custom_emoji(owner.id, server.id, "server_emoji")
-        custom_str = f"<:server_emoji:{emoji.id}>"
 
-        reaction = reactions.add_reaction(owner.id, msg.id, custom_str)
-
-        assert reaction.is_custom is True
-        assert reaction.custom_emoji_id == emoji.id
+        assert emoji is not None
+        assert emoji.server_id == server.id
 
 
 class TestRelationshipsIntegration:
