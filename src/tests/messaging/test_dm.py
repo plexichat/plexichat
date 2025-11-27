@@ -66,13 +66,17 @@ class TestDMSettings:
         
         messaging.update_user_message_settings(user2.id, allow_dms_from="none")
         
-        with pytest.raises(messaging.ConversationAccessDeniedError):
-            messaging.create_dm(user1.id, user2.id)
+        try:
+            with pytest.raises(messaging.ConversationAccessDeniedError):
+                messaging.create_dm(user1.id, user2.id)
+        finally:
+            messaging.update_user_message_settings(user2.id, allow_dms_from="everyone")
     
     def test_dm_allowed_when_dms_enabled(self, users):
         """Test DM creation allowed when recipient enables DMs."""
         user1, user2, user3, messaging = users
         
+        # Ensure DMs are enabled (may have been disabled by previous test)
         messaging.update_user_message_settings(user2.id, allow_dms_from="everyone")
         
         dm = messaging.create_dm(user1.id, user2.id)

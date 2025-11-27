@@ -50,8 +50,12 @@ class TestCreateDM:
         # Disable DMs for user2
         messaging.update_user_message_settings(user2.id, allow_dms_from="none")
         
-        with pytest.raises(messaging.ConversationAccessDeniedError):
-            messaging.create_dm(user1.id, user2.id)
+        try:
+            with pytest.raises(messaging.ConversationAccessDeniedError):
+                messaging.create_dm(user1.id, user2.id)
+        finally:
+            # Reset settings for other tests
+            messaging.update_user_message_settings(user2.id, allow_dms_from="everyone")
 
 
 class TestCreateGroup:

@@ -197,15 +197,14 @@ class TestDeleteMessage:
         with pytest.raises(messaging.MessageAccessDeniedError):
             messaging.delete_message(user2.id, msg.id)
     
-    def test_soft_delete_preserves_record(self, dm_conversation):
-        """Test soft delete preserves database record."""
+    def test_soft_delete_hides_from_api(self, dm_conversation):
+        """Test deleted messages are not accessible via API."""
         dm, user1, user2, messaging = dm_conversation
         
         msg = messaging.send_message(user1.id, dm.id, "To delete")
         messaging.delete_message(user1.id, msg.id)
         
-        # Message should still exist in DB but marked deleted
-        # This is internal behavior, tested via get_message returning None
+        # Deleted messages should not be accessible via API
         assert messaging.get_message(user1.id, msg.id) is None
 
 

@@ -113,6 +113,11 @@ class MessagingManager:
         if user_id == recipient_id:
             raise InvalidRecipientError("Cannot create DM with yourself")
         
+        # Check recipient's DM settings FIRST - applies to both new and existing DMs
+        recipient_settings = self.get_user_message_settings(recipient_id)
+        if recipient_settings.allow_dms_from == "none":
+            raise ConversationAccessDeniedError("Recipient does not accept DMs")
+        
         # Check if DM already exists
         existing = self._get_existing_dm(user_id, recipient_id)
         if existing:
@@ -120,11 +125,6 @@ class MessagingManager:
         
         # Check auto-create setting
         should_create = auto_create if auto_create is not None else self._config.get("dm_auto_create", True)
-        
-        # Check recipient's DM settings
-        recipient_settings = self.get_user_message_settings(recipient_id)
-        if recipient_settings.allow_dms_from == "none":
-            raise ConversationAccessDeniedError("Recipient does not accept DMs")
         
         if not should_create:
             raise ConversationNotFoundError("DM does not exist and auto-create is disabled")
@@ -199,10 +199,15 @@ class MessagingManager:
         if not content_result.valid:
             raise InvalidContentError("Invalid group name", content_result.issues)
         
-        max_parts = max_participants or self._config.get("max_group_participants", 100)
+        max_parts = max_participants if max_participants is not None else self._config.get("max_group_participants", 100)
         
-        # Check participant count
+        # Check participant count - must have at least 1 (owner)
         participants = list(set([owner_id] + (participant_ids or [])))
+        if max_parts < 1:
+            raise ParticipantLimitError(
+                "Group must allow at least 1 participant",
+                max_parts, len(participants)
+            )
         if len(participants) > max_parts:
             raise ParticipantLimitError(
                 f"Cannot create group with more than {max_parts} participants",
@@ -366,6 +371,13 @@ class MessagingManager:
             "UPDATE msg_conversations SET deleted = 1, deleted_at = ? WHERE id = ?",
             (now, conversation_id)
         )
+        
+        # For DMs, also remove the lookup entry so a new DM can be created
+        if conv.conversation_type == ConversationType.DM:
+            self._db.execute(
+                "DELETE FROM msg_dm_lookup WHERE conversation_id = ?",
+                (conversation_id,)
+            )
         
         logger.debug(f"Deleted conversation {conversation_id}")
         return True
@@ -729,11 +741,15 @@ class MessagingManager:
         if not msg:
             raise MessageNotFoundError("Message not found")
         
+        if msg["deleted"]:
+            raise MessageNotFoundError("Message not found")
+        
+        # Must be participant in conversation to edit
+        if not self._is_participant(msg["conversation_id"], user_id):
+            raise MessageNotFoundError("Message not found")
+        
         if msg["author_id"] != user_id:
             raise MessageAccessDeniedError("Can only edit own messages")
-        
-        if msg["deleted"]:
-            raise MessageNotFoundError("Message has been deleted")
         
         # Validate content
         user_settings = self.get_user_message_settings(user_id)
@@ -803,6 +819,10 @@ class MessagingManager:
         if not msg:
             return None
         
+        # Deleted messages are not accessible via API
+        if msg["deleted"]:
+            return None
+        
         # Check access
         if not self._is_participant(msg["conversation_id"], user_id):
             return None
@@ -854,6 +874,10 @@ class MessagingManager:
         """Pin a message in its conversation."""
         msg = self._get_message_raw(message_id)
         if not msg:
+            raise MessageNotFoundError("Message not found")
+        
+        # Cannot pin deleted messages
+        if msg["deleted"]:
             raise MessageNotFoundError("Message not found")
         
         if not self._is_participant(msg["conversation_id"], user_id):

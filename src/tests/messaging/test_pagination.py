@@ -118,9 +118,9 @@ class TestMessagePagination:
         
         assert len(page1_ids & page2_ids) == 0
     
-    def test_pagination_covers_all_messages(self, dm_conversation):
+    def test_pagination_covers_all_messages(self, fresh_dm):
         """Test pagination covers all messages."""
-        dm, user1, user2, messaging = dm_conversation
+        dm, user1, user2, messaging = fresh_dm
         
         for i in range(25):
             messaging.send_message(user1.id, dm.id, f"Message {i}")
@@ -138,9 +138,9 @@ class TestMessagePagination:
         
         assert len(all_ids) == 25
     
-    def test_empty_result_at_end(self, dm_conversation):
+    def test_empty_result_at_end(self, fresh_dm):
         """Test empty result when no more messages."""
-        dm, user1, user2, messaging = dm_conversation
+        dm, user1, user2, messaging = fresh_dm
         
         msgs = []
         for i in range(5):
@@ -152,8 +152,8 @@ class TestMessagePagination:
         # Try to get more before the oldest
         older = messaging.get_messages(user1.id, dm.id, before_id=all_msgs[-1].id, limit=10)
         
-        # Should be empty or only have system messages
-        assert len(older) <= 1  # May have system message from group creation
+        # Should be empty (fresh DM has no prior messages)
+        assert len(older) == 0
 
 
 class TestConversationPagination:

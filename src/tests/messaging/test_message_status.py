@@ -77,9 +77,9 @@ class TestMarkDelivered:
 class TestMarkRead:
     """Test marking messages as read."""
     
-    def test_mark_read_all(self, dm_conversation):
+    def test_mark_read_all(self, fresh_dm):
         """Test marking all messages as read."""
-        dm, user1, user2, messaging = dm_conversation
+        dm, user1, user2, messaging = fresh_dm
         
         msg1 = messaging.send_message(user1.id, dm.id, "Test 1")
         msg2 = messaging.send_message(user1.id, dm.id, "Test 2")
@@ -88,9 +88,9 @@ class TestMarkRead:
         
         assert count == 2
     
-    def test_mark_read_up_to_message(self, dm_conversation):
+    def test_mark_read_up_to_message(self, fresh_dm):
         """Test marking messages as read up to specific message."""
-        dm, user1, user2, messaging = dm_conversation
+        dm, user1, user2, messaging = fresh_dm
         
         msg1 = messaging.send_message(user1.id, dm.id, "Test 1")
         msg2 = messaging.send_message(user1.id, dm.id, "Test 2")
@@ -191,9 +191,9 @@ class TestGetUnreadCount:
         
         assert unread[dm.id] == 1
     
-    def test_get_unread_count_excludes_own(self, dm_conversation):
+    def test_get_unread_count_excludes_own(self, fresh_dm):
         """Test unread count excludes own messages."""
-        dm, user1, user2, messaging = dm_conversation
+        dm, user1, user2, messaging = fresh_dm
         
         messaging.send_message(user1.id, dm.id, "From user1")
         messaging.send_message(user2.id, dm.id, "From user2")

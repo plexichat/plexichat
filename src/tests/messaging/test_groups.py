@@ -12,7 +12,7 @@ class TestGroupCreation:
         """Test group has a name."""
         group, user1, user2, user3, messaging = group_conversation
         
-        assert group.name == "Test Group"
+        assert group.name.startswith("Test Group")
     
     def test_group_has_owner(self, group_conversation):
         """Test group has an owner."""

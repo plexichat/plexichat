@@ -148,6 +148,9 @@ class TestUserMessageSettings:
         settings = messaging.update_user_message_settings(user1.id, allow_dms_from="friends")
         
         assert settings.allow_dms_from == "friends"
+        
+        # Reset for other tests
+        messaging.update_user_message_settings(user1.id, allow_dms_from="everyone")
     
     def test_update_auto_create_dms(self, users):
         """Test updating auto-create DMs setting."""
@@ -156,6 +159,9 @@ class TestUserMessageSettings:
         settings = messaging.update_user_message_settings(user1.id, auto_create_dms=False)
         
         assert settings.auto_create_dms is False
+        
+        # Reset for other tests
+        messaging.update_user_message_settings(user1.id, auto_create_dms=True)
     
     def test_update_max_message_length(self, users):
         """Test updating max message length."""
@@ -164,6 +170,9 @@ class TestUserMessageSettings:
         settings = messaging.update_user_message_settings(user1.id, max_message_length=8000)
         
         assert settings.max_message_length == 8000
+        
+        # Reset for other tests
+        messaging.update_user_message_settings(user1.id, max_message_length=None)
     
     def test_custom_message_length_enforced(self, users):
         """Test custom message length is enforced."""
@@ -172,11 +181,15 @@ class TestUserMessageSettings:
         # Set custom limit
         messaging.update_user_message_settings(user1.id, max_message_length=100)
         
-        dm = messaging.create_dm(user1.id, user2.id)
-        
-        # Should fail with 101 characters
-        with pytest.raises(messaging.ContentTooLongError):
-            messaging.send_message(user1.id, dm.id, "x" * 101)
+        try:
+            dm = messaging.create_dm(user1.id, user2.id)
+            
+            # Should fail with 101 characters
+            with pytest.raises(messaging.ContentTooLongError):
+                messaging.send_message(user1.id, dm.id, "x" * 101)
+        finally:
+            # Reset for other tests
+            messaging.update_user_message_settings(user1.id, max_message_length=None)
     
     def test_custom_message_length_allows_longer(self, users):
         """Test custom message length allows longer messages."""
@@ -185,12 +198,16 @@ class TestUserMessageSettings:
         # Set higher limit
         messaging.update_user_message_settings(user1.id, max_message_length=8000)
         
-        dm = messaging.create_dm(user1.id, user2.id)
-        
-        # Should succeed with 5000 characters (exceeds default 4000)
-        msg = messaging.send_message(user1.id, dm.id, "x" * 5000)
-        
-        assert len(msg.content) == 5000
+        try:
+            dm = messaging.create_dm(user1.id, user2.id)
+            
+            # Should succeed with 5000 characters (exceeds default 4000)
+            msg = messaging.send_message(user1.id, dm.id, "x" * 5000)
+            
+            assert len(msg.content) == 5000
+        finally:
+            # Reset for other tests
+            messaging.update_user_message_settings(user1.id, max_message_length=None)
     
     def test_update_attachment_settings(self, users):
         """Test updating attachment settings."""
@@ -308,7 +325,10 @@ class TestUnicodeContent:
         """Test unicode characters are preserved."""
         dm, user1, user2, messaging = dm_conversation
         
-        content = "Hello! Testing unicode: cafe, resume, naive"
+        # Reset any filters from previous tests
+        messaging.update_user_filter_settings(user1.id, custom_blocked_words=[])
+        
+        content = "Hello! Unicode chars: cafe, resume, naive"
         msg = messaging.send_message(user1.id, dm.id, content)
         
         assert msg.content == content

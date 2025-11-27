@@ -93,7 +93,7 @@ class TestMessageEdgeCases:
         msg = messaging.send_message(user1.id, dm.id, "To delete")
         messaging.delete_message(user1.id, msg.id)
         
-        # Message is soft deleted, pin should fail
+        # Message is deleted, pin should fail
         with pytest.raises(messaging.MessageNotFoundError):
             messaging.pin_message(user1.id, msg.id)
 
@@ -215,16 +215,14 @@ class TestConcurrentOperations:
             messaging.get_messages(user2.id, group.id)
     
     def test_edit_after_removed(self, group_conversation):
-        """Test editing message after being removed."""
+        """Test editing message after being removed fails."""
         group, user1, user2, user3, messaging = group_conversation
         
         msg = messaging.send_message(user2.id, group.id, "My message")
         
         messaging.remove_participant(user1.id, group.id, user2.id)
         
-        # User can still edit their own message even after removal
-        # This is a design decision - could also fail
-        # For now, we expect it to fail since they're not a participant
+        # User cannot edit after being removed - no access to conversation
         with pytest.raises(messaging.MessageNotFoundError):
             messaging.edit_message(user2.id, msg.id, "Edited")
 
@@ -254,10 +252,10 @@ class TestValidationEdgeCases:
             messaging.create_group(user1.id, "x" * 200)
     
     def test_zero_max_participants(self, users):
-        """Test zero max participants still allows owner."""
+        """Test zero max participants fails on creation."""
         user1, user2, user3, messaging = users
         
-        # This should fail because owner needs to be added
+        # Creating with 0 max participants should fail - owner needs to be added
         with pytest.raises(messaging.ParticipantLimitError):
             messaging.create_group(user1.id, "Empty Group", max_participants=0)
     
