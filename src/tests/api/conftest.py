@@ -1,5 +1,5 @@
 """
-Shared fixtures for webhook tests.
+Shared fixtures for API tests.
 """
 
 import pytest
@@ -91,16 +91,12 @@ def get_test_config():
             "max_message_length": 2000,
             "max_embeds_per_message": 10,
         },
-        "embeds": {
-            "max_embeds_per_message": 10,
-            "max_title_length": 256,
-            "max_description_length": 4096,
-            "max_fields": 25,
-            "max_field_name_length": 256,
-            "max_field_value_length": 1024,
-            "max_footer_length": 2048,
-            "max_author_name_length": 256,
-            "max_total_characters": 6000,
+        "api": {
+            "title": "PlexiChat API Test",
+            "version": "1.0.0",
+            "api_prefix": "/api/v1",
+            "debug": True,
+            "cors_origins": ["*"],
         },
     }
 
@@ -108,7 +104,7 @@ def get_test_config():
 @pytest.fixture(scope="session")
 def test_env():
     """Setup test environment once per session."""
-    test_dir = "temp_webhooks_test"
+    test_dir = "temp_api_test"
 
     try:
         if os.path.exists(test_dir):
@@ -158,8 +154,12 @@ def db_and_modules(test_env, request):
     from src.core import auth
     from src.core import messaging
     from src.core import servers
+    from src.core import relationships
+    from src.core import presence
+    from src.core import reactions
     from src.core import embeds
     from src.core import webhooks
+    import src.api as api
 
     db = Database()
     db.connect()
@@ -176,6 +176,18 @@ def db_and_modules(test_env, request):
     servers._setup_complete = False
     servers.setup(db, auth, messaging)
 
+    relationships._manager = None
+    relationships._setup_complete = False
+    relationships.setup(db, auth, servers)
+
+    presence._manager = None
+    presence._setup_complete = False
+    presence.setup(db, auth, relationships, servers)
+
+    reactions._manager = None
+    reactions._setup_complete = False
+    reactions.setup(db, messaging, servers, relationships)
+
     embeds._manager = None
     embeds._setup_complete = False
     embeds.setup(db, messaging, servers)
@@ -184,157 +196,93 @@ def db_and_modules(test_env, request):
     webhooks._setup_complete = False
     webhooks.setup(db, auth, messaging, servers, embeds)
 
-    yield db, auth, messaging, servers, embeds, webhooks
+    api.setup(
+        db=db,
+        auth_module=auth,
+        messaging_module=messaging,
+        servers_module=servers,
+        relationships_module=relationships,
+        presence_module=presence,
+        reactions_module=reactions,
+        embeds_module=embeds,
+        webhooks_module=webhooks,
+    )
+
+    yield {
+        "db": db,
+        "auth": auth,
+        "messaging": messaging,
+        "servers": servers,
+        "relationships": relationships,
+        "presence": presence,
+        "reactions": reactions,
+        "embeds": embeds,
+        "webhooks": webhooks,
+        "api": api,
+    }
 
     db.close()
     gc.collect()
 
 
 @pytest.fixture(scope="module")
-def base_server_setup(db_and_modules):
-    """Create base server with channel for webhook tests."""
-    db, auth, messaging, servers, embeds, webhooks = db_and_modules
+def test_client(db_and_modules):
+    """Create test client for API testing."""
+    from fastapi.testclient import TestClient
+    from src.api import create_app
 
+    app = create_app()
+    client = TestClient(app)
+
+    yield client
+
+
+@pytest.fixture(scope="module")
+def test_user(db_and_modules):
+    """Create a test user and return credentials."""
+    auth = db_and_modules["auth"]
     unique_id = uuid.uuid4().hex[:8]
 
-    owner = auth.register(
-        username=f"owner_{unique_id}",
-        email=f"owner_{unique_id}@example.com",
+    user = auth.register(
+        username=f"testuser_{unique_id}",
+        email=f"testuser_{unique_id}@example.com",
         password="TestPass123!"
     )
 
-    member = auth.register(
-        username=f"member_{unique_id}",
-        email=f"member_{unique_id}@example.com",
+    result = auth.login(
+        username=f"testuser_{unique_id}",
         password="TestPass123!"
     )
 
-    non_member = auth.register(
-        username=f"nonmember_{unique_id}",
-        email=f"nonmember_{unique_id}@example.com",
-        password="TestPass123!"
-    )
-
-    server = servers.create_server(owner.id, f"Test Server {unique_id}")
-    servers.add_member(server.id, member.id)
-
-    channels = servers.get_channels(owner.id, server.id)
-    channel = channels[0] if channels else None
-
-    result = {
-        "owner": owner,
-        "member": member,
-        "non_member": non_member,
-        "server": server,
-        "channel": channel,
-        "auth": auth,
-        "messaging": messaging,
-        "servers": servers,
-        "embeds": embeds,
-        "webhooks": webhooks,
-        "db": db,
+    return {
+        "user": user,
+        "token": result.token,
+        "username": f"testuser_{unique_id}",
+        "password": "TestPass123!",
     }
 
-    yield result
 
-    # Cleanup: delete all webhooks in the server after module tests complete
-    try:
-        all_webhooks = db.fetch_all(
-            "SELECT id FROM webhook_webhooks WHERE server_id = ?",
-            (server.id,)
-        )
-        for wh in all_webhooks:
-            try:
-                db.execute("DELETE FROM webhook_messages WHERE webhook_id = ?", (wh["id"],))
-                db.execute("DELETE FROM webhook_webhooks WHERE id = ?", (wh["id"],))
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-
-@pytest.fixture
-def fresh_server(db_and_modules):
-    """Create a fresh server for isolated tests."""
-    db, auth, messaging, servers, embeds, webhooks = db_and_modules
-
+@pytest.fixture(scope="module")
+def test_server(db_and_modules, test_user):
+    """Create a test server."""
+    servers = db_and_modules["servers"]
     unique_id = uuid.uuid4().hex[:8]
 
-    owner = auth.register(
-        username=f"fresh_owner_{unique_id}",
-        email=f"fresh_owner_{unique_id}@example.com",
-        password="TestPass123!"
+    server = servers.create_server(
+        owner_id=test_user["user"].id,
+        name=f"Test Server {unique_id}"
     )
 
-    server = servers.create_server(owner.id, f"Fresh Server {unique_id}")
-
-    channels = servers.get_channels(owner.id, server.id)
+    channels = servers.get_channels(test_user["user"].id, server.id)
     channel = channels[0] if channels else None
 
     return {
-        "owner": owner,
         "server": server,
         "channel": channel,
-        "servers": servers,
-        "webhooks": webhooks,
-        "embeds": embeds,
-        "db": db,
     }
-
-
-@pytest.fixture(autouse=True)
-def cleanup_webhooks_after_test(request, db_and_modules):
-    """Automatically cleanup webhooks after each test to prevent limit issues."""
-    db, auth, messaging, servers, embeds, webhooks = db_and_modules
-    
-    # Get webhook count before test
-    before = db.fetch_one("SELECT COUNT(*) as count FROM webhook_webhooks")
-    before_count = before["count"] if before else 0
-    
-    yield
-    
-    # After test: delete any webhooks created during the test
-    # Keep only the webhooks that existed before
-    try:
-        all_webhooks = db.fetch_all(
-            "SELECT id FROM webhook_webhooks ORDER BY created_at DESC"
-        )
-        current_count = len(all_webhooks)
-        webhooks_to_delete = current_count - before_count
-        
-        if webhooks_to_delete > 0:
-            for wh in all_webhooks[:webhooks_to_delete]:
-                try:
-                    db.execute("DELETE FROM webhook_messages WHERE webhook_id = ?", (wh["id"],))
-                    db.execute("DELETE FROM webhook_webhooks WHERE id = ?", (wh["id"],))
-                except Exception:
-                    pass
-    except Exception:
-        pass
 
 
 @pytest.fixture
-def webhook_with_token(base_server_setup):
-    """Create a webhook and return it with token, cleanup after test."""
-    setup = base_server_setup
-    unique_id = uuid.uuid4().hex[:8]
-
-    webhook = setup["webhooks"].create_webhook(
-        user_id=setup["owner"].id,
-        channel_id=setup["channel"].id,
-        name=f"Test Webhook {unique_id}"
-    )
-
-    result = {
-        **setup,
-        "webhook": webhook,
-        "token": webhook.token,
-    }
-
-    yield result
-
-    # Cleanup: delete the webhook after test
-    try:
-        setup["webhooks"].delete_webhook(setup["owner"].id, webhook.id)
-    except Exception:
-        pass
+def auth_headers(test_user):
+    """Get authorization headers for authenticated requests."""
+    return {"Authorization": f"Bearer {test_user['token']}"}

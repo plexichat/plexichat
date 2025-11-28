@@ -121,12 +121,13 @@ class TestGetServerWebhooks:
     def test_get_server_webhooks(self, fresh_server):
         """Test getting all webhooks for a server."""
         setup = fresh_server
+        from src.core.servers import ChannelType
 
         channel2 = setup["servers"].create_channel(
             user_id=setup["owner"].id,
             server_id=setup["server"].id,
             name="second-channel",
-            channel_type="text"
+            channel_type=ChannelType.TEXT
         )
 
         setup["webhooks"].create_webhook(
@@ -305,12 +306,13 @@ class TestMoveWebhook:
     def test_move_webhook_to_different_channel(self, fresh_server):
         """Test moving webhook to a different channel."""
         setup = fresh_server
+        from src.core.servers import ChannelType
 
         channel2 = setup["servers"].create_channel(
             user_id=setup["owner"].id,
             server_id=setup["server"].id,
             name="target-channel",
-            channel_type="text"
+            channel_type=ChannelType.TEXT
         )
 
         webhook = setup["webhooks"].create_webhook(

@@ -266,6 +266,16 @@ def server_with_channel(db_and_modules):
     servers.add_member(server.id, member1.id)
     servers.add_member(server.id, member2.id)
 
+    # Create a member role with thread creation permissions
+    member_role = servers.create_role(
+        owner.id, server.id, "Member",
+        permissions={
+            "threads.create_public": True,
+        }
+    )
+    servers.assign_role(owner.id, server.id, member1.id, member_role.id)
+    servers.assign_role(owner.id, server.id, member2.id, member_role.id)
+
     channel = servers.create_channel(
         owner.id, server.id, "general",
         channel_type=servers.ChannelType.TEXT

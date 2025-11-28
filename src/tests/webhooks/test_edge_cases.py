@@ -50,12 +50,13 @@ class TestDeletedChannel:
     def test_webhook_in_deleted_channel(self, fresh_server):
         """Test behavior when channel is deleted."""
         setup = fresh_server
+        from src.core.servers import ChannelType
 
         channel = setup["servers"].create_channel(
             user_id=setup["owner"].id,
             server_id=setup["server"].id,
             name="temp-channel",
-            channel_type="text"
+            channel_type=ChannelType.TEXT
         )
 
         webhook = setup["webhooks"].create_webhook(

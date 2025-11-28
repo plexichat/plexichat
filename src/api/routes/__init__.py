@@ -1,0 +1,37 @@
+"""
+API routes - Route registration for all endpoints.
+"""
+
+from fastapi import APIRouter
+
+from .health import router as health_router
+from .auth import router as auth_router
+from .users import router as users_router
+from .servers import router as servers_router
+from .channels import router as channels_router
+from .messages import router as messages_router
+from .relationships import router as relationships_router
+from .presence import router as presence_router
+from .reactions import router as reactions_router
+from .webhooks import router as webhooks_router
+
+
+def create_api_router() -> APIRouter:
+    """Create and configure the main API router."""
+    api_router = APIRouter()
+    
+    api_router.include_router(health_router, tags=["Health"])
+    api_router.include_router(auth_router, prefix="/auth", tags=["Authentication"])
+    api_router.include_router(users_router, prefix="/users", tags=["Users"])
+    api_router.include_router(servers_router, prefix="/servers", tags=["Servers"])
+    api_router.include_router(channels_router, prefix="/channels", tags=["Channels"])
+    api_router.include_router(messages_router, tags=["Messages"])
+    api_router.include_router(relationships_router, prefix="/relationships", tags=["Relationships"])
+    api_router.include_router(presence_router, tags=["Presence"])
+    api_router.include_router(reactions_router, tags=["Reactions"])
+    api_router.include_router(webhooks_router, prefix="/webhooks", tags=["Webhooks"])
+    
+    return api_router
+
+
+__all__ = ["create_api_router"]

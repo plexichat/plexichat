@@ -693,7 +693,7 @@ class WebhookManager:
             try:
                 self._db.execute(
                     """INSERT INTO msg_messages 
-                       (id, conversation_id, sender_id, content, created_at, updated_at, 
+                       (id, conversation_id, author_id, content, created_at, updated_at, 
                         deleted, edited, webhook_id)
                        VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?)""",
                     (message_id, channel_id, row["creator_id"], content or "", 
@@ -702,7 +702,7 @@ class WebhookManager:
             except Exception:
                 self._db.execute(
                     """INSERT INTO msg_messages 
-                       (id, conversation_id, sender_id, content, created_at, updated_at, 
+                       (id, conversation_id, author_id, content, created_at, updated_at, 
                         deleted, edited)
                        VALUES (?, ?, ?, ?, ?, ?, 0, 0)""",
                     (message_id, channel_id, row["creator_id"], content or "", now, now)

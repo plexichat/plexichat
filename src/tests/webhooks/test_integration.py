@@ -198,12 +198,13 @@ class TestMultipleWebhooks:
     def test_webhooks_different_channels(self, fresh_server):
         """Test webhooks in different channels."""
         setup = fresh_server
+        from src.core.servers import ChannelType
 
         channel2 = setup["servers"].create_channel(
             user_id=setup["owner"].id,
             server_id=setup["server"].id,
             name="second-channel",
-            channel_type="text"
+            channel_type=ChannelType.TEXT
         )
 
         webhook1 = setup["webhooks"].create_webhook(
