@@ -9,10 +9,14 @@ import sys
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
-if common_utils_path not in sys.path:
-    sys.path.append(common_utils_path)
+for path in [project_root, common_utils_path]:
+    if path not in sys.path:
+        sys.path.insert(0, path)
 
-import utils.config as config
+try:
+    import utils.config as config
+except ImportError:
+    config = None
 
 
 @dataclass
@@ -34,6 +38,8 @@ class APIConfig:
 
 def get_api_config() -> APIConfig:
     """Load API configuration from config file."""
+    if config is None:
+        return APIConfig()
     api_conf = config.get("api", {})
     
     return APIConfig(
