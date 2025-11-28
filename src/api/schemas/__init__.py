@@ -41,6 +41,29 @@ from .messages import (
     MessageResponse,
     AttachmentResponse,
 )
+from .relationships import (
+    FriendRequestCreate,
+    BlockCreate,
+    RelationshipResponse,
+    FriendRequestResponse,
+)
+from .presence import (
+    PresenceUpdate,
+    PresenceResponse,
+    ActivityResponse,
+)
+from .reactions import (
+    ReactionResponse,
+    ReactionUserResponse,
+    MessageReactionsResponse,
+)
+from .webhooks import (
+    WebhookCreateRequest,
+    WebhookUpdateRequest,
+    WebhookResponse,
+    WebhookExecuteRequest,
+    WebhookMessageResponse,
+)
 
 __all__ = [
     # Common
@@ -76,4 +99,23 @@ __all__ = [
     "MessageUpdateRequest",
     "MessageResponse",
     "AttachmentResponse",
+    # Relationships
+    "FriendRequestCreate",
+    "BlockCreate",
+    "RelationshipResponse",
+    "FriendRequestResponse",
+    # Presence
+    "PresenceUpdate",
+    "PresenceResponse",
+    "ActivityResponse",
+    # Reactions
+    "ReactionResponse",
+    "ReactionUserResponse",
+    "MessageReactionsResponse",
+    # Webhooks
+    "WebhookCreateRequest",
+    "WebhookUpdateRequest",
+    "WebhookResponse",
+    "WebhookExecuteRequest",
+    "WebhookMessageResponse",
 ]
