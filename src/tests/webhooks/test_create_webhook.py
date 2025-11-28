@@ -167,9 +167,9 @@ class TestCreateWebhook:
 
         assert len(webhook.name) == 80
 
-    def test_create_webhook_name_sanitized(self, base_server_setup):
+    def test_create_webhook_name_sanitized(self, fresh_server):
         """Test that webhook name is sanitized."""
-        setup = base_server_setup
+        setup = fresh_server
 
         webhook = setup["webhooks"].create_webhook(
             user_id=setup["owner"].id,
@@ -206,59 +206,55 @@ class TestCreateWebhook:
                 avatar_url="data:image/png;base64,abc123"
             )
 
-    def test_create_webhook_http_avatar(self, base_server_setup):
+    def test_create_webhook_http_avatar(self, fresh_server):
         """Test creating webhook with HTTP avatar URL."""
-        setup = base_server_setup
-        unique_id = uuid.uuid4().hex[:8]
+        setup = fresh_server
 
         webhook = setup["webhooks"].create_webhook(
             user_id=setup["owner"].id,
             channel_id=setup["channel"].id,
-            name=f"HTTP Avatar {unique_id}",
+            name="HTTP Avatar Test",
             avatar_url="http://example.com/avatar.png"
         )
 
         assert webhook.avatar_url == "http://example.com/avatar.png"
 
-    def test_create_webhook_https_avatar(self, base_server_setup):
+    def test_create_webhook_https_avatar(self, fresh_server):
         """Test creating webhook with HTTPS avatar URL."""
-        setup = base_server_setup
-        unique_id = uuid.uuid4().hex[:8]
+        setup = fresh_server
 
         webhook = setup["webhooks"].create_webhook(
             user_id=setup["owner"].id,
             channel_id=setup["channel"].id,
-            name=f"HTTPS Avatar {unique_id}",
+            name="HTTPS Avatar Test",
             avatar_url="https://example.com/avatar.png"
         )
 
         assert webhook.avatar_url == "https://example.com/avatar.png"
 
-    def test_create_webhook_timestamps(self, base_server_setup):
+    def test_create_webhook_timestamps(self, fresh_server):
         """Test that webhook has valid timestamps."""
-        setup = base_server_setup
-        unique_id = uuid.uuid4().hex[:8]
+        setup = fresh_server
 
         webhook = setup["webhooks"].create_webhook(
             user_id=setup["owner"].id,
             channel_id=setup["channel"].id,
-            name=f"Timestamp Test {unique_id}"
+            name="Timestamp Test"
         )
 
         assert webhook.created_at > 0
         assert webhook.updated_at > 0
         assert webhook.created_at == webhook.updated_at
 
-    def test_create_webhook_type_incoming(self, base_server_setup):
+    def test_create_webhook_type_incoming(self, fresh_server):
         """Test that created webhook has INCOMING type."""
-        setup = base_server_setup
+        setup = fresh_server
         from src.core.webhooks import WebhookType
-        unique_id = uuid.uuid4().hex[:8]
 
         webhook = setup["webhooks"].create_webhook(
             user_id=setup["owner"].id,
             channel_id=setup["channel"].id,
-            name=f"Type Test {unique_id}"
+            name="Type Test"
         )
 
         assert webhook.webhook_type == WebhookType.INCOMING
