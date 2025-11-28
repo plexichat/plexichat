@@ -40,7 +40,10 @@ def get_api_config() -> APIConfig:
     """Load API configuration from config file."""
     if config is None:
         return APIConfig()
-    api_conf = config.get("api", {})
+    try:
+        api_conf = config.get("api", {})
+    except RuntimeError:
+        return APIConfig()
     
     return APIConfig(
         title=api_conf.get("title", "PlexiChat API"),
