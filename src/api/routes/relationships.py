@@ -4,30 +4,16 @@ Relationship routes - Friend and block management endpoints.
 
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel, Field
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.schemas.relationships import (
+    FriendRequestCreate,
+    BlockCreate,
+    RelationshipResponse,
+)
 
 router = APIRouter()
-
-
-class RelationshipResponse(BaseModel):
-    """Relationship response model."""
-    user_id: str
-    status: str
-    created_at: Optional[int] = None
-
-
-class FriendRequestCreate(BaseModel):
-    """Friend request creation model."""
-    user_id: str = Field(..., description="Target user ID")
-    message: Optional[str] = Field(None, max_length=256, description="Optional message")
-
-
-class BlockCreate(BaseModel):
-    """Block creation model."""
-    user_id: str = Field(..., description="User ID to block")
 
 
 def _relationship_to_response(rel) -> RelationshipResponse:

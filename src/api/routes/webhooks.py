@@ -4,50 +4,17 @@ Webhook routes - Webhook management and execution endpoints.
 
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel, Field
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, get_optional_user, TokenInfo
+from src.api.schemas.webhooks import (
+    WebhookCreateRequest,
+    WebhookResponse,
+    WebhookExecuteRequest,
+    WebhookMessageResponse,
+)
 
 router = APIRouter()
-
-
-class WebhookCreateRequest(BaseModel):
-    """Webhook creation request."""
-    channel_id: str = Field(..., description="Channel ID for the webhook")
-    name: str = Field(..., min_length=1, max_length=80, description="Webhook name")
-    avatar_url: Optional[str] = Field(None, description="Webhook avatar URL")
-
-
-class WebhookResponse(BaseModel):
-    """Webhook response model."""
-    id: str
-    channel_id: str
-    server_id: str
-    name: str
-    avatar_url: Optional[str] = None
-    token: Optional[str] = None
-    url: Optional[str] = None
-    created_at: int
-
-
-class WebhookExecuteRequest(BaseModel):
-    """Webhook execution request."""
-    content: Optional[str] = Field(None, max_length=2000, description="Message content")
-    username: Optional[str] = Field(None, max_length=80, description="Override username")
-    avatar_url: Optional[str] = Field(None, description="Override avatar URL")
-    embeds: Optional[List[Dict[str, Any]]] = Field(None, description="Rich embeds")
-    thread_id: Optional[str] = Field(None, description="Thread ID to post to")
-
-
-class WebhookMessageResponse(BaseModel):
-    """Webhook message response model."""
-    id: str
-    channel_id: str
-    content: Optional[str] = None
-    username: Optional[str] = None
-    avatar_url: Optional[str] = None
-    created_at: int
 
 
 def _webhook_to_response(webhook, include_token: bool = False) -> WebhookResponse:
@@ -56,6 +23,7 @@ def _webhook_to_response(webhook, include_token: bool = False) -> WebhookRespons
         id=str(webhook.id),
         channel_id=str(webhook.channel_id),
         server_id=str(webhook.server_id),
+        creator_id=str(getattr(webhook, "creator_id", 0)),
         name=webhook.name,
         avatar_url=webhook.avatar_url,
         token=webhook.token if include_token and webhook.token else None,
@@ -209,6 +177,7 @@ async def execute_webhook(
         if wait and result:
             return WebhookMessageResponse(
                 id=str(result.id),
+                webhook_id=str(wid),
                 channel_id=str(result.channel_id),
                 content=result.content,
                 username=result.username,

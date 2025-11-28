@@ -4,25 +4,12 @@ Reaction routes - Message reaction endpoints.
 
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Depends, Query
-from pydantic import BaseModel
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.schemas.reactions import ReactionResponse, ReactionUserResponse
 
 router = APIRouter()
-
-
-class ReactionResponse(BaseModel):
-    """Reaction response model."""
-    emoji: str
-    count: int
-    me: bool
-
-
-class ReactionUserResponse(BaseModel):
-    """User who reacted response model."""
-    user_id: str
-    reacted_at: int
 
 
 @router.put("/channels/{channel_id}/messages/{message_id}/reactions/{emoji}")

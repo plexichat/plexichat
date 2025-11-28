@@ -4,28 +4,12 @@ Presence routes - User status and presence endpoints.
 
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel, Field
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.schemas.presence import PresenceUpdate, PresenceResponse
 
 router = APIRouter()
-
-
-class PresenceUpdate(BaseModel):
-    """Presence update request."""
-    status: str = Field(..., description="Status: online, idle, dnd, invisible")
-    custom_status: Optional[str] = Field(None, max_length=128, description="Custom status text")
-    custom_emoji: Optional[str] = Field(None, description="Custom status emoji")
-
-
-class PresenceResponse(BaseModel):
-    """Presence response model."""
-    user_id: str
-    status: str
-    custom_status: Optional[str] = None
-    custom_emoji: Optional[str] = None
-    last_seen: Optional[int] = None
 
 
 def _presence_to_response(pres, user_id: int) -> PresenceResponse:
