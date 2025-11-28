@@ -170,3 +170,51 @@ class TestDeleteMessage:
         )
         
         assert response.status_code == 404
+
+
+class TestMessageFields:
+    """Tests for message response fields."""
+
+    def test_message_has_author_id(self, test_client, auth_headers, test_server):
+        """Test that message response includes author_id."""
+        channel_id = str(test_server["channel"].id)
+        
+        response = test_client.post(
+            f"/api/v1/channels/{channel_id}/messages",
+            headers=auth_headers,
+            json={"content": "Test author field"}
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert "author_id" in data
+        assert data["author_id"] is not None
+
+    def test_message_has_created_at(self, test_client, auth_headers, test_server):
+        """Test that message response includes created_at."""
+        channel_id = str(test_server["channel"].id)
+        
+        response = test_client.post(
+            f"/api/v1/channels/{channel_id}/messages",
+            headers=auth_headers,
+            json={"content": "Test timestamp field"}
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert "created_at" in data
+        assert data["created_at"] > 0
+
+    def test_message_has_channel_id(self, test_client, auth_headers, test_server):
+        """Test that message response includes channel_id."""
+        channel_id = str(test_server["channel"].id)
+        
+        response = test_client.post(
+            f"/api/v1/channels/{channel_id}/messages",
+            headers=auth_headers,
+            json={"content": "Test channel field"}
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert "channel_id" in data

@@ -143,3 +143,48 @@ class TestDeleteChannel:
         )
         
         assert response.status_code == 404
+
+
+class TestChannelFields:
+    """Tests for channel response fields."""
+
+    def test_channel_has_server_id(self, test_client, auth_headers, test_server):
+        """Test that channel response includes server_id."""
+        channel_id = str(test_server["channel"].id)
+        
+        response = test_client.get(
+            f"/api/v1/channels/{channel_id}",
+            headers=auth_headers
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert "server_id" in data
+        assert data["server_id"] == str(test_server["server"].id)
+
+    def test_channel_has_channel_type(self, test_client, auth_headers, test_server):
+        """Test that channel response includes channel_type."""
+        channel_id = str(test_server["channel"].id)
+        
+        response = test_client.get(
+            f"/api/v1/channels/{channel_id}",
+            headers=auth_headers
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert "channel_type" in data
+
+    def test_channel_has_created_at(self, test_client, auth_headers, test_server):
+        """Test that channel response includes created_at."""
+        channel_id = str(test_server["channel"].id)
+        
+        response = test_client.get(
+            f"/api/v1/channels/{channel_id}",
+            headers=auth_headers
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert "created_at" in data
+        assert data["created_at"] > 0

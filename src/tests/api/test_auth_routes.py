@@ -159,3 +159,24 @@ class TestLogout:
         )
         
         assert response.status_code == 401
+
+
+class TestTwoFactorAuth:
+    """Tests for 2FA endpoints."""
+
+    def test_2fa_invalid_challenge_token(self, test_client):
+        """Test 2FA with invalid challenge token."""
+        response = test_client.post("/api/v1/auth/2fa", json={
+            "challenge_token": "invalid_challenge_token",
+            "code": "123456"
+        })
+        
+        assert response.status_code == 401
+
+    def test_2fa_missing_code(self, test_client):
+        """Test 2FA with missing code."""
+        response = test_client.post("/api/v1/auth/2fa", json={
+            "challenge_token": "some_token"
+        })
+        
+        assert response.status_code == 400 or response.status_code == 422

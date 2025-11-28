@@ -206,3 +206,48 @@ class TestGetServerChannels:
         )
         
         assert response.status_code == 404
+
+
+class TestServerMembership:
+    """Tests for server membership."""
+
+    def test_server_has_owner_id(self, test_client, auth_headers, test_server):
+        """Test that server response includes owner_id."""
+        server_id = str(test_server["server"].id)
+        
+        response = test_client.get(
+            f"/api/v1/servers/{server_id}",
+            headers=auth_headers
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert "owner_id" in data
+        assert data["owner_id"] is not None
+
+    def test_server_has_member_count(self, test_client, auth_headers, test_server):
+        """Test that server response includes member_count."""
+        server_id = str(test_server["server"].id)
+        
+        response = test_client.get(
+            f"/api/v1/servers/{server_id}",
+            headers=auth_headers
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert "member_count" in data
+
+    def test_server_has_created_at(self, test_client, auth_headers, test_server):
+        """Test that server response includes created_at."""
+        server_id = str(test_server["server"].id)
+        
+        response = test_client.get(
+            f"/api/v1/servers/{server_id}",
+            headers=auth_headers
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert "created_at" in data
+        assert data["created_at"] > 0

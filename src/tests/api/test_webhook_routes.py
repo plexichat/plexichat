@@ -223,3 +223,64 @@ class TestExecuteWebhook:
         )
         
         assert response.status_code == 400
+
+
+class TestWebhookFields:
+    """Tests for webhook response fields."""
+
+    def test_webhook_has_server_id(self, test_client, auth_headers, test_server):
+        """Test that webhook response includes server_id."""
+        channel_id = str(test_server["channel"].id)
+        unique_id = uuid.uuid4().hex[:8]
+        
+        response = test_client.post(
+            "/api/v1/webhooks",
+            headers=auth_headers,
+            json={
+                "channel_id": channel_id,
+                "name": f"Server ID Test {unique_id}"
+            }
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert "server_id" in data
+        assert data["server_id"] == str(test_server["server"].id)
+
+    def test_webhook_has_created_at(self, test_client, auth_headers, test_server):
+        """Test that webhook response includes created_at."""
+        channel_id = str(test_server["channel"].id)
+        unique_id = uuid.uuid4().hex[:8]
+        
+        response = test_client.post(
+            "/api/v1/webhooks",
+            headers=auth_headers,
+            json={
+                "channel_id": channel_id,
+                "name": f"Created At Test {unique_id}"
+            }
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert "created_at" in data
+        assert data["created_at"] > 0
+
+    def test_webhook_url_format(self, test_client, auth_headers, test_server):
+        """Test that webhook URL has correct format."""
+        channel_id = str(test_server["channel"].id)
+        unique_id = uuid.uuid4().hex[:8]
+        
+        response = test_client.post(
+            "/api/v1/webhooks",
+            headers=auth_headers,
+            json={
+                "channel_id": channel_id,
+                "name": f"URL Format Test {unique_id}"
+            }
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert "url" in data
+        assert "/webhooks/" in data["url"]
