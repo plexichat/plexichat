@@ -14,6 +14,7 @@ build/
 
 # Temp and logs
 temp/
+temp_*/
 temp_test/
 temp_auth_test/
 temp_messaging_test/
@@ -21,6 +22,17 @@ temp_servers_test/
 temp_relationships_test/
 temp_presence_test/
 temp_reactions_test/
+temp_embeds_test/
+temp_notifications_test/
+temp_voice_test/
+temp_threads_test/
+temp_webhooks_test/
+temp_ratelimit_test/
+temp_events_test/
+temp_cache_test/
+temp_jobs_test/
+temp_analytics_test/
+temp_api_test/
 logs/
 *.log
 *.log.zip

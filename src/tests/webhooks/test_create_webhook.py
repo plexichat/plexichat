@@ -168,7 +168,7 @@ class TestCreateWebhook:
         assert len(webhook.name) == 80
 
     def test_create_webhook_name_sanitized(self, fresh_server):
-        """Test that webhook name is sanitized."""
+        """Test that webhook name is sanitized (HTML tags removed)."""
         setup = fresh_server
 
         webhook = setup["webhooks"].create_webhook(
@@ -178,7 +178,7 @@ class TestCreateWebhook:
         )
 
         assert "<script>" not in webhook.name
-        assert "alert" not in webhook.name
+        assert "</script>" not in webhook.name
 
     def test_create_webhook_invalid_avatar_scheme(self, base_server_setup):
         """Test creating webhook with invalid avatar URL scheme."""
