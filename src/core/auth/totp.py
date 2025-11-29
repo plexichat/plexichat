@@ -136,9 +136,9 @@ def generate_backup_codes(count: Optional[int] = None) -> List[str]:
     """
     totp_config = get_totp_config()
     if count is None:
-        count = totp_config.get("backup_code_count", 10)
+        count = int(totp_config.get("backup_code_count", 10))
     
-    code_length = totp_config.get("backup_code_length", 8)
+    code_length = int(totp_config.get("backup_code_length", 8))
     half_length = code_length // 2
     
     codes = []
@@ -202,7 +202,7 @@ def generate_qr_code_data(uri: str) -> bytes:
     
     qr = qrcode.QRCode(
         version=1,
-        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        error_correction=qrcode.ERROR_CORRECT_L,
         box_size=10,
         border=4,
     )
@@ -212,7 +212,7 @@ def generate_qr_code_data(uri: str) -> bytes:
     img = qr.make_image(fill_color="black", back_color="white")
     
     buffer = BytesIO()
-    img.save(buffer, format="PNG")
+    img.save(buffer, "PNG")
     return buffer.getvalue()
 
 
