@@ -18,7 +18,7 @@ class ConversationNotFoundError(MessagingError):
 class ConversationAccessDeniedError(MessagingError):
     """Raised when user does not have access to a conversation."""
     
-    def __init__(self, message: str, required_permission: str = None):
+    def __init__(self, message: str, required_permission: str | None = None):
         super().__init__(message)
         self.required_permission = required_permission
 
@@ -31,7 +31,7 @@ class MessageNotFoundError(MessagingError):
 class MessageAccessDeniedError(MessagingError):
     """Raised when user does not have access to a message."""
     
-    def __init__(self, message: str, required_permission: str = None):
+    def __init__(self, message: str, required_permission: str | None = None):
         super().__init__(message)
         self.required_permission = required_permission
 
@@ -58,7 +58,7 @@ class ParticipantLimitError(MessagingError):
 class InvalidContentError(MessagingError):
     """Raised when message content fails validation."""
     
-    def __init__(self, message: str, issues: list = None):
+    def __init__(self, message: str, issues: list | None = None):
         super().__init__(message)
         self.issues = issues or []
 
@@ -98,7 +98,7 @@ class AttachmentLimitError(AttachmentError):
 class RateLimitError(MessagingError):
     """Raised when user exceeds rate limits."""
     
-    def __init__(self, message: str, retry_after: int = None):
+    def __init__(self, message: str, retry_after: int | None = None):
         super().__init__(message)
         self.retry_after = retry_after
 
