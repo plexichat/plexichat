@@ -332,7 +332,9 @@ class ApplicationManager:
 
             logger.debug(f"Application updated: {application_id}")
 
-        return self.get_application(application_id)
+        result = self.get_application(application_id)
+        assert result is not None  # Should exist since we just updated it
+        return result
 
     def delete_application(self, user_id: int, application_id: int) -> bool:
         """

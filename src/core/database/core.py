@@ -244,6 +244,7 @@ class Database:
     def begin_transaction(self):
         """Begin a transaction (disables autocommit)."""
         self._ensure_connected()
+        assert self.connection is not None  # Type narrowing for pyright
         self._in_transaction = True
         if self.type == "sqlite":
             self.connection.execute("BEGIN")
@@ -252,6 +253,7 @@ class Database:
     def commit(self):
         """Commit the current transaction."""
         self._ensure_connected()
+        assert self.connection is not None  # Type narrowing for pyright
         self.connection.commit()
         self._in_transaction = False
         logger.debug("Transaction committed")
@@ -259,6 +261,7 @@ class Database:
     def rollback(self):
         """Rollback the current transaction."""
         self._ensure_connected()
+        assert self.connection is not None  # Type narrowing for pyright
         self.connection.rollback()
         self._in_transaction = False
         logger.debug("Transaction rolled back")

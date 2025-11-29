@@ -154,7 +154,7 @@ def response_to_dict(response: InteractionResponse) -> Dict[str, Any]:
     Returns:
         Dict for JSON serialization
     """
-    result = {
+    result: Dict[str, Any] = {
         "type": response.response_type.value if isinstance(response.response_type, InteractionResponseType) else response.response_type,
     }
     

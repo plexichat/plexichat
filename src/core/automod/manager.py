@@ -457,7 +457,9 @@ class AutoModManager:
         
         logger.debug(f"Created automod rule {rule_id} for server {server_id}")
         
-        return self.get_rule(rule_id)
+        result = self.get_rule(rule_id)
+        assert result is not None  # Should exist since we just created it
+        return result
     
     def get_rule(self, rule_id: int) -> Optional[Rule]:
         """Get a rule by ID."""
@@ -548,7 +550,9 @@ class AutoModManager:
                 tuple(params)
             )
         
-        return self.get_rule(rule_id)
+        result = self.get_rule(rule_id)
+        assert result is not None  # Should exist since we just updated it
+        return result
     
     def delete_rule(self, user_id: int, rule_id: int) -> bool:
         """Delete a rule."""
@@ -590,7 +594,9 @@ class AutoModManager:
             (1 if enabled else 0, self._get_timestamp(), rule_id)
         )
         
-        return self.get_rule(rule_id)
+        result = self.get_rule(rule_id)
+        assert result is not None  # Should exist since we just updated it
+        return result
 
     def add_exemption(
         self,

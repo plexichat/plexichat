@@ -146,7 +146,7 @@ class GatewayDispatcher:
         Returns:
             True if sent successfully
         """
-        payload = {"op": int(opcode)}
+        payload: Dict[str, Any] = {"op": int(opcode)}
 
         if opcode == GatewayOpcode.DISPATCH:
             payload["s"] = connection.increment_sequence()
@@ -208,7 +208,7 @@ class GatewayDispatcher:
         return await self.dispatch_raw(
             connection,
             GatewayOpcode.INVALID_SESSION,
-            resumable,
+            {"resumable": resumable},
         )
 
     async def send_reconnect(self, connection: Connection) -> bool:

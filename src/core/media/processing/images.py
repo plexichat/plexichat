@@ -84,8 +84,8 @@ class ImageProcessor:
                             if isinstance(value, bytes):
                                 continue
                             exif_data[tag] = value
-                    except Exception:
-                        pass
+                        except Exception:
+                            pass
             
             return ImageMetadata(
                 width=img.width,

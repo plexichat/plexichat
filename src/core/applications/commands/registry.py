@@ -142,7 +142,9 @@ class CommandRegistry:
         
         logger.info(f"Command registered: {name} for app {application_id}")
         
-        return self.get_command(command_id)
+        result = self.get_command(command_id)
+        assert result is not None  # Should exist since we just created it
+        return result
     
     def get_command(self, command_id: int) -> Optional[Command]:
         """
@@ -318,7 +320,9 @@ class CommandRegistry:
             
             logger.debug(f"Command updated: {command_id}")
         
-        return self.get_command(command_id)
+        result = self.get_command(command_id)
+        assert result is not None  # Should exist since we just updated it
+        return result
     
     def delete_command(self, command_id: int) -> bool:
         """
