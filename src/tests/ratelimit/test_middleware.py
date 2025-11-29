@@ -78,7 +78,7 @@ class TestMiddlewareIntegration:
         ratelimit.setup(
             storage_backend=storage,
             route_configs={
-                "GET /test": RateLimitConfig(
+                "GET /api/v1/test": RateLimitConfig(
                     requests=3,
                     window_seconds=60.0,
                     burst=0,
@@ -166,7 +166,7 @@ class TestMiddlewareWithAuth:
         ratelimit.setup(
             storage_backend=storage,
             route_configs={
-                "GET /test": RateLimitConfig(
+                "GET /api/v1/test": RateLimitConfig(
                     requests=3,
                     window_seconds=60.0,
                     burst=0,
@@ -218,7 +218,7 @@ class TestMiddlewareBypass:
         ratelimit.setup(
             storage_backend=storage,
             route_configs={
-                "GET /test": RateLimitConfig(
+                "GET /api/v1/test": RateLimitConfig(
                     requests=1,
                     window_seconds=60.0,
                     burst=0,
@@ -229,6 +229,7 @@ class TestMiddlewareBypass:
             bypass_check=lambda uid, admin, internal: admin or internal,
         )
         app = FastAPI()
+        app.add_middleware(RateLimitMiddleware)
 
         @app.middleware("http")
         async def auth_middleware(request: Request, call_next):
@@ -238,8 +239,6 @@ class TestMiddlewareBypass:
                 permissions = {"admin.*": request.headers.get("X-Admin") == "true"}
             request.state.user = MockUser()
             return await call_next(request)
-
-        app.add_middleware(RateLimitMiddleware)
 
         @app.get("/api/v1/test")
         async def test_endpoint():
@@ -254,7 +253,7 @@ class TestMiddlewareBypass:
         client = TestClient(app_with_bypass)
         for i in range(10):
             response = client.get("/api/v1/test", headers={"X-Admin": "true"})
-            assert response.status_code == 200
+            assert response.status_code == 200, f"Request {i+1} failed with {response.status_code}"
 
     def test_internal_request_bypasses(self, app_with_bypass):
         """Test internal requests bypass rate limiting."""

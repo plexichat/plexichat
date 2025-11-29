@@ -39,14 +39,10 @@ class RateLimitConfig:
     include_in_global: bool = True
     retry_after_precision: int = 1
 
-    def __post_init__(self):
-        if self.burst == 0:
-            self.burst = self.requests
-
     @property
     def effective_limit(self) -> int:
         """Get effective limit including burst."""
-        return self.requests + self.burst if self.burst > self.requests else self.requests
+        return self.requests + self.burst
 
     def with_multiplier(self, multiplier: float) -> "RateLimitConfig":
         """Create a new config with adjusted limits."""
