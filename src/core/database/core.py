@@ -18,6 +18,9 @@ if common_utils_path not in sys.path:
 import utils.config as config
 import utils.logger as logger
 
+# Type alias for database connections
+DbConnection = Union[sqlite3.Connection, Any]  # Any for psycopg2 connection
+
 
 class Database:
     """
@@ -45,7 +48,7 @@ class Database:
             raise ValueError("Database configuration not found. Ensure config is set up.")
         
         self.type = self.config.get("type", "sqlite")
-        self.connection = None
+        self.connection: Optional[DbConnection] = None
         self._cursor = None
         self._in_transaction = False
         logger.info(f"Database initialized with type: {self.type}")
