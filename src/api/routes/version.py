@@ -106,6 +106,13 @@ async def negotiate_version(request: VersionNegotiateRequest):
         )
         update_recommended = comparison < 0
     
+    message = None
+    if not is_compatible:
+        message = (
+            f"Client version {request.client_version} is no longer supported. "
+            f"Please update to at least {version_util.format_version(min_supported)}."
+        )
+    
     response = VersionNegotiateResponse(
         compatible=is_compatible,
         server_version=_version_to_info(server_ver),
@@ -114,13 +121,10 @@ async def negotiate_version(request: VersionNegotiateRequest):
         update_required=not is_compatible,
         update_recommended=update_recommended,
         update_url=_update_url,
+        message=message,
     )
     
     if not is_compatible:
-        response.message = (
-            f"Client version {request.client_version} is no longer supported. "
-            f"Please update to at least {version_util.format_version(min_supported)}."
-        )
         raise HTTPException(
             status_code=426,  # Upgrade Required
             detail={
@@ -128,7 +132,7 @@ async def negotiate_version(request: VersionNegotiateRequest):
                     "code": "VERSION_OUTDATED",
                     "message": response.message,
                     "client_version": request.client_version,
-                    "min_version": version_util.format_version(min_supported) if min_supported else None,
+                    "min_version": version_util.format_version(min_supported) if min_supported is not None else None,
                     "server_version": version_util.current_string(),
                     "update_url": _update_url,
                 }
