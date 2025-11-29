@@ -145,7 +145,7 @@ class MediaManager:
                 base_url=self._config.get("local_url", "/media"),
             )
 
-    def _init_image_processor(self) -> ImageProcessor:
+    def _init_image_processor(self) -> Optional[ImageProcessor]:
         """Initialize image processor."""
         try:
             return ImageProcessor(
