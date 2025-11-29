@@ -2,6 +2,8 @@
 Media exceptions - All media-related error types.
 """
 
+from typing import Optional
+
 
 class MediaError(Exception):
     """Base exception for all media errors."""
@@ -16,7 +18,7 @@ class FileNotFoundError(MediaError):
 class FileUploadError(MediaError):
     """File upload failed."""
     
-    def __init__(self, message: str, filename: str = None):
+    def __init__(self, message: str, filename: Optional[str] = None):
         super().__init__(message)
         self.filename = filename
 
@@ -33,7 +35,7 @@ class FileSizeError(MediaError):
 class FileTypeError(MediaError):
     """File type not allowed."""
     
-    def __init__(self, message: str, content_type: str = None, allowed_types: list = None):
+    def __init__(self, message: str, content_type: Optional[str] = None, allowed_types: Optional[list] = None):
         super().__init__(message)
         self.content_type = content_type
         self.allowed_types = allowed_types or []
@@ -42,7 +44,7 @@ class FileTypeError(MediaError):
 class StorageError(MediaError):
     """Storage backend error."""
     
-    def __init__(self, message: str, backend: str = None):
+    def __init__(self, message: str, backend: Optional[str] = None):
         super().__init__(message)
         self.backend = backend
 
@@ -70,7 +72,7 @@ class StorageDeleteError(StorageError):
 class ImageProcessingError(MediaError):
     """Image processing failed."""
     
-    def __init__(self, message: str, operation: str = None):
+    def __init__(self, message: str, operation: Optional[str] = None):
         super().__init__(message)
         self.operation = operation
 
@@ -78,7 +80,7 @@ class ImageProcessingError(MediaError):
 class VideoProcessingError(MediaError):
     """Video processing failed."""
     
-    def __init__(self, message: str, operation: str = None):
+    def __init__(self, message: str, operation: Optional[str] = None):
         super().__init__(message)
         self.operation = operation
 
@@ -101,7 +103,7 @@ class SignatureInvalidError(MediaError):
 class ProxyError(MediaError):
     """External URL proxy error."""
     
-    def __init__(self, message: str, url: str = None):
+    def __init__(self, message: str, url: Optional[str] = None):
         super().__init__(message)
         self.url = url
 
@@ -124,7 +126,7 @@ class ScannerError(MediaError):
 class MalwareDetectedError(MediaError):
     """Malware detected in file."""
     
-    def __init__(self, message: str, threat_name: str = None):
+    def __init__(self, message: str, threat_name: Optional[str] = None):
         super().__init__(message)
         self.threat_name = threat_name
 
