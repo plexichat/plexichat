@@ -250,6 +250,73 @@ Available regions (placeholders for future WebRTC):
 pytest src/tests/voice/ -v
 ```
 
+## WebRTC Signaling
+
+The voice module includes a signaling submodule for WebRTC connections:
+
+```python
+from src.core.voice import signaling
+
+# Setup signaling (in main.py)
+signaling.setup(
+    voice_module=voice,
+    sfu_backend="mediasoup",  # or "janus"
+    mediasoup_url="http://localhost:3000",
+    stun_urls=["stun:stun.l.google.com:19302"],
+    turn_urls=["turn:turn.example.com:3478"],
+    turn_secret="your_turn_secret",
+    turn_ttl=86400,
+)
+
+# Get voice server info with TURN credentials
+info = signaling.get_voice_server_info(user_id, channel_id)
+
+# Create voice connection
+info = signaling.create_voice_connection(user_id, channel_id)
+
+# Handle SDP offer/answer exchange
+answer = signaling.handle_sdp_offer(user_id, channel_id, sdp_offer)
+
+# Handle ICE candidates
+signaling.handle_ice_candidate(user_id, channel_id, candidate, sdp_mid, sdp_mline_index)
+
+# Screen sharing
+state = signaling.start_screen_share(user_id, channel_id)
+signaling.stop_screen_share(user_id, channel_id)
+
+# Connection quality
+quality = signaling.get_connection_quality(user_id, channel_id)
+signaling.update_quality_hint(user_id, channel_id, target_bitrate=128000)
+
+# Disconnect
+signaling.disconnect_voice(user_id)
+```
+
+### WebSocket Opcodes
+
+| Opcode | Name | Direction | Description |
+|--------|------|-----------|-------------|
+| 20 | VOICE_CONNECT | Client -> Server | Connect to voice channel |
+| 21 | VOICE_DISCONNECT | Client -> Server | Disconnect from voice |
+| 22 | VOICE_SDP_OFFER | Client -> Server | Send SDP offer |
+| 23 | VOICE_SDP_ANSWER | Server -> Client | SDP answer response |
+| 24 | VOICE_ICE_CANDIDATE | Bidirectional | ICE candidate exchange |
+| 25 | VOICE_SPEAKING | Client -> Server | Speaking state update |
+| 26 | VOICE_QUALITY | Bidirectional | Quality metrics/hints |
+
+### SFU Backends
+
+The signaling module supports two SFU backends:
+
+- **mediasoup**: High-performance SFU with simulcast support
+- **janus**: Flexible WebRTC gateway with VideoRoom plugin
+
+### TURN Credentials
+
+TURN credentials are generated using HMAC-SHA1 per RFC 5389:
+- Username format: `expiry_timestamp:user_id`
+- Credential: Base64-encoded HMAC-SHA1 of username
+
 ## Notes
 
 - This module handles state management only, not actual audio/video streaming
