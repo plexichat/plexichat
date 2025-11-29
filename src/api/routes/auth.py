@@ -62,6 +62,9 @@ async def register(request: Request, body: RegisterRequest):
             status="success",
             token=result.token,
             user=_user_to_response(result.user) if result.user else _user_to_response(user),
+            challenge_token=None,
+            methods=None,
+            expires_in=None,
         )
     except Exception as e:
         exc_name = type(e).__name__
@@ -97,6 +100,8 @@ async def login(request: Request, body: LoginRequest):
         if result.status.value == "two_factor_required":
             return LoginResponse(
                 status="two_factor_required",
+                token=None,
+                user=None,
                 challenge_token=result.challenge_token,
                 methods=result.methods,
                 expires_in=result.expires_in,
@@ -106,6 +111,9 @@ async def login(request: Request, body: LoginRequest):
             status="success",
             token=result.token,
             user=_user_to_response(result.user) if result.user else None,
+            challenge_token=None,
+            methods=None,
+            expires_in=None,
         )
     except Exception as e:
         exc_name = type(e).__name__
@@ -136,6 +144,9 @@ async def complete_2fa(body: TwoFactorRequest):
             status="success",
             token=result.token,
             user=_user_to_response(result.user) if result.user else None,
+            challenge_token=None,
+            methods=None,
+            expires_in=None,
         )
     except Exception as e:
         exc_name = type(e).__name__
