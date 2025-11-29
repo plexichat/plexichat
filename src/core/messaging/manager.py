@@ -247,6 +247,30 @@ class MessagingManager:
         logger.debug(f"Created group conversation {conv_id} with {len(participants)} participants")
         
         return self.get_conversation(conv_id, owner_id)
+
+    def create_server_channel_conversation(self, server_id: int, channel_id: int) -> Conversation:
+        """Create a conversation for a server channel."""
+        now = self._get_timestamp()
+        conv_id = self._generate_id()
+        
+        self._db.execute(
+            """INSERT INTO msg_conversations 
+               (id, conversation_type, created_at, updated_at, encrypted, metadata)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (conv_id, ConversationType.GROUP.value, now, now,
+             1 if self._config.get("encrypt_messages") else 0,
+             json.dumps({"server_id": server_id, "channel_id": channel_id}))
+        )
+        
+        logger.debug(f"Created server channel conversation {conv_id} for channel {channel_id}")
+        
+        return Conversation(
+            id=conv_id,
+            conversation_type=ConversationType.GROUP,
+            created_at=now,
+            updated_at=now,
+            encrypted=self._config.get("encrypt_messages", False)
+        )
     
     def get_conversation(self, conversation_id: int, user_id: int) -> Optional[Conversation]:
         """Get a conversation by ID if user has access."""
