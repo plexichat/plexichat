@@ -228,6 +228,8 @@ class ConversationFactory:
         if user2 is None:
             user2 = self.user_factory.create()
         
+        assert user1 is not None
+        assert user2 is not None
         dm = self.messaging_module.create_dm(user1.id, user2.id)
         return dm, user1, user2
     
@@ -246,6 +248,7 @@ class ConversationFactory:
         if owner is None:
             owner = self.user_factory.create()
         
+        assert owner is not None
         participants = self.user_factory.create_many(participant_count)
         participant_ids = [p.id for p in participants]
         
@@ -289,6 +292,8 @@ class WebhookFactory:
             server = None
             owner = user
         
+        assert user is not None
+        assert channel is not None
         unique_id = uuid.uuid4().hex[:6]
         name = name or f"Test Webhook {unique_id}"
         
