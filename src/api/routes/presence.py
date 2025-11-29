@@ -99,6 +99,9 @@ async def get_user_presence(user_id: str, current_user: TokenInfo = Depends(get_
             return PresenceResponse(
                 user_id=str(uid),
                 status="offline",
+                custom_status=None,
+                custom_emoji=None,
+                last_seen=None,
             )
         return _presence_to_response(pres, uid)
     except Exception as e:
@@ -107,5 +110,8 @@ async def get_user_presence(user_id: str, current_user: TokenInfo = Depends(get_
             return PresenceResponse(
                 user_id=str(uid),
                 status="offline",
+                custom_status=None,
+                custom_emoji=None,
+                last_seen=None,
             )
         raise
