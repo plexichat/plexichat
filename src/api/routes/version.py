@@ -108,9 +108,10 @@ async def negotiate_version(request: VersionNegotiateRequest):
     
     message = None
     if not is_compatible:
+        min_version_str = version_util.format_version(min_supported) if min_supported else "latest"
         message = (
             f"Client version {request.client_version} is no longer supported. "
-            f"Please update to at least {version_util.format_version(min_supported)}."
+            f"Please update to at least {min_version_str}."
         )
     
     response = VersionNegotiateResponse(
