@@ -185,7 +185,7 @@ class NotificationManager:
         )
         return [row["user_id"] for row in rows]
 
-    def _has_mention_everyone_permission(self, user_id: int, server_id: int, channel_id: int = None) -> bool:
+    def _has_mention_everyone_permission(self, user_id: int, server_id: int, channel_id: Optional[int] = None) -> bool:
         """Check if user has permission to use @everyone/@here."""
         if not self._servers:
             return True
