@@ -1,5 +1,7 @@
 """
-AutoMod exceptions - All automod-related error types.
+Auto-moderation exceptions.
+
+All automod errors inherit from AutoModError for easy catching.
 """
 
 
@@ -9,63 +11,48 @@ class AutoModError(Exception):
 
 
 class RuleNotFoundError(AutoModError):
-    """Rule does not exist."""
+    """Raised when a rule is not found."""
     pass
 
 
 class RuleValidationError(AutoModError):
-    """Rule configuration failed validation."""
+    """Raised when rule configuration is invalid."""
     
     def __init__(self, message: str, issues: list = None):
         super().__init__(message)
         self.issues = issues or []
 
 
-class RuleLimitError(AutoModError):
-    """Maximum rules limit reached for server."""
-    
-    def __init__(self, message: str, max_allowed: int, current: int):
-        super().__init__(message)
-        self.max_allowed = max_allowed
-        self.current = current
-
-
-class ViolationNotFoundError(AutoModError):
-    """Violation record does not exist."""
-    pass
-
-
-class ServerConfigNotFoundError(AutoModError):
-    """Server automod configuration does not exist."""
-    pass
-
-
-class ExemptionError(AutoModError):
-    """Error managing exemptions."""
-    pass
-
-
-class ExemptionExistsError(ExemptionError):
-    """Exemption already exists."""
-    pass
-
-
-class ExemptionNotFoundError(ExemptionError):
-    """Exemption does not exist."""
+class RuleDisabledError(AutoModError):
+    """Raised when attempting to use a disabled rule."""
     pass
 
 
 class ActionExecutionError(AutoModError):
-    """Failed to execute an automod action."""
+    """Raised when an action fails to execute."""
     
-    def __init__(self, message: str, action_type: str = None, original_error: Exception = None):
+    def __init__(self, message: str, action_type: str = None):
         super().__init__(message)
         self.action_type = action_type
-        self.original_error = original_error
+
+
+class ExemptionError(AutoModError):
+    """Raised for exemption-related errors."""
+    pass
+
+
+class ViolationNotFoundError(AutoModError):
+    """Raised when a violation record is not found."""
+    pass
+
+
+class ReputationError(AutoModError):
+    """Raised for reputation system errors."""
+    pass
 
 
 class AIBackendError(AutoModError):
-    """Error communicating with AI moderation backend."""
+    """Raised when AI moderation backend fails."""
     
     def __init__(self, message: str, backend: str = None, status_code: int = None):
         super().__init__(message)
@@ -73,39 +60,44 @@ class AIBackendError(AutoModError):
         self.status_code = status_code
 
 
-class AIConfigurationError(AutoModError):
-    """AI backend is not properly configured."""
-    
-    def __init__(self, message: str, backend: str = None, missing_config: str = None):
-        super().__init__(message)
-        self.backend = backend
-        self.missing_config = missing_config
+class AIBackendUnavailableError(AIBackendError):
+    """Raised when AI backend is not configured or unavailable."""
+    pass
 
 
-class ReputationError(AutoModError):
-    """Error managing user reputation."""
+class AIBackendTimeoutError(AIBackendError):
+    """Raised when AI backend request times out."""
+    pass
+
+
+class RateLimitExceededError(AutoModError):
+    """Raised when rate limit is exceeded for automod operations."""
+    pass
+
+
+class ConfigurationError(AutoModError):
+    """Raised when automod configuration is invalid."""
+    pass
+
+
+class ServerNotFoundError(AutoModError):
+    """Raised when server is not found."""
+    pass
+
+
+class ChannelNotFoundError(AutoModError):
+    """Raised when channel is not found."""
+    pass
+
+
+class UserNotFoundError(AutoModError):
+    """Raised when user is not found."""
     pass
 
 
 class PermissionDeniedError(AutoModError):
-    """User does not have permission to perform this action."""
+    """Raised when user lacks permission for automod operation."""
     
     def __init__(self, message: str, permission: str = None):
         super().__init__(message)
         self.permission = permission
-
-
-class RateLimitError(AutoModError):
-    """Rate limit exceeded for automod operations."""
-    
-    def __init__(self, message: str, retry_after_seconds: int = None):
-        super().__init__(message)
-        self.retry_after_seconds = retry_after_seconds
-
-
-class InvalidPatternError(AutoModError):
-    """Invalid regex pattern in rule configuration."""
-    
-    def __init__(self, message: str, pattern: str = None):
-        super().__init__(message)
-        self.pattern = pattern

@@ -1,6 +1,6 @@
 # Servers Module
 
-Server-specific permissions system for PlexiChat API supporting Discord-style servers (guilds) with channels, roles, and permission overrides.
+Server-specific permissions system for PlexiChat API supporting community servers with channels, roles, and permission overrides.
 
 ## Features
 
@@ -12,6 +12,10 @@ Server-specific permissions system for PlexiChat API supporting Discord-style se
 - Invite system with expiration and usage limits
 - Comprehensive audit logging
 - Integration with messaging module for channel messages
+- Scheduled events with RSVP tracking and recurring support
+- Server templates for cloning server structure
+- Welcome screens for new members
+- Onboarding flows with customizable steps
 
 ## Installation
 
@@ -39,8 +43,8 @@ auth.setup(db)
 # Initialize messaging
 messaging.setup(db, auth)
 
-# Initialize servers
-servers.setup(db, auth, messaging)
+# Initialize servers (with optional notifications and events modules)
+servers.setup(db, auth, messaging, notifications_module=None, events_module=None)
 ```
 
 ## Usage
@@ -320,6 +324,233 @@ kicks = servers.get_audit_log(
 )
 ```
 
+### Scheduled Events
+
+```python
+import time
+
+# Create a voice channel event
+start_time = int(time.time() * 1000) + 3600000  # 1 hour from now
+event = servers.create_scheduled_event(
+    user_id=owner_id,
+    server_id=server.id,
+    name="Game Night",
+    start_time=start_time,
+    event_type=servers.ScheduledEventType.VOICE,
+    description="Weekly game night",
+    channel_id=voice_channel.id,
+    end_time=start_time + 7200000,  # 2 hours duration
+)
+
+# Create an external location event
+event = servers.create_scheduled_event(
+    user_id=owner_id,
+    server_id=server.id,
+    name="Community Meetup",
+    start_time=start_time,
+    event_type=servers.ScheduledEventType.EXTERNAL,
+    location="Central Park, NYC",
+)
+
+# Create a recurring event with RRULE
+event = servers.create_scheduled_event(
+    user_id=owner_id,
+    server_id=server.id,
+    name="Weekly Standup",
+    start_time=start_time,
+    event_type=servers.ScheduledEventType.EXTERNAL,
+    location="Virtual",
+    rrule="FREQ=WEEKLY;BYDAY=MO,WE,FR",
+)
+
+# Get scheduled events
+events = servers.get_scheduled_events(user_id, server_id)
+
+# Get events by status
+active_events = servers.get_scheduled_events(
+    user_id, server_id, status=servers.ScheduledEventStatus.ACTIVE
+)
+
+# Update event
+event = servers.update_scheduled_event(
+    user_id=owner_id,
+    event_id=event.id,
+    name="Updated Event Name",
+    status=servers.ScheduledEventStatus.CANCELLED,
+)
+
+# Delete event
+servers.delete_scheduled_event(owner_id, event.id)
+
+# Generate recurring event instances
+instances = servers.generate_recurring_instances(event.id, owner_id, count=10)
+```
+
+### Event RSVP
+
+```python
+# RSVP to an event
+rsvp = servers.rsvp_event(user_id, event.id, servers.RSVPStatus.GOING)
+rsvp = servers.rsvp_event(user_id, event.id, servers.RSVPStatus.INTERESTED)
+
+# Remove RSVP
+servers.remove_rsvp(user_id, event.id)
+
+# Get RSVPs for an event
+rsvps = servers.get_event_rsvps(user_id, event.id)
+
+# Filter by status
+going = servers.get_event_rsvps(user_id, event.id, status=servers.RSVPStatus.GOING)
+
+# Event counts are updated automatically
+event = servers.get_scheduled_event(event.id, user_id)
+print(f"Interested: {event.interested_count}, Going: {event.going_count}")
+```
+
+### Server Templates
+
+```python
+# Create a template from an existing server
+template = servers.create_template(
+    user_id=owner_id,
+    server_id=server.id,
+    name="Gaming Community Template",
+    description="Perfect for gaming communities",
+)
+print(f"Template code: {template.code}")
+
+# Get template by code
+template = servers.get_template(code)
+
+# Preview template without applying
+preview = servers.preview_template(code)
+print(f"Channels: {len(preview.channels)}")
+print(f"Roles: {len(preview.roles)}")
+
+# Apply template to create a new server
+new_server = servers.apply_template(
+    user_id=user_id,
+    code=template.code,
+    server_name="My New Server",
+    server_description="Created from template",
+)
+
+# Get user's templates
+templates = servers.get_user_templates(user_id)
+
+# Get public templates
+public = servers.get_public_templates()
+
+# Update template
+template = servers.update_template(
+    user_id=owner_id,
+    code=template.code,
+    is_public=True,
+)
+
+# Delete template
+servers.delete_template(owner_id, template.code)
+```
+
+### Welcome Screen
+
+```python
+# Set welcome screen for a server
+welcome = servers.set_welcome_screen(
+    user_id=owner_id,
+    server_id=server.id,
+    description="Welcome to our community!",
+    welcome_channels=[
+        {"channel_id": general.id, "description": "Start chatting here"},
+        {"channel_id": announcements.id, "description": "Important updates"},
+    ],
+    enabled=True,
+)
+
+# Get welcome screen
+welcome = servers.get_welcome_screen(server.id, user_id)
+
+# Disable welcome screen
+welcome = servers.set_welcome_screen(
+    user_id=owner_id,
+    server_id=server.id,
+    enabled=False,
+)
+
+# Delete welcome screen
+servers.delete_welcome_screen(owner_id, server.id)
+```
+
+### Onboarding
+
+```python
+# Create onboarding steps
+rules_step = servers.create_onboarding_step(
+    user_id=owner_id,
+    server_id=server.id,
+    step_type=servers.OnboardingStepType.READ_RULES,
+    title="Read Our Rules",
+    description="Please read and accept our community rules",
+    required=True,
+)
+
+roles_step = servers.create_onboarding_step(
+    user_id=owner_id,
+    server_id=server.id,
+    step_type=servers.OnboardingStepType.SELECT_ROLES,
+    title="Choose Your Interests",
+    options={"role_ids": [gamer_role.id, artist_role.id]},
+)
+
+channel_step = servers.create_onboarding_step(
+    user_id=owner_id,
+    server_id=server.id,
+    step_type=servers.OnboardingStepType.VISIT_CHANNEL,
+    title="Check Out Introductions",
+    options={"channel_id": intro_channel.id},
+)
+
+# Get onboarding steps
+steps = servers.get_onboarding_steps(user_id, server.id)
+
+# Update step
+step = servers.update_onboarding_step(
+    user_id=owner_id,
+    step_id=step.id,
+    required=True,
+    position=0,
+)
+
+# Delete step
+servers.delete_onboarding_step(owner_id, step.id)
+
+# Start onboarding for a user
+progress = servers.start_onboarding(user_id, server.id)
+
+# Complete a step
+progress = servers.complete_onboarding_step(
+    user_id=user_id,
+    server_id=server.id,
+    step_id=rules_step.id,
+)
+
+# Complete select roles step with response
+progress = servers.complete_onboarding_step(
+    user_id=user_id,
+    server_id=server.id,
+    step_id=roles_step.id,
+    response={"selected_roles": [gamer_role.id]},
+)
+
+# Get onboarding progress
+progress = servers.get_onboarding_progress(user_id, server.id)
+print(f"Completed: {progress.completed}")
+print(f"Steps done: {progress.completed_steps}")
+
+# Reset progress
+servers.reset_onboarding_progress(user_id, server.id)
+```
+
 ## Configuration
 
 All settings are in `config/config.yaml` under `servers`:
@@ -337,6 +568,23 @@ servers:
   role_name_min_length: 1
   role_name_max_length: 100
   invite_code_length: 8
+
+  events:
+    max_events_per_server: 100
+    max_event_duration_hours: 168
+    reminder_minutes: [60, 15]
+    max_recurring_instances: 50
+
+  templates:
+    max_templates_per_user: 25
+    template_code_length: 8
+    max_channels_in_template: 100
+    max_roles_in_template: 50
+
+  onboarding:
+    max_onboarding_steps: 10
+    max_welcome_channels: 5
+    max_step_options: 25
 ```
 
 ## Permission System
@@ -377,6 +625,10 @@ servers:
 | voice | voice.mute_members | Mute other members |
 | voice | voice.deafen_members | Deafen other members |
 | voice | voice.move_members | Move members between channels |
+| events | events.manage | Create, edit, delete scheduled events |
+| events | events.view | View scheduled events |
+| templates | templates.manage | Create and manage server templates |
+| onboarding | onboarding.manage | Manage welcome screen and onboarding |
 | admin | administrator | Full administrator access |
 
 ### Role Hierarchy
@@ -428,6 +680,13 @@ Tables (prefixed with `srv_`):
 - `srv_invites` - Server invites
 - `srv_bans` - Server bans
 - `srv_audit_log` - Audit log entries
+- `srv_scheduled_events` - Scheduled server events
+- `srv_event_rsvps` - Event RSVP tracking
+- `srv_templates` - Server templates
+- `srv_template_data` - Template structure snapshots
+- `srv_welcome_screens` - Welcome screen configuration
+- `srv_onboarding_steps` - Onboarding step definitions
+- `srv_onboarding_progress` - User onboarding progress
 
 ## Testing
 

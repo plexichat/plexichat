@@ -95,7 +95,7 @@ messaging.remove_participant(user_id=1, conversation_id=group.id, participant_id
 
 ### Rich Text Formatting
 
-Messages support Discord-style formatting:
+Messages support markdown-style formatting:
 
 ```python
 # Bold

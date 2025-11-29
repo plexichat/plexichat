@@ -1,5 +1,5 @@
 """
-WebSocket Gateway Module - Discord-compatible WebSocket gateway for PlexiChat.
+WebSocket Gateway Module - WebSocket gateway for PlexiChat.
 
 Provides real-time event delivery to connected clients.
 

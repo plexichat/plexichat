@@ -1,10 +1,10 @@
 # WebSocket Gateway Module
 
-Discord-compatible WebSocket gateway for real-time event delivery.
+WebSocket gateway for real-time event delivery.
 
 ## Features
 
-- Discord-compatible opcodes and close codes
+- Standard opcodes and close codes
 - Connection lifecycle management
 - Session management with resume support
 - Heartbeat monitoring

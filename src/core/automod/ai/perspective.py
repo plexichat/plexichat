@@ -1,104 +1,98 @@
 """
-Perspective API adapter - Uses Google's Perspective API for toxicity detection.
+Google Perspective API adapter.
+
+Makes real HTTP calls to Perspective API for toxicity analysis.
 """
 
 import json
-import urllib.request
-import urllib.error
 from typing import Dict, Any, Optional
+from urllib.request import Request, urlopen
+from urllib.error import URLError, HTTPError
 
 import utils.logger as logger
 
 from .base import BaseAIAdapter
-from ..models import AICheckResult
-from ..exceptions import AIBackendError
+from ..models import AICheckResult, AIBackendType
+from ..exceptions import AIBackendError, AIBackendUnavailableError, AIBackendTimeoutError
 
 
 class PerspectiveAdapter(BaseAIAdapter):
-    """Adapter for Google's Perspective API."""
+    """Adapter for Google Perspective API."""
+    
+    backend_type = AIBackendType.PERSPECTIVE
     
     API_URL = "https://commentanalyzer.googleapis.com/v1alpha1/comments:analyze"
     
-    DEFAULT_ATTRIBUTES = [
-        "TOXICITY",
-        "SEVERE_TOXICITY",
-        "IDENTITY_ATTACK",
-        "INSULT",
-        "PROFANITY",
-        "THREAT",
-    ]
+    CATEGORIES = {
+        "TOXICITY": "Rude, disrespectful, or unreasonable content",
+        "SEVERE_TOXICITY": "Very hateful, aggressive, or disrespectful content",
+        "IDENTITY_ATTACK": "Negative or hateful content targeting identity",
+        "INSULT": "Insulting or inflammatory content",
+        "PROFANITY": "Swear words, curse words, or obscene language",
+        "THREAT": "Intention to inflict pain, injury, or violence",
+        "SEXUALLY_EXPLICIT": "References to sexual acts or body parts",
+        "FLIRTATION": "Pickup lines, complimenting appearance, or suggestive content",
+    }
     
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        self._api_key = config.get("perspective_api_key", "")
-        self._threshold = config.get("perspective_threshold", 0.7)
-        self._attributes = config.get("perspective_attributes", self.DEFAULT_ATTRIBUTES)
-        self._language = config.get("perspective_language", "en")
+        self._api_key = config.get("api_key", "")
+        self._threshold = config.get("threshold", 0.7)
+        self._requested_attributes = config.get("attributes", [
+            "TOXICITY",
+            "SEVERE_TOXICITY",
+            "IDENTITY_ATTACK",
+            "INSULT",
+            "PROFANITY",
+            "THREAT"
+        ])
+        self._language = config.get("language", "en")
     
     def check_content(self, content: str, context: Optional[Dict[str, Any]] = None) -> AICheckResult:
         """Check content using Perspective API."""
-        if not self._api_key:
-            return AICheckResult(
-                flagged=False,
-                error="Perspective API key not configured"
+        if not self.is_available():
+            raise AIBackendUnavailableError(
+                "Perspective API key not configured",
+                backend="perspective"
             )
         
         try:
-            requested_attributes = {}
-            for attr in self._attributes:
-                requested_attributes[attr] = {}
+            attributes = {attr: {} for attr in self._requested_attributes}
             
-            payload = {
+            request_data = json.dumps({
                 "comment": {"text": content},
                 "languages": [self._language],
-                "requestedAttributes": requested_attributes,
-            }
+                "requestedAttributes": attributes
+            }).encode("utf-8")
             
             url = f"{self.API_URL}?key={self._api_key}"
-            data = json.dumps(payload).encode("utf-8")
             
-            req = urllib.request.Request(
+            request = Request(
                 url,
-                data=data,
+                data=request_data,
                 headers={"Content-Type": "application/json"},
                 method="POST"
             )
             
-            with urllib.request.urlopen(req, timeout=self._timeout) as response:
+            with urlopen(request, timeout=self._timeout) as response:
                 response_data = json.loads(response.read().decode("utf-8"))
             
-            categories = {}
-            scores = {}
-            flagged = False
+            return self._parse_response(response_data)
             
-            attribute_scores = response_data.get("attributeScores", {})
-            
-            for attr, data in attribute_scores.items():
-                score = data.get("summaryScore", {}).get("value", 0)
-                scores[attr.lower()] = score
-                
-                is_flagged = score >= self._threshold
-                categories[attr.lower()] = is_flagged
-                
-                if is_flagged:
-                    flagged = True
-            
-            return AICheckResult(
-                flagged=flagged,
-                categories=categories,
-                scores=scores,
-                raw_response=response_data
-            )
-            
-        except urllib.error.HTTPError as e:
+        except HTTPError as e:
             logger.error(f"Perspective API HTTP error: {e.code} - {e.reason}")
             raise AIBackendError(
                 f"Perspective API error: {e.reason}",
                 backend="perspective",
                 status_code=e.code
             )
-        except urllib.error.URLError as e:
-            logger.error(f"Perspective API connection error: {e.reason}")
+        except URLError as e:
+            if "timed out" in str(e.reason).lower():
+                raise AIBackendTimeoutError(
+                    "Perspective API request timed out",
+                    backend="perspective"
+                )
+            logger.error(f"Perspective API URL error: {e.reason}")
             raise AIBackendError(
                 f"Perspective API connection error: {e.reason}",
                 backend="perspective"
@@ -106,50 +100,40 @@ class PerspectiveAdapter(BaseAIAdapter):
         except json.JSONDecodeError as e:
             logger.error(f"Perspective API response parse error: {e}")
             raise AIBackendError(
-                "Failed to parse Perspective response",
+                "Failed to parse Perspective API response",
                 backend="perspective"
             )
-        except Exception as e:
-            logger.error(f"Perspective moderation check failed: {e}")
-            return AICheckResult(
-                flagged=False,
-                error=str(e)
-            )
     
-    @classmethod
-    def get_backend_name(cls) -> str:
-        return "perspective"
+    def _parse_response(self, response: Dict[str, Any]) -> AICheckResult:
+        """Parse Perspective API response."""
+        attribute_scores = response.get("attributeScores", {})
+        
+        categories = {}
+        scores = {}
+        
+        for attr, data in attribute_scores.items():
+            summary_score = data.get("summaryScore", {}).get("value", 0.0)
+            scores[attr] = summary_score
+            categories[attr] = summary_score >= self._threshold
+        
+        flagged = any(categories.values())
+        
+        return AICheckResult(
+            flagged=flagged,
+            categories=categories,
+            scores=scores,
+            backend=self.backend_type,
+            raw_response=response
+        )
     
-    @classmethod
-    def validate_config(cls, config: Dict[str, Any]) -> list:
-        """Validate Perspective adapter configuration."""
-        issues = []
-        
-        api_key = config.get("perspective_api_key")
-        if not api_key:
-            issues.append("perspective_api_key is required")
-        elif not isinstance(api_key, str):
-            issues.append("perspective_api_key must be a string")
-        
-        threshold = config.get("perspective_threshold")
-        if threshold is not None:
-            if not isinstance(threshold, (int, float)):
-                issues.append("perspective_threshold must be a number")
-            elif threshold < 0 or threshold > 1:
-                issues.append("perspective_threshold must be between 0 and 1")
-        
-        attributes = config.get("perspective_attributes")
-        if attributes is not None:
-            if not isinstance(attributes, list):
-                issues.append("perspective_attributes must be a list")
-            else:
-                valid_attrs = {
-                    "TOXICITY", "SEVERE_TOXICITY", "IDENTITY_ATTACK",
-                    "INSULT", "PROFANITY", "THREAT", "SEXUALLY_EXPLICIT",
-                    "FLIRTATION", "SPAM", "INCOHERENT", "INFLAMMATORY",
-                }
-                for attr in attributes:
-                    if attr not in valid_attrs:
-                        issues.append(f"Unknown Perspective attribute: {attr}")
-        
-        return issues
+    def is_available(self) -> bool:
+        """Check if Perspective API is configured."""
+        return bool(self._api_key)
+    
+    def get_categories(self) -> Dict[str, str]:
+        """Get Perspective API categories."""
+        return {
+            cat: desc
+            for cat, desc in self.CATEGORIES.items()
+            if cat in self._requested_attributes
+        }

@@ -1,14 +1,16 @@
 """
-AutoMod models - Dataclasses for all automod-related entities.
+Auto-moderation data models.
+
+Defines all data structures for rules, actions, violations, and audit entries.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any
 from enum import Enum
+from typing import Optional, List, Dict, Any
 
 
 class RuleType(Enum):
-    """Type of automod rule."""
+    """Types of automod rules."""
     KEYWORD = "keyword"
     REGEX = "regex"
     MENTION_SPAM = "mention_spam"
@@ -22,7 +24,7 @@ class RuleType(Enum):
 
 
 class ActionType(Enum):
-    """Type of action to take on violation."""
+    """Types of actions that can be taken."""
     DELETE_MESSAGE = "delete_message"
     TIMEOUT_USER = "timeout_user"
     KICK_USER = "kick_user"
@@ -31,15 +33,15 @@ class ActionType(Enum):
     LOG_ONLY = "log_only"
 
 
-class AIBackend(Enum):
-    """AI moderation backend type."""
+class AIBackendType(Enum):
+    """Supported AI moderation backends."""
     OPENAI = "openai"
     PERSPECTIVE = "perspective"
     CUSTOM = "custom"
 
 
 class ViolationSeverity(Enum):
-    """Severity level of a violation."""
+    """Severity levels for violations."""
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
@@ -48,37 +50,47 @@ class ViolationSeverity(Enum):
 
 @dataclass
 class RuleAction:
-    """Action configuration for a rule."""
+    """Action to take when a rule is triggered."""
     action_type: ActionType
     duration_seconds: Optional[int] = None
     reason: Optional[str] = None
     notify_user: bool = True
-    delete_message_history_hours: Optional[int] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class Rule:
-    """Represents an automod rule."""
+    """Automod rule definition."""
     id: int
     server_id: int
-    rule_type: RuleType
     name: str
-    enabled: bool = True
-    priority: int = 0
-    trigger_config: Dict[str, Any] = field(default_factory=dict)
-    actions: List[RuleAction] = field(default_factory=list)
-    exempt_roles: List[int] = field(default_factory=list)
-    exempt_channels: List[int] = field(default_factory=list)
-    cooldown_seconds: int = 0
-    check_all_rules: bool = False
-    created_at: int = 0
-    updated_at: int = 0
-    created_by: int = 0
+    rule_type: RuleType
+    enabled: bool
+    config: Dict[str, Any]
+    actions: List[RuleAction]
+    exempt_roles: List[int]
+    exempt_channels: List[int]
+    priority: int
+    created_at: int
+    updated_at: int
+    created_by: int
+    check_all: bool = False
+
+
+@dataclass
+class RuleMatch:
+    """Result of a rule check."""
+    rule_id: int
+    rule_type: RuleType
+    matched: bool
+    matched_content: Optional[str] = None
+    match_details: Dict[str, Any] = field(default_factory=dict)
+    severity: ViolationSeverity = ViolationSeverity.MEDIUM
 
 
 @dataclass
 class Violation:
-    """Represents a rule violation."""
+    """Record of a rule violation."""
     id: int
     server_id: int
     channel_id: int
@@ -86,76 +98,78 @@ class Violation:
     message_id: Optional[int]
     rule_id: int
     rule_type: RuleType
+    matched_content: str
+    actions_taken: List[ActionType]
     severity: ViolationSeverity
-    matched_content: Optional[str] = None
-    trigger_details: Dict[str, Any] = field(default_factory=dict)
-    actions_taken: List[ActionType] = field(default_factory=list)
-    created_at: int = 0
+    created_at: int
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class AuditEntry:
-    """Represents an automod audit log entry."""
+    """Audit log entry for automod actions."""
     id: int
     server_id: int
     action_type: ActionType
-    user_id: int
-    target_user_id: Optional[int]
+    target_user_id: int
+    moderator_id: Optional[int]
     rule_id: Optional[int]
-    violation_id: Optional[int]
-    message_id: Optional[int]
-    channel_id: Optional[int]
-    reason: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    created_at: int = 0
+    reason: str
+    metadata: Dict[str, Any]
+    created_at: int
 
 
 @dataclass
 class UserReputation:
-    """Represents a user's reputation score in a server."""
+    """User reputation score for a server."""
     user_id: int
     server_id: int
-    score: float = 100.0
-    total_violations: int = 0
-    last_violation_at: Optional[int] = None
-    last_decay_at: Optional[int] = None
-    created_at: int = 0
-    updated_at: int = 0
+    score: float
+    violation_count: int
+    last_violation_at: Optional[int]
+    last_decay_at: int
+    created_at: int
+    updated_at: int
+
+
+@dataclass
+class Exemption:
+    """Exemption from automod rules."""
+    id: int
+    server_id: int
+    rule_id: Optional[int]
+    target_type: str
+    target_id: int
+    created_at: int
+    created_by: int
 
 
 @dataclass
 class CheckResult:
-    """Result of checking a message against rules."""
+    """Result of checking a message against all rules."""
     passed: bool
-    violations: List[Violation] = field(default_factory=list)
-    actions_to_take: List[RuleAction] = field(default_factory=list)
-    matched_rules: List[Rule] = field(default_factory=list)
-    processing_time_ms: float = 0.0
+    violations: List[RuleMatch]
+    actions_to_take: List[RuleAction]
+    should_delete: bool = False
+    should_timeout: bool = False
+    timeout_duration: Optional[int] = None
 
 
 @dataclass
 class AICheckResult:
     """Result from AI moderation backend."""
     flagged: bool
-    categories: Dict[str, bool] = field(default_factory=dict)
-    scores: Dict[str, float] = field(default_factory=dict)
-    raw_response: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
+    categories: Dict[str, bool]
+    scores: Dict[str, float]
+    backend: AIBackendType
+    raw_response: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
-class ServerConfig:
-    """Per-server automod configuration."""
-    server_id: int
-    enabled: bool = True
-    log_channel_id: Optional[int] = None
-    alert_channel_id: Optional[int] = None
-    alert_webhook_url: Optional[str] = None
-    default_timeout_duration: int = 300
-    reputation_enabled: bool = True
-    reputation_decay_rate: float = 1.0
-    reputation_decay_interval_hours: int = 24
-    ai_backend: Optional[AIBackend] = None
-    ai_enabled: bool = False
-    created_at: int = 0
-    updated_at: int = 0
+class BulkScanResult:
+    """Result of bulk message scanning."""
+    total_scanned: int
+    violations_found: int
+    messages_flagged: List[int]
+    user_violations: Dict[int, int]
+    scan_duration_ms: int

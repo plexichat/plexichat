@@ -1,8 +1,10 @@
 """
-AutoMod actions package - Action executor implementations.
+Automod actions package.
+
+Exports all action executors.
 """
 
-from .base import BaseAction, ActionResult
+from .base import BaseAction
 from .delete import DeleteMessageAction
 from .timeout import TimeoutUserAction
 from .kick import KickUserAction
@@ -11,7 +13,6 @@ from .alert import AlertModeratorsAction
 
 __all__ = [
     "BaseAction",
-    "ActionResult",
     "DeleteMessageAction",
     "TimeoutUserAction",
     "KickUserAction",

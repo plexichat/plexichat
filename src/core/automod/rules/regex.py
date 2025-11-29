@@ -1,124 +1,127 @@
 """
-Regex pattern rule - Matches messages against regex patterns.
+Regex pattern rule.
+
+Checks messages against configurable regex patterns.
 """
 
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any, Optional, List
 
-from .base import BaseRule, RuleMatch
-from ..models import Rule, ViolationSeverity
-from ..exceptions import InvalidPatternError
+from .base import BaseRule
+from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
 
 
 class RegexRule(BaseRule):
-    """Rule that matches messages against regex patterns."""
+    """Rule that checks content against regex patterns."""
+    
+    rule_type = RuleType.REGEX
     
     def __init__(self, rule: Rule):
         super().__init__(rule)
-        self._patterns = self._compile_patterns(self.config.get("patterns", []))
-        self._flags = self._get_flags()
-    
-    def _get_flags(self) -> int:
-        """Get regex flags from config."""
-        flags = 0
-        if not self.config.get("case_sensitive", False):
-            flags |= re.IGNORECASE
-        if self.config.get("multiline", False):
-            flags |= re.MULTILINE
-        if self.config.get("dotall", False):
-            flags |= re.DOTALL
-        return flags
-    
-    def _compile_patterns(self, patterns: List[str]) -> List[re.Pattern]:
-        """Compile regex patterns."""
-        compiled = []
-        flags = self._get_flags()
+        self._patterns: List[Dict[str, Any]] = self.config.get("patterns", [])
+        self._compiled_patterns: List[tuple] = []
         
-        for pattern in patterns:
+        for pattern_config in self._patterns:
+            pattern_str = pattern_config.get("pattern", "")
+            flags = 0
+            if not pattern_config.get("case_sensitive", False):
+                flags |= re.IGNORECASE
+            if pattern_config.get("multiline", False):
+                flags |= re.MULTILINE
+            
             try:
-                compiled.append(re.compile(pattern, flags))
+                compiled = re.compile(pattern_str, flags)
+                severity = self._parse_severity(pattern_config.get("severity", "medium"))
+                name = pattern_config.get("name", pattern_str[:30])
+                self._compiled_patterns.append((compiled, severity, name))
             except re.error:
-                continue
-        
-        return compiled
+                pass
     
-    def check(self, content: str, context: Dict[str, Any]) -> RuleMatch:
+    def check(
+        self,
+        content: str,
+        user_id: int,
+        channel_id: int,
+        context: Optional[Dict[str, Any]] = None
+    ) -> RuleMatch:
         """Check content against regex patterns."""
-        if not self._patterns:
-            return RuleMatch(matched=False)
+        if not self._compiled_patterns:
+            return self._no_match()
         
         matches = []
-        matched_patterns = []
+        highest_severity = ViolationSeverity.LOW
         
-        for pattern in self._patterns:
-            found = pattern.findall(content)
-            if found:
-                matches.extend(found)
-                matched_patterns.append(pattern.pattern)
+        for compiled, severity, name in self._compiled_patterns:
+            match = compiled.search(content)
+            if match:
+                matches.append({
+                    "name": name,
+                    "matched": match.group(),
+                    "start": match.start(),
+                    "end": match.end()
+                })
+                if self._severity_rank(severity) > self._severity_rank(highest_severity):
+                    highest_severity = severity
         
         if not matches:
-            return RuleMatch(matched=False)
+            return self._no_match()
         
-        severity = self._calculate_severity(len(matches))
+        matched_texts = [m["matched"] for m in matches]
         
-        matched_str = []
-        for m in matches[:5]:
-            if isinstance(m, tuple):
-                matched_str.append(m[0] if m else "")
-            else:
-                matched_str.append(str(m))
-        
-        return RuleMatch(
+        return self._create_match(
             matched=True,
-            severity=severity,
-            matched_content=", ".join(matched_str),
-            trigger_details={
-                "matched_patterns": matched_patterns,
-                "match_count": len(matches),
-                "matches": matches[:10],
-            }
+            matched_content=", ".join(matched_texts[:5]),
+            details={
+                "matches": matches,
+                "count": len(matches)
+            },
+            severity=highest_severity
         )
     
+    def _parse_severity(self, sev_str: str) -> ViolationSeverity:
+        """Parse severity string to enum."""
+        mapping = {
+            "low": ViolationSeverity.LOW,
+            "medium": ViolationSeverity.MEDIUM,
+            "high": ViolationSeverity.HIGH,
+            "critical": ViolationSeverity.CRITICAL
+        }
+        return mapping.get(sev_str.lower(), ViolationSeverity.MEDIUM)
+    
+    def _severity_rank(self, sev: ViolationSeverity) -> int:
+        """Get numeric rank for severity comparison."""
+        ranks = {
+            ViolationSeverity.LOW: 1,
+            ViolationSeverity.MEDIUM: 2,
+            ViolationSeverity.HIGH: 3,
+            ViolationSeverity.CRITICAL: 4
+        }
+        return ranks.get(sev, 2)
+    
     @classmethod
-    def validate_config(cls, config: Dict[str, Any]) -> List[str]:
+    def validate_config(cls, config: Dict[str, Any]) -> tuple:
         """Validate regex rule configuration."""
         issues = []
         
         patterns = config.get("patterns")
-        if patterns is None:
-            issues.append("patterns is required")
+        if not patterns:
+            issues.append("patterns list is required")
         elif not isinstance(patterns, list):
             issues.append("patterns must be a list")
-        elif len(patterns) == 0:
-            issues.append("patterns list cannot be empty")
-        elif len(patterns) > 100:
-            issues.append("patterns list cannot exceed 100 items")
         else:
-            for i, pattern in enumerate(patterns):
-                if not isinstance(pattern, str):
-                    issues.append(f"pattern at index {i} must be a string")
-                elif len(pattern) == 0:
-                    issues.append(f"pattern at index {i} cannot be empty")
-                elif len(pattern) > 500:
-                    issues.append(f"pattern at index {i} exceeds 500 characters")
-                else:
-                    try:
-                        re.compile(pattern)
-                    except re.error as e:
-                        issues.append(f"pattern at index {i} is invalid: {str(e)}")
+            for i, p in enumerate(patterns):
+                if not isinstance(p, dict):
+                    issues.append(f"pattern {i} must be a dictionary")
+                    continue
+                
+                pattern_str = p.get("pattern")
+                if not pattern_str:
+                    issues.append(f"pattern {i} missing 'pattern' field")
+                    continue
+                
+                try:
+                    re.compile(pattern_str)
+                except re.error as e:
+                    issues.append(f"pattern {i} invalid regex: {e}")
         
-        for key in ["case_sensitive", "multiline", "dotall"]:
-            if key in config and not isinstance(config[key], bool):
-                issues.append(f"{key} must be a boolean")
-        
-        return issues
-    
-    @classmethod
-    def get_default_config(cls) -> Dict[str, Any]:
-        """Get default configuration."""
-        return {
-            "patterns": [],
-            "case_sensitive": False,
-            "multiline": False,
-            "dotall": False,
-        }
+        return len(issues) == 0, issues

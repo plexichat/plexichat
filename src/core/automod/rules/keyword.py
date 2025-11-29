@@ -1,101 +1,132 @@
 """
-Keyword filter rule - Matches messages containing blocked keywords.
+Keyword filter rule.
+
+Checks messages for blocked keywords with optional word boundary matching.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, Optional, List
 
-from .base import BaseRule, RuleMatch
-from ..models import Rule, ViolationSeverity
+from .base import BaseRule
+from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
 
 
 class KeywordRule(BaseRule):
-    """Rule that matches messages containing blocked keywords."""
+    """Rule that checks for blocked keywords."""
+    
+    rule_type = RuleType.KEYWORD
     
     def __init__(self, rule: Rule):
         super().__init__(rule)
-        self._keywords = self._normalize_keywords(self.config.get("keywords", []))
-        self._match_whole_word = self.config.get("match_whole_word", True)
-        self._case_sensitive = self.config.get("case_sensitive", False)
+        self._keywords: List[str] = self.config.get("keywords", [])
+        self._case_sensitive: bool = self.config.get("case_sensitive", False)
+        self._whole_word: bool = self.config.get("whole_word", True)
+        self._severity_map: Dict[str, str] = self.config.get("severity_map", {})
+        
+        if not self._case_sensitive:
+            self._keywords = [k.lower() for k in self._keywords]
+            self._severity_map = {k.lower(): v for k, v in self._severity_map.items()}
     
-    def _normalize_keywords(self, keywords: List[str]) -> List[str]:
-        """Normalize keywords for matching."""
-        if self._case_sensitive:
-            return [k.strip() for k in keywords if k.strip()]
-        return [k.strip().lower() for k in keywords if k.strip()]
-    
-    def check(self, content: str, context: Dict[str, Any]) -> RuleMatch:
+    def check(
+        self,
+        content: str,
+        user_id: int,
+        channel_id: int,
+        context: Optional[Dict[str, Any]] = None
+    ) -> RuleMatch:
         """Check content for blocked keywords."""
         if not self._keywords:
-            return RuleMatch(matched=False)
+            return self._no_match()
         
         check_content = content if self._case_sensitive else content.lower()
+        
         matched_keywords = []
+        highest_severity = ViolationSeverity.LOW
         
         for keyword in self._keywords:
-            if self._match_whole_word:
-                if self._word_match(check_content, keyword):
+            if self._whole_word:
+                if self._contains_whole_word(check_content, keyword):
                     matched_keywords.append(keyword)
             else:
                 if keyword in check_content:
                     matched_keywords.append(keyword)
         
         if not matched_keywords:
-            return RuleMatch(matched=False)
+            return self._no_match()
         
-        severity = self._calculate_severity(len(matched_keywords))
+        for kw in matched_keywords:
+            sev_str = self._severity_map.get(kw, "medium")
+            sev = self._parse_severity(sev_str)
+            if self._severity_rank(sev) > self._severity_rank(highest_severity):
+                highest_severity = sev
         
-        return RuleMatch(
+        return self._create_match(
             matched=True,
-            severity=severity,
-            matched_content=", ".join(matched_keywords[:5]),
-            trigger_details={
-                "matched_keywords": matched_keywords,
-                "match_count": len(matched_keywords),
-            }
+            matched_content=", ".join(matched_keywords),
+            details={
+                "keywords": matched_keywords,
+                "count": len(matched_keywords)
+            },
+            severity=highest_severity
         )
     
-    def _word_match(self, content: str, keyword: str) -> bool:
-        """Check if keyword exists as a whole word in content."""
-        import re
-        pattern = r'\b' + re.escape(keyword) + r'\b'
-        return bool(re.search(pattern, content))
+    def _contains_whole_word(self, text: str, word: str) -> bool:
+        """Check if text contains word as a whole word."""
+        word_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
+        
+        start = 0
+        while True:
+            pos = text.find(word, start)
+            if pos == -1:
+                return False
+            
+            before_ok = pos == 0 or text[pos - 1] not in word_chars
+            after_pos = pos + len(word)
+            after_ok = after_pos >= len(text) or text[after_pos] not in word_chars
+            
+            if before_ok and after_ok:
+                return True
+            
+            start = pos + 1
+        
+        return False
+    
+    def _parse_severity(self, sev_str: str) -> ViolationSeverity:
+        """Parse severity string to enum."""
+        mapping = {
+            "low": ViolationSeverity.LOW,
+            "medium": ViolationSeverity.MEDIUM,
+            "high": ViolationSeverity.HIGH,
+            "critical": ViolationSeverity.CRITICAL
+        }
+        return mapping.get(sev_str.lower(), ViolationSeverity.MEDIUM)
+    
+    def _severity_rank(self, sev: ViolationSeverity) -> int:
+        """Get numeric rank for severity comparison."""
+        ranks = {
+            ViolationSeverity.LOW: 1,
+            ViolationSeverity.MEDIUM: 2,
+            ViolationSeverity.HIGH: 3,
+            ViolationSeverity.CRITICAL: 4
+        }
+        return ranks.get(sev, 2)
     
     @classmethod
-    def validate_config(cls, config: Dict[str, Any]) -> List[str]:
+    def validate_config(cls, config: Dict[str, Any]) -> tuple:
         """Validate keyword rule configuration."""
         issues = []
         
         keywords = config.get("keywords")
-        if keywords is None:
-            issues.append("keywords is required")
+        if not keywords:
+            issues.append("keywords list is required")
         elif not isinstance(keywords, list):
             issues.append("keywords must be a list")
-        elif len(keywords) == 0:
-            issues.append("keywords list cannot be empty")
-        elif len(keywords) > 1000:
-            issues.append("keywords list cannot exceed 1000 items")
-        else:
-            for i, kw in enumerate(keywords):
-                if not isinstance(kw, str):
-                    issues.append(f"keyword at index {i} must be a string")
-                elif len(kw.strip()) == 0:
-                    issues.append(f"keyword at index {i} cannot be empty")
-                elif len(kw) > 100:
-                    issues.append(f"keyword at index {i} exceeds 100 characters")
-        
-        if "match_whole_word" in config and not isinstance(config["match_whole_word"], bool):
-            issues.append("match_whole_word must be a boolean")
+        elif not all(isinstance(k, str) for k in keywords):
+            issues.append("all keywords must be strings")
         
         if "case_sensitive" in config and not isinstance(config["case_sensitive"], bool):
             issues.append("case_sensitive must be a boolean")
         
-        return issues
-    
-    @classmethod
-    def get_default_config(cls) -> Dict[str, Any]:
-        """Get default configuration."""
-        return {
-            "keywords": [],
-            "match_whole_word": True,
-            "case_sensitive": False,
-        }
+        if "whole_word" in config and not isinstance(config["whole_word"], bool):
+            issues.append("whole_word must be a boolean")
+        
+        return len(issues) == 0, issues

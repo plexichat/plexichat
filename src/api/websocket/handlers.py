@@ -430,7 +430,7 @@ class OpcodeHandler:
             "user": user_data,
             "guilds": guilds,
             "session_id": session_id,
-            "resume_gateway_url": "wss://gateway.plexichat.com",
+            "resume_gateway_url": "wss://gateway.example.com",
             "application": {"id": str(user_id), "flags": 0},
         }
 

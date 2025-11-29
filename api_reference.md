@@ -24,7 +24,7 @@ Current version: `a.1.0-1`
 ## Base URL
 
 ```
-https://api.plexichat.com/api/v1
+https://api.example.com/api/v1
 ```
 
 ## Authentication
@@ -520,7 +520,7 @@ Connect to the WebSocket gateway for real-time events.
 ### Connection URL
 
 ```
-wss://gateway.plexichat.com/?v=1
+wss://gateway.example.com/?v=1
 ```
 
 ### Opcodes

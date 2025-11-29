@@ -1,18 +1,22 @@
 """
-Timeout user action - Temporarily restricts user from sending messages.
+Timeout user action.
+
+Temporarily restricts a user from sending messages.
 """
 
 import time
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 import utils.logger as logger
 
-from .base import BaseAction, ActionResult
-from ..models import RuleAction, Violation, ActionType
+from .base import BaseAction
+from ..models import ActionType, RuleAction, Violation
 
 
 class TimeoutUserAction(BaseAction):
     """Action that times out a user."""
+    
+    action_type = ActionType.TIMEOUT_USER
     
     DEFAULT_DURATION = 300
     
@@ -20,78 +24,62 @@ class TimeoutUserAction(BaseAction):
         self,
         action: RuleAction,
         violation: Violation,
-        context: Dict[str, Any]
-    ) -> ActionResult:
-        """Execute user timeout."""
-        user_id = violation.user_id
-        server_id = violation.server_id
-        
-        db = context.get("db")
-        if not db:
-            return ActionResult(
-                success=False,
-                action_type=self.get_action_type(),
-                error="Database not available"
-            )
-        
+        context: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """Timeout the user."""
         duration = action.duration_seconds or self.DEFAULT_DURATION
+        
+        if not self._servers:
+            logger.warning("Cannot timeout user: servers module not available")
+            return False
         
         try:
             now = int(time.time() * 1000)
             timeout_until = now + (duration * 1000)
             
-            existing = db.fetch_one(
-                "SELECT id FROM srv_member_timeouts WHERE server_id = ? AND user_id = ?",
-                (server_id, user_id)
+            reason = action.reason or f"Automod: {violation.rule_type.value} violation"
+            
+            self._db.execute(
+                """UPDATE srv_members 
+                   SET timeout_until = ?, timeout_reason = ?
+                   WHERE server_id = ? AND user_id = ?""",
+                (timeout_until, reason, violation.server_id, violation.user_id)
             )
             
-            if existing:
-                db.execute(
-                    """UPDATE srv_member_timeouts 
-                       SET timeout_until = ?, reason = ?, updated_at = ?
-                       WHERE server_id = ? AND user_id = ?""",
-                    (timeout_until, action.reason or "AutoMod violation", now, server_id, user_id)
-                )
-            else:
-                from src.utils.encryption import generate_snowflake_id
-                timeout_id = generate_snowflake_id()
-                
-                db.execute(
-                    """INSERT INTO srv_member_timeouts 
-                       (id, server_id, user_id, timeout_until, reason, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (timeout_id, server_id, user_id, timeout_until, action.reason or "AutoMod violation", now, now)
-                )
-            
-            logger.debug(f"AutoMod timed out user {user_id} in server {server_id} for {duration}s")
-            
-            if action.notify_user:
-                self._notify_user(
-                    user_id,
-                    server_id,
-                    f"You have been timed out for {duration} seconds: {action.reason or 'Rule violation'}",
-                    context
-                )
-            
-            return ActionResult(
-                success=True,
-                action_type=self.get_action_type(),
-                message=f"Timed out user {user_id} for {duration} seconds",
-                metadata={
-                    "user_id": user_id,
-                    "duration_seconds": duration,
-                    "timeout_until": timeout_until,
-                }
+            logger.debug(
+                f"Timed out user {violation.user_id} in server {violation.server_id} "
+                f"for {duration}s due to violation {violation.id}"
             )
+            return True
             
         except Exception as e:
-            logger.error(f"Failed to timeout user {user_id}: {e}")
-            return ActionResult(
-                success=False,
-                action_type=self.get_action_type(),
-                error=str(e)
-            )
+            logger.error(f"Failed to timeout user {violation.user_id}: {e}")
+            return False
     
-    @classmethod
-    def get_action_type(cls) -> str:
-        return ActionType.TIMEOUT_USER.value
+    def can_execute(
+        self,
+        action: RuleAction,
+        violation: Violation,
+        context: Optional[Dict[str, Any]] = None
+    ) -> tuple:
+        """Check if user can be timed out."""
+        if not violation.server_id:
+            return False, "No server ID available"
+        
+        member = self._db.fetch_one(
+            "SELECT * FROM srv_members WHERE server_id = ? AND user_id = ?",
+            (violation.server_id, violation.user_id)
+        )
+        
+        if not member:
+            return False, "User is not a member of the server"
+        
+        server = self._db.fetch_one(
+            "SELECT owner_id FROM srv_servers WHERE id = ?",
+            (violation.server_id,)
+        )
+        
+        if server and server["owner_id"] == violation.user_id:
+            return False, "Cannot timeout server owner"
+        
+        return True, None

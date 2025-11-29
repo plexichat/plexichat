@@ -1,127 +1,115 @@
 """
-Mass emoji rule - Detects excessive emoji usage in messages.
+Mass emoji detection rule.
+
+Detects messages with excessive emoji usage.
 """
 
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any, Optional
 
-from .base import BaseRule, RuleMatch
-from ..models import Rule, ViolationSeverity
+from .base import BaseRule
+from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
 
 
 class MassEmojiRule(BaseRule):
     """Rule that detects excessive emoji usage."""
     
-    CUSTOM_EMOJI_PATTERN = re.compile(r'<a?:\w+:\d+>')
+    rule_type = RuleType.MASS_EMOJI
     
+    CUSTOM_EMOJI_PATTERN = re.compile(r"<a?:\w+:\d+>")
     UNICODE_EMOJI_PATTERN = re.compile(
-        "["
-        "\U0001F600-\U0001F64F"
-        "\U0001F300-\U0001F5FF"
-        "\U0001F680-\U0001F6FF"
-        "\U0001F1E0-\U0001F1FF"
-        "\U00002702-\U000027B0"
-        "\U000024C2-\U0001F251"
-        "\U0001F900-\U0001F9FF"
-        "\U0001FA00-\U0001FA6F"
-        "\U0001FA70-\U0001FAFF"
-        "\U00002600-\U000026FF"
-        "\U00002700-\U000027BF"
-        "]+"
+        r"[\U0001F600-\U0001F64F"
+        r"\U0001F300-\U0001F5FF"
+        r"\U0001F680-\U0001F6FF"
+        r"\U0001F1E0-\U0001F1FF"
+        r"\U00002702-\U000027B0"
+        r"\U0001F900-\U0001F9FF"
+        r"\U0001FA00-\U0001FA6F"
+        r"\U0001FA70-\U0001FAFF"
+        r"\U00002600-\U000026FF]+"
     )
     
     def __init__(self, rule: Rule):
         super().__init__(rule)
-        self._max_emojis = self.config.get("max_emojis", 10)
-        self._max_emoji_percentage = self.config.get("max_emoji_percentage", 50)
-        self._count_custom = self.config.get("count_custom", True)
-        self._count_unicode = self.config.get("count_unicode", True)
+        self._max_emoji: int = self.config.get("max_emoji", 10)
+        self._max_percentage: float = self.config.get("max_percentage", 50.0)
+        self._count_custom: bool = self.config.get("count_custom", True)
+        self._count_unicode: bool = self.config.get("count_unicode", True)
+        self._min_length: int = self.config.get("min_length", 5)
     
-    def check(self, content: str, context: Dict[str, Any]) -> RuleMatch:
+    def check(
+        self,
+        content: str,
+        user_id: int,
+        channel_id: int,
+        context: Optional[Dict[str, Any]] = None
+    ) -> RuleMatch:
         """Check for excessive emoji usage."""
         custom_count = 0
         unicode_count = 0
         
         if self._count_custom:
-            custom_emojis = self.CUSTOM_EMOJI_PATTERN.findall(content)
-            custom_count = len(custom_emojis)
+            custom_matches = self.CUSTOM_EMOJI_PATTERN.findall(content)
+            custom_count = len(custom_matches)
         
         if self._count_unicode:
             unicode_matches = self.UNICODE_EMOJI_PATTERN.findall(content)
             unicode_count = sum(len(m) for m in unicode_matches)
         
-        total_emojis = custom_count + unicode_count
+        total_emoji = custom_count + unicode_count
         
-        if total_emojis == 0:
-            return RuleMatch(matched=False)
+        if total_emoji == 0:
+            return self._no_match()
         
-        content_length = len(content.strip())
-        emoji_percentage = (total_emojis / max(content_length, 1)) * 100
+        content_without_emoji = self.CUSTOM_EMOJI_PATTERN.sub("", content)
+        content_without_emoji = self.UNICODE_EMOJI_PATTERN.sub("", content_without_emoji)
+        text_length = len(content_without_emoji.strip())
+        
+        total_length = text_length + total_emoji
+        if total_length < self._min_length:
+            return self._no_match()
         
         violations = []
         
-        if total_emojis > self._max_emojis:
-            violations.append(f"count:{total_emojis}")
+        if total_emoji > self._max_emoji:
+            violations.append(f"{total_emoji} emoji (max {self._max_emoji})")
         
-        if emoji_percentage > self._max_emoji_percentage:
-            violations.append(f"percentage:{emoji_percentage:.1f}")
+        if total_length > 0:
+            emoji_percentage = (total_emoji / total_length) * 100
+            if emoji_percentage > self._max_percentage:
+                violations.append(f"{emoji_percentage:.1f}% emoji (max {self._max_percentage}%)")
         
         if not violations:
-            return RuleMatch(matched=False)
+            return self._no_match()
         
-        severity = self._calculate_emoji_severity(total_emojis, emoji_percentage)
-        
-        return RuleMatch(
+        return self._create_match(
             matched=True,
-            severity=severity,
-            matched_content=f"{total_emojis} emojis ({emoji_percentage:.1f}%)",
-            trigger_details={
-                "total_emojis": total_emojis,
-                "custom_emojis": custom_count,
-                "unicode_emojis": unicode_count,
-                "emoji_percentage": round(emoji_percentage, 2),
-                "violations": violations,
-            }
+            matched_content="; ".join(violations),
+            details={
+                "custom_emoji": custom_count,
+                "unicode_emoji": unicode_count,
+                "total_emoji": total_emoji,
+                "text_length": text_length,
+                "violations": violations
+            },
+            severity=ViolationSeverity.LOW
         )
     
-    def _calculate_emoji_severity(self, count: int, percentage: float) -> ViolationSeverity:
-        """Calculate severity based on emoji usage."""
-        if count >= 50 or percentage >= 90:
-            return ViolationSeverity.HIGH
-        elif count >= 25 or percentage >= 70:
-            return ViolationSeverity.MEDIUM
-        else:
-            return ViolationSeverity.LOW
-    
     @classmethod
-    def validate_config(cls, config: Dict[str, Any]) -> List[str]:
+    def validate_config(cls, config: Dict[str, Any]) -> tuple:
         """Validate mass emoji rule configuration."""
         issues = []
         
-        max_emojis = config.get("max_emojis", 10)
-        if not isinstance(max_emojis, int) or max_emojis < 1:
-            issues.append("max_emojis must be a positive integer")
-        elif max_emojis > 500:
-            issues.append("max_emojis cannot exceed 500")
+        max_emoji = config.get("max_emoji", 10)
+        if not isinstance(max_emoji, int) or max_emoji < 1:
+            issues.append("max_emoji must be a positive integer")
         
-        max_percentage = config.get("max_emoji_percentage", 50)
-        if not isinstance(max_percentage, (int, float)):
-            issues.append("max_emoji_percentage must be a number")
-        elif max_percentage < 0 or max_percentage > 100:
-            issues.append("max_emoji_percentage must be between 0 and 100")
+        max_pct = config.get("max_percentage", 50.0)
+        if not isinstance(max_pct, (int, float)) or not 0 <= max_pct <= 100:
+            issues.append("max_percentage must be between 0 and 100")
         
-        for key in ["count_custom", "count_unicode"]:
-            if key in config and not isinstance(config[key], bool):
-                issues.append(f"{key} must be a boolean")
+        for field in ["count_custom", "count_unicode"]:
+            if field in config and not isinstance(config[field], bool):
+                issues.append(f"{field} must be a boolean")
         
-        return issues
-    
-    @classmethod
-    def get_default_config(cls) -> Dict[str, Any]:
-        """Get default configuration."""
-        return {
-            "max_emojis": 10,
-            "max_emoji_percentage": 50,
-            "count_custom": True,
-            "count_unicode": True,
-        }
+        return len(issues) == 0, issues

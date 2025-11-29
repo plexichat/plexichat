@@ -1,25 +1,19 @@
 """
-Base rule class - Abstract base for all automod rule types.
+Base rule class for automod rules.
+
+All rule implementations inherit from BaseRule.
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 
-from ..models import Rule, ViolationSeverity
-
-
-@dataclass
-class RuleMatch:
-    """Result of a rule check."""
-    matched: bool
-    severity: ViolationSeverity = ViolationSeverity.MEDIUM
-    matched_content: Optional[str] = None
-    trigger_details: Dict[str, Any] = field(default_factory=dict)
+from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
 
 
 class BaseRule(ABC):
     """Abstract base class for all automod rules."""
+    
+    rule_type: RuleType = None
     
     def __init__(self, rule: Rule):
         """
@@ -29,90 +23,60 @@ class BaseRule(ABC):
             rule: Rule configuration from database
         """
         self.rule = rule
-        self.config = rule.trigger_config
+        self.config = rule.config
     
     @abstractmethod
-    def check(self, content: str, context: Dict[str, Any]) -> RuleMatch:
+    def check(
+        self,
+        content: str,
+        user_id: int,
+        channel_id: int,
+        context: Optional[Dict[str, Any]] = None
+    ) -> RuleMatch:
         """
         Check content against this rule.
         
         Args:
             content: Message content to check
-            context: Additional context (user_id, channel_id, server_id, etc.)
+            user_id: ID of user who sent the message
+            channel_id: ID of channel where message was sent
+            context: Additional context (message history, etc.)
             
         Returns:
-            RuleMatch with result
+            RuleMatch with results
         """
         pass
     
     @classmethod
-    @abstractmethod
-    def validate_config(cls, config: Dict[str, Any]) -> List[str]:
+    def validate_config(cls, config: Dict[str, Any]) -> tuple:
         """
         Validate rule configuration.
         
         Args:
-            config: Configuration dictionary to validate
+            config: Configuration dictionary
             
         Returns:
-            List of validation error messages (empty if valid)
+            Tuple of (valid: bool, issues: list)
         """
-        pass
+        return True, []
     
-    @classmethod
-    def get_default_config(cls) -> Dict[str, Any]:
-        """
-        Get default configuration for this rule type.
-        
-        Returns:
-            Default configuration dictionary
-        """
-        return {}
+    def _create_match(
+        self,
+        matched: bool,
+        matched_content: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+        severity: ViolationSeverity = ViolationSeverity.MEDIUM
+    ) -> RuleMatch:
+        """Helper to create a RuleMatch."""
+        return RuleMatch(
+            rule_id=self.rule.id,
+            rule_type=self.rule.rule_type,
+            matched=matched,
+            matched_content=matched_content,
+            match_details=details or {},
+            severity=severity
+        )
     
-    def is_exempt(self, user_roles: List[int], channel_id: int) -> bool:
-        """
-        Check if user/channel is exempt from this rule.
-        
-        Args:
-            user_roles: List of role IDs the user has
-            channel_id: Channel ID where message was sent
-            
-        Returns:
-            True if exempt
-        """
-        if channel_id in self.rule.exempt_channels:
-            return True
-        
-        for role_id in user_roles:
-            if role_id in self.rule.exempt_roles:
-                return True
-        
-        return False
-    
-    def _calculate_severity(self, match_count: int = 1, thresholds: Dict[str, int] = None) -> ViolationSeverity:
-        """
-        Calculate severity based on match count and thresholds.
-        
-        Args:
-            match_count: Number of matches found
-            thresholds: Optional custom thresholds
-            
-        Returns:
-            Calculated severity level
-        """
-        if thresholds is None:
-            thresholds = {
-                "critical": 10,
-                "high": 5,
-                "medium": 2,
-                "low": 1,
-            }
-        
-        if match_count >= thresholds.get("critical", 10):
-            return ViolationSeverity.CRITICAL
-        elif match_count >= thresholds.get("high", 5):
-            return ViolationSeverity.HIGH
-        elif match_count >= thresholds.get("medium", 2):
-            return ViolationSeverity.MEDIUM
-        else:
-            return ViolationSeverity.LOW
+    def _no_match(self) -> RuleMatch:
+        """Helper to create a non-matching result."""
+        return self._create_match(matched=False)

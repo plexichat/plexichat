@@ -1,10 +1,10 @@
 # Search & Discovery Module
 
-Full-text search and server discovery system for PlexiChat supporting Discord-style query syntax, multiple search backends, and public server directory.
+Full-text search and server discovery system for PlexiChat supporting advanced query syntax, multiple search backends, and public server directory.
 
 ## Features
 
-- Full-text message search with Discord query syntax
+- Full-text message search with advanced query syntax
 - User search by username/display name
 - Server search by name/description/tags
 - Public server directory with categories

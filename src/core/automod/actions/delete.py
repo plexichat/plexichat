@@ -1,76 +1,65 @@
 """
-Delete message action - Deletes the violating message.
+Delete message action.
+
+Deletes the message that triggered the violation.
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 import utils.logger as logger
 
-from .base import BaseAction, ActionResult
-from ..models import RuleAction, Violation, ActionType
+from .base import BaseAction
+from ..models import ActionType, RuleAction, Violation
 
 
 class DeleteMessageAction(BaseAction):
-    """Action that deletes the violating message."""
+    """Action that deletes the offending message."""
+    
+    action_type = ActionType.DELETE_MESSAGE
     
     def execute(
         self,
         action: RuleAction,
         violation: Violation,
-        context: Dict[str, Any]
-    ) -> ActionResult:
-        """Execute message deletion."""
-        message_id = violation.message_id
+        context: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """Delete the message."""
+        if not violation.message_id:
+            logger.warning(f"Cannot delete message: no message_id in violation {violation.id}")
+            return False
         
-        if not message_id:
-            return ActionResult(
-                success=False,
-                action_type=self.get_action_type(),
-                error="No message ID provided"
-            )
-        
-        db = context.get("db")
-        if not db:
-            return ActionResult(
-                success=False,
-                action_type=self.get_action_type(),
-                error="Database not available"
-            )
+        if not self._messaging:
+            logger.warning("Cannot delete message: messaging module not available")
+            return False
         
         try:
-            import time
-            now = int(time.time() * 1000)
-            
-            db.execute(
-                "UPDATE msg_messages SET deleted = 1, deleted_at = ? WHERE id = ?",
-                (now, message_id)
-            )
-            
-            logger.debug(f"AutoMod deleted message {message_id} for violation {violation.id}")
-            
-            if action.notify_user:
-                self._notify_user(
-                    violation.user_id,
-                    violation.server_id,
-                    f"Your message was removed by AutoMod: {action.reason or 'Rule violation'}",
-                    context
+            bot_user_id = context.get("bot_user_id") if context else None
+            if not bot_user_id:
+                self._db.execute(
+                    "UPDATE msg_messages SET deleted = 1, deleted_at = ? WHERE id = ?",
+                    (violation.created_at, violation.message_id)
+                )
+            else:
+                self._messaging.delete_message(
+                    user_id=bot_user_id,
+                    message_id=violation.message_id
                 )
             
-            return ActionResult(
-                success=True,
-                action_type=self.get_action_type(),
-                message=f"Deleted message {message_id}",
-                metadata={"message_id": message_id}
-            )
+            logger.debug(f"Deleted message {violation.message_id} for violation {violation.id}")
+            return True
             
         except Exception as e:
-            logger.error(f"Failed to delete message {message_id}: {e}")
-            return ActionResult(
-                success=False,
-                action_type=self.get_action_type(),
-                error=str(e)
-            )
+            logger.error(f"Failed to delete message {violation.message_id}: {e}")
+            return False
     
-    @classmethod
-    def get_action_type(cls) -> str:
-        return ActionType.DELETE_MESSAGE.value
+    def can_execute(
+        self,
+        action: RuleAction,
+        violation: Violation,
+        context: Optional[Dict[str, Any]] = None
+    ) -> tuple:
+        """Check if message can be deleted."""
+        if not violation.message_id:
+            return False, "No message ID available"
+        
+        return True, None

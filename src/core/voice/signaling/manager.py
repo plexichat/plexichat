@@ -144,8 +144,8 @@ class SignalingManager:
             if channel:
                 bitrate = channel.bitrate
         
-        # Build endpoint URL
-        endpoint = f"wss://voice.plexichat.com/ws/{channel_id}"
+        # Build endpoint URL (placeholder - configure with actual voice server)
+        endpoint = f"wss://voice.example.com/ws/{channel_id}"
         
         # Generate connection token
         token = secrets.token_urlsafe(32)

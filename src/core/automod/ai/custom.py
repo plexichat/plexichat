@@ -1,144 +1,140 @@
 """
-Custom AI endpoint adapter - Connects to custom moderation API endpoints.
+Custom AI endpoint adapter.
+
+Makes real HTTP calls to user-configured moderation endpoints.
 """
 
 import json
-import urllib.request
-import urllib.error
 from typing import Dict, Any, Optional
+from urllib.request import Request, urlopen
+from urllib.error import URLError, HTTPError
 
 import utils.logger as logger
 
 from .base import BaseAIAdapter
-from ..models import AICheckResult
-from ..exceptions import AIBackendError
+from ..models import AICheckResult, AIBackendType
+from ..exceptions import AIBackendError, AIBackendUnavailableError, AIBackendTimeoutError
 
 
 class CustomAdapter(BaseAIAdapter):
-    """Adapter for custom AI moderation endpoints."""
+    """Adapter for custom moderation API endpoints."""
+    
+    backend_type = AIBackendType.CUSTOM
     
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        self._endpoint_url = config.get("custom_endpoint_url", "")
-        self._api_key = config.get("custom_api_key", "")
-        self._auth_header = config.get("custom_auth_header", "Authorization")
-        self._auth_prefix = config.get("custom_auth_prefix", "Bearer")
-        self._request_format = config.get("custom_request_format", "json")
-        self._content_field = config.get("custom_content_field", "content")
-        self._flagged_field = config.get("custom_flagged_field", "flagged")
-        self._categories_field = config.get("custom_categories_field", "categories")
-        self._scores_field = config.get("custom_scores_field", "scores")
+        self._endpoint_url = config.get("endpoint_url", "")
+        self._api_key = config.get("api_key", "")
+        self._auth_header = config.get("auth_header", "Authorization")
+        self._auth_prefix = config.get("auth_prefix", "Bearer")
+        self._threshold = config.get("threshold", 0.5)
+        self._request_format = config.get("request_format", "default")
+        self._headers = config.get("headers", {})
     
     def check_content(self, content: str, context: Optional[Dict[str, Any]] = None) -> AICheckResult:
         """Check content using custom endpoint."""
-        if not self._endpoint_url:
-            return AICheckResult(
-                flagged=False,
-                error="Custom endpoint URL not configured"
+        if not self.is_available():
+            raise AIBackendUnavailableError(
+                "Custom endpoint URL not configured",
+                backend="custom"
             )
         
         try:
-            payload = {self._content_field: content}
+            request_data = self._build_request(content, context)
+            headers = self._build_headers()
             
-            if context:
-                payload["context"] = context
-            
-            data = json.dumps(payload).encode("utf-8")
-            
-            headers = {"Content-Type": "application/json"}
-            
-            if self._api_key:
-                auth_value = f"{self._auth_prefix} {self._api_key}" if self._auth_prefix else self._api_key
-                headers[self._auth_header] = auth_value
-            
-            req = urllib.request.Request(
+            request = Request(
                 self._endpoint_url,
-                data=data,
+                data=json.dumps(request_data).encode("utf-8"),
                 headers=headers,
                 method="POST"
             )
             
-            with urllib.request.urlopen(req, timeout=self._timeout) as response:
+            with urlopen(request, timeout=self._timeout) as response:
                 response_data = json.loads(response.read().decode("utf-8"))
             
-            flagged = self._extract_field(response_data, self._flagged_field, False)
-            categories = self._extract_field(response_data, self._categories_field, {})
-            scores = self._extract_field(response_data, self._scores_field, {})
+            return self._parse_response(response_data)
             
-            if isinstance(flagged, str):
-                flagged = flagged.lower() in ("true", "1", "yes")
-            
-            return AICheckResult(
-                flagged=bool(flagged),
-                categories=categories if isinstance(categories, dict) else {},
-                scores=scores if isinstance(scores, dict) else {},
-                raw_response=response_data
-            )
-            
-        except urllib.error.HTTPError as e:
-            logger.error(f"Custom endpoint HTTP error: {e.code} - {e.reason}")
+        except HTTPError as e:
+            logger.error(f"Custom API HTTP error: {e.code} - {e.reason}")
             raise AIBackendError(
-                f"Custom endpoint error: {e.reason}",
+                f"Custom API error: {e.reason}",
                 backend="custom",
                 status_code=e.code
             )
-        except urllib.error.URLError as e:
-            logger.error(f"Custom endpoint connection error: {e.reason}")
+        except URLError as e:
+            if "timed out" in str(e.reason).lower():
+                raise AIBackendTimeoutError(
+                    "Custom API request timed out",
+                    backend="custom"
+                )
+            logger.error(f"Custom API URL error: {e.reason}")
             raise AIBackendError(
-                f"Custom endpoint connection error: {e.reason}",
+                f"Custom API connection error: {e.reason}",
                 backend="custom"
             )
         except json.JSONDecodeError as e:
-            logger.error(f"Custom endpoint response parse error: {e}")
+            logger.error(f"Custom API response parse error: {e}")
             raise AIBackendError(
-                "Failed to parse custom endpoint response",
+                "Failed to parse custom API response",
                 backend="custom"
             )
-        except Exception as e:
-            logger.error(f"Custom moderation check failed: {e}")
-            return AICheckResult(
-                flagged=False,
-                error=str(e)
-            )
     
-    def _extract_field(self, data: Dict, field_path: str, default: Any) -> Any:
-        """Extract a field from response data using dot notation path."""
-        if not field_path:
-            return default
-        
-        parts = field_path.split(".")
-        current = data
-        
-        for part in parts:
-            if isinstance(current, dict) and part in current:
-                current = current[part]
-            else:
-                return default
-        
-        return current
+    def _build_request(self, content: str, context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Build request payload based on configured format."""
+        if self._request_format == "openai":
+            return {"input": content}
+        elif self._request_format == "perspective":
+            return {"comment": {"text": content}}
+        else:
+            return {
+                "content": content,
+                "context": context or {}
+            }
     
-    @classmethod
-    def get_backend_name(cls) -> str:
-        return "custom"
+    def _build_headers(self) -> Dict[str, str]:
+        """Build request headers."""
+        headers = {"Content-Type": "application/json"}
+        headers.update(self._headers)
+        
+        if self._api_key:
+            auth_value = f"{self._auth_prefix} {self._api_key}" if self._auth_prefix else self._api_key
+            headers[self._auth_header] = auth_value
+        
+        return headers
     
-    @classmethod
-    def validate_config(cls, config: Dict[str, Any]) -> list:
-        """Validate custom adapter configuration."""
-        issues = []
+    def _parse_response(self, response: Dict[str, Any]) -> AICheckResult:
+        """Parse custom endpoint response."""
+        flagged = response.get("flagged", False)
         
-        endpoint_url = config.get("custom_endpoint_url")
-        if not endpoint_url:
-            issues.append("custom_endpoint_url is required")
-        elif not isinstance(endpoint_url, str):
-            issues.append("custom_endpoint_url must be a string")
-        elif not endpoint_url.startswith(("http://", "https://")):
-            issues.append("custom_endpoint_url must be a valid HTTP(S) URL")
+        if not flagged and "score" in response:
+            flagged = response["score"] >= self._threshold
         
-        for key in ["custom_api_key", "custom_auth_header", "custom_auth_prefix",
-                    "custom_content_field", "custom_flagged_field",
-                    "custom_categories_field", "custom_scores_field"]:
-            value = config.get(key)
-            if value is not None and not isinstance(value, str):
-                issues.append(f"{key} must be a string")
+        if not flagged and "scores" in response:
+            scores = response["scores"]
+            if isinstance(scores, dict):
+                flagged = any(s >= self._threshold for s in scores.values())
         
-        return issues
+        categories = response.get("categories", {})
+        if isinstance(categories, list):
+            categories = {cat: True for cat in categories}
+        
+        scores = response.get("scores", {})
+        if isinstance(scores, (int, float)):
+            scores = {"default": scores}
+        
+        return AICheckResult(
+            flagged=flagged,
+            categories=categories,
+            scores=scores,
+            backend=self.backend_type,
+            raw_response=response
+        )
+    
+    def is_available(self) -> bool:
+        """Check if custom endpoint is configured."""
+        return bool(self._endpoint_url)
+    
+    def get_categories(self) -> Dict[str, str]:
+        """Custom endpoints define their own categories."""
+        return {}

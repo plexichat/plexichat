@@ -1,30 +1,40 @@
 """
-Mention spam rule - Detects excessive mentions in messages.
+Mention spam detection rule.
+
+Detects excessive user mentions, role mentions, and @everyone/@here abuse.
 """
 
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any, Optional
 
-from .base import BaseRule, RuleMatch
-from ..models import Rule, ViolationSeverity
+from .base import BaseRule
+from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
 
 
 class MentionSpamRule(BaseRule):
-    """Rule that detects excessive mentions in messages."""
+    """Rule that detects mention spam."""
     
-    USER_MENTION_PATTERN = re.compile(r'<@!?(\d+)>')
-    ROLE_MENTION_PATTERN = re.compile(r'<@&(\d+)>')
-    EVERYONE_PATTERN = re.compile(r'@(everyone|here)\b')
+    rule_type = RuleType.MENTION_SPAM
+    
+    USER_MENTION_PATTERN = re.compile(r"<@!?(\d+)>")
+    ROLE_MENTION_PATTERN = re.compile(r"<@&(\d+)>")
+    EVERYONE_PATTERN = re.compile(r"@(everyone|here)\b", re.IGNORECASE)
     
     def __init__(self, rule: Rule):
         super().__init__(rule)
-        self._max_user_mentions = self.config.get("max_user_mentions", 5)
-        self._max_role_mentions = self.config.get("max_role_mentions", 3)
-        self._max_total_mentions = self.config.get("max_total_mentions", 10)
-        self._block_everyone = self.config.get("block_everyone", True)
-        self._count_unique_only = self.config.get("count_unique_only", False)
+        self._max_user_mentions: int = self.config.get("max_user_mentions", 5)
+        self._max_role_mentions: int = self.config.get("max_role_mentions", 3)
+        self._max_total_mentions: int = self.config.get("max_total_mentions", 10)
+        self._block_everyone: bool = self.config.get("block_everyone", False)
+        self._count_unique_only: bool = self.config.get("count_unique_only", False)
     
-    def check(self, content: str, context: Dict[str, Any]) -> RuleMatch:
+    def check(
+        self,
+        content: str,
+        user_id: int,
+        channel_id: int,
+        context: Optional[Dict[str, Any]] = None
+    ) -> RuleMatch:
         """Check for mention spam."""
         user_mentions = self.USER_MENTION_PATTERN.findall(content)
         role_mentions = self.ROLE_MENTION_PATTERN.findall(content)
@@ -36,69 +46,54 @@ class MentionSpamRule(BaseRule):
         
         user_count = len(user_mentions)
         role_count = len(role_mentions)
+        everyone_count = len(everyone_mentions)
         total_count = user_count + role_count
-        has_everyone = len(everyone_mentions) > 0
         
         violations = []
+        highest_severity = ViolationSeverity.LOW
         
         if user_count > self._max_user_mentions:
-            violations.append(f"user_mentions:{user_count}")
+            violations.append(f"{user_count} user mentions (max {self._max_user_mentions})")
+            highest_severity = ViolationSeverity.MEDIUM
         
         if role_count > self._max_role_mentions:
-            violations.append(f"role_mentions:{role_count}")
+            violations.append(f"{role_count} role mentions (max {self._max_role_mentions})")
+            highest_severity = ViolationSeverity.MEDIUM
         
         if total_count > self._max_total_mentions:
-            violations.append(f"total_mentions:{total_count}")
+            violations.append(f"{total_count} total mentions (max {self._max_total_mentions})")
+            highest_severity = ViolationSeverity.HIGH
         
-        if has_everyone and self._block_everyone:
-            violations.append("everyone_mention")
+        if self._block_everyone and everyone_count > 0:
+            violations.append(f"@everyone/@here usage blocked")
+            highest_severity = ViolationSeverity.HIGH
         
         if not violations:
-            return RuleMatch(matched=False)
+            return self._no_match()
         
-        severity = self._calculate_mention_severity(user_count, role_count, has_everyone)
-        
-        return RuleMatch(
+        return self._create_match(
             matched=True,
-            severity=severity,
-            matched_content=f"{total_count} mentions",
-            trigger_details={
+            matched_content="; ".join(violations),
+            details={
                 "user_mentions": user_count,
                 "role_mentions": role_count,
+                "everyone_mentions": everyone_count,
                 "total_mentions": total_count,
-                "has_everyone": has_everyone,
-                "violations": violations,
-            }
+                "violations": violations
+            },
+            severity=highest_severity
         )
     
-    def _calculate_mention_severity(self, user_count: int, role_count: int, has_everyone: bool) -> ViolationSeverity:
-        """Calculate severity based on mention counts."""
-        if has_everyone:
-            return ViolationSeverity.HIGH
-        
-        total = user_count + role_count
-        
-        if total >= 20 or role_count >= 10:
-            return ViolationSeverity.CRITICAL
-        elif total >= 10 or role_count >= 5:
-            return ViolationSeverity.HIGH
-        elif total >= 5:
-            return ViolationSeverity.MEDIUM
-        else:
-            return ViolationSeverity.LOW
-    
     @classmethod
-    def validate_config(cls, config: Dict[str, Any]) -> List[str]:
+    def validate_config(cls, config: Dict[str, Any]) -> tuple:
         """Validate mention spam rule configuration."""
         issues = []
         
-        for key in ["max_user_mentions", "max_role_mentions", "max_total_mentions"]:
-            value = config.get(key)
+        for field in ["max_user_mentions", "max_role_mentions", "max_total_mentions"]:
+            value = config.get(field)
             if value is not None:
                 if not isinstance(value, int) or value < 0:
-                    issues.append(f"{key} must be a non-negative integer")
-                elif value > 100:
-                    issues.append(f"{key} cannot exceed 100")
+                    issues.append(f"{field} must be a non-negative integer")
         
         if "block_everyone" in config and not isinstance(config["block_everyone"], bool):
             issues.append("block_everyone must be a boolean")
@@ -106,15 +101,4 @@ class MentionSpamRule(BaseRule):
         if "count_unique_only" in config and not isinstance(config["count_unique_only"], bool):
             issues.append("count_unique_only must be a boolean")
         
-        return issues
-    
-    @classmethod
-    def get_default_config(cls) -> Dict[str, Any]:
-        """Get default configuration."""
-        return {
-            "max_user_mentions": 5,
-            "max_role_mentions": 3,
-            "max_total_mentions": 10,
-            "block_everyone": True,
-            "count_unique_only": False,
-        }
+        return len(issues) == 0, issues

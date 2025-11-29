@@ -1,136 +1,100 @@
 """
-Ban user action - Permanently bans user from the server.
+Ban user action.
+
+Permanently bans a user from the server.
 """
 
 import time
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 import utils.logger as logger
+from src.utils.encryption import generate_snowflake_id
 
-from .base import BaseAction, ActionResult
-from ..models import RuleAction, Violation, ActionType
+from .base import BaseAction
+from ..models import ActionType, RuleAction, Violation
 
 
 class BanUserAction(BaseAction):
     """Action that bans a user from the server."""
     
+    action_type = ActionType.BAN_USER
+    
     def execute(
         self,
         action: RuleAction,
         violation: Violation,
-        context: Dict[str, Any]
-    ) -> ActionResult:
-        """Execute user ban."""
-        user_id = violation.user_id
-        server_id = violation.server_id
-        
-        db = context.get("db")
-        if not db:
-            return ActionResult(
-                success=False,
-                action_type=self.get_action_type(),
-                error="Database not available"
-            )
+        context: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """Ban the user."""
+        if not self._servers:
+            logger.warning("Cannot ban user: servers module not available")
+            return False
         
         try:
-            server = db.fetch_one(
-                "SELECT owner_id FROM srv_servers WHERE id = ?",
-                (server_id,)
-            )
+            reason = action.reason or f"Automod: {violation.rule_type.value} violation"
+            bot_user_id = context.get("bot_user_id") if context else None
+            delete_message_days = action.metadata.get("delete_message_days", 0)
             
-            if server and server["owner_id"] == user_id:
-                return ActionResult(
-                    success=False,
-                    action_type=self.get_action_type(),
-                    error="Cannot ban server owner"
+            if bot_user_id:
+                self._servers.ban_member(
+                    user_id=bot_user_id,
+                    server_id=violation.server_id,
+                    member_user_id=violation.user_id,
+                    reason=reason,
+                    delete_message_days=delete_message_days
                 )
-            
-            existing_ban = db.fetch_one(
-                "SELECT id FROM srv_bans WHERE server_id = ? AND user_id = ?",
-                (server_id, user_id)
-            )
-            
-            if existing_ban:
-                return ActionResult(
-                    success=True,
-                    action_type=self.get_action_type(),
-                    message=f"User {user_id} is already banned",
-                    metadata={"user_id": user_id, "already_banned": True}
+            else:
+                self._db.execute(
+                    "DELETE FROM srv_members WHERE server_id = ? AND user_id = ?",
+                    (violation.server_id, violation.user_id)
                 )
-            
-            now = int(time.time() * 1000)
-            from src.utils.encryption import generate_snowflake_id
-            
-            if action.delete_message_history_hours:
-                cutoff = now - (action.delete_message_history_hours * 3600 * 1000)
-                
-                channels = db.fetch_all(
-                    "SELECT conversation_id FROM srv_channels WHERE server_id = ?",
-                    (server_id,)
+                self._db.execute(
+                    "DELETE FROM srv_member_roles WHERE server_id = ? AND user_id = ?",
+                    (violation.server_id, violation.user_id)
                 )
                 
-                for channel in channels:
-                    db.execute(
-                        """UPDATE msg_messages SET deleted = 1, deleted_at = ?
-                           WHERE conversation_id = ? AND author_id = ? AND created_at > ?""",
-                        (now, channel["conversation_id"], user_id, cutoff)
-                    )
-            
-            db.execute(
-                "DELETE FROM srv_member_roles WHERE server_id = ? AND user_id = ?",
-                (server_id, user_id)
-            )
-            
-            db.execute(
-                "DELETE FROM srv_members WHERE server_id = ? AND user_id = ?",
-                (server_id, user_id)
-            )
-            
-            ban_id = generate_snowflake_id()
-            db.execute(
-                """INSERT INTO srv_bans (id, server_id, user_id, reason, banned_by, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (ban_id, server_id, user_id, f"AutoMod: {action.reason or 'Rule violation'}", 0, now)
-            )
-            
-            audit_id = generate_snowflake_id()
-            db.execute(
-                """INSERT INTO srv_audit_log 
-                   (id, server_id, action_type, user_id, target_id, reason, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (audit_id, server_id, "MEMBER_BAN", 0, user_id,
-                 f"AutoMod: {action.reason or 'Rule violation'}", now)
-            )
-            
-            logger.debug(f"AutoMod banned user {user_id} from server {server_id}")
-            
-            if action.notify_user:
-                self._notify_user(
-                    user_id,
-                    server_id,
-                    f"You have been banned from the server: {action.reason or 'Rule violation'}",
-                    context
+                now = int(time.time() * 1000)
+                ban_id = generate_snowflake_id()
+                self._db.execute(
+                    """INSERT INTO srv_bans (id, server_id, user_id, banned_by, reason, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (ban_id, violation.server_id, violation.user_id, 0, reason, now)
                 )
             
-            return ActionResult(
-                success=True,
-                action_type=self.get_action_type(),
-                message=f"Banned user {user_id} from server {server_id}",
-                metadata={
-                    "user_id": user_id,
-                    "server_id": server_id,
-                    "delete_message_hours": action.delete_message_history_hours,
-                }
+            logger.debug(
+                f"Banned user {violation.user_id} from server {violation.server_id} "
+                f"due to violation {violation.id}"
             )
+            return True
             
         except Exception as e:
-            logger.error(f"Failed to ban user {user_id}: {e}")
-            return ActionResult(
-                success=False,
-                action_type=self.get_action_type(),
-                error=str(e)
-            )
+            logger.error(f"Failed to ban user {violation.user_id}: {e}")
+            return False
     
-    @classmethod
-    def get_action_type(cls) -> str:
-        return ActionType.BAN_USER.value
+    def can_execute(
+        self,
+        action: RuleAction,
+        violation: Violation,
+        context: Optional[Dict[str, Any]] = None
+    ) -> tuple:
+        """Check if user can be banned."""
+        if not violation.server_id:
+            return False, "No server ID available"
+        
+        existing_ban = self._db.fetch_one(
+            "SELECT 1 FROM srv_bans WHERE server_id = ? AND user_id = ?",
+            (violation.server_id, violation.user_id)
+        )
+        
+        if existing_ban:
+            return False, "User is already banned"
+        
+        server = self._db.fetch_one(
+            "SELECT owner_id FROM srv_servers WHERE id = ?",
+            (violation.server_id,)
+        )
+        
+        if server and server["owner_id"] == violation.user_id:
+            return False, "Cannot ban server owner"
+        
+        return True, None

@@ -1,5 +1,5 @@
 """
-Rate Limiting Module - Discord-style rate limiting for PlexiChat API.
+Rate Limiting Module - Advanced rate limiting for PlexiChat API.
 
 Setup once in main.py, use anywhere via import.
 

@@ -1,6 +1,6 @@
 # Rate Limiting Module
 
-Discord-style rate limiting for PlexiChat API with multiple bucket types, algorithms, and storage backends.
+Advanced rate limiting for PlexiChat API with multiple bucket types, algorithms, and storage backends.
 
 ## Features
 
@@ -9,7 +9,7 @@ Discord-style rate limiting for PlexiChat API with multiple bucket types, algori
 - Hourly and daily limits
 - Bot and webhook multipliers
 - Admin/internal bypass
-- Discord-compatible headers
+- Standard rate limit headers
 - Thread-safe in-memory storage
 - Redis adapter interface (for distributed deployments)
 - Route decorators for custom limits
@@ -128,7 +128,7 @@ ratelimit.setup(route_configs=custom_routes)
 
 ## Rate Limit Headers
 
-All responses include Discord-compatible headers:
+All responses include standard rate limit headers:
 
 ```
 X-RateLimit-Limit: 5

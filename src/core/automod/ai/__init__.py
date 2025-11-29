@@ -1,5 +1,7 @@
 """
-AutoMod AI package - AI moderation backend adapters.
+AI moderation adapters package.
+
+Exports all AI backend implementations.
 """
 
 from .base import BaseAIAdapter

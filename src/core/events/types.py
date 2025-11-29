@@ -6,7 +6,7 @@ from enum import Enum, IntFlag
 
 
 class EventType(Enum):
-    """Gateway event types (Discord-compatible)."""
+    """Gateway event types."""
     READY = "READY"
     RESUMED = "RESUMED"
     
@@ -56,7 +56,7 @@ class EventType(Enum):
 
 
 class GatewayIntent(IntFlag):
-    """Gateway intents for filtering events (Discord-compatible)."""
+    """Gateway intents for filtering events."""
     GUILDS = 1 << 0
     GUILD_MEMBERS = 1 << 1
     GUILD_BANS = 1 << 2

@@ -1,11 +1,11 @@
 # Embeds Module
 
-Rich embed system for PlexiChat API supporting Discord-style embeds with fields, images, authors, footers, and URL previews.
+Rich embed system for PlexiChat API supporting rich embeds with fields, images, authors, footers, and URL previews.
 
 ## Features
 
 - Rich embed creation with all standard fields
-- Field limits and character validation (Discord-compatible)
+- Field limits and character validation
 - URL preview embeds (OpenGraph/Twitter Card simulation)
 - Attach/update/remove embeds from messages
 - Suppress/unsuppress embeds (hide URL previews)

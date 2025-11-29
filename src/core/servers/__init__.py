@@ -29,6 +29,17 @@ from .models import (
     ChannelType,
     AuditLogAction,
     PermissionValue,
+    ScheduledEvent,
+    EventRSVP,
+    ScheduledEventType,
+    ScheduledEventStatus,
+    RSVPStatus,
+    ServerTemplate,
+    TemplateData,
+    WelcomeScreen,
+    OnboardingStep,
+    OnboardingProgress,
+    OnboardingStepType,
 )
 from .exceptions import (
     ServerError,
@@ -55,6 +66,15 @@ from .exceptions import (
     PermissionDeniedError,
     OwnerCannotLeaveError,
     CannotModifyOwnerError,
+    ScheduledEventNotFoundError,
+    ScheduledEventError,
+    InvalidEventTimeError,
+    TemplateNotFoundError,
+    TemplateError,
+    InvalidTemplateCodeError,
+    WelcomeScreenNotFoundError,
+    OnboardingStepNotFoundError,
+    OnboardingError,
 )
 
 __all__ = [
@@ -72,6 +92,17 @@ __all__ = [
     "ChannelType",
     "AuditLogAction",
     "PermissionValue",
+    "ScheduledEvent",
+    "EventRSVP",
+    "ScheduledEventType",
+    "ScheduledEventStatus",
+    "RSVPStatus",
+    "ServerTemplate",
+    "TemplateData",
+    "WelcomeScreen",
+    "OnboardingStep",
+    "OnboardingProgress",
+    "OnboardingStepType",
     # Exceptions
     "ServerError",
     "ServerNotFoundError",
@@ -97,6 +128,15 @@ __all__ = [
     "PermissionDeniedError",
     "OwnerCannotLeaveError",
     "CannotModifyOwnerError",
+    "ScheduledEventNotFoundError",
+    "ScheduledEventError",
+    "InvalidEventTimeError",
+    "TemplateNotFoundError",
+    "TemplateError",
+    "InvalidTemplateCodeError",
+    "WelcomeScreenNotFoundError",
+    "OnboardingStepNotFoundError",
+    "OnboardingError",
     # Setup
     "setup",
     # Server operations
@@ -153,13 +193,50 @@ __all__ = [
     "get_channel_messages",
     # Audit log
     "get_audit_log",
+    # Scheduled events
+    "create_scheduled_event",
+    "get_scheduled_event",
+    "get_scheduled_events",
+    "update_scheduled_event",
+    "delete_scheduled_event",
+    "rsvp_event",
+    "remove_rsvp",
+    "get_event_rsvps",
+    "generate_recurring_instances",
+    # Templates
+    "create_template",
+    "get_template",
+    "get_template_by_id",
+    "get_user_templates",
+    "get_public_templates",
+    "preview_template",
+    "apply_template",
+    "delete_template",
+    "update_template",
+    # Welcome screen
+    "set_welcome_screen",
+    "get_welcome_screen",
+    "delete_welcome_screen",
+    # Onboarding
+    "create_onboarding_step",
+    "get_onboarding_step",
+    "get_onboarding_steps",
+    "update_onboarding_step",
+    "delete_onboarding_step",
+    "start_onboarding",
+    "complete_onboarding_step",
+    "get_onboarding_progress",
+    "reset_onboarding_progress",
 ]
 
 _manager = None
+_event_manager = None
+_template_manager = None
+_onboarding_manager = None
 _setup_complete = False
 
 
-def setup(db, auth_module=None, messaging_module=None):
+def setup(db, auth_module=None, messaging_module=None, notifications_module=None, events_module=None):
     """
     Initialize the servers module.
 
@@ -167,12 +244,20 @@ def setup(db, auth_module=None, messaging_module=None):
         db: Database instance (must be connected)
         auth_module: Optional auth module for user verification
         messaging_module: Optional messaging module for channel messages
+        notifications_module: Optional notifications module for event reminders
+        events_module: Optional events module for dispatching
     """
-    global _manager, _setup_complete
+    global _manager, _event_manager, _template_manager, _onboarding_manager, _setup_complete
 
     from .manager import ServerManager
+    from .events import ScheduledEventManager
+    from .templates import TemplateManager
+    from .onboarding import OnboardingManager
 
     _manager = ServerManager(db, auth_module, messaging_module)
+    _event_manager = ScheduledEventManager(db, _manager, notifications_module, events_module)
+    _template_manager = TemplateManager(db, _manager)
+    _onboarding_manager = OnboardingManager(db, _manager)
     _setup_complete = True
 
 
@@ -183,6 +268,33 @@ def _get_manager():
             "Servers module not initialized. Call servers.setup(db) first."
         )
     return _manager
+
+
+def _get_event_manager():
+    """Get the event manager instance."""
+    if not _setup_complete or _event_manager is None:
+        raise RuntimeError(
+            "Servers module not initialized. Call servers.setup(db) first."
+        )
+    return _event_manager
+
+
+def _get_template_manager():
+    """Get the template manager instance."""
+    if not _setup_complete or _template_manager is None:
+        raise RuntimeError(
+            "Servers module not initialized. Call servers.setup(db) first."
+        )
+    return _template_manager
+
+
+def _get_onboarding_manager():
+    """Get the onboarding manager instance."""
+    if not _setup_complete or _onboarding_manager is None:
+        raise RuntimeError(
+            "Servers module not initialized. Call servers.setup(db) first."
+        )
+    return _onboarding_manager
 
 
 # === Server Operations ===
@@ -570,3 +682,254 @@ def get_audit_log(
 ) -> List[AuditLogEntry]:
     """Get audit log entries for a server."""
     return _get_manager().get_audit_log(user_id, server_id, limit, action_type, before_id)
+
+
+# === Scheduled Events ===
+
+
+def create_scheduled_event(
+    user_id: int,
+    server_id: int,
+    name: str,
+    start_time: int,
+    event_type: ScheduledEventType = ScheduledEventType.VOICE,
+    description: Optional[str] = None,
+    channel_id: Optional[int] = None,
+    location: Optional[str] = None,
+    end_time: Optional[int] = None,
+    timezone_str: str = "UTC",
+    image_url: Optional[str] = None,
+    rrule: Optional[str] = None,
+) -> ScheduledEvent:
+    """Create a new scheduled event."""
+    return _get_event_manager().create_event(
+        user_id, server_id, name, start_time, event_type, description,
+        channel_id, location, end_time, timezone_str, image_url, rrule
+    )
+
+
+def get_scheduled_event(event_id: int, user_id: int) -> Optional[ScheduledEvent]:
+    """Get a scheduled event by ID."""
+    return _get_event_manager().get_event(event_id, user_id)
+
+
+def get_scheduled_events(
+    user_id: int,
+    server_id: int,
+    status: Optional[ScheduledEventStatus] = None,
+    limit: int = 50,
+) -> List[ScheduledEvent]:
+    """Get scheduled events for a server."""
+    return _get_event_manager().get_events(user_id, server_id, status, limit)
+
+
+def update_scheduled_event(
+    user_id: int,
+    event_id: int,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    start_time: Optional[int] = None,
+    end_time: Optional[int] = None,
+    channel_id: Optional[int] = None,
+    location: Optional[str] = None,
+    image_url: Optional[str] = None,
+    status: Optional[ScheduledEventStatus] = None,
+) -> ScheduledEvent:
+    """Update a scheduled event."""
+    return _get_event_manager().update_event(
+        user_id, event_id, name, description, start_time, end_time,
+        channel_id, location, image_url, status
+    )
+
+
+def delete_scheduled_event(user_id: int, event_id: int) -> bool:
+    """Delete a scheduled event."""
+    return _get_event_manager().delete_event(user_id, event_id)
+
+
+def rsvp_event(user_id: int, event_id: int, status: RSVPStatus) -> EventRSVP:
+    """RSVP to an event."""
+    return _get_event_manager().rsvp_event(user_id, event_id, status)
+
+
+def remove_rsvp(user_id: int, event_id: int) -> bool:
+    """Remove RSVP from an event."""
+    return _get_event_manager().remove_rsvp(user_id, event_id)
+
+
+def get_event_rsvps(
+    user_id: int,
+    event_id: int,
+    status: Optional[RSVPStatus] = None,
+    limit: int = 100,
+) -> List[EventRSVP]:
+    """Get RSVPs for an event."""
+    return _get_event_manager().get_event_rsvps(user_id, event_id, status, limit)
+
+
+def generate_recurring_instances(event_id: int, user_id: int, count: int = 10) -> List[ScheduledEvent]:
+    """Generate instances of a recurring event."""
+    return _get_event_manager().generate_recurring_instances(event_id, user_id, count)
+
+
+# === Templates ===
+
+
+def create_template(
+    user_id: int,
+    server_id: int,
+    name: str,
+    description: Optional[str] = None,
+) -> ServerTemplate:
+    """Create a template from an existing server."""
+    return _get_template_manager().create_template(user_id, server_id, name, description)
+
+
+def get_template(code: str, user_id: Optional[int] = None) -> Optional[ServerTemplate]:
+    """Get a template by code."""
+    return _get_template_manager().get_template(code, user_id)
+
+
+def get_template_by_id(template_id: int, user_id: int) -> Optional[ServerTemplate]:
+    """Get a template by ID."""
+    return _get_template_manager().get_template_by_id(template_id, user_id)
+
+
+def get_user_templates(user_id: int, limit: int = 50) -> List[ServerTemplate]:
+    """Get templates created by a user."""
+    return _get_template_manager().get_user_templates(user_id, limit)
+
+
+def get_public_templates(limit: int = 50) -> List[ServerTemplate]:
+    """Get public templates."""
+    return _get_template_manager().get_public_templates(limit)
+
+
+def preview_template(code: str) -> Optional[TemplateData]:
+    """Preview template data without applying."""
+    return _get_template_manager().preview_template(code)
+
+
+def apply_template(
+    user_id: int,
+    code: str,
+    server_name: str,
+    server_description: Optional[str] = None,
+) -> Server:
+    """Apply a template to create a new server."""
+    return _get_template_manager().apply_template(user_id, code, server_name, server_description)
+
+
+def delete_template(user_id: int, code: str) -> bool:
+    """Delete a template."""
+    return _get_template_manager().delete_template(user_id, code)
+
+
+def update_template(
+    user_id: int,
+    code: str,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    is_public: Optional[bool] = None,
+) -> ServerTemplate:
+    """Update template metadata."""
+    return _get_template_manager().update_template(user_id, code, name, description, is_public)
+
+
+# === Welcome Screen ===
+
+
+def set_welcome_screen(
+    user_id: int,
+    server_id: int,
+    description: Optional[str] = None,
+    welcome_channels: Optional[List[Dict[str, Any]]] = None,
+    enabled: bool = True,
+) -> WelcomeScreen:
+    """Set or update the welcome screen for a server."""
+    return _get_onboarding_manager().set_welcome_screen(
+        user_id, server_id, description, welcome_channels, enabled
+    )
+
+
+def get_welcome_screen(server_id: int, user_id: int) -> Optional[WelcomeScreen]:
+    """Get the welcome screen for a server."""
+    return _get_onboarding_manager().get_welcome_screen(server_id, user_id)
+
+
+def delete_welcome_screen(user_id: int, server_id: int) -> bool:
+    """Delete the welcome screen for a server."""
+    return _get_onboarding_manager().delete_welcome_screen(user_id, server_id)
+
+
+# === Onboarding ===
+
+
+def create_onboarding_step(
+    user_id: int,
+    server_id: int,
+    step_type: OnboardingStepType,
+    title: str,
+    description: Optional[str] = None,
+    required: bool = False,
+    options: Optional[Dict[str, Any]] = None,
+) -> OnboardingStep:
+    """Create an onboarding step."""
+    return _get_onboarding_manager().create_onboarding_step(
+        user_id, server_id, step_type, title, description, required, options
+    )
+
+
+def get_onboarding_step(step_id: int, user_id: int) -> Optional[OnboardingStep]:
+    """Get an onboarding step by ID."""
+    return _get_onboarding_manager().get_onboarding_step(step_id, user_id)
+
+
+def get_onboarding_steps(user_id: int, server_id: int) -> List[OnboardingStep]:
+    """Get all onboarding steps for a server."""
+    return _get_onboarding_manager().get_onboarding_steps(user_id, server_id)
+
+
+def update_onboarding_step(
+    user_id: int,
+    step_id: int,
+    title: Optional[str] = None,
+    description: Optional[str] = None,
+    required: Optional[bool] = None,
+    options: Optional[Dict[str, Any]] = None,
+    position: Optional[int] = None,
+) -> OnboardingStep:
+    """Update an onboarding step."""
+    return _get_onboarding_manager().update_onboarding_step(
+        user_id, step_id, title, description, required, options, position
+    )
+
+
+def delete_onboarding_step(user_id: int, step_id: int) -> bool:
+    """Delete an onboarding step."""
+    return _get_onboarding_manager().delete_onboarding_step(user_id, step_id)
+
+
+def start_onboarding(user_id: int, server_id: int) -> OnboardingProgress:
+    """Start onboarding for a user."""
+    return _get_onboarding_manager().start_onboarding(user_id, server_id)
+
+
+def complete_onboarding_step(
+    user_id: int,
+    server_id: int,
+    step_id: int,
+    response: Optional[Dict[str, Any]] = None,
+) -> OnboardingProgress:
+    """Mark an onboarding step as complete."""
+    return _get_onboarding_manager().complete_onboarding_step(user_id, server_id, step_id, response)
+
+
+def get_onboarding_progress(user_id: int, server_id: int) -> Optional[OnboardingProgress]:
+    """Get onboarding progress for a user."""
+    return _get_onboarding_manager().get_onboarding_progress(user_id, server_id)
+
+
+def reset_onboarding_progress(user_id: int, server_id: int) -> bool:
+    """Reset onboarding progress for a user."""
+    return _get_onboarding_manager().reset_onboarding_progress(user_id, server_id)

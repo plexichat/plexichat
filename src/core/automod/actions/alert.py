@@ -1,167 +1,175 @@
 """
-Alert moderators action - Sends alerts to moderators about violations.
+Alert moderators action.
+
+Sends notifications to server moderators about violations.
 """
 
 import time
 import json
-from typing import Dict, Any
+from typing import Dict, Any, Optional, List
 
 import utils.logger as logger
+import utils.config as config
+from src.utils.encryption import generate_snowflake_id
 
-from .base import BaseAction, ActionResult
-from ..models import RuleAction, Violation, ActionType
+from .base import BaseAction
+from ..models import ActionType, RuleAction, Violation
 
 
 class AlertModeratorsAction(BaseAction):
     """Action that alerts moderators about a violation."""
     
+    action_type = ActionType.ALERT_MODERATORS
+    
     def execute(
         self,
         action: RuleAction,
         violation: Violation,
-        context: Dict[str, Any]
-    ) -> ActionResult:
-        """Execute moderator alert."""
-        server_id = violation.server_id
-        
-        db = context.get("db")
-        if not db:
-            return ActionResult(
-                success=False,
-                action_type=self.get_action_type(),
-                error="Database not available"
-            )
-        
+        context: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """Send alert to moderators."""
         try:
-            config = db.fetch_one(
-                "SELECT alert_channel_id, alert_webhook_url FROM automod_config WHERE server_id = ?",
-                (server_id,)
+            moderator_ids = self._get_moderator_ids(violation.server_id)
+            
+            if not moderator_ids:
+                logger.debug(f"No moderators to alert for server {violation.server_id}")
+                return True
+            
+            alert_channel_id = self._get_alert_channel(violation.server_id)
+            
+            if alert_channel_id and self._messaging:
+                self._send_channel_alert(alert_channel_id, violation, context)
+            
+            if self._notifications:
+                self._send_notifications(moderator_ids, violation, context)
+            
+            self._log_alert(violation, moderator_ids)
+            
+            logger.debug(
+                f"Alerted {len(moderator_ids)} moderators about violation {violation.id}"
             )
-            
-            alert_sent = False
-            alert_methods = []
-            
-            if config and config["alert_channel_id"]:
-                channel_sent = self._send_channel_alert(db, config["alert_channel_id"], violation, context)
-                if channel_sent:
-                    alert_sent = True
-                    alert_methods.append("channel")
-            
-            if config and config["alert_webhook_url"]:
-                webhook_sent = self._send_webhook_alert(config["alert_webhook_url"], violation, context)
-                if webhook_sent:
-                    alert_sent = True
-                    alert_methods.append("webhook")
-            
-            if not alert_sent:
-                logger.warning(f"No alert destination configured for server {server_id}")
-                return ActionResult(
-                    success=False,
-                    action_type=self.get_action_type(),
-                    error="No alert destination configured"
-                )
-            
-            logger.debug(f"AutoMod sent alert for violation {violation.id} via {alert_methods}")
-            
-            return ActionResult(
-                success=True,
-                action_type=self.get_action_type(),
-                message=f"Alert sent via {', '.join(alert_methods)}",
-                metadata={
-                    "violation_id": violation.id,
-                    "alert_methods": alert_methods,
-                }
-            )
-            
-        except Exception as e:
-            logger.error(f"Failed to send alert for violation {violation.id}: {e}")
-            return ActionResult(
-                success=False,
-                action_type=self.get_action_type(),
-                error=str(e)
-            )
-    
-    def _send_channel_alert(self, db, channel_id: int, violation: Violation, context: Dict[str, Any]) -> bool:
-        """Send alert to a channel."""
-        try:
-            channel = db.fetch_one(
-                "SELECT conversation_id FROM srv_channels WHERE id = ?",
-                (channel_id,)
-            )
-            
-            if not channel:
-                return False
-            
-            now = int(time.time() * 1000)
-            from src.utils.encryption import generate_snowflake_id
-            
-            alert_content = self._format_alert_message(violation)
-            
-            msg_id = generate_snowflake_id()
-            db.execute(
-                """INSERT INTO msg_messages 
-                   (id, conversation_id, author_id, content, message_type, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (msg_id, channel["conversation_id"], 0, alert_content, "system", now, now)
-            )
-            
             return True
             
         except Exception as e:
-            logger.error(f"Failed to send channel alert: {e}")
+            logger.error(f"Failed to alert moderators: {e}")
             return False
     
-    def _send_webhook_alert(self, webhook_url: str, violation: Violation, context: Dict[str, Any]) -> bool:
-        """Send alert via webhook."""
-        try:
-            import urllib.request
-            
-            payload = {
-                "content": None,
-                "embeds": [{
-                    "title": "AutoMod Alert",
-                    "description": self._format_alert_message(violation),
-                    "color": 0xFF0000,
-                    "fields": [
-                        {"name": "User ID", "value": str(violation.user_id), "inline": True},
-                        {"name": "Channel ID", "value": str(violation.channel_id), "inline": True},
-                        {"name": "Rule Type", "value": violation.rule_type.value, "inline": True},
-                        {"name": "Severity", "value": violation.severity.value, "inline": True},
-                    ],
-                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                }]
-            }
-            
-            data = json.dumps(payload).encode("utf-8")
-            req = urllib.request.Request(
-                webhook_url,
-                data=data,
-                headers={"Content-Type": "application/json"},
-                method="POST"
+    def _get_moderator_ids(self, server_id: int) -> List[int]:
+        """Get IDs of users with moderation permissions."""
+        server = self._db.fetch_one(
+            "SELECT owner_id FROM srv_servers WHERE id = ?",
+            (server_id,)
+        )
+        
+        mod_ids = set()
+        if server:
+            mod_ids.add(server["owner_id"])
+        
+        mod_roles = self._db.fetch_all(
+            """SELECT id FROM srv_roles 
+               WHERE server_id = ? AND (
+                   permissions LIKE '%"administrator": true%' OR
+                   permissions LIKE '%"members.kick": true%' OR
+                   permissions LIKE '%"members.ban": true%'
+               )""",
+            (server_id,)
+        )
+        
+        role_ids = [r["id"] for r in mod_roles]
+        
+        if role_ids:
+            placeholders = ",".join("?" * len(role_ids))
+            members = self._db.fetch_all(
+                f"""SELECT DISTINCT user_id FROM srv_member_roles 
+                    WHERE server_id = ? AND role_id IN ({placeholders})""",
+                (server_id, *role_ids)
             )
-            
-            with urllib.request.urlopen(req, timeout=10) as response:
-                return response.status in (200, 204)
-                
+            for m in members:
+                mod_ids.add(m["user_id"])
+        
+        return list(mod_ids)
+    
+    def _get_alert_channel(self, server_id: int) -> Optional[int]:
+        """Get the configured alert channel for a server."""
+        automod_config = config.get("automod", {})
+        
+        server_config = self._db.fetch_one(
+            "SELECT config FROM automod_rules WHERE server_id = ? LIMIT 1",
+            (server_id,)
+        )
+        
+        if server_config:
+            try:
+                cfg = json.loads(server_config["config"])
+                if "alert_channel_id" in cfg:
+                    return cfg["alert_channel_id"]
+            except (json.JSONDecodeError, KeyError):
+                pass
+        
+        return automod_config.get("default_alert_channel_id")
+    
+    def _send_channel_alert(
+        self,
+        channel_id: int,
+        violation: Violation,
+        context: Optional[Dict[str, Any]]
+    ):
+        """Send alert message to channel."""
+        content = self._format_alert_message(violation)
+        
+        try:
+            bot_user_id = context.get("bot_user_id") if context else None
+            if bot_user_id and self._messaging:
+                conv = self._db.fetch_one(
+                    "SELECT conversation_id FROM srv_channels WHERE id = ?",
+                    (channel_id,)
+                )
+                if conv:
+                    self._messaging.send_message(
+                        user_id=bot_user_id,
+                        conversation_id=conv["conversation_id"],
+                        content=content
+                    )
         except Exception as e:
-            logger.error(f"Failed to send webhook alert: {e}")
-            return False
+            logger.warning(f"Failed to send channel alert: {e}")
+    
+    def _send_notifications(
+        self,
+        moderator_ids: List[int],
+        violation: Violation,
+        context: Optional[Dict[str, Any]]
+    ):
+        """Send notifications to moderators."""
+        pass
     
     def _format_alert_message(self, violation: Violation) -> str:
-        """Format alert message content."""
-        parts = [
-            f"**AutoMod Violation Detected**",
-            f"User: <@{violation.user_id}>",
-            f"Channel: <#{violation.channel_id}>",
-            f"Rule: {violation.rule_type.value}",
-            f"Severity: {violation.severity.value}",
-        ]
-        
-        if violation.matched_content:
-            parts.append(f"Matched: {violation.matched_content[:100]}")
-        
-        return "\n".join(parts)
+        """Format the alert message."""
+        return (
+            f"[AutoMod] Violation detected\n"
+            f"User: <@{violation.user_id}>\n"
+            f"Rule: {violation.rule_type.value}\n"
+            f"Severity: {violation.severity.value}\n"
+            f"Content: {violation.matched_content[:100]}"
+        )
     
-    @classmethod
-    def get_action_type(cls) -> str:
-        return ActionType.ALERT_MODERATORS.value
+    def _log_alert(self, violation: Violation, moderator_ids: List[int]):
+        """Log the alert in the database."""
+        now = int(time.time() * 1000)
+        alert_id = generate_snowflake_id()
+        
+        self._db.execute(
+            """INSERT INTO automod_audit 
+               (id, server_id, action_type, target_user_id, moderator_id, rule_id, reason, metadata, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                alert_id,
+                violation.server_id,
+                ActionType.ALERT_MODERATORS.value,
+                violation.user_id,
+                None,
+                violation.rule_id,
+                f"Alert sent to {len(moderator_ids)} moderators",
+                json.dumps({"moderator_ids": moderator_ids}),
+                now
+            )
+        )

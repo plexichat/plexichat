@@ -141,7 +141,7 @@ class SearchManager:
         offset: int = 0,
     ) -> List[MessageSearchResult]:
         """
-        Search messages with Discord-style query syntax.
+        Search messages with advanced query syntax.
         
         Args:
             user_id: ID of user performing search

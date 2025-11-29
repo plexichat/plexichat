@@ -1,159 +1,172 @@
 """
-Message spam detection rule - Detects rapid message sending and duplicate content.
+Message spam detection rule.
+
+Detects rapid message sending (rate limiting) and duplicate content spam.
 """
 
-import hashlib
 import time
-from typing import Dict, Any, List
+from typing import Dict, Any, Optional, List
 
-from .base import BaseRule, RuleMatch
-from ..models import Rule, ViolationSeverity
+from .base import BaseRule
+from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
 
 
 class MessageSpamRule(BaseRule):
-    """Rule that detects message spam (rate and duplicate content)."""
+    """Rule that detects message spam based on rate and content."""
+    
+    rule_type = RuleType.MESSAGE_SPAM
     
     def __init__(self, rule: Rule):
         super().__init__(rule)
-        self._max_messages = self.config.get("max_messages", 5)
-        self._time_window_seconds = self.config.get("time_window_seconds", 5)
-        self._duplicate_threshold = self.config.get("duplicate_threshold", 3)
-        self._duplicate_window_seconds = self.config.get("duplicate_window_seconds", 60)
+        self._max_messages: int = self.config.get("max_messages", 5)
+        self._window_seconds: int = self.config.get("window_seconds", 5)
+        self._duplicate_threshold: int = self.config.get("duplicate_threshold", 3)
+        self._duplicate_window: int = self.config.get("duplicate_window_seconds", 60)
+        self._similarity_threshold: float = self.config.get("similarity_threshold", 0.9)
     
-    def check(self, content: str, context: Dict[str, Any]) -> RuleMatch:
+    def check(
+        self,
+        content: str,
+        user_id: int,
+        channel_id: int,
+        context: Optional[Dict[str, Any]] = None
+    ) -> RuleMatch:
         """Check for message spam."""
-        db = context.get("db")
-        user_id = context.get("user_id")
-        server_id = context.get("server_id")
-        channel_id = context.get("channel_id")
+        context = context or {}
         
-        if not all([db, user_id, server_id]):
-            return RuleMatch(matched=False)
+        rate_violation = self._check_rate_spam(user_id, context)
+        if rate_violation:
+            return rate_violation
+        
+        duplicate_violation = self._check_duplicate_spam(content, user_id, context)
+        if duplicate_violation:
+            return duplicate_violation
+        
+        return self._no_match()
+    
+    def _check_rate_spam(
+        self,
+        user_id: int,
+        context: Dict[str, Any]
+    ) -> Optional[RuleMatch]:
+        """Check if user is sending messages too fast."""
+        recent_messages = context.get("recent_messages", [])
+        if not recent_messages:
+            return None
         
         now = int(time.time() * 1000)
-        content_hash = self._hash_content(content)
+        window_start = now - (self._window_seconds * 1000)
         
-        rate_violation = self._check_rate_limit(db, user_id, server_id, now)
-        duplicate_violation = self._check_duplicates(db, user_id, server_id, content_hash, now)
+        messages_in_window = [
+            m for m in recent_messages
+            if m.get("user_id") == user_id and m.get("created_at", 0) >= window_start
+        ]
         
-        self._record_message(db, user_id, server_id, channel_id, context.get("message_id", 0), content_hash, now)
-        
-        if rate_violation or duplicate_violation:
-            details = {}
-            severity = ViolationSeverity.MEDIUM
-            
-            if rate_violation:
-                details["rate_limit_exceeded"] = True
-                details["messages_in_window"] = rate_violation
-                severity = ViolationSeverity.HIGH
-            
-            if duplicate_violation:
-                details["duplicate_detected"] = True
-                details["duplicate_count"] = duplicate_violation
-                if duplicate_violation >= self._duplicate_threshold * 2:
-                    severity = ViolationSeverity.HIGH
-            
-            return RuleMatch(
+        if len(messages_in_window) >= self._max_messages:
+            return self._create_match(
                 matched=True,
-                severity=severity,
-                matched_content="spam detected",
-                trigger_details=details
+                matched_content=f"{len(messages_in_window)} messages in {self._window_seconds}s",
+                details={
+                    "type": "rate_spam",
+                    "message_count": len(messages_in_window),
+                    "window_seconds": self._window_seconds,
+                    "threshold": self._max_messages
+                },
+                severity=ViolationSeverity.MEDIUM
             )
         
-        return RuleMatch(matched=False)
+        return None
     
-    def _hash_content(self, content: str) -> str:
-        """Create hash of content for duplicate detection."""
-        normalized = content.lower().strip()
-        return hashlib.sha256(normalized.encode()).hexdigest()[:32]
-    
-    def _check_rate_limit(self, db, user_id: int, server_id: int, now: int) -> int:
-        """Check if user is sending messages too fast."""
-        window_start = now - (self._time_window_seconds * 1000)
-        
-        row = db.fetch_one(
-            """SELECT COUNT(*) as count FROM automod_message_history
-               WHERE user_id = ? AND server_id = ? AND created_at > ?""",
-            (user_id, server_id, window_start)
-        )
-        
-        count = row["count"] if row else 0
-        
-        if count >= self._max_messages:
-            return count
-        return 0
-    
-    def _check_duplicates(self, db, user_id: int, server_id: int, content_hash: str, now: int) -> int:
+    def _check_duplicate_spam(
+        self,
+        content: str,
+        user_id: int,
+        context: Dict[str, Any]
+    ) -> Optional[RuleMatch]:
         """Check for duplicate message content."""
-        window_start = now - (self._duplicate_window_seconds * 1000)
+        recent_messages = context.get("recent_messages", [])
+        if not recent_messages:
+            return None
         
-        row = db.fetch_one(
-            """SELECT COUNT(*) as count FROM automod_message_history
-               WHERE user_id = ? AND server_id = ? AND content_hash = ? AND created_at > ?""",
-            (user_id, server_id, content_hash, window_start)
-        )
+        now = int(time.time() * 1000)
+        window_start = now - (self._duplicate_window * 1000)
         
-        count = row["count"] if row else 0
+        content_lower = content.lower().strip()
+        duplicate_count = 0
         
-        if count >= self._duplicate_threshold:
-            return count
-        return 0
+        for msg in recent_messages:
+            if msg.get("user_id") != user_id:
+                continue
+            if msg.get("created_at", 0) < window_start:
+                continue
+            
+            msg_content = msg.get("content", "").lower().strip()
+            
+            if msg_content == content_lower:
+                duplicate_count += 1
+            elif self._calculate_similarity(content_lower, msg_content) >= self._similarity_threshold:
+                duplicate_count += 1
+        
+        if duplicate_count >= self._duplicate_threshold:
+            return self._create_match(
+                matched=True,
+                matched_content=f"{duplicate_count} duplicate messages",
+                details={
+                    "type": "duplicate_spam",
+                    "duplicate_count": duplicate_count,
+                    "threshold": self._duplicate_threshold
+                },
+                severity=ViolationSeverity.MEDIUM
+            )
+        
+        return None
     
-    def _record_message(self, db, user_id: int, server_id: int, channel_id: int, message_id: int, content_hash: str, now: int):
-        """Record message for spam tracking."""
-        from src.utils.encryption import generate_snowflake_id
+    def _calculate_similarity(self, s1: str, s2: str) -> float:
+        """Calculate simple similarity ratio between two strings."""
+        if not s1 or not s2:
+            return 0.0
         
-        record_id = generate_snowflake_id()
-        db.execute(
-            """INSERT INTO automod_message_history 
-               (id, server_id, channel_id, user_id, message_id, content_hash, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (record_id, server_id, channel_id, user_id, message_id, content_hash, now)
-        )
+        if s1 == s2:
+            return 1.0
         
-        cleanup_threshold = now - (max(self._time_window_seconds, self._duplicate_window_seconds) * 2 * 1000)
-        db.execute(
-            "DELETE FROM automod_message_history WHERE created_at < ?",
-            (cleanup_threshold,)
-        )
+        len1, len2 = len(s1), len(s2)
+        if len1 == 0 or len2 == 0:
+            return 0.0
+        
+        max_len = max(len1, len2)
+        min_len = min(len1, len2)
+        
+        if min_len / max_len < 0.5:
+            return 0.0
+        
+        matches = 0
+        shorter, longer = (s1, s2) if len1 <= len2 else (s2, s1)
+        
+        for i, char in enumerate(shorter):
+            if i < len(longer) and char == longer[i]:
+                matches += 1
+        
+        return matches / max_len
     
     @classmethod
-    def validate_config(cls, config: Dict[str, Any]) -> List[str]:
+    def validate_config(cls, config: Dict[str, Any]) -> tuple:
         """Validate spam rule configuration."""
         issues = []
         
         max_messages = config.get("max_messages", 5)
         if not isinstance(max_messages, int) or max_messages < 1:
             issues.append("max_messages must be a positive integer")
-        elif max_messages > 100:
-            issues.append("max_messages cannot exceed 100")
         
-        time_window = config.get("time_window_seconds", 5)
-        if not isinstance(time_window, int) or time_window < 1:
-            issues.append("time_window_seconds must be a positive integer")
-        elif time_window > 3600:
-            issues.append("time_window_seconds cannot exceed 3600")
+        window_seconds = config.get("window_seconds", 5)
+        if not isinstance(window_seconds, int) or window_seconds < 1:
+            issues.append("window_seconds must be a positive integer")
         
-        dup_threshold = config.get("duplicate_threshold", 3)
-        if not isinstance(dup_threshold, int) or dup_threshold < 1:
+        duplicate_threshold = config.get("duplicate_threshold", 3)
+        if not isinstance(duplicate_threshold, int) or duplicate_threshold < 1:
             issues.append("duplicate_threshold must be a positive integer")
-        elif dup_threshold > 50:
-            issues.append("duplicate_threshold cannot exceed 50")
         
-        dup_window = config.get("duplicate_window_seconds", 60)
-        if not isinstance(dup_window, int) or dup_window < 1:
-            issues.append("duplicate_window_seconds must be a positive integer")
-        elif dup_window > 86400:
-            issues.append("duplicate_window_seconds cannot exceed 86400")
+        similarity = config.get("similarity_threshold", 0.9)
+        if not isinstance(similarity, (int, float)) or not 0 <= similarity <= 1:
+            issues.append("similarity_threshold must be between 0 and 1")
         
-        return issues
-    
-    @classmethod
-    def get_default_config(cls) -> Dict[str, Any]:
-        """Get default configuration."""
-        return {
-            "max_messages": 5,
-            "time_window_seconds": 5,
-            "duplicate_threshold": 3,
-            "duplicate_window_seconds": 60,
-        }
+        return len(issues) == 0, issues

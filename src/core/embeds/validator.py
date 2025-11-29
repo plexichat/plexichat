@@ -18,7 +18,7 @@ from .exceptions import (
 )
 
 
-# Character limits (Discord-style)
+# Character limits for embeds
 TITLE_MAX_LENGTH = 256
 DESCRIPTION_MAX_LENGTH = 4096
 FIELD_NAME_MAX_LENGTH = 256

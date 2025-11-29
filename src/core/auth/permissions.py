@@ -33,7 +33,7 @@ PERMISSIONS = {
     "conversations.manage": "Manage conversation settings",
     "conversations.delete": "Delete conversations",
     
-    # Servers (future - like Discord guilds)
+    # Servers (community servers)
     "servers.create": "Create new servers",
     "servers.join": "Join servers",
     "servers.leave": "Leave servers",

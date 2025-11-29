@@ -4,7 +4,7 @@ Event types, payloads, and routing for the PlexiChat gateway system.
 
 ## Features
 
-- Discord-compatible event types
+- Standard event types
 - Gateway intents for event filtering
 - Event payload builders
 - Event routing to appropriate users

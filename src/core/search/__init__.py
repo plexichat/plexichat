@@ -134,7 +134,7 @@ def search_messages(
     offset: int = 0,
 ) -> List[MessageSearchResult]:
     """
-    Search messages with Discord-style query syntax.
+    Search messages with advanced query syntax.
     
     Supports filters: from:user, in:channel, before:date, after:date,
     has:link/image/file/embed, mentions:user, pinned:true, "exact phrase"

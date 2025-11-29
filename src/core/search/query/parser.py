@@ -1,5 +1,5 @@
 """
-Query parser - Parse Discord-style search queries.
+Query parser - Parse advanced search queries with filters.
 
 Supports:
 - from:user - Messages from a specific user
@@ -46,7 +46,7 @@ RELATIVE_DATE_PATTERN = re.compile(r"^(\d+)(d|w|m|y)$", re.IGNORECASE)
 
 
 class QueryParser:
-    """Parser for Discord-style search queries."""
+    """Parser for advanced search queries with filters."""
     
     def __init__(self):
         self._filter_regex = re.compile(

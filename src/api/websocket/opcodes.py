@@ -1,12 +1,12 @@
 """
-Gateway opcodes - Discord-compatible opcode definitions.
+Gateway opcodes - Standard opcode definitions for WebSocket gateway.
 """
 
 from enum import IntEnum
 
 
 class GatewayOpcode(IntEnum):
-    """Gateway operation codes (Discord-compatible)."""
+    """Gateway operation codes."""
     DISPATCH = 0
     HEARTBEAT = 1
     IDENTIFY = 2
@@ -29,10 +29,13 @@ class GatewayOpcode(IntEnum):
     VOICE_ICE_CANDIDATE = 24
     VOICE_SPEAKING = 25
     VOICE_QUALITY = 26
+    # PlexiChat application interaction opcodes
+    INTERACTION_CREATE = 30
+    INTERACTION_RESPONSE = 31
 
 
 class GatewayCloseCode(IntEnum):
-    """Gateway close codes (Discord-compatible)."""
+    """Gateway close codes."""
     UNKNOWN_ERROR = 4000
     UNKNOWN_OPCODE = 4001
     DECODE_ERROR = 4002

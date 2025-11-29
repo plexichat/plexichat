@@ -1,109 +1,88 @@
 """
-Kick user action - Removes user from the server.
+Kick user action.
+
+Removes a user from the server.
 """
 
-import time
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 import utils.logger as logger
 
-from .base import BaseAction, ActionResult
-from ..models import RuleAction, Violation, ActionType
+from .base import BaseAction
+from ..models import ActionType, RuleAction, Violation
 
 
 class KickUserAction(BaseAction):
     """Action that kicks a user from the server."""
     
+    action_type = ActionType.KICK_USER
+    
     def execute(
         self,
         action: RuleAction,
         violation: Violation,
-        context: Dict[str, Any]
-    ) -> ActionResult:
-        """Execute user kick."""
-        user_id = violation.user_id
-        server_id = violation.server_id
-        
-        db = context.get("db")
-        if not db:
-            return ActionResult(
-                success=False,
-                action_type=self.get_action_type(),
-                error="Database not available"
-            )
+        context: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """Kick the user."""
+        if not self._servers:
+            logger.warning("Cannot kick user: servers module not available")
+            return False
         
         try:
-            member = db.fetch_one(
-                "SELECT id FROM srv_members WHERE server_id = ? AND user_id = ?",
-                (server_id, user_id)
-            )
+            reason = action.reason or f"Automod: {violation.rule_type.value} violation"
+            bot_user_id = context.get("bot_user_id") if context else None
             
-            if not member:
-                return ActionResult(
-                    success=False,
-                    action_type=self.get_action_type(),
-                    error="User is not a member of this server"
+            if bot_user_id:
+                self._servers.kick_member(
+                    user_id=bot_user_id,
+                    server_id=violation.server_id,
+                    member_user_id=violation.user_id,
+                    reason=reason
+                )
+            else:
+                self._db.execute(
+                    "DELETE FROM srv_members WHERE server_id = ? AND user_id = ?",
+                    (violation.server_id, violation.user_id)
+                )
+                self._db.execute(
+                    "DELETE FROM srv_member_roles WHERE server_id = ? AND user_id = ?",
+                    (violation.server_id, violation.user_id)
                 )
             
-            server = db.fetch_one(
-                "SELECT owner_id FROM srv_servers WHERE id = ?",
-                (server_id,)
+            logger.debug(
+                f"Kicked user {violation.user_id} from server {violation.server_id} "
+                f"due to violation {violation.id}"
             )
-            
-            if server and server["owner_id"] == user_id:
-                return ActionResult(
-                    success=False,
-                    action_type=self.get_action_type(),
-                    error="Cannot kick server owner"
-                )
-            
-            db.execute(
-                "DELETE FROM srv_member_roles WHERE server_id = ? AND user_id = ?",
-                (server_id, user_id)
-            )
-            
-            db.execute(
-                "DELETE FROM srv_members WHERE server_id = ? AND user_id = ?",
-                (server_id, user_id)
-            )
-            
-            now = int(time.time() * 1000)
-            from src.utils.encryption import generate_snowflake_id
-            audit_id = generate_snowflake_id()
-            
-            db.execute(
-                """INSERT INTO srv_audit_log 
-                   (id, server_id, action_type, user_id, target_id, reason, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (audit_id, server_id, "MEMBER_KICK", 0, user_id, 
-                 f"AutoMod: {action.reason or 'Rule violation'}", now)
-            )
-            
-            logger.debug(f"AutoMod kicked user {user_id} from server {server_id}")
-            
-            if action.notify_user:
-                self._notify_user(
-                    user_id,
-                    server_id,
-                    f"You have been kicked from the server: {action.reason or 'Rule violation'}",
-                    context
-                )
-            
-            return ActionResult(
-                success=True,
-                action_type=self.get_action_type(),
-                message=f"Kicked user {user_id} from server {server_id}",
-                metadata={"user_id": user_id, "server_id": server_id}
-            )
+            return True
             
         except Exception as e:
-            logger.error(f"Failed to kick user {user_id}: {e}")
-            return ActionResult(
-                success=False,
-                action_type=self.get_action_type(),
-                error=str(e)
-            )
+            logger.error(f"Failed to kick user {violation.user_id}: {e}")
+            return False
     
-    @classmethod
-    def get_action_type(cls) -> str:
-        return ActionType.KICK_USER.value
+    def can_execute(
+        self,
+        action: RuleAction,
+        violation: Violation,
+        context: Optional[Dict[str, Any]] = None
+    ) -> tuple:
+        """Check if user can be kicked."""
+        if not violation.server_id:
+            return False, "No server ID available"
+        
+        member = self._db.fetch_one(
+            "SELECT * FROM srv_members WHERE server_id = ? AND user_id = ?",
+            (violation.server_id, violation.user_id)
+        )
+        
+        if not member:
+            return False, "User is not a member of the server"
+        
+        server = self._db.fetch_one(
+            "SELECT owner_id FROM srv_servers WHERE id = ?",
+            (violation.server_id,)
+        )
+        
+        if server and server["owner_id"] == violation.user_id:
+            return False, "Cannot kick server owner"
+        
+        return True, None
