@@ -41,7 +41,7 @@ class NotFriendsError(RelationshipError):
 class UserBlockedError(RelationshipError):
     """Cannot perform action because user is blocked."""
     
-    def __init__(self, message: str, blocked_by: int = None, blocked_user: int = None):
+    def __init__(self, message: str, blocked_by: int | None = None, blocked_user: int | None = None):
         super().__init__(message)
         self.blocked_by = blocked_by
         self.blocked_user = blocked_user

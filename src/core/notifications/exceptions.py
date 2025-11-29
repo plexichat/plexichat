@@ -36,7 +36,7 @@ class InvalidMentionError(NotificationError):
 class PermissionDeniedError(NotificationError):
     """User does not have permission to perform this action."""
 
-    def __init__(self, message: str, permission: str = None):
+    def __init__(self, message: str, permission: str | None = None):
         super().__init__(message)
         self.permission = permission
 
