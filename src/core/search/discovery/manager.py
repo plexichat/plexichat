@@ -57,8 +57,8 @@ class DiscoveryManager:
         user_id: int,
         server_id: int,
         category: str,
-        description: str = None,
-        tags: List[str] = None,
+        description: Optional[str] = None,
+        tags: Optional[List[str]] = None,
     ) -> ServerListing:
         """
         List a server in the public directory.
@@ -211,7 +211,7 @@ class DiscoveryManager:
     
     def list_public_servers(
         self,
-        category: str = None,
+        category: Optional[str] = None,
         sort_by: str = "member_count",
         limit: int = 25,
         offset: int = 0,
@@ -404,8 +404,8 @@ class DiscoveryManager:
         server_id: int,
         name: str,
         description: str,
-        icon_url: str,
-        banner_url: str,
+        icon_url: Optional[str],
+        banner_url: Optional[str],
         category: str,
         tags: List[str],
         member_count: int,

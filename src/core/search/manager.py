@@ -134,9 +134,9 @@ class SearchManager:
         self,
         user_id: int,
         query: str,
-        conversation_id: int = None,
-        server_id: int = None,
-        channel_id: int = None,
+        conversation_id: Optional[int] = None,
+        server_id: Optional[int] = None,
+        channel_id: Optional[int] = None,
         limit: int = 25,
         offset: int = 0,
     ) -> List[MessageSearchResult]:
@@ -282,7 +282,7 @@ class SearchManager:
         self,
         user_id: int,
         query: str,
-        server_id: int = None,
+        server_id: Optional[int] = None,
         limit: int = 25,
         offset: int = 0,
     ) -> List[UserSearchResult]:
@@ -344,7 +344,7 @@ class SearchManager:
         self,
         user_id: int,
         query: str,
-        category: str = None,
+        category: Optional[str] = None,
         limit: int = 25,
         offset: int = 0,
     ) -> List[ServerSearchResult]:
@@ -418,7 +418,7 @@ class SearchManager:
     
     def list_public_servers(
         self,
-        category: str = None,
+        category: Optional[str] = None,
         sort_by: str = "member_count",
         limit: int = 25,
         offset: int = 0,
@@ -435,8 +435,8 @@ class SearchManager:
         user_id: int,
         server_id: int,
         category: str,
-        description: str = None,
-        tags: List[str] = None,
+        description: Optional[str] = None,
+        tags: Optional[List[str]] = None,
     ) -> ServerListing:
         """List a server in the public directory."""
         return self._discovery.list_server(user_id, server_id, category, description, tags)
