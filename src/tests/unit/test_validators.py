@@ -16,33 +16,18 @@ try:
     HAS_HYPOTHESIS = True
 except ImportError:
     HAS_HYPOTHESIS = False
-    # Create dummy decorators
-    def given(*args, **kwargs):
-        def decorator(f):
-            return pytest.mark.skip(reason="hypothesis not installed")(f)
-        return decorator
+    # Create dummy decorators - type: ignore needed for fallback stubs
+    from typing import Any
     
-    class st:
-        @staticmethod
-        def text(*args, **kwargs):
-            return None
-        @staticmethod
-        def integers(*args, **kwargs):
-            return None
-        @staticmethod
-        def emails(*args, **kwargs):
-            return None
-        @staticmethod
-        def characters(*args, **kwargs):
-            return None
-    
-    def settings(*args, **kwargs):
-        def decorator(f):
-            return f
-        return decorator
-    
-    def assume(x):
-        pass
+    given: Any = lambda *args, **kwargs: lambda f: pytest.mark.skip(reason="hypothesis not installed")(f)
+    st: Any = type('st', (), {
+        'text': staticmethod(lambda *args, **kwargs: None),
+        'integers': staticmethod(lambda *args, **kwargs: None),
+        'emails': staticmethod(lambda *args, **kwargs: None),
+        'characters': staticmethod(lambda *args, **kwargs: None),
+    })()
+    settings: Any = lambda *args, **kwargs: lambda f: f
+    assume: Any = lambda x: None
 
 
 @pytest.mark.unit
