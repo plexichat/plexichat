@@ -6,11 +6,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_api_config
-from .middleware import AuthenticationMiddleware, setup_exception_handlers, LoggingMiddleware
+from .middleware import (
+    AuthenticationMiddleware,
+    setup_exception_handlers,
+    LoggingMiddleware,
+    create_rate_limit_middleware,
+)
 from .routes import create_api_router
 
 
-def create_app() -> FastAPI:
+def create_app(enable_rate_limiting: bool = True) -> FastAPI:
     """
     Create and configure the FastAPI application.
     
@@ -35,6 +40,12 @@ def create_app() -> FastAPI:
         allow_methods=config.cors_allow_methods,
         allow_headers=config.cors_allow_headers,
     )
+    
+    if enable_rate_limiting:
+        from src.core import ratelimit
+        if ratelimit.is_setup():
+            RateLimitMiddleware = create_rate_limit_middleware()
+            app.add_middleware(RateLimitMiddleware)
     
     app.add_middleware(AuthenticationMiddleware)
     app.add_middleware(LoggingMiddleware)
