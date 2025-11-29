@@ -139,6 +139,7 @@ class Database:
             sqlite3.Error/psycopg2.Error: If query execution fails.
         """
         self._ensure_connected()
+        assert self.connection is not None  # Type narrowing for pyright
         
         cursor = self.connection.cursor()
         try:
@@ -168,6 +169,7 @@ class Database:
             Database cursor after execution.
         """
         self._ensure_connected()
+        assert self.connection is not None  # Type narrowing for pyright
         
         cursor = self.connection.cursor()
         try:
