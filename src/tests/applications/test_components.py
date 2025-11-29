@@ -119,6 +119,7 @@ class TestSelectMenuBuilder:
 
         assert select.custom_id == "color_select"
         assert select.component_type == ComponentType.STRING_SELECT
+        assert select.options is not None
         assert len(select.options) == 3
 
     def test_build_select_with_placeholder(self):
