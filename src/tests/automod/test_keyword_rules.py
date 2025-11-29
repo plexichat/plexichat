@@ -94,6 +94,7 @@ class TestKeywordRule:
         )
         
         assert not result.passed
+        assert result.violations[0].matched_content is not None
         assert "word1" in result.violations[0].matched_content
         assert "word2" in result.violations[0].matched_content
 
