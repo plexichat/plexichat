@@ -503,6 +503,7 @@ def test_fetch_one(db_config):
     db.execute("INSERT INTO users (username) VALUES (?)", ("bob",))
     
     result = db.fetch_one("SELECT username FROM users WHERE id = ?", (1,))
+    assert result is not None
     assert result["username"] == "alice"
     
     result = db.fetch_one("SELECT username FROM users WHERE id = ?", (999,))
@@ -572,6 +573,7 @@ def test_context_manager(db_config):
         db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT)")
         db.execute("INSERT INTO test (data) VALUES (?)", ("test_data",))
         result = db.fetch_one("SELECT data FROM test")
+        assert result is not None
         assert result["data"] == "test_data"
     
     # Connection should be closed after context
@@ -589,6 +591,7 @@ def test_transaction_commit(db_config):
     db.commit()
     
     result = db.fetch_one("SELECT balance FROM accounts WHERE id = 1")
+    assert result is not None
     assert result["balance"] == 50
     db.close()
 
@@ -604,6 +607,7 @@ def test_transaction_rollback(db_config):
     db.rollback()
     
     result = db.fetch_one("SELECT balance FROM accounts WHERE id = 1")
+    assert result is not None
     assert result["balance"] == 100
     db.close()
 
@@ -615,6 +619,7 @@ def test_row_factory_dict_access(db_config):
     db.execute("INSERT INTO users (username, email) VALUES (?, ?)", ("alice", "alice@example.com"))
     
     result = db.fetch_one("SELECT * FROM users WHERE id = 1")
+    assert result is not None
     assert result["username"] == "alice"
     assert result["email"] == "alice@example.com"
     assert result["id"] == 1
