@@ -5,7 +5,7 @@ Optional backend for production deployments requiring fast, typo-tolerant search
 """
 
 import json
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 
 import utils.logger as logger
 
@@ -27,9 +27,9 @@ class MeilisearchIndexer(BaseIndexer):
     def __init__(
         self,
         host: str = "http://localhost:7700",
-        api_key: str = None,
+        api_key: Optional[str] = None,
         index_prefix: str = "plexichat",
-        config: IndexerConfig = None,
+        config: Optional[IndexerConfig] = None,
         http_client=None,
     ):
         super().__init__(config)
@@ -73,7 +73,7 @@ class MeilisearchIndexer(BaseIndexer):
         self,
         method: str,
         path: str,
-        body: Dict = None,
+        body: Optional[Union[Dict, List]] = None,
     ) -> Dict[str, Any]:
         """Make HTTP request to Meilisearch."""
         if self._http_client is not None:
@@ -255,10 +255,10 @@ class MeilisearchIndexer(BaseIndexer):
     def search_messages(
         self,
         query: str,
-        conversation_ids: List[int] = None,
-        server_ids: List[int] = None,
-        channel_ids: List[int] = None,
-        author_ids: List[int] = None,
+        conversation_ids: Optional[List[int]] = None,
+        server_ids: Optional[List[int]] = None,
+        channel_ids: Optional[List[int]] = None,
+        author_ids: Optional[List[int]] = None,
         limit: int = 25,
         offset: int = 0,
     ) -> List[MessageSearchResult]:
@@ -415,7 +415,7 @@ class MeilisearchIndexer(BaseIndexer):
     def search_servers(
         self,
         query: str,
-        category: str = None,
+        category: Optional[str] = None,
         public_only: bool = True,
         limit: int = 25,
         offset: int = 0,
