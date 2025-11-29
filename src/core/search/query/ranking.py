@@ -2,7 +2,7 @@
 Ranking engine - Score and rank search results.
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Sequence
 from dataclasses import dataclass
 import math
 
@@ -210,7 +210,7 @@ class RankingEngine:
 
 
 def rank_results(
-    results: List[SearchResult],
+    results: Sequence[SearchResult],
     parsed_query: Optional[ParsedQuery] = None,
     query: Optional[str] = None,
     user_id: Optional[int] = None,
@@ -239,4 +239,4 @@ def rank_results(
         ranked = engine.rank_server_results(server_results, query or "")
         return list(ranked)
     
-    return results
+    return list(results)
