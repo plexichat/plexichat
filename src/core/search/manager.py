@@ -197,7 +197,7 @@ class SearchManager:
         self,
         message_id: int,
         content: str,
-        metadata: Dict[str, Any] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ):
         """
         Index a message for search.
@@ -319,7 +319,7 @@ class SearchManager:
         
         return results[:limit]
     
-    def index_user(self, user_id: int, username: str, display_name: str = None, is_bot: bool = False):
+    def index_user(self, user_id: int, username: str, display_name: Optional[str] = None, is_bot: bool = False):
         """Index a user for search."""
         indexed = IndexedUser(
             user_id=user_id,
@@ -387,9 +387,9 @@ class SearchManager:
         self,
         server_id: int,
         name: str,
-        description: str = None,
-        tags: List[str] = None,
-        category: str = None,
+        description: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        category: Optional[str] = None,
         member_count: int = 0,
         is_public: bool = False,
     ):
@@ -487,9 +487,9 @@ class SearchManager:
     def _get_accessible_conversations(
         self,
         user_id: int,
-        conversation_id: int = None,
-        server_id: int = None,
-        channel_id: int = None,
+        conversation_id: Optional[int] = None,
+        server_id: Optional[int] = None,
+        channel_id: Optional[int] = None,
     ) -> List[int]:
         """Get list of conversation IDs the user can access."""
         if conversation_id:
