@@ -72,6 +72,18 @@ class OpcodeHandler:
             return await self._handle_voice_state_update(connection, data)
         elif op == GatewayOpcode.REQUEST_GUILD_MEMBERS:
             return await self._handle_request_guild_members(connection, data)
+        elif op == GatewayOpcode.VOICE_CONNECT:
+            return await self._handle_voice_connect(connection, data)
+        elif op == GatewayOpcode.VOICE_DISCONNECT:
+            return await self._handle_voice_disconnect(connection, data)
+        elif op == GatewayOpcode.VOICE_SDP_OFFER:
+            return await self._handle_voice_sdp_offer(connection, data)
+        elif op == GatewayOpcode.VOICE_ICE_CANDIDATE:
+            return await self._handle_voice_ice_candidate(connection, data)
+        elif op == GatewayOpcode.VOICE_SPEAKING:
+            return await self._handle_voice_speaking(connection, data)
+        elif op == GatewayOpcode.VOICE_QUALITY:
+            return await self._handle_voice_quality(connection, data)
         else:
             return None, None, GatewayCloseCode.UNKNOWN_OPCODE
 
@@ -210,6 +222,149 @@ class OpcodeHandler:
         """Handle voice state update opcode."""
         if not connection.is_authenticated:
             return None, None, GatewayCloseCode.NOT_AUTHENTICATED
+
+        return None, None, None
+
+    async def _handle_voice_connect(
+        self,
+        connection: Connection,
+        data: Optional[Dict[str, Any]],
+    ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
+        """Handle voice connect opcode."""
+        if not connection.is_authenticated:
+            return None, None, GatewayCloseCode.NOT_AUTHENTICATED
+
+        if not data:
+            return None, None, GatewayCloseCode.DECODE_ERROR
+
+        channel_id = data.get("channel_id")
+        if not channel_id:
+            return None, None, GatewayCloseCode.DECODE_ERROR
+
+        try:
+            from src.core.voice import signaling
+            info = signaling.create_voice_connection(connection.user_id, channel_id)
+            return GatewayOpcode.DISPATCH, {
+                "t": "VOICE_SERVER_UPDATE",
+                "s": connection.increment_sequence(),
+                "d": info.to_dict(),
+            }, None
+        except Exception as e:
+            logger.warning(f"Voice connect failed: {e}")
+            return None, None, None
+
+    async def _handle_voice_disconnect(
+        self,
+        connection: Connection,
+        data: Optional[Dict[str, Any]],
+    ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
+        """Handle voice disconnect opcode."""
+        if not connection.is_authenticated:
+            return None, None, GatewayCloseCode.NOT_AUTHENTICATED
+
+        channel_id = data.get("channel_id") if data else None
+
+        try:
+            from src.core.voice import signaling
+            signaling.disconnect_voice(connection.user_id, channel_id)
+        except Exception as e:
+            logger.warning(f"Voice disconnect failed: {e}")
+
+        return None, None, None
+
+    async def _handle_voice_sdp_offer(
+        self,
+        connection: Connection,
+        data: Optional[Dict[str, Any]],
+    ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
+        """Handle voice SDP offer opcode."""
+        if not connection.is_authenticated:
+            return None, None, GatewayCloseCode.NOT_AUTHENTICATED
+
+        if not data:
+            return None, None, GatewayCloseCode.DECODE_ERROR
+
+        channel_id = data.get("channel_id")
+        sdp = data.get("sdp")
+        sdp_type = data.get("type", "offer")
+
+        if not channel_id or not sdp:
+            return None, None, GatewayCloseCode.DECODE_ERROR
+
+        try:
+            from src.core.voice import signaling
+            answer = signaling.handle_sdp_offer(connection.user_id, channel_id, sdp, sdp_type)
+            return GatewayOpcode.VOICE_SDP_ANSWER, answer.to_dict(), None
+        except Exception as e:
+            logger.warning(f"SDP offer handling failed: {e}")
+            return None, None, None
+
+    async def _handle_voice_ice_candidate(
+        self,
+        connection: Connection,
+        data: Optional[Dict[str, Any]],
+    ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
+        """Handle voice ICE candidate opcode."""
+        if not connection.is_authenticated:
+            return None, None, GatewayCloseCode.NOT_AUTHENTICATED
+
+        if not data:
+            return None, None, GatewayCloseCode.DECODE_ERROR
+
+        channel_id = data.get("channel_id")
+        candidate = data.get("candidate")
+        sdp_mid = data.get("sdpMid")
+        sdp_mline_index = data.get("sdpMLineIndex")
+
+        if not channel_id or not candidate:
+            return None, None, GatewayCloseCode.DECODE_ERROR
+
+        try:
+            from src.core.voice import signaling
+            signaling.handle_ice_candidate(
+                connection.user_id, channel_id, candidate, sdp_mid, sdp_mline_index
+            )
+        except Exception as e:
+            logger.warning(f"ICE candidate handling failed: {e}")
+
+        return None, None, None
+
+    async def _handle_voice_speaking(
+        self,
+        connection: Connection,
+        data: Optional[Dict[str, Any]],
+    ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
+        """Handle voice speaking opcode."""
+        if not connection.is_authenticated:
+            return None, None, GatewayCloseCode.NOT_AUTHENTICATED
+
+        # Speaking state is informational, broadcast to channel
+        return None, None, None
+
+    async def _handle_voice_quality(
+        self,
+        connection: Connection,
+        data: Optional[Dict[str, Any]],
+    ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
+        """Handle voice quality opcode."""
+        if not connection.is_authenticated:
+            return None, None, GatewayCloseCode.NOT_AUTHENTICATED
+
+        if not data:
+            return None, None, None
+
+        channel_id = data.get("channel_id")
+        target_bitrate = data.get("target_bitrate")
+        quality_level = data.get("quality_level")
+
+        if channel_id:
+            try:
+                from src.core.voice import signaling
+                signaling.update_quality_hint(
+                    connection.user_id, channel_id, target_bitrate, quality_level
+                )
+            except Exception as e:
+                logger.warning(f"Quality update failed: {e}")
 
         return None, None, None
 

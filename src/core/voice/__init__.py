@@ -111,6 +111,18 @@ __all__ = [
     # User voice state queries
     "get_user_voice_state",
     "is_user_in_voice",
+    # Signaling operations
+    "get_voice_server_info",
+    "create_voice_connection",
+    "handle_sdp_offer",
+    "handle_ice_candidate",
+    "disconnect_voice",
+    "get_turn_credentials",
+    "start_screen_share",
+    "stop_screen_share",
+    "get_connection_quality",
+    # Signaling submodule
+    "signaling",
 ]
 
 _manager = None
@@ -355,3 +367,60 @@ def get_user_voice_state(user_id: int) -> Optional[VoiceState]:
 def is_user_in_voice(user_id: int) -> bool:
     """Check if a user is currently in a voice channel."""
     return _get_manager().is_user_in_voice(user_id)
+
+
+# === Signaling Operations ===
+# These are convenience wrappers around the signaling submodule
+
+from . import signaling
+
+
+def get_voice_server_info(user_id: int, channel_id: int):
+    """Get voice server connection info including TURN credentials."""
+    return signaling.get_voice_server_info(user_id, channel_id)
+
+
+def create_voice_connection(user_id: int, channel_id: int):
+    """Create a new voice connection for a user in a channel."""
+    return signaling.create_voice_connection(user_id, channel_id)
+
+
+def handle_sdp_offer(user_id: int, channel_id: int, sdp: str, sdp_type: str = "offer"):
+    """Handle an SDP offer from a client and return the answer."""
+    return signaling.handle_sdp_offer(user_id, channel_id, sdp, sdp_type)
+
+
+def handle_ice_candidate(
+    user_id: int,
+    channel_id: int,
+    candidate: str,
+    sdp_mid: Optional[str] = None,
+    sdp_mline_index: Optional[int] = None,
+):
+    """Handle an ICE candidate from a client."""
+    return signaling.handle_ice_candidate(user_id, channel_id, candidate, sdp_mid, sdp_mline_index)
+
+
+def disconnect_voice(user_id: int, channel_id: Optional[int] = None) -> bool:
+    """Disconnect a user from voice signaling."""
+    return signaling.disconnect_voice(user_id, channel_id)
+
+
+def get_turn_credentials(user_id: int):
+    """Get TURN server credentials for a user."""
+    return signaling.get_turn_credentials(user_id)
+
+
+def start_screen_share(user_id: int, channel_id: int):
+    """Start screen sharing for a user."""
+    return signaling.start_screen_share(user_id, channel_id)
+
+
+def stop_screen_share(user_id: int, channel_id: int) -> bool:
+    """Stop screen sharing for a user."""
+    return signaling.stop_screen_share(user_id, channel_id)
+
+
+def get_connection_quality(user_id: int, channel_id: int):
+    """Get connection quality metrics for a user."""
+    return signaling.get_connection_quality(user_id, channel_id)

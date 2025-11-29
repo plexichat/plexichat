@@ -21,6 +21,14 @@ class GatewayOpcode(IntEnum):
     # PlexiChat extensions for server status
     SERVER_STATUS = 12
     VERSION_CHECK = 13
+    # PlexiChat voice signaling opcodes
+    VOICE_CONNECT = 20
+    VOICE_DISCONNECT = 21
+    VOICE_SDP_OFFER = 22
+    VOICE_SDP_ANSWER = 23
+    VOICE_ICE_CANDIDATE = 24
+    VOICE_SPEAKING = 25
+    VOICE_QUALITY = 26
 
 
 class GatewayCloseCode(IntEnum):
