@@ -343,7 +343,9 @@ class ThreadManager:
 
         logger.debug(f"User {user_id} joined thread {thread_id}")
 
-        return self._get_member(thread_id, user_id)
+        member = self._get_member(thread_id, user_id)
+        assert member is not None
+        return member
 
     def leave_thread(self, user_id: int, thread_id: int) -> bool:
         """
@@ -411,7 +413,9 @@ class ThreadManager:
 
         logger.debug(f"User {member_user_id} added to thread {thread_id} by {user_id}")
 
-        return self._get_member(thread_id, member_user_id)
+        member = self._get_member(thread_id, member_user_id)
+        assert member is not None
+        return member
 
     def remove_member(self, user_id: int, thread_id: int, member_user_id: int) -> bool:
         """
