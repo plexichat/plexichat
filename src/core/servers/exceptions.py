@@ -144,3 +144,55 @@ class OwnerCannotLeaveError(ServerError):
 class CannotModifyOwnerError(ServerError):
     """Cannot kick, ban, or modify the server owner."""
     pass
+
+
+class ScheduledEventNotFoundError(ServerError):
+    """Scheduled event does not exist."""
+    pass
+
+
+class ScheduledEventError(ServerError):
+    """Error with scheduled event operation."""
+    pass
+
+
+class InvalidEventTimeError(ServerError):
+    """Event time is invalid."""
+    
+    def __init__(self, message: str, start_time: int = 0, end_time: int = 0):
+        super().__init__(message)
+        self.start_time = start_time
+        self.end_time = end_time
+
+
+class TemplateNotFoundError(ServerError):
+    """Template does not exist."""
+    pass
+
+
+class TemplateError(ServerError):
+    """Error with template operation."""
+    pass
+
+
+class InvalidTemplateCodeError(ServerError):
+    """Template code is invalid."""
+    
+    def __init__(self, message: str, code: str = ""):
+        super().__init__(message)
+        self.code = code
+
+
+class WelcomeScreenNotFoundError(ServerError):
+    """Welcome screen does not exist."""
+    pass
+
+
+class OnboardingStepNotFoundError(ServerError):
+    """Onboarding step does not exist."""
+    pass
+
+
+class OnboardingError(ServerError):
+    """Error with onboarding operation."""
+    pass

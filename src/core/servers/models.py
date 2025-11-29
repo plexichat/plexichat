@@ -15,6 +15,36 @@ class ChannelType(Enum):
     STAGE = "stage"
 
 
+class ScheduledEventType(Enum):
+    """Types of scheduled events."""
+    VOICE = "voice"
+    STAGE = "stage"
+    EXTERNAL = "external"
+
+
+class ScheduledEventStatus(Enum):
+    """Status of scheduled events."""
+    SCHEDULED = "scheduled"
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
+class RSVPStatus(Enum):
+    """RSVP status for events."""
+    INTERESTED = "interested"
+    GOING = "going"
+
+
+class OnboardingStepType(Enum):
+    """Types of onboarding steps."""
+    SELECT_ROLES = "select_roles"
+    READ_RULES = "read_rules"
+    CUSTOMIZE_PROFILE = "customize_profile"
+    VISIT_CHANNEL = "visit_channel"
+    CUSTOM = "custom"
+
+
 class AuditLogAction(Enum):
     """Types of audit log actions."""
     SERVER_CREATE = "server_create"
@@ -39,6 +69,13 @@ class AuditLogAction(Enum):
     OVERRIDE_CREATE = "override_create"
     OVERRIDE_UPDATE = "override_update"
     OVERRIDE_DELETE = "override_delete"
+    EVENT_CREATE = "event_create"
+    EVENT_UPDATE = "event_update"
+    EVENT_DELETE = "event_delete"
+    TEMPLATE_CREATE = "template_create"
+    TEMPLATE_DELETE = "template_delete"
+    WELCOME_SCREEN_UPDATE = "welcome_screen_update"
+    ONBOARDING_UPDATE = "onboarding_update"
 
 
 class PermissionValue(Enum):
@@ -196,6 +233,106 @@ class AuditLogEntry:
     created_at: int = 0
 
 
+@dataclass
+class ScheduledEvent:
+    """Represents a scheduled server event."""
+    id: int
+    server_id: int
+    creator_id: int
+    name: str
+    description: Optional[str] = None
+    event_type: ScheduledEventType = ScheduledEventType.VOICE
+    channel_id: Optional[int] = None
+    location: Optional[str] = None
+    start_time: int = 0
+    end_time: Optional[int] = None
+    timezone: str = "UTC"
+    status: ScheduledEventStatus = ScheduledEventStatus.SCHEDULED
+    image_url: Optional[str] = None
+    interested_count: int = 0
+    going_count: int = 0
+    rrule: Optional[str] = None
+    parent_event_id: Optional[int] = None
+    created_at: int = 0
+    updated_at: int = 0
+
+
+@dataclass
+class EventRSVP:
+    """Represents an RSVP to a scheduled event."""
+    id: int
+    event_id: int
+    user_id: int
+    status: RSVPStatus
+    created_at: int = 0
+    updated_at: int = 0
+
+
+@dataclass
+class ServerTemplate:
+    """Represents a server template."""
+    id: int
+    name: str
+    description: Optional[str] = None
+    creator_id: int = 0
+    source_server_id: Optional[int] = None
+    code: str = ""
+    usage_count: int = 0
+    is_public: bool = False
+    created_at: int = 0
+    updated_at: int = 0
+
+
+@dataclass
+class TemplateData:
+    """Represents the data snapshot of a template."""
+    id: int
+    template_id: int
+    channels: List[Dict[str, Any]] = field(default_factory=list)
+    categories: List[Dict[str, Any]] = field(default_factory=list)
+    roles: List[Dict[str, Any]] = field(default_factory=list)
+    created_at: int = 0
+
+
+@dataclass
+class WelcomeScreen:
+    """Represents a server welcome screen."""
+    id: int
+    server_id: int
+    description: Optional[str] = None
+    enabled: bool = True
+    welcome_channels: List[Dict[str, Any]] = field(default_factory=list)
+    created_at: int = 0
+    updated_at: int = 0
+
+
+@dataclass
+class OnboardingStep:
+    """Represents an onboarding step."""
+    id: int
+    server_id: int
+    step_type: OnboardingStepType
+    title: str
+    description: Optional[str] = None
+    position: int = 0
+    required: bool = False
+    options: Optional[Dict[str, Any]] = None
+    created_at: int = 0
+    updated_at: int = 0
+
+
+@dataclass
+class OnboardingProgress:
+    """Represents a user's onboarding progress."""
+    id: int
+    server_id: int
+    user_id: int
+    completed_steps: List[int] = field(default_factory=list)
+    completed: bool = False
+    started_at: int = 0
+    completed_at: Optional[int] = None
+
+
 # Server permission definitions
 SERVER_PERMISSIONS = {
     # Server management
@@ -229,6 +366,13 @@ SERVER_PERMISSIONS = {
     "voice.mute_members": "Mute other members",
     "voice.deafen_members": "Deafen other members",
     "voice.move_members": "Move members between channels",
+    # Event permissions
+    "events.manage": "Create, edit, delete scheduled events",
+    "events.view": "View scheduled events",
+    # Template permissions
+    "templates.manage": "Create and manage server templates",
+    # Onboarding permissions
+    "onboarding.manage": "Manage welcome screen and onboarding",
     # Administrator (bypasses all permissions)
     "administrator": "Full administrator access",
 }
@@ -244,4 +388,5 @@ DEFAULT_EVERYONE_PERMISSIONS = {
     "voice.connect": True,
     "voice.speak": True,
     "invites.create": True,
+    "events.view": True,
 }
