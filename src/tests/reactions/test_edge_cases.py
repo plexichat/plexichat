@@ -200,6 +200,7 @@ class TestConcurrentOperations:
         msg_reactions = reactions.get_reactions(owner.id, msg.id)
         concurrent = next((r for r in msg_reactions.reactions if r.emoji == "concurrent"), None)
 
+        assert concurrent is not None
         assert concurrent.count == 3
 
     def test_add_remove_rapid_succession(self, fresh_users_with_dm):
