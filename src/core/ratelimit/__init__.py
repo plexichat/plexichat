@@ -17,7 +17,7 @@ Usage:
     )
 """
 
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Callable
 
 from .models import (
     RateLimitBucket,
@@ -73,7 +73,7 @@ def setup(
     global_config: Optional[RateLimitConfig] = None,
     bot_multiplier: float = 1.2,
     webhook_multiplier: float = 1.0,
-    bypass_check: Optional[callable] = None,
+    bypass_check: Optional[Callable[..., bool]] = None,
     enable_global_limit: bool = True,
 ) -> None:
     """
@@ -111,6 +111,7 @@ def _ensure_setup() -> None:
 def get_manager() -> RateLimitManager:
     """Get the rate limit manager instance."""
     _ensure_setup()
+    assert _manager is not None
     return _manager
 
 
@@ -143,6 +144,7 @@ def check_rate_limit(
         RateLimitResult with allowed status and headers.
     """
     _ensure_setup()
+    assert _manager is not None
     return _manager.check_rate_limit(
         user_id=user_id,
         route=route,
@@ -167,6 +169,7 @@ def get_headers(result: RateLimitResult) -> Dict[str, str]:
         Dictionary of HTTP headers.
     """
     _ensure_setup()
+    assert _manager is not None
     return _manager.get_headers(result)
 
 
@@ -178,6 +181,7 @@ def reset_bucket(bucket_key: str) -> None:
         bucket_key: The bucket identifier to reset.
     """
     _ensure_setup()
+    assert _manager is not None
     _manager.reset_bucket(bucket_key)
 
 
@@ -189,12 +193,14 @@ def reset_user(user_id: int) -> None:
         user_id: User ID to reset.
     """
     _ensure_setup()
+    assert _manager is not None
     _manager.reset_user(user_id)
 
 
 def reset_all() -> None:
     """Reset all rate limit buckets."""
     _ensure_setup()
+    assert _manager is not None
     _manager.reset_all()
 
 
@@ -209,10 +215,11 @@ def get_bucket_info(bucket_key: str) -> Optional[RateLimitBucket]:
         Bucket information or None if not found.
     """
     _ensure_setup()
+    assert _manager is not None
     return _manager.get_bucket_info(bucket_key)
 
 
-def set_bypass_check(bypass_check: callable) -> None:
+def set_bypass_check(bypass_check: Callable[..., bool]) -> None:
     """
     Set the bypass check function.
 
@@ -220,6 +227,7 @@ def set_bypass_check(bypass_check: callable) -> None:
         bypass_check: Callable(user_id, is_admin, is_internal) -> bool.
     """
     _ensure_setup()
+    assert _manager is not None
     _manager.set_bypass_check(bypass_check)
 
 

@@ -162,7 +162,10 @@ class MessagingManager:
         
         logger.debug(f"Created DM conversation {conv_id} between {user_id} and {recipient_id}")
         
-        return self.get_conversation(conv_id, user_id)
+        conversation = self.get_conversation(conv_id, user_id)
+        if conversation is None:
+            raise ConversationNotFoundError(f"Failed to retrieve created conversation {conv_id}")
+        return conversation
     
     def _get_existing_dm(self, user_id: int, recipient_id: int) -> Optional[Conversation]:
         """Get existing DM between two users."""
@@ -246,7 +249,10 @@ class MessagingManager:
         
         logger.debug(f"Created group conversation {conv_id} with {len(participants)} participants")
         
-        return self.get_conversation(conv_id, owner_id)
+        conversation = self.get_conversation(conv_id, owner_id)
+        if conversation is None:
+            raise ConversationNotFoundError(f"Failed to retrieve created conversation {conv_id}")
+        return conversation
 
     def create_server_channel_conversation(self, server_id: int, channel_id: int) -> Conversation:
         """Create a conversation for a server channel."""
@@ -376,7 +382,10 @@ class MessagingManager:
                 tuple(params)
             )
         
-        return self.get_conversation(conversation_id, user_id)
+        conversation = self.get_conversation(conversation_id, user_id)
+        if conversation is None:
+            raise ConversationNotFoundError(f"Failed to retrieve updated conversation {conversation_id}")
+        return conversation
     
     def delete_conversation(self, user_id: int, conversation_id: int) -> bool:
         """Delete a conversation (soft delete)."""

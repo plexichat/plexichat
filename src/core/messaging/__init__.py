@@ -87,6 +87,7 @@ def _get_manager():
     """Get the messaging manager, ensuring setup was called."""
     if not _setup_complete:
         raise RuntimeError("Messaging not initialized. Call messaging.setup(db) first.")
+    assert _manager is not None
     return _manager
 
 

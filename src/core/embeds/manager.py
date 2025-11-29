@@ -113,7 +113,7 @@ class EmbedManager:
             (conversation_id,)
         )
 
-    def _check_embed_links_permission(self, user_id: int, server_id: int, channel_id: int = None) -> bool:
+    def _check_embed_links_permission(self, user_id: int, server_id: int, channel_id: Optional[int] = None) -> bool:
         """Check if user has embed_links permission in server."""
         if not self._servers:
             return True
@@ -183,6 +183,7 @@ class EmbedManager:
             )
 
         sanitized = validation.sanitized_data
+        assert sanitized is not None
         now = self._get_timestamp()
         embed_id = self._generate_id()
 
@@ -233,7 +234,9 @@ class EmbedManager:
 
         logger.debug(f"Embed {embed_id} created by user {user_id}")
 
-        return self.get_embed(embed_id)
+        result = self.get_embed(embed_id)
+        assert result is not None
+        return result
 
     def get_embed(self, embed_id: int) -> Optional[Embed]:
         """Get an embed by ID."""
@@ -317,6 +320,7 @@ class EmbedManager:
             )
 
         sanitized = validation.sanitized_data
+        assert sanitized is not None
 
         self._db.execute(
             """UPDATE embed_embeds SET

@@ -104,6 +104,7 @@ def _get_manager():
     """Get the auth manager, ensuring setup was called."""
     if not _setup_complete:
         raise RuntimeError("Auth not initialized. Call auth.setup(db) first.")
+    assert _manager is not None
     return _manager
 
 

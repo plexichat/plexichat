@@ -1,0 +1,15 @@
+{
+  "include": ["src"],
+  "extraPaths": [
+    "src",
+    "src/utils/common-utils",
+    "src/utils"
+  ],
+  "pythonVersion": "3.13",
+  "typeCheckingMode": "standard",
+  "reportMissingImports": "error",
+  "reportOptionalMemberAccess": "error",
+  "reportOptionalSubscript": "error",
+  "reportArgumentType": "error",
+  "reportReturnType": "error"
+}

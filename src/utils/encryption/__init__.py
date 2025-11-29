@@ -81,6 +81,7 @@ def _get_manager() -> EncryptionManager:
         _encryption_manager = EncryptionManager()
         _setup_called = True
     
+    assert _encryption_manager is not None
     return _encryption_manager
 
 def _get_snowflake() -> SnowflakeGenerator:

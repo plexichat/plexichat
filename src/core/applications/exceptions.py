@@ -2,6 +2,8 @@
 Application exceptions - All application-related error types.
 """
 
+from typing import Optional
+
 
 class ApplicationError(Exception):
     """Base exception for all application errors."""
@@ -44,7 +46,7 @@ class CommandLimitError(ApplicationError):
 class CommandValidationError(ApplicationError):
     """Command data failed validation."""
     
-    def __init__(self, message: str, issues: list = None):
+    def __init__(self, message: str, issues: Optional[list] = None):
         super().__init__(message)
         self.issues = issues or []
 
@@ -76,7 +78,7 @@ class InteractionAlreadyRespondedError(ApplicationError):
 class InteractionValidationError(ApplicationError):
     """Interaction data failed validation."""
     
-    def __init__(self, message: str, issues: list = None):
+    def __init__(self, message: str, issues: Optional[list] = None):
         super().__init__(message)
         self.issues = issues or []
 
@@ -84,7 +86,7 @@ class InteractionValidationError(ApplicationError):
 class ComponentValidationError(ApplicationError):
     """Component data failed validation."""
     
-    def __init__(self, message: str, issues: list = None):
+    def __init__(self, message: str, issues: Optional[list] = None):
         super().__init__(message)
         self.issues = issues or []
 
@@ -92,7 +94,7 @@ class ComponentValidationError(ApplicationError):
 class OAuth2Error(ApplicationError):
     """Base exception for OAuth2 errors."""
     
-    def __init__(self, error: str, error_description: str = None):
+    def __init__(self, error: str, error_description: Optional[str] = None):
         super().__init__(error_description or error)
         self.error = error
         self.error_description = error_description
@@ -101,28 +103,28 @@ class OAuth2Error(ApplicationError):
 class InvalidClientError(OAuth2Error):
     """Invalid client credentials."""
     
-    def __init__(self, description: str = None):
+    def __init__(self, description: Optional[str] = None):
         super().__init__("invalid_client", description or "Invalid client credentials")
 
 
 class InvalidGrantError(OAuth2Error):
     """Invalid authorization grant."""
     
-    def __init__(self, description: str = None):
+    def __init__(self, description: Optional[str] = None):
         super().__init__("invalid_grant", description or "Invalid authorization grant")
 
 
 class InvalidScopeError(OAuth2Error):
     """Invalid or unknown scope."""
     
-    def __init__(self, description: str = None):
+    def __init__(self, description: Optional[str] = None):
         super().__init__("invalid_scope", description or "Invalid or unknown scope")
 
 
 class InvalidRedirectUriError(OAuth2Error):
     """Invalid redirect URI."""
     
-    def __init__(self, description: str = None):
+    def __init__(self, description: Optional[str] = None):
         super().__init__("invalid_request", description or "Invalid redirect URI")
 
 
@@ -165,7 +167,7 @@ class WebhookSignatureError(ApplicationError):
 class WebhookDeliveryError(ApplicationError):
     """Webhook delivery failed."""
     
-    def __init__(self, message: str, status_code: int = None):
+    def __init__(self, message: str, status_code: Optional[int] = None):
         super().__init__(message)
         self.status_code = status_code
 
@@ -181,6 +183,6 @@ class RateLimitError(ApplicationError):
 class PermissionDeniedError(ApplicationError):
     """User does not have permission to perform this action."""
     
-    def __init__(self, message: str, permission: str = None):
+    def __init__(self, message: str, permission: Optional[str] = None):
         super().__init__(message)
         self.permission = permission

@@ -233,7 +233,9 @@ class VoiceManager:
 
         logger.debug(f"User {user_id} joined voice channel {channel_id}")
 
-        return self.get_voice_state(user_id)
+        result = self.get_voice_state(user_id)
+        assert result is not None
+        return result
 
     def leave_channel(self, user_id: int) -> bool:
         """
@@ -345,7 +347,9 @@ class VoiceManager:
             (1 if muted else 0, now, user_id)
         )
 
-        return self.get_voice_state(user_id)
+        result = self.get_voice_state(user_id)
+        assert result is not None
+        return result
 
     def set_self_deaf(self, user_id: int, deafened: bool) -> VoiceState:
         """Set self-deaf state."""
@@ -360,7 +364,9 @@ class VoiceManager:
             (1 if deafened else 0, mute_val, now, user_id)
         )
 
-        return self.get_voice_state(user_id)
+        result = self.get_voice_state(user_id)
+        assert result is not None
+        return result
 
     def set_streaming(self, user_id: int, streaming: bool) -> VoiceState:
         """Set streaming (screen share) state."""
@@ -374,7 +380,9 @@ class VoiceManager:
             (1 if streaming else 0, now, user_id)
         )
 
-        return self.get_voice_state(user_id)
+        result = self.get_voice_state(user_id)
+        assert result is not None
+        return result
 
     def set_video(self, user_id: int, video: bool) -> VoiceState:
         """Set video (camera) state."""
@@ -388,7 +396,9 @@ class VoiceManager:
             (1 if video else 0, now, user_id)
         )
 
-        return self.get_voice_state(user_id)
+        result = self.get_voice_state(user_id)
+        assert result is not None
+        return result
 
     def update_voice_state(
         self,
@@ -436,7 +446,9 @@ class VoiceManager:
                 tuple(params)
             )
 
-        return self.get_voice_state(user_id)
+        result = self.get_voice_state(user_id)
+        assert result is not None
+        return result
 
     # === Server Moderation ===
 
@@ -459,7 +471,9 @@ class VoiceManager:
 
         logger.debug(f"User {target_user_id} server muted by {moderator_id}")
 
-        return self.get_voice_state(target_user_id)
+        result = self.get_voice_state(target_user_id)
+        assert result is not None
+        return result
 
     def server_unmute(self, moderator_id: int, target_user_id: int, server_id: int) -> VoiceState:
         """Server unmute a user (moderator action)."""
@@ -478,7 +492,9 @@ class VoiceManager:
             (now, target_user_id)
         )
 
-        return self.get_voice_state(target_user_id)
+        result = self.get_voice_state(target_user_id)
+        assert result is not None
+        return result
 
     def server_deaf(self, moderator_id: int, target_user_id: int, server_id: int) -> VoiceState:
         """Server deafen a user (moderator action)."""
@@ -499,7 +515,9 @@ class VoiceManager:
 
         logger.debug(f"User {target_user_id} server deafened by {moderator_id}")
 
-        return self.get_voice_state(target_user_id)
+        result = self.get_voice_state(target_user_id)
+        assert result is not None
+        return result
 
     def server_undeaf(self, moderator_id: int, target_user_id: int, server_id: int) -> VoiceState:
         """Server undeafen a user (moderator action)."""
@@ -518,7 +536,9 @@ class VoiceManager:
             (now, target_user_id)
         )
 
-        return self.get_voice_state(target_user_id)
+        result = self.get_voice_state(target_user_id)
+        assert result is not None
+        return result
 
     def move_member(self, moderator_id: int, target_user_id: int, channel_id: int) -> VoiceState:
         """Move a member to a different voice channel (moderator action)."""
@@ -553,7 +573,9 @@ class VoiceManager:
 
         logger.debug(f"User {target_user_id} moved to channel {channel_id} by {moderator_id}")
 
-        return self.get_voice_state(target_user_id)
+        result = self.get_voice_state(target_user_id)
+        assert result is not None
+        return result
 
     def disconnect_member(self, moderator_id: int, target_user_id: int, server_id: int) -> bool:
         """Disconnect a member from voice (moderator action)."""
@@ -628,7 +650,9 @@ class VoiceManager:
 
         logger.debug(f"Stage started in channel {channel_id} by user {user_id}")
 
-        return self.get_stage(channel_id)
+        result = self.get_stage(channel_id)
+        assert result is not None
+        return result
 
     def end_stage(self, user_id: int, channel_id: int) -> bool:
         """
@@ -818,7 +842,9 @@ class VoiceManager:
 
         logger.debug(f"User {target_user_id} invited to speak by {moderator_id}")
 
-        return self.get_voice_state(target_user_id)
+        result = self.get_voice_state(target_user_id)
+        assert result is not None
+        return result
 
     def move_to_audience(self, moderator_id: int, target_user_id: int, channel_id: int) -> VoiceState:
         """
@@ -860,7 +886,9 @@ class VoiceManager:
 
         logger.debug(f"User {target_user_id} moved to audience by {moderator_id}")
 
-        return self.get_voice_state(target_user_id)
+        result = self.get_voice_state(target_user_id)
+        assert result is not None
+        return result
 
     def get_speaker_requests(self, channel_id: int) -> List[SpeakerRequest]:
         """Get all pending speaker requests for a stage channel."""
@@ -926,7 +954,9 @@ class VoiceManager:
             (max(0, limit), channel_id)
         )
 
-        return self.get_voice_channel(channel_id, user_id)
+        result = self.get_voice_channel(channel_id, user_id)
+        assert result is not None
+        return result
 
     def set_bitrate(self, user_id: int, channel_id: int, bitrate: int) -> VoiceChannel:
         """
@@ -959,7 +989,9 @@ class VoiceManager:
             (bitrate, channel_id)
         )
 
-        return self.get_voice_channel(channel_id, user_id)
+        result = self.get_voice_channel(channel_id, user_id)
+        assert result is not None
+        return result
 
     def set_voice_region(self, user_id: int, channel_id: int, region_id: Optional[str]) -> VoiceChannel:
         """
@@ -995,7 +1027,9 @@ class VoiceManager:
             (region_id, channel_id)
         )
 
-        return self.get_voice_channel(channel_id, user_id)
+        result = self.get_voice_channel(channel_id, user_id)
+        assert result is not None
+        return result
 
     def get_voice_regions(self) -> List[VoiceRegion]:
         """Get available voice regions."""

@@ -4,6 +4,8 @@ Authentication exceptions.
 All auth-related errors inherit from AuthError for easy catching.
 """
 
+from typing import Optional
+
 
 class AuthError(Exception):
     """Base exception for all authentication errors."""
@@ -18,7 +20,7 @@ class InvalidCredentialsError(AuthError):
 class AccountLockedError(AuthError):
     """Raised when account is temporarily locked due to failed attempts."""
     
-    def __init__(self, message: str, locked_until: int = None):
+    def __init__(self, message: str, locked_until: Optional[int] = None):
         super().__init__(message)
         self.locked_until = locked_until
 
@@ -65,7 +67,7 @@ class PermissionDeniedError(AuthError):
 class UserExistsError(AuthError):
     """Raised when trying to create a user that already exists."""
     
-    def __init__(self, message: str, field: str = None):
+    def __init__(self, message: str, field: Optional[str] = None):
         super().__init__(message)
         self.field = field  # 'username' or 'email'
 

@@ -1,0 +1,1038 @@
+f:\coding\plexichat\src\api\app.py
+  f:\coding\plexichat\src\api\app.py:48:13 - error: Arguments for ParamSpec "P@add_middleware" are missing (reportCallIssue)
+  f:\coding\plexichat\src\api\app.py:48:32 - error: Argument of type "RateLimitMiddleware" cannot be assigned to parameter "middleware_class" of type "_MiddlewareFactory[P@add_middleware]" in function "add_middleware"
+  ┬á┬á"RateLimitMiddleware" is incompatible with protocol "_MiddlewareFactory[P@add_middleware]"
+  ┬á┬á┬á┬á"__call__" is an incompatible type
+  ┬á┬á┬á┬á┬á┬áType "(scope: Scope, receive: Receive, send: Send) -> CoroutineType[Any, Any, None]" is not assignable to type "(app: ASGIApp, /, **P@_MiddlewareFactory) -> ASGIApp"
+  ┬á┬á┬á┬á┬á┬á┬á┬áParameter 1: type "ASGIApp" is incompatible with type "Scope"
+  ┬á┬á┬á┬á┬á┬á┬á┬á┬á┬á"FunctionType" is not assignable to "MutableMapping[str, Any]"
+  ┬á┬á┬á┬á┬á┬á┬á┬áFunction return type "CoroutineType[Any, Any, None]" is incompatible with type "ASGIApp"
+  ┬á┬á┬á┬á┬á┬á┬á┬á┬á┬áType "CoroutineType[Any, Any, None]" is not assignable to type "ASGIApp" (reportArgumentType)
+f:\coding\plexichat\src\api\middleware\rate_limiting.py
+  f:\coding\plexichat\src\api\middleware\rate_limiting.py:87:12 - error: Type "type[ConfiguredRateLimitMiddleware]" is not assignable to return type "RateLimitMiddleware"
+  ┬á┬áType "type[ConfiguredRateLimitMiddleware]" is not assignable to type "RateLimitMiddleware" (reportReturnType)
+f:\coding\plexichat\src\api\routes\auth.py
+  f:\coding\plexichat\src\api\routes\auth.py:61:16 - error: Arguments missing for parameters "challenge_token", "methods", "expires_in" (reportCallIssue)
+  f:\coding\plexichat\src\api\routes\auth.py:98:20 - error: Arguments missing for parameters "token", "user" (reportCallIssue)
+  f:\coding\plexichat\src\api\routes\auth.py:105:16 - error: Arguments missing for parameters "challenge_token", "methods", "expires_in" (reportCallIssue)
+  f:\coding\plexichat\src\api\routes\auth.py:135:16 - error: Arguments missing for parameters "challenge_token", "methods", "expires_in" (reportCallIssue)
+f:\coding\plexichat\src\api\routes\channels.py
+  f:\coding\plexichat\src\api\routes\channels.py:18:37 - error: "value" is not a known attribute of "None" (reportOptionalMemberAccess)
+f:\coding\plexichat\src\api\routes\presence.py
+  f:\coding\plexichat\src\api\routes\presence.py:19:25 - error: "value" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\api\routes\presence.py:99:20 - error: Arguments missing for parameters "custom_status", "custom_emoji", "last_seen" (reportCallIssue)
+  f:\coding\plexichat\src\api\routes\presence.py:107:20 - error: Arguments missing for parameters "custom_status", "custom_emoji", "last_seen" (reportCallIssue)
+f:\coding\plexichat\src\api\routes\relationships.py
+  f:\coding\plexichat\src\api\routes\relationships.py:23:25 - error: "value" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\api\routes\relationships.py:186:29 - error: "value" is not a known attribute of "None" (reportOptionalMemberAccess)
+f:\coding\plexichat\src\api\routes\servers.py
+  f:\coding\plexichat\src\api\routes\servers.py:37:37 - error: "value" is not a known attribute of "None" (reportOptionalMemberAccess)
+f:\coding\plexichat\src\api\routes\version.py
+  f:\coding\plexichat\src\api\routes\version.py:109:16 - error: Argument missing for parameter "message" (reportCallIssue)
+  f:\coding\plexichat\src\api\routes\version.py:122:70 - error: Argument of type "Version | None" cannot be assigned to parameter "version" of type "Version" in function "format_version"
+  ┬á┬áType "Version | None" is not assignable to type "Version"
+  ┬á┬á┬á┬á"None" is not assignable to "Version" (reportArgumentType)
+f:\coding\plexichat\src\api\schemas\auth.py
+  f:\coding\plexichat\src\api\schemas\auth.py:48:16 - error: Type "str | None" is not assignable to return type "str"
+  ┬á┬áType "str | None" is not assignable to type "str"
+  ┬á┬á┬á┬á"None" is not assignable to "str" (reportReturnType)
+f:\coding\plexichat\src\api\schemas\common.py
+  f:\coding\plexichat\src\api\schemas\common.py:67:16 - error: Type "None" is not assignable to return type "str"
+  ┬á┬á"None" is not assignable to "str" (reportReturnType)
+f:\coding\plexichat\src\api\schemas\messages.py
+  f:\coding\plexichat\src\api\schemas\messages.py:48:16 - error: Type "str | None" is not assignable to return type "str"
+  ┬á┬áType "str | None" is not assignable to type "str"
+  ┬á┬á┬á┬á"None" is not assignable to "str" (reportReturnType)
+f:\coding\plexichat\src\api\schemas\presence.py
+  f:\coding\plexichat\src\api\schemas\presence.py:30:16 - error: Type "str | None" is not assignable to return type "str"
+  ┬á┬áType "str | None" is not assignable to type "str"
+  ┬á┬á┬á┬á"None" is not assignable to "str" (reportReturnType)
+f:\coding\plexichat\src\api\schemas\reactions.py
+  f:\coding\plexichat\src\api\schemas\reactions.py:27:16 - error: Type "str | None" is not assignable to return type "str"
+  ┬á┬áType "str | None" is not assignable to type "str"
+  ┬á┬á┬á┬á"None" is not assignable to "str" (reportReturnType)
+  f:\coding\plexichat\src\api\schemas\reactions.py:40:16 - error: Type "str | None" is not assignable to return type "str"
+  ┬á┬áType "str | None" is not assignable to type "str"
+  ┬á┬á┬á┬á"None" is not assignable to "str" (reportReturnType)
+f:\coding\plexichat\src\api\schemas\relationships.py
+  f:\coding\plexichat\src\api\schemas\relationships.py:34:16 - error: Type "str | None" is not assignable to return type "str"
+  ┬á┬áType "str | None" is not assignable to type "str"
+  ┬á┬á┬á┬á"None" is not assignable to "str" (reportReturnType)
+  f:\coding\plexichat\src\api\schemas\relationships.py:50:16 - error: Type "str | None" is not assignable to return type "str"
+  ┬á┬áType "str | None" is not assignable to type "str"
+  ┬á┬á┬á┬á"None" is not assignable to "str" (reportReturnType)
+f:\coding\plexichat\src\api\schemas\servers.py
+  f:\coding\plexichat\src\api\schemas\servers.py:41:16 - error: Type "str | None" is not assignable to return type "str"
+  ┬á┬áType "str | None" is not assignable to type "str"
+  ┬á┬á┬á┬á"None" is not assignable to "str" (reportReturnType)
+  f:\coding\plexichat\src\api\schemas\servers.py:90:16 - error: Type "str | None" is not assignable to return type "str"
+  ┬á┬áType "str | None" is not assignable to type "str"
+  ┬á┬á┬á┬á"None" is not assignable to "str" (reportReturnType)
+  f:\coding\plexichat\src\api\schemas\servers.py:105:16 - error: Type "str | None" is not assignable to return type "str"
+  ┬á┬áType "str | None" is not assignable to type "str"
+  ┬á┬á┬á┬á"None" is not assignable to "str" (reportReturnType)
+  f:\coding\plexichat\src\api\schemas\servers.py:125:16 - error: Type "str | None" is not assignable to return type "str"
+  ┬á┬áType "str | None" is not assignable to type "str"
+  ┬á┬á┬á┬á"None" is not assignable to "str" (reportReturnType)
+f:\coding\plexichat\src\api\schemas\users.py
+  f:\coding\plexichat\src\api\schemas\users.py:31:16 - error: Type "str | None" is not assignable to return type "str"
+  ┬á┬áType "str | None" is not assignable to type "str"
+  ┬á┬á┬á┬á"None" is not assignable to "str" (reportReturnType)
+f:\coding\plexichat\src\api\schemas\webhooks.py
+  f:\coding\plexichat\src\api\schemas\webhooks.py:43:16 - error: Type "str | None" is not assignable to return type "str"
+  ┬á┬áType "str | None" is not assignable to type "str"
+  ┬á┬á┬á┬á"None" is not assignable to "str" (reportReturnType)
+  f:\coding\plexichat\src\api\schemas\webhooks.py:71:16 - error: Type "str | None" is not assignable to return type "str"
+  ┬á┬áType "str | None" is not assignable to type "str"
+  ┬á┬á┬á┬á"None" is not assignable to "str" (reportReturnType)
+f:\coding\plexichat\src\api\websocket\__init__.py
+  f:\coding\plexichat\src\api\websocket\__init__.py:113:12 - error: Type "SessionManager | None" is not assignable to return type "SessionManager"
+  ┬á┬áType "SessionManager | None" is not assignable to type "SessionManager"
+  ┬á┬á┬á┬á"None" is not assignable to "SessionManager" (reportReturnType)
+  f:\coding\plexichat\src\api\websocket\__init__.py:119:12 - error: Type "GatewayDispatcher | None" is not assignable to return type "GatewayDispatcher"
+  ┬á┬áType "GatewayDispatcher | None" is not assignable to type "GatewayDispatcher"
+  ┬á┬á┬á┬á"None" is not assignable to "GatewayDispatcher" (reportReturnType)
+f:\coding\plexichat\src\api\websocket\connection.py
+  f:\coding\plexichat\src\api\websocket\connection.py:46:29 - error: Expected class but received "(level: int = -1, method: int = 8, wbits: int = 15, memLevel: int = 8, strategy: int = 0, zdict: ReadableBuffer | None = None) -> _Compress" (reportGeneralTypeIssues)
+f:\coding\plexichat\src\api\websocket\dispatcher.py
+  f:\coding\plexichat\src\api\websocket\dispatcher.py:154:17 - error: Argument of type "str" cannot be assigned to parameter "value" of type "int" in function "__setitem__"
+  ┬á┬á"str" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\api\websocket\dispatcher.py:155:13 - error: Argument of type "Dict[str, Any]" cannot be assigned to parameter "value" of type "int" in function "__setitem__"
+  ┬á┬á"Dict[str, Any]" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\api\websocket\dispatcher.py:160:13 - error: Argument of type "Dict[str, Any] | None" cannot be assigned to parameter "value" of type "int" in function "__setitem__"
+  ┬á┬áType "Dict[str, Any] | None" is not assignable to type "int"
+  ┬á┬á┬á┬á"Dict[str, Any]" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\api\websocket\dispatcher.py:211:13 - error: Argument of type "bool" cannot be assigned to parameter "data" of type "Dict[str, Any] | None" in function "dispatch_raw"
+  ┬á┬áType "bool" is not assignable to type "Dict[str, Any] | None"
+  ┬á┬á┬á┬á"bool" is not assignable to "Dict[str, Any]"
+  ┬á┬á┬á┬á"bool" is not assignable to "None" (reportArgumentType)
+f:\coding\plexichat\src\api\websocket\handlers.py
+  f:\coding\plexichat\src\api\websocket\handlers.py:246:54 - error: Argument of type "int | None" cannot be assigned to parameter "user_id" of type "int" in function "create_voice_connection"
+  ┬á┬áType "int | None" is not assignable to type "int"
+  ┬á┬á┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\api\websocket\handlers.py:269:40 - error: Argument of type "int | None" cannot be assigned to parameter "user_id" of type "int" in function "disconnect_voice"
+  ┬á┬áType "int | None" is not assignable to type "int"
+  ┬á┬á┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\api\websocket\handlers.py:296:49 - error: Argument of type "int | None" cannot be assigned to parameter "user_id" of type "int" in function "handle_sdp_offer"
+  ┬á┬áType "int | None" is not assignable to type "int"
+  ┬á┬á┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\api\websocket\handlers.py:325:17 - error: Argument of type "int | None" cannot be assigned to parameter "user_id" of type "int" in function "handle_ice_candidate"
+  ┬á┬áType "int | None" is not assignable to type "int"
+  ┬á┬á┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\api\websocket\handlers.py:364:21 - error: Argument of type "int | None" cannot be assigned to parameter "user_id" of type "int" in function "update_quality_hint"
+  ┬á┬áType "int | None" is not assignable to type "int"
+  ┬á┬á┬á┬á"None" is not assignable to "int" (reportArgumentType)
+f:\coding\plexichat\src\api\websocket\opcodes.py
+  f:\coding\plexichat\src\api\websocket\opcodes.py:102:12 - error: No overloads for "get" match the provided arguments (reportCallIssue)
+  f:\coding\plexichat\src\api\websocket\opcodes.py:102:36 - error: Argument of type "int" cannot be assigned to parameter "key" of type "GatewayCloseCode" in function "get"
+  ┬á┬á"int" is not assignable to "GatewayCloseCode" (reportArgumentType)
+f:\coding\plexichat\src\core\applications\commands\options.py
+  f:\coding\plexichat\src\core\applications\commands\options.py:265:25 - error: Argument of type "CommandOptionType | Any | None" cannot be assigned to parameter "option_type" of type "CommandOptionType" in function "__init__"
+  ┬á┬áType "CommandOptionType | Any | None" is not assignable to type "CommandOptionType"
+  ┬á┬á┬á┬á"None" is not assignable to "CommandOptionType" (reportArgumentType)
+f:\coding\plexichat\src\core\applications\commands\registry.py
+  f:\coding\plexichat\src\core\applications\commands\registry.py:145:16 - error: Type "Command | None" is not assignable to return type "Command"
+  ┬á┬áType "Command | None" is not assignable to type "Command"
+  ┬á┬á┬á┬á"None" is not assignable to "Command" (reportReturnType)
+  f:\coding\plexichat\src\core\applications\commands\registry.py:321:16 - error: Type "Command | None" is not assignable to return type "Command"
+  ┬á┬áType "Command | None" is not assignable to type "Command"
+  ┬á┬á┬á┬á"None" is not assignable to "Command" (reportReturnType)
+f:\coding\plexichat\src\core\applications\exceptions.py
+  f:\coding\plexichat\src\core\applications\exceptions.py:47:53 - error: Expression of type "None" cannot be assigned to parameter of type "list[Unknown]"
+  ┬á┬á"None" is not assignable to "list[Unknown]" (reportArgumentType)
+  f:\coding\plexichat\src\core\applications\exceptions.py:79:53 - error: Expression of type "None" cannot be assigned to parameter of type "list[Unknown]"
+  ┬á┬á"None" is not assignable to "list[Unknown]" (reportArgumentType)
+  f:\coding\plexichat\src\core\applications\exceptions.py:87:53 - error: Expression of type "None" cannot be assigned to parameter of type "list[Unknown]"
+  ┬á┬á"None" is not assignable to "list[Unknown]" (reportArgumentType)
+  f:\coding\plexichat\src\core\applications\exceptions.py:95:61 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\applications\exceptions.py:104:43 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\applications\exceptions.py:111:43 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\applications\exceptions.py:118:43 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\applications\exceptions.py:125:43 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\applications\exceptions.py:168:57 - error: Expression of type "None" cannot be assigned to parameter of type "int"
+  ┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\applications\exceptions.py:184:56 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+f:\coding\plexichat\src\core\applications\interactions\handler.py
+  f:\coding\plexichat\src\core\applications\interactions\handler.py:164:52 - error: Argument of type "str | None" cannot be assigned to parameter "expected_hash" of type "str" in function "verify_token_hash"
+  ┬á┬áType "str | None" is not assignable to type "str"
+  ┬á┬á┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\applications\interactions\handler.py:373:26 - error: Argument of type "CommandType | Any | None" cannot be assigned to parameter "command_type" of type "CommandType" in function "__init__"
+  ┬á┬áType "CommandType | Any | None" is not assignable to type "CommandType"
+  ┬á┬á┬á┬á"None" is not assignable to "CommandType" (reportArgumentType)
+f:\coding\plexichat\src\core\applications\interactions\responses.py
+  f:\coding\plexichat\src\core\applications\interactions\responses.py:162:9 - error: Argument of type "dict[str, str | List[Dict[str, Any]] | None]" cannot be assigned to parameter "value" of type "int" in function "__setitem__"
+  ┬á┬á"dict[str, str | List[Dict[str, Any]] | None]" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\applications\interactions\responses.py:168:9 - error: Argument of type "dict[str, List[Dict[str, Any]]]" cannot be assigned to parameter "value" of type "int" in function "__setitem__"
+  ┬á┬á"dict[str, List[Dict[str, Any]]]" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\applications\interactions\responses.py:190:9 - error: Argument of type "dict[Unknown, Unknown]" cannot be assigned to parameter "value" of type "int" in function "__setitem__"
+  ┬á┬á"dict[Unknown, Unknown]" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\applications\interactions\responses.py:196:13 - error: Argument of type "dict[str, int]" cannot be assigned to parameter "value" of type "int" in function "__setitem__"
+  ┬á┬á"dict[str, int]" is not assignable to "int" (reportArgumentType)
+f:\coding\plexichat\src\core\applications\manager.py
+  f:\coding\plexichat\src\core\applications\manager.py:335:16 - error: Type "Application | None" is not assignable to return type "Application"
+  ┬á┬áType "Application | None" is not assignable to type "Application"
+  ┬á┬á┬á┬á"None" is not assignable to "Application" (reportReturnType)
+f:\coding\plexichat\src\core\applications\oauth\tokens.py
+  f:\coding\plexichat\src\core\applications\oauth\tokens.py:132:16 - error: Type "None" is not assignable to return type "dict[Unknown, Unknown]"
+  ┬á┬á"None" is not assignable to "dict[Unknown, Unknown]" (reportReturnType)
+  f:\coding\plexichat\src\core\applications\oauth\tokens.py:136:16 - error: Type "None" is not assignable to return type "dict[Unknown, Unknown]"
+  ┬á┬á"None" is not assignable to "dict[Unknown, Unknown]" (reportReturnType)
+  f:\coding\plexichat\src\core\applications\oauth\tokens.py:141:16 - error: Type "None" is not assignable to return type "dict[Unknown, Unknown]"
+  ┬á┬á"None" is not assignable to "dict[Unknown, Unknown]" (reportReturnType)
+  f:\coding\plexichat\src\core\applications\oauth\tokens.py:146:16 - error: Type "None" is not assignable to return type "dict[Unknown, Unknown]"
+  ┬á┬á"None" is not assignable to "dict[Unknown, Unknown]" (reportReturnType)
+f:\coding\plexichat\src\core\auth\exceptions.py
+  f:\coding\plexichat\src\core\auth\exceptions.py:21:58 - error: Expression of type "None" cannot be assigned to parameter of type "int"
+  ┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\auth\exceptions.py:68:51 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+f:\coding\plexichat\src\core\auth\manager.py
+  f:\coding\plexichat\src\core\auth\manager.py:1508:20 - error: Type "None" is not assignable to return type "int"
+  ┬á┬á"None" is not assignable to "int" (reportReturnType)
+f:\coding\plexichat\src\core\auth\totp.py
+  f:\coding\plexichat\src\core\auth\totp.py:145:20 - error: Argument of type "Unknown | int | None" cannot be assigned to parameter "stop" of type "SupportsIndex" in function "__new__"
+  ┬á┬áType "Unknown | int | None" is not assignable to type "SupportsIndex"
+  ┬á┬á┬á┬á"None" is incompatible with protocol "SupportsIndex"
+  ┬á┬á┬á┬á┬á┬á"__index__" is not present (reportArgumentType)
+  f:\coding\plexichat\src\core\auth\totp.py:205:33 - error: "constants" is not a known attribute of module "qrcode" (reportAttributeAccessIssue)
+  f:\coding\plexichat\src\core\auth\totp.py:215:22 - error: No parameter named "format" (reportCallIssue)
+f:\coding\plexichat\src\core\automod\actions\base.py
+  f:\coding\plexichat\src\core\automod\actions\base.py:16:31 - error: Type "None" is not assignable to declared type "ActionType"
+  ┬á┬á"None" is not assignable to "ActionType" (reportAssignmentType)
+f:\coding\plexichat\src\core\automod\ai\base.py
+  f:\coding\plexichat\src\core\automod\ai\base.py:16:35 - error: Type "None" is not assignable to declared type "AIBackendType"
+  ┬á┬á"None" is not assignable to "AIBackendType" (reportAssignmentType)
+f:\coding\plexichat\src\core\automod\ai\custom.py
+  f:\coding\plexichat\src\core\automod\ai\custom.py:129:20 - error: Argument of type "dict[str, int | float] | Any" cannot be assigned to parameter "scores" of type "Dict[str, float]" in function "__init__"
+  ┬á┬áType "dict[str, int | float] | Any" is not assignable to type "Dict[str, float]"
+  ┬á┬á┬á┬á"dict[str, int | float]" is not assignable to "Dict[str, float]"
+  ┬á┬á┬á┬á┬á┬áType parameter "_VT@dict" is invariant, but "int | float" is not the same as "float"
+  ┬á┬á┬á┬á┬á┬áConsider switching from "dict" to "Mapping" which is covariant in the value type (reportArgumentType)
+f:\coding\plexichat\src\core\automod\exceptions.py
+  f:\coding\plexichat\src\core\automod\exceptions.py:21:53 - error: Expression of type "None" cannot be assigned to parameter of type "list[Unknown]"
+  ┬á┬á"None" is not assignable to "list[Unknown]" (reportArgumentType)
+  f:\coding\plexichat\src\core\automod\exceptions.py:34:57 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\automod\exceptions.py:57:53 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\automod\exceptions.py:57:78 - error: Expression of type "None" cannot be assigned to parameter of type "int"
+  ┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\automod\exceptions.py:101:56 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+f:\coding\plexichat\src\core\automod\manager.py
+  f:\coding\plexichat\src\core\automod\manager.py:460:16 - error: Type "Rule | None" is not assignable to return type "Rule"
+  ┬á┬áType "Rule | None" is not assignable to type "Rule"
+  ┬á┬á┬á┬á"None" is not assignable to "Rule" (reportReturnType)
+  f:\coding\plexichat\src\core\automod\manager.py:551:16 - error: Type "Rule | None" is not assignable to return type "Rule"
+  ┬á┬áType "Rule | None" is not assignable to type "Rule"
+  ┬á┬á┬á┬á"None" is not assignable to "Rule" (reportReturnType)
+  f:\coding\plexichat\src\core\automod\manager.py:593:16 - error: Type "Rule | None" is not assignable to return type "Rule"
+  ┬á┬áType "Rule | None" is not assignable to type "Rule"
+  ┬á┬á┬á┬á"None" is not assignable to "Rule" (reportReturnType)
+  f:\coding\plexichat\src\core\automod\manager.py:866:27 - error: Argument of type "Literal['delete_message', 'timeout_user', 'kick_user', 'ban_user', 'alert_moderators', 'log_only']" cannot be assigned to parameter "object" of type "int" in function "append"
+  ┬á┬áType "Literal['delete_message', 'timeout_user', 'kick_user', 'ban_user', 'alert_moderators', 'log_only']" is not assignable to type "int"
+  ┬á┬á┬á┬á"Literal['alert_moderators']" is not assignable to "int" (reportArgumentType)
+f:\coding\plexichat\src\core\automod\rules\base.py
+  f:\coding\plexichat\src\core\automod\rules\base.py:16:27 - error: Type "None" is not assignable to declared type "RuleType"
+  ┬á┬á"None" is not assignable to "RuleType" (reportAssignmentType)
+f:\coding\plexichat\src\core\database\core.py
+  f:\coding\plexichat\src\core\database\core.py:143:34 - error: "cursor" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\core\database\core.py:150:33 - error: "commit" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\core\database\core.py:155:29 - error: "rollback" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\core\database\core.py:172:34 - error: "cursor" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\core\database\core.py:175:29 - error: "commit" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\core\database\core.py:180:29 - error: "rollback" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\core\database\core.py:247:29 - error: "execute" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\core\database\core.py:247:29 - error: Cannot access attribute "execute" for class "connection"
+  ┬á┬áAttribute "execute" is unknown (reportAttributeAccessIssue)
+  f:\coding\plexichat\src\core\database\core.py:253:25 - error: "commit" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\core\database\core.py:260:25 - error: "rollback" is not a known attribute of "None" (reportOptionalMemberAccess)
+f:\coding\plexichat\src\core\embeds\exceptions.py
+  f:\coding\plexichat\src\core\embeds\exceptions.py:19:53 - error: Expression of type "None" cannot be assigned to parameter of type "list[Unknown]"
+  ┬á┬á"None" is not assignable to "list[Unknown]" (reportArgumentType)
+  f:\coding\plexichat\src\core\embeds\exceptions.py:54:49 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\embeds\exceptions.py:62:51 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\embeds\exceptions.py:75:56 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\embeds\exceptions.py:83:51 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+f:\coding\plexichat\src\core\embeds\manager.py
+  f:\coding\plexichat\src\core\embeds\manager.py:367:16 - error: Type "Embed | None" is not assignable to return type "Embed"
+  ┬á┬áType "Embed | None" is not assignable to type "Embed"
+  ┬á┬á┬á┬á"None" is not assignable to "Embed" (reportReturnType)
+  f:\coding\plexichat\src\core\embeds\manager.py:705:16 - error: Type "Embed | None" is not assignable to return type "Embed"
+  ┬á┬áType "Embed | None" is not assignable to type "Embed"
+  ┬á┬á┬á┬á"None" is not assignable to "Embed" (reportReturnType)
+  f:\coding\plexichat\src\core\embeds\manager.py:740:13 - error: Argument of type "Literal[1280]" cannot be assigned to parameter "value" of type "str" in function "__setitem__"
+  ┬á┬á"Literal[1280]" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\embeds\manager.py:741:13 - error: Argument of type "Literal[720]" cannot be assigned to parameter "value" of type "str" in function "__setitem__"
+  ┬á┬á"Literal[720]" is not assignable to "str" (reportArgumentType)
+f:\coding\plexichat\src\core\media\exceptions.py
+  f:\coding\plexichat\src\core\media\exceptions.py:19:54 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\media\exceptions.py:36:58 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\media\exceptions.py:36:86 - error: Expression of type "None" cannot be assigned to parameter of type "list[Unknown]"
+  ┬á┬á"None" is not assignable to "list[Unknown]" (reportArgumentType)
+  f:\coding\plexichat\src\core\media\exceptions.py:45:53 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\media\exceptions.py:73:55 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\media\exceptions.py:81:55 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\media\exceptions.py:104:49 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\media\exceptions.py:127:57 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+f:\coding\plexichat\src\core\media\manager.py
+  f:\coding\plexichat\src\core\media\manager.py:157:20 - error: Type "None" is not assignable to return type "ImageProcessor"
+  ┬á┬á"None" is not assignable to "ImageProcessor" (reportReturnType)
+f:\coding\plexichat\src\core\media\processing\images.py
+  f:\coding\plexichat\src\core\media\processing\images.py:76:49 - error: Cannot access attribute "_getexif" for class "ImageFile"
+  ┬á┬áAttribute "_getexif" is unknown (reportAttributeAccessIssue)
+  f:\coding\plexichat\src\core\media\processing\images.py:77:32 - error: Cannot access attribute "_getexif" for class "ImageFile"
+  ┬á┬áAttribute "_getexif" is unknown (reportAttributeAccessIssue)
+  f:\coding\plexichat\src\core\media\processing\images.py:144:17 - error: Argument of type "int" cannot be assigned to parameter "value" of type "str" in function "__setitem__"
+  ┬á┬á"int" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\media\processing\images.py:146:17 - error: Argument of type "Literal[True]" cannot be assigned to parameter "value" of type "str" in function "__setitem__"
+  ┬á┬á"Literal[True]" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\media\processing\images.py:158:28 - error: Expression of type "None" cannot be assigned to parameter of type "List[int]"
+  ┬á┬á"None" is not assignable to "List[int]" (reportArgumentType)
+  f:\coding\plexichat\src\core\media\processing\images.py:223:29 - error: Operator "/" not supported for "None" (reportOptionalOperand)
+  f:\coding\plexichat\src\core\media\processing\images.py:230:30 - error: Argument of type "tuple[int, int | None]" cannot be assigned to parameter "size" of type "tuple[int, int] | list[int] | NumpyArray" in function "resize"
+  ┬á┬áType "tuple[int, int | None]" is not assignable to type "tuple[int, int] | list[int] | NumpyArray"
+  ┬á┬á┬á┬á"tuple[int, int | None]" is not assignable to "tuple[int, int]"
+  ┬á┬á┬á┬á┬á┬áTuple entry 2 is incorrect type
+  ┬á┬á┬á┬á┬á┬á┬á┬áType "int | None" is not assignable to type "int"
+  ┬á┬á┬á┬á┬á┬á┬á┬á┬á┬á"None" is not assignable to "int"
+  ┬á┬á┬á┬á"tuple[int, int | None]" is not assignable to "list[int]"
+  ┬á┬á┬á┬á"tuple[int, int | None]" is not assignable to "ndarray[_Shape, dtype[Any]]" (reportArgumentType)
+  f:\coding\plexichat\src\core\media\processing\images.py:245:17 - error: Argument of type "int" cannot be assigned to parameter "value" of type "str" in function "__setitem__"
+  ┬á┬á"int" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\media\processing\images.py:247:17 - error: Argument of type "Literal[True]" cannot be assigned to parameter "value" of type "str" in function "__setitem__"
+  ┬á┬á"Literal[True]" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\media\processing\images.py:287:17 - error: Argument of type "int" cannot be assigned to parameter "value" of type "str" in function "__setitem__"
+  ┬á┬á"int" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\media\processing\images.py:289:17 - error: Argument of type "Literal[True]" cannot be assigned to parameter "value" of type "str" in function "__setitem__"
+  ┬á┬á"Literal[True]" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\media\processing\images.py:323:17 - error: Argument of type "int" cannot be assigned to parameter "value" of type "str" in function "__setitem__"
+  ┬á┬á"int" is not assignable to "str" (reportArgumentType)
+f:\coding\plexichat\src\core\media\security\proxy.py
+  f:\coding\plexichat\src\core\media\security\proxy.py:38:25 - error: Expression of type "None" cannot be assigned to parameter of type "int"
+  ┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\media\security\proxy.py:39:30 - error: Expression of type "None" cannot be assigned to parameter of type "set[Unknown]"
+  ┬á┬á"None" is not assignable to "set[Unknown]" (reportArgumentType)
+f:\coding\plexichat\src\core\media\security\signing.py
+  f:\coding\plexichat\src\core\media\security\signing.py:94:30 - error: Argument of type "str | None" cannot be assigned to parameter "x" of type "ConvertibleToInt" in function "__new__"
+  ┬á┬áType "str | None" is not assignable to type "ConvertibleToInt"
+  ┬á┬á┬á┬áType "None" is not assignable to type "ConvertibleToInt"
+  ┬á┬á┬á┬á┬á┬á"None" is not assignable to "str"
+  ┬á┬á┬á┬á┬á┬á"None" is incompatible with protocol "Buffer"
+  ┬á┬á┬á┬á┬á┬á┬á┬á"__buffer__" is not present
+  ┬á┬á┬á┬á┬á┬á"None" is incompatible with protocol "SupportsInt"
+  ┬á┬á┬á┬á┬á┬á┬á┬á"__int__" is not present
+  ┬á┬á┬á┬á┬á┬á"None" is incompatible with protocol "SupportsIndex"
+    ... (reportArgumentType)
+  f:\coding\plexichat\src\core\media\security\signing.py:94:30 - error: Argument of type "str | None" cannot be assigned to parameter "x" of type "ConvertibleToInt" in function "__new__"
+  ┬á┬áType "str | None" is not assignable to type "ConvertibleToInt"
+  ┬á┬á┬á┬áType "None" is not assignable to type "ConvertibleToInt"
+  ┬á┬á┬á┬á┬á┬á"None" is not assignable to "str"
+  ┬á┬á┬á┬á┬á┬á"None" is incompatible with protocol "Buffer"
+  ┬á┬á┬á┬á┬á┬á┬á┬á"__buffer__" is not present
+  ┬á┬á┬á┬á┬á┬á"None" is incompatible with protocol "SupportsInt"
+  ┬á┬á┬á┬á┬á┬á┬á┬á"__int__" is not present
+  ┬á┬á┬á┬á┬á┬á"None" is incompatible with protocol "SupportsIndex" (reportArgumentType)
+  f:\coding\plexichat\src\core\media\security\signing.py:95:27 - error: Argument of type "str | None" cannot be assigned to parameter "x" of type "ConvertibleToInt" in function "__new__"
+  ┬á┬áType "str | None" is not assignable to type "ConvertibleToInt"
+  ┬á┬á┬á┬áType "None" is not assignable to type "ConvertibleToInt"
+  ┬á┬á┬á┬á┬á┬á"None" is not assignable to "str"
+  ┬á┬á┬á┬á┬á┬á"None" is incompatible with protocol "Buffer"
+  ┬á┬á┬á┬á┬á┬á┬á┬á"__buffer__" is not present
+  ┬á┬á┬á┬á┬á┬á"None" is incompatible with protocol "SupportsInt"
+  ┬á┬á┬á┬á┬á┬á┬á┬á"__int__" is not present
+  ┬á┬á┬á┬á┬á┬á"None" is incompatible with protocol "SupportsIndex"
+    ... (reportArgumentType)
+  f:\coding\plexichat\src\core\media\security\signing.py:95:27 - error: Argument of type "str | None" cannot be assigned to parameter "x" of type "ConvertibleToInt" in function "__new__"
+  ┬á┬áType "str | None" is not assignable to type "ConvertibleToInt"
+  ┬á┬á┬á┬áType "None" is not assignable to type "ConvertibleToInt"
+  ┬á┬á┬á┬á┬á┬á"None" is not assignable to "str"
+  ┬á┬á┬á┬á┬á┬á"None" is incompatible with protocol "Buffer"
+  ┬á┬á┬á┬á┬á┬á┬á┬á"__buffer__" is not present
+  ┬á┬á┬á┬á┬á┬á"None" is incompatible with protocol "SupportsInt"
+  ┬á┬á┬á┬á┬á┬á┬á┬á"__int__" is not present
+  ┬á┬á┬á┬á┬á┬á"None" is incompatible with protocol "SupportsIndex" (reportArgumentType)
+  f:\coding\plexichat\src\core\media\security\signing.py:106:16 - error: No overloads for "compare_digest" match the provided arguments (reportCallIssue)
+  f:\coding\plexichat\src\core\media\security\signing.py:106:36 - error: Argument of type "str | None" cannot be assigned to parameter "a" of type "AnyStr@compare_digest" in function "compare_digest"
+  ┬á┬áType "str | None" is not assignable to type "str"
+  ┬á┬á┬á┬á"None" is not assignable to "str" (reportArgumentType)
+f:\coding\plexichat\src\core\media\storage\s3.py
+  f:\coding\plexichat\src\core\media\storage\s3.py:56:20 - error: Import "boto3" could not be resolved (reportMissingImports)
+  f:\coding\plexichat\src\core\media\storage\s3.py:57:18 - error: Import "botocore.config" could not be resolved (reportMissingImports)
+  f:\coding\plexichat\src\core\media\storage\s3.py:58:18 - error: Import "botocore.exceptions" could not be resolved (reportMissingImports)
+  f:\coding\plexichat\src\core\media\storage\s3.py:281:31 - error: Argument of type "list[str | int]" cannot be assigned to parameter "object" of type "dict[str, str]" in function "append"
+  ┬á┬á"list[str | int]" is not assignable to "dict[str, str]" (reportArgumentType)
+f:\coding\plexichat\src\core\messaging\content.py
+  f:\coding\plexichat\src\core\messaging\content.py:126:29 - error: No overloads for "search" match the provided arguments (reportCallIssue)
+  f:\coding\plexichat\src\core\messaging\content.py:126:71 - error: Argument of type "str | None" cannot be assigned to parameter "string" of type "str" in function "search"
+  ┬á┬áType "str | None" is not assignable to type "str"
+  ┬á┬á┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\messaging\content.py:130:16 - error: No overloads for "search" match the provided arguments (reportCallIssue)
+  f:\coding\plexichat\src\core\messaging\content.py:130:35 - error: Argument of type "str | None" cannot be assigned to parameter "string" of type "ReadableBuffer" in function "search"
+  ┬á┬áType "str | None" is not assignable to type "ReadableBuffer"
+  ┬á┬á┬á┬á"str" is incompatible with protocol "Buffer"
+  ┬á┬á┬á┬á┬á┬á"__buffer__" is not present (reportArgumentType)
+  f:\coding\plexichat\src\core\messaging\content.py:136:60 - error: Argument of type "str | None" cannot be assigned to parameter "content" of type "str" in function "_apply_user_filters"
+  ┬á┬áType "str | None" is not assignable to type "str"
+  ┬á┬á┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\messaging\content.py:141:31 - error: Argument of type "str | None" cannot be assigned to parameter "sanitized_content" of type "str" in function "__init__"
+  ┬á┬áType "str | None" is not assignable to type "str"
+  ┬á┬á┬á┬á"None" is not assignable to "str" (reportArgumentType)
+f:\coding\plexichat\src\core\messaging\exceptions.py
+  f:\coding\plexichat\src\core\messaging\exceptions.py:21:65 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\messaging\exceptions.py:34:65 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\messaging\exceptions.py:61:53 - error: Expression of type "None" cannot be assigned to parameter of type "list[Unknown]"
+  ┬á┬á"None" is not assignable to "list[Unknown]" (reportArgumentType)
+  f:\coding\plexichat\src\core\messaging\exceptions.py:101:57 - error: Expression of type "None" cannot be assigned to parameter of type "int"
+  ┬á┬á"None" is not assignable to "int" (reportArgumentType)
+f:\coding\plexichat\src\core\messaging\manager.py
+  f:\coding\plexichat\src\core\messaging\manager.py:165:16 - error: Type "Conversation | None" is not assignable to return type "Conversation"
+  ┬á┬áType "Conversation | None" is not assignable to type "Conversation"
+  ┬á┬á┬á┬á"None" is not assignable to "Conversation" (reportReturnType)
+  f:\coding\plexichat\src\core\messaging\manager.py:249:16 - error: Type "Conversation | None" is not assignable to return type "Conversation"
+  ┬á┬áType "Conversation | None" is not assignable to type "Conversation"
+  ┬á┬á┬á┬á"None" is not assignable to "Conversation" (reportReturnType)
+  f:\coding\plexichat\src\core\messaging\manager.py:315:27 - error: Argument of type "Literal['dm', 'group']" cannot be assigned to parameter "object" of type "int" in function "append"
+  ┬á┬áType "Literal['dm', 'group']" is not assignable to type "int"
+  ┬á┬á┬á┬á"Literal['dm']" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\messaging\manager.py:344:24 - error: "role" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\core\messaging\manager.py:379:16 - error: Type "Conversation | None" is not assignable to return type "Conversation"
+  ┬á┬áType "Conversation | None" is not assignable to type "Conversation"
+  ┬á┬á┬á┬á"None" is not assignable to "Conversation" (reportReturnType)
+  f:\coding\plexichat\src\core\messaging\manager.py:423:24 - error: "role" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\core\messaging\manager.py:481:18 - error: "role" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\core\messaging\manager.py:517:16 - error: Type "Participant | None" is not assignable to return type "Participant"
+  ┬á┬áType "Participant | None" is not assignable to type "Participant"
+  ┬á┬á┬á┬á"None" is not assignable to "Participant" (reportReturnType)
+  f:\coding\plexichat\src\core\messaging\manager.py:542:18 - error: "role" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\core\messaging\manager.py:545:20 - error: "role" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\core\messaging\manager.py:588:18 - error: "role" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\core\messaging\manager.py:604:16 - error: Type "Participant | None" is not assignable to return type "Participant"
+  ┬á┬áType "Participant | None" is not assignable to type "Participant"
+  ┬á┬á┬á┬á"None" is not assignable to "Participant" (reportReturnType)
+  f:\coding\plexichat\src\core\messaging\manager.py:760:16 - error: Type "Message | None" is not assignable to return type "Message"
+  ┬á┬áType "Message | None" is not assignable to type "Message"
+  ┬á┬á┬á┬á"None" is not assignable to "Message" (reportReturnType)
+  f:\coding\plexichat\src\core\messaging\manager.py:807:16 - error: Type "Message | None" is not assignable to return type "Message"
+  ┬á┬áType "Message | None" is not assignable to type "Message"
+  ┬á┬á┬á┬á"None" is not assignable to "Message" (reportReturnType)
+  f:\coding\plexichat\src\core\messaging\manager.py:1313:16 - error: Type "Attachment | None" is not assignable to return type "Attachment"
+  ┬á┬áType "Attachment | None" is not assignable to type "Attachment"
+  ┬á┬á┬á┬á"None" is not assignable to "Attachment" (reportReturnType)
+f:\coding\plexichat\src\core\notifications\exceptions.py
+  f:\coding\plexichat\src\core\notifications\exceptions.py:39:56 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+f:\coding\plexichat\src\core\notifications\manager.py
+  f:\coding\plexichat\src\core\notifications\manager.py:188:96 - error: Expression of type "None" cannot be assigned to parameter of type "int"
+  ┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\notifications\manager.py:241:42 - error: Argument of type "int | None" cannot be assigned to parameter "user_id" of type "int" in function "_user_exists"
+  ┬á┬áType "int | None" is not assignable to type "int"
+  ┬á┬á┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\notifications\manager.py:246:42 - error: Argument of type "int | None" cannot be assigned to parameter "role_id" of type "int" in function "_role_exists"
+  ┬á┬áType "int | None" is not assignable to type "int"
+  ┬á┬á┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\notifications\manager.py:250:43 - error: Argument of type "int | None" cannot be assigned to parameter "role_id" of type "int" in function "_get_role"
+  ┬á┬áType "int | None" is not assignable to type "int"
+  ┬á┬á┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\notifications\manager.py:262:45 - error: Argument of type "int | None" cannot be assigned to parameter "channel_id" of type "int" in function "_channel_exists"
+  ┬á┬áType "int | None" is not assignable to type "int"
+  ┬á┬á┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\notifications\manager.py:268:86 - error: Argument of type "int | None" cannot be assigned to parameter "channel_id" of type "int" in function "_has_mention_everyone_permission"
+  ┬á┬áType "int | None" is not assignable to type "int"
+  ┬á┬á┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\notifications\manager.py:366:55 - error: Argument of type "int | None" cannot be assigned to parameter "role_id" of type "int" in function "_get_role_members"
+  ┬á┬áType "int | None" is not assignable to type "int"
+  ┬á┬á┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\notifications\manager.py:396:84 - error: Argument of type "Unknown | None" cannot be assigned to parameter "mention_type" of type "MentionType" in function "_should_notify_user"
+  ┬á┬áType "Unknown | None" is not assignable to type "MentionType"
+  ┬á┬á┬á┬á"None" is not assignable to "MentionType" (reportArgumentType)
+  f:\coding\plexichat\src\core\notifications\manager.py:880:16 - error: Type "ChannelNotificationOverride | None" is not assignable to return type "ChannelNotificationOverride"
+  ┬á┬áType "ChannelNotificationOverride | None" is not assignable to type "ChannelNotificationOverride"
+  ┬á┬á┬á┬á"None" is not assignable to "ChannelNotificationOverride" (reportReturnType)
+f:\coding\plexichat\src\core\polls\manager.py
+  f:\coding\plexichat\src\core\polls\manager.py:210:16 - error: Type "Poll | None" is not assignable to return type "Poll"
+  ┬á┬áType "Poll | None" is not assignable to type "Poll"
+  ┬á┬á┬á┬á"None" is not assignable to "Poll" (reportReturnType)
+  f:\coding\plexichat\src\core\polls\manager.py:388:16 - error: Type "Poll | None" is not assignable to return type "Poll"
+  ┬á┬áType "Poll | None" is not assignable to type "Poll"
+  ┬á┬á┬á┬á"None" is not assignable to "Poll" (reportReturnType)
+f:\coding\plexichat\src\core\reactions\exceptions.py
+  f:\coding\plexichat\src\core\reactions\exceptions.py:48:56 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+f:\coding\plexichat\src\core\reactions\manager.py
+  f:\coding\plexichat\src\core\reactions\manager.py:109:88 - error: Expression of type "None" cannot be assigned to parameter of type "int"
+  ┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\reactions\manager.py:241:16 - error: Type "Reaction | None" is not assignable to return type "Reaction"
+  ┬á┬áType "Reaction | None" is not assignable to type "Reaction"
+  ┬á┬á┬á┬á"None" is not assignable to "Reaction" (reportReturnType)
+  f:\coding\plexichat\src\core\reactions\manager.py:647:16 - error: Type "CustomEmoji | None" is not assignable to return type "CustomEmoji"
+  ┬á┬áType "CustomEmoji | None" is not assignable to type "CustomEmoji"
+  ┬á┬á┬á┬á"None" is not assignable to "CustomEmoji" (reportReturnType)
+f:\coding\plexichat\src\core\relationships\exceptions.py
+  f:\coding\plexichat\src\core\relationships\exceptions.py:44:56 - error: Expression of type "None" cannot be assigned to parameter of type "int"
+  ┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\relationships\exceptions.py:44:82 - error: Expression of type "None" cannot be assigned to parameter of type "int"
+  ┬á┬á"None" is not assignable to "int" (reportArgumentType)
+f:\coding\plexichat\src\core\relationships\manager.py
+  f:\coding\plexichat\src\core\relationships\manager.py:185:16 - error: Type "FriendRequest | None" is not assignable to return type "FriendRequest"
+  ┬á┬áType "FriendRequest | None" is not assignable to type "FriendRequest"
+  ┬á┬á┬á┬á"None" is not assignable to "FriendRequest" (reportReturnType)
+  f:\coding\plexichat\src\core\relationships\manager.py:233:16 - error: Type "FriendRequest | None" is not assignable to return type "FriendRequest"
+  ┬á┬áType "FriendRequest | None" is not assignable to type "FriendRequest"
+  ┬á┬á┬á┬á"None" is not assignable to "FriendRequest" (reportReturnType)
+  f:\coding\plexichat\src\core\relationships\manager.py:266:16 - error: Type "FriendRequest | None" is not assignable to return type "FriendRequest"
+  ┬á┬áType "FriendRequest | None" is not assignable to type "FriendRequest"
+  ┬á┬á┬á┬á"None" is not assignable to "FriendRequest" (reportReturnType)
+  f:\coding\plexichat\src\core\relationships\manager.py:299:16 - error: Type "FriendRequest | None" is not assignable to return type "FriendRequest"
+  ┬á┬áType "FriendRequest | None" is not assignable to type "FriendRequest"
+  ┬á┬á┬á┬á"None" is not assignable to "FriendRequest" (reportReturnType)
+  f:\coding\plexichat\src\core\relationships\manager.py:438:16 - error: Type "BlockedUser | None" is not assignable to return type "BlockedUser"
+  ┬á┬áType "BlockedUser | None" is not assignable to type "BlockedUser"
+  ┬á┬á┬á┬á"None" is not assignable to "BlockedUser" (reportReturnType)
+f:\coding\plexichat\src\core\search\__init__.py
+  f:\coding\plexichat\src\core\search\__init__.py:157:25 - error: Argument of type "int | None" cannot be assigned to parameter "conversation_id" of type "int" in function "search_messages"
+  ┬á┬áType "int | None" is not assignable to type "int"
+  ┬á┬á┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\__init__.py:158:19 - error: Argument of type "int | None" cannot be assigned to parameter "server_id" of type "int" in function "search_messages"
+  ┬á┬áType "int | None" is not assignable to type "int"
+  ┬á┬á┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\__init__.py:159:20 - error: Argument of type "int | None" cannot be assigned to parameter "channel_id" of type "int" in function "search_messages"
+  ┬á┬áType "int | None" is not assignable to type "int"
+  ┬á┬á┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\__init__.py:165:77 - error: Expression of type "None" cannot be assigned to parameter of type "Dict[str, Any]"
+  ┬á┬á"None" is not assignable to "Dict[str, Any]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\__init__.py:223:19 - error: Argument of type "int | None" cannot be assigned to parameter "server_id" of type "int" in function "search_users"
+  ┬á┬áType "int | None" is not assignable to type "int"
+  ┬á┬á┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\__init__.py:255:18 - error: Argument of type "str | None" cannot be assigned to parameter "category" of type "str" in function "search_servers"
+  ┬á┬áType "str | None" is not assignable to type "str"
+  ┬á┬á┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\__init__.py:283:18 - error: Argument of type "str | None" cannot be assigned to parameter "category" of type "str" in function "list_public_servers"
+  ┬á┬áType "str | None" is not assignable to type "str"
+  ┬á┬á┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\__init__.py:324:21 - error: Argument of type "str | None" cannot be assigned to parameter "description" of type "str" in function "list_server"
+  ┬á┬áType "str | None" is not assignable to type "str"
+  ┬á┬á┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\__init__.py:325:14 - error: Argument of type "List[str] | None" cannot be assigned to parameter "tags" of type "List[str]" in function "list_server"
+  ┬á┬áType "List[str] | None" is not assignable to type "List[str]"
+  ┬á┬á┬á┬á"None" is not assignable to "List[str]" (reportArgumentType)
+f:\coding\plexichat\src\core\search\discovery\manager.py
+  f:\coding\plexichat\src\core\search\discovery\manager.py:60:28 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\discovery\manager.py:61:27 - error: Expression of type "None" cannot be assigned to parameter of type "List[str]"
+  ┬á┬á"None" is not assignable to "List[str]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\discovery\manager.py:130:62 - error: Argument of type "Unknown | None" cannot be assigned to parameter "icon_url" of type "str" in function "_build_listing"
+  ┬á┬áType "Unknown | None" is not assignable to type "str"
+  ┬á┬á┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\discovery\manager.py:131:13 - error: Argument of type "None" cannot be assigned to parameter "banner_url" of type "str" in function "_build_listing"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\discovery\manager.py:214:25 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\discovery\manager.py:262:17 - error: Argument of type "None" cannot be assigned to parameter "banner_url" of type "str" in function "_build_listing"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\discovery\manager.py:302:13 - error: Argument of type "None" cannot be assigned to parameter "banner_url" of type "str" in function "_build_listing"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+f:\coding\plexichat\src\core\search\discovery\verification.py
+  f:\coding\plexichat\src\core\search\discovery\verification.py:24:28 - error: Expression of type "None" cannot be assigned to parameter of type "int"
+  ┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\discovery\verification.py:25:23 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+f:\coding\plexichat\src\core\search\exceptions.py
+  f:\coding\plexichat\src\core\search\exceptions.py:19:56 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\exceptions.py:32:54 - error: Expression of type "None" cannot be assigned to parameter of type "int"
+  ┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\exceptions.py:32:78 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\exceptions.py:41:53 - error: Expression of type "None" cannot be assigned to parameter of type "int"
+  ┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\exceptions.py:49:53 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\exceptions.py:49:87 - error: Expression of type "None" cannot be assigned to parameter of type "Exception"
+  ┬á┬á"None" is not assignable to "Exception" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\exceptions.py:72:55 - error: Expression of type "None" cannot be assigned to parameter of type "int"
+  ┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\exceptions.py:80:55 - error: Expression of type "None" cannot be assigned to parameter of type "int"
+  ┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\exceptions.py:80:75 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\exceptions.py:98:54 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+f:\coding\plexichat\src\core\search\indexer\base.py
+  f:\coding\plexichat\src\core\search\indexer\base.py:33:48 - error: Expression of type "None" cannot be assigned to parameter of type "IndexerConfig"
+  ┬á┬á"None" is not assignable to "IndexerConfig" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\base.py:107:39 - error: Expression of type "None" cannot be assigned to parameter of type "List[int]"
+  ┬á┬á"None" is not assignable to "List[int]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\base.py:108:33 - error: Expression of type "None" cannot be assigned to parameter of type "List[int]"
+  ┬á┬á"None" is not assignable to "List[int]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\base.py:109:34 - error: Expression of type "None" cannot be assigned to parameter of type "List[int]"
+  ┬á┬á"None" is not assignable to "List[int]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\base.py:110:33 - error: Expression of type "None" cannot be assigned to parameter of type "List[int]"
+  ┬á┬á"None" is not assignable to "List[int]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\base.py:207:25 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+f:\coding\plexichat\src\core\search\indexer\elasticsearch.py
+  f:\coding\plexichat\src\core\search\indexer\elasticsearch.py:29:28 - error: Expression of type "None" cannot be assigned to parameter of type "List[str]"
+  ┬á┬á"None" is not assignable to "List[str]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\elasticsearch.py:31:33 - error: Expression of type "None" cannot be assigned to parameter of type "IndexerConfig"
+  ┬á┬á"None" is not assignable to "IndexerConfig" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\elasticsearch.py:74:22 - error: Expression of type "None" cannot be assigned to parameter of type "Dict[Unknown, Unknown]"
+  ┬á┬á"None" is not assignable to "Dict[Unknown, Unknown]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\elasticsearch.py:96:20 - error: "urllib" is possibly unbound (reportPossiblyUnboundVariable)
+  f:\coding\plexichat\src\core\search\indexer\elasticsearch.py:302:39 - error: Expression of type "None" cannot be assigned to parameter of type "List[int]"
+  ┬á┬á"None" is not assignable to "List[int]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\elasticsearch.py:303:33 - error: Expression of type "None" cannot be assigned to parameter of type "List[int]"
+  ┬á┬á"None" is not assignable to "List[int]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\elasticsearch.py:304:34 - error: Expression of type "None" cannot be assigned to parameter of type "List[int]"
+  ┬á┬á"None" is not assignable to "List[int]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\elasticsearch.py:305:33 - error: Expression of type "None" cannot be assigned to parameter of type "List[int]"
+  ┬á┬á"None" is not assignable to "List[int]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\elasticsearch.py:314:59 - error: Argument of type "dict[str, dict[str, list[str]]]" cannot be assigned to parameter "object" of type "dict[str, dict[str, str]]" in function "append"
+  ┬á┬á"list[str]" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\elasticsearch.py:316:53 - error: Argument of type "dict[str, dict[str, list[str]]]" cannot be assigned to parameter "object" of type "dict[str, dict[str, str]]" in function "append"
+  ┬á┬á"list[str]" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\elasticsearch.py:318:54 - error: Argument of type "dict[str, dict[str, list[str]]]" cannot be assigned to parameter "object" of type "dict[str, dict[str, str]]" in function "append"
+  ┬á┬á"list[str]" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\elasticsearch.py:320:53 - error: Argument of type "dict[str, dict[str, list[str]]]" cannot be assigned to parameter "object" of type "dict[str, dict[str, str]]" in function "append"
+  ┬á┬á"list[str]" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\elasticsearch.py:453:25 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+f:\coding\plexichat\src\core\search\indexer\meilisearch.py
+  f:\coding\plexichat\src\core\search\indexer\meilisearch.py:30:24 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\meilisearch.py:32:33 - error: Expression of type "None" cannot be assigned to parameter of type "IndexerConfig"
+  ┬á┬á"None" is not assignable to "IndexerConfig" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\meilisearch.py:76:22 - error: Expression of type "None" cannot be assigned to parameter of type "Dict[Unknown, Unknown]"
+  ┬á┬á"None" is not assignable to "Dict[Unknown, Unknown]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\meilisearch.py:106:16 - error: "urllib" is possibly unbound (reportPossiblyUnboundVariable)
+  f:\coding\plexichat\src\core\search\indexer\meilisearch.py:192:80 - error: Argument of type "list[dict[str, Unknown]]" cannot be assigned to parameter "body" of type "Dict[Unknown, Unknown]" in function "_request"
+  ┬á┬á"list[dict[str, Unknown]]" is not assignable to "Dict[Unknown, Unknown]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\meilisearch.py:225:80 - error: Argument of type "list[Unknown]" cannot be assigned to parameter "body" of type "Dict[Unknown, Unknown]" in function "_request"
+  ┬á┬á"list[Unknown]" is not assignable to "Dict[Unknown, Unknown]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\meilisearch.py:258:39 - error: Expression of type "None" cannot be assigned to parameter of type "List[int]"
+  ┬á┬á"None" is not assignable to "List[int]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\meilisearch.py:259:33 - error: Expression of type "None" cannot be assigned to parameter of type "List[int]"
+  ┬á┬á"None" is not assignable to "List[int]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\meilisearch.py:260:34 - error: Expression of type "None" cannot be assigned to parameter of type "List[int]"
+  ┬á┬á"None" is not assignable to "List[int]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\meilisearch.py:261:33 - error: Expression of type "None" cannot be assigned to parameter of type "List[int]"
+  ┬á┬á"None" is not assignable to "List[int]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\meilisearch.py:341:77 - error: Argument of type "list[dict[str, Unknown]]" cannot be assigned to parameter "body" of type "Dict[Unknown, Unknown]" in function "_request"
+  ┬á┬á"list[dict[str, Unknown]]" is not assignable to "Dict[Unknown, Unknown]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\meilisearch.py:400:79 - error: Argument of type "list[dict[str, Unknown]]" cannot be assigned to parameter "body" of type "Dict[Unknown, Unknown]" in function "_request"
+  ┬á┬á"list[dict[str, Unknown]]" is not assignable to "Dict[Unknown, Unknown]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\meilisearch.py:418:25 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+f:\coding\plexichat\src\core\search\indexer\sqlite_fts.py
+  f:\coding\plexichat\src\core\search\indexer\sqlite_fts.py:28:52 - error: Expression of type "None" cannot be assigned to parameter of type "IndexerConfig"
+  ┬á┬á"None" is not assignable to "IndexerConfig" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\sqlite_fts.py:172:39 - error: Expression of type "None" cannot be assigned to parameter of type "List[int]"
+  ┬á┬á"None" is not assignable to "List[int]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\sqlite_fts.py:173:33 - error: Expression of type "None" cannot be assigned to parameter of type "List[int]"
+  ┬á┬á"None" is not assignable to "List[int]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\sqlite_fts.py:174:34 - error: Expression of type "None" cannot be assigned to parameter of type "List[int]"
+  ┬á┬á"None" is not assignable to "List[int]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\sqlite_fts.py:175:33 - error: Expression of type "None" cannot be assigned to parameter of type "List[int]"
+  ┬á┬á"None" is not assignable to "List[int]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\sqlite_fts.py:218:27 - error: Argument of type "list[int]" cannot be assigned to parameter "iterable" of type "Iterable[str]" in function "extend"
+  ┬á┬á"int" is not assignable to "str"
+  ┬á┬á"int" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\sqlite_fts.py:377:25 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\indexer\sqlite_fts.py:407:27 - error: Argument of type "list[int]" cannot be assigned to parameter "iterable" of type "Iterable[str]" in function "extend"
+  ┬á┬á"int" is not assignable to "str"
+  ┬á┬á"int" is not assignable to "str" (reportArgumentType)
+f:\coding\plexichat\src\core\search\manager.py
+  f:\coding\plexichat\src\core\search\manager.py:137:32 - error: Expression of type "None" cannot be assigned to parameter of type "int"
+  ┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\manager.py:138:26 - error: Expression of type "None" cannot be assigned to parameter of type "int"
+  ┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\manager.py:139:27 - error: Expression of type "None" cannot be assigned to parameter of type "int"
+  ┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\manager.py:180:24 - error: Argument of type "list[int] | None" cannot be assigned to parameter "server_ids" of type "List[int]" in function "search_messages"
+  ┬á┬áType "list[int] | None" is not assignable to type "List[int]"
+  ┬á┬á┬á┬á"None" is not assignable to "List[int]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\manager.py:181:25 - error: Argument of type "list[int] | None" cannot be assigned to parameter "channel_ids" of type "List[int]" in function "search_messages"
+  ┬á┬áType "list[int] | None" is not assignable to type "List[int]"
+  ┬á┬á┬á┬á"None" is not assignable to "List[int]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\manager.py:200:36 - error: Expression of type "None" cannot be assigned to parameter of type "Dict[str, Any]"
+  ┬á┬á"None" is not assignable to "Dict[str, Any]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\manager.py:285:26 - error: Expression of type "None" cannot be assigned to parameter of type "int"
+  ┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\manager.py:322:75 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\manager.py:347:25 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\manager.py:390:28 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\manager.py:391:27 - error: Expression of type "None" cannot be assigned to parameter of type "List[str]"
+  ┬á┬á"None" is not assignable to "List[str]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\manager.py:392:25 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\manager.py:421:25 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\manager.py:438:28 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\manager.py:439:27 - error: Expression of type "None" cannot be assigned to parameter of type "List[str]"
+  ┬á┬á"None" is not assignable to "List[str]" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\manager.py:490:32 - error: Expression of type "None" cannot be assigned to parameter of type "int"
+  ┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\manager.py:491:26 - error: Expression of type "None" cannot be assigned to parameter of type "int"
+  ┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\manager.py:492:27 - error: Expression of type "None" cannot be assigned to parameter of type "int"
+  ┬á┬á"None" is not assignable to "int" (reportArgumentType)
+f:\coding\plexichat\src\core\search\query\ranking.py
+  f:\coding\plexichat\src\core\search\query\ranking.py:33:50 - error: Expression of type "None" cannot be assigned to parameter of type "RankingWeights"
+  ┬á┬á"None" is not assignable to "RankingWeights" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\query\ranking.py:41:23 - error: Expression of type "None" cannot be assigned to parameter of type "int"
+  ┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\query\ranking.py:214:33 - error: Expression of type "None" cannot be assigned to parameter of type "ParsedQuery"
+  ┬á┬á"None" is not assignable to "ParsedQuery" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\query\ranking.py:215:18 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\query\ranking.py:216:20 - error: Expression of type "None" cannot be assigned to parameter of type "int"
+  ┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\query\ranking.py:217:19 - error: Expression of type "None" cannot be assigned to parameter of type "int"
+  ┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\query\ranking.py:218:31 - error: Expression of type "None" cannot be assigned to parameter of type "RankingWeights"
+  ┬á┬á"None" is not assignable to "RankingWeights" (reportArgumentType)
+  f:\coding\plexichat\src\core\search\query\ranking.py:228:16 - error: Type "List[MessageSearchResult]" is not assignable to return type "List[SearchResult]"
+  ┬á┬á"List[MessageSearchResult]" is not assignable to "List[SearchResult]"
+  ┬á┬á┬á┬áType parameter "_T@list" is invariant, but "MessageSearchResult" is not the same as "SearchResult"
+  ┬á┬á┬á┬áConsider switching from "list" to "Sequence" which is covariant (reportReturnType)
+  f:\coding\plexichat\src\core\search\query\ranking.py:228:44 - error: Argument of type "List[SearchResult]" cannot be assigned to parameter "results" of type "List[MessageSearchResult]" in function "rank_message_results"
+  ┬á┬á"List[SearchResult]" is not assignable to "List[MessageSearchResult]"
+  ┬á┬á┬á┬áType parameter "_T@list" is invariant, but "SearchResult" is not the same as "MessageSearchResult"
+  ┬á┬á┬á┬áConsider switching from "list" to "Sequence" which is covariant (reportArgumentType)
+  f:\coding\plexichat\src\core\search\query\ranking.py:231:16 - error: Type "List[UserSearchResult]" is not assignable to return type "List[SearchResult]"
+  ┬á┬á"List[UserSearchResult]" is not assignable to "List[SearchResult]"
+  ┬á┬á┬á┬áType parameter "_T@list" is invariant, but "UserSearchResult" is not the same as "SearchResult"
+  ┬á┬á┬á┬áConsider switching from "list" to "Sequence" which is covariant (reportReturnType)
+  f:\coding\plexichat\src\core\search\query\ranking.py:231:41 - error: Argument of type "List[SearchResult]" cannot be assigned to parameter "results" of type "List[UserSearchResult]" in function "rank_user_results"
+  ┬á┬á"List[SearchResult]" is not assignable to "List[UserSearchResult]"
+  ┬á┬á┬á┬áType parameter "_T@list" is invariant, but "SearchResult" is not the same as "UserSearchResult"
+  ┬á┬á┬á┬áConsider switching from "list" to "Sequence" which is covariant (reportArgumentType)
+  f:\coding\plexichat\src\core\search\query\ranking.py:234:16 - error: Type "List[ServerSearchResult]" is not assignable to return type "List[SearchResult]"
+  ┬á┬á"List[ServerSearchResult]" is not assignable to "List[SearchResult]"
+  ┬á┬á┬á┬áType parameter "_T@list" is invariant, but "ServerSearchResult" is not the same as "SearchResult"
+  ┬á┬á┬á┬áConsider switching from "list" to "Sequence" which is covariant (reportReturnType)
+  f:\coding\plexichat\src\core\search\query\ranking.py:234:43 - error: Argument of type "List[SearchResult]" cannot be assigned to parameter "results" of type "List[ServerSearchResult]" in function "rank_server_results"
+  ┬á┬á"List[SearchResult]" is not assignable to "List[ServerSearchResult]"
+  ┬á┬á┬á┬áType parameter "_T@list" is invariant, but "SearchResult" is not the same as "ServerSearchResult"
+  ┬á┬á┬á┬áConsider switching from "list" to "Sequence" which is covariant (reportArgumentType)
+f:\coding\plexichat\src\core\servers\events.py
+  f:\coding\plexichat\src\core\servers\events.py:146:16 - error: Type "ScheduledEvent | None" is not assignable to return type "ScheduledEvent"
+  ┬á┬áType "ScheduledEvent | None" is not assignable to type "ScheduledEvent"
+  ┬á┬á┬á┬á"None" is not assignable to "ScheduledEvent" (reportReturnType)
+  f:\coding\plexichat\src\core\servers\events.py:178:27 - error: Argument of type "Literal['scheduled', 'active', 'completed', 'cancelled']" cannot be assigned to parameter "object" of type "int" in function "append"
+  ┬á┬áType "Literal['scheduled', 'active', 'completed', 'cancelled']" is not assignable to type "int"
+  ┬á┬á┬á┬á"Literal['active']" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\servers\events.py:279:16 - error: Type "ScheduledEvent | None" is not assignable to return type "ScheduledEvent"
+  ┬á┬áType "ScheduledEvent | None" is not assignable to type "ScheduledEvent"
+  ┬á┬á┬á┬á"None" is not assignable to "ScheduledEvent" (reportReturnType)
+  f:\coding\plexichat\src\core\servers\events.py:334:16 - error: Type "EventRSVP | None" is not assignable to return type "EventRSVP"
+  ┬á┬áType "EventRSVP | None" is not assignable to type "EventRSVP"
+  ┬á┬á┬á┬á"None" is not assignable to "EventRSVP" (reportReturnType)
+  f:\coding\plexichat\src\core\servers\events.py:379:27 - error: Argument of type "Literal['interested', 'going']" cannot be assigned to parameter "object" of type "int" in function "append"
+  ┬á┬áType "Literal['interested', 'going']" is not assignable to type "int"
+  ┬á┬á┬á┬á"Literal['going']" is not assignable to "int" (reportArgumentType)
+f:\coding\plexichat\src\core\servers\manager.py
+  f:\coding\plexichat\src\core\servers\manager.py:303:16 - error: Type "Server | None" is not assignable to return type "Server"
+  ┬á┬áType "Server | None" is not assignable to type "Server"
+  ┬á┬á┬á┬á"None" is not assignable to "Server" (reportReturnType)
+  f:\coding\plexichat\src\core\servers\manager.py:398:16 - error: Type "Server | None" is not assignable to return type "Server"
+  ┬á┬áType "Server | None" is not assignable to type "Server"
+  ┬á┬á┬á┬á"None" is not assignable to "Server" (reportReturnType)
+  f:\coding\plexichat\src\core\servers\manager.py:448:16 - error: Type "Server | None" is not assignable to return type "Server"
+  ┬á┬áType "Server | None" is not assignable to type "Server"
+  ┬á┬á┬á┬á"None" is not assignable to "Server" (reportReturnType)
+  f:\coding\plexichat\src\core\servers\manager.py:520:16 - error: Type "Channel | None" is not assignable to return type "Channel"
+  ┬á┬áType "Channel | None" is not assignable to type "Channel"
+  ┬á┬á┬á┬á"None" is not assignable to "Channel" (reportReturnType)
+  f:\coding\plexichat\src\core\servers\manager.py:590:27 - error: Argument of type "Literal['text', 'voice', 'announcement', 'stage']" cannot be assigned to parameter "object" of type "int" in function "append"
+  ┬á┬áType "Literal['text', 'voice', 'announcement', 'stage']" is not assignable to type "int"
+  ┬á┬á┬á┬á"Literal['announcement']" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\servers\manager.py:679:16 - error: Type "Channel | None" is not assignable to return type "Channel"
+  ┬á┬áType "Channel | None" is not assignable to type "Channel"
+  ┬á┬á┬á┬á"None" is not assignable to "Channel" (reportReturnType)
+  f:\coding\plexichat\src\core\servers\manager.py:718:16 - error: Type "Channel | None" is not assignable to return type "Channel"
+  ┬á┬áType "Channel | None" is not assignable to type "Channel"
+  ┬á┬á┬á┬á"None" is not assignable to "Channel" (reportReturnType)
+  f:\coding\plexichat\src\core\servers\manager.py:775:16 - error: Type "Role | None" is not assignable to return type "Role"
+  ┬á┬áType "Role | None" is not assignable to type "Role"
+  ┬á┬á┬á┬á"None" is not assignable to "Role" (reportReturnType)
+  f:\coding\plexichat\src\core\servers\manager.py:826:73 - error: Argument of type "bool | None" cannot be assigned to parameter "is_owner" of type "bool" in function "can_manage_role"
+  ┬á┬áType "bool | None" is not assignable to type "bool"
+  ┬á┬á┬á┬á"None" is not assignable to "bool" (reportArgumentType)
+  f:\coding\plexichat\src\core\servers\manager.py:882:16 - error: Type "Role | None" is not assignable to return type "Role"
+  ┬á┬áType "Role | None" is not assignable to type "Role"
+  ┬á┬á┬á┬á"None" is not assignable to "Role" (reportReturnType)
+  f:\coding\plexichat\src\core\servers\manager.py:900:73 - error: Argument of type "bool | None" cannot be assigned to parameter "is_owner" of type "bool" in function "can_manage_role"
+  ┬á┬áType "bool | None" is not assignable to type "bool"
+  ┬á┬á┬á┬á"None" is not assignable to "bool" (reportArgumentType)
+  f:\coding\plexichat\src\core\servers\manager.py:938:73 - error: Argument of type "bool | None" cannot be assigned to parameter "is_owner" of type "bool" in function "can_manage_role"
+  ┬á┬áType "bool | None" is not assignable to type "bool"
+  ┬á┬á┬á┬á"None" is not assignable to "bool" (reportArgumentType)
+  f:\coding\plexichat\src\core\servers\manager.py:953:16 - error: Type "Role | None" is not assignable to return type "Role"
+  ┬á┬áType "Role | None" is not assignable to type "Role"
+  ┬á┬á┬á┬á"None" is not assignable to "Role" (reportReturnType)
+  f:\coding\plexichat\src\core\servers\manager.py:1011:16 - error: Type "Member | None" is not assignable to return type "Member"
+  ┬á┬áType "Member | None" is not assignable to type "Member"
+  ┬á┬á┬á┬á"None" is not assignable to "Member" (reportReturnType)
+  f:\coding\plexichat\src\core\servers\manager.py:1113:16 - error: Type "Member | None" is not assignable to return type "Member"
+  ┬á┬áType "Member | None" is not assignable to type "Member"
+  ┬á┬á┬á┬á"None" is not assignable to "Member" (reportReturnType)
+  f:\coding\plexichat\src\core\servers\manager.py:1517:16 - error: Type "ChannelOverride | None" is not assignable to return type "ChannelOverride"
+  ┬á┬áType "ChannelOverride | None" is not assignable to type "ChannelOverride"
+  ┬á┬á┬á┬á"None" is not assignable to "ChannelOverride" (reportReturnType)
+  f:\coding\plexichat\src\core\servers\manager.py:1677:16 - error: Type "Invite | None" is not assignable to return type "Invite"
+  ┬á┬áType "Invite | None" is not assignable to type "Invite"
+  ┬á┬á┬á┬á"None" is not assignable to "Invite" (reportReturnType)
+  f:\coding\plexichat\src\core\servers\manager.py:1853:27 - error: Argument of type "Literal['server_create', 'server_update', 'server_delete', 'channel_create', 'channel_update', 'channel_delete', 'role_create', 'role_update', 'role_delete', 'member_join', 'member_leave', 'member_kick', 'member_ban', 'member_unban', 'member_update', 'member_role_add', 'member_role_remove', 'invite_create', 'invite_delete', 'override_create', 'override_update', 'override_delete', 'event_create', 'event_update', 'event_delete', 'template_create', 'template_delete', 'welcome_screen_update', 'onboarding_update']" cannot be assigned to parameter "object" of type "int" in function "append"
+  ┬á┬áType "Literal['server_create', 'server_update', 'server_delete', 'channel_create', 'channel_update', 'channel_delete', 'role_create', 'role_update', 'role_delete', 'member_join', 'member_leave', 'member_kick', 'member_ban', 'member_unban', 'member_update', 'member_role_add', 'member_role_remove', 'invite_create', 'invite_delete', 'override_create', 'override_update', 'override_delete', 'event_create', 'event_update', 'event_delete', 'template_create', 'template_delete', 'welcome_screen_update', 'onboarding_update']" is not assignable to type "int"
+  ┬á┬á┬á┬á"Literal['channel_create']" is not assignable to "int" (reportArgumentType)
+f:\coding\plexichat\src\core\servers\onboarding.py
+  f:\coding\plexichat\src\core\servers\onboarding.py:116:16 - error: Type "WelcomeScreen | None" is not assignable to return type "WelcomeScreen"
+  ┬á┬áType "WelcomeScreen | None" is not assignable to type "WelcomeScreen"
+  ┬á┬á┬á┬á"None" is not assignable to "WelcomeScreen" (reportReturnType)
+  f:\coding\plexichat\src\core\servers\onboarding.py:198:16 - error: Type "OnboardingStep | None" is not assignable to return type "OnboardingStep"
+  ┬á┬áType "OnboardingStep | None" is not assignable to type "OnboardingStep"
+  ┬á┬á┬á┬á"None" is not assignable to "OnboardingStep" (reportReturnType)
+  f:\coding\plexichat\src\core\servers\onboarding.py:304:16 - error: Type "OnboardingStep | None" is not assignable to return type "OnboardingStep"
+  ┬á┬áType "OnboardingStep | None" is not assignable to type "OnboardingStep"
+  ┬á┬á┬á┬á"None" is not assignable to "OnboardingStep" (reportReturnType)
+  f:\coding\plexichat\src\core\servers\onboarding.py:347:16 - error: Type "OnboardingProgress | None" is not assignable to return type "OnboardingProgress"
+  ┬á┬áType "OnboardingProgress | None" is not assignable to type "OnboardingProgress"
+  ┬á┬á┬á┬á"None" is not assignable to "OnboardingProgress" (reportReturnType)
+  f:\coding\plexichat\src\core\servers\onboarding.py:391:16 - error: Type "OnboardingProgress | None" is not assignable to return type "OnboardingProgress"
+  ┬á┬áType "OnboardingProgress | None" is not assignable to type "OnboardingProgress"
+  ┬á┬á┬á┬á"None" is not assignable to "OnboardingProgress" (reportReturnType)
+f:\coding\plexichat\src\core\servers\templates.py
+  f:\coding\plexichat\src\core\servers\templates.py:124:16 - error: Type "ServerTemplate | None" is not assignable to return type "ServerTemplate"
+  ┬á┬áType "ServerTemplate | None" is not assignable to type "ServerTemplate"
+  ┬á┬á┬á┬á"None" is not assignable to "ServerTemplate" (reportReturnType)
+  f:\coding\plexichat\src\core\servers\templates.py:390:16 - error: Type "ServerTemplate | None" is not assignable to return type "ServerTemplate"
+  ┬á┬áType "ServerTemplate | None" is not assignable to type "ServerTemplate"
+  ┬á┬á┬á┬á"None" is not assignable to "ServerTemplate" (reportReturnType)
+f:\coding\plexichat\src\core\soundboard\exceptions.py
+  f:\coding\plexichat\src\core\soundboard\exceptions.py:70:56 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+f:\coding\plexichat\src\core\soundboard\manager.py
+  f:\coding\plexichat\src\core\soundboard\manager.py:250:16 - error: Type "Sound | None" is not assignable to return type "Sound"
+  ┬á┬áType "Sound | None" is not assignable to type "Sound"
+  ┬á┬á┬á┬á"None" is not assignable to "Sound" (reportReturnType)
+f:\coding\plexichat\src\core\stickers\exceptions.py
+  f:\coding\plexichat\src\core\stickers\exceptions.py:72:56 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+f:\coding\plexichat\src\core\stickers\manager.py
+  f:\coding\plexichat\src\core\stickers\manager.py:88:16 - error: Type "StickerPack | None" is not assignable to return type "StickerPack"
+  ┬á┬áType "StickerPack | None" is not assignable to type "StickerPack"
+  ┬á┬á┬á┬á"None" is not assignable to "StickerPack" (reportReturnType)
+  f:\coding\plexichat\src\core\stickers\manager.py:144:16 - error: Type "Sticker | None" is not assignable to return type "Sticker"
+  ┬á┬áType "Sticker | None" is not assignable to type "Sticker"
+  ┬á┬á┬á┬á"None" is not assignable to "Sticker" (reportReturnType)
+f:\coding\plexichat\src\core\threads\manager.py
+  f:\coding\plexichat\src\core\threads\manager.py:233:16 - error: Type "Thread | None" is not assignable to return type "Thread"
+  ┬á┬áType "Thread | None" is not assignable to type "Thread"
+  ┬á┬á┬á┬á"None" is not assignable to "Thread" (reportReturnType)
+  f:\coding\plexichat\src\core\threads\manager.py:306:16 - error: Type "Thread | None" is not assignable to return type "Thread"
+  ┬á┬áType "Thread | None" is not assignable to type "Thread"
+  ┬á┬á┬á┬á"None" is not assignable to "Thread" (reportReturnType)
+  f:\coding\plexichat\src\core\threads\manager.py:342:16 - error: Type "ThreadMember | None" is not assignable to return type "ThreadMember"
+  ┬á┬áType "ThreadMember | None" is not assignable to type "ThreadMember"
+  ┬á┬á┬á┬á"None" is not assignable to "ThreadMember" (reportReturnType)
+  f:\coding\plexichat\src\core\threads\manager.py:410:16 - error: Type "ThreadMember | None" is not assignable to return type "ThreadMember"
+  ┬á┬áType "ThreadMember | None" is not assignable to type "ThreadMember"
+  ┬á┬á┬á┬á"None" is not assignable to "ThreadMember" (reportReturnType)
+  f:\coding\plexichat\src\core\threads\manager.py:644:16 - error: Type "Thread | None" is not assignable to return type "Thread"
+  ┬á┬áType "Thread | None" is not assignable to type "Thread"
+  ┬á┬á┬á┬á"None" is not assignable to "Thread" (reportReturnType)
+  f:\coding\plexichat\src\core\threads\manager.py:679:16 - error: Type "Thread | None" is not assignable to return type "Thread"
+  ┬á┬áType "Thread | None" is not assignable to type "Thread"
+  ┬á┬á┬á┬á"None" is not assignable to "Thread" (reportReturnType)
+  f:\coding\plexichat\src\core\threads\manager.py:706:16 - error: Type "Thread | None" is not assignable to return type "Thread"
+  ┬á┬áType "Thread | None" is not assignable to type "Thread"
+  ┬á┬á┬á┬á"None" is not assignable to "Thread" (reportReturnType)
+  f:\coding\plexichat\src\core\threads\manager.py:733:16 - error: Type "Thread | None" is not assignable to return type "Thread"
+  ┬á┬áType "Thread | None" is not assignable to type "Thread"
+  ┬á┬á┬á┬á"None" is not assignable to "Thread" (reportReturnType)
+  f:\coding\plexichat\src\core\threads\manager.py:963:16 - error: Type "Thread | None" is not assignable to return type "Thread"
+  ┬á┬áType "Thread | None" is not assignable to type "Thread"
+  ┬á┬á┬á┬á"None" is not assignable to "Thread" (reportReturnType)
+f:\coding\plexichat\src\core\voice\signaling\models.py
+  f:\coding\plexichat\src\core\voice\signaling\models.py:112:13 - error: Argument of type "str" cannot be assigned to parameter "value" of type "List[str]" in function "__setitem__"
+  ┬á┬á"str" is not assignable to "List[str]" (reportArgumentType)
+  f:\coding\plexichat\src\core\voice\signaling\models.py:114:13 - error: Argument of type "str" cannot be assigned to parameter "value" of type "List[str]" in function "__setitem__"
+  ┬á┬á"str" is not assignable to "List[str]" (reportArgumentType)
+f:\coding\plexichat\src\core\voice\signaling\sdp.py
+  f:\coding\plexichat\src\core\voice\signaling\sdp.py:449:71 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+f:\coding\plexichat\src\core\webhooks\exceptions.py
+  f:\coding\plexichat\src\core\webhooks\exceptions.py:56:56 - error: Expression of type "None" cannot be assigned to parameter of type "str"
+  ┬á┬á"None" is not assignable to "str" (reportArgumentType)
+  f:\coding\plexichat\src\core\webhooks\exceptions.py:64:53 - error: Expression of type "None" cannot be assigned to parameter of type "list[Unknown]"
+  ┬á┬á"None" is not assignable to "list[Unknown]" (reportArgumentType)
+f:\coding\plexichat\src\core\webhooks\manager.py
+  f:\coding\plexichat\src\core\webhooks\manager.py:180:97 - error: Expression of type "None" cannot be assigned to parameter of type "int"
+  ┬á┬á"None" is not assignable to "int" (reportArgumentType)
+  f:\coding\plexichat\src\core\webhooks\manager.py:508:16 - error: Type "Webhook | None" is not assignable to return type "Webhook"
+  ┬á┬áType "Webhook | None" is not assignable to type "Webhook"
+  ┬á┬á┬á┬á"None" is not assignable to "Webhook" (reportReturnType)
+f:\coding\plexichat\src\tests\applications\test_components.py
+  f:\coding\plexichat\src\tests\applications\test_components.py:122:20 - error: Argument of type "List[SelectOption] | None" cannot be assigned to parameter "obj" of type "Sized" in function "len"
+  ┬á┬áType "List[SelectOption] | None" is not assignable to type "Sized"
+  ┬á┬á┬á┬á"None" is incompatible with protocol "Sized"
+  ┬á┬á┬á┬á┬á┬á"__len__" is not present (reportArgumentType)
+f:\coding\plexichat\src\tests\applications\test_responses.py
+  f:\coding\plexichat\src\tests\applications\test_responses.py:48:20 - error: Argument of type "List[Dict[str, Any]] | None" cannot be assigned to parameter "obj" of type "Sized" in function "len"
+  ┬á┬áType "List[Dict[str, Any]] | None" is not assignable to type "Sized"
+  ┬á┬á┬á┬á"None" is incompatible with protocol "Sized"
+  ┬á┬á┬á┬á┬á┬á"__len__" is not present (reportArgumentType)
+  f:\coding\plexichat\src\tests\applications\test_responses.py:49:16 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+  f:\coding\plexichat\src\tests\applications\test_responses.py:65:20 - error: Argument of type "List[Dict[str, Any]] | None" cannot be assigned to parameter "obj" of type "Sized" in function "len"
+  ┬á┬áType "List[Dict[str, Any]] | None" is not assignable to type "Sized"
+  ┬á┬á┬á┬á"None" is incompatible with protocol "Sized"
+  ┬á┬á┬á┬á┬á┬á"__len__" is not present (reportArgumentType)
+  f:\coding\plexichat\src\tests\applications\test_responses.py:137:20 - error: Argument of type "List[Dict[str, Any]] | None" cannot be assigned to parameter "obj" of type "Sized" in function "len"
+  ┬á┬áType "List[Dict[str, Any]] | None" is not assignable to type "Sized"
+  ┬á┬á┬á┬á"None" is incompatible with protocol "Sized"
+  ┬á┬á┬á┬á┬á┬á"__len__" is not present (reportArgumentType)
+  f:\coding\plexichat\src\tests\applications\test_responses.py:168:20 - error: Argument of type "List[Dict[str, Any]] | None" cannot be assigned to parameter "obj" of type "Sized" in function "len"
+  ┬á┬áType "List[Dict[str, Any]] | None" is not assignable to type "Sized"
+  ┬á┬á┬á┬á"None" is incompatible with protocol "Sized"
+  ┬á┬á┬á┬á┬á┬á"__len__" is not present (reportArgumentType)
+  f:\coding\plexichat\src\tests\applications\test_responses.py:186:20 - error: Argument of type "List[Dict[str, Any]] | None" cannot be assigned to parameter "obj" of type "Sized" in function "len"
+  ┬á┬áType "List[Dict[str, Any]] | None" is not assignable to type "Sized"
+  ┬á┬á┬á┬á"None" is incompatible with protocol "Sized"
+  ┬á┬á┬á┬á┬á┬á"__len__" is not present (reportArgumentType)
+f:\coding\plexichat\src\tests\auth\test_permissions.py
+  f:\coding\plexichat\src\tests\auth\test_permissions.py:54:31 - error: Argument of type "None" cannot be assigned to parameter "user_permissions" of type "Dict[str, bool]" in function "has_permission"
+  ┬á┬á"None" is not assignable to "Dict[str, bool]" (reportArgumentType)
+f:\coding\plexichat\src\tests\automod\test_keyword_rules.py
+  f:\coding\plexichat\src\tests\automod\test_keyword_rules.py:97:16 - error: Operator "in" not supported for types "Literal['word1']" and "str | None"
+  ┬á┬áOperator "in" not supported for types "Literal['word1']" and "None" (reportOperatorIssue)
+  f:\coding\plexichat\src\tests\automod\test_keyword_rules.py:98:16 - error: Operator "in" not supported for types "Literal['word2']" and "str | None"
+  ┬á┬áOperator "in" not supported for types "Literal['word2']" and "None" (reportOperatorIssue)
+f:\coding\plexichat\src\tests\fixtures\database.py
+  f:\coding\plexichat\src\tests\fixtures\database.py:26:25 - error: "Database" is not defined (reportUndefinedVariable)
+  f:\coding\plexichat\src\tests\fixtures\database.py:82:22 - error: "Database" is not defined (reportUndefinedVariable)
+  f:\coding\plexichat\src\tests\fixtures\database.py:91:22 - error: "execute" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\tests\fixtures\database.py:97:22 - error: "execute" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\tests\fixtures\database.py:103:22 - error: "execute" is not a known attribute of "None" (reportOptionalMemberAccess)
+f:\coding\plexichat\src\tests\fixtures\factories.py
+  f:\coding\plexichat\src\tests\fixtures\factories.py:142:28 - error: "id" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\tests\fixtures\factories.py:176:36 - error: Expression of type "None" cannot be assigned to parameter of type "List[str]"
+  ┬á┬á"None" is not assignable to "List[str]" (reportArgumentType)
+  f:\coding\plexichat\src\tests\fixtures\factories.py:191:59 - error: "id" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\tests\fixtures\factories.py:197:31 - error: "id" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\tests\fixtures\factories.py:229:52 - error: "id" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\tests\fixtures\factories.py:229:62 - error: "id" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\tests\fixtures\factories.py:254:28 - error: "id" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\tests\fixtures\factories.py:294:26 - error: "id" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\tests\fixtures\factories.py:295:32 - error: "id" is not a known attribute of "None" (reportOptionalMemberAccess)
+f:\coding\plexichat\src\tests\media\conftest.py
+  f:\coding\plexichat\src\tests\media\conftest.py:153:29 - error: "config" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\tests\media\conftest.py:162:29 - error: "config" is not a known attribute of "None" (reportOptionalMemberAccess)
+f:\coding\plexichat\src\tests\media\test_integration.py
+  f:\coding\plexichat\src\tests\media\test_integration.py:16:33 - error: "config" is not a known attribute of "None" (reportOptionalMemberAccess)
+f:\coding\plexichat\src\tests\media\test_signing.py
+  f:\coding\plexichat\src\tests\media\test_signing.py:111:20 - error: Operator "-" not supported for "None" (reportOptionalOperand)
+f:\coding\plexichat\src\tests\media\test_storage.py
+  f:\coding\plexichat\src\tests\media\test_storage.py:175:16 - error: Import "boto3" could not be resolved (reportMissingImports)
+f:\coding\plexichat\src\tests\notifications\test_integration.py
+  f:\coding\plexichat\src\tests\notifications\test_integration.py:302:12 - error: "notifs" is possibly unbound (reportPossiblyUnboundVariable)
+f:\coding\plexichat\src\tests\ratelimit\conftest.py
+  f:\coding\plexichat\src\tests\ratelimit\conftest.py:171:24 - error: Cannot assign to attribute "user" for class "MockState"
+  ┬á┬áExpression of type "MockUser" cannot be assigned to attribute "user" of class "MockState"
+  ┬á┬á┬á┬á"MockUser" is not assignable to "None" (reportAttributeAccessIssue)
+f:\coding\plexichat\src\tests\reactions\test_counts.py
+  f:\coding\plexichat\src\tests\reactions\test_counts.py:51:27 - error: "me" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\tests\reactions\test_counts.py:69:24 - error: "count" is not a known attribute of "None" (reportOptionalMemberAccess)
+  f:\coding\plexichat\src\tests\reactions\test_counts.py:70:24 - error: "count" is not a known attribute of "None" (reportOptionalMemberAccess)
+f:\coding\plexichat\src\tests\reactions\test_edge_cases.py
+  f:\coding\plexichat\src\tests\reactions\test_edge_cases.py:203:27 - error: "count" is not a known attribute of "None" (reportOptionalMemberAccess)
+f:\coding\plexichat\src\tests\search\test_ranking.py
+  f:\coding\plexichat\src\tests\search\test_ranking.py:278:31 - error: Argument of type "list[MessageSearchResult]" cannot be assigned to parameter "results" of type "List[SearchResult]" in function "rank_results"
+  ┬á┬á"list[MessageSearchResult]" is not assignable to "List[SearchResult]"
+  ┬á┬á┬á┬áType parameter "_T@list" is invariant, but "MessageSearchResult" is not the same as "SearchResult"
+  ┬á┬á┬á┬áConsider switching from "list" to "Sequence" which is covariant (reportArgumentType)
+  f:\coding\plexichat\src\tests\search\test_ranking.py:288:31 - error: Argument of type "list[UserSearchResult]" cannot be assigned to parameter "results" of type "List[SearchResult]" in function "rank_results"
+  ┬á┬á"list[UserSearchResult]" is not assignable to "List[SearchResult]"
+  ┬á┬á┬á┬áType parameter "_T@list" is invariant, but "UserSearchResult" is not the same as "SearchResult"
+  ┬á┬á┬á┬áConsider switching from "list" to "Sequence" which is covariant (reportArgumentType)
+  f:\coding\plexichat\src\tests\search\test_ranking.py:298:31 - error: Argument of type "list[ServerSearchResult]" cannot be assigned to parameter "results" of type "List[SearchResult]" in function "rank_results"
+  ┬á┬á"list[ServerSearchResult]" is not assignable to "List[SearchResult]"
+  ┬á┬á┬á┬áType parameter "_T@list" is invariant, but "ServerSearchResult" is not the same as "SearchResult"
+  ┬á┬á┬á┬áConsider switching from "list" to "Sequence" which is covariant (reportArgumentType)
+f:\coding\plexichat\src\tests\test_database.py
+  f:\coding\plexichat\src\tests\test_database.py:125:12 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+  f:\coding\plexichat\src\tests\test_database.py:138:13 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+  f:\coding\plexichat\src\tests\test_database.py:152:12 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+  f:\coding\plexichat\src\tests\test_database.py:165:13 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+  f:\coding\plexichat\src\tests\test_database.py:170:12 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+  f:\coding\plexichat\src\tests\test_database.py:183:12 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+  f:\coding\plexichat\src\tests\test_database.py:196:12 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+  f:\coding\plexichat\src\tests\test_database.py:220:16 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+  f:\coding\plexichat\src\tests\test_database.py:340:12 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+  f:\coding\plexichat\src\tests\test_database.py:341:12 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+  f:\coding\plexichat\src\tests\test_database.py:347:12 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+  f:\coding\plexichat\src\tests\test_database.py:352:13 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+  f:\coding\plexichat\src\tests\test_database.py:369:19 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+  f:\coding\plexichat\src\tests\test_database.py:387:12 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+  f:\coding\plexichat\src\tests\test_database.py:461:12 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+  f:\coding\plexichat\src\tests\test_database.py:473:12 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+  f:\coding\plexichat\src\tests\test_database.py:474:16 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+  f:\coding\plexichat\src\tests\test_database.py:487:12 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+  f:\coding\plexichat\src\tests\test_database.py:491:12 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+  f:\coding\plexichat\src\tests\test_database.py:506:12 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+  f:\coding\plexichat\src\tests\test_database.py:575:16 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+  f:\coding\plexichat\src\tests\test_database.py:592:12 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+  f:\coding\plexichat\src\tests\test_database.py:607:12 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+  f:\coding\plexichat\src\tests\test_database.py:618:12 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+  f:\coding\plexichat\src\tests\test_database.py:619:12 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+  f:\coding\plexichat\src\tests\test_database.py:620:12 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+f:\coding\plexichat\src\tests\unit\test_validators.py
+  f:\coding\plexichat\src\tests\unit\test_validators.py:15:28 - error: Type "Overload[(_: EllipsisType, /) -> ((((...) -> (Coroutine[Any, Any, None] | None))) -> (() -> None)), (*_given_arguments: SearchStrategy[Any]) -> ((((...) -> (Coroutine[Any, Any, None] | None))) -> ((...) -> None)), (**_given_kwargs: SearchStrategy[Any] | EllipsisType) -> ((((...) -> (Coroutine[Any, Any, None] | None))) -> ((...) -> None))]" is not assignable to declared type "(...) -> ((f: Unknown) -> Unknown)"
+  ┬á┬áNo overloaded function matches type "(...) -> ((f: Unknown) -> Unknown)" (reportAssignmentType)
+  f:\coding\plexichat\src\tests\unit\test_validators.py:15:49 - error: Type "Module("hypothesis.strategies")" is not assignable to declared type "type[st]"
+  ┬á┬áType "Module("hypothesis.strategies")" is not assignable to type "type[st]" (reportAssignmentType)
+  f:\coding\plexichat\src\tests\unit\test_validators.py:15:53 - error: Type "(condition: object) -> bool" is not assignable to declared type "(x: Unknown) -> None"
+  ┬á┬áType "(condition: object) -> bool" is not assignable to type "(x: Unknown) -> None"
+  ┬á┬á┬á┬áParameter name mismatch: "x" versus "condition"
+  ┬á┬á┬á┬áFunction return type "bool" is incompatible with type "None"
+  ┬á┬á┬á┬á┬á┬á"bool" is not assignable to "None" (reportAssignmentType)
+  f:\coding\plexichat\src\tests\unit\test_validators.py:15:61 - error: Type "type[settings]" is not assignable to declared type "(...) -> ((f: Unknown) -> Unknown)"
+  ┬á┬áType "type[settings]" is not assignable to type "(...) -> ((f: Unknown) -> Unknown)"
+  ┬á┬á┬á┬áFunction return type "settings" is incompatible with type "(f: Unknown) -> Unknown"
+  ┬á┬á┬á┬á┬á┬áType "settings" is not assignable to type "(f: Unknown) -> Unknown"
+  ┬á┬á┬á┬á┬á┬á┬á┬áParameter name mismatch: "f" versus "test" (reportAssignmentType)
+f:\coding\plexichat\src\utils\common-utils\tests\integration\main.py
+  f:\coding\plexichat\src\utils\common-utils\tests\integration\main.py:57:10 - error: Import "script2" could not be resolved (reportMissingImports)
+f:\coding\plexichat\src\utils\common-utils\tests\validator\test_validator.py
+  f:\coding\plexichat\src\utils\common-utils\tests\validator\test_validator.py:19:12 - error: Operator "in" not supported for types "Literal['blocked pattern']" and "str | None"
+  ┬á┬áOperator "in" not supported for types "Literal['blocked pattern']" and "None" (reportOperatorIssue)
+  f:\coding\plexichat\src\utils\common-utils\tests\validator\test_validator.py:25:12 - error: Operator "in" not supported for types "Literal['<script>']" and "str | None"
+  ┬á┬áOperator "in" not supported for types "Literal['<script>']" and "None" (reportOperatorIssue)
+f:\coding\plexichat\src\utils\common-utils\tests\version\test_version.py
+  f:\coding\plexichat\src\utils\common-utils\tests\version\test_version.py:230:17 - error: Cannot assign to attribute "major" for class "Version"
+  ┬á┬áAttribute "major" is read-only (reportAttributeAccessIssue)
+410 errors, 0 warnings, 0 informations 
