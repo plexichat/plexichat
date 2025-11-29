@@ -323,6 +323,15 @@ def server_with_moderator(db_and_modules):
     )
     servers.assign_role(owner.id, server.id, moderator.id, mod_role.id)
 
+    # Create a member role with thread creation permissions
+    member_role = servers.create_role(
+        owner.id, server.id, "Member",
+        permissions={
+            "threads.create_public": True,
+        }
+    )
+    servers.assign_role(owner.id, server.id, member.id, member_role.id)
+
     channel = servers.create_channel(
         owner.id, server.id, "mod-channel",
         channel_type=servers.ChannelType.TEXT

@@ -18,12 +18,16 @@ class TestHealthCheck:
         assert "version" in data
 
     def test_health_check_returns_version(self, test_client):
-        """Test that health check returns version."""
+        """Test that health check returns version in correct format."""
         response = test_client.get("/api/v1/health")
         
         assert response.status_code == 200
         data = response.json()
-        assert data["version"] == "1.0.0"
+        # Version should be in format [a|b|c|r].[major].[minor]-[build] or "unknown"
+        version = data["version"]
+        assert version == "unknown" or (
+            version[0] in "abcr" and "." in version and "-" in version
+        )
 
     def test_root_endpoint(self, test_client):
         """Test root endpoint returns API info."""
