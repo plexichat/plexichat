@@ -173,7 +173,7 @@ class ScheduledEventManager:
             raise ServerNotFoundError("Server not found")
 
         query = "SELECT * FROM srv_scheduled_events WHERE server_id = ?"
-        params = [server_id]
+        params: list[int | str] = [server_id]
 
         if status:
             query += " AND status = ?"
@@ -378,7 +378,7 @@ class ScheduledEventManager:
             raise ScheduledEventNotFoundError("Event not found")
 
         query = "SELECT * FROM srv_event_rsvps WHERE event_id = ?"
-        params = [event_id]
+        params: list[int | str] = [event_id]
 
         if status:
             query += " AND status = ?"
