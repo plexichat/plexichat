@@ -238,7 +238,9 @@ class ReactionManager:
 
         logger.debug(f"Reaction {reaction_id} added to message {message_id} by user {user_id}")
 
-        return self.get_reaction(reaction_id)
+        result = self.get_reaction(reaction_id)
+        assert result is not None  # Should exist since we just created it
+        return result
 
     def remove_reaction(
         self,
@@ -644,7 +646,9 @@ class ReactionManager:
 
         logger.debug(f"Custom emoji {name} created for server {server_id}")
 
-        return self.get_custom_emoji(emoji_id)
+        result = self.get_custom_emoji(emoji_id)
+        assert result is not None  # Should exist since we just created it
+        return result
 
     def delete_custom_emoji(
         self,

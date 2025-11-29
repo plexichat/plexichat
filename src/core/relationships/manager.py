@@ -182,7 +182,9 @@ class RelationshipManager:
 
         logger.debug(f"Friend request {request_id} sent from {sender_id} to {recipient_id}")
 
-        return self.get_friend_request(request_id)
+        result = self.get_friend_request(request_id)
+        assert result is not None  # Should exist since we just created it
+        return result
 
     def accept_friend_request(self, user_id: int, request_id: int) -> FriendRequest:
         """
@@ -230,7 +232,9 @@ class RelationshipManager:
 
         logger.debug(f"Friend request {request_id} accepted")
 
-        return self.get_friend_request(request_id)
+        result = self.get_friend_request(request_id)
+        assert result is not None  # Should exist since we just updated it
+        return result
 
     def decline_friend_request(self, user_id: int, request_id: int) -> FriendRequest:
         """
@@ -263,7 +267,9 @@ class RelationshipManager:
 
         logger.debug(f"Friend request {request_id} declined")
 
-        return self.get_friend_request(request_id)
+        result = self.get_friend_request(request_id)
+        assert result is not None  # Should exist since we just updated it
+        return result
 
     def cancel_friend_request(self, user_id: int, request_id: int) -> FriendRequest:
         """
@@ -296,7 +302,9 @@ class RelationshipManager:
 
         logger.debug(f"Friend request {request_id} cancelled")
 
-        return self.get_friend_request(request_id)
+        result = self.get_friend_request(request_id)
+        assert result is not None  # Should exist since we just updated it
+        return result
 
     def get_friend_request(self, request_id: int) -> Optional[FriendRequest]:
         """Get a friend request by ID."""
@@ -435,7 +443,9 @@ class RelationshipManager:
 
         logger.debug(f"User {blocker_id} blocked user {blocked_id}")
 
-        return self.get_block(block_id)
+        result = self.get_block(block_id)
+        assert result is not None  # Should exist since we just created it
+        return result
 
     def unblock_user(self, blocker_id: int, blocked_id: int) -> bool:
         """

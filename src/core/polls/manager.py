@@ -207,7 +207,9 @@ class PollManager:
 
         logger.debug(f"Created poll {poll_id} on message {message_id}")
 
-        return self.get_poll(poll_id, user_id)
+        result = self.get_poll(poll_id, user_id)
+        assert result is not None  # Should exist since we just created it
+        return result
 
     def get_poll(self, poll_id: int, user_id: int) -> Optional[Poll]:
         """Get a poll by ID."""
@@ -385,7 +387,9 @@ class PollManager:
 
         logger.debug(f"Poll {poll_id} closed by user {user_id}")
 
-        return self.get_poll(poll_id, user_id)
+        result = self.get_poll(poll_id, user_id)
+        assert result is not None  # Should exist since we just updated it
+        return result
 
     def delete_poll(self, user_id: int, poll_id: int) -> bool:
         """

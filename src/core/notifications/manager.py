@@ -877,7 +877,9 @@ class NotificationManager:
                 (override_id, user_id, channel_id, level.value, muted_until, now, now)
             )
 
-        return self.get_channel_override(user_id, channel_id)
+        result = self.get_channel_override(user_id, channel_id)
+        assert result is not None  # Should exist since we just created/updated it
+        return result
 
     def delete_channel_override(self, user_id: int, channel_id: int) -> bool:
         """Delete channel notification override."""
