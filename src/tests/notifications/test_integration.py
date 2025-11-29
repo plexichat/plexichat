@@ -289,6 +289,7 @@ class TestPushPayload:
         """Test push payload includes badge count."""
         owner, member1, member2, group, messaging, notifications, relationships = group_conversation
 
+        notifs = []
         for i in range(3):
             content = f"<@{member1.id}> message {i}"
             msg = messaging.send_message(owner.id, group.id, content)
