@@ -300,7 +300,9 @@ class ServerManager:
 
         logger.debug(f"Created server {server_id} for owner {owner_id}")
 
-        return self.get_server(server_id, owner_id)
+        result = self.get_server(server_id, owner_id)
+        assert result is not None  # Should exist since we just created it
+        return result
 
     def get_server(self, server_id: int, user_id: int) -> Optional[Server]:
         """Get a server by ID if user has access."""
@@ -395,7 +397,9 @@ class ServerManager:
                 changes,
             )
 
-        return self.get_server(server_id, user_id)
+        result = self.get_server(server_id, user_id)
+        assert result is not None  # Should exist since we just updated it
+        return result
 
     def delete_server(self, user_id: int, server_id: int) -> bool:
         """Delete a server (owner only)."""
@@ -517,7 +521,9 @@ class ServerManager:
 
         logger.debug(f"Created channel {channel_id} in server {server_id}")
 
-        return self.get_channel(channel_id, user_id)
+        result = self.get_channel(channel_id, user_id)
+        assert result is not None  # Should exist since we just created it
+        return result
 
     def create_category(
         self,
@@ -676,7 +682,9 @@ class ServerManager:
                 changes,
             )
 
-        return self.get_channel(channel_id, user_id)
+        result = self.get_channel(channel_id, user_id)
+        assert result is not None  # Should exist since we just updated it
+        return result
 
     def delete_channel(self, user_id: int, channel_id: int) -> bool:
         """Delete a channel."""
@@ -715,7 +723,9 @@ class ServerManager:
             (position, self._get_timestamp(), channel_id),
         )
 
-        return self.get_channel(channel_id, user_id)
+        result = self.get_channel(channel_id, user_id)
+        assert result is not None  # Should exist since we just updated it
+        return result
 
     # === Role Operations ===
 
@@ -772,7 +782,9 @@ class ServerManager:
 
         logger.debug(f"Created role {role_id} in server {server_id}")
 
-        return self.get_role(role_id, user_id)
+        result = self.get_role(role_id, user_id)
+        assert result is not None  # Should exist since we just created it
+        return result
 
     def get_role(self, role_id: int, user_id: int) -> Optional[Role]:
         """Get a role by ID."""
@@ -950,7 +962,9 @@ class ServerManager:
             (position, self._get_timestamp(), role_id),
         )
 
-        return self.get_role(role_id, user_id)
+        result = self.get_role(role_id, user_id)
+        assert result is not None  # Should exist since we just updated it
+        return result
 
 
     # === Member Operations ===
@@ -1008,7 +1022,9 @@ class ServerManager:
 
         logger.debug(f"Added member {user_id} to server {server_id}")
 
-        return self.get_member(server_id, user_id)
+        result = self.get_member(server_id, user_id)
+        assert result is not None  # Should exist since we just created it
+        return result
 
     def get_member(self, server_id: int, user_id: int) -> Optional[Member]:
         """Get a member by user ID."""
@@ -1110,7 +1126,9 @@ class ServerManager:
                     changes,
                 )
 
-        return self.get_member(server_id, member_user_id)
+        result = self.get_member(server_id, member_user_id)
+        assert result is not None  # Should exist since we just updated it
+        return result
 
     def remove_member(self, user_id: int, server_id: int) -> bool:
         """Remove yourself from a server (leave)."""
@@ -1514,7 +1532,9 @@ class ServerManager:
             {"target_type": target_type, "target_id": target_id},
         )
 
-        return self.get_channel_override(channel_id, target_type, target_id)
+        result = self.get_channel_override(channel_id, target_type, target_id)
+        assert result is not None  # Should exist since we just created/updated it
+        return result
 
     def delete_channel_override(
         self,
@@ -1674,7 +1694,9 @@ class ServerManager:
             invite_id,
         )
 
-        return self.get_invite(code)
+        result = self.get_invite(code)
+        assert result is not None  # Should exist since we just created it
+        return result
 
     def get_invite(self, code: str) -> Optional[Invite]:
         """Get an invite by code."""
