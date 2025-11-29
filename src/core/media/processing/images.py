@@ -73,16 +73,17 @@ class ImageProcessor:
             frame_count = getattr(img, "n_frames", 1)
             
             exif_data = None
-            if hasattr(img, "_getexif") and img._getexif():
-                raw_exif = img._getexif()
-                exif_data = {}
-                for tag_id, value in raw_exif.items():
-                    try:
-                        from PIL.ExifTags import TAGS
-                        tag = TAGS.get(tag_id, tag_id)
-                        if isinstance(value, bytes):
-                            continue
-                        exif_data[tag] = value
+            if hasattr(img, "_getexif"):
+                raw_exif = getattr(img, "_getexif")()
+                if raw_exif:
+                    exif_data = {}
+                    for tag_id, value in raw_exif.items():
+                        try:
+                            from PIL.ExifTags import TAGS
+                            tag = TAGS.get(tag_id, tag_id)
+                            if isinstance(value, bytes):
+                                continue
+                            exif_data[tag] = value
                     except Exception:
                         pass
             
@@ -138,7 +139,7 @@ class ImageProcessor:
                 img = background
             
             output = io.BytesIO()
-            save_kwargs = {"format": output_format}
+            save_kwargs: Dict[str, Any] = {"format": output_format}
             
             if output_format in ("JPEG", "WEBP"):
                 save_kwargs["quality"] = self._quality
@@ -155,7 +156,7 @@ class ImageProcessor:
     def create_thumbnails(
         self,
         image_data: bytes,
-        sizes: List[int] = None,
+        sizes: Optional[List[int]] = None,
         output_format: str = "JPEG",
     ) -> Dict[int, Tuple[bytes, int, int]]:
         """
@@ -220,6 +221,7 @@ class ImageProcessor:
                     new_w = width
                     new_h = int(orig_h * ratio)
                 else:
+                    assert height is not None  # Checked at function start
                     ratio = height / orig_h
                     new_w = int(orig_w * ratio)
                     new_h = height
@@ -239,7 +241,7 @@ class ImageProcessor:
                 img = background
             
             output = io.BytesIO()
-            save_kwargs = {"format": out_format}
+            save_kwargs: Dict[str, Any] = {"format": out_format}
             
             if out_format in ("JPEG", "WEBP"):
                 save_kwargs["quality"] = self._quality
@@ -281,7 +283,7 @@ class ImageProcessor:
                 img = background
             
             output = io.BytesIO()
-            save_kwargs = {"format": output_format}
+            save_kwargs: Dict[str, Any] = {"format": output_format}
             
             if output_format in ("JPEG", "WEBP"):
                 save_kwargs["quality"] = quality or self._quality
@@ -317,7 +319,7 @@ class ImageProcessor:
             out_format = output_format or original_format or "PNG"
             
             output = io.BytesIO()
-            save_kwargs = {"format": out_format}
+            save_kwargs: Dict[str, Any] = {"format": out_format}
             
             if out_format in ("JPEG", "WEBP"):
                 save_kwargs["quality"] = self._quality

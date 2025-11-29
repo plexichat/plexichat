@@ -35,8 +35,8 @@ class ExternalProxy:
         db,
         cache_path: str = "proxy_cache",
         cache_ttl: int = 86400,
-        max_size: int = None,
-        allowed_types: set = None,
+        max_size: Optional[int] = None,
+        allowed_types: Optional[set] = None,
         user_agent: str = "PlexiChat/1.0",
         timeout: int = 30,
     ):
