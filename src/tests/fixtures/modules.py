@@ -200,6 +200,36 @@ class ModuleRegistry:
             self._cache['applications'] = applications
         return self._cache['applications']
 
+    @property
+    def stickers(self):
+        """Get the stickers module (lazy loaded)."""
+        if 'stickers' not in self._cache:
+            from src.core import stickers
+            self._reset_module(stickers)
+            stickers.setup(self._db, self.messaging, self.servers)
+            self._cache['stickers'] = stickers
+        return self._cache['stickers']
+
+    @property
+    def polls(self):
+        """Get the polls module (lazy loaded)."""
+        if 'polls' not in self._cache:
+            from src.core import polls
+            self._reset_module(polls)
+            polls.setup(self._db, self.messaging)
+            self._cache['polls'] = polls
+        return self._cache['polls']
+
+    @property
+    def soundboard(self):
+        """Get the soundboard module (lazy loaded)."""
+        if 'soundboard' not in self._cache:
+            from src.core import soundboard
+            self._reset_module(soundboard)
+            soundboard.setup(self._db, self.servers)
+            self._cache['soundboard'] = soundboard
+        return self._cache['soundboard']
+
     def get_api(self):
         """
         Get the API module with all dependencies setup.

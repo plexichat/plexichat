@@ -54,7 +54,7 @@ def db_manager():
     
     This is the key optimization - ONE database for all tests.
     """
-    manager = DatabaseManager(test_dir="temp_test_session")
+    manager = DatabaseManager(test_dir="temp/test_session")
     manager.setup()
     
     yield manager
@@ -347,6 +347,9 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "media: Media module tests")
     config.addinivalue_line("markers", "search: Search module tests")
     config.addinivalue_line("markers", "applications: Applications module tests")
+    config.addinivalue_line("markers", "stickers: Stickers module tests")
+    config.addinivalue_line("markers", "polls: Polls module tests")
+    config.addinivalue_line("markers", "soundboard: Soundboard module tests")
 
 
 def pytest_collection_modifyitems(config, items):
@@ -391,6 +394,15 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.integration)
         elif "/applications/" in str(item.fspath):
             item.add_marker(pytest.mark.applications)
+            item.add_marker(pytest.mark.integration)
+        elif "/stickers/" in str(item.fspath):
+            item.add_marker(pytest.mark.stickers)
+            item.add_marker(pytest.mark.integration)
+        elif "/polls/" in str(item.fspath):
+            item.add_marker(pytest.mark.polls)
+            item.add_marker(pytest.mark.integration)
+        elif "/soundboard/" in str(item.fspath):
+            item.add_marker(pytest.mark.soundboard)
             item.add_marker(pytest.mark.integration)
         elif "/unit/" in str(item.fspath):
             item.add_marker(pytest.mark.unit)
