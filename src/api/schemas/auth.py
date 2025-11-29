@@ -44,7 +44,7 @@ class UserResponse(BaseModel):
     totp_enabled: bool = Field(False, description="2FA enabled status")
     
     @field_serializer("id")
-    def serialize_id(self, v: Any) -> str:
+    def serialize_id(self, v: Any) -> Optional[str]:
         return str(v) if v else None
 
 
