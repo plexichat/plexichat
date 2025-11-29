@@ -16,7 +16,7 @@ class SearchNotFoundError(SearchError):
 class SearchPermissionError(SearchError):
     """User does not have permission to search or access results."""
     
-    def __init__(self, message: str, permission: str = None):
+    def __init__(self, message: str, permission: str | None = None):
         super().__init__(message)
         self.permission = permission
 
@@ -29,7 +29,7 @@ class SearchQueryError(SearchError):
 class InvalidQuerySyntaxError(SearchQueryError):
     """Invalid query syntax."""
     
-    def __init__(self, message: str, position: int = None, suggestion: str = None):
+    def __init__(self, message: str, position: int | None = None, suggestion: str | None = None):
         super().__init__(message)
         self.position = position
         self.suggestion = suggestion
@@ -38,7 +38,7 @@ class InvalidQuerySyntaxError(SearchQueryError):
 class SearchIndexError(SearchError):
     """Error during indexing operation."""
     
-    def __init__(self, message: str, item_id: int = None):
+    def __init__(self, message: str, item_id: int | None = None):
         super().__init__(message)
         self.item_id = item_id
 
@@ -46,7 +46,7 @@ class SearchIndexError(SearchError):
 class SearchBackendError(SearchError):
     """Error communicating with search backend."""
     
-    def __init__(self, message: str, backend: str = None, original_error: Exception = None):
+    def __init__(self, message: str, backend: str | None = None, original_error: Exception | None = None):
         super().__init__(message)
         self.backend = backend
         self.original_error = original_error
@@ -69,7 +69,7 @@ class DiscoveryError(SearchError):
 class ServerNotListedError(DiscoveryError):
     """Server is not listed in the discovery directory."""
     
-    def __init__(self, message: str, server_id: int = None):
+    def __init__(self, message: str, server_id: int | None = None):
         super().__init__(message)
         self.server_id = server_id
 
@@ -77,7 +77,7 @@ class ServerNotListedError(DiscoveryError):
 class VerificationError(DiscoveryError):
     """Error in server verification."""
     
-    def __init__(self, message: str, server_id: int = None, reason: str = None):
+    def __init__(self, message: str, server_id: int | None = None, reason: str | None = None):
         super().__init__(message)
         self.server_id = server_id
         self.reason = reason
@@ -95,7 +95,7 @@ class BumpCooldownError(DiscoveryError):
 class CategoryNotFoundError(DiscoveryError):
     """Server category does not exist."""
     
-    def __init__(self, message: str, category: str = None):
+    def __init__(self, message: str, category: str | None = None):
         super().__init__(message)
         self.category = category
 
