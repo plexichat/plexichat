@@ -12,6 +12,7 @@ if common_utils_path not in sys.path:
 import utils.logger as logger
 import utils.config as config
 import utils.validator as validator
+import utils.version as version
 
 def main():
     """
@@ -85,8 +86,12 @@ def main():
         },
         "application": {
             "name": "PlexiChat",
-            "version": "0.1.0",
+            "version": "a.1.0-1",
             "environment": "development"
+        },
+        "versioning": {
+            "min_supported_version": "a.1.0-1",
+            "update_url": None
         }
     }
     
@@ -105,6 +110,13 @@ def main():
     )
     
     validator.setup()
+    
+    app_version = config.get("application", {}).get("version", "a.1.0-1")
+    versioning_config = config.get("versioning", {})
+    version.setup(
+        current_version=app_version,
+        min_supported_version=versioning_config.get("min_supported_version"),
+    )
     
     logger.info("=" * 60)
     logger.info("PlexiChat Application Starting")
