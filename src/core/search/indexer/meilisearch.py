@@ -5,6 +5,8 @@ Optional backend for production deployments requiring fast, typo-tolerant search
 """
 
 import json
+import urllib.request
+import urllib.error
 from typing import List, Dict, Any, Optional, Union
 
 import utils.logger as logger
@@ -80,9 +82,6 @@ class MeilisearchIndexer(BaseIndexer):
             return self._http_client.request(method, path, body)
         
         try:
-            import urllib.request
-            import urllib.error
-            
             url = f"{self._host}{path}"
             data = json.dumps(body).encode() if body else None
             headers = {"Content-Type": "application/json"}

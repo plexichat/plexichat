@@ -5,6 +5,8 @@ Optional backend for production deployments requiring advanced search features.
 """
 
 import json
+import urllib.request
+import urllib.error
 from typing import List, Dict, Any, Optional
 
 import utils.logger as logger
@@ -76,9 +78,6 @@ class ElasticsearchIndexer(BaseIndexer):
         """Make HTTP request to Elasticsearch."""
         if self._http_client is None:
             try:
-                import urllib.request
-                import urllib.error
-                
                 url = f"{self._hosts[0]}{path}"
                 data = json.dumps(body).encode() if body else None
                 headers = {"Content-Type": "application/json"}
@@ -317,7 +316,7 @@ class ElasticsearchIndexer(BaseIndexer):
             if channel_ids:
                 must.append({"terms": {"channel_id": [str(c) for c in channel_ids]}})
             if author_ids:
-                must.append({"terms": {"author_id": [str(a) for c in author_ids]}})
+                must.append({"terms": {"author_id": [str(a) for a in author_ids]}})
             
             search_body = {
                 "query": {"bool": {"must": must}},
