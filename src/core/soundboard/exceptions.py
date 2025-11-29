@@ -2,6 +2,8 @@
 Soundboard exceptions - All soundboard-related error types.
 """
 
+from typing import List
+
 
 class SoundboardError(Exception):
     """Base exception for all soundboard errors."""

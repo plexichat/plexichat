@@ -2,6 +2,8 @@
 Sticker exceptions - All sticker-related error types.
 """
 
+from typing import List
+
 
 class StickerError(Exception):
     """Base exception for all sticker errors."""

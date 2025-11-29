@@ -139,6 +139,23 @@ def create_group(
     return _get_manager().create_group(owner_id, name, participant_ids, max_participants)
 
 
+def create_server_channel_conversation(
+    server_id: int,
+    channel_id: int
+) -> Conversation:
+    """
+    Create a conversation for a server channel.
+    
+    Args:
+        server_id: Server ID
+        channel_id: Channel ID
+        
+    Returns:
+        Conversation object
+    """
+    return _get_manager().create_server_channel_conversation(server_id, channel_id)
+
+
 def get_conversation(conversation_id: int, user_id: int) -> Optional[Conversation]:
     """Get a conversation by ID if user has access."""
     return _get_manager().get_conversation(conversation_id, user_id)

@@ -17,7 +17,7 @@ class DatabaseManager:
     transaction-based isolation between tests.
     """
     
-    def __init__(self, test_dir: str = "temp_test_session"):
+    def __init__(self, test_dir: str = "temp/test_session"):
         self.test_dir = test_dir
         self.db_path = os.path.join(test_dir, "test_session.db")
         self._db = None

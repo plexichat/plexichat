@@ -94,7 +94,7 @@ def get_test_config():
 @pytest.fixture(scope="session")
 def test_env():
     """Setup test environment once per session."""
-    test_dir = "temp_servers_test"
+    test_dir = "temp/servers"
 
     try:
         if os.path.exists(test_dir):
