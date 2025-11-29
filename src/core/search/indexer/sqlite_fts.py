@@ -25,7 +25,7 @@ from ..exceptions import SearchIndexError, SearchBackendError
 class SQLiteFTS5Indexer(BaseIndexer):
     """SQLite FTS5 full-text search indexer."""
     
-    def __init__(self, db, config: IndexerConfig = None):
+    def __init__(self, db, config: Optional[IndexerConfig] = None):
         super().__init__(config)
         self._db = db
         self._initialized = False
@@ -169,10 +169,10 @@ class SQLiteFTS5Indexer(BaseIndexer):
     def search_messages(
         self,
         query: str,
-        conversation_ids: List[int] = None,
-        server_ids: List[int] = None,
-        channel_ids: List[int] = None,
-        author_ids: List[int] = None,
+        conversation_ids: Optional[List[int]] = None,
+        server_ids: Optional[List[int]] = None,
+        channel_ids: Optional[List[int]] = None,
+        author_ids: Optional[List[int]] = None,
         limit: int = 25,
         offset: int = 0,
     ) -> List[MessageSearchResult]:
@@ -192,7 +192,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
                 FROM search_messages_fts
                 WHERE search_messages_fts MATCH ?
             """
-            params = [fts_query]
+            params: List[Any] = [fts_query]
             
             if conversation_ids:
                 placeholders = ",".join("?" * len(conversation_ids))
@@ -374,7 +374,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
     def search_servers(
         self,
         query: str,
-        category: str = None,
+        category: Optional[str] = None,
         public_only: bool = True,
         limit: int = 25,
         offset: int = 0,
@@ -394,7 +394,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
                 FROM search_servers_fts
                 WHERE search_servers_fts MATCH ?
             """
-            params = [fts_query]
+            params: List[Any] = [fts_query]
             
             if public_only:
                 sql += " AND is_public = '1'"
