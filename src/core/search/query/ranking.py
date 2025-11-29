@@ -30,7 +30,7 @@ class RankingWeights:
 class RankingEngine:
     """Engine for scoring and ranking search results."""
     
-    def __init__(self, weights: RankingWeights = None):
+    def __init__(self, weights: Optional[RankingWeights] = None):
         self.weights = weights or RankingWeights()
         self._now_ms = 0
     
@@ -38,7 +38,7 @@ class RankingEngine:
         self,
         results: List[MessageSearchResult],
         parsed_query: ParsedQuery,
-        now_ms: int = None,
+        now_ms: Optional[int] = None,
     ) -> List[MessageSearchResult]:
         """
         Rank message search results by relevance.
@@ -211,11 +211,11 @@ class RankingEngine:
 
 def rank_results(
     results: List[SearchResult],
-    parsed_query: ParsedQuery = None,
-    query: str = None,
-    user_id: int = None,
-    now_ms: int = None,
-    weights: RankingWeights = None,
+    parsed_query: Optional[ParsedQuery] = None,
+    query: Optional[str] = None,
+    user_id: Optional[int] = None,
+    now_ms: Optional[int] = None,
+    weights: Optional[RankingWeights] = None,
 ) -> List[SearchResult]:
     """
     Rank search results by relevance.
@@ -225,12 +225,18 @@ def rank_results(
     engine = RankingEngine(weights)
     
     if results and isinstance(results[0], MessageSearchResult):
-        return engine.rank_message_results(results, parsed_query, now_ms)
+        msg_results = [r for r in results if isinstance(r, MessageSearchResult)]
+        ranked = engine.rank_message_results(msg_results, parsed_query or ParsedQuery(raw_query=""), now_ms)
+        return list(ranked)
     
     if results and isinstance(results[0], UserSearchResult):
-        return engine.rank_user_results(results, query or "", user_id or 0)
+        user_results = [r for r in results if isinstance(r, UserSearchResult)]
+        ranked = engine.rank_user_results(user_results, query or "", user_id or 0)
+        return list(ranked)
     
     if results and isinstance(results[0], ServerSearchResult):
-        return engine.rank_server_results(results, query or "")
+        server_results = [r for r in results if isinstance(r, ServerSearchResult)]
+        ranked = engine.rank_server_results(server_results, query or "")
+        return list(ranked)
     
     return results
