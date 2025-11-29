@@ -345,6 +345,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "ratelimit: Rate limiting tests")
     config.addinivalue_line("markers", "api: API route tests")
     config.addinivalue_line("markers", "media: Media module tests")
+    config.addinivalue_line("markers", "search: Search module tests")
 
 
 def pytest_collection_modifyitems(config, items):

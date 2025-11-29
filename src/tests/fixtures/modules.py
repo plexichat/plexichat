@@ -180,6 +180,16 @@ class ModuleRegistry:
             self._cache['media'] = media
         return self._cache['media']
     
+    @property
+    def search(self):
+        """Get the search module (lazy loaded)."""
+        if 'search' not in self._cache:
+            from src.core import search
+            self._reset_module(search)
+            search.setup(self._db, self.auth, self.messaging, self.servers)
+            self._cache['search'] = search
+        return self._cache['search']
+    
     def get_api(self):
         """
         Get the API module with all dependencies setup.

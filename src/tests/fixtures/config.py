@@ -138,4 +138,15 @@ def get_test_config():
             "scanner_enabled": False,
             "proxy_enabled": False,
         },
+        "search": {
+            "backend": "sqlite_fts5",
+            "batch_size": 100,
+            "write_time_indexing": True,
+            "result_limit": 100,
+            "discovery": {
+                "min_members_for_listing": 2,
+                "bump_cooldown_hours": 0,
+                "max_tags": 10,
+            },
+        },
     }
