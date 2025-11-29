@@ -177,7 +177,7 @@ class WebhookManager:
             (server_id,)
         )
 
-    def _check_manage_webhooks_permission(self, user_id: int, server_id: int, channel_id: int = None) -> bool:
+    def _check_manage_webhooks_permission(self, user_id: int, server_id: int, channel_id: Optional[int] = None) -> bool:
         """Check if user has manage_webhooks permission."""
         if not self._servers:
             return True
