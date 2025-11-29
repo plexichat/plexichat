@@ -314,7 +314,7 @@ class MessagingManager:
             INNER JOIN msg_participants p ON c.id = p.conversation_id
             WHERE p.user_id = ? AND c.deleted = 0
         """
-        params = [user_id]
+        params: List[Any] = [user_id]
         
         if conversation_type:
             query += " AND c.conversation_type = ?"
@@ -347,6 +347,7 @@ class MessagingManager:
         
         # Check permission (owner or admin)
         participant = self._get_participant(conversation_id, user_id)
+        assert participant is not None  # Checked by _is_participant above
         if participant.role not in [ParticipantRole.OWNER, ParticipantRole.ADMIN]:
             raise ConversationAccessDeniedError("Only owner or admin can update conversation")
         
@@ -427,6 +428,7 @@ class MessagingManager:
         
         # For groups, remove participant
         participant = self._get_participant(conversation_id, user_id)
+        assert participant is not None  # Checked by _is_participant above
         
         # If owner is leaving, transfer ownership or delete
         if participant.role == ParticipantRole.OWNER:
@@ -487,6 +489,7 @@ class MessagingManager:
         
         # Check permission
         actor = self._get_participant(conversation_id, user_id)
+        assert actor is not None  # Checked by get_conversation above
         if actor.role not in [ParticipantRole.OWNER, ParticipantRole.ADMIN]:
             raise ConversationAccessDeniedError("Only owner or admin can add participants")
         
@@ -523,7 +526,9 @@ class MessagingManager:
             {"user_id": participant_id, "added_by": user_id}
         )
         
-        return self._get_participant(conversation_id, participant_id)
+        result = self._get_participant(conversation_id, participant_id)
+        assert result is not None  # Should exist since we just added it
+        return result
     
     def remove_participant(
         self,
@@ -541,6 +546,7 @@ class MessagingManager:
         
         # Check permission
         actor = self._get_participant(conversation_id, user_id)
+        assert actor is not None  # Checked by get_conversation above
         target = self._get_participant(conversation_id, participant_id)
         
         if not target:
@@ -588,6 +594,7 @@ class MessagingManager:
             raise ConversationTypeError("Cannot change roles in DM")
         
         actor = self._get_participant(conversation_id, user_id)
+        assert actor is not None  # Checked by get_conversation above
         target = self._get_participant(conversation_id, participant_id)
         
         if not target:
@@ -610,7 +617,9 @@ class MessagingManager:
             (role.value, conversation_id, participant_id)
         )
         
-        return self._get_participant(conversation_id, participant_id)
+        result = self._get_participant(conversation_id, participant_id)
+        assert result is not None  # Should exist since we just updated it
+        return result
     
     def get_participants(self, user_id: int, conversation_id: int) -> List[Participant]:
         """Get all participants in a conversation."""
@@ -766,7 +775,9 @@ class MessagingManager:
         
         logger.debug(f"Message {msg_id} sent to conversation {conversation_id}")
         
-        return self.get_message(user_id, msg_id)
+        result = self.get_message(user_id, msg_id)
+        assert result is not None  # Should exist since we just created it
+        return result
     
     def edit_message(self, user_id: int, message_id: int, content: str) -> Message:
         """Edit a message (own messages only)."""
@@ -813,7 +824,9 @@ class MessagingManager:
             (final_content, encrypted_content, now, message_id)
         )
         
-        return self.get_message(user_id, message_id)
+        result = self.get_message(user_id, message_id)
+        assert result is not None  # Should exist since we just updated it
+        return result
     
     def delete_message(self, user_id: int, message_id: int, hard_delete: bool = False) -> bool:
         """Delete a message."""
@@ -1319,7 +1332,9 @@ class MessagingManager:
              json.dumps(metadata) if metadata else None)
         )
         
-        return self._get_attachment(att_id)
+        result = self._get_attachment(att_id)
+        assert result is not None  # Should exist since we just created it
+        return result
     
     def get_attachments(self, user_id: int, message_id: int) -> List[Attachment]:
         """Get attachments for a message."""
