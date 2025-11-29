@@ -106,7 +106,7 @@ class ReactionManager:
             (conversation_id,)
         )
 
-    def _check_server_permission(self, user_id: int, server_id: int, channel_id: int = None) -> bool:
+    def _check_server_permission(self, user_id: int, server_id: int, channel_id: Optional[int] = None) -> bool:
         """Check if user has add_reactions permission in server."""
         if not self._servers:
             return True
