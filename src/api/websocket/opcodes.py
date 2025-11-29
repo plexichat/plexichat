@@ -99,4 +99,4 @@ def is_resumable(close_code: int) -> bool:
 
 def get_close_message(close_code: int) -> str:
     """Get human-readable message for close code."""
-    return CLOSE_CODE_MESSAGES.get(close_code, "Unknown close code")
+    return CLOSE_CODE_MESSAGES.get(GatewayCloseCode(close_code), "Unknown close code")
