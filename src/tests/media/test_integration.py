@@ -13,6 +13,7 @@ class TestMediaModuleSetup:
         """Test that media module can be set up."""
         import utils.config as config
         
+        assert config._config_instance is not None
         config._config_instance.config["media"] = {
             "storage_backend": "local",
             "local_path": temp_upload_dir,
