@@ -471,6 +471,14 @@ class EmbedManager:
         # Determine position
         if position is None:
             position = count
+        else:
+            # Shift existing embeds at or after this position
+            self._db.execute(
+                """UPDATE embed_message_embeds 
+                   SET position = position + 1 
+                   WHERE message_id = ? AND position >= ?""",
+                (message_id, position)
+            )
 
         now = self._get_timestamp()
         assoc_id = self._generate_id()

@@ -519,11 +519,14 @@ class ThreadManager:
         if not thread:
             raise ThreadNotFoundError(f"Thread {thread_id} not found")
 
+        # Check locked status first to give more specific error
+        if thread.locked:
+            # Only users who can manage the thread can send to locked threads
+            if not self.can_manage_thread(user_id, thread_id):
+                raise ThreadLockedError("Thread is locked")
+
         if not self.can_send_in_thread(user_id, thread_id):
             raise ThreadAccessDeniedError("Cannot send messages in this thread")
-
-        if thread.locked:
-            raise ThreadLockedError("Thread is locked")
 
         if thread.state == ThreadState.ARCHIVED:
             self._unarchive_thread_internal(thread_id)
