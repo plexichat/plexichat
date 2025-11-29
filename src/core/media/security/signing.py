@@ -90,6 +90,8 @@ class UrlSigner:
         if not all([signature, expires_str, file_id_str]):
             raise SignatureInvalidError("Missing signature parameters")
         
+        assert expires_str is not None and file_id_str is not None  # Checked above
+        
         try:
             expires_at = int(expires_str)
             file_id = int(file_id_str)
@@ -103,6 +105,7 @@ class UrlSigner:
         expected_data = self._build_signature_data(base_url, file_id, expires_at, None)
         expected_signature = self._generate_signature(expected_data)
         
+        assert signature is not None  # Checked above
         if not hmac.compare_digest(signature, expected_signature):
             raise SignatureInvalidError("Invalid signature")
         
