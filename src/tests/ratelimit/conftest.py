@@ -139,7 +139,7 @@ def mock_request():
 
     class MockState:
         def __init__(self):
-            self.user = None
+            self.user: MockUser | None = None
 
     class MockClient:
         def __init__(self):
