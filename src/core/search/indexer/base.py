@@ -30,7 +30,7 @@ class IndexerConfig:
 class BaseIndexer(ABC):
     """Abstract base class for search indexers."""
     
-    def __init__(self, config: IndexerConfig = None):
+    def __init__(self, config: Optional[IndexerConfig] = None):
         self.config = config or IndexerConfig()
     
     @abstractmethod
@@ -104,10 +104,10 @@ class BaseIndexer(ABC):
     def search_messages(
         self,
         query: str,
-        conversation_ids: List[int] = None,
-        server_ids: List[int] = None,
-        channel_ids: List[int] = None,
-        author_ids: List[int] = None,
+        conversation_ids: Optional[List[int]] = None,
+        server_ids: Optional[List[int]] = None,
+        channel_ids: Optional[List[int]] = None,
+        author_ids: Optional[List[int]] = None,
         limit: int = 25,
         offset: int = 0,
     ) -> List[MessageSearchResult]:
@@ -204,7 +204,7 @@ class BaseIndexer(ABC):
     def search_servers(
         self,
         query: str,
-        category: str = None,
+        category: Optional[str] = None,
         public_only: bool = True,
         limit: int = 25,
         offset: int = 0,
