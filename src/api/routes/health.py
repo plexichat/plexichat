@@ -5,6 +5,8 @@ Health check endpoint.
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+import utils.version as version
+
 router = APIRouter()
 
 
@@ -21,4 +23,8 @@ async def health_check():
     
     Returns the current health status and API version.
     """
-    return HealthResponse(status="healthy", version="1.0.0")
+    try:
+        ver = version.current_string()
+    except RuntimeError:
+        ver = "unknown"
+    return HealthResponse(status="healthy", version=ver)

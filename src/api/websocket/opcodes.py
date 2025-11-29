@@ -18,6 +18,9 @@ class GatewayOpcode(IntEnum):
     INVALID_SESSION = 9
     HELLO = 10
     HEARTBEAT_ACK = 11
+    # PlexiChat extensions for server status
+    SERVER_STATUS = 12
+    VERSION_CHECK = 13
 
 
 class GatewayCloseCode(IntEnum):
@@ -36,6 +39,10 @@ class GatewayCloseCode(IntEnum):
     INVALID_API_VERSION = 4012
     INVALID_INTENTS = 4013
     DISALLOWED_INTENTS = 4014
+    # PlexiChat extensions
+    VERSION_OUTDATED = 4015
+    SERVER_MAINTENANCE = 4016
+    SERVER_SHUTDOWN = 4017
 
     NORMAL_CLOSURE = 1000
     GOING_AWAY = 1001
@@ -56,6 +63,9 @@ CLOSE_CODE_MESSAGES = {
     GatewayCloseCode.INVALID_API_VERSION: "Invalid API version",
     GatewayCloseCode.INVALID_INTENTS: "Invalid intents",
     GatewayCloseCode.DISALLOWED_INTENTS: "Disallowed intents",
+    GatewayCloseCode.VERSION_OUTDATED: "Client version outdated",
+    GatewayCloseCode.SERVER_MAINTENANCE: "Server entering maintenance",
+    GatewayCloseCode.SERVER_SHUTDOWN: "Server shutting down",
 }
 
 

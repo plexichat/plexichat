@@ -24,7 +24,7 @@ class APIConfig:
     """API configuration settings."""
     title: str = "PlexiChat API"
     description: str = "REST API for PlexiChat messaging platform"
-    version: str = "1.0.0"
+    version: str = "a.1.0-1"
     api_prefix: str = "/api/v1"
     debug: bool = False
     cors_origins: List[str] = field(default_factory=lambda: ["*"])
@@ -48,7 +48,7 @@ def get_api_config() -> APIConfig:
     return APIConfig(
         title=api_conf.get("title", "PlexiChat API"),
         description=api_conf.get("description", "REST API for PlexiChat messaging platform"),
-        version=api_conf.get("version", "1.0.0"),
+        version=api_conf.get("version", "a.1.0-1"),
         api_prefix=api_conf.get("api_prefix", "/api/v1"),
         debug=api_conf.get("debug", False),
         cors_origins=api_conf.get("cors_origins", ["*"]),

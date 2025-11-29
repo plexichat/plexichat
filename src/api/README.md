@@ -64,6 +64,14 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 |--------|----------|-------------|
 | GET | `/api/v1/health` | Health check |
 
+### Version & Status
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/version` | Get server version info |
+| POST | `/api/v1/version/negotiate` | Negotiate client/server compatibility |
+| GET | `/api/v1/status` | Get server operational status |
+
 ### Authentication
 
 | Method | Endpoint | Description |
@@ -174,7 +182,7 @@ Settings in `config/config.yaml` under `api`:
 ```yaml
 api:
   title: PlexiChat API
-  version: 1.0.0
+  version: a.1.0-1
   api_prefix: /api/v1
   debug: false
   cors_origins:
@@ -182,6 +190,15 @@ api:
   cors_allow_credentials: true
   docs_url: /docs
   redoc_url: /redoc
+
+application:
+  name: PlexiChat
+  version: a.1.0-1
+  environment: development
+
+versioning:
+  min_supported_version: a.1.0-1
+  update_url: null
 ```
 
 ## Testing
