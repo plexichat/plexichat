@@ -161,7 +161,7 @@ class InteractionHandler:
         if not interaction:
             raise InteractionNotFoundError("Interaction not found")
         
-        if not verify_token_hash(parsed["secret"], interaction.token_hash):
+        if not interaction.token_hash or not verify_token_hash(parsed["secret"], interaction.token_hash):
             raise InteractionNotFoundError("Invalid interaction token")
         
         expiry = self._config.get("interaction_timeout", INTERACTION_TOKEN_EXPIRY)

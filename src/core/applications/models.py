@@ -166,7 +166,7 @@ class InteractionData:
     """Data payload for an interaction."""
     id: int
     name: str
-    command_type: CommandType
+    command_type: Optional[CommandType] = None
     resolved: Optional[Dict[str, Any]] = None
     options: Optional[List[Dict[str, Any]]] = None
     custom_id: Optional[str] = None
