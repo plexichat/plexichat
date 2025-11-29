@@ -110,12 +110,14 @@ def get_router():
 def get_session_manager() -> SessionManager:
     """Get the session manager instance."""
     _ensure_setup()
+    assert _session_manager is not None  # Ensured by _ensure_setup
     return _session_manager
 
 
 def get_dispatcher() -> GatewayDispatcher:
     """Get the gateway dispatcher instance."""
     _ensure_setup()
+    assert _dispatcher is not None  # Ensured by _ensure_setup
     return _dispatcher
 
 
