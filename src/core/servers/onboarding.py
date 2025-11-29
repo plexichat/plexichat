@@ -113,7 +113,9 @@ class OnboardingManager:
             )
 
         self._log_audit(server_id, user_id, AuditLogAction.WELCOME_SCREEN_UPDATE)
-        return self.get_welcome_screen(server_id, user_id)
+        result = self.get_welcome_screen(server_id, user_id)
+        assert result is not None  # Should exist since we just created/updated it
+        return result
 
     def get_welcome_screen(self, server_id: int, user_id: int) -> Optional[WelcomeScreen]:
         """Get the welcome screen for a server."""
@@ -195,7 +197,9 @@ class OnboardingManager:
         )
 
         self._log_audit(server_id, user_id, AuditLogAction.ONBOARDING_UPDATE, "step", step_id)
-        return self.get_onboarding_step(step_id, user_id)
+        result = self.get_onboarding_step(step_id, user_id)
+        assert result is not None  # Should exist since we just created it
+        return result
 
     def _validate_step_options(
         self,
@@ -301,7 +305,9 @@ class OnboardingManager:
                 tuple(params),
             )
 
-        return self.get_onboarding_step(step_id, user_id)
+        result = self.get_onboarding_step(step_id, user_id)
+        assert result is not None  # Should exist since we just updated it
+        return result
 
     def delete_onboarding_step(self, user_id: int, step_id: int) -> bool:
         """Delete an onboarding step."""
@@ -344,7 +350,9 @@ class OnboardingManager:
             (progress_id, server_id, user_id, json.dumps([]), now),
         )
 
-        return self.get_onboarding_progress(user_id, server_id)
+        result = self.get_onboarding_progress(user_id, server_id)
+        assert result is not None  # Should exist since we just created it
+        return result
 
     def complete_onboarding_step(
         self,
@@ -388,7 +396,9 @@ class OnboardingManager:
              now if all_required_complete else None, server_id, user_id),
         )
 
-        return self.get_onboarding_progress(user_id, server_id)
+        result = self.get_onboarding_progress(user_id, server_id)
+        assert result is not None  # Should exist since we just updated it
+        return result
 
     def get_onboarding_progress(self, user_id: int, server_id: int) -> Optional[OnboardingProgress]:
         """Get onboarding progress for a user."""

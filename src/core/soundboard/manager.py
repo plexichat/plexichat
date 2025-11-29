@@ -247,7 +247,9 @@ class SoundboardManager:
 
         logger.debug(f"Uploaded sound {sound_id} to server {server_id}")
 
-        return self.get_sound(sound_id, user_id)
+        result = self.get_sound(sound_id, user_id)
+        assert result is not None  # Should exist since we just created it
+        return result
 
     def get_sound(self, sound_id: int, user_id: int) -> Optional[Sound]:
         """Get a sound by ID."""

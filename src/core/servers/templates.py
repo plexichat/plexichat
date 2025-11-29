@@ -121,7 +121,9 @@ class TemplateManager:
         self._log_audit(server_id, user_id, AuditLogAction.TEMPLATE_CREATE, "template", template_id)
         logger.debug(f"Created template {template_id} from server {server_id}")
 
-        return self.get_template(code, user_id)
+        result = self.get_template(code, user_id)
+        assert result is not None  # Should exist since we just created it
+        return result
 
     def _snapshot_server(self, template_id: int, server_id: int, user_id: int):
         """Snapshot server structure into template data."""
@@ -387,7 +389,9 @@ class TemplateManager:
                 tuple(params),
             )
 
-        return self.get_template(code, user_id)
+        result = self.get_template(code, user_id)
+        assert result is not None  # Should exist since we just updated it
+        return result
 
     def _log_audit(
         self,

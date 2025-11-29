@@ -85,7 +85,9 @@ class StickerManager:
         pack_id = self._generate_id()
         self._db.execute("INSERT INTO sticker_packs (id, name, description, pack_type, server_id, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                          (pack_id, name, description, pack_type.value, server_id, user_id, now, now))
-        return self.get_pack(pack_id, user_id)
+        result = self.get_pack(pack_id, user_id)
+        assert result is not None  # Should exist since we just created it
+        return result
 
     def get_pack(self, pack_id: int, user_id: int) -> Optional[StickerPack]:
         row = self._db.fetch_one("SELECT p.*, COUNT(s.id) as sticker_count FROM sticker_packs p LEFT JOIN sticker_stickers s ON p.id = s.pack_id WHERE p.id = ? GROUP BY p.id", (pack_id,))
@@ -141,7 +143,9 @@ class StickerManager:
         self._db.execute("INSERT INTO sticker_stickers (id, pack_id, name, format, tags, related_emoji, url, size, width, height, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                          (sticker_id, pack_id, name, format.value, json.dumps(tags) if tags else None, related_emoji, url, size, width, height, now))
         self._db.execute("UPDATE sticker_packs SET updated_at = ? WHERE id = ?", (now, pack_id))
-        return self.get_sticker(sticker_id)
+        result = self.get_sticker(sticker_id)
+        assert result is not None  # Should exist since we just created it
+        return result
 
     def get_sticker(self, sticker_id: int) -> Optional[Sticker]:
         row = self._db.fetch_one("SELECT s.*, COUNT(u.id) as usage_count FROM sticker_stickers s LEFT JOIN sticker_usage u ON s.id = u.sticker_id WHERE s.id = ? GROUP BY s.id", (sticker_id,))

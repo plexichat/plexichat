@@ -505,7 +505,9 @@ class WebhookManager:
 
         logger.debug(f"Webhook {webhook_id} updated by user {user_id}")
 
-        return self.get_webhook(webhook_id)
+        result = self.get_webhook(webhook_id)
+        assert result is not None  # Should exist since we just updated it
+        return result
 
     def delete_webhook(self, user_id: int, webhook_id: int) -> bool:
         """

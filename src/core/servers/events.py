@@ -143,7 +143,9 @@ class ScheduledEventManager:
         self._log_audit(server_id, user_id, AuditLogAction.EVENT_CREATE, "event", event_id)
         logger.debug(f"Created scheduled event {event_id} in server {server_id}")
 
-        return self.get_event(event_id, user_id)
+        result = self.get_event(event_id, user_id)
+        assert result is not None  # Should exist since we just created it
+        return result
 
     def get_event(self, event_id: int, user_id: int) -> Optional[ScheduledEvent]:
         """Get a scheduled event by ID."""
@@ -276,7 +278,9 @@ class ScheduledEventManager:
                 "event", event_id, changes,
             )
 
-        return self.get_event(event_id, user_id)
+        result = self.get_event(event_id, user_id)
+        assert result is not None  # Should exist since we just updated it
+        return result
 
     def delete_event(self, user_id: int, event_id: int) -> bool:
         """Delete a scheduled event."""
@@ -331,7 +335,9 @@ class ScheduledEventManager:
             )
             self._update_rsvp_counts(event_id, None, status.value)
 
-        return self.get_rsvp(event_id, user_id)
+        result = self.get_rsvp(event_id, user_id)
+        assert result is not None  # Should exist since we just created/updated it
+        return result
 
     def remove_rsvp(self, user_id: int, event_id: int) -> bool:
         """Remove RSVP from an event."""

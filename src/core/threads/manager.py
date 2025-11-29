@@ -230,7 +230,9 @@ class ThreadManager:
 
         logger.debug(f"Thread {thread_id} created by user {user_id} in channel {channel_id}")
 
-        return self.get_thread(user_id, thread_id)
+        result = self.get_thread(user_id, thread_id)
+        assert result is not None  # Should exist since we just created/updated it
+        return result
 
     def create_thread_from_message(
         self,
@@ -303,7 +305,9 @@ class ThreadManager:
 
         logger.debug(f"Thread {thread_id} created from message {message_id} by user {user_id}")
 
-        return self.get_thread(user_id, thread_id)
+        result = self.get_thread(user_id, thread_id)
+        assert result is not None  # Should exist since we just created/updated it
+        return result
 
     # === Thread Membership ===
 
@@ -641,7 +645,9 @@ class ThreadManager:
 
         logger.debug(f"Thread {thread_id} archived by user {user_id}")
 
-        return self.get_thread(user_id, thread_id)
+        result = self.get_thread(user_id, thread_id)
+        assert result is not None  # Should exist since we just created/updated it
+        return result
 
     def _unarchive_thread_internal(self, thread_id: int) -> None:
         """Internal method to unarchive a thread."""
@@ -676,7 +682,9 @@ class ThreadManager:
 
         logger.debug(f"Thread {thread_id} unarchived by user {user_id}")
 
-        return self.get_thread(user_id, thread_id)
+        result = self.get_thread(user_id, thread_id)
+        assert result is not None  # Should exist since we just created/updated it
+        return result
 
     def lock_thread(self, user_id: int, thread_id: int) -> Thread:
         """
@@ -703,7 +711,9 @@ class ThreadManager:
 
         logger.debug(f"Thread {thread_id} locked by user {user_id}")
 
-        return self.get_thread(user_id, thread_id)
+        result = self.get_thread(user_id, thread_id)
+        assert result is not None  # Should exist since we just created/updated it
+        return result
 
     def unlock_thread(self, user_id: int, thread_id: int) -> Thread:
         """
@@ -730,7 +740,9 @@ class ThreadManager:
 
         logger.debug(f"Thread {thread_id} unlocked by user {user_id}")
 
-        return self.get_thread(user_id, thread_id)
+        result = self.get_thread(user_id, thread_id)
+        assert result is not None  # Should exist since we just created/updated it
+        return result
 
     # === Thread Listing ===
 
@@ -960,7 +972,9 @@ class ThreadManager:
 
         logger.debug(f"Thread {thread_id} updated by user {user_id}")
 
-        return self.get_thread(user_id, thread_id)
+        result = self.get_thread(user_id, thread_id)
+        assert result is not None  # Should exist since we just created/updated it
+        return result
 
     def delete_thread(self, user_id: int, thread_id: int) -> bool:
         """
@@ -1062,3 +1076,5 @@ class ThreadManager:
             return self._check_permission(user_id, thread.server_id, "threads.manage", thread.channel_id)
 
         return False
+
+
