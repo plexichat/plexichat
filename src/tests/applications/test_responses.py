@@ -45,6 +45,7 @@ class TestMessageResponse:
             ],
         )
 
+        assert response.embeds is not None
         assert len(response.embeds) == 1
         assert response.embeds[0]["title"] == "Embed Title"
 
@@ -62,6 +63,7 @@ class TestMessageResponse:
             ],
         )
 
+        assert response.components is not None
         assert len(response.components) == 1
 
     def test_create_message_with_tts(self):
@@ -134,6 +136,7 @@ class TestUpdateResponse:
             ],
         )
 
+        assert response.components is not None
         assert len(response.components) == 1
 
 
@@ -165,6 +168,7 @@ class TestModalResponse:
         assert response.response_type == InteractionResponseType.MODAL
         assert response.custom_id == "test_modal"
         assert response.title == "Test Modal"
+        assert response.components is not None
         assert len(response.components) == 1
 
 
@@ -183,6 +187,7 @@ class TestAutocompleteResponse:
         )
 
         assert response.response_type == InteractionResponseType.APPLICATION_COMMAND_AUTOCOMPLETE_RESULT
+        assert response.choices is not None
         assert len(response.choices) == 2
 
     def test_create_empty_autocomplete(self):
