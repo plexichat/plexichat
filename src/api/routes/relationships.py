@@ -19,7 +19,7 @@ router = APIRouter()
 def _relationship_to_response(rel) -> RelationshipResponse:
     """Convert relationship object to response model."""
     status = getattr(rel, "status", None)
-    if hasattr(status, "value"):
+    if status is not None and hasattr(status, "value"):
         status = status.value
     
     return RelationshipResponse(
@@ -182,7 +182,7 @@ async def delete_relationship(user_id: str, current_user: TokenInfo = Depends(ge
     try:
         rel = relationships.get_relationship(current_user.user_id, target_id)
         status = getattr(rel, "status", None)
-        if hasattr(status, "value"):
+        if status is not None and hasattr(status, "value"):
             status = status.value
         
         if status == "friend":

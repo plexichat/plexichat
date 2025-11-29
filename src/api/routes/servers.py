@@ -33,7 +33,7 @@ def _server_to_response(server) -> ServerResponse:
 def _channel_to_response(channel) -> ChannelResponse:
     """Convert channel object to response model."""
     channel_type = getattr(channel, "channel_type", None)
-    if hasattr(channel_type, "value"):
+    if channel_type is not None and hasattr(channel_type, "value"):
         channel_type = channel_type.value
     
     return ChannelResponse(

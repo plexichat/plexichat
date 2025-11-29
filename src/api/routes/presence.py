@@ -15,7 +15,7 @@ router = APIRouter()
 def _presence_to_response(pres, user_id: int) -> PresenceResponse:
     """Convert presence object to response model."""
     status = getattr(pres, "status", None)
-    if hasattr(status, "value"):
+    if status is not None and hasattr(status, "value"):
         status = status.value
     
     custom = getattr(pres, "custom_status", None)
