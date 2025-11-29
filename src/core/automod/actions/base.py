@@ -13,7 +13,7 @@ from ..models import ActionType, RuleAction, Violation
 class BaseAction(ABC):
     """Abstract base class for all automod actions."""
     
-    action_type: ActionType = None
+    action_type: Optional[ActionType] = None
     
     def __init__(self, db, servers_module=None, messaging_module=None, notifications_module=None):
         """

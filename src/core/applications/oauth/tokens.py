@@ -118,7 +118,7 @@ def verify_token_hash(token: str, expected_hash: str) -> bool:
     return secrets.compare_digest(actual_hash, expected_hash)
 
 
-def parse_oauth_token(token: str) -> dict:
+def parse_oauth_token(token: str) -> Optional[dict]:
     """
     Parse an OAuth token string.
     

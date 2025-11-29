@@ -13,7 +13,7 @@ from ..models import AICheckResult, AIBackendType
 class BaseAIAdapter(ABC):
     """Abstract base class for AI moderation backends."""
     
-    backend_type: AIBackendType = None
+    backend_type: Optional[AIBackendType] = None
     
     def __init__(self, config: Dict[str, Any]):
         """

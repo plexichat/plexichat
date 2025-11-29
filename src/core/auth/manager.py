@@ -1501,7 +1501,7 @@ class AuthManager:
 
     # === Device Management ===
     
-    def _track_device(self, user_id: int, device_info: Dict[str, str]) -> int:
+    def _track_device(self, user_id: int, device_info: Dict[str, str]) -> Optional[int]:
         """Track a device, creating or updating as needed."""
         fingerprint = device_info.get("fingerprint", "")
         if not fingerprint:

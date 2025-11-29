@@ -865,7 +865,7 @@ class AutoModManager:
     ) -> List[AuditEntry]:
         """Get automod audit log entries."""
         query = "SELECT * FROM automod_audit WHERE server_id = ?"
-        params = [server_id]
+        params: List[Any] = [server_id]
         
         if action_type is not None:
             query += " AND action_type = ?"

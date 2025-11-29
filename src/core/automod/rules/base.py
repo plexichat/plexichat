@@ -13,7 +13,7 @@ from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
 class BaseRule(ABC):
     """Abstract base class for all automod rules."""
     
-    rule_type: RuleType = None
+    rule_type: Optional[RuleType] = None
     
     def __init__(self, rule: Rule):
         """
