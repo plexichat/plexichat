@@ -48,6 +48,7 @@ class TestReactionCounts:
 
         msg_reactions_u2 = reactions.get_reactions(user2.id, msg.id)
         popular_u2 = next((r for r in msg_reactions_u2.reactions if r.emoji == "popular"), None)
+        assert popular_u2 is not None
         assert popular_u2.me is True
 
     def test_get_reactions_multiple_emojis(self, fresh_users_with_dm):
@@ -66,6 +67,8 @@ class TestReactionCounts:
         emoji_a = next((r for r in msg_reactions.reactions if r.emoji == "emoji_a"), None)
         emoji_b = next((r for r in msg_reactions.reactions if r.emoji == "emoji_b"), None)
 
+        assert emoji_a is not None
+        assert emoji_b is not None
         assert emoji_a.count == 2
         assert emoji_b.count == 1
 
