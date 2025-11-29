@@ -125,7 +125,7 @@ class OpenAIAdapter(BaseAIAdapter):
             flagged=flagged or above_threshold,
             categories=flagged_categories,
             scores=category_scores,
-            backend=self.backend_type,
+            backend=self.backend_type or AIBackendType.OPENAI,
             raw_response=response
         )
     

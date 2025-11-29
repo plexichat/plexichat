@@ -122,7 +122,7 @@ class PerspectiveAdapter(BaseAIAdapter):
             flagged=flagged,
             categories=categories,
             scores=scores,
-            backend=self.backend_type,
+            backend=self.backend_type or AIBackendType.PERSPECTIVE,
             raw_response=response
         )
     

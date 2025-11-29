@@ -127,7 +127,7 @@ class CustomAdapter(BaseAIAdapter):
             flagged=flagged,
             categories=categories,
             scores=scores,
-            backend=self.backend_type,
+            backend=self.backend_type or AIBackendType.CUSTOM,
             raw_response=response
         )
     
