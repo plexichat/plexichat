@@ -1,5 +1,6 @@
 {
   "include": ["src"],
+  "exclude": ["src/utils/common-utils"],
   "extraPaths": [
     "src",
     "src/utils/common-utils",
