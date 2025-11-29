@@ -138,7 +138,7 @@ BOT_RESTRICTED_PERMISSIONS = {
 }
 
 
-def has_permission(user_permissions: Dict[str, bool], required: str) -> bool:
+def has_permission(user_permissions: Optional[Dict[str, bool]], required: str) -> bool:
     """
     Check if user has a specific permission.
     
