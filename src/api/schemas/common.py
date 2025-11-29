@@ -61,7 +61,7 @@ class PaginatedResponse(BaseModel, Generic[T]):
     total: Optional[int] = None
 
 
-def snowflake_to_str(v: Any) -> str:
+def snowflake_to_str(v: Any) -> Optional[str]:
     """Convert snowflake ID to string."""
     if v is None:
         return None

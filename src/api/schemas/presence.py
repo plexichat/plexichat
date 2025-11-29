@@ -26,7 +26,7 @@ class PresenceResponse(BaseModel):
     last_seen: Optional[int] = Field(None, description="Last seen timestamp")
     
     @field_serializer("user_id")
-    def serialize_user_id(self, v: Any) -> str:
+    def serialize_user_id(self, v: Any) -> Optional[str]:
         return str(v) if v else None
 
 

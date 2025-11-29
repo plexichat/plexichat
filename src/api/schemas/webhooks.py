@@ -39,7 +39,7 @@ class WebhookResponse(BaseModel):
     created_at: int = Field(..., description="Creation timestamp")
     
     @field_serializer("id", "channel_id", "server_id", "creator_id")
-    def serialize_ids(self, v: Any) -> str:
+    def serialize_ids(self, v: Any) -> Optional[str]:
         return str(v) if v else None
 
 
@@ -67,5 +67,5 @@ class WebhookMessageResponse(BaseModel):
     created_at: int = Field(..., description="Creation timestamp")
     
     @field_serializer("id", "webhook_id", "channel_id")
-    def serialize_ids(self, v: Any) -> str:
+    def serialize_ids(self, v: Any) -> Optional[str]:
         return str(v) if v else None

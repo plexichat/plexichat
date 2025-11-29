@@ -37,7 +37,7 @@ class ServerResponse(BaseModel):
     created_at: int = Field(..., description="Creation timestamp")
     
     @field_serializer("id", "owner_id")
-    def serialize_ids(self, v: Any) -> str:
+    def serialize_ids(self, v: Any) -> Optional[str]:
         return str(v) if v else None
 
 
@@ -86,7 +86,7 @@ class RoleResponse(BaseModel):
     mentionable: bool = Field(False, description="Can be mentioned")
     
     @field_serializer("id", "server_id")
-    def serialize_ids(self, v: Any) -> str:
+    def serialize_ids(self, v: Any) -> Optional[str]:
         return str(v) if v else None
 
 
@@ -101,7 +101,7 @@ class MemberResponse(BaseModel):
     joined_at: int = Field(..., description="Join timestamp")
     
     @field_serializer("user_id", "server_id")
-    def serialize_ids(self, v: Any) -> str:
+    def serialize_ids(self, v: Any) -> Optional[str]:
         return str(v) if v else None
 
 
@@ -121,5 +121,5 @@ class InviteResponse(BaseModel):
     expires_at: Optional[int] = Field(None, description="Expiration timestamp")
     
     @field_serializer("server_id", "channel_id", "inviter_id")
-    def serialize_ids(self, v: Any) -> str:
+    def serialize_ids(self, v: Any) -> Optional[str]:
         return str(v) if v else None

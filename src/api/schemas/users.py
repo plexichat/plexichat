@@ -27,5 +27,5 @@ class UserPublicResponse(BaseModel):
     created_at: int = Field(..., description="Account creation timestamp")
     
     @field_serializer("id")
-    def serialize_id(self, v: Any) -> str:
+    def serialize_id(self, v: Any) -> Optional[str]:
         return str(v) if v else None

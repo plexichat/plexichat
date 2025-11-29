@@ -44,7 +44,7 @@ class AttachmentResponse(BaseModel):
     url: str = Field(..., description="File URL")
     
     @field_serializer("id")
-    def serialize_id(self, v: Any) -> str:
+    def serialize_id(self, v: Any) -> Optional[str]:
         return str(v) if v else None
 
 

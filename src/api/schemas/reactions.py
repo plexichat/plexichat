@@ -23,7 +23,7 @@ class ReactionUserResponse(BaseModel):
     reacted_at: int = Field(..., description="Reaction timestamp")
     
     @field_serializer("user_id")
-    def serialize_user_id(self, v: Any) -> str:
+    def serialize_user_id(self, v: Any) -> Optional[str]:
         return str(v) if v else None
 
 
@@ -36,5 +36,5 @@ class MessageReactionsResponse(BaseModel):
     total_count: int = Field(0, description="Total reaction count")
     
     @field_serializer("message_id")
-    def serialize_message_id(self, v: Any) -> str:
+    def serialize_message_id(self, v: Any) -> Optional[str]:
         return str(v) if v else None

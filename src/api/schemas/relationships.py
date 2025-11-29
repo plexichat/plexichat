@@ -30,7 +30,7 @@ class RelationshipResponse(BaseModel):
     created_at: Optional[int] = Field(None, description="Creation timestamp")
     
     @field_serializer("user_id")
-    def serialize_user_id(self, v: Any) -> str:
+    def serialize_user_id(self, v: Any) -> Optional[str]:
         return str(v) if v else None
 
 
@@ -46,5 +46,5 @@ class FriendRequestResponse(BaseModel):
     created_at: int = Field(..., description="Creation timestamp")
     
     @field_serializer("id", "sender_id", "recipient_id")
-    def serialize_ids(self, v: Any) -> str:
+    def serialize_ids(self, v: Any) -> Optional[str]:
         return str(v) if v else None
