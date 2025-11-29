@@ -4,7 +4,7 @@ OAuth2 tokens - Token generation and verification.
 
 import secrets
 import hashlib
-from typing import Tuple
+from typing import Tuple, Optional
 
 
 def generate_authorization_code(code_id: int, length: int = 32) -> Tuple[str, str]:
