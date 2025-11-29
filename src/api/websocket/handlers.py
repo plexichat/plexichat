@@ -1,0 +1,288 @@
+"""
+Opcode handlers - Handle incoming gateway messages.
+"""
+
+from typing import Optional, Dict, Any, Tuple
+import time
+
+import utils.logger as logger
+
+from .opcodes import GatewayOpcode, GatewayCloseCode
+from .connection import Connection, ConnectionState
+from .session import SessionManager
+from .intents import validate_intents, has_privileged_intents, DEFAULT_INTENTS
+
+
+class OpcodeHandler:
+    """Handles incoming gateway opcodes."""
+
+    def __init__(
+        self,
+        session_manager: SessionManager,
+        auth_module=None,
+        presence_module=None,
+        servers_module=None,
+    ):
+        """
+        Initialize the opcode handler.
+
+        Args:
+            session_manager: Session manager instance
+            auth_module: Auth module for token verification
+            presence_module: Presence module for status updates
+            servers_module: Servers module for guild data
+        """
+        self._session_manager = session_manager
+        self._auth = auth_module
+        self._presence = presence_module
+        self._servers = servers_module
+
+    async def handle(
+        self,
+        connection: Connection,
+        opcode: int,
+        data: Optional[Dict[str, Any]],
+    ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
+        """
+        Handle an incoming opcode.
+
+        Args:
+            connection: Connection that sent the message
+            opcode: Gateway opcode
+            data: Payload data
+
+        Returns:
+            Tuple of (response_opcode, response_data, close_code)
+            close_code is set if connection should be closed
+        """
+        try:
+            op = GatewayOpcode(opcode)
+        except ValueError:
+            return None, None, GatewayCloseCode.UNKNOWN_OPCODE
+
+        if op == GatewayOpcode.HEARTBEAT:
+            return await self._handle_heartbeat(connection, data)
+        elif op == GatewayOpcode.IDENTIFY:
+            return await self._handle_identify(connection, data)
+        elif op == GatewayOpcode.RESUME:
+            return await self._handle_resume(connection, data)
+        elif op == GatewayOpcode.PRESENCE_UPDATE:
+            return await self._handle_presence_update(connection, data)
+        elif op == GatewayOpcode.VOICE_STATE_UPDATE:
+            return await self._handle_voice_state_update(connection, data)
+        elif op == GatewayOpcode.REQUEST_GUILD_MEMBERS:
+            return await self._handle_request_guild_members(connection, data)
+        else:
+            return None, None, GatewayCloseCode.UNKNOWN_OPCODE
+
+    async def _handle_heartbeat(
+        self,
+        connection: Connection,
+        data: Optional[Dict[str, Any]],
+    ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
+        """Handle heartbeat opcode."""
+        connection.record_heartbeat()
+        connection.record_heartbeat_ack()
+        return GatewayOpcode.HEARTBEAT_ACK, None, None
+
+    async def _handle_identify(
+        self,
+        connection: Connection,
+        data: Optional[Dict[str, Any]],
+    ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
+        """Handle identify opcode."""
+        if connection.state == ConnectionState.READY:
+            return None, None, GatewayCloseCode.ALREADY_AUTHENTICATED
+
+        if not data:
+            return None, None, GatewayCloseCode.DECODE_ERROR
+
+        token = data.get("token")
+        if not token:
+            return None, None, GatewayCloseCode.AUTHENTICATION_FAILED
+
+        intents = data.get("intents", DEFAULT_INTENTS)
+        if not validate_intents(intents):
+            return None, None, GatewayCloseCode.INVALID_INTENTS
+
+        user_id = await self._verify_token(token)
+        if user_id is None:
+            return None, None, GatewayCloseCode.AUTHENTICATION_FAILED
+
+        if not self._session_manager.can_user_connect(user_id):
+            return None, None, GatewayCloseCode.RATE_LIMITED
+
+        properties = data.get("properties", {})
+        connection.properties = properties
+
+        compress = data.get("compress", False)
+        if compress:
+            connection.enable_compression()
+
+        session = self._session_manager.create_session(connection, user_id, intents)
+
+        ready_data = await self._build_ready_payload(user_id, session.session_id)
+
+        logger.info(f"User {user_id} identified with session {session.session_id}")
+
+        return GatewayOpcode.DISPATCH, {
+            "t": "READY",
+            "s": connection.increment_sequence(),
+            "d": ready_data,
+        }, None
+
+    async def _handle_resume(
+        self,
+        connection: Connection,
+        data: Optional[Dict[str, Any]],
+    ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
+        """Handle resume opcode."""
+        if not data:
+            return None, None, GatewayCloseCode.DECODE_ERROR
+
+        token = data.get("token")
+        session_id = data.get("session_id")
+        seq = data.get("seq", 0)
+
+        if not token or not session_id:
+            return GatewayOpcode.INVALID_SESSION, {"d": False}, None
+
+        user_id = await self._verify_token(token)
+        if user_id is None:
+            return GatewayOpcode.INVALID_SESSION, {"d": False}, None
+
+        if not self._session_manager.can_resume_session(session_id, user_id):
+            return GatewayOpcode.INVALID_SESSION, {"d": False}, None
+
+        session = self._session_manager.resume_session(connection, session_id, seq)
+        if not session:
+            return GatewayOpcode.INVALID_SESSION, {"d": False}, None
+
+        logger.info(f"User {user_id} resumed session {session_id}")
+
+        return GatewayOpcode.DISPATCH, {
+            "t": "RESUMED",
+            "s": connection.sequence,
+            "d": {},
+        }, None
+
+    async def _handle_presence_update(
+        self,
+        connection: Connection,
+        data: Optional[Dict[str, Any]],
+    ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
+        """Handle presence update opcode."""
+        if not connection.is_authenticated:
+            return None, None, GatewayCloseCode.NOT_AUTHENTICATED
+
+        if not data or not self._presence:
+            return None, None, None
+
+        status = data.get("status", "online")
+        activities = data.get("activities", [])
+
+        try:
+            from src.core.presence import UserStatus
+            status_enum = UserStatus(status)
+            self._presence.set_status(connection.user_id, status_enum)
+
+            if activities:
+                activity = activities[0]
+                from src.core.presence import ActivityType
+                activity_type = ActivityType(activity.get("type", "custom"))
+                self._presence.set_activity(
+                    connection.user_id,
+                    activity_type,
+                    activity.get("name", ""),
+                    details=activity.get("details"),
+                    state=activity.get("state"),
+                )
+        except Exception as e:
+            logger.warning(f"Presence update failed: {e}")
+
+        return None, None, None
+
+    async def _handle_voice_state_update(
+        self,
+        connection: Connection,
+        data: Optional[Dict[str, Any]],
+    ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
+        """Handle voice state update opcode."""
+        if not connection.is_authenticated:
+            return None, None, GatewayCloseCode.NOT_AUTHENTICATED
+
+        return None, None, None
+
+    async def _handle_request_guild_members(
+        self,
+        connection: Connection,
+        data: Optional[Dict[str, Any]],
+    ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
+        """Handle request guild members opcode."""
+        if not connection.is_authenticated:
+            return None, None, GatewayCloseCode.NOT_AUTHENTICATED
+
+        return None, None, None
+
+    async def _verify_token(self, token: str) -> Optional[int]:
+        """Verify a token and return user ID."""
+        if not self._auth:
+            return None
+
+        try:
+            token_info = self._auth.verify_token(token)
+            return token_info.user_id
+        except Exception:
+            return None
+
+    async def _build_ready_payload(
+        self,
+        user_id: int,
+        session_id: str,
+    ) -> Dict[str, Any]:
+        """Build the READY event payload."""
+        user_data = {"id": str(user_id)}
+        guilds = []
+
+        if self._auth:
+            try:
+                user = self._auth.get_user(user_id)
+                if user:
+                    user_data = {
+                        "id": str(user_id),
+                        "username": user.username,
+                        "discriminator": "0",
+                        "avatar": None,
+                        "bot": False,
+                    }
+            except Exception:
+                pass
+
+        if self._servers:
+            try:
+                servers = self._servers.get_servers(user_id)
+                for server in (servers or []):
+                    guilds.append({
+                        "id": str(server.id),
+                        "name": server.name,
+                        "unavailable": False,
+                    })
+            except Exception:
+                pass
+
+        return {
+            "v": 10,
+            "user": user_data,
+            "guilds": guilds,
+            "session_id": session_id,
+            "resume_gateway_url": "wss://gateway.plexichat.com",
+            "application": {"id": str(user_id), "flags": 0},
+        }
+
+    def get_replay_events(
+        self,
+        session_id: str,
+        after_sequence: int,
+    ) -> list:
+        """Get events to replay after resume."""
+        return self._session_manager.get_replay_events(session_id, after_sequence)
