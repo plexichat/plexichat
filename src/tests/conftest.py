@@ -41,6 +41,7 @@ for path in [project_root, src_path, utils_path, common_utils_path]:
 from src.tests.fixtures.config import get_test_config, TEST_PASSWORD
 from src.tests.fixtures.database import DatabaseManager
 from src.tests.fixtures.modules import ModuleRegistry
+from src.tests.fixtures.factories import UserFactory, ServerFactory, ConversationFactory
 
 
 # =============================================================================
@@ -91,7 +92,8 @@ def session_users(modules):
     users = []
     print("\n[Setup] Creating user pool with real Argon2 hashing...")
     
-    for i in range(100):  # Create 100 users upfront
+    # Reduced from 100 to 20 for faster test startup
+    for i in range(20):
         username = f"pooluser_{i}_{uuid.uuid4().hex[:4]}"
         email = f"{username}@test.example.com"
         password = TEST_PASSWORD
@@ -163,6 +165,30 @@ def user_pool(modules, session_users):
     """
     pool = UserPool(session_users, modules.auth)
     return pool
+
+
+# =============================================================================
+# Factory Fixtures
+# =============================================================================
+
+@pytest.fixture
+def user_factory(modules, session_users):
+    """Get a user factory for creating test users."""
+    factory = UserFactory(auth_module=modules.auth)
+    factory._pool = [user for user, _, _ in session_users]
+    return factory
+
+
+@pytest.fixture
+def server_factory(modules, user_factory):
+    """Get a server factory for creating test servers."""
+    return ServerFactory(servers_module=modules.servers, user_factory=user_factory)
+
+
+@pytest.fixture
+def conversation_factory(modules, user_factory):
+    """Get a conversation factory for creating test conversations."""
+    return ConversationFactory(messaging_module=modules.messaging, user_factory=user_factory)
 
 
 # =============================================================================

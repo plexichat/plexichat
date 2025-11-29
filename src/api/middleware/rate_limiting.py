@@ -2,7 +2,7 @@
 Rate limiting middleware integration for the API.
 """
 
-from typing import Optional, Dict, Any, Callable
+from typing import Optional, Dict, Any, Callable, Type
 
 from fastapi import Request
 
@@ -53,7 +53,7 @@ def create_rate_limit_middleware(
     exclude_paths: Optional[list] = None,
     include_headers_on_success: bool = True,
     custom_user_info_getter: Optional[Callable] = None,
-) -> RateLimitMiddleware:
+) -> Type[RateLimitMiddleware]:
     """
     Create a configured rate limit middleware instance.
 
