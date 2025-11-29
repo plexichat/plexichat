@@ -21,7 +21,7 @@ class OpenAIAdapter(BaseAIAdapter):
     
     backend_type = AIBackendType.OPENAI
     
-    API_URL = "https://api.openai.com/v1/moderations"
+    DEFAULT_API_URL = "https://api.openai.com/v1/moderations"
     
     CATEGORIES = {
         "hate": "Content that expresses hate toward a group",
@@ -40,6 +40,7 @@ class OpenAIAdapter(BaseAIAdapter):
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self._api_key = config.get("api_key", "")
+        self._api_url = config.get("api_url", self.DEFAULT_API_URL)
         self._model = config.get("model", "text-moderation-latest")
         self._threshold = config.get("threshold", 0.5)
     
@@ -58,7 +59,7 @@ class OpenAIAdapter(BaseAIAdapter):
             }).encode("utf-8")
             
             request = Request(
-                self.API_URL,
+                self._api_url,
                 data=request_data,
                 headers={
                     "Authorization": f"Bearer {self._api_key}",
