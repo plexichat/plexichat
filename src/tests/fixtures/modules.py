@@ -189,7 +189,17 @@ class ModuleRegistry:
             search.setup(self._db, self.auth, self.messaging, self.servers)
             self._cache['search'] = search
         return self._cache['search']
-    
+
+    @property
+    def applications(self):
+        """Get the applications module (lazy loaded)."""
+        if 'applications' not in self._cache:
+            from src.core import applications
+            self._reset_module(applications)
+            applications.setup(self._db, self.auth, self.servers, self.events)
+            self._cache['applications'] = applications
+        return self._cache['applications']
+
     def get_api(self):
         """
         Get the API module with all dependencies setup.

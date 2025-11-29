@@ -346,6 +346,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "api: API route tests")
     config.addinivalue_line("markers", "media: Media module tests")
     config.addinivalue_line("markers", "search: Search module tests")
+    config.addinivalue_line("markers", "applications: Applications module tests")
 
 
 def pytest_collection_modifyitems(config, items):
@@ -387,6 +388,9 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.integration)
         elif "/media/" in str(item.fspath):
             item.add_marker(pytest.mark.media)
+            item.add_marker(pytest.mark.integration)
+        elif "/applications/" in str(item.fspath):
+            item.add_marker(pytest.mark.applications)
             item.add_marker(pytest.mark.integration)
         elif "/unit/" in str(item.fspath):
             item.add_marker(pytest.mark.unit)
