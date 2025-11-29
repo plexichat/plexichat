@@ -446,7 +446,7 @@ def validate_sdp(sdp: str, sdp_type: SDPType) -> None:
     validator.validate(parsed, sdp_type)
 
 
-def create_sdp_message(sdp: str, sdp_type: SDPType, session_id: str = None) -> SDPMessage:
+def create_sdp_message(sdp: str, sdp_type: SDPType, session_id: Optional[str] = None) -> SDPMessage:
     """Create an SDPMessage from raw SDP."""
     validate_sdp(sdp, sdp_type)
     return SDPMessage(sdp_type=sdp_type, sdp=sdp, session_id=session_id)
