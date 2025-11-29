@@ -242,6 +242,8 @@ class OpcodeHandler:
             return None, None, GatewayCloseCode.DECODE_ERROR
 
         try:
+            if not connection.user_id:
+                return None, None, GatewayCloseCode.NOT_AUTHENTICATED
             from src.core.voice import signaling
             info = signaling.create_voice_connection(connection.user_id, channel_id)
             return GatewayOpcode.DISPATCH, {
@@ -262,6 +264,7 @@ class OpcodeHandler:
         if not connection.is_authenticated:
             return None, None, GatewayCloseCode.NOT_AUTHENTICATED
 
+        assert connection.user_id is not None  # Guaranteed by is_authenticated
         channel_id = data.get("channel_id") if data else None
 
         try:
@@ -291,6 +294,9 @@ class OpcodeHandler:
         if not channel_id or not sdp:
             return None, None, GatewayCloseCode.DECODE_ERROR
 
+        if not connection.user_id:
+            return None, None, GatewayCloseCode.NOT_AUTHENTICATED
+
         try:
             from src.core.voice import signaling
             answer = signaling.handle_sdp_offer(connection.user_id, channel_id, sdp, sdp_type)
@@ -318,6 +324,9 @@ class OpcodeHandler:
 
         if not channel_id or not candidate:
             return None, None, GatewayCloseCode.DECODE_ERROR
+
+        if not connection.user_id:
+            return None, None, GatewayCloseCode.NOT_AUTHENTICATED
 
         try:
             from src.core.voice import signaling
@@ -349,6 +358,8 @@ class OpcodeHandler:
         """Handle voice quality opcode."""
         if not connection.is_authenticated:
             return None, None, GatewayCloseCode.NOT_AUTHENTICATED
+
+        assert connection.user_id is not None  # Guaranteed by is_authenticated
 
         if not data:
             return None, None, None
