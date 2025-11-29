@@ -252,6 +252,8 @@ def options_from_dict(options_data: List[Dict[str, Any]]) -> List[CommandOption]
     result = []
     for opt_dict in options_data:
         option_type = opt_dict.get("type") or opt_dict.get("option_type")
+        if option_type is None:
+            raise ValueError(f"Option {opt_dict.get('name')} missing type")
         if isinstance(option_type, int):
             option_type = CommandOptionType(option_type)
         
