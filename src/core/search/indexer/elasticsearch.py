@@ -26,9 +26,9 @@ class ElasticsearchIndexer(BaseIndexer):
     
     def __init__(
         self,
-        hosts: List[str] = None,
+        hosts: Optional[List[str]] = None,
         index_prefix: str = "plexichat",
-        config: IndexerConfig = None,
+        config: Optional[IndexerConfig] = None,
         http_client=None,
     ):
         super().__init__(config)
@@ -71,7 +71,7 @@ class ElasticsearchIndexer(BaseIndexer):
         self,
         method: str,
         path: str,
-        body: Dict = None,
+        body: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         """Make HTTP request to Elasticsearch."""
         if self._http_client is None:
@@ -299,16 +299,16 @@ class ElasticsearchIndexer(BaseIndexer):
     def search_messages(
         self,
         query: str,
-        conversation_ids: List[int] = None,
-        server_ids: List[int] = None,
-        channel_ids: List[int] = None,
-        author_ids: List[int] = None,
+        conversation_ids: Optional[List[int]] = None,
+        server_ids: Optional[List[int]] = None,
+        channel_ids: Optional[List[int]] = None,
+        author_ids: Optional[List[int]] = None,
         limit: int = 25,
         offset: int = 0,
     ) -> List[MessageSearchResult]:
         """Search messages using Elasticsearch."""
         try:
-            must = [{"match": {"content": query}}]
+            must: List[Dict[str, Any]] = [{"match": {"content": query}}]
             
             if conversation_ids:
                 must.append({"terms": {"conversation_id": [str(c) for c in conversation_ids]}})
@@ -317,7 +317,7 @@ class ElasticsearchIndexer(BaseIndexer):
             if channel_ids:
                 must.append({"terms": {"channel_id": [str(c) for c in channel_ids]}})
             if author_ids:
-                must.append({"terms": {"author_id": [str(a) for a in author_ids]}})
+                must.append({"terms": {"author_id": [str(a) for c in author_ids]}})
             
             search_body = {
                 "query": {"bool": {"must": must}},
@@ -450,7 +450,7 @@ class ElasticsearchIndexer(BaseIndexer):
     def search_servers(
         self,
         query: str,
-        category: str = None,
+        category: Optional[str] = None,
         public_only: bool = True,
         limit: int = 25,
         offset: int = 0,
