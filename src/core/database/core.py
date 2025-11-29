@@ -80,7 +80,7 @@ class Database:
             logger.debug(f"Created database directory: {db_dir}")
         
         try:
-            self.connection = sqlite3.connect(path)
+            self.connection = sqlite3.connect(path, check_same_thread=False)
             self.connection.row_factory = sqlite3.Row
             logger.info(f"Connected to SQLite at {path}")
         except sqlite3.Error as e:
