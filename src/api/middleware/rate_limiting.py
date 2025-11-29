@@ -71,6 +71,7 @@ def create_rate_limit_middleware(
         "/docs",
         "/redoc",
         "/openapi.json",
+        "/docs/api",  # API documentation has its own rate limiting
     ]
     all_excludes = list(set(default_excludes + (exclude_paths or [])))
     user_info_getter = custom_user_info_getter or get_user_info_from_request

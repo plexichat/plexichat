@@ -1,0 +1,202 @@
+# Relationships API
+
+Endpoints for managing friend relationships and blocks.
+
+## GET /relationships/@me
+
+Get all relationships for the current user.
+
+### Headers
+
+```
+Authorization: Bearer <token>
+```
+
+### Response (200 OK)
+
+```json
+[
+  {
+    "user_id": "123456789012345678",
+    "status": "friend",
+    "created_at": 1704067200
+  },
+  {
+    "user_id": "234567890123456789",
+    "status": "pending_incoming",
+    "created_at": 1704067300
+  }
+]
+```
+
+### Relationship Statuses
+
+| Status | Description |
+|--------|-------------|
+| friend | Mutual friendship |
+| pending_incoming | Incoming friend request |
+| pending_outgoing | Outgoing friend request |
+| blocked | User is blocked |
+
+## POST /relationships
+
+Send a friend request.
+
+### Headers
+
+```
+Authorization: Bearer <token>
+```
+
+### Request Body
+
+| Field | Type | Required | Constraints | Description |
+|-------|------|----------|-------------|-------------|
+| user_id | string | Yes | Snowflake ID | Target user ID |
+| message | string | No | Max 256 chars | Optional message |
+
+### Example Request
+
+```json
+{
+  "user_id": "123456789012345678",
+  "message": "Hey, let's be friends!"
+}
+```
+
+### Response (200 OK)
+
+```json
+{
+  "user_id": "123456789012345678",
+  "status": "pending_outgoing",
+  "created_at": 1704067200
+}
+```
+
+### Error Responses
+
+| Status | Code | Description |
+|--------|------|-------------|
+| 400 | Self request | Cannot send request to yourself |
+| 403 | Blocked | User has blocked you |
+| 404 | User not found | User doesn't exist |
+| 409 | Already exists | Request exists or already friends |
+
+## PUT /relationships/{user_id}/accept
+
+Accept a pending friend request.
+
+### Headers
+
+```
+Authorization: Bearer <token>
+```
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| user_id | string | Sender's user ID |
+
+### Response (200 OK)
+
+```json
+{
+  "success": true
+}
+```
+
+### Error Responses
+
+| Status | Code | Description |
+|--------|------|-------------|
+| 400 | Invalid user ID | ID format invalid |
+| 404 | Request not found | No pending request from user |
+
+## DELETE /relationships/{user_id}
+
+Remove a relationship. Action depends on current status:
+- Friend: Unfriend
+- Pending incoming: Decline request
+- Pending outgoing: Cancel request
+- Blocked: Unblock
+
+### Headers
+
+```
+Authorization: Bearer <token>
+```
+
+### Response (200 OK)
+
+```json
+{
+  "success": true
+}
+```
+
+### Error Responses
+
+| Status | Code | Description |
+|--------|------|-------------|
+| 400 | Invalid user ID | ID format invalid |
+| 404 | Relationship not found | No relationship exists |
+
+## POST /relationships/block
+
+Block a user. Removes any existing relationship.
+
+### Headers
+
+```
+Authorization: Bearer <token>
+```
+
+### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| user_id | string | Yes | User ID to block |
+
+### Example Request
+
+```json
+{
+  "user_id": "123456789012345678"
+}
+```
+
+### Response (200 OK)
+
+```json
+{
+  "user_id": "123456789012345678",
+  "status": "blocked",
+  "created_at": 1704067200
+}
+```
+
+### Error Responses
+
+| Status | Code | Description |
+|--------|------|-------------|
+| 400 | Self block | Cannot block yourself |
+| 404 | User not found | User doesn't exist |
+| 409 | Already blocked | User already blocked |
+
+## Relationship Object
+
+```json
+{
+  "user_id": "123456789012345678",
+  "status": "friend",
+  "created_at": 1704067200
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| user_id | string | Related user's ID |
+| status | string | Relationship status |
+| created_at | int? | Unix timestamp of creation |

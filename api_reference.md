@@ -66,9 +66,23 @@ Version-related errors include additional fields:
 
 ---
 
-## Version & Status Endpoints
+## Health Endpoint
 
-These endpoints enable client-server version negotiation and server status monitoring.
+### GET /health
+
+Check API health status.
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "version": "a.1.0-1"
+}
+```
+
+---
+
+## Version & Status Endpoints
 
 ### GET /version
 
@@ -177,26 +191,6 @@ Get current server operational status.
 | `shutting_down` | Server is shutting down |
 | `restarting` | Server is restarting |
 
-**Polling Recommendations:**
-- Normal operation: Poll every 60 seconds
-- Non-running state: Poll every 5 seconds
-
----
-
-## Health Endpoint
-
-### GET /health
-
-Check API health status.
-
-**Response:**
-```json
-{
-  "status": "healthy",
-  "version": "a.1.0-1"
-}
-```
-
 ---
 
 ## Authentication Endpoints
@@ -214,38 +208,83 @@ Register a new user account.
 }
 ```
 
-**Response:**
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| username | string | 3-32 chars | Username |
+| email | string | Valid email | Email address |
+| password | string | Min 8 chars | Password |
+
+**Response (201):**
 ```json
 {
-  "user_id": "123456789012345678",
-  "username": "johndoe",
-  "email": "john@example.com"
+  "status": "success",
+  "token": "session_token_here",
+  "user": {
+    "id": "123456789012345678",
+    "username": "johndoe",
+    "email": "john@example.com",
+    "avatar_url": null,
+    "created_at": 1704067200,
+    "email_verified": false,
+    "totp_enabled": false
+  },
+  "challenge_token": null,
+  "methods": null,
+  "expires_in": null
 }
 ```
 
+**Error Responses:**
+- `400` - Invalid input or weak password
+- `409` - Username or email already exists
+
 ### POST /auth/login
 
-Login to an existing account.
+Authenticate a user.
 
 **Request:**
 ```json
 {
-  "email": "john@example.com",
+  "username": "johndoe",
   "password": "SecurePass123!"
 }
 ```
 
-**Response:**
+**Response (Success):**
 ```json
 {
+  "status": "success",
   "token": "session_token_here",
   "user": {
     "id": "123456789012345678",
-    "username": "johndoe"
+    "username": "johndoe",
+    "email": "john@example.com",
+    "avatar_url": null,
+    "created_at": 1704067200,
+    "email_verified": true,
+    "totp_enabled": false
   },
-  "requires_2fa": false
+  "challenge_token": null,
+  "methods": null,
+  "expires_in": null
 }
 ```
+
+**Response (2FA Required):**
+```json
+{
+  "status": "two_factor_required",
+  "token": null,
+  "user": null,
+  "challenge_token": "challenge_token_here",
+  "methods": ["totp", "backup_code"],
+  "expires_in": 300
+}
+```
+
+**Error Responses:**
+- `401` - Invalid credentials
+- `403` - Account locked or email not verified
 
 ### POST /auth/2fa
 
@@ -254,16 +293,46 @@ Complete two-factor authentication.
 **Request:**
 ```json
 {
-  "token": "partial_session_token",
+  "challenge_token": "challenge_token_from_login",
   "code": "123456"
 }
 ```
 
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| challenge_token | string | Required | Challenge token from login |
+| code | string | 6-8 chars | TOTP code or backup code |
+
+**Response (200):**
+```json
+{
+  "status": "success",
+  "token": "session_token_here",
+  "user": {
+    "id": "123456789012345678",
+    "username": "johndoe"
+  },
+  "challenge_token": null,
+  "methods": null,
+  "expires_in": null
+}
+```
+
+**Error Responses:**
+- `401` - Invalid or expired code/token
+
 ### POST /auth/logout
 
-Logout current session.
+Logout current session. Requires authentication.
 
 **Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "success": true
+}
+```
 
 ---
 
@@ -271,36 +340,73 @@ Logout current session.
 
 ### GET /users/@me
 
-Get current authenticated user.
+Get current authenticated user. Requires authentication.
 
 **Headers:** `Authorization: Bearer <token>`
 
-**Response:**
+**Response (200):**
 ```json
 {
   "id": "123456789012345678",
   "username": "johndoe",
   "email": "john@example.com",
-  "avatar": "avatar_hash",
-  "created_at": "2024-01-01T00:00:00Z"
+  "avatar_url": "https://cdn.example.com/avatars/123.png",
+  "created_at": 1704067200,
+  "email_verified": true,
+  "totp_enabled": false
 }
 ```
 
 ### PATCH /users/@me
 
-Update current user.
+Update current user profile. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
 
 **Request:**
 ```json
 {
   "username": "newusername",
-  "avatar": "base64_image_data"
+  "email": "newemail@example.com",
+  "avatar_url": "https://cdn.example.com/avatars/new.png",
+  "password": "NewSecurePass123!",
+  "current_password": "OldPassword123!"
 }
 ```
 
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| username | string | 3-32 chars, optional | New username |
+| email | string | Valid email, optional | New email |
+| avatar_url | string | Optional | New avatar URL |
+| password | string | Min 8 chars, optional | New password |
+| current_password | string | Required if changing password | Current password |
+
+**Response (200):** Updated user object
+
+**Error Responses:**
+- `400` - Invalid input or weak password
+- `409` - Username or email already exists
+
 ### GET /users/{user_id}
 
-Get user by ID.
+Get public user information. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "id": "123456789012345678",
+  "username": "johndoe",
+  "avatar_url": "https://cdn.example.com/avatars/123.png",
+  "created_at": 1704067200
+}
+```
+
+**Error Responses:**
+- `400` - Invalid user ID
+- `404` - User not found
 
 ---
 
@@ -308,35 +414,131 @@ Get user by ID.
 
 ### GET /servers
 
-Get user's servers.
+Get all servers the user is a member of. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+[
+  {
+    "id": "123456789012345678",
+    "name": "My Server",
+    "description": "A cool server",
+    "icon_url": "https://cdn.example.com/icons/123.png",
+    "owner_id": "123456789012345678",
+    "member_count": 150,
+    "created_at": 1704067200
+  }
+]
+```
 
 ### POST /servers
 
-Create a new server.
+Create a new server. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
 
 **Request:**
 ```json
 {
   "name": "My Server",
-  "icon": "base64_image_data"
+  "description": "A cool server",
+  "icon_url": "https://cdn.example.com/icons/new.png"
 }
 ```
 
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| name | string | 2-100 chars | Server name |
+| description | string | Max 1000 chars, optional | Server description |
+| icon_url | string | Optional | Server icon URL |
+
+**Response (200):** Created server object
+
+**Error Responses:**
+- `400` - Server limit reached
+
 ### GET /servers/{server_id}
 
-Get server details.
+Get server details. Requires authentication and membership.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):** Server object
+
+**Error Responses:**
+- `400` - Invalid server ID
+- `403` - Access denied
+- `404` - Server not found
 
 ### PATCH /servers/{server_id}
 
-Update server.
+Update server settings. Requires manage server permission.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request:**
+```json
+{
+  "name": "Updated Name",
+  "description": "Updated description",
+  "icon_url": "https://cdn.example.com/icons/updated.png"
+}
+```
+
+**Response (200):** Updated server object
+
+**Error Responses:**
+- `403` - Permission denied
+- `404` - Server not found
 
 ### DELETE /servers/{server_id}
 
-Delete server.
+Delete a server. Only the owner can delete.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "success": true
+}
+```
+
+**Error Responses:**
+- `403` - Not the owner
+- `404` - Server not found
 
 ### GET /servers/{server_id}/channels
 
-Get server channels.
+Get all channels in a server. Requires authentication and membership.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+[
+  {
+    "id": "123456789012345678",
+    "server_id": "123456789012345678",
+    "name": "general",
+    "channel_type": "text",
+    "topic": "General discussion",
+    "position": 0,
+    "category_id": null,
+    "nsfw": false,
+    "slowmode_seconds": 0,
+    "created_at": 1704067200
+  }
+]
+```
+
+**Channel Types:** `text`, `voice`, `category`
+
+**Error Responses:**
+- `403` - Access denied
+- `404` - Server not found
 
 ---
 
@@ -344,15 +546,78 @@ Get server channels.
 
 ### GET /channels/{channel_id}
 
-Get channel details.
+Get channel details. Requires authentication and access.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "id": "123456789012345678",
+  "server_id": "123456789012345678",
+  "name": "general",
+  "channel_type": "text",
+  "topic": "General discussion",
+  "position": 0,
+  "category_id": null,
+  "nsfw": false,
+  "slowmode_seconds": 0,
+  "created_at": 1704067200
+}
+```
+
+**Error Responses:**
+- `400` - Invalid channel ID
+- `403` - Access denied
+- `404` - Channel not found
 
 ### PATCH /channels/{channel_id}
 
-Update channel.
+Update channel settings. Requires manage channels permission.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request:**
+```json
+{
+  "name": "updated-channel",
+  "topic": "Updated topic",
+  "position": 1,
+  "nsfw": false,
+  "slowmode_seconds": 5
+}
+```
+
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| name | string | 1-100 chars, optional | Channel name |
+| topic | string | Max 1024 chars, optional | Channel topic |
+| position | int | >= 0, optional | Channel position |
+| nsfw | bool | Optional | NSFW flag |
+| slowmode_seconds | int | 0-21600, optional | Slowmode delay |
+
+**Response (200):** Updated channel object
+
+**Error Responses:**
+- `403` - Permission denied
+- `404` - Channel not found
 
 ### DELETE /channels/{channel_id}
 
-Delete channel.
+Delete a channel. Requires manage channels permission.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "success": true
+}
+```
+
+**Error Responses:**
+- `403` - Permission denied
+- `404` - Channel not found
 
 ---
 
@@ -360,38 +625,131 @@ Delete channel.
 
 ### GET /channels/{channel_id}/messages
 
-Get messages in a channel.
+Get messages in a channel. Requires authentication and access.
+
+**Headers:** `Authorization: Bearer <token>`
 
 **Query Parameters:**
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| limit | int | Max messages to return (1-100, default 50) |
-| before | snowflake | Get messages before this ID |
-| after | snowflake | Get messages after this ID |
+| Parameter | Type | Default | Constraints | Description |
+|-----------|------|---------|-------------|-------------|
+| limit | int | 50 | 1-100 | Max messages to return |
+| before | string | null | Snowflake ID | Get messages before this ID |
+| after | string | null | Snowflake ID | Get messages after this ID |
+
+**Response (200):**
+```json
+[
+  {
+    "id": "123456789012345678",
+    "channel_id": "123456789012345678",
+    "author_id": "123456789012345678",
+    "content": "Hello, world!",
+    "created_at": 1704067200,
+    "edited_at": null,
+    "reply_to_id": null,
+    "attachments": [],
+    "embeds": [],
+    "pinned": false
+  }
+]
+```
+
+**Error Responses:**
+- `403` - Access denied
+- `404` - Channel not found
 
 ### POST /channels/{channel_id}/messages
 
-Send a message.
+Send a message to a channel. Requires authentication and send permission.
+
+**Headers:** `Authorization: Bearer <token>`
 
 **Request:**
 ```json
 {
   "content": "Hello, world!",
-  "attachments": []
+  "reply_to_id": "123456789012345678",
+  "attachments": [
+    {
+      "filename": "image.png",
+      "content_type": "image/png",
+      "size": 12345,
+      "url": "https://cdn.example.com/attachments/image.png"
+    }
+  ],
+  "embeds": []
 }
 ```
 
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| content | string | Max 4000 chars, optional | Message content |
+| reply_to_id | string | Snowflake ID, optional | Message to reply to |
+| attachments | array | Optional | File attachments |
+| embeds | array | Optional | Rich embeds |
+
+**Note:** At least one of `content`, `attachments`, or `embeds` is required.
+
+**Response (200):** Created message object
+
+**Error Responses:**
+- `400` - Empty message or invalid content
+- `403` - Permission denied
+- `404` - Channel not found
+
 ### GET /channels/{channel_id}/messages/{message_id}
 
-Get a specific message.
+Get a specific message. Requires authentication and access.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):** Message object
+
+**Error Responses:**
+- `400` - Invalid message ID
+- `403` - Access denied
+- `404` - Message not found
 
 ### PATCH /channels/{channel_id}/messages/{message_id}
 
-Edit a message.
+Edit a message. Only the author can edit.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request:**
+```json
+{
+  "content": "Updated message content"
+}
+```
+
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| content | string | Max 4000 chars | New message content |
+
+**Response (200):** Updated message object with `edited_at` timestamp
+
+**Error Responses:**
+- `400` - Invalid content
+- `403` - Not the author
+- `404` - Message not found
 
 ### DELETE /channels/{channel_id}/messages/{message_id}
 
-Delete a message.
+Delete a message. Author or moderators can delete.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "success": true
+}
+```
+
+**Error Responses:**
+- `403` - Permission denied
+- `404` - Message not found
 
 ---
 
@@ -399,30 +757,112 @@ Delete a message.
 
 ### GET /relationships/@me
 
-Get current user's relationships.
+Get all relationships for current user. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+[
+  {
+    "user_id": "123456789012345678",
+    "status": "friend",
+    "created_at": 1704067200
+  },
+  {
+    "user_id": "234567890123456789",
+    "status": "pending_incoming",
+    "created_at": 1704067300
+  },
+  {
+    "user_id": "345678901234567890",
+    "status": "blocked",
+    "created_at": 1704067400
+  }
+]
+```
+
+**Relationship Statuses:**
+| Status | Description |
+|--------|-------------|
+| `friend` | Mutual friendship |
+| `pending_incoming` | Incoming friend request |
+| `pending_outgoing` | Outgoing friend request |
+| `blocked` | User is blocked |
 
 ### POST /relationships
 
-Send a friend request.
+Send a friend request. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
 
 **Request:**
 ```json
 {
-  "user_id": "123456789012345678"
+  "user_id": "123456789012345678",
+  "message": "Hey, let's be friends!"
 }
 ```
 
-### PUT /relationships/{relationship_id}/accept
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| user_id | string | Snowflake ID | Target user ID |
+| message | string | Max 256 chars, optional | Request message |
 
-Accept a friend request.
+**Response (200):**
+```json
+{
+  "user_id": "123456789012345678",
+  "status": "pending_outgoing",
+  "created_at": 1704067200
+}
+```
 
-### DELETE /relationships/{relationship_id}
+**Error Responses:**
+- `400` - Cannot send request to yourself
+- `403` - User has blocked you
+- `404` - User not found
+- `409` - Request already exists or already friends
 
-Remove a relationship.
+### PUT /relationships/{user_id}/accept
+
+Accept a friend request. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "success": true
+}
+```
+
+**Error Responses:**
+- `400` - Invalid user ID
+- `404` - Friend request not found
+
+### DELETE /relationships/{user_id}
+
+Remove a relationship (unfriend, decline request, cancel request, or unblock).
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "success": true
+}
+```
+
+**Error Responses:**
+- `400` - Invalid user ID
+- `404` - Relationship not found
 
 ### POST /relationships/block
 
-Block a user.
+Block a user. Removes any existing relationship.
+
+**Headers:** `Authorization: Bearer <token>`
 
 **Request:**
 ```json
@@ -430,6 +870,20 @@ Block a user.
   "user_id": "123456789012345678"
 }
 ```
+
+**Response (200):**
+```json
+{
+  "user_id": "123456789012345678",
+  "status": "blocked",
+  "created_at": 1704067200
+}
+```
+
+**Error Responses:**
+- `400` - Cannot block yourself
+- `404` - User not found
+- `409` - User already blocked
 
 ---
 
@@ -437,21 +891,59 @@ Block a user.
 
 ### PUT /users/@me/presence
 
-Update current user's presence.
+Update current user's presence. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
 
 **Request:**
 ```json
 {
   "status": "online",
-  "custom_status": "Working on PlexiChat"
+  "custom_status": "Working on PlexiChat",
+  "custom_emoji": "💻"
 }
 ```
 
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| status | string | Required | Status value |
+| custom_status | string | Max 128 chars, optional | Custom status text |
+| custom_emoji | string | Optional | Custom status emoji |
+
 **Status Values:** `online`, `idle`, `dnd`, `invisible`, `offline`
+
+**Response (200):**
+```json
+{
+  "user_id": "123456789012345678",
+  "status": "online",
+  "custom_status": "Working on PlexiChat",
+  "custom_emoji": "💻",
+  "last_seen": 1704067200
+}
+```
+
+**Error Responses:**
+- `400` - Invalid status value
 
 ### GET /users/{user_id}/presence
 
-Get a user's presence.
+Get a user's presence. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "user_id": "123456789012345678",
+  "status": "online",
+  "custom_status": "Working on PlexiChat",
+  "custom_emoji": "💻",
+  "last_seen": 1704067200
+}
+```
+
+**Note:** Returns `offline` status if user not found or presence not visible.
 
 ---
 
@@ -459,19 +951,86 @@ Get a user's presence.
 
 ### PUT /channels/{channel_id}/messages/{message_id}/reactions/{emoji}
 
-Add a reaction to a message.
+Add a reaction to a message. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "success": true
+}
+```
+
+**Error Responses:**
+- `400` - Invalid emoji or reaction limit reached
+- `403` - Permission denied
+- `404` - Message not found
 
 ### DELETE /channels/{channel_id}/messages/{message_id}/reactions/{emoji}
 
-Remove your reaction from a message.
+Remove your reaction from a message. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "success": true
+}
+```
 
 ### GET /channels/{channel_id}/messages/{message_id}/reactions
 
-Get all reactions on a message.
+Get all reactions on a message. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+[
+  {
+    "emoji": "👍",
+    "count": 5,
+    "me": true
+  },
+  {
+    "emoji": "❤️",
+    "count": 3,
+    "me": false
+  }
+]
+```
+
+**Error Responses:**
+- `400` - Invalid message ID
+- `404` - Message not found
 
 ### GET /channels/{channel_id}/messages/{message_id}/reactions/{emoji}
 
-Get users who reacted with a specific emoji.
+Get users who reacted with a specific emoji. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Query Parameters:**
+| Parameter | Type | Default | Constraints | Description |
+|-----------|------|---------|-------------|-------------|
+| limit | int | 50 | 1-100 | Max users to return |
+| after | string | null | Snowflake ID | Get users after this ID |
+
+**Response (200):**
+```json
+[
+  {
+    "user_id": "123456789012345678",
+    "reacted_at": 1704067200
+  }
+]
+```
+
+**Error Responses:**
+- `400` - Invalid message ID
+- `404` - Message not found
 
 ---
 
@@ -479,37 +1038,126 @@ Get users who reacted with a specific emoji.
 
 ### POST /webhooks
 
-Create a webhook.
+Create a new webhook. Requires authentication and manage webhooks permission.
+
+**Headers:** `Authorization: Bearer <token>`
 
 **Request:**
 ```json
 {
   "channel_id": "123456789012345678",
   "name": "My Webhook",
-  "avatar": "base64_image_data"
+  "avatar_url": "https://cdn.example.com/avatars/webhook.png"
 }
 ```
 
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| channel_id | string | Snowflake ID | Target channel |
+| name | string | 1-80 chars | Webhook name |
+| avatar_url | string | Optional | Webhook avatar URL |
+
+**Response (200):**
+```json
+{
+  "id": "123456789012345678",
+  "channel_id": "123456789012345678",
+  "server_id": "123456789012345678",
+  "creator_id": "123456789012345678",
+  "name": "My Webhook",
+  "avatar_url": "https://cdn.example.com/avatars/webhook.png",
+  "token": "webhook_token_here",
+  "url": "https://api.example.com/api/v1/webhooks/123456789012345678/webhook_token_here",
+  "created_at": 1704067200
+}
+```
+
+**Note:** Token and URL are only returned on creation.
+
+**Error Responses:**
+- `400` - Invalid input or webhook limit reached
+- `403` - Permission denied
+- `404` - Channel not found
+
 ### GET /webhooks/{webhook_id}
 
-Get webhook details.
+Get webhook details. Requires authentication and access.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):** Webhook object (without token)
+
+**Error Responses:**
+- `400` - Invalid webhook ID
+- `403` - Access denied
+- `404` - Webhook not found
 
 ### DELETE /webhooks/{webhook_id}
 
-Delete a webhook.
+Delete a webhook. Requires authentication and manage webhooks permission.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "success": true
+}
+```
+
+**Error Responses:**
+- `403` - Permission denied
+- `404` - Webhook not found
 
 ### POST /webhooks/{webhook_id}/{token}
 
-Execute a webhook (send a message).
+Execute a webhook (send a message). No authentication required if token is valid.
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| wait | bool | false | Wait for message creation and return message object |
 
 **Request:**
 ```json
 {
   "content": "Webhook message",
   "username": "Custom Name",
-  "avatar_url": "https://..."
+  "avatar_url": "https://cdn.example.com/avatars/custom.png",
+  "embeds": [],
+  "thread_id": "123456789012345678"
 }
 ```
+
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| content | string | Max 2000 chars, optional | Message content |
+| username | string | Max 80 chars, optional | Override webhook name |
+| avatar_url | string | Optional | Override webhook avatar |
+| embeds | array | Optional | Rich embeds |
+| thread_id | string | Snowflake ID, optional | Thread to post to |
+
+**Note:** At least one of `content` or `embeds` is required.
+
+**Response (200 with wait=true):**
+```json
+{
+  "id": "123456789012345678",
+  "webhook_id": "123456789012345678",
+  "channel_id": "123456789012345678",
+  "content": "Webhook message",
+  "username": "Custom Name",
+  "avatar_url": "https://cdn.example.com/avatars/custom.png",
+  "created_at": 1704067200
+}
+```
+
+**Response (200 with wait=false):** `null`
+
+**Error Responses:**
+- `400` - Empty message or invalid content
+- `401` - Invalid webhook token
+- `404` - Webhook not found
 
 ---
 
@@ -520,24 +1168,35 @@ Connect to the WebSocket gateway for real-time events.
 ### Connection URL
 
 ```
-wss://gateway.example.com/?v=1
+wss://gateway.example.com/gateway
 ```
 
 ### Opcodes
 
 | Code | Name | Description | Direction |
 |------|------|-------------|-----------|
-| 0 | DISPATCH | Event dispatch | Server -> Client |
+| 0 | DISPATCH | Event dispatch | Server → Client |
 | 1 | HEARTBEAT | Keep connection alive | Bidirectional |
-| 2 | IDENTIFY | Authenticate connection | Client -> Server |
-| 3 | PRESENCE_UPDATE | Update presence | Client -> Server |
-| 6 | RESUME | Resume session | Client -> Server |
-| 7 | RECONNECT | Server requests reconnect | Server -> Client |
-| 9 | INVALID_SESSION | Session invalidated | Server -> Client |
-| 10 | HELLO | Initial handshake | Server -> Client |
-| 11 | HEARTBEAT_ACK | Heartbeat acknowledged | Server -> Client |
-| 12 | SERVER_STATUS | Server status update | Server -> Client |
+| 2 | IDENTIFY | Authenticate connection | Client → Server |
+| 3 | PRESENCE_UPDATE | Update presence | Client → Server |
+| 4 | VOICE_STATE_UPDATE | Update voice state | Client → Server |
+| 6 | RESUME | Resume session | Client → Server |
+| 7 | RECONNECT | Server requests reconnect | Server → Client |
+| 8 | REQUEST_GUILD_MEMBERS | Request member list | Client → Server |
+| 9 | INVALID_SESSION | Session invalidated | Server → Client |
+| 10 | HELLO | Initial handshake | Server → Client |
+| 11 | HEARTBEAT_ACK | Heartbeat acknowledged | Server → Client |
+| 12 | SERVER_STATUS | Server status update | Server → Client |
 | 13 | VERSION_CHECK | Version compatibility check | Bidirectional |
+| 20 | VOICE_CONNECT | Voice connection request | Client → Server |
+| 21 | VOICE_DISCONNECT | Voice disconnection | Client → Server |
+| 22 | VOICE_SDP_OFFER | WebRTC SDP offer | Bidirectional |
+| 23 | VOICE_SDP_ANSWER | WebRTC SDP answer | Bidirectional |
+| 24 | VOICE_ICE_CANDIDATE | WebRTC ICE candidate | Bidirectional |
+| 25 | VOICE_SPEAKING | Speaking indicator | Bidirectional |
+| 26 | VOICE_QUALITY | Voice quality metrics | Server → Client |
+| 30 | INTERACTION_CREATE | Application interaction | Server → Client |
+| 31 | INTERACTION_RESPONSE | Interaction response | Client → Server |
 
 ### Close Codes
 
@@ -552,10 +1211,23 @@ wss://gateway.example.com/?v=1
 | 4007 | INVALID_SEQ | Invalid sequence | Yes |
 | 4008 | RATE_LIMITED | Rate limited | Yes |
 | 4009 | SESSION_TIMED_OUT | Session timed out | Yes |
+| 4010 | INVALID_SHARD | Invalid shard | No |
+| 4011 | SHARDING_REQUIRED | Sharding required | No |
 | 4012 | INVALID_API_VERSION | Invalid API version | No |
+| 4013 | INVALID_INTENTS | Invalid intents | No |
+| 4014 | DISALLOWED_INTENTS | Disallowed intents | No |
 | 4015 | VERSION_OUTDATED | Client version outdated | No |
 | 4016 | SERVER_MAINTENANCE | Server maintenance | Yes (after maintenance) |
 | 4017 | SERVER_SHUTDOWN | Server shutting down | Yes (after restart) |
+
+### Connection Flow
+
+1. Connect to WebSocket endpoint
+2. Receive HELLO (opcode 10) with heartbeat interval
+3. Send IDENTIFY (opcode 2) with token
+4. Receive DISPATCH with READY event
+5. Send HEARTBEAT (opcode 1) at specified interval
+6. Receive HEARTBEAT_ACK (opcode 11) for each heartbeat
 
 ### Server Status Event (Opcode 12)
 
@@ -591,6 +1263,92 @@ Server may send to verify client version.
 
 ---
 
+## Rate Limits
+
+PlexiChat uses multiple rate limiting algorithms depending on the endpoint.
+
+### Rate Limit Algorithms
+
+| Algorithm | Description |
+|-----------|-------------|
+| Token Bucket | Allows bursts, refills over time |
+| Sliding Window | Smooth rate limiting over time window |
+| Fixed Window | Simple count per time window |
+
+### Default Limits
+
+| Endpoint Category | Requests | Window | Burst | Algorithm |
+|-------------------|----------|--------|-------|-----------|
+| Global (per user) | 120 | 60s | 20 | Sliding Window |
+| Global (per second) | 50 | 1s | 10 | Token Bucket |
+| POST /auth/login | 5 | 60s | 0 | Fixed Window |
+| POST /auth/register | 3 | 60s | 0 | Fixed Window |
+| POST /auth/2fa | 5 | 60s | 2 | Sliding Window |
+| POST /channels/{id}/messages | 5 | 5s | 3 | Token Bucket |
+| PATCH/DELETE messages | 5 | 5s | 2 | Sliding Window |
+| PUT/DELETE reactions | 1 | 0.25s | 1 | Token Bucket |
+| PATCH /users/@me | 2 | 60s | 0 | Fixed Window |
+| POST /servers | 10 | 60s | 2 | Sliding Window |
+| DELETE /servers/{id} | 1 | 60s | 0 | Fixed Window |
+| POST /relationships | 5 | 60s | 2 | Sliding Window |
+| POST /webhooks | 5 | 60s | 2 | Sliding Window |
+| POST /webhooks/{id}/{token} | 5 | 2s | 5 | Token Bucket |
+| GET /channels/{id}/messages | 10 | 10s | 5 | Sliding Window |
+| GET /servers/{id} | 20 | 10s | 10 | Sliding Window |
+| GET /users/@me | 30 | 60s | 10 | Sliding Window |
+
+### Hourly/Daily Limits
+
+Some endpoints have additional hourly or daily limits:
+
+| Endpoint | Hourly Limit | Daily Limit |
+|----------|--------------|-------------|
+| POST /auth/login | 20 | - |
+| POST /auth/register | 10 | 20 |
+| PATCH /users/@me | 10 | - |
+| POST /servers | - | 100 |
+| POST /relationships | 50 | - |
+
+### Rate Limit Headers
+
+All responses include rate limit headers:
+
+```
+X-RateLimit-Limit: 50
+X-RateLimit-Remaining: 49
+X-RateLimit-Reset: 1704067200
+X-RateLimit-Bucket: route:POST:/channels/{id}/messages
+```
+
+### Rate Limit Response (HTTP 429)
+
+```json
+{
+  "error": {
+    "code": 429,
+    "message": "Rate limited",
+    "retry_after": 1.5
+  }
+}
+```
+
+### Bot Rate Limits
+
+Bots receive a 1.2x multiplier on certain high-traffic routes:
+- POST /channels/{id}/messages
+- GET /channels/{id}/messages
+- PUT/DELETE reactions
+
+### Bypassing Rate Limits
+
+Internal requests can bypass rate limits using headers:
+- `X-Internal-Request: true`
+- `X-RateLimit-Bypass: <key>`
+
+Admins with `admin.*` or `*` permissions are also exempt.
+
+---
+
 ## Client Implementation Guidelines
 
 ### Version Checking
@@ -622,18 +1380,41 @@ Always check for version-related error codes:
 
 ---
 
-## Rate Limits
+## Data Types
 
-| Endpoint Category | Requests | Window |
-|-------------------|----------|--------|
-| Authentication | 5 | 60s |
-| Messages | 5 | 5s |
-| General API | 50 | 60s |
-| WebSocket | 120 events | 60s |
+### Snowflake ID
 
-Rate limit headers:
+All IDs in PlexiChat are snowflake IDs - 64-bit integers represented as strings in JSON.
+
 ```
-X-RateLimit-Limit: 50
-X-RateLimit-Remaining: 49
-X-RateLimit-Reset: 1704067200
+123456789012345678
 ```
+
+Snowflake structure:
+- Bits 63-22: Timestamp (milliseconds since epoch 2024-01-01)
+- Bits 21-17: Datacenter ID
+- Bits 16-12: Worker ID
+- Bits 11-0: Sequence number
+
+### Timestamps
+
+All timestamps are Unix timestamps in seconds (integer).
+
+```json
+{
+  "created_at": 1704067200
+}
+```
+
+### Pagination
+
+List endpoints support cursor-based pagination:
+
+```
+GET /channels/{id}/messages?limit=50&before=123456789012345678
+GET /channels/{id}/messages?limit=50&after=123456789012345678
+```
+
+- `before`: Get items with ID less than this value
+- `after`: Get items with ID greater than this value
+- `limit`: Maximum items to return (1-100, default 50)

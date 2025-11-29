@@ -15,6 +15,7 @@ from .presence import router as presence_router
 from .reactions import router as reactions_router
 from .webhooks import router as webhooks_router
 from .version import router as version_router
+from .docs import router as docs_router, is_docs_enabled, clear_docs_cache, get_docs_stats
 
 
 def create_api_router() -> APIRouter:
@@ -36,4 +37,15 @@ def create_api_router() -> APIRouter:
     return api_router
 
 
-__all__ = ["create_api_router"]
+def create_docs_router() -> APIRouter:
+    """Create the documentation router (mounted separately)."""
+    return docs_router
+
+
+__all__ = [
+    "create_api_router",
+    "create_docs_router",
+    "is_docs_enabled",
+    "clear_docs_cache",
+    "get_docs_stats",
+]

@@ -12,12 +12,21 @@ from .middleware import (
     LoggingMiddleware,
     create_rate_limit_middleware,
 )
-from .routes import create_api_router
+from .routes import create_api_router, create_docs_router, is_docs_enabled
+from .routes.docs import get_docs_config
+
+import utils.logger as logger
+import utils.config as app_config
 
 
-def create_app(enable_rate_limiting: bool = True) -> FastAPI:
+def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> FastAPI:
     """
     Create and configure the FastAPI application.
+    
+    Args:
+        enable_rate_limiting: Whether to enable rate limiting middleware.
+        enable_docs: Whether to enable documentation serving.
+                     The actual path is configured in config.yaml under docs.path
     
     Returns:
         Configured FastAPI application instance.
@@ -55,14 +64,31 @@ def create_app(enable_rate_limiting: bool = True) -> FastAPI:
     api_router = create_api_router()
     app.include_router(api_router, prefix=config.api_prefix)
     
+    # Mount documentation router if enabled
+    # Path is configurable via config.yaml docs.path
+    docs_path = "/docs/api"  # Default
+    if enable_docs and is_docs_enabled():
+        try:
+            docs_conf = get_docs_config()
+            docs_path = docs_conf.path
+        except Exception:
+            pass
+        
+        docs_router = create_docs_router()
+        app.include_router(docs_router, prefix=docs_path, tags=["Documentation"])
+        logger.info(f"Documentation server enabled at {docs_path}")
+    
     @app.get("/")
     async def root():
         """Root endpoint with API information."""
-        return {
+        response = {
             "name": config.title,
             "version": config.version,
             "docs": config.docs_url,
             "api": config.api_prefix,
         }
+        if enable_docs and is_docs_enabled():
+            response["api_docs"] = docs_path
+        return response
     
     return app
