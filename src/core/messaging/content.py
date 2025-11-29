@@ -120,7 +120,7 @@ class ContentProcessor:
             # For messages, we sanitize rather than reject
             warnings.append("Content contained potentially unsafe patterns and was sanitized")
         
-        sanitized = validation_result.sanitized_value
+        sanitized = validation_result.sanitized_value or content
         
         # Check for spoiler tags
         has_spoilers = bool(re.search(TextFormat.PATTERNS["spoiler"], sanitized))
