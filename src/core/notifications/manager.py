@@ -238,15 +238,15 @@ class NotificationManager:
             )
 
             if mention.mention_type == MentionType.USER:
-                if not self._user_exists(mention.target_id):
+                if mention.target_id is None or not self._user_exists(mention.target_id):
                     m.valid = False
                     m.error = "User not found"
 
             elif mention.mention_type == MentionType.ROLE:
-                if not self._role_exists(mention.target_id):
+                if mention.target_id is None or not self._role_exists(mention.target_id):
                     m.valid = False
                     m.error = "Role not found"
-                elif server_id:
+                elif server_id and mention.target_id is not None:
                     role = self._get_role(mention.target_id)
                     if role and role["server_id"] != server_id:
                         m.valid = False
@@ -259,13 +259,20 @@ class NotificationManager:
                             m.error = "Role is not mentionable"
 
             elif mention.mention_type == MentionType.CHANNEL:
-                if not self._channel_exists(mention.target_id):
+                if mention.target_id is None or not self._channel_exists(mention.target_id):
                     m.valid = False
                     m.error = "Channel not found"
 
             elif mention.mention_type in (MentionType.EVERYONE, MentionType.HERE):
-                if server_id:
+                if server_id and channel_id is not None:
                     if not self._has_mention_everyone_permission(user_id, server_id, channel_id):
+                        m.valid = False
+                        m.error = "No permission to mention everyone"
+                elif server_id:
+                    # No channel_id provided, check server-level permission
+                    if not self._servers or not self._servers.has_permission(
+                        user_id, server_id, "messages.mention_everyone"
+                    ):
                         m.valid = False
                         m.error = "No permission to mention everyone"
                 else:
@@ -363,6 +370,8 @@ class NotificationManager:
                     mention_types[target_id] = MentionType.USER
 
             elif mention.mention_type == MentionType.ROLE:
+                if mention.target_id is None:
+                    continue
                 role_members = self._get_role_members(mention.target_id)
                 for member_id in role_members:
                     if member_id != sender_id and member_id not in blocked_users:
@@ -393,7 +402,8 @@ class NotificationManager:
         preview = self._truncate_content(content)
 
         for user_id in users_to_notify:
-            if self._should_notify_user(user_id, sender_id, server_id, channel_id, mention_types.get(user_id)):
+            mention_type = mention_types.get(user_id)
+            if mention_type and self._should_notify_user(user_id, sender_id, server_id, channel_id, mention_type):
                 notif = self._create_notification(
                     user_id=user_id,
                     sender_id=sender_id,
