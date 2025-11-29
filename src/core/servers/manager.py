@@ -449,7 +449,9 @@ class ServerManager:
             {"owner_id": {"old": user_id, "new": new_owner_id}},
         )
 
-        return self.get_server(server_id, new_owner_id)
+        updated_server = self.get_server(server_id, new_owner_id)
+        assert updated_server is not None
+        return updated_server
 
 
     # === Channel Operations ===
@@ -589,7 +591,7 @@ class ServerManager:
             raise ServerAccessDeniedError("Not a member of this server")
 
         query = "SELECT * FROM srv_channels WHERE server_id = ? AND deleted = 0"
-        params = [server_id]
+        params: list[int | str] = [server_id]
 
         if channel_type:
             query += " AND channel_type = ?"
@@ -833,7 +835,7 @@ class ServerManager:
         # Check hierarchy
         user_roles = self._get_member_role_rows(role.server_id, user_id)
         server = self.get_server(role.server_id, user_id)
-        is_owner = server and server.owner_id == user_id
+        is_owner = server is not None and server.owner_id == user_id
 
         if not can_manage_role(user_roles, {"position": role.position}, is_owner):
             raise RoleHierarchyError(
@@ -891,7 +893,9 @@ class ServerManager:
                 changes,
             )
 
-        return self.get_role(role_id, user_id)
+        updated_role = self.get_role(role_id, user_id)
+        assert updated_role is not None
+        return updated_role
 
     def delete_role(self, user_id: int, role_id: int) -> bool:
         """Delete a role."""
@@ -907,7 +911,7 @@ class ServerManager:
         # Check hierarchy
         user_roles = self._get_member_role_rows(role.server_id, user_id)
         server = self.get_server(role.server_id, user_id)
-        is_owner = server and server.owner_id == user_id
+        is_owner = server is not None and server.owner_id == user_id
 
         if not can_manage_role(user_roles, {"position": role.position}, is_owner):
             raise RoleHierarchyError(
@@ -945,7 +949,7 @@ class ServerManager:
         # Check hierarchy
         user_roles = self._get_member_role_rows(role.server_id, user_id)
         server = self.get_server(role.server_id, user_id)
-        is_owner = server and server.owner_id == user_id
+        is_owner = server is not None and server.owner_id == user_id
 
         if not can_manage_role(user_roles, {"position": role.position}, is_owner):
             raise RoleHierarchyError(
@@ -1868,7 +1872,7 @@ class ServerManager:
         limit = min(limit, 100)
 
         query = "SELECT * FROM srv_audit_log WHERE server_id = ?"
-        params = [server_id]
+        params: list[int | str] = [server_id]
 
         if action_type:
             query += " AND action = ?"
