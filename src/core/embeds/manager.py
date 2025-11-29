@@ -364,7 +364,9 @@ class EmbedManager:
 
         logger.debug(f"Embed {embed_id} updated by user {user_id}")
 
-        return self.get_embed(embed_id)
+        result = self.get_embed(embed_id)
+        assert result is not None  # Should exist since we just updated it
+        return result
 
     def delete_embed(self, user_id: int, embed_id: int) -> bool:
         """
@@ -698,6 +700,7 @@ class EmbedManager:
         logger.debug(f"URL preview embed {embed_id} created for {validated_url}")
 
         embed = self.get_embed(embed_id)
+        assert embed is not None  # Should exist since we just created it
 
         if message_id:
             self.attach_embed_to_message(user_id, message_id, embed_id)
@@ -723,7 +726,7 @@ class EmbedManager:
         domain = parsed.netloc.lower()
         path = parsed.path
         
-        metadata = {
+        metadata: Dict[str, Any] = {
             "url": validated_url,
             "site_name": domain,
             "site_url": f"{parsed.scheme}://{parsed.netloc}",
