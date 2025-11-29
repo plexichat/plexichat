@@ -121,7 +121,9 @@ class CustomAdapter(BaseAIAdapter):
         
         scores = response.get("scores", {})
         if isinstance(scores, (int, float)):
-            scores = {"default": scores}
+            scores = {"default": float(scores)}
+        elif isinstance(scores, dict):
+            scores = {k: float(v) for k, v in scores.items()}
         
         return AICheckResult(
             flagged=flagged,
