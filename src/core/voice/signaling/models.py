@@ -107,7 +107,7 @@ class ICEServer:
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        result = {"urls": self.urls}
+        result: Dict[str, Any] = {"urls": self.urls}
         if self.username:
             result["username"] = self.username
         if self.credential:
