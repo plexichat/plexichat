@@ -21,8 +21,8 @@ class VerificationManager:
         self,
         server_id: int,
         level: VerificationLevel,
-        verified_by: int = None,
-        reason: str = None,
+        verified_by: Optional[int] = None,
+        reason: Optional[str] = None,
     ) -> bool:
         """
         Set verification level for a server.

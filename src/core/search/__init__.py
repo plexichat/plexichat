@@ -162,7 +162,7 @@ def search_messages(
     )
 
 
-def index_message(message_id: int, content: str, metadata: Dict[str, Any] = None):
+def index_message(message_id: int, content: str, metadata: Optional[Dict[str, Any]] = None):
     """
     Index a message for search.
     
