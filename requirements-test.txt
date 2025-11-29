@@ -1,0 +1,22 @@
+# Test dependencies for PlexiChat
+# Install with: pip install -r requirements-test.txt
+
+# Core testing
+pytest>=7.0.0
+pytest-cov>=4.0.0          # Coverage reporting
+pytest-timeout>=2.0.0      # Prevent hanging tests
+
+# Parallel execution (optional but recommended)
+pytest-xdist>=3.0.0        # Run tests in parallel with: pytest -n auto
+
+# Property-based testing (optional but recommended)
+hypothesis>=6.0.0          # Generate test cases automatically
+
+# API testing
+httpx>=0.24.0              # Async HTTP client for FastAPI testing
+
+# Mocking
+pytest-mock>=3.0.0         # Enhanced mocking support
+
+# Benchmarking (optional)
+pytest-benchmark>=4.0.0    # Performance benchmarking
