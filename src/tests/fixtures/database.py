@@ -23,7 +23,7 @@ class DatabaseManager:
         self._db = None
         self._in_transaction = False
     
-    def setup(self) -> "Database":
+    def setup(self):
         """
         Initialize the test database.
         
@@ -79,7 +79,7 @@ class DatabaseManager:
         return self._db
     
     @property
-    def db(self) -> "Database":
+    def db(self):
         """Get the database instance."""
         if self._db is None:
             raise RuntimeError("Database not initialized. Call setup() first.")
@@ -87,19 +87,19 @@ class DatabaseManager:
     
     def begin_transaction(self):
         """Start a new transaction for test isolation."""
-        if not self._in_transaction:
+        if not self._in_transaction and self._db is not None:
             self._db.execute("BEGIN")
             self._in_transaction = True
     
     def rollback_transaction(self):
         """Rollback the current transaction to restore state."""
-        if self._in_transaction:
+        if self._in_transaction and self._db is not None:
             self._db.execute("ROLLBACK")
             self._in_transaction = False
     
     def commit_transaction(self):
         """Commit the current transaction (rarely needed in tests)."""
-        if self._in_transaction:
+        if self._in_transaction and self._db is not None:
             self._db.execute("COMMIT")
             self._in_transaction = False
     

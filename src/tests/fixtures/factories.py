@@ -135,6 +135,7 @@ class ServerFactory:
         if owner is None:
             owner = self.user_factory.create()
         
+        assert owner is not None  # Created above if None
         unique_id = uuid.uuid4().hex[:6]
         name = name or f"Test Server {unique_id}"
         
@@ -173,7 +174,7 @@ class ServerFactory:
     def create_with_channels(
         self,
         owner: Optional[Any] = None,
-        channel_names: List[str] = None,
+        channel_names: Optional[List[str]] = None,
         **kwargs
     ) -> tuple:
         """
@@ -185,6 +186,7 @@ class ServerFactory:
         if owner is None:
             owner = self.user_factory.create()
         
+        assert owner is not None  # Created above if None
         server = self.create(owner=owner, **kwargs)
         
         # Get default general channel
