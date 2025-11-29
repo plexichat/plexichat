@@ -43,6 +43,7 @@ logs/
 .kiro/
 *.swp
 *.swo
+.qodo/
 
 # Testing
 .pytest_cache/
@@ -54,7 +55,13 @@ htmlcov/
 *.db
 *.sqlite
 *.sqlite3
+data/
+config/
 
 # OS
 .DS_Store
 Thumbs.db
+*.yaml
+# other
+.hypothesis/
+*.gz
