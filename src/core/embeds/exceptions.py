@@ -2,6 +2,8 @@
 Embed exceptions - All embed-related error types.
 """
 
+from typing import Optional
+
 
 class EmbedError(Exception):
     """Base exception for all embed errors."""
@@ -16,7 +18,7 @@ class EmbedNotFoundError(EmbedError):
 class EmbedValidationError(EmbedError):
     """Embed data failed validation."""
     
-    def __init__(self, message: str, issues: list = None):
+    def __init__(self, message: str, issues: Optional[list] = None):
         super().__init__(message)
         self.issues = issues or []
 
@@ -51,7 +53,7 @@ class EmbedCharacterLimitError(EmbedError):
 class InvalidUrlError(EmbedError):
     """URL is invalid or not allowed."""
     
-    def __init__(self, message: str, url: str = None):
+    def __init__(self, message: str, url: Optional[str] = None):
         super().__init__(message)
         self.url = url
 
@@ -59,7 +61,7 @@ class InvalidUrlError(EmbedError):
 class InvalidColorError(EmbedError):
     """Color format is invalid."""
     
-    def __init__(self, message: str, color: str = None):
+    def __init__(self, message: str, color: Optional[str] = None):
         super().__init__(message)
         self.color = color
 
@@ -72,7 +74,7 @@ class MessageNotFoundError(EmbedError):
 class PermissionDeniedError(EmbedError):
     """User does not have permission to perform this action."""
     
-    def __init__(self, message: str, permission: str = None):
+    def __init__(self, message: str, permission: Optional[str] = None):
         super().__init__(message)
         self.permission = permission
 
@@ -80,6 +82,6 @@ class PermissionDeniedError(EmbedError):
 class EmbedSanitizationError(EmbedError):
     """Content failed sanitization (potential XSS or unsafe content)."""
     
-    def __init__(self, message: str, field: str = None):
+    def __init__(self, message: str, field: Optional[str] = None):
         super().__init__(message)
         self.field = field
