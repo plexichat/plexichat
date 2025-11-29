@@ -150,6 +150,7 @@ def media_module(modules, temp_upload_dir):
         "proxy_enabled": False,
     }
     
+    assert config._config_instance is not None
     config._config_instance.config["media"] = test_config
     
     from src.core import media
@@ -159,6 +160,7 @@ def media_module(modules, temp_upload_dir):
     
     yield media
     
+    assert config._config_instance is not None
     config._config_instance.config["media"] = original_media_config
     media._manager = None
     media._setup_complete = False
