@@ -22,12 +22,21 @@ def get_user_info_from_request(request: Request) -> Dict[str, Any]:
     """
     user_info = {
         "user_id": None,
+        "ip_address": None,
         "is_bot": False,
         "is_admin": False,
         "is_internal": False,
         "is_webhook": False,
         "webhook_id": None,
     }
+    
+    # Extract IP address
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        user_info["ip_address"] = forwarded.split(",")[0].strip()
+    elif request.client:
+        user_info["ip_address"] = request.client.host
+
     if hasattr(request.state, "user") and request.state.user:
         user = request.state.user
         user_info["user_id"] = getattr(user, "user_id", None)

@@ -27,6 +27,17 @@ DEFAULT_USER_LIMIT = RateLimitConfig(
 )
 
 
+DEFAULT_IP_LIMIT = RateLimitConfig(
+    requests=60,
+    window_seconds=60.0,
+    burst=10,
+    algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
+    scope=BucketType.IP,
+    hourly_limit=1800,
+    daily_limit=10000,
+)
+
+
 DEFAULT_ROUTE_LIMITS: Dict[str, RateLimitConfig] = {
     "POST /auth/login": RateLimitConfig(
         requests=5,

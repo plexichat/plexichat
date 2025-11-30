@@ -36,6 +36,7 @@ class RateLimitManager:
         route_configs: Optional[Dict[str, RateLimitConfig]] = None,
         global_config: Optional[RateLimitConfig] = None,
         user_config: Optional[RateLimitConfig] = None,
+        ip_config: Optional[RateLimitConfig] = None,
         bot_multiplier: float = 1.2,
         webhook_multiplier: float = 1.0,
         bypass_check: Optional[Callable] = None,
@@ -49,6 +50,7 @@ class RateLimitManager:
             route_configs: Custom route configurations.
             global_config: Global rate limit config.
             user_config: Per-user rate limit config.
+            ip_config: Per-IP rate limit config (for unauthenticated users).
             bot_multiplier: Multiplier for bot limits.
             webhook_multiplier: Multiplier for webhook limits.
             bypass_check: Callable(user_id, is_admin, is_internal) -> bool.
@@ -61,6 +63,8 @@ class RateLimitManager:
         )
         self._global_config = global_config or DEFAULT_GLOBAL_LIMIT
         self._user_config = user_config or DEFAULT_USER_LIMIT
+        from .config import DEFAULT_IP_LIMIT
+        self._ip_config = ip_config or DEFAULT_IP_LIMIT
         self._bot_multiplier = bot_multiplier
         self._webhook_multiplier = webhook_multiplier
         self._bypass_check = bypass_check
@@ -74,6 +78,7 @@ class RateLimitManager:
         self,
         bucket_type: BucketType,
         user_id: Optional[int] = None,
+        ip_address: Optional[str] = None,
         route: Optional[str] = None,
         resource_id: Optional[int] = None,
         webhook_id: Optional[int] = None,
@@ -82,6 +87,9 @@ class RateLimitManager:
         parts = [bucket_type.value]
         if user_id is not None:
             parts.append(f"u:{user_id}")
+        elif ip_address is not None:
+            parts.append(f"ip:{ip_address}")
+            
         if route:
             route_hash = hashlib.md5(route.encode()).hexdigest()[:8]
             parts.append(f"r:{route_hash}")
@@ -331,6 +339,7 @@ class RateLimitManager:
     def check_rate_limit(
         self,
         user_id: Optional[int] = None,
+        ip_address: Optional[str] = None,
         route: Optional[str] = None,
         resource_id: Optional[int] = None,
         is_bot: bool = False,
@@ -351,10 +360,23 @@ class RateLimitManager:
         if self._check_bypass(user_id, is_admin, is_internal):
             return self._create_bypass_result(route, unix_now)
         checks = []
+        
+        # Check global limit (shared by all if no user_id, but we want to avoid that for IPs)
+        # If we have an IP but no user, we should probably skip the global shared bucket 
+        # or have a separate global IP bucket?
+        # For now, let's keep global limit for authenticated users, 
+        # and maybe a separate check for IPs if we wanted a "global IP limit".
+        # But the requirement is to avoid shared limits for unauthenticated users.
+        
         if self._enable_global_limit and user_id is not None:
             checks.append(self._check_global_limit(user_id, cost, unix_now))
+            
         if user_id is not None and not is_webhook:
             checks.append(self._check_user_limit(user_id, cost, unix_now))
+        elif ip_address is not None and not is_webhook:
+            # Fallback to IP limit if no user_id
+            checks.append(self._check_ip_limit(ip_address, cost, unix_now))
+
         if route:
             config = self._get_config_for_request(route, is_bot, is_webhook)
             if config.scope == BucketType.RESOURCE and resource_id is not None:
@@ -366,8 +388,10 @@ class RateLimitManager:
                     webhook_id, route, resource_id, config, cost, unix_now
                 ))
             else:
+                # For route limits, we need to pass IP if user_id is missing
+                # We need to update _check_route_limit to handle IP
                 checks.append(self._check_route_limit(
-                    user_id, route, config, cost, unix_now
+                    user_id, ip_address, route, config, cost, unix_now
                 ))
         for result in checks:
             if not result.allowed:
@@ -460,16 +484,71 @@ class RateLimitManager:
             cost=cost,
         )
 
+    def _check_ip_limit(
+        self,
+        ip_address: str,
+        cost: int,
+        unix_now: float,
+    ) -> RateLimitResult:
+        """Check per-IP rate limit (for unauthenticated users)."""
+        key = self._generate_bucket_key(BucketType.IP, ip_address=ip_address)
+        state = self._get_or_create_bucket(key, BucketType.IP, self._ip_config)
+        allowed, remaining, reset_after = self._check_algorithm(
+            state, self._ip_config, cost
+        )
+        if allowed and self._ip_config.hourly_limit:
+            hourly_allowed, _, hourly_reset = self._check_hourly_limit(
+                state, self._ip_config, cost
+            )
+            if not hourly_allowed:
+                allowed = False
+                reset_after = hourly_reset
+        if allowed and self._ip_config.daily_limit:
+            daily_allowed, _, daily_reset = self._check_daily_limit(
+                state, self._ip_config, cost
+            )
+            if not daily_allowed:
+                allowed = False
+                reset_after = daily_reset
+        self._storage.set_bucket(key, state, ttl=86400)
+        return RateLimitResult(
+            allowed=allowed,
+            headers=RateLimitHeaders(
+                limit=self._ip_config.effective_limit,
+                remaining=remaining,
+                reset=unix_now + reset_after,
+                reset_after=reset_after,
+                bucket=self._generate_bucket_id(key),
+                is_global=False,
+                retry_after=reset_after if not allowed else None,
+                scope="ip",
+            ),
+            bucket_key=key,
+            bucket_type=BucketType.IP,
+            remaining=remaining,
+            reset_at=unix_now + reset_after,
+            retry_after=reset_after if not allowed else None,
+            is_global=False,
+            limited_by="ip" if not allowed else None,
+            cost=cost,
+        )
+
     def _check_route_limit(
         self,
         user_id: Optional[int],
+        ip_address: Optional[str],
         route: str,
         config: RateLimitConfig,
         cost: int,
         unix_now: float,
     ) -> RateLimitResult:
         """Check per-route rate limit."""
-        key = self._generate_bucket_key(BucketType.ROUTE, user_id=user_id, route=route)
+        key = self._generate_bucket_key(
+            BucketType.ROUTE, 
+            user_id=user_id, 
+            ip_address=ip_address,
+            route=route
+        )
         state = self._get_or_create_bucket(key, BucketType.ROUTE, config)
         allowed, remaining, reset_after = self._check_algorithm(state, config, cost)
         if allowed and config.hourly_limit:

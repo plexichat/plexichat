@@ -140,6 +140,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             user_info["webhook_id"] = webhook_id
         result = ratelimit.check_rate_limit(
             user_id=user_info.get("user_id"),
+            ip_address=user_info.get("ip_address"),
             route=route,
             resource_id=resource_id,
             is_bot=user_info.get("is_bot", False),

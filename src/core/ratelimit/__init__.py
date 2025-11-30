@@ -30,6 +30,8 @@ from .models import (
 from .config import (
     DEFAULT_ROUTE_LIMITS,
     DEFAULT_GLOBAL_LIMIT,
+    DEFAULT_USER_LIMIT,
+    DEFAULT_IP_LIMIT,
     get_route_config,
     get_default_config,
 )
@@ -59,6 +61,8 @@ __all__ = [
     "custom_rate_limit",
     "DEFAULT_ROUTE_LIMITS",
     "DEFAULT_GLOBAL_LIMIT",
+    "DEFAULT_USER_LIMIT",
+    "DEFAULT_IP_LIMIT",
     "get_route_config",
     "get_default_config",
 ]
@@ -71,6 +75,8 @@ def setup(
     storage_backend: Optional[Any] = None,
     route_configs: Optional[Dict[str, RateLimitConfig]] = None,
     global_config: Optional[RateLimitConfig] = None,
+    user_config: Optional[RateLimitConfig] = None,
+    ip_config: Optional[RateLimitConfig] = None,
     bot_multiplier: float = 1.2,
     webhook_multiplier: float = 1.0,
     bypass_check: Optional[Callable[..., bool]] = None,
@@ -83,6 +89,8 @@ def setup(
         storage_backend: Storage backend instance (default: in-memory).
         route_configs: Custom route configurations (merged with defaults).
         global_config: Global rate limit configuration.
+        user_config: Per-user rate limit configuration (authenticated).
+        ip_config: Per-IP rate limit configuration (unauthenticated).
         bot_multiplier: Multiplier for bot rate limits (higher = more lenient).
         webhook_multiplier: Multiplier for webhook rate limits.
         bypass_check: Callable(user_id, is_admin, is_internal) -> bool for bypass logic.
@@ -94,6 +102,8 @@ def setup(
         storage_backend=storage_backend,
         route_configs=route_configs,
         global_config=global_config,
+        user_config=user_config,
+        ip_config=ip_config,
         bot_multiplier=bot_multiplier,
         webhook_multiplier=webhook_multiplier,
         bypass_check=bypass_check,
@@ -117,6 +127,7 @@ def get_manager() -> RateLimitManager:
 
 def check_rate_limit(
     user_id: Optional[int] = None,
+    ip_address: Optional[str] = None,
     route: Optional[str] = None,
     resource_id: Optional[int] = None,
     is_bot: bool = False,
@@ -147,6 +158,7 @@ def check_rate_limit(
     assert _manager is not None
     return _manager.check_rate_limit(
         user_id=user_id,
+        ip_address=ip_address,
         route=route,
         resource_id=resource_id,
         is_bot=is_bot,

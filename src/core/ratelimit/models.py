@@ -12,6 +12,7 @@ class BucketType(Enum):
     """Types of rate limit buckets."""
     GLOBAL = "global"
     USER = "user"
+    IP = "ip"
     ROUTE = "route"
     RESOURCE = "resource"
     WEBHOOK = "webhook"
