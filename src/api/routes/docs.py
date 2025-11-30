@@ -302,9 +302,15 @@ def get_app_config() -> Dict[str, Any]:
         app_conf = config.get("application", {})
         auth_conf = config.get("authentication", {})
         
+        import utils.version as version
+        try:
+            current_ver = version.current_string()
+        except RuntimeError:
+            current_ver = "unknown"
+        
         return {
             "name": app_conf.get("name", "PlexiChat"),
-            "version": app_conf.get("version", "a.1.0-1"),
+            "version": current_ver,
             "environment": app_conf.get("environment", "development"),
             "password_requirements": {
                 "min_length": auth_conf.get("password", {}).get("min_length", 8),

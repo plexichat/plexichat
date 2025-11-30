@@ -6,6 +6,7 @@ Single source of truth for all test configuration values.
 
 # Standard test password that meets all requirements
 TEST_PASSWORD = "TestPass123!"
+TEST_VERSION = "a.1.0-1"
 
 
 def get_test_config():
@@ -101,18 +102,18 @@ def get_test_config():
         },
         "api": {
             "title": "PlexiChat API Test",
-            "version": "a.1.0-1",
+            "version": TEST_VERSION,
             "api_prefix": "/api/v1",
             "debug": True,
             "cors_origins": ["*"],
         },
         "application": {
             "name": "PlexiChat",
-            "version": "a.1.0-1",
+            "version": TEST_VERSION,
             "environment": "test",
         },
         "versioning": {
-            "min_supported_version": "a.1.0-1",
+            "min_supported_version": TEST_VERSION,
             "update_url": None,
         },
         "media": {
