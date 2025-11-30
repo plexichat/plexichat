@@ -227,7 +227,50 @@ async def send_channel_message(
         except Exception:
             pass
     
-    return _message_to_response(msg, author_username)
+    response = _message_to_response(msg, author_username)
+    
+    # Broadcast MESSAGE_CREATE event via WebSocket
+    try:
+        from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+        from src.core.events.models import Event
+        from src.core.events.types import EventType
+        
+        if ws_is_setup():
+            dispatcher = get_dispatcher()
+            
+            # Get users to broadcast to
+            user_ids = []
+            if servers_mod:
+                try:
+                    # Get server channel info
+                    channel = servers_mod.get_channel(cid, current_user.user_id)
+                    if channel:
+                        server_id = getattr(channel, "server_id", None)
+                        if server_id:
+                            members = servers_mod.get_members(current_user.user_id, server_id)
+                            user_ids = [m.user_id for m in (members or [])]
+                except Exception:
+                    pass
+            
+            if not user_ids and messaging:
+                # For DM conversations, get participants
+                try:
+                    participants = messaging.get_participants(cid)
+                    user_ids = [p.user_id for p in (participants or [])]
+                except Exception:
+                    pass
+            
+            if user_ids:
+                event = Event(
+                    event_type=EventType.MESSAGE_CREATE,
+                    data=response
+                )
+                await dispatcher.dispatch_event(event, user_ids)
+    except Exception as e:
+        import utils.logger as logger
+        logger.debug(f"Failed to broadcast MESSAGE_CREATE: {e}")
+    
+    return response
 
 
 @router.get("/channels/{channel_id}/messages/{message_id}", response_model=MessageResponse)

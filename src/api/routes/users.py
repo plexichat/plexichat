@@ -114,19 +114,18 @@ async def update_current_user(
         raise
 
 
+from fastapi import File, UploadFile
+
 @router.post("/@me/avatar")
 async def upload_avatar(
-    current_user: TokenInfo = Depends(get_current_user),
-    file: bytes = None
+    file: UploadFile = File(...),
+    current_user: TokenInfo = Depends(get_current_user)
 ):
     """
     Upload user avatar.
     
     Accepts image file upload and updates the user's avatar.
     """
-    from fastapi import File, UploadFile
-    # This endpoint needs to be handled specially for file uploads
-    # For now, return a placeholder response
     auth = api.get_auth()
     media = api.get_media()
     
@@ -134,11 +133,51 @@ async def upload_avatar(
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
     
     if not media:
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Media module not available"}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Media module not available. Please restart the server to initialize the media module."}})
     
-    # The actual file handling is done via multipart form
-    # This is a placeholder - the real implementation needs UploadFile
-    return {"success": True, "message": "Avatar upload endpoint - use multipart form data"}
+    # Validate file type
+    if not file.content_type or not file.content_type.startswith('image/'):
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "File must be an image"}})
+    
+    # Read file data
+    try:
+        file_data = await file.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": f"Failed to read file: {str(e)}"}})
+    
+    # Check file size (5MB max for avatars)
+    if len(file_data) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Avatar must be less than 5MB"}})
+    
+    try:
+        # Upload the file
+        result = media.upload_file(
+            user_id=current_user.user_id,
+            file_data=file_data,
+            filename=file.filename or "avatar.png",
+            content_type=file.content_type
+        )
+        
+        # Update user's avatar_url in database
+        db = api.get_db()
+        if db and result.url:
+            db.execute(
+                "UPDATE auth_users SET avatar_url = ? WHERE id = ?",
+                (result.url, current_user.user_id)
+            )
+        
+        return {
+            "success": True,
+            "avatar_url": result.url,
+            "file_id": str(result.file_id)
+        }
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "Size" in exc_name:
+            raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": str(e)}})
+        elif "Type" in exc_name:
+            raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": str(e)}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": f"Upload failed: {str(e)}"}})
 
 
 @router.get("/@me/channels")
