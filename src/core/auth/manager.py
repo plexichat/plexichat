@@ -49,6 +49,11 @@ from .passwords import (
 )
 from . import totp as totp_module
 
+# Import cache functions for token caching (graceful degradation if Redis unavailable)
+from src.core.database import (
+    cache_get, cache_set, cache_delete, check_rate_limit, redis_available
+)
+
 
 class AuthManager:
     """
@@ -668,17 +673,85 @@ class AuthManager:
         )
     
     def verify_token(self, token: str, ip_address: Optional[str] = None) -> TokenInfo:
-        """Verify a session or bot token."""
+        """
+        Verify a session or bot token.
+        
+        Features:
+        - Redis caching for validated tokens (30s TTL) - skips DB on cache hit
+        - Rate limiting on verification attempts per IP
+        - Graceful fallback to DB-only when Redis unavailable
+        """
         parsed = parse_token(token)
         if not parsed:
             raise TokenInvalidError("Invalid token format")
         
+        # Rate limit token verification attempts per IP to prevent brute force
+        if ip_address:
+            rate_limit_key = f"token_verify:{ip_address}"
+            max_attempts = self._get_config("security.token_verify_rate_limit", 100)
+            allowed, remaining = check_rate_limit(rate_limit_key, max_attempts, 60)
+            if not allowed:
+                logger.warning(f"Token verification rate limit exceeded for IP: {ip_address}")
+                raise TokenInvalidError("Too many verification attempts")
+        
+        # Generate cache key from token hash (not the token itself for security)
+        cache_key = f"token:{hash_token(token)[:16]}"
+        
+        # Try cache first (only if Redis available)
+        if redis_available():
+            cached = cache_get(cache_key)
+            if cached:
+                # Validate IP binding if enabled
+                if self._get_config("security.token_binding", False):
+                    if ip_address and cached.get("bound_ip") and cached["bound_ip"] != ip_address:
+                        logger.warning(f"Token IP mismatch: expected {cached['bound_ip']}, got {ip_address}")
+                        cache_delete(cache_key)
+                        raise TokenInvalidError("Token bound to different IP")
+                
+                logger.debug(f"Token cache hit for {parsed['token_type']}")
+                return TokenInfo(
+                    valid=cached["valid"],
+                    token_type=cached["token_type"],
+                    account_id=cached["account_id"],
+                    user_id=cached["user_id"],
+                    session_id=cached.get("session_id"),
+                    permissions=cached["permissions"],
+                    rate_limit_tier=cached["rate_limit_tier"],
+                    expires_at=cached.get("expires_at"),
+                    username=cached["username"],
+                    account_type=AccountType(cached["account_type"])
+                )
+        
+        # Cache miss or Redis unavailable - verify from DB
         if parsed["token_type"] == "session":
-            return self._verify_session_token(parsed, ip_address)
+            token_info = self._verify_session_token(parsed, ip_address)
         elif parsed["token_type"] == "bot":
-            return self._verify_bot_token(parsed, ip_address)
+            token_info = self._verify_bot_token(parsed, ip_address)
         else:
             raise TokenInvalidError("Invalid token type")
+        
+        # Cache the result (30s TTL - short enough for quick revocation)
+        if redis_available():
+            cache_ttl = self._get_config("security.token_cache_ttl", 30)
+            cache_data = {
+                "valid": token_info.valid,
+                "token_type": token_info.token_type,
+                "account_id": token_info.account_id,
+                "user_id": token_info.user_id,
+                "session_id": token_info.session_id,
+                "permissions": token_info.permissions,
+                "rate_limit_tier": token_info.rate_limit_tier,
+                "expires_at": token_info.expires_at,
+                "username": token_info.username,
+                "account_type": token_info.account_type.value,
+            }
+            # Add IP binding if enabled
+            if self._get_config("security.token_binding", False) and ip_address:
+                cache_data["bound_ip"] = ip_address
+            
+            cache_set(cache_key, cache_data, ttl=cache_ttl)
+        
+        return token_info
     
     def _verify_session_token(
         self,
@@ -834,6 +907,10 @@ class AuthManager:
             "UPDATE auth_sessions SET revoked = 1 WHERE id = ?",
             (parsed["id"],)
         )
+        
+        # Invalidate token cache
+        cache_key = f"token:{hash_token(token)[:16]}"
+        cache_delete(cache_key)
         
         logger.info(f"Session logged out: {parsed['id']}")
         self._log_audit(AuditEventType.LOGOUT, session["user_id"], True)

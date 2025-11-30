@@ -210,6 +210,9 @@ authentication:
   security:
     max_failed_attempts: 5
     lockout_duration_minutes: 15
+    token_cache_ttl: 30           # Redis cache TTL for validated tokens (seconds)
+    token_verify_rate_limit: 100  # Max token verifications per IP per minute
+    token_binding: false          # Bind tokens to IP (rejects if IP changes)
     
   totp:
     issuer: PlexiChat
@@ -290,6 +293,21 @@ Example: bot.7891234567890123456.a8Kj2mNpQrStUvWx...
 5. **Session Limits**: Maximum concurrent sessions per user
 6. **2FA**: TOTP with backup codes
 7. **Audit Logging**: All security events logged
+8. **Redis Token Caching**: Validated tokens cached for 30s (configurable) to reduce DB load
+9. **Rate Limited Verification**: Prevents brute-force token guessing (100/min per IP)
+10. **Token Binding**: Optional IP binding - tokens rejected if used from different IP
+
+### Redis Caching (Optional)
+
+When Redis is enabled, token verification is cached for faster repeated requests:
+- Cache TTL: 30 seconds (configurable via `security.token_cache_ttl`)
+- Cache key: SHA-256 hash prefix of token (secure, no token exposure)
+- Graceful fallback: If Redis unavailable, falls back to DB-only verification
+- Automatic invalidation: Cache cleared on logout
+
+### Token Binding
+
+Enable `security.token_binding: true` to bind tokens to the IP address they were first verified from. If a token is used from a different IP, it will be rejected. This helps detect stolen tokens but may cause issues with mobile users or VPNs.
 
 ## Error Handling
 
