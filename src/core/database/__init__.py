@@ -1,1 +1,31 @@
 from .core import Database
+from .redis_client import (
+    RedisClient,
+    RedisError,
+    RedisConnectionError,
+    RedisOperationError,
+    setup as setup_redis,
+    get_client as get_redis_client,
+    is_available as redis_available,
+)
+from .cache import (
+    cached,
+    cache_get,
+    cache_set,
+    cache_delete,
+    invalidate_cached,
+    invalidate_pattern,
+    cache_stats,
+    reset_cache_stats,
+    cache_health,
+    cache_session,
+    get_cached_session,
+    invalidate_session,
+    invalidate_user_sessions,
+    cache_presence,
+    get_cached_presence,
+    get_bulk_presence,
+    check_rate_limit,
+    reset_rate_limit,
+    CacheError,
+)
