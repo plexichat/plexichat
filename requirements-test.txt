@@ -17,6 +17,7 @@ httpx>=0.24.0              # Async HTTP client for FastAPI testing
 
 # Mocking
 pytest-mock>=3.0.0         # Enhanced mocking support
+fakeredis>=2.20.0          # Fake Redis for testing
 
 # Benchmarking (optional)
 pytest-benchmark>=4.0.0    # Performance benchmarking
