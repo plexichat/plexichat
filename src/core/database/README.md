@@ -179,6 +179,34 @@ Rollback current transaction.
 #### `close()`
 Close the database connection.
 
+#### `insert_or_ignore(table, columns, values)`
+Insert a row if it doesn't already exist. Cross-database compatible alternative to SQLite's `INSERT OR IGNORE`.
+
+#### `upsert(table, columns, values, conflict_columns, update_columns=None)`
+Insert a row or update it if it already exists. Cross-database compatible alternative to SQLite's `INSERT OR REPLACE`.
+
+### Cross-Database Upsert Operations
+
+For operations that need to handle conflicts (insert-or-ignore, insert-or-update), use the helper methods instead of raw SQL:
+
+```python
+# Insert if not exists (ignores duplicates)
+db.insert_or_ignore("users", ["id", "name"], (1, "alice"))
+
+# Insert or update (upsert)
+db.upsert(
+    table="users",
+    columns=["id", "name", "email"],
+    values=(1, "alice", "alice@example.com"),
+    conflict_columns=["id"],  # Columns that define uniqueness
+    update_columns=["name", "email"]  # Columns to update on conflict
+)
+```
+
+These methods automatically generate the correct SQL for each database:
+- SQLite: `INSERT OR IGNORE` / `INSERT OR REPLACE`
+- PostgreSQL: `INSERT ... ON CONFLICT DO NOTHING` / `INSERT ... ON CONFLICT DO UPDATE`
+
 ## Error Handling
 
 The module raises appropriate exceptions:
@@ -203,6 +231,31 @@ SQLite connections are not thread-safe by default. For multi-threaded applicatio
 - Uses `RealDictCursor` for dict-like row access matching SQLite behavior
 - Autocommit is disabled by default to match SQLite transaction behavior
 - The `?` placeholder syntax is automatically converted to `%s`
+- Supports `sslmode` configuration (default: `prefer`)
+
+### PostgreSQL Configuration Options
+
+```yaml
+database:
+  type: postgres
+  postgres:
+    host: localhost
+    port: 5432
+    user: postgres
+    password: your_password
+    dbname: plexichat
+    sslmode: prefer  # disable, allow, prefer, require, verify-ca, verify-full
+```
+
+### SQLite-Specific Syntax
+
+Some existing code in the application uses SQLite-specific syntax that won't work directly with PostgreSQL:
+
+- `INSERT OR IGNORE` - Use `db.insert_or_ignore()` instead
+- `INSERT OR REPLACE` - Use `db.upsert()` instead
+- `AUTOINCREMENT` - PostgreSQL uses `SERIAL` or `GENERATED AS IDENTITY`
+
+For new code, prefer using the cross-database helper methods.
 
 ## Testing
 
