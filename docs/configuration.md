@@ -40,6 +40,11 @@ database:
     user: postgres
     password: ""
     dbname: plexichat
+    sslmode: prefer      # disable, allow, prefer, require, verify-ca, verify-full
+  
+  connection_pool:
+    min_connections: 1
+    max_connections: 10
 ```
 
 #### PostgreSQL Setup
@@ -66,6 +71,12 @@ To use PostgreSQL instead of SQLite:
        user: postgres
        password: your_secure_password
        dbname: plexichat
+       sslmode: prefer
+   ```
+
+4. Or use the `DATABASE_URL` environment variable:
+   ```bash
+   export DATABASE_URL="postgres://user:password@host:5432/plexichat?sslmode=prefer"
    ```
 
 The database module automatically handles differences between SQLite and PostgreSQL, including placeholder syntax conversion (`?` to `%s`).
@@ -122,13 +133,20 @@ encryption:
 ```yaml
 api:
   title: PlexiChat API
+  description: REST API for PlexiChat messaging platform
   version: a.1.0-1
   api_prefix: /api/v1
   debug: false           # Enable debug mode
   cors_origins:
     - "*"                # Allowed CORS origins
-  docs_url: /docs        # Swagger UI path
-  redoc_url: /redoc      # ReDoc path
+  cors_allow_credentials: true
+  cors_allow_methods:
+    - "*"
+  cors_allow_headers:
+    - "*"
+  docs_url: /docs        # Swagger UI path (null to disable)
+  redoc_url: /redoc      # ReDoc path (null to disable)
+  openapi_url: /openapi.json  # OpenAPI schema path
 ```
 
 ### Logging
@@ -262,6 +280,25 @@ Before deploying to production:
 |----------|-------------|-------------|
 | `HOST` | `server.host` | Server bind address |
 | `PORT` | `server.port` | Server port |
-| `DATABASE_URL` | - | Full database URL (overrides config) |
+| `DATABASE_URL` | `database.*` | Full database URL (overrides config) |
 | `JWT_SECRET` | `authentication.jwt.secret_key` | JWT signing key |
-| `LOG_LEVEL` | `logging.level` | Log level |
+| `LOG_LEVEL` | `logging.level` | Log level (DEBUG, INFO, WARNING, ERROR) |
+
+### Database URL Format
+
+The `DATABASE_URL` environment variable supports two formats:
+
+**SQLite:**
+```
+sqlite:///path/to/database.db
+sqlite:///~/.plexichat/data/plexichat.db
+```
+
+**PostgreSQL:**
+```
+postgres://user:password@host:port/dbname
+postgres://user:password@host:port/dbname?sslmode=require
+postgresql://user:password@host:port/dbname
+```
+
+When `DATABASE_URL` is set, it overrides the `database.type`, `database.path`, and `database.postgres.*` settings from the config file.
