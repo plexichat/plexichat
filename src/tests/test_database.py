@@ -418,11 +418,13 @@ def test_postgres_connection_real(db_config):
 
     pg_config = {
         "type": "postgres",
-        "host": "localhost",
-        "port": 5432,
-        "user": "postgres",
-        "password": "password",
-        "dbname": "postgres"
+        "postgres": {
+            "host": "localhost",
+            "port": 5432,
+            "user": "postgres",
+            "password": "password",
+            "dbname": "postgres"
+        }
     }
     config.set("database", pg_config)
     
@@ -437,16 +439,57 @@ def test_postgres_type_detection(db_config):
     """Test PostgreSQL type detection."""
     pg_config = {
         "type": "postgres",
-        "host": "localhost",
-        "port": 5432,
-        "user": "postgres",
-        "password": "password",
-        "dbname": "postgres"
+        "postgres": {
+            "host": "localhost",
+            "port": 5432,
+            "user": "postgres",
+            "password": "password",
+            "dbname": "postgres"
+        }
     }
     config.set("database", pg_config)
     
     db = Database()
     assert db.type == "postgres"
+
+def test_placeholder_conversion(db_config):
+    """Test that ? placeholders are converted to %s for PostgreSQL."""
+    pg_config = {
+        "type": "postgres",
+        "postgres": {
+            "host": "localhost",
+            "port": 5432,
+            "user": "postgres",
+            "password": "password",
+            "dbname": "postgres"
+        }
+    }
+    config.set("database", pg_config)
+    
+    db = Database()
+    
+    # Test simple conversion
+    query = "SELECT * FROM users WHERE id = ?"
+    converted = db._convert_placeholders(query)
+    assert converted == "SELECT * FROM users WHERE id = %s"
+    
+    # Test multiple placeholders
+    query = "INSERT INTO users (name, email) VALUES (?, ?)"
+    converted = db._convert_placeholders(query)
+    assert converted == "INSERT INTO users (name, email) VALUES (%s, %s)"
+    
+    # Test placeholder inside quotes should NOT be converted
+    query = "SELECT * FROM users WHERE name = 'What?' AND id = ?"
+    converted = db._convert_placeholders(query)
+    assert converted == "SELECT * FROM users WHERE name = 'What?' AND id = %s"
+
+def test_placeholder_no_conversion_sqlite(db_config):
+    """Test that SQLite queries are not modified."""
+    db = Database()
+    
+    query = "SELECT * FROM users WHERE id = ?"
+    converted = db._convert_placeholders(query)
+    assert converted == query  # Should be unchanged for SQLite
 
 # Edge Cases
 def test_null_values(db_config):
