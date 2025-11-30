@@ -1161,6 +1161,104 @@ Execute a webhook (send a message). No authentication required if token is valid
 
 ---
 
+## User Settings Endpoints
+
+Cloud-synced key-value store for user preferences like themes, UI settings, and other client configurations.
+
+### Configuration Limits
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| max_settings_per_user | 100 | Maximum settings per user |
+| max_key_length | 100 | Maximum key length in characters |
+| max_value_length | 10000 | Maximum value length in characters |
+
+### GET /users/@me/settings
+
+Get all settings for the current user. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "settings": {
+    "theme": "dark",
+    "sidebar_collapsed": "false",
+    "notification_sound": "enabled"
+  },
+  "count": 3,
+  "limit": 100
+}
+```
+
+### GET /users/@me/settings/{key}
+
+Get a specific setting by key. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "key": "theme",
+  "value": "dark",
+  "created_at": 1704067200,
+  "updated_at": 1704067200
+}
+```
+
+**Error Responses:**
+- `404` - Setting not found
+
+### PUT /users/@me/settings/{key}
+
+Set a setting value (create or update). Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request:**
+```json
+{
+  "value": "dark"
+}
+```
+
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| value | string | Max 10000 chars | Setting value |
+
+**Response (200):**
+```json
+{
+  "key": "theme",
+  "value": "dark",
+  "created_at": 1704067200,
+  "updated_at": 1704067200
+}
+```
+
+**Error Responses:**
+- `400` - Key too long, value too long, reserved key, or limit exceeded
+
+### DELETE /users/@me/settings/{key}
+
+Delete a setting. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "success": true
+}
+```
+
+**Error Responses:**
+- `404` - Setting not found
+
+---
+
 ## WebSocket Gateway
 
 Connect to the WebSocket gateway for real-time events.

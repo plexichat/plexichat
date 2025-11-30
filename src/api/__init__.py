@@ -37,6 +37,7 @@ _notifications = None
 _webhooks = None
 _threads = None
 _media = None
+_settings = None
 _setup_complete = False
 
 
@@ -52,7 +53,8 @@ def setup(
     notifications_module=None,
     webhooks_module=None,
     threads_module=None,
-    media_module=None
+    media_module=None,
+    settings_module=None
 ):
     """
     Initialize the API module with all dependencies.
@@ -70,9 +72,10 @@ def setup(
         webhooks_module: Webhooks module for webhook execution
         threads_module: Threads module for thread management
         media_module: Media module for file uploads
+        settings_module: Settings module for user preferences
     """
     global _db, _auth, _messaging, _servers, _relationships, _presence
-    global _reactions, _embeds, _notifications, _webhooks, _threads, _media, _setup_complete
+    global _reactions, _embeds, _notifications, _webhooks, _threads, _media, _settings, _setup_complete
 
     _db = db
     _auth = auth_module
@@ -86,6 +89,7 @@ def setup(
     _webhooks = webhooks_module
     _threads = threads_module
     _media = media_module
+    _settings = settings_module
     _setup_complete = True
 
 
@@ -149,6 +153,11 @@ def get_threads():
 def get_media():
     """Get media module."""
     return _media
+
+
+def get_settings():
+    """Get settings module."""
+    return _settings
 
 
 def is_setup() -> bool:

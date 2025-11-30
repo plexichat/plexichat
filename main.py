@@ -202,7 +202,7 @@ class PlexiChatServer:
     def initialize_modules(self):
         """Initialize all core modules in dependency order."""
         from src.core.database import Database
-        from src.core import auth, messaging, servers, relationships, presence, reactions, embeds, webhooks
+        from src.core import auth, messaging, servers, relationships, presence, reactions, embeds, webhooks, settings
         
         # Initialize database
         logger.info("Initializing database...")
@@ -242,9 +242,13 @@ class PlexiChatServer:
         webhooks.setup(self.db, auth, messaging, servers, embeds)
         self._modules['webhooks'] = webhooks
         
-        return auth, messaging, servers, relationships, presence, reactions, embeds, webhooks
+        logger.info("Initializing settings module...")
+        settings.setup(self.db)
+        self._modules['settings'] = settings
+        
+        return auth, messaging, servers, relationships, presence, reactions, embeds, webhooks, settings
     
-    def create_application(self, auth, messaging, servers, relationships, presence, reactions, embeds, webhooks):
+    def create_application(self, auth, messaging, servers, relationships, presence, reactions, embeds, webhooks, settings):
         """Create and configure the FastAPI application."""
         from src.api import setup as api_setup, create_app
         
@@ -259,6 +263,7 @@ class PlexiChatServer:
             reactions_module=reactions,
             embeds_module=embeds,
             webhooks_module=webhooks,
+            settings_module=settings,
         )
         
         self.app = create_app(enable_rate_limiting=False, enable_docs=True)
