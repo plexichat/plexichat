@@ -3,11 +3,17 @@ Database module - Provides database connectivity for SQLite and PostgreSQL.
 
 This module follows the zero-friction pattern established by common-utils.
 It requires config and logger to be set up before use.
+
+PostgreSQL Support:
+    - Uses psycopg2-binary driver (install with: pip install psycopg2-binary)
+    - Automatically converts ? placeholders to %s for PostgreSQL compatibility
+    - Uses RealDictCursor for dict-like row access matching SQLite behavior
 """
 
 import sqlite3
 import sys
 import os
+import re
 from typing import Any, List, Optional, Tuple, Union
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
@@ -20,6 +26,9 @@ import utils.logger as logger
 
 # Type alias for database connections
 DbConnection = Union[sqlite3.Connection, Any]  # Any for psycopg2 connection
+
+# Regex pattern to match ? placeholders (not inside quotes)
+_PLACEHOLDER_PATTERN = re.compile(r"\?(?=(?:[^']*'[^']*')*[^']*$)")
 
 
 class Database:
@@ -91,20 +100,23 @@ class Database:
             raise
 
     def _connect_postgres(self):
-        """Connect to PostgreSQL database."""
+        """Connect to PostgreSQL database using psycopg2."""
         try:
             import psycopg2
             import psycopg2.extras
         except ImportError:
             logger.error("psycopg2 is not installed. Cannot connect to PostgreSQL.")
-            raise ImportError("psycopg2 is required for PostgreSQL support.")
+            raise ImportError(
+                "psycopg2 is required for PostgreSQL support. "
+                "Install with: pip install psycopg2-binary"
+            )
 
         pg_config = self.config.get("postgres", {})
         host = pg_config.get("host", "localhost")
         port = pg_config.get("port", 5432)
         user = pg_config.get("user", "postgres")
         password = pg_config.get("password", "")
-        dbname = pg_config.get("dbname", "postgres")
+        dbname = pg_config.get("dbname", "plexichat")
 
         try:
             self.connection = psycopg2.connect(
@@ -112,12 +124,32 @@ class Database:
                 port=port,
                 user=user,
                 password=password,
-                dbname=dbname
+                dbname=dbname,
+                cursor_factory=psycopg2.extras.RealDictCursor
             )
-            logger.info(f"Connected to PostgreSQL at {host}:{port}")
+            # Set autocommit off by default (matches SQLite behavior)
+            self.connection.autocommit = False
+            logger.info(f"Connected to PostgreSQL at {host}:{port}/{dbname}")
         except psycopg2.Error as e:
             logger.error(f"Failed to connect to PostgreSQL: {e}")
             raise
+
+    def _convert_placeholders(self, query: str) -> str:
+        """
+        Convert SQLite-style ? placeholders to PostgreSQL-style %s.
+        
+        This allows using the same query syntax for both databases.
+        Only converts ? that are not inside quoted strings.
+        
+        Args:
+            query: SQL query with ? placeholders.
+            
+        Returns:
+            Query with %s placeholders if PostgreSQL, unchanged if SQLite.
+        """
+        if self.type != "postgres":
+            return query
+        return _PLACEHOLDER_PATTERN.sub("%s", query)
 
     def _ensure_connected(self):
         """Ensure database is connected before operations."""
@@ -129,7 +161,7 @@ class Database:
         Execute a query and return the cursor.
         
         Args:
-            query: SQL query string.
+            query: SQL query string. Use ? for placeholders (auto-converted to %s for PostgreSQL).
             params: Optional tuple of parameters for parameterized queries.
             auto_commit: Whether to auto-commit after execution (default True).
                         Set to False when using transactions.
@@ -144,12 +176,15 @@ class Database:
         self._ensure_connected()
         assert self.connection is not None  # Type narrowing for pyright
         
+        # Convert ? to %s for PostgreSQL
+        converted_query = self._convert_placeholders(query)
+        
         cursor = self.connection.cursor()
         try:
             if params:
-                cursor.execute(query, params)
+                cursor.execute(converted_query, params)
             else:
-                cursor.execute(query)
+                cursor.execute(converted_query)
             if auto_commit and not self._in_transaction:
                 self.connection.commit()
             logger.debug(f"Executed query: {query[:100]}...")
@@ -165,7 +200,7 @@ class Database:
         Execute a query multiple times with different parameters.
         
         Args:
-            query: SQL query string.
+            query: SQL query string. Use ? for placeholders (auto-converted to %s for PostgreSQL).
             params_list: List of parameter tuples.
             
         Returns:
@@ -174,9 +209,12 @@ class Database:
         self._ensure_connected()
         assert self.connection is not None  # Type narrowing for pyright
         
+        # Convert ? to %s for PostgreSQL
+        converted_query = self._convert_placeholders(query)
+        
         cursor = self.connection.cursor()
         try:
-            cursor.executemany(query, params_list)
+            cursor.executemany(converted_query, params_list)
             self.connection.commit()
             logger.debug(f"Executed batch query: {query[:100]}... ({len(params_list)} rows)")
             return cursor
@@ -234,9 +272,10 @@ class Database:
             query = "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
             result = self.fetch_one(query, (table_name,))
         elif self.type == "postgres":
+            # Use ? placeholder - will be auto-converted to %s
             query = """
                 SELECT table_name FROM information_schema.tables 
-                WHERE table_schema='public' AND table_name=%s
+                WHERE table_schema='public' AND table_name=?
             """
             result = self.fetch_one(query, (table_name,))
         else:
