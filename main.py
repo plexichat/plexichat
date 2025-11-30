@@ -63,7 +63,8 @@ class PlexiChatServer:
                     "port": 5432,
                     "user": "postgres",
                     "password": "",
-                    "dbname": "plexichat"
+                    "dbname": "plexichat",
+                    "sslmode": "prefer"
                 },
                 "connection_pool": {
                     "min_connections": 1,
@@ -113,10 +114,17 @@ class PlexiChatServer:
             },
             "api": {
                 "title": "PlexiChat API",
+                "description": "REST API for PlexiChat messaging platform",
                 "version": VERSION,
                 "api_prefix": "/api/v1",
                 "debug": True,
-                "cors_origins": ["*"]
+                "cors_origins": ["*"],
+                "cors_allow_credentials": True,
+                "cors_allow_methods": ["*"],
+                "cors_allow_headers": ["*"],
+                "docs_url": "/docs",
+                "redoc_url": "/redoc",
+                "openapi_url": "/openapi.json"
             },
             "server": {
                 "host": "0.0.0.0",
@@ -138,6 +146,34 @@ class PlexiChatServer:
                 "logs_dir": str(home_dir / "logs"),
                 "media_dir": str(home_dir / "media"),
                 "temp_dir": str(home_dir / "temp")
+            },
+            "docs": {
+                "enabled": True,
+                "path": "/docs/api",
+                "title": "PlexiChat API Documentation",
+                "description": "Complete API documentation for PlexiChat messaging platform",
+                "base_url": "http://localhost:8000",
+                "websocket_url": "ws://localhost:8000/gateway",
+                "theme": {
+                    "style": "dark",
+                    "primary_color": "#e94560",
+                    "background_color": "#1a1a2e",
+                    "text_color": "#eaeaea",
+                    "code_background": "#16213e",
+                    "border_color": "#0f3460"
+                },
+                "rate_limit": {
+                    "enabled": True,
+                    "requests": 60,
+                    "window_seconds": 60
+                },
+                "cache": {
+                    "enabled": True,
+                    "ttl_seconds": 300
+                },
+                "security": {
+                    "require_auth": False
+                }
             }
         }
     
@@ -153,7 +189,7 @@ class PlexiChatServer:
         logger.debug(f"Created directories in {home_dir}")
     
     def setup_config(self):
-        """Setup configuration from file or defaults."""
+        """Setup configuration from file or defaults, with environment variable overrides."""
         # Try project config first, then home folder config
         config_paths = [
             os.path.join(project_root, "config", "config.yaml"),
@@ -170,7 +206,56 @@ class PlexiChatServer:
             config_path = str(config_paths[0])
         
         config.setup(config_path=config_path, default_config=self.get_default_config())
+        
+        # Apply environment variable overrides
+        self._apply_env_overrides()
+        
         return config_path
+    
+    def _apply_env_overrides(self):
+        """Apply environment variable overrides to configuration."""
+        # DATABASE_URL override (format: postgres://user:pass@host:port/dbname or sqlite:///path)
+        database_url = os.getenv("DATABASE_URL")
+        if database_url:
+            db_config = config.get("database", {})
+            if database_url.startswith("postgres://") or database_url.startswith("postgresql://"):
+                # Parse PostgreSQL URL
+                import urllib.parse
+                parsed = urllib.parse.urlparse(database_url)
+                db_config["type"] = "postgres"
+                db_config["postgres"] = {
+                    "host": parsed.hostname or "localhost",
+                    "port": parsed.port or 5432,
+                    "user": parsed.username or "postgres",
+                    "password": parsed.password or "",
+                    "dbname": parsed.path.lstrip("/") if parsed.path else "plexichat",
+                    "sslmode": "prefer"
+                }
+                # Parse query params for sslmode
+                if parsed.query:
+                    params = urllib.parse.parse_qs(parsed.query)
+                    if "sslmode" in params:
+                        db_config["postgres"]["sslmode"] = params["sslmode"][0]
+            elif database_url.startswith("sqlite:///"):
+                db_config["type"] = "sqlite"
+                db_config["path"] = database_url[10:]  # Remove sqlite:///
+            config.set("database", db_config)
+        
+        # JWT_SECRET override
+        jwt_secret = os.getenv("JWT_SECRET")
+        if jwt_secret:
+            auth_config = config.get("authentication", {})
+            if "jwt" not in auth_config:
+                auth_config["jwt"] = {}
+            auth_config["jwt"]["secret_key"] = jwt_secret
+            config.set("authentication", auth_config)
+        
+        # LOG_LEVEL override
+        log_level = os.getenv("LOG_LEVEL")
+        if log_level:
+            log_config = config.get("logging", {})
+            log_config["level"] = log_level.upper()
+            config.set("logging", log_config)
 
     def setup_logging(self):
         """Setup logging with configured settings."""
