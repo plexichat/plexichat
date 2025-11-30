@@ -102,10 +102,17 @@ def get_test_config():
         },
         "api": {
             "title": "PlexiChat API Test",
+            "description": "REST API for PlexiChat messaging platform",
             "version": TEST_VERSION,
             "api_prefix": "/api/v1",
             "debug": True,
             "cors_origins": ["*"],
+            "cors_allow_credentials": True,
+            "cors_allow_methods": ["*"],
+            "cors_allow_headers": ["*"],
+            "docs_url": "/docs",
+            "redoc_url": "/redoc",
+            "openapi_url": "/openapi.json",
         },
         "application": {
             "name": "PlexiChat",
