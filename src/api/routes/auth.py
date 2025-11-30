@@ -173,3 +173,219 @@ async def logout(current_user: TokenInfo = Depends(get_current_user)):
             pass
     
     return {"success": True}
+
+
+@router.get("/2fa/status")
+async def get_2fa_status(current_user: TokenInfo = Depends(get_current_user)):
+    """
+    Get current 2FA status for the user.
+    """
+    auth = api.get_auth()
+    if not auth:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
+    
+    try:
+        user = auth.get_user(current_user.user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
+        
+        return {
+            "enabled": getattr(user, "totp_enabled", False),
+            "backup_codes_remaining": 0  # TODO: implement backup codes count
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+@router.get("/sessions")
+async def get_sessions_list(current_user: TokenInfo = Depends(get_current_user)):
+    """
+    Get all active sessions for the current user.
+    """
+    auth = api.get_auth()
+    if not auth:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
+    
+    try:
+        sessions = auth.get_sessions(current_user.user_id)
+        return [
+            {
+                "id": str(s.id),
+                "ip_address": getattr(s, "ip_address", None),
+                "user_agent": getattr(s, "user_agent", None),
+                "created_at": getattr(s, "created_at", None),
+                "last_activity": getattr(s, "last_activity", None),
+                "current": s.id == current_user.session_id
+            }
+            for s in sessions
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+@router.delete("/sessions/{session_id}")
+async def revoke_session(session_id: str, current_user: TokenInfo = Depends(get_current_user)):
+    """
+    Revoke a specific session.
+    """
+    auth = api.get_auth()
+    if not auth:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
+    
+    try:
+        sid = int(session_id)
+        auth.revoke_session(current_user.user_id, sid)
+        return {"success": True}
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid session ID"}})
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Session not found"}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+@router.post("/2fa/enable")
+async def enable_2fa(body: dict, current_user: TokenInfo = Depends(get_current_user)):
+    """
+    Enable 2FA - returns QR code and secret.
+    
+    Requires password confirmation. Returns setup data for authenticator app.
+    """
+    auth = api.get_auth()
+    if not auth:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
+    
+    password = body.get("password", "")
+    if not password:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Password required"}})
+    
+    # Verify password first
+    try:
+        user = auth.get_user(current_user.user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
+        
+        # Check if already enabled
+        if getattr(user, "totp_enabled", False):
+            raise HTTPException(status_code=409, detail={"error": {"code": 409, "message": "2FA is already enabled"}})
+        
+        # Verify password by attempting to validate credentials
+        from src.core.auth.passwords import verify_password
+        user_row = auth.db.fetch_one(
+            "SELECT password_hash FROM auth_users WHERE id = ?",
+            (current_user.user_id,)
+        )
+        if not user_row or not verify_password(password, user_row["password_hash"]):
+            raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Invalid password"}})
+        
+        # Setup 2FA - returns TwoFactorSetup object
+        result = auth.setup_2fa(current_user.user_id)
+        return {
+            "secret": result.secret,
+            "qr_code": getattr(result, "qr_code", None),
+            "provisioning_uri": result.provisioning_uri,
+            "backup_codes": result.backup_codes or []
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "Invalid" in exc_name or "Credentials" in exc_name:
+            raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Invalid password"}})
+        elif "Already" in exc_name or "Enabled" in exc_name:
+            raise HTTPException(status_code=409, detail={"error": {"code": 409, "message": "2FA is already enabled"}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+@router.post("/2fa/confirm")
+async def confirm_2fa_setup(body: dict, current_user: TokenInfo = Depends(get_current_user)):
+    """
+    Confirm 2FA setup with TOTP code.
+    
+    Validates the code from authenticator app to complete 2FA setup.
+    """
+    auth = api.get_auth()
+    if not auth:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
+    
+    code = body.get("code", "")
+    if not code or len(code) != 6:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Valid 6-digit code required"}})
+    
+    try:
+        # confirm_2fa returns bool
+        success = auth.confirm_2fa(current_user.user_id, code)
+        if success:
+            return {"success": True}
+        else:
+            raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Invalid code"}})
+    except HTTPException:
+        raise
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "Invalid" in exc_name:
+            raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Invalid code"}})
+        elif "NotFound" in exc_name or "Setup" in exc_name:
+            raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "2FA setup not started"}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+@router.post("/2fa/disable")
+async def disable_2fa(body: dict, current_user: TokenInfo = Depends(get_current_user)):
+    """
+    Disable 2FA.
+    
+    Requires password and current 2FA code for security.
+    """
+    auth = api.get_auth()
+    if not auth:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
+    
+    password = body.get("password", "")
+    code = body.get("code", "")
+    
+    if not password:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Password required"}})
+    if not code:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "2FA code required"}})
+    
+    try:
+        auth.disable_2fa(current_user.user_id, password, code)
+        return {"success": True}
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "Invalid" in exc_name or "Credentials" in exc_name:
+            raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Invalid password or code"}})
+        elif "NotEnabled" in exc_name or "Disabled" in exc_name:
+            raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "2FA is not enabled"}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+@router.post("/sessions/revoke-all")
+async def revoke_all_sessions(body: dict, current_user: TokenInfo = Depends(get_current_user)):
+    """
+    Revoke all sessions except optionally the current one.
+    """
+    auth = api.get_auth()
+    if not auth:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
+    
+    except_current = body.get("except_current", True)
+    
+    try:
+        sessions = auth.get_sessions(current_user.user_id)
+        revoked = 0
+        for s in sessions:
+            if except_current and s.id == current_user.session_id:
+                continue
+            try:
+                auth.revoke_session(current_user.user_id, s.id)
+                revoked += 1
+            except Exception:
+                pass
+        return {"success": True, "revoked_count": revoked}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})

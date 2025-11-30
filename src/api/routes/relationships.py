@@ -29,16 +29,47 @@ def _relationship_to_response(rel) -> RelationshipResponse:
     )
 
 
-@router.get("/@me", response_model=List[RelationshipResponse])
+@router.get("/@me")
 async def get_relationships(current_user: TokenInfo = Depends(get_current_user)):
     """
     Get all relationships for current user.
     
-    Returns friends, pending requests, and blocked users.
+    Returns friends, pending requests, and blocked users with user info.
     """
     relationships = api.get_relationships()
+    auth = api.get_auth()
+    presence = api.get_presence()
+    
     if not relationships:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Relationships module not available"}})
+    
+    def get_user_info(user_id):
+        """Get username and presence for a user."""
+        username = None
+        avatar_url = None
+        presence_data = None
+        
+        if auth:
+            try:
+                user = auth.get_user(user_id)
+                if user:
+                    username = user.username
+                    avatar_url = getattr(user, "avatar_url", None)
+            except Exception:
+                pass
+        
+        if presence:
+            try:
+                pres = presence.get_visible_presence(current_user.user_id, user_id)
+                if pres:
+                    status = getattr(pres, "status", None)
+                    if status and hasattr(status, "value"):
+                        status = status.value
+                    presence_data = {"status": status or "offline"}
+            except Exception:
+                pass
+        
+        return username, avatar_url, presence_data
     
     try:
         friends = relationships.get_friends(current_user.user_id)
@@ -49,32 +80,52 @@ async def get_relationships(current_user: TokenInfo = Depends(get_current_user))
         result = []
         
         for f in friends:
-            result.append(RelationshipResponse(
-                user_id=str(getattr(f, "user_id", 0) or getattr(f, "friend_id", 0)),
-                status="friend",
-                created_at=getattr(f, "created_at", None),
-            ))
+            user_id = getattr(f, "user_id", 0) or getattr(f, "friend_id", 0)
+            username, avatar_url, presence_data = get_user_info(user_id)
+            result.append({
+                "user_id": str(user_id),
+                "username": username or f"User {user_id}",
+                "avatar_url": avatar_url,
+                "status": "friend",
+                "presence": presence_data,
+                "created_at": getattr(f, "created_at", None),
+            })
         
         for r in pending_in:
-            result.append(RelationshipResponse(
-                user_id=str(getattr(r, "sender_id", 0)),
-                status="pending_incoming",
-                created_at=getattr(r, "created_at", None),
-            ))
+            user_id = getattr(r, "sender_id", 0)
+            username, avatar_url, presence_data = get_user_info(user_id)
+            result.append({
+                "user_id": str(user_id),
+                "username": username or f"User {user_id}",
+                "avatar_url": avatar_url,
+                "status": "pending_incoming",
+                "presence": presence_data,
+                "created_at": getattr(r, "created_at", None),
+            })
         
         for r in pending_out:
-            result.append(RelationshipResponse(
-                user_id=str(getattr(r, "recipient_id", 0)),
-                status="pending_outgoing",
-                created_at=getattr(r, "created_at", None),
-            ))
+            user_id = getattr(r, "recipient_id", 0)
+            username, avatar_url, presence_data = get_user_info(user_id)
+            result.append({
+                "user_id": str(user_id),
+                "username": username or f"User {user_id}",
+                "avatar_url": avatar_url,
+                "status": "pending_outgoing",
+                "presence": presence_data,
+                "created_at": getattr(r, "created_at", None),
+            })
         
         for b in blocked:
-            result.append(RelationshipResponse(
-                user_id=str(getattr(b, "blocked_id", 0)),
-                status="blocked",
-                created_at=getattr(b, "created_at", None),
-            ))
+            user_id = getattr(b, "blocked_id", 0)
+            username, avatar_url, _ = get_user_info(user_id)
+            result.append({
+                "user_id": str(user_id),
+                "username": username or f"User {user_id}",
+                "avatar_url": avatar_url,
+                "status": "blocked",
+                "presence": None,
+                "created_at": getattr(b, "created_at", None),
+            })
         
         return result
     except Exception as e:

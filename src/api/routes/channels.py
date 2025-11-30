@@ -122,3 +122,140 @@ async def delete_channel(channel_id: str, current_user: TokenInfo = Depends(get_
         elif "Permission" in exc_name:
             raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
         raise
+
+
+@router.post("/{channel_id}/invites")
+async def create_channel_invite(
+    channel_id: str,
+    body: dict = None,
+    current_user: TokenInfo = Depends(get_current_user)
+):
+    """
+    Create an invite for a channel.
+    """
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
+    
+    try:
+        cid = int(channel_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
+    
+    body = body or {}
+    max_age = body.get("max_age", 86400)
+    max_uses = body.get("max_uses", 0)
+    temporary = body.get("temporary", False)
+    
+    try:
+        invite = servers_mod.create_invite(
+            user_id=current_user.user_id,
+            channel_id=cid,
+            max_age=max_age,
+            max_uses=max_uses,
+            temporary=temporary
+        )
+        return {
+            "code": invite.code,
+            "channel_id": str(cid),
+            "server_id": str(invite.server_id) if hasattr(invite, "server_id") else None,
+            "max_age": max_age,
+            "max_uses": max_uses,
+            "temporary": temporary,
+            "uses": 0,
+            "created_at": getattr(invite, "created_at", None),
+        }
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
+        elif "Permission" in exc_name:
+            raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+
+# ==================== Global Invite Routes ====================
+
+@router.get("/invites/{invite_code}")
+async def get_invite_info(invite_code: str, current_user: TokenInfo = Depends(get_current_user)):
+    """
+    Get invite information.
+    
+    Returns details about an invite without joining.
+    """
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
+    
+    try:
+        invite = servers_mod.get_invite(invite_code)
+        if not invite:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Invite not found or expired"}})
+        
+        return {
+            "code": invite.code,
+            "server_id": str(invite.server_id) if hasattr(invite, "server_id") else None,
+            "server_name": getattr(invite, "server_name", None),
+            "channel_id": str(invite.channel_id) if hasattr(invite, "channel_id") else None,
+            "inviter_id": str(invite.inviter_id) if hasattr(invite, "inviter_id") else None,
+            "uses": getattr(invite, "uses", 0),
+            "max_uses": getattr(invite, "max_uses", 0),
+            "expires_at": getattr(invite, "expires_at", None),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name or "Expired" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Invite not found or expired"}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+@router.post("/invites/{invite_code}")
+async def join_server_via_invite(invite_code: str, current_user: TokenInfo = Depends(get_current_user)):
+    """
+    Join a server via invite code.
+    """
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
+    
+    try:
+        result = servers_mod.use_invite(current_user.user_id, invite_code)
+        return {
+            "success": True,
+            "server_id": str(result.server_id) if hasattr(result, "server_id") else str(result) if result else None,
+        }
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name or "Expired" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Invite not found or expired"}})
+        elif "Already" in exc_name or "Member" in exc_name:
+            raise HTTPException(status_code=409, detail={"error": {"code": 409, "message": "Already a member of this server"}})
+        elif "Banned" in exc_name:
+            raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": "You are banned from this server"}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+@router.delete("/invites/{invite_code}")
+async def delete_invite(invite_code: str, current_user: TokenInfo = Depends(get_current_user)):
+    """
+    Delete an invite.
+    
+    Requires manage server permission.
+    """
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
+    
+    try:
+        servers_mod.delete_invite(current_user.user_id, invite_code)
+        return {"success": True}
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Invite not found"}})
+        elif "Permission" in exc_name:
+            raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})

@@ -64,6 +64,23 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     api_router = create_api_router()
     app.include_router(api_router, prefix=config.api_prefix)
     
+    # Include WebSocket gateway router
+    try:
+        from src.api import websocket
+        if not websocket.is_setup():
+            # Setup websocket with available modules
+            import src.api as api_module
+            websocket.setup(
+                auth_module=api_module.get_auth(),
+                presence_module=api_module.get_presence(),
+                servers_module=api_module.get_servers(),
+            )
+        gateway_router = websocket.get_router()
+        app.include_router(gateway_router)
+        logger.info("WebSocket gateway enabled at /gateway")
+    except Exception as e:
+        logger.warning(f"WebSocket gateway not available: {e}")
+    
     # Mount documentation router if enabled
     # Path is configurable via config.yaml docs.path
     docs_path = "/docs/api"  # Default

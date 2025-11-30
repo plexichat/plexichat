@@ -17,7 +17,7 @@ from src.api.schemas.messages import (
 router = APIRouter()
 
 
-def _message_to_response(msg) -> MessageResponse:
+def _message_to_response(msg, author_username: str = None) -> MessageResponse:
     """Convert message object to response model."""
     attachments = []
     if hasattr(msg, "attachments") and msg.attachments:
@@ -30,7 +30,7 @@ def _message_to_response(msg) -> MessageResponse:
                 url=att.url,
             ))
     
-    return MessageResponse(
+    response = MessageResponse(
         id=str(msg.id),
         channel_id=str(getattr(msg, "channel_id", 0) or getattr(msg, "conversation_id", 0)),
         author_id=str(msg.author_id),
@@ -42,9 +42,14 @@ def _message_to_response(msg) -> MessageResponse:
         embeds=getattr(msg, "embeds", []) or [],
         pinned=getattr(msg, "pinned", False),
     )
+    
+    # Add author_username as extra field (not in schema but useful for client)
+    response_dict = response.model_dump()
+    response_dict["author_username"] = author_username or getattr(msg, "author_username", None) or f"User {msg.author_id}"
+    return response_dict
 
 
-@router.get("/channels/{channel_id}/messages", response_model=List[MessageResponse])
+@router.get("/channels/{channel_id}/messages")
 async def get_channel_messages(
     channel_id: str,
     limit: int = Query(default=50, ge=1, le=100),
@@ -58,6 +63,8 @@ async def get_channel_messages(
     Returns messages with pagination support.
     """
     servers_mod = api.get_servers()
+    auth = api.get_auth()
+    
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
     
@@ -77,7 +84,26 @@ async def get_channel_messages(
             before_id=before_id,
             after_id=after_id
         )
-        return [_message_to_response(m) for m in messages]
+        
+        # Cache author usernames for efficiency
+        author_cache = {}
+        result = []
+        for m in messages:
+            author_id = m.author_id
+            if author_id not in author_cache:
+                username = None
+                if auth:
+                    try:
+                        user = auth.get_user(author_id)
+                        if user:
+                            username = user.username
+                    except Exception:
+                        pass
+                author_cache[author_id] = username
+            
+            result.append(_message_to_response(m, author_cache.get(author_id)))
+        
+        return result
     except Exception as e:
         exc_name = type(e).__name__
         if "NotFound" in exc_name:
@@ -87,7 +113,7 @@ async def get_channel_messages(
         raise
 
 
-@router.post("/channels/{channel_id}/messages", response_model=MessageResponse)
+@router.post("/channels/{channel_id}/messages")
 async def send_channel_message(
     channel_id: str,
     body: MessageCreateRequest,
@@ -99,6 +125,8 @@ async def send_channel_message(
     Creates a new message in the specified channel.
     """
     servers_mod = api.get_servers()
+    auth = api.get_auth()
+    
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
     
@@ -132,10 +160,20 @@ async def send_channel_message(
             user_id=current_user.user_id,
             channel_id=cid,
             content=body.content or "",
-            reply_to_id=reply_to,
             attachments=attachments
         )
-        return _message_to_response(msg)
+        
+        # Get author username
+        author_username = None
+        if auth:
+            try:
+                user = auth.get_user(current_user.user_id)
+                if user:
+                    author_username = user.username
+            except Exception:
+                pass
+        
+        return _message_to_response(msg, author_username)
     except Exception as e:
         exc_name = type(e).__name__
         if "NotFound" in exc_name:
@@ -248,3 +286,76 @@ async def delete_message(
         elif "Access" in exc_name or "Permission" in exc_name:
             raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
         raise
+
+
+@router.post("/channels/{channel_id}/typing")
+async def trigger_typing(
+    channel_id: str,
+    current_user: TokenInfo = Depends(get_current_user)
+):
+    """
+    Trigger typing indicator in a channel.
+    
+    Broadcasts a typing event to other users in the channel.
+    """
+    presence = api.get_presence()
+    servers_mod = api.get_servers()
+    
+    try:
+        cid = int(channel_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
+    
+    # Verify user has access to channel
+    if servers_mod:
+        try:
+            channel = servers_mod.get_channel(current_user.user_id, cid)
+            if not channel:
+                raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
+        except HTTPException:
+            raise
+        except Exception as e:
+            if "NotFound" in type(e).__name__:
+                raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
+            elif "Access" in type(e).__name__ or "Permission" in type(e).__name__:
+                raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": "Access denied"}})
+    
+    # Set typing indicator in presence module
+    if presence:
+        try:
+            presence.set_typing(current_user.user_id, cid)
+        except Exception:
+            pass  # Non-critical, don't fail the request
+    
+    # Broadcast typing event via WebSocket dispatcher
+    try:
+        from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+        from src.core.events.models import Event
+        from src.core.events.types import EventType
+        
+        if ws_is_setup():
+            dispatcher = get_dispatcher()
+            auth = api.get_auth()
+            user = auth.get_user(current_user.user_id) if auth else None
+            
+            # Get server members to broadcast to
+            if servers_mod and channel:
+                server_id = getattr(channel, "server_id", None)
+                if server_id:
+                    members = servers_mod.get_members(current_user.user_id, server_id)
+                    user_ids = [m.user_id for m in (members or []) if m.user_id != current_user.user_id]
+                    
+                    if user_ids:
+                        event = Event(
+                            event_type=EventType.TYPING_START,
+                            data={
+                                "channel_id": str(cid),
+                                "user_id": str(current_user.user_id),
+                                "username": user.username if user else "Unknown"
+                            }
+                        )
+                        await dispatcher.dispatch_event(event, user_ids)
+    except Exception:
+        pass  # Non-critical
+    
+    return {"success": True}

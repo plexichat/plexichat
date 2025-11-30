@@ -56,7 +56,9 @@ async def update_presence(
         )
     
     try:
-        presence.set_status(current_user.user_id, body.status)
+        from src.core.presence.models import UserStatus
+        status_enum = UserStatus(body.status)
+        presence.set_status(current_user.user_id, status_enum)
         
         if body.custom_status is not None or body.custom_emoji is not None:
             if body.custom_status or body.custom_emoji:

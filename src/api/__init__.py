@@ -36,6 +36,7 @@ _embeds = None
 _notifications = None
 _webhooks = None
 _threads = None
+_media = None
 _setup_complete = False
 
 
@@ -50,7 +51,8 @@ def setup(
     embeds_module=None,
     notifications_module=None,
     webhooks_module=None,
-    threads_module=None
+    threads_module=None,
+    media_module=None
 ):
     """
     Initialize the API module with all dependencies.
@@ -67,9 +69,10 @@ def setup(
         notifications_module: Notifications module for mentions
         webhooks_module: Webhooks module for webhook execution
         threads_module: Threads module for thread management
+        media_module: Media module for file uploads
     """
     global _db, _auth, _messaging, _servers, _relationships, _presence
-    global _reactions, _embeds, _notifications, _webhooks, _threads, _setup_complete
+    global _reactions, _embeds, _notifications, _webhooks, _threads, _media, _setup_complete
 
     _db = db
     _auth = auth_module
@@ -82,6 +85,7 @@ def setup(
     _notifications = notifications_module
     _webhooks = webhooks_module
     _threads = threads_module
+    _media = media_module
     _setup_complete = True
 
 
@@ -140,6 +144,11 @@ def get_webhooks():
 def get_threads():
     """Get threads module."""
     return _threads
+
+
+def get_media():
+    """Get media module."""
+    return _media
 
 
 def is_setup() -> bool:
