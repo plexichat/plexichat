@@ -259,3 +259,70 @@ async def delete_invite(invite_code: str, current_user: TokenInfo = Depends(get_
         elif "Permission" in exc_name:
             raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+# ==================== Attachment Upload ====================
+
+from fastapi import UploadFile, File
+import os
+import uuid
+from pathlib import Path
+
+
+@router.post("/{channel_id}/attachments")
+async def upload_attachment(
+    channel_id: str,
+    file: UploadFile = File(...),
+    current_user: TokenInfo = Depends(get_current_user)
+):
+    """
+    Upload a file attachment to a channel.
+    
+    Returns the URL of the uploaded file.
+    """
+    servers_mod = api.get_servers()
+    
+    try:
+        cid = int(channel_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
+    
+    # Verify user has access to channel
+    if servers_mod:
+        try:
+            channel = servers_mod.get_channel(cid, current_user.user_id)
+            if not channel:
+                raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
+        except HTTPException:
+            raise
+        except Exception as e:
+            if "NotFound" in type(e).__name__:
+                raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
+            elif "Access" in type(e).__name__:
+                raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": "Access denied"}})
+    
+    # Check file size (10MB limit)
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "File too large (max 10MB)"}})
+    
+    # Generate unique filename
+    ext = os.path.splitext(file.filename)[1] if file.filename else ''
+    unique_name = f"{uuid.uuid4().hex}{ext}"
+    
+    # Save to media directory
+    media_dir = Path.home() / ".plexichat" / "media" / "attachments"
+    media_dir.mkdir(parents=True, exist_ok=True)
+    
+    file_path = media_dir / unique_name
+    with open(file_path, "wb") as f:
+        f.write(content)
+    
+    # Return URL (relative to API)
+    return {
+        "id": unique_name,
+        "filename": file.filename,
+        "size": len(content),
+        "content_type": file.content_type,
+        "url": f"/api/v1/media/attachments/{unique_name}"
+    }

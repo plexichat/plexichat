@@ -108,4 +108,18 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             response["api_docs"] = docs_path
         return response
     
+    # Serve uploaded media files
+    from fastapi.responses import FileResponse
+    from pathlib import Path
+    
+    @app.get("/api/v1/media/attachments/{filename}")
+    async def serve_attachment(filename: str):
+        """Serve uploaded attachment files."""
+        media_dir = Path.home() / ".plexichat" / "media" / "attachments"
+        file_path = media_dir / filename
+        if not file_path.exists():
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "File not found"}})
+        return FileResponse(file_path)
+    
     return app

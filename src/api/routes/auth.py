@@ -262,7 +262,6 @@ async def enable_2fa(body: dict, current_user: TokenInfo = Depends(get_current_u
     if not password:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Password required"}})
     
-    # Verify password first
     try:
         user = auth.get_user(current_user.user_id)
         if not user:
@@ -272,21 +271,21 @@ async def enable_2fa(body: dict, current_user: TokenInfo = Depends(get_current_u
         if getattr(user, "totp_enabled", False):
             raise HTTPException(status_code=409, detail={"error": {"code": 409, "message": "2FA is already enabled"}})
         
-        # Verify password by attempting to validate credentials
-        from src.core.auth.passwords import verify_password
-        user_row = auth.db.fetch_one(
-            "SELECT password_hash FROM auth_users WHERE id = ?",
-            (current_user.user_id,)
-        )
-        if not user_row or not verify_password(password, user_row["password_hash"]):
-            raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Invalid password"}})
+        # Verify password by attempting a login (this validates credentials)
+        try:
+            auth.login(user.username, password)
+        except Exception as login_err:
+            if "Credentials" in type(login_err).__name__ or "Invalid" in type(login_err).__name__:
+                raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Invalid password"}})
+            # If it's a 2FA required error, password was correct
+            if "TwoFactor" not in type(login_err).__name__:
+                raise
         
         # Setup 2FA - returns TwoFactorSetup object
         result = auth.setup_2fa(current_user.user_id)
         return {
             "secret": result.secret,
-            "qr_code": getattr(result, "qr_code", None),
-            "provisioning_uri": result.provisioning_uri,
+            "qr_uri": result.qr_uri,
             "backup_codes": result.backup_codes or []
         }
     except HTTPException:

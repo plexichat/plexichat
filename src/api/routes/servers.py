@@ -386,3 +386,236 @@ async def get_server_invites(server_id: str, current_user: TokenInfo = Depends(g
         elif "Permission" in exc_name:
             raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+# ==================== Role Management ====================
+
+@router.get("/{server_id}/roles")
+async def get_server_roles(server_id: str, current_user: TokenInfo = Depends(get_current_user)):
+    """Get all roles in a server."""
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
+    
+    try:
+        sid = int(server_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
+    
+    try:
+        roles = servers_mod.get_roles(current_user.user_id, sid)
+        return [
+            {
+                "id": str(r.id),
+                "server_id": str(sid),
+                "name": r.name,
+                "color": getattr(r, "color", None),
+                "position": getattr(r, "position", 0),
+                "permissions": getattr(r, "permissions", {}),
+                "hoist": getattr(r, "hoist", False),
+                "mentionable": getattr(r, "mentionable", False),
+                "is_default": getattr(r, "is_default", False),
+            }
+            for r in (roles or [])
+        ]
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Server not found"}})
+        elif "Access" in exc_name:
+            raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": "Access denied"}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+@router.post("/{server_id}/roles")
+async def create_role(server_id: str, body: dict, current_user: TokenInfo = Depends(get_current_user)):
+    """Create a new role in a server."""
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
+    
+    try:
+        sid = int(server_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
+    
+    name = body.get("name", "New Role")
+    color = body.get("color")
+    permissions = body.get("permissions", {})
+    hoist = body.get("hoist", False)
+    mentionable = body.get("mentionable", False)
+    
+    try:
+        role = servers_mod.create_role(
+            user_id=current_user.user_id,
+            server_id=sid,
+            name=name,
+            color=color,
+            permissions=permissions,
+            hoist=hoist,
+            mentionable=mentionable
+        )
+        return {
+            "id": str(role.id),
+            "server_id": str(sid),
+            "name": role.name,
+            "color": getattr(role, "color", None),
+            "position": getattr(role, "position", 0),
+            "permissions": getattr(role, "permissions", {}),
+            "hoist": getattr(role, "hoist", False),
+            "mentionable": getattr(role, "mentionable", False),
+        }
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Server not found"}})
+        elif "Permission" in exc_name:
+            raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+@router.patch("/{server_id}/roles/{role_id}")
+async def update_role(server_id: str, role_id: str, body: dict, current_user: TokenInfo = Depends(get_current_user)):
+    """Update a role in a server."""
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
+    
+    try:
+        sid = int(server_id)
+        rid = int(role_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid ID"}})
+    
+    try:
+        role = servers_mod.update_role(current_user.user_id, sid, rid, **body)
+        return {
+            "id": str(role.id),
+            "server_id": str(sid),
+            "name": role.name,
+            "color": getattr(role, "color", None),
+            "position": getattr(role, "position", 0),
+            "permissions": getattr(role, "permissions", {}),
+            "hoist": getattr(role, "hoist", False),
+            "mentionable": getattr(role, "mentionable", False),
+        }
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Role not found"}})
+        elif "Permission" in exc_name or "Default" in exc_name:
+            raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+@router.delete("/{server_id}/roles/{role_id}")
+async def delete_role(server_id: str, role_id: str, current_user: TokenInfo = Depends(get_current_user)):
+    """Delete a role from a server."""
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
+    
+    try:
+        sid = int(server_id)
+        rid = int(role_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid ID"}})
+    
+    try:
+        servers_mod.delete_role(current_user.user_id, sid, rid)
+        return {"success": True}
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Role not found"}})
+        elif "Permission" in exc_name or "Default" in exc_name:
+            raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+# ==================== Ban Management ====================
+
+@router.get("/{server_id}/bans")
+async def get_server_bans(server_id: str, current_user: TokenInfo = Depends(get_current_user)):
+    """Get all bans in a server."""
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
+    
+    try:
+        sid = int(server_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
+    
+    try:
+        bans = servers_mod.get_bans(current_user.user_id, sid)
+        return [
+            {
+                "user_id": str(b.user_id),
+                "reason": getattr(b, "reason", None),
+                "banned_by": str(b.banned_by) if hasattr(b, "banned_by") else None,
+                "banned_at": getattr(b, "banned_at", None),
+            }
+            for b in (bans or [])
+        ]
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Server not found"}})
+        elif "Permission" in exc_name:
+            raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+@router.put("/{server_id}/bans/{user_id}")
+async def ban_member(server_id: str, user_id: str, body: dict = None, current_user: TokenInfo = Depends(get_current_user)):
+    """Ban a user from a server."""
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
+    
+    try:
+        sid = int(server_id)
+        uid = int(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid ID"}})
+    
+    body = body or {}
+    reason = body.get("reason")
+    delete_message_days = body.get("delete_message_days", 0)
+    
+    try:
+        servers_mod.ban_member(current_user.user_id, sid, uid, reason=reason, delete_message_days=delete_message_days)
+        return {"success": True}
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
+        elif "Permission" in exc_name:
+            raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+@router.delete("/{server_id}/bans/{user_id}")
+async def unban_member(server_id: str, user_id: str, current_user: TokenInfo = Depends(get_current_user)):
+    """Unban a user from a server."""
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
+    
+    try:
+        sid = int(server_id)
+        uid = int(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid ID"}})
+    
+    try:
+        servers_mod.unban_member(current_user.user_id, sid, uid)
+        return {"success": True}
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Ban not found"}})
+        elif "Permission" in exc_name:
+            raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})

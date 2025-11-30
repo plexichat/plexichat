@@ -224,14 +224,17 @@ Register a new user account.
     "username": "johndoe",
     "email": "john@example.com",
     "avatar_url": null,
-    "created_at": 1704067200,
-    "email_verified": false,
+    "created_at": 1704067200000,
+    "email_verified": true,
     "totp_enabled": false
   },
   "challenge_token": null,
   "methods": null,
   "expires_in": null
 }
+```
+
+**Note:** `email_verified` is `true` by default when email verification is not required (default configuration). When email verification is enabled in server config, it will be `false` until verified.
 ```
 
 **Error Responses:**
@@ -260,7 +263,7 @@ Authenticate a user.
     "username": "johndoe",
     "email": "john@example.com",
     "avatar_url": null,
-    "created_at": 1704067200,
+    "created_at": 1704067200000,
     "email_verified": true,
     "totp_enabled": false
   },
@@ -334,6 +337,96 @@ Logout current session. Requires authentication.
 }
 ```
 
+### GET /auth/2fa/status
+
+Get current 2FA status for the user. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "enabled": false,
+  "backup_codes_remaining": 0
+}
+```
+
+### POST /auth/2fa/enable
+
+Enable 2FA - returns secret and QR URI. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request:**
+```json
+{
+  "password": "CurrentPassword123!"
+}
+```
+
+**Response (200):**
+```json
+{
+  "secret": "JBSWY3DPEHPK3PXP",
+  "qr_uri": "otpauth://totp/PlexiChat:username?secret=JBSWY3DPEHPK3PXP&issuer=PlexiChat",
+  "backup_codes": ["XXXX-XXXX", "YYYY-YYYY", "..."]
+}
+```
+
+**Error Responses:**
+- `400` - Password required
+- `401` - Invalid password
+- `409` - 2FA is already enabled
+
+### POST /auth/2fa/confirm
+
+Confirm 2FA setup with TOTP code. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request:**
+```json
+{
+  "code": "123456"
+}
+```
+
+**Response (200):**
+```json
+{
+  "success": true
+}
+```
+
+**Error Responses:**
+- `400` - Invalid code format or 2FA setup not started
+- `401` - Invalid code
+
+### POST /auth/2fa/disable
+
+Disable 2FA. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request:**
+```json
+{
+  "password": "CurrentPassword123!",
+  "code": "123456"
+}
+```
+
+**Response (200):**
+```json
+{
+  "success": true
+}
+```
+
+**Error Responses:**
+- `400` - Password or code required, or 2FA not enabled
+- `401` - Invalid password or code
+
 ---
 
 ## User Endpoints
@@ -351,7 +444,7 @@ Get current authenticated user. Requires authentication.
   "username": "johndoe",
   "email": "john@example.com",
   "avatar_url": "https://cdn.example.com/avatars/123.png",
-  "created_at": 1704067200,
+  "created_at": 1704067200000,
   "email_verified": true,
   "totp_enabled": false
 }
@@ -400,7 +493,7 @@ Get public user information. Requires authentication.
   "id": "123456789012345678",
   "username": "johndoe",
   "avatar_url": "https://cdn.example.com/avatars/123.png",
-  "created_at": 1704067200
+  "created_at": 1704067200000
 }
 ```
 
@@ -428,7 +521,7 @@ Get all servers the user is a member of. Requires authentication.
     "icon_url": "https://cdn.example.com/icons/123.png",
     "owner_id": "123456789012345678",
     "member_count": 150,
-    "created_at": 1704067200
+    "created_at": 1704067200000
   }
 ]
 ```
@@ -529,7 +622,7 @@ Get all channels in a server. Requires authentication and membership.
     "category_id": null,
     "nsfw": false,
     "slowmode_seconds": 0,
-    "created_at": 1704067200
+    "created_at": 1704067200000
   }
 ]
 ```
@@ -562,7 +655,7 @@ Get channel details. Requires authentication and access.
   "category_id": null,
   "nsfw": false,
   "slowmode_seconds": 0,
-  "created_at": 1704067200
+  "created_at": 1704067200000
 }
 ```
 
@@ -644,15 +737,18 @@ Get messages in a channel. Requires authentication and access.
     "channel_id": "123456789012345678",
     "author_id": "123456789012345678",
     "content": "Hello, world!",
-    "created_at": 1704067200,
+    "created_at": 1704067200000,
     "edited_at": null,
     "reply_to_id": null,
     "attachments": [],
     "embeds": [],
-    "pinned": false
+    "pinned": false,
+    "author_username": "johndoe"
   }
 ]
 ```
+
+**Note:** The `author_username` field is included for convenience when listing messages.
 
 **Error Responses:**
 - `403` - Access denied
@@ -690,7 +786,22 @@ Send a message to a channel. Requires authentication and send permission.
 
 **Note:** At least one of `content`, `attachments`, or `embeds` is required.
 
-**Response (200):** Created message object
+**Response (200):**
+```json
+{
+  "id": "123456789012345678",
+  "channel_id": "123456789012345678",
+  "author_id": "123456789012345678",
+  "content": "Hello, world!",
+  "created_at": 1704067200000,
+  "edited_at": null,
+  "reply_to_id": null,
+  "attachments": [],
+  "embeds": [],
+  "pinned": false,
+  "author_username": "johndoe"
+}
+```
 
 **Error Responses:**
 - `400` - Empty message or invalid content
@@ -703,7 +814,21 @@ Get a specific message. Requires authentication and access.
 
 **Headers:** `Authorization: Bearer <token>`
 
-**Response (200):** Message object
+**Response (200):**
+```json
+{
+  "id": "123456789012345678",
+  "channel_id": "123456789012345678",
+  "author_id": "123456789012345678",
+  "content": "Hello, world!",
+  "created_at": 1704067200000,
+  "edited_at": null,
+  "reply_to_id": null,
+  "attachments": [],
+  "embeds": [],
+  "pinned": false
+}
+```
 
 **Error Responses:**
 - `400` - Invalid message ID
@@ -727,7 +852,21 @@ Edit a message. Only the author can edit.
 |-------|------|-------------|-------------|
 | content | string | Max 4000 chars | New message content |
 
-**Response (200):** Updated message object with `edited_at` timestamp
+**Response (200):**
+```json
+{
+  "id": "123456789012345678",
+  "channel_id": "123456789012345678",
+  "author_id": "123456789012345678",
+  "content": "Updated message content",
+  "created_at": 1704067200000,
+  "edited_at": 1704067300000,
+  "reply_to_id": null,
+  "attachments": [],
+  "embeds": [],
+  "pinned": false
+}
+```
 
 **Error Responses:**
 - `400` - Invalid content
@@ -766,21 +905,36 @@ Get all relationships for current user. Requires authentication.
 [
   {
     "user_id": "123456789012345678",
+    "username": "johndoe",
+    "avatar_url": "https://cdn.example.com/avatars/123.png",
     "status": "friend",
-    "created_at": 1704067200
+    "presence": {
+      "status": "online"
+    },
+    "created_at": 1704067200000
   },
   {
     "user_id": "234567890123456789",
+    "username": "janedoe",
+    "avatar_url": null,
     "status": "pending_incoming",
-    "created_at": 1704067300
+    "presence": {
+      "status": "offline"
+    },
+    "created_at": 1704067300000
   },
   {
     "user_id": "345678901234567890",
+    "username": "blockeduser",
+    "avatar_url": null,
     "status": "blocked",
-    "created_at": 1704067400
+    "presence": null,
+    "created_at": 1704067400000
   }
 ]
 ```
+
+**Note:** The response includes enriched user information (`username`, `avatar_url`, `presence`) for convenience.
 
 **Relationship Statuses:**
 | Status | Description |
@@ -814,7 +968,7 @@ Send a friend request. Requires authentication.
 {
   "user_id": "123456789012345678",
   "status": "pending_outgoing",
-  "created_at": 1704067200
+  "created_at": 1704067200000
 }
 ```
 
@@ -876,7 +1030,7 @@ Block a user. Removes any existing relationship.
 {
   "user_id": "123456789012345678",
   "status": "blocked",
-  "created_at": 1704067200
+  "created_at": 1704067200000
 }
 ```
 
@@ -919,7 +1073,7 @@ Update current user's presence. Requires authentication.
   "status": "online",
   "custom_status": "Working on PlexiChat",
   "custom_emoji": "💻",
-  "last_seen": 1704067200
+  "last_seen": 1704067200000
 }
 ```
 
@@ -939,7 +1093,7 @@ Get a user's presence. Requires authentication.
   "status": "online",
   "custom_status": "Working on PlexiChat",
   "custom_emoji": "💻",
-  "last_seen": 1704067200
+  "last_seen": 1704067200000
 }
 ```
 
@@ -1023,7 +1177,7 @@ Get users who reacted with a specific emoji. Requires authentication.
 [
   {
     "user_id": "123456789012345678",
-    "reacted_at": 1704067200
+    "reacted_at": 1704067200000
   }
 ]
 ```
@@ -1066,13 +1220,13 @@ Create a new webhook. Requires authentication and manage webhooks permission.
   "creator_id": "123456789012345678",
   "name": "My Webhook",
   "avatar_url": "https://cdn.example.com/avatars/webhook.png",
-  "token": "webhook_token_here",
-  "url": "https://api.example.com/api/v1/webhooks/123456789012345678/webhook_token_here",
-  "created_at": 1704067200
+  "token": "webhook.123456789012345678.random_token_string",
+  "url": "/webhooks/123456789012345678/webhook.123456789012345678.random_token_string",
+  "created_at": 1704067200000
 }
 ```
 
-**Note:** Token and URL are only returned on creation.
+**Note:** Token and URL are only returned on creation. The URL is relative to the API base URL.
 
 **Error Responses:**
 - `400` - Invalid input or webhook limit reached
@@ -1148,7 +1302,7 @@ Execute a webhook (send a message). No authentication required if token is valid
   "content": "Webhook message",
   "username": "Custom Name",
   "avatar_url": "https://cdn.example.com/avatars/custom.png",
-  "created_at": 1704067200
+  "created_at": 1704067200000
 }
 ```
 
@@ -1203,8 +1357,8 @@ Get a specific setting by key. Requires authentication.
 {
   "key": "theme",
   "value": "dark",
-  "created_at": 1704067200,
-  "updated_at": 1704067200
+  "created_at": 1704067200000,
+  "updated_at": 1704067200000
 }
 ```
 
@@ -1233,8 +1387,8 @@ Set a setting value (create or update). Requires authentication.
 {
   "key": "theme",
   "value": "dark",
-  "created_at": 1704067200,
-  "updated_at": 1704067200
+  "created_at": 1704067200000,
+  "updated_at": 1704067200000
 }
 ```
 
@@ -1496,13 +1650,15 @@ Snowflake structure:
 
 ### Timestamps
 
-All timestamps are Unix timestamps in seconds (integer).
+All timestamps are Unix timestamps in milliseconds (integer).
 
 ```json
 {
-  "created_at": 1704067200
+  "created_at": 1704067200000
 }
 ```
+
+**Note:** Some endpoints (like user settings) may return timestamps in seconds. Check the specific endpoint documentation for details.
 
 ### Pagination
 
