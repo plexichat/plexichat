@@ -147,13 +147,23 @@ async def get_dm_channels(current_user: TokenInfo = Depends(get_current_user)):
     Get all DM channels for the current user.
     """
     messaging = api.get_messaging()
-    auth = api.get_auth()
     
     if not messaging:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
     
     try:
-        channels = messaging.get_dm_channels(current_user.user_id)
+        # Try to get DM conversations if the method exists
+        if hasattr(messaging, 'get_dm_channels'):
+            channels = messaging.get_dm_channels(current_user.user_id)
+        elif hasattr(messaging, 'get_conversations'):
+            # Fallback to get_conversations and filter for DMs
+            channels = messaging.get_conversations(current_user.user_id)
+            channels = [c for c in (channels or []) if getattr(c, 'conversation_type', None) == 'dm']
+        else:
+            # DM channels not yet implemented
+            return []
+        
+        auth = api.get_auth()
         result = []
         for ch in (channels or []):
             recipient_id = getattr(ch, "recipient_id", None)
@@ -202,7 +212,13 @@ async def create_dm_channel(body: dict, current_user: TokenInfo = Depends(get_cu
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid recipient ID"}})
     
     try:
-        channel = messaging.get_or_create_dm(current_user.user_id, rid)
+        # Try different method names
+        if hasattr(messaging, 'get_or_create_dm'):
+            channel = messaging.get_or_create_dm(current_user.user_id, rid)
+        elif hasattr(messaging, 'create_dm'):
+            channel = messaging.create_dm(current_user.user_id, rid)
+        else:
+            raise HTTPException(status_code=501, detail={"error": {"code": 501, "message": "DM creation not implemented"}})
         
         recipient_username = None
         if auth:
@@ -222,6 +238,8 @@ async def create_dm_channel(body: dict, current_user: TokenInfo = Depends(get_cu
                 "username": recipient_username or f"User {rid}"
             },
         }
+    except HTTPException:
+        raise
     except Exception as e:
         exc_name = type(e).__name__
         if "NotFound" in exc_name:
