@@ -13,6 +13,7 @@ from src.api.schemas.servers import (
     ServerResponse,
     ChannelResponse,
 )
+from src.core.servers.models import ChannelType
 
 router = APIRouter()
 
@@ -315,7 +316,12 @@ async def create_server_channel(
             "name": name,
         }
         if body.get("type"):
-            kwargs["channel_type"] = body.get("type")
+            # Convert string to ChannelType enum
+            type_str = body.get("type", "text").lower()
+            try:
+                kwargs["channel_type"] = ChannelType(type_str)
+            except ValueError:
+                kwargs["channel_type"] = ChannelType.TEXT
         if body.get("topic"):
             kwargs["topic"] = body.get("topic")
         if body.get("category_id"):

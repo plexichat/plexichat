@@ -48,7 +48,7 @@ async def get_channel(channel_id: str, current_user: TokenInfo = Depends(get_cur
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
     
     try:
-        channel = servers_mod.get_channel(current_user.user_id, cid)
+        channel = servers_mod.get_channel(cid, current_user.user_id)
         if not channel:
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
         return _channel_to_response(channel)

@@ -93,10 +93,14 @@ async def update_current_user(
         if "current_password" in update_data:
             del update_data["current_password"]
         
+        # Note: update_user not implemented yet, only password changes supported
         if update_data:
-            user = auth.update_user(current_user.user_id, **update_data)
-        else:
-            user = auth.get_user(current_user.user_id)
+            # For now, just return current user - profile updates not yet supported
+            pass
+        
+        user = auth.get_user(current_user.user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
         
         return _user_to_response(user, include_private=True)
     except HTTPException:

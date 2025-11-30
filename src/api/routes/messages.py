@@ -309,7 +309,7 @@ async def trigger_typing(
     # Verify user has access to channel
     if servers_mod:
         try:
-            channel = servers_mod.get_channel(current_user.user_id, cid)
+            channel = servers_mod.get_channel(cid, current_user.user_id)
             if not channel:
                 raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
         except HTTPException:

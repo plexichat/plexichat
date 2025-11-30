@@ -513,6 +513,17 @@ class ServerManager:
             ),
         )
 
+        # Create conversation for text channels if messaging module available
+        if channel_type == ChannelType.TEXT and self._messaging:
+            conv = self._messaging.create_server_channel_conversation(
+                server_id, channel_id
+            ) if hasattr(self._messaging, 'create_server_channel_conversation') else None
+            if conv:
+                self._db.execute(
+                    "UPDATE srv_channels SET conversation_id = ? WHERE id = ?",
+                    (conv.id, channel_id),
+                )
+
         self._log_audit(
             server_id,
             user_id,
@@ -572,10 +583,20 @@ class ServerManager:
         if not row:
             return None
 
-        if not self._is_member(row["server_id"], user_id):
+        server_id = row["server_id"]
+        
+        if not self._is_member(server_id, user_id):
             return None
 
-        if not self.has_permission(user_id, row["server_id"], "channels.view", channel_id):
+        # Check if user is server owner (owners have all permissions)
+        server = self._db.fetch_one(
+            "SELECT owner_id FROM srv_servers WHERE id = ? AND deleted = 0",
+            (server_id,),
+        )
+        if server and server["owner_id"] == user_id:
+            return self._row_to_channel(row)
+
+        if not self.has_permission(user_id, server_id, "channels.view", channel_id):
             return None
 
         return self._row_to_channel(row)

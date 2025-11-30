@@ -653,11 +653,36 @@ class MessagingManager:
     
     def _is_participant(self, conversation_id: int, user_id: int) -> bool:
         """Check if user is a participant in conversation."""
+        # First check direct participants table
         row = self._db.fetch_one(
             "SELECT 1 FROM msg_participants WHERE conversation_id = ? AND user_id = ?",
             (conversation_id, user_id)
         )
-        return row is not None
+        if row:
+            return True
+        
+        # Check if this is a server channel conversation
+        conv_row = self._db.fetch_one(
+            "SELECT metadata FROM msg_conversations WHERE id = ?",
+            (conversation_id,)
+        )
+        if conv_row:
+            metadata_str = conv_row["metadata"] if "metadata" in conv_row.keys() else None
+            if metadata_str:
+                try:
+                    metadata = json.loads(metadata_str) if isinstance(metadata_str, str) else metadata_str
+                    server_id = metadata.get("server_id") if isinstance(metadata, dict) else None
+                    if server_id:
+                        # Check if user is a member of the server
+                        member_row = self._db.fetch_one(
+                            "SELECT 1 FROM srv_members WHERE server_id = ? AND user_id = ?",
+                            (server_id, user_id)
+                        )
+                        return member_row is not None
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        
+        return False
     
     def _get_participant(self, conversation_id: int, user_id: int) -> Optional[Participant]:
         """Get participant record."""
