@@ -170,10 +170,9 @@ def _seed_categories(db):
     
     for cat_id, name, description, icon, position in DEFAULT_CATEGORIES:
         try:
-            db.execute(
-                """INSERT OR IGNORE INTO search_categories 
-                   (id, name, description, icon, position) 
-                   VALUES (?, ?, ?, ?, ?)""",
+            db.insert_or_ignore(
+                "search_categories",
+                ["id", "name", "description", "icon", "position"],
                 (cat_id, name, description, icon, position)
             )
         except Exception as e:

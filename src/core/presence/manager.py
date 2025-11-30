@@ -90,10 +90,10 @@ class PresenceManager:
     def _ensure_presence_record(self, user_id: int) -> None:
         """Ensure a presence record exists for user."""
         now = self._get_timestamp()
-        self._db.execute(
-            """INSERT OR IGNORE INTO pres_presence (user_id, status, last_seen, updated_at)
-               VALUES (?, 'offline', ?, ?)""",
-            (user_id, now, now)
+        self._db.insert_or_ignore(
+            "pres_presence",
+            ["user_id", "status", "last_seen", "updated_at"],
+            (user_id, "offline", now, now)
         )
 
     def _cleanup_expired_typing(self) -> None:
@@ -181,11 +181,12 @@ class PresenceManager:
 
         now = self._get_timestamp()
 
-        self._db.execute(
-            """INSERT OR REPLACE INTO pres_custom_status 
-               (user_id, text, emoji, expires_at, created_at)
-               VALUES (?, ?, ?, ?, ?)""",
-            (user_id, text, emoji, expires_at, now)
+        self._db.upsert(
+            "pres_custom_status",
+            ["user_id", "text", "emoji", "expires_at", "created_at"],
+            (user_id, text, emoji, expires_at, now),
+            ["user_id"],
+            ["text", "emoji", "expires_at"]
         )
 
         # Update presence timestamp
@@ -278,14 +279,17 @@ class PresenceManager:
         small_image = assets.get("small_image") if assets else None
         small_text = assets.get("small_text") if assets else None
 
-        self._db.execute(
-            """INSERT OR REPLACE INTO pres_activity 
-               (user_id, activity_type, name, details, url, state,
-                start_timestamp, end_timestamp, large_image, large_text,
-                small_image, small_text, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        self._db.upsert(
+            "pres_activity",
+            ["user_id", "activity_type", "name", "details", "url", "state",
+             "start_timestamp", "end_timestamp", "large_image", "large_text",
+             "small_image", "small_text", "created_at"],
             (user_id, activity_type.value, name, details, url, state,
-             start_ts, end_ts, large_image, large_text, small_image, small_text, now)
+             start_ts, end_ts, large_image, large_text, small_image, small_text, now),
+            ["user_id"],
+            ["activity_type", "name", "details", "url", "state",
+             "start_timestamp", "end_timestamp", "large_image", "large_text",
+             "small_image", "small_text"]
         )
 
         self._db.execute(
@@ -412,11 +416,12 @@ class PresenceManager:
 
         indicator_id = self._generate_id()
 
-        self._db.execute(
-            """INSERT OR REPLACE INTO pres_typing 
-               (id, user_id, channel_id, started_at, expires_at)
-               VALUES (?, ?, ?, ?, ?)""",
-            (indicator_id, user_id, channel_id, now, expires_at)
+        self._db.upsert(
+            "pres_typing",
+            ["id", "user_id", "channel_id", "started_at", "expires_at"],
+            (indicator_id, user_id, channel_id, now, expires_at),
+            ["user_id", "channel_id"],
+            ["id", "started_at", "expires_at"]
         )
 
         logger.debug(f"User {user_id} started typing in channel {channel_id}")

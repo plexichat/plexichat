@@ -221,12 +221,14 @@ class RelationshipManager:
         friend_id_1 = self._generate_id()
         friend_id_2 = self._generate_id()
 
-        self._db.execute(
-            "INSERT OR IGNORE INTO rel_friends (id, user_id, friend_id, created_at) VALUES (?, ?, ?, ?)",
+        self._db.insert_or_ignore(
+            "rel_friends",
+            ["id", "user_id", "friend_id", "created_at"],
             (friend_id_1, row["sender_id"], row["recipient_id"], now)
         )
-        self._db.execute(
-            "INSERT OR IGNORE INTO rel_friends (id, user_id, friend_id, created_at) VALUES (?, ?, ?, ?)",
+        self._db.insert_or_ignore(
+            "rel_friends",
+            ["id", "user_id", "friend_id", "created_at"],
             (friend_id_2, row["recipient_id"], row["sender_id"], now)
         )
 

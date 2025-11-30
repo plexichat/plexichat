@@ -230,19 +230,12 @@ class SearchManager:
         self._indexer.index_message(indexed)
         
         now = self._get_timestamp()
-        self._db.execute(
-            """INSERT OR REPLACE INTO search_message_index 
-               (message_id, conversation_id, server_id, channel_id, author_id, indexed_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (
-                message_id,
-                indexed.conversation_id,
-                indexed.server_id,
-                indexed.channel_id,
-                indexed.author_id,
-                now,
-                now,
-            )
+        self._db.upsert(
+            "search_message_index",
+            ["message_id", "conversation_id", "server_id", "channel_id", "author_id", "indexed_at", "updated_at"],
+            (message_id, indexed.conversation_id, indexed.server_id, indexed.channel_id, indexed.author_id, now, now),
+            ["message_id"],
+            ["conversation_id", "server_id", "channel_id", "author_id", "updated_at"]
         )
     
     def remove_from_index(self, message_id: int):
@@ -331,11 +324,12 @@ class SearchManager:
         self._indexer.index_user(indexed)
         
         now = self._get_timestamp()
-        self._db.execute(
-            """INSERT OR REPLACE INTO search_user_index 
-               (user_id, indexed_at, updated_at)
-               VALUES (?, ?, ?)""",
-            (user_id, now, now)
+        self._db.upsert(
+            "search_user_index",
+            ["user_id", "indexed_at", "updated_at"],
+            (user_id, now, now),
+            ["user_id"],
+            ["updated_at"]
         )
     
     # === Server Search ===
@@ -407,11 +401,12 @@ class SearchManager:
         self._indexer.index_server(indexed)
         
         now = self._get_timestamp()
-        self._db.execute(
-            """INSERT OR REPLACE INTO search_server_index 
-               (server_id, indexed_at, updated_at)
-               VALUES (?, ?, ?)""",
-            (server_id, now, now)
+        self._db.upsert(
+            "search_server_index",
+            ["server_id", "indexed_at", "updated_at"],
+            (server_id, now, now),
+            ["server_id"],
+            ["updated_at"]
         )
     
     # === Discovery ===

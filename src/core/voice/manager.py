@@ -131,8 +131,9 @@ class VoiceManager:
 
     def _ensure_channel_settings(self, channel_id: int) -> None:
         """Ensure channel settings record exists."""
-        self._db.execute(
-            "INSERT OR IGNORE INTO voice_channel_settings (channel_id) VALUES (?)",
+        self._db.insert_or_ignore(
+            "voice_channel_settings",
+            ["channel_id"],
             (channel_id,)
         )
 
@@ -1061,10 +1062,11 @@ class VoiceManager:
             if not self._is_voice_channel(channel["channel_type"]):
                 raise ChannelTypeError("Not a voice channel", expected="voice", actual=channel["channel_type"])
 
-        self._db.execute(
-            """INSERT OR REPLACE INTO voice_afk_settings (server_id, channel_id, timeout_seconds)
-               VALUES (?, ?, ?)""",
-            (server_id, channel_id, max(60, timeout_seconds))
+        self._db.upsert(
+            "voice_afk_settings",
+            ["server_id", "channel_id", "timeout_seconds"],
+            (server_id, channel_id, max(60, timeout_seconds)),
+            ["server_id"]
         )
 
         return True
