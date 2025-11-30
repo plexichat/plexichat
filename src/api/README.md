@@ -182,14 +182,20 @@ Settings in `config/config.yaml` under `api`:
 ```yaml
 api:
   title: PlexiChat API
+  description: REST API for PlexiChat messaging platform
   version: a.1.0-1
   api_prefix: /api/v1
   debug: false
   cors_origins:
     - "*"
   cors_allow_credentials: true
-  docs_url: /docs
-  redoc_url: /redoc
+  cors_allow_methods:
+    - "*"
+  cors_allow_headers:
+    - "*"
+  docs_url: /docs        # Set to null to disable
+  redoc_url: /redoc      # Set to null to disable
+  openapi_url: /openapi.json
 
 application:
   name: PlexiChat
