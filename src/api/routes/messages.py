@@ -61,12 +61,11 @@ async def get_channel_messages(
     Get messages in a channel.
     
     Returns messages with pagination support.
+    Works for both server channels and DM conversations.
     """
     servers_mod = api.get_servers()
+    messaging = api.get_messaging()
     auth = api.get_auth()
-    
-    if not servers_mod:
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
     
     try:
         cid = int(channel_id)
@@ -76,41 +75,64 @@ async def get_channel_messages(
     before_id = int(before) if before else None
     after_id = int(after) if after else None
     
-    try:
-        messages = servers_mod.get_channel_messages(
-            user_id=current_user.user_id,
-            channel_id=cid,
-            limit=limit,
-            before_id=before_id,
-            after_id=after_id
-        )
+    messages = None
+    
+    # Try server channel first
+    if servers_mod:
+        try:
+            messages = servers_mod.get_channel_messages(
+                user_id=current_user.user_id,
+                channel_id=cid,
+                limit=limit,
+                before_id=before_id,
+                after_id=after_id
+            )
+        except Exception as e:
+            exc_name = type(e).__name__
+            if "NotFound" not in exc_name:
+                if "Access" in exc_name or "Permission" in exc_name:
+                    raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": "Access denied"}})
+            # Channel not found in servers, try as DM conversation
+            messages = None
+    
+    # If not a server channel, try as DM conversation
+    if messages is None and messaging:
+        try:
+            messages = messaging.get_messages(
+                user_id=current_user.user_id,
+                conversation_id=cid,
+                limit=limit,
+                before_id=before_id,
+                after_id=after_id
+            )
+        except Exception as e:
+            exc_name = type(e).__name__
+            if "NotFound" in exc_name or "Access" in exc_name:
+                raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
+            raise
+    
+    if messages is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
+    
+    # Cache author usernames for efficiency
+    author_cache = {}
+    result = []
+    for m in messages:
+        author_id = m.author_id
+        if author_id not in author_cache:
+            username = None
+            if auth:
+                try:
+                    user = auth.get_user(author_id)
+                    if user:
+                        username = user.username
+                except Exception:
+                    pass
+            author_cache[author_id] = username
         
-        # Cache author usernames for efficiency
-        author_cache = {}
-        result = []
-        for m in messages:
-            author_id = m.author_id
-            if author_id not in author_cache:
-                username = None
-                if auth:
-                    try:
-                        user = auth.get_user(author_id)
-                        if user:
-                            username = user.username
-                    except Exception:
-                        pass
-                author_cache[author_id] = username
-            
-            result.append(_message_to_response(m, author_cache.get(author_id)))
-        
-        return result
-    except Exception as e:
-        exc_name = type(e).__name__
-        if "NotFound" in exc_name:
-            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
-        elif "Access" in exc_name or "Permission" in exc_name:
-            raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": "Access denied"}})
-        raise
+        result.append(_message_to_response(m, author_cache.get(author_id)))
+    
+    return result
 
 
 @router.post("/channels/{channel_id}/messages")
@@ -123,12 +145,11 @@ async def send_channel_message(
     Send a message to a channel.
     
     Creates a new message in the specified channel.
+    Works for both server channels and DM conversations.
     """
     servers_mod = api.get_servers()
+    messaging = api.get_messaging()
     auth = api.get_auth()
-    
-    if not servers_mod:
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
     
     try:
         cid = int(channel_id)
@@ -155,34 +176,58 @@ async def send_channel_message(
             for a in body.attachments
         ]
     
-    try:
-        msg = servers_mod.send_channel_message(
-            user_id=current_user.user_id,
-            channel_id=cid,
-            content=body.content or "",
-            attachments=attachments
-        )
-        
-        # Get author username
-        author_username = None
-        if auth:
-            try:
-                user = auth.get_user(current_user.user_id)
-                if user:
-                    author_username = user.username
-            except Exception:
-                pass
-        
-        return _message_to_response(msg, author_username)
-    except Exception as e:
-        exc_name = type(e).__name__
-        if "NotFound" in exc_name:
-            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
-        elif "Permission" in exc_name:
-            raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
-        elif "Content" in exc_name or "Invalid" in exc_name:
-            raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": str(e)}})
-        raise
+    msg = None
+    
+    # Try server channel first
+    if servers_mod:
+        try:
+            msg = servers_mod.send_channel_message(
+                user_id=current_user.user_id,
+                channel_id=cid,
+                content=body.content or "",
+                attachments=attachments
+            )
+        except Exception as e:
+            exc_name = type(e).__name__
+            if "NotFound" not in exc_name:
+                if "Permission" in exc_name:
+                    raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
+                elif "Content" in exc_name or "Invalid" in exc_name:
+                    raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": str(e)}})
+            # Channel not found in servers, try as DM conversation
+            msg = None
+    
+    # If not a server channel, try as DM conversation
+    if msg is None and messaging:
+        try:
+            msg = messaging.send_message(
+                user_id=current_user.user_id,
+                conversation_id=cid,
+                content=body.content or "",
+                attachments=attachments
+            )
+        except Exception as e:
+            exc_name = type(e).__name__
+            if "NotFound" in exc_name or "Access" in exc_name:
+                raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
+            elif "Content" in exc_name or "Invalid" in exc_name:
+                raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": str(e)}})
+            raise
+    
+    if msg is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
+    
+    # Get author username
+    author_username = None
+    if auth:
+        try:
+            user = auth.get_user(current_user.user_id)
+            if user:
+                author_username = user.username
+        except Exception:
+            pass
+    
+    return _message_to_response(msg, author_username)
 
 
 @router.get("/channels/{channel_id}/messages/{message_id}", response_model=MessageResponse)
