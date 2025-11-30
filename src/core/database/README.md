@@ -247,15 +247,28 @@ database:
     sslmode: prefer  # disable, allow, prefer, require, verify-ca, verify-full
 ```
 
-### SQLite-Specific Syntax
+### PostgreSQL Compatibility Status
 
-Some existing code in the application uses SQLite-specific syntax that won't work directly with PostgreSQL:
+All core modules have been migrated to use cross-database compatible methods:
 
-- `INSERT OR IGNORE` - Use `db.insert_or_ignore()` instead
-- `INSERT OR REPLACE` - Use `db.upsert()` instead
-- `AUTOINCREMENT` - PostgreSQL uses `SERIAL` or `GENERATED AS IDENTITY`
+- `voice/manager.py` - Channel settings and AFK settings
+- `search/manager.py` - Message, user, and server indexing
+- `search/schema.py` - Category seeding
+- `relationships/manager.py` - Friend creation
+- `presence/manager.py` - Presence, custom status, activity, and typing indicators
 
-For new code, prefer using the cross-database helper methods.
+The codebase is now fully compatible with both SQLite and PostgreSQL.
+
+### Writing Cross-Database Code
+
+For new code, always use the helper methods instead of SQLite-specific syntax:
+
+| SQLite Syntax | Cross-Database Method |
+|---------------|----------------------|
+| `INSERT OR IGNORE` | `db.insert_or_ignore()` |
+| `INSERT OR REPLACE` | `db.upsert()` |
+
+Note: `AUTOINCREMENT` should be avoided; PostgreSQL uses `SERIAL` or `GENERATED AS IDENTITY`.
 
 ## Testing
 
