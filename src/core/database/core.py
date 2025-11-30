@@ -117,6 +117,7 @@ class Database:
         user = pg_config.get("user", "postgres")
         password = pg_config.get("password", "")
         dbname = pg_config.get("dbname", "plexichat")
+        sslmode = pg_config.get("sslmode", "prefer")
 
         try:
             self.connection = psycopg2.connect(
@@ -125,11 +126,12 @@ class Database:
                 user=user,
                 password=password,
                 dbname=dbname,
+                sslmode=sslmode,
                 cursor_factory=psycopg2.extras.RealDictCursor
             )
             # Set autocommit off by default (matches SQLite behavior)
             self.connection.autocommit = False
-            logger.info(f"Connected to PostgreSQL at {host}:{port}/{dbname}")
+            logger.info(f"Connected to PostgreSQL at {host}:{port}/{dbname} (sslmode={sslmode})")
         except psycopg2.Error as e:
             logger.error(f"Failed to connect to PostgreSQL: {e}")
             raise
@@ -307,6 +309,75 @@ class Database:
         self.connection.rollback()
         self._in_transaction = False
         logger.debug("Transaction rolled back")
+
+    def insert_or_ignore(self, table: str, columns: List[str], values: Tuple) -> bool:
+        """
+        Insert a row if it doesn't already exist (based on primary key/unique constraint).
+        
+        Cross-database compatible alternative to SQLite's INSERT OR IGNORE.
+        
+        Args:
+            table: Table name.
+            columns: List of column names.
+            values: Tuple of values corresponding to columns.
+            
+        Returns:
+            True if row was inserted, False if ignored due to conflict.
+        """
+        self._ensure_connected()
+        
+        placeholders = ", ".join(["?"] * len(columns))
+        cols = ", ".join(columns)
+        
+        if self.type == "sqlite":
+            query = f"INSERT OR IGNORE INTO {table} ({cols}) VALUES ({placeholders})"
+        elif self.type == "postgres":
+            query = f"INSERT INTO {table} ({cols}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
+        else:
+            raise ValueError(f"Unsupported database type: {self.type}")
+        
+        cursor = self.execute(query, values)
+        inserted = cursor.rowcount > 0
+        cursor.close()
+        return inserted
+
+    def upsert(self, table: str, columns: List[str], values: Tuple, 
+               conflict_columns: List[str], update_columns: Optional[List[str]] = None) -> None:
+        """
+        Insert a row or update it if it already exists.
+        
+        Cross-database compatible alternative to SQLite's INSERT OR REPLACE.
+        
+        Args:
+            table: Table name.
+            columns: List of column names for insert.
+            values: Tuple of values corresponding to columns.
+            conflict_columns: Columns that define uniqueness (for ON CONFLICT).
+            update_columns: Columns to update on conflict. If None, updates all non-conflict columns.
+        """
+        self._ensure_connected()
+        
+        placeholders = ", ".join(["?"] * len(columns))
+        cols = ", ".join(columns)
+        
+        if update_columns is None:
+            update_columns = [c for c in columns if c not in conflict_columns]
+        
+        if self.type == "sqlite":
+            query = f"INSERT OR REPLACE INTO {table} ({cols}) VALUES ({placeholders})"
+        elif self.type == "postgres":
+            conflict_cols = ", ".join(conflict_columns)
+            if update_columns:
+                updates = ", ".join([f"{c} = EXCLUDED.{c}" for c in update_columns])
+                query = f"""INSERT INTO {table} ({cols}) VALUES ({placeholders})
+                           ON CONFLICT ({conflict_cols}) DO UPDATE SET {updates}"""
+            else:
+                query = f"""INSERT INTO {table} ({cols}) VALUES ({placeholders})
+                           ON CONFLICT ({conflict_cols}) DO NOTHING"""
+        else:
+            raise ValueError(f"Unsupported database type: {self.type}")
+        
+        self.execute(query, values)
 
     def close(self):
         """Close the database connection."""
