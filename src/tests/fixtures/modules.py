@@ -230,6 +230,16 @@ class ModuleRegistry:
             self._cache['soundboard'] = soundboard
         return self._cache['soundboard']
 
+    @property
+    def settings(self):
+        """Get the settings module (lazy loaded)."""
+        if 'settings' not in self._cache:
+            from src.core import settings
+            self._reset_module(settings)
+            settings.setup(self._db)
+            self._cache['settings'] = settings
+        return self._cache['settings']
+
     def get_api(self):
         """
         Get the API module with all dependencies setup.
@@ -250,6 +260,7 @@ class ModuleRegistry:
                 reactions_module=self.reactions,
                 embeds_module=self.embeds,
                 webhooks_module=self.webhooks,
+                settings_module=self.settings,
             )
             self._cache['api'] = api
         return self._cache['api']

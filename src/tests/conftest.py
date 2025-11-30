@@ -376,6 +376,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "stickers: Stickers module tests")
     config.addinivalue_line("markers", "polls: Polls module tests")
     config.addinivalue_line("markers", "soundboard: Soundboard module tests")
+    config.addinivalue_line("markers", "settings: User settings module tests")
 
 
 def pytest_collection_modifyitems(config, items):
@@ -429,6 +430,9 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.integration)
         elif "/soundboard/" in str(item.fspath):
             item.add_marker(pytest.mark.soundboard)
+            item.add_marker(pytest.mark.integration)
+        elif "/settings/" in str(item.fspath):
+            item.add_marker(pytest.mark.settings)
             item.add_marker(pytest.mark.integration)
         elif "/unit/" in str(item.fspath):
             item.add_marker(pytest.mark.unit)
