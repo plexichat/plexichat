@@ -22,8 +22,9 @@ cache:
 default:
   image: python:3.11-slim
   before_script:
+    - apt-get update && apt-get install -y git
     - python -m venv venv
-    - source venv/bin/activate
+    - . venv/bin/activate
     - pip install --upgrade pip
     - pip install -r requirements.txt
     - pip install -r requirements-test.txt
@@ -39,11 +40,8 @@ lint:
   timeout: 10m
   script:
     - pip install ruff
-    - ruff check src/ --ignore E501,F401 || true  # Non-blocking for now
+    - ruff check src/ --ignore E501,F401 || true
   allow_failure: true
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 # =============================================================================
 # TEST STAGE
@@ -51,7 +49,7 @@ lint:
 
 test:full:
   stage: test
-  timeout: 2h  # Full suite takes 1+ hour
+  timeout: 2h
   script:
     - pytest src/tests/ -v --tb=short --junitxml=report.xml --cov=src --cov-report=xml --cov-report=term-missing
   coverage: '/TOTAL.*\s+(\d+%)/'
@@ -66,19 +64,12 @@ test:full:
       - report.xml
       - coverage.xml
     expire_in: 30 days
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_PIPELINE_SOURCE == "schedule"
 
 test:unit:
   stage: test
   timeout: 30m
   script:
-    - pytest src/tests/unit/ -v --tb=short -m "unit or not integration"
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "push"
-      when: always
+    - pytest src/tests/unit/ -v --tb=short
   allow_failure: false
 
 # =============================================================================
@@ -90,6 +81,7 @@ secret_detection:
   image: registry.gitlab.com/gitlab-org/security-products/analyzers/secrets:latest
   variables:
     GIT_DEPTH: 50
+  before_script: []
   script:
     - /analyzer run
   artifacts:
@@ -98,9 +90,6 @@ secret_detection:
     paths:
       - gl-secret-detection-report.json
     expire_in: 30 days
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
   allow_failure: false
 
 sast:
@@ -108,6 +97,7 @@ sast:
   image: registry.gitlab.com/gitlab-org/security-products/analyzers/semgrep:latest
   variables:
     SAST_EXCLUDED_PATHS: "venv/,tests/,.cache/"
+  before_script: []
   script:
     - /analyzer run
   artifacts:
@@ -116,14 +106,10 @@ sast:
     paths:
       - gl-sast-report.json
     expire_in: 30 days
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
   allow_failure: true
 
 dependency_scanning:
   stage: security
-  image: python:3.11-slim
   timeout: 15m
   script:
     - pip install pip-audit safety
@@ -134,16 +120,9 @@ dependency_scanning:
       - pip-audit-report.json
       - safety-report.json
     expire_in: 30 days
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
   allow_failure: true
 
-# =============================================================================
-# SCHEDULED JOBS
-# =============================================================================
-
-# Weekly full security scan
+# Weekly security scan (runs on schedule)
 security:weekly:
   stage: security
   timeout: 30m
