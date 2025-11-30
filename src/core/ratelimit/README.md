@@ -4,7 +4,8 @@ Advanced rate limiting for PlexiChat API with multiple bucket types, algorithms,
 
 ## Features
 
-- Multiple bucket types (global, user, route, resource, webhook)
+- Multiple bucket types (global, user, IP, route, resource, webhook)
+- IP-based rate limiting for unauthenticated users
 - Multiple algorithms (token bucket, sliding window, fixed window, leaky bucket)
 - Hourly and daily limits
 - Bot and webhook multipliers
@@ -30,6 +31,21 @@ ratelimit.setup(
     enable_global_limit=True,     # Enforce global rate limit
     bypass_check=lambda uid, admin, internal: admin,  # Admins bypass
 )
+
+# Custom IP limit for unauthenticated users
+from src.core.ratelimit import RateLimitConfig, RateLimitAlgorithm, BucketType
+
+custom_ip_limit = RateLimitConfig(
+    requests=30,                   # 30 requests
+    window_seconds=60.0,           # per minute
+    burst=5,                       # with 5 burst
+    algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
+    scope=BucketType.IP,
+    hourly_limit=900,              # 900 per hour
+    daily_limit=5000,              # 5000 per day
+)
+
+ratelimit.setup(ip_config=custom_ip_limit)
 ```
 
 ## Usage
@@ -97,14 +113,14 @@ async def upload_file(request: Request):
 
 ### Default Route Limits
 
-| Route | Limit | Window | Algorithm |
-|-------|-------|--------|-----------|
-| POST /auth/login | 5 | 60s | Fixed Window |
-| POST /auth/register | 3 | 60s | Fixed Window |
-| POST /channels/{id}/messages | 5 | 5s | Token Bucket |
-| PATCH /users/@me | 2 | 60s | Fixed Window |
-| PUT /reactions | 1 | 0.25s | Token Bucket |
-| POST /webhooks/{id}/{token} | 5 | 2s | Token Bucket |
+| Route                        | Limit | Window | Algorithm    |
+| ---------------------------- | ----- | ------ | ------------ |
+| POST /auth/login             | 5     | 60s    | Fixed Window |
+| POST /auth/register          | 3     | 60s    | Fixed Window |
+| POST /channels/{id}/messages | 5     | 5s     | Token Bucket |
+| PATCH /users/@me             | 2     | 60s    | Fixed Window |
+| PUT /reactions               | 1     | 0.25s  | Token Bucket |
+| POST /webhooks/{id}/{token}  | 5     | 2s     | Token Bucket |
 
 ### Custom Route Configuration
 
@@ -140,6 +156,7 @@ X-RateLimit-Scope: channel
 ```
 
 On 429 responses:
+
 ```
 Retry-After: 5
 X-RateLimit-Global: true  (if global limit hit)
@@ -148,21 +165,25 @@ X-RateLimit-Global: true  (if global limit hit)
 ## Algorithms
 
 ### Token Bucket (default for messaging)
+
 - Tokens refill continuously
 - Allows bursts up to bucket capacity
 - Best for: APIs with variable traffic
 
 ### Sliding Window (default for most routes)
+
 - Tracks individual request timestamps
 - Smooth rate limiting without hard edges
 - Best for: General API protection
 
 ### Fixed Window (default for auth)
+
 - Simple counter per time window
 - Resets at window boundary
 - Best for: Login/registration protection
 
 ### Leaky Bucket
+
 - Requests "leak" out at constant rate
 - Smooths traffic spikes
 - Best for: Downstream protection
@@ -170,11 +191,32 @@ X-RateLimit-Global: true  (if global limit hit)
 ## Bucket Types
 
 - **Global**: Per-user across all requests (50/second default)
-- **User**: Per-user general limit (120/minute default)
+- **User**: Per-authenticated-user general limit (120/minute default)
+- **IP**: Per-IP-address for unauthenticated users (60/minute default)
 - **Route**: Per-user per-route
 - **Resource**: Per-user per-resource (e.g., per channel)
 - **Webhook**: Per-webhook
 - **Channel Webhook**: Shared limit for all webhooks in a channel
+
+### How IP-Based Limiting Works
+
+For **authenticated requests** (user has a valid token):
+
+- Rate limits are tracked per User ID
+- Each user gets their own independent rate limit buckets
+- Example: User A can send 120 requests/minute, User B can also send 120 requests/minute
+
+For **unauthenticated requests** (no token, e.g., login/register):
+
+- Rate limits are tracked per IP address
+- Each IP gets its own independent rate limit bucket
+- Example: IP 192.168.1.10 spamming login won't affect IP 192.168.1.20
+- IP extracted from `X-Forwarded-For` header (for proxies) or direct connection
+
+This prevents scenarios where:
+
+- A malicious user spamming `/auth/login` blocks all other users from logging in
+- Your Flask proxy server exhausts shared limits and blocks legitimate clients
 
 ## Bypass Configuration
 
@@ -197,6 +239,7 @@ ratelimit.setup(bypass_check=custom_bypass)
 ## Storage Backends
 
 ### In-Memory (default)
+
 ```python
 from src.core.ratelimit.storage import MemoryStorage
 
@@ -208,17 +251,18 @@ ratelimit.setup(storage_backend=storage)
 ```
 
 ### Redis (interface only)
+
 ```python
 from src.core.ratelimit.storage import RateLimitStorage
 
 class RedisStorage(RateLimitStorage):
     def __init__(self, redis_client):
         self.redis = redis_client
-    
+
     def get_bucket(self, key):
         data = self.redis.get(f"ratelimit:{key}")
         return json.loads(data) if data else None
-    
+
     # Implement other methods...
 ```
 
@@ -251,9 +295,9 @@ pytest src/tests/ratelimit/ -v
 
 ```json
 {
-    "message": "You are being rate limited.",
-    "retry_after": 4.567,
-    "global": false,
-    "scope": "channel"
+  "message": "You are being rate limited.",
+  "retry_after": 4.567,
+  "global": false,
+  "scope": "channel"
 }
 ```
