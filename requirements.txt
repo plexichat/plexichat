@@ -9,6 +9,8 @@ starlette>=0.35.0
 # Database
 aiosqlite>=0.19.0
 psycopg2-binary>=2.9.9     # PostgreSQL sync driver (optional)
+redis>=5.0.0               # Redis client for caching/sessions
+hiredis>=2.3.0             # Redis parser (optional, for performance)
 
 # Authentication & Security
 argon2-cffi>=23.1.0        # Password hashing
