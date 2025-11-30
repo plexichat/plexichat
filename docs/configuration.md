@@ -33,18 +33,42 @@ database:
   type: sqlite           # sqlite or postgres
   path: ~/.plexichat/data/plexichat.db  # SQLite path
   
-  # PostgreSQL settings (when type: postgres)
+  # PostgreSQL settings (only used when type: postgres)
   postgres:
     host: localhost
     port: 5432
     user: postgres
     password: ""
     dbname: plexichat
-  
-  connection_pool:
-    min_connections: 1
-    max_connections: 10
 ```
+
+#### PostgreSQL Setup
+
+To use PostgreSQL instead of SQLite:
+
+1. Install the PostgreSQL driver:
+   ```bash
+   pip install psycopg2-binary
+   ```
+
+2. Create the database:
+   ```sql
+   CREATE DATABASE plexichat;
+   ```
+
+3. Update your config:
+   ```yaml
+   database:
+     type: postgres
+     postgres:
+       host: localhost
+       port: 5432
+       user: postgres
+       password: your_secure_password
+       dbname: plexichat
+   ```
+
+The database module automatically handles differences between SQLite and PostgreSQL, including placeholder syntax conversion (`?` to `%s`).
 
 ### Authentication
 
@@ -218,8 +242,13 @@ Before deploying to production:
      type: postgres
      postgres:
        host: your-db-host
+       port: 5432
+       user: postgres
        password: <secure-password>
+       dbname: plexichat
    ```
+   
+   Install the driver: `pip install psycopg2-binary`
 
 6. **Set appropriate log level**
    ```yaml
