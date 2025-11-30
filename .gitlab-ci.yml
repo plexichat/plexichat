@@ -1,0 +1,159 @@
+# PlexiChat GitLab CI/CD Configuration
+# Full test suite takes ~1+ hour, timeouts set accordingly
+
+stages:
+  - lint
+  - test
+  - security
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  PYTHONUNBUFFERED: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+
+# Cache pip packages between jobs
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - .cache/pip
+    - venv/
+
+# Base Python image
+default:
+  image: python:3.11-slim
+  before_script:
+    - python -m venv venv
+    - source venv/bin/activate
+    - pip install --upgrade pip
+    - pip install -r requirements.txt
+    - pip install -r requirements-test.txt
+    # Initialize submodules (common-utils)
+    - git submodule update --init --recursive
+
+# =============================================================================
+# LINT STAGE
+# =============================================================================
+
+lint:
+  stage: lint
+  timeout: 10m
+  script:
+    - pip install ruff
+    - ruff check src/ --ignore E501,F401 || true  # Non-blocking for now
+  allow_failure: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# =============================================================================
+# TEST STAGE
+# =============================================================================
+
+test:full:
+  stage: test
+  timeout: 2h  # Full suite takes 1+ hour
+  script:
+    - pytest src/tests/ -v --tb=short --junitxml=report.xml --cov=src --cov-report=xml --cov-report=term-missing
+  coverage: '/TOTAL.*\s+(\d+%)/'
+  artifacts:
+    when: always
+    reports:
+      junit: report.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+    paths:
+      - report.xml
+      - coverage.xml
+    expire_in: 30 days
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+
+test:unit:
+  stage: test
+  timeout: 30m
+  script:
+    - pytest src/tests/unit/ -v --tb=short -m "unit or not integration"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push"
+      when: always
+  allow_failure: false
+
+# =============================================================================
+# SECURITY STAGE
+# =============================================================================
+
+secret_detection:
+  stage: security
+  image: registry.gitlab.com/gitlab-org/security-products/analyzers/secrets:latest
+  variables:
+    GIT_DEPTH: 50
+  script:
+    - /analyzer run
+  artifacts:
+    reports:
+      secret_detection: gl-secret-detection-report.json
+    paths:
+      - gl-secret-detection-report.json
+    expire_in: 30 days
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  allow_failure: false
+
+sast:
+  stage: security
+  image: registry.gitlab.com/gitlab-org/security-products/analyzers/semgrep:latest
+  variables:
+    SAST_EXCLUDED_PATHS: "venv/,tests/,.cache/"
+  script:
+    - /analyzer run
+  artifacts:
+    reports:
+      sast: gl-sast-report.json
+    paths:
+      - gl-sast-report.json
+    expire_in: 30 days
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  allow_failure: true
+
+dependency_scanning:
+  stage: security
+  image: python:3.11-slim
+  timeout: 15m
+  script:
+    - pip install pip-audit safety
+    - pip-audit -r requirements.txt --format json > pip-audit-report.json || true
+    - safety check -r requirements.txt --json > safety-report.json || true
+  artifacts:
+    paths:
+      - pip-audit-report.json
+      - safety-report.json
+    expire_in: 30 days
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  allow_failure: true
+
+# =============================================================================
+# SCHEDULED JOBS
+# =============================================================================
+
+# Weekly full security scan
+security:weekly:
+  stage: security
+  timeout: 30m
+  script:
+    - pip install bandit
+    - bandit -r src/ -f json -o bandit-report.json || true
+  artifacts:
+    paths:
+      - bandit-report.json
+    expire_in: 90 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+  allow_failure: true
