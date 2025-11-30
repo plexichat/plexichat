@@ -100,6 +100,7 @@ async def get_relationships(current_user: TokenInfo = Depends(get_current_user))
                 "avatar_url": avatar_url,
                 "status": "pending_incoming",
                 "presence": presence_data,
+                "message": getattr(r, "message", None),
                 "created_at": getattr(r, "created_at", None),
             })
         

@@ -249,6 +249,56 @@ async def create_dm_channel(body: dict, current_user: TokenInfo = Depends(get_cu
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
 
 
+@router.get("/search")
+async def search_user_by_username(
+    username: str = None,
+    current_user: TokenInfo = Depends(get_current_user)
+):
+    """
+    Search for a user by username.
+    
+    Returns the user if found by exact username match.
+    """
+    auth = api.get_auth()
+    if not auth:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
+    
+    if not username:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Username required"}})
+    
+    try:
+        # Try to find user by username
+        if hasattr(auth, 'get_user_by_username'):
+            user = auth.get_user_by_username(username)
+        else:
+            # Fallback: search in database directly
+            db = api.get_db()
+            if db:
+                row = db.fetch_one(
+                    "SELECT id, username, avatar_url, created_at FROM auth_users WHERE username = ? COLLATE NOCASE",
+                    (username,)
+                )
+                if row:
+                    return {
+                        "id": str(row["id"]),
+                        "username": row["username"],
+                        "avatar_url": row.get("avatar_url"),
+                        "created_at": row.get("created_at"),
+                    }
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
+        
+        if not user:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
+        
+        return _user_to_public_response(user)
+    except HTTPException:
+        raise
+    except Exception as e:
+        if "NotFound" in type(e).__name__:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
 @router.get("/{user_id}", response_model=UserPublicResponse)
 async def get_user(user_id: str, current_user: TokenInfo = Depends(get_current_user)):
     """

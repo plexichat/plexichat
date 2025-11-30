@@ -86,6 +86,7 @@ class EncryptionManager:
     def _get_or_create_key(self, key: Optional[bytes] = None) -> bytes:
         """
         Get provided key or create/retrieve default key.
+        The default key is persisted to disk to survive server restarts.
         
         Args:
             key (bytes, optional): Encryption key.
@@ -99,7 +100,25 @@ class EncryptionManager:
             return key
         
         if self.default_key is None:
-            self.default_key = AESGCM.generate_key(bit_length=256)
+            # Try to load key from disk
+            from pathlib import Path
+            key_file = Path.home() / ".plexichat" / "data" / ".encryption_key"
+            
+            if key_file.exists():
+                try:
+                    with open(key_file, "rb") as f:
+                        self.default_key = f.read()
+                    if len(self.default_key) != 32:
+                        raise ValueError("Invalid key length")
+                except Exception:
+                    self.default_key = None
+            
+            if self.default_key is None:
+                # Generate new key and save it
+                self.default_key = AESGCM.generate_key(bit_length=256)
+                key_file.parent.mkdir(parents=True, exist_ok=True)
+                with open(key_file, "wb") as f:
+                    f.write(self.default_key)
         
         return self.default_key
     

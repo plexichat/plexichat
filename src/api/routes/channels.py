@@ -281,25 +281,35 @@ async def upload_attachment(
     Returns the URL of the uploaded file.
     """
     servers_mod = api.get_servers()
+    messaging = api.get_messaging()
     
     try:
         cid = int(channel_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
     
-    # Verify user has access to channel
+    # Verify user has access to channel (try server channel first, then DM)
+    has_access = False
+    
     if servers_mod:
         try:
             channel = servers_mod.get_channel(cid, current_user.user_id)
-            if not channel:
-                raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
-        except HTTPException:
-            raise
-        except Exception as e:
-            if "NotFound" in type(e).__name__:
-                raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
-            elif "Access" in type(e).__name__:
-                raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": "Access denied"}})
+            if channel:
+                has_access = True
+        except Exception:
+            pass
+    
+    # If not a server channel, check if it's a DM conversation
+    if not has_access and messaging:
+        try:
+            conv = messaging.get_conversation(cid, current_user.user_id)
+            if conv:
+                has_access = True
+        except Exception:
+            pass
+    
+    if not has_access:
+        raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
     
     # Check file size (10MB limit)
     content = await file.read()
