@@ -7,6 +7,27 @@ This guide will help you get started with the PlexiChat API.
 - A PlexiChat account or bot application
 - HTTP client (curl, Postman, or your preferred library)
 
+## Server Setup
+
+### Quick Start
+
+```bash
+cd plexichat
+pip install -r requirements.txt
+python main.py
+```
+
+The server will start on `http://localhost:8000` with:
+- REST API at `/api/v1`
+- WebSocket gateway at `/gateway`
+- Swagger docs at `/docs`
+
+### Configuration
+
+See [Configuration Guide](configuration.md) for detailed setup options.
+
+Data is stored in `~/.plexichat/` by default.
+
 ## Authentication
 
 ### User Authentication
@@ -14,7 +35,7 @@ This guide will help you get started with the PlexiChat API.
 1. Register a new account:
 
 ```bash
-curl -X POST https://api.example.com/api/v1/auth/register \
+curl -X POST http://localhost:8000/api/v1/auth/register \
   -H "Content-Type: application/json" \
   -d '{
     "username": "myusername",
@@ -26,7 +47,7 @@ curl -X POST https://api.example.com/api/v1/auth/register \
 2. Login to get a session token:
 
 ```bash
-curl -X POST https://api.example.com/api/v1/auth/login \
+curl -X POST http://localhost:8000/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{
     "username": "myusername",
@@ -49,7 +70,7 @@ Response:
 3. Use the token in subsequent requests:
 
 ```bash
-curl https://api.example.com/api/v1/users/@me \
+curl http://localhost:8000/api/v1/users/@me \
   -H "Authorization: Bearer your_session_token_here"
 ```
 
@@ -58,7 +79,7 @@ curl https://api.example.com/api/v1/users/@me \
 Bot tokens use the `Bot` prefix instead of `Bearer`:
 
 ```bash
-curl https://api.example.com/api/v1/users/@me \
+curl http://localhost:8000/api/v1/users/@me \
   -H "Authorization: Bot your_bot_token_here"
 ```
 
@@ -78,7 +99,7 @@ If 2FA is enabled on the account, login returns a challenge:
 Complete 2FA:
 
 ```bash
-curl -X POST https://api.example.com/api/v1/auth/2fa \
+curl -X POST http://localhost:8000/api/v1/auth/2fa \
   -H "Content-Type: application/json" \
   -d '{
     "challenge_token": "challenge_token_here",
@@ -86,12 +107,35 @@ curl -X POST https://api.example.com/api/v1/auth/2fa \
   }'
 ```
 
+### Enabling 2FA
+
+To enable 2FA on your account:
+
+```bash
+# Step 1: Request 2FA setup (returns QR code)
+curl -X POST http://localhost:8000/api/v1/auth/2fa/enable \
+  -H "Authorization: Bearer your_token" \
+  -H "Content-Type: application/json" \
+  -d '{"password": "your_password"}'
+
+# Response includes:
+# - qr_code: Base64 encoded QR code image
+# - secret: TOTP secret (for manual entry)
+# - backup_codes: Array of backup codes
+
+# Step 2: Confirm with TOTP code from authenticator app
+curl -X POST http://localhost:8000/api/v1/auth/2fa/confirm \
+  -H "Authorization: Bearer your_token" \
+  -H "Content-Type: application/json" \
+  -d '{"code": "123456"}'
+```
+
 ## Version Negotiation
 
 Before making API calls, check version compatibility:
 
 ```bash
-curl -X POST https://api.example.com/api/v1/version/negotiate \
+curl -X POST http://localhost:8000/api/v1/version/negotiate \
   -H "Content-Type: application/json" \
   -d '{
     "client_version": "a.1.0-1"
@@ -103,7 +147,7 @@ curl -X POST https://api.example.com/api/v1/version/negotiate \
 Get your user information:
 
 ```bash
-curl https://api.example.com/api/v1/users/@me \
+curl http://localhost:8000/api/v1/users/@me \
   -H "Authorization: Bearer your_token_here"
 ```
 
@@ -120,8 +164,43 @@ Response:
 }
 ```
 
+## Common Operations
+
+### Create a Server
+
+```bash
+curl -X POST http://localhost:8000/api/v1/servers \
+  -H "Authorization: Bearer your_token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "My Server",
+    "description": "A cool server"
+  }'
+```
+
+### Send a Message
+
+```bash
+curl -X POST http://localhost:8000/api/v1/channels/CHANNEL_ID/messages \
+  -H "Authorization: Bearer your_token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "Hello, world!"
+  }'
+```
+
+### Add a Reaction
+
+```bash
+curl -X PUT "http://localhost:8000/api/v1/channels/CHANNEL_ID/messages/MESSAGE_ID/reactions/%F0%9F%91%8D" \
+  -H "Authorization: Bearer your_token"
+```
+
+Note: Emoji must be URL-encoded (👍 = %F0%9F%91%8D)
+
 ## Next Steps
 
+- [Configuration](configuration.md) - Server configuration
 - [REST API Reference](api/index.md) - Explore all endpoints
 - [WebSocket Gateway](websocket/index.md) - Connect for real-time events
 - [Rate Limits](rate-limits.md) - Understand rate limiting

@@ -195,6 +195,7 @@ def _load_docs_config() -> DocsConfig:
         nav_items = [
             NavItem("Home", "/"),
             NavItem("Getting Started", "/getting-started"),
+            NavItem("Configuration", "/configuration"),
             NavItem("API Reference", "/reference"),
             NavItem("WebSocket", "/websocket"),
             NavItem("Rate Limits", "/rate-limits"),
@@ -638,10 +639,71 @@ def _build_footer_html(conf: DocsConfig) -> str:
     return f'<footer class="footer">{" | ".join(parts)}</footer>'
 
 
+def _convert_markdown_links(text: str, conf: DocsConfig, current_path: str = "") -> str:
+    """Convert markdown links to proper HTML links with correct paths."""
+    # Pattern to match markdown links: [text](url)
+    link_pattern = r'\[([^\]]+)\]\(([^)]+)\)'
+    
+    def replace_link(match):
+        link_text = match.group(1)
+        link_url = match.group(2)
+        
+        # Skip external links and anchors
+        if link_url.startswith(('http://', 'https://', '#', 'mailto:')):
+            return f'<a href="{link_url}">{link_text}</a>'
+        
+        # Convert .md links to proper paths
+        if link_url.endswith('.md'):
+            link_url = link_url[:-3]  # Remove .md extension
+        
+        # Handle relative paths
+        if link_url.startswith('./'):
+            link_url = link_url[2:]
+        
+        # Map file paths to URL paths
+        path_mappings = {
+            'getting-started': '/getting-started',
+            'configuration': '/configuration',
+            'rate-limits': '/rate-limits',
+            'errors': '/errors',
+            'data-types': '/data-types',
+            'api/index': '/reference',
+            'websocket/index': '/websocket',
+        }
+        
+        # Check for direct mapping
+        if link_url in path_mappings:
+            link_url = path_mappings[link_url]
+        # Handle api/ subdirectory
+        elif link_url.startswith('api/'):
+            page = link_url[4:]  # Remove 'api/'
+            link_url = f'/reference/{page}'
+        # Handle websocket/ subdirectory
+        elif link_url.startswith('websocket/'):
+            page = link_url[10:]  # Remove 'websocket/'
+            link_url = f'/websocket/{page}'
+        # Handle relative links from subdirectories
+        elif current_path.startswith('/reference'):
+            link_url = f'/reference/{link_url}'
+        elif current_path.startswith('/websocket'):
+            link_url = f'/websocket/{link_url}'
+        else:
+            link_url = f'/{link_url}'
+        
+        # Prepend docs path
+        full_url = f'{conf.path}{link_url}'
+        return f'<a href="{full_url}">{link_text}</a>'
+    
+    return re.sub(link_pattern, replace_link, text)
+
+
 def _markdown_to_html(markdown_content: str, title: str, conf: DocsConfig, current_path: str = "") -> str:
     """Convert markdown to HTML with configurable styling."""
     import html as html_module
     content = html_module.escape(markdown_content)
+    
+    # Convert markdown links before processing lines
+    content = _convert_markdown_links(content, conf, current_path)
     
     lines = content.split("\n")
     html_lines = []
@@ -865,6 +927,13 @@ async def docs_getting_started(request: Request):
     """Getting started documentation."""
     docs_path = _get_docs_path()
     return await _serve_page(request, docs_path / "getting-started.md", "Getting Started", "/getting-started")
+
+
+@router.get("/configuration", response_class=HTMLResponse)
+async def docs_configuration(request: Request):
+    """Server configuration documentation."""
+    docs_path = _get_docs_path()
+    return await _serve_page(request, docs_path / "configuration.md", "Configuration", "/configuration")
 
 
 @router.get("/reference", response_class=HTMLResponse)
