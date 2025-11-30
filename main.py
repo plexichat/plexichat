@@ -149,7 +149,8 @@ class PlexiChatServer:
         for d in dirs:
             dir_path = home_dir / d
             dir_path.mkdir(parents=True, exist_ok=True)
-            logger.debug(f"Ensured directory exists: {dir_path}")
+        
+        logger.debug(f"Created directories in {home_dir}")
     
     def setup_config(self):
         """Setup configuration from file or defaults."""
@@ -388,19 +389,32 @@ def main():
     """Main entry point for the PlexiChat server."""
     server = PlexiChatServer()
     
-    # Setup phase
+    # Buffer for early log messages (before logger is configured)
+    early_logs = []
+    
+    # Setup directories in home folder first (buffer logs)
+    home_dir = Path.home() / ".plexichat"
+    dirs = ["data", "logs", "media", "temp", "config"]
+    for d in dirs:
+        dir_path = home_dir / d
+        dir_path.mkdir(parents=True, exist_ok=True)
+        early_logs.append(("debug", f"Ensured directory exists: {dir_path}"))
+    
+    # Setup configuration (needed for logger config)
+    config_path = server.setup_config()
+    early_logs.append(("debug", f"Config loaded from: {config_path}"))
+    
+    # Setup logging - NOW we can use logger
+    server.setup_logging()
+    
+    # Replay buffered logs
+    for level, msg in early_logs:
+        getattr(logger, level)(msg)
+    
+    # Now we can log normally
     logger.info("=" * 60)
     logger.info("PlexiChat Server Starting")
     logger.info("=" * 60)
-    
-    # Setup directories in home folder
-    server.setup_directories()
-    
-    # Setup configuration
-    config_path = server.setup_config()
-    
-    # Setup logging
-    server.setup_logging()
     
     # Log startup info
     app_config = config.get("application", {})
