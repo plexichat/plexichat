@@ -8,10 +8,22 @@ File upload, storage, and processing system for PlexiChat API supporting local f
 - Image processing with Pillow (thumbnails, resizing, format conversion)
 - Video metadata extraction using ffprobe
 - Secure URL signing with HMAC and expiration
-- External URL proxy with caching
+- External URL proxy with caching and SSRF protection
 - Content-type validation and configurable file size limits
+- Magic byte validation to prevent MIME type spoofing
 - Malware scanning interface for ClamAV
 - Integration with messaging module for attachments
+
+## Security Features
+
+The media module includes several security protections:
+
+- **Magic byte validation**: Verifies file content matches declared MIME type
+- **SSRF protection**: External proxy blocks internal/private IP addresses
+- **Decompression bomb protection**: Limits max image dimensions and pixel count
+- **ffprobe timeout**: Prevents hanging on malformed video files
+- **Rate limiting**: Configurable limits for uploads and thumbnail generation
+- **Path traversal prevention**: Storage backends validate paths
 
 ## Setup
 
