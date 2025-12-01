@@ -1,18 +1,39 @@
 """
 Image processing utilities using Pillow.
+
+Security features:
+- Maximum image dimensions to prevent decompression bombs
+- Rate limiting integration for thumbnail generation
+- Configurable limits via config
 """
 
 import io
 from typing import Optional, Tuple, List, Dict, Any
 
+import utils.config as config
 import utils.logger as logger
 
 from ..models import ImageMetadata, ThumbnailSize
 from ..exceptions import ImageProcessingError
 
 
+# Default security limits
+DEFAULT_MAX_IMAGE_DIMENSION = 16384  # 16K pixels max width/height
+DEFAULT_MAX_IMAGE_PIXELS = 178956970  # ~13400x13400 (Pillow's default MAX_IMAGE_PIXELS)
+DEFAULT_MAX_THUMBNAIL_REQUESTS_PER_MINUTE = 60
+
+
+def _get_image_config() -> dict:
+    """Get image processing configuration."""
+    try:
+        media_config = config.get("media", {})
+        return media_config.get("image_processing", {})
+    except RuntimeError:
+        return {}
+
+
 class ImageProcessor:
-    """Image processing using Pillow."""
+    """Image processing using Pillow with security limits."""
     
     SUPPORTED_FORMATS = {
         "image/jpeg": "JPEG",
@@ -32,24 +53,64 @@ class ImageProcessor:
         "TIFF": ".tiff",
     }
     
-    def __init__(self, quality: int = 85, optimize: bool = True):
+    def __init__(
+        self,
+        quality: int = 85,
+        optimize: bool = True,
+        max_dimension: Optional[int] = None,
+        max_pixels: Optional[int] = None,
+    ):
         """
         Initialize image processor.
         
         Args:
             quality: JPEG/WebP quality (1-100)
             optimize: Enable optimization for output
+            max_dimension: Maximum width/height in pixels (DoS protection)
+            max_pixels: Maximum total pixels (decompression bomb protection)
         """
         self._quality = quality
         self._optimize = optimize
         
+        # Load security limits from config
+        img_config = _get_image_config()
+        self._max_dimension = max_dimension or img_config.get(
+            "max_dimension", DEFAULT_MAX_IMAGE_DIMENSION
+        )
+        self._max_pixels = max_pixels or img_config.get(
+            "max_pixels", DEFAULT_MAX_IMAGE_PIXELS
+        )
+        
         try:
             from PIL import Image
             self._Image = Image
+            # Set Pillow's decompression bomb limit
+            Image.MAX_IMAGE_PIXELS = self._max_pixels
         except ImportError:
             raise ImageProcessingError(
                 "Pillow is required for image processing. Install with: pip install Pillow",
                 "init"
+            )
+    
+    def _validate_image_dimensions(self, img) -> None:
+        """
+        Validate image dimensions are within safe limits.
+        
+        Raises:
+            ImageProcessingError: If image exceeds dimension limits
+        """
+        if img.width > self._max_dimension or img.height > self._max_dimension:
+            raise ImageProcessingError(
+                f"Image dimensions ({img.width}x{img.height}) exceed maximum "
+                f"allowed ({self._max_dimension}x{self._max_dimension})",
+                "validation"
+            )
+        
+        total_pixels = img.width * img.height
+        if total_pixels > self._max_pixels:
+            raise ImageProcessingError(
+                f"Image has too many pixels ({total_pixels:,}) - maximum is {self._max_pixels:,}",
+                "validation"
             )
     
     def get_metadata(self, image_data: bytes) -> ImageMetadata:
@@ -64,6 +125,9 @@ class ImageProcessor:
         """
         try:
             img = self._Image.open(io.BytesIO(image_data))
+            
+            # Security: Validate dimensions before processing
+            self._validate_image_dimensions(img)
             
             has_alpha = img.mode in ("RGBA", "LA", "PA") or (
                 img.mode == "P" and "transparency" in img.info
@@ -122,6 +186,9 @@ class ImageProcessor:
         """
         try:
             img = self._Image.open(io.BytesIO(image_data))
+            
+            # Security: Validate dimensions before processing
+            self._validate_image_dimensions(img)
             
             if img.mode == "P" and "transparency" in img.info:
                 img = img.convert("RGBA")
@@ -208,6 +275,10 @@ class ImageProcessor:
         
         try:
             img = self._Image.open(io.BytesIO(image_data))
+            
+            # Security: Validate dimensions before processing
+            self._validate_image_dimensions(img)
+            
             original_format = img.format
             
             if maintain_aspect:

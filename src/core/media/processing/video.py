@@ -1,5 +1,10 @@
 """
 Video metadata extraction using ffprobe.
+
+Security features:
+- Configurable timeout to prevent hanging on malformed files
+- File size limits for metadata extraction
+- Subprocess isolation
 """
 
 import json
@@ -7,14 +12,29 @@ import subprocess
 import shutil
 from typing import Optional
 
+import utils.config as config
 import utils.logger as logger
 
 from ..models import VideoMetadata
 from ..exceptions import VideoProcessingError
 
 
+# Default limits
+DEFAULT_FFPROBE_TIMEOUT = 30  # seconds
+DEFAULT_MAX_VIDEO_SIZE_FOR_METADATA = 500 * 1024 * 1024  # 500MB
+
+
+def _get_video_config() -> dict:
+    """Get video processing configuration."""
+    try:
+        media_config = config.get("media", {})
+        return media_config.get("video_processing", {})
+    except RuntimeError:
+        return {}
+
+
 class VideoProcessor:
-    """Video metadata extraction using ffprobe."""
+    """Video metadata extraction using ffprobe with security limits."""
     
     SUPPORTED_FORMATS = {
         "video/mp4",
@@ -28,14 +48,28 @@ class VideoProcessor:
         "video/3gpp2",
     }
     
-    def __init__(self, ffprobe_path: Optional[str] = None):
+    def __init__(
+        self,
+        ffprobe_path: Optional[str] = None,
+        timeout: Optional[int] = None,
+        max_size_for_metadata: Optional[int] = None,
+    ):
         """
         Initialize video processor.
         
         Args:
             ffprobe_path: Path to ffprobe executable (auto-detected if None)
+            timeout: Timeout in seconds for ffprobe (default: 30)
+            max_size_for_metadata: Max file size to extract metadata from (default: 500MB)
         """
         self._ffprobe_path = ffprobe_path or self._find_ffprobe()
+        
+        # Load config with fallbacks
+        video_config = _get_video_config()
+        self._timeout = timeout or video_config.get("ffprobe_timeout", DEFAULT_FFPROBE_TIMEOUT)
+        self._max_size = max_size_for_metadata or video_config.get(
+            "max_size_for_metadata", DEFAULT_MAX_VIDEO_SIZE_FOR_METADATA
+        )
         
         if not self._ffprobe_path:
             logger.warning("ffprobe not found - video metadata extraction disabled")
@@ -78,7 +112,7 @@ class VideoProcessor:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=self._timeout,
             )
             
             if result.returncode != 0:
@@ -107,9 +141,22 @@ class VideoProcessor:
             
         Returns:
             VideoMetadata object
+            
+        Raises:
+            VideoProcessingError: If file too large or ffprobe fails/times out
         """
         if not self._ffprobe_path:
             raise VideoProcessingError("ffprobe not available", "metadata")
+        
+        # Security: Check file size before processing
+        if len(video_data) > self._max_size:
+            logger.warning(
+                f"Video too large for metadata extraction: {len(video_data)} > {self._max_size}"
+            )
+            raise VideoProcessingError(
+                f"Video exceeds maximum size for metadata extraction ({self._max_size // (1024*1024)}MB)",
+                "metadata"
+            )
         
         try:
             cmd = [
@@ -125,7 +172,7 @@ class VideoProcessor:
                 cmd,
                 input=video_data,
                 capture_output=True,
-                timeout=30,
+                timeout=self._timeout,
             )
             
             if result.returncode != 0:

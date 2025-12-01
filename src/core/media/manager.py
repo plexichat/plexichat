@@ -930,10 +930,59 @@ class MediaManager:
             for row in rows
         }
 
+    def _check_thumbnail_rate_limit(self, user_id: int) -> None:
+        """
+        Check if user is within thumbnail generation rate limits.
+        
+        Raises:
+            MediaError: If rate limit exceeded
+        """
+        img_config = self._config.get("image_processing", {})
+        max_per_minute = img_config.get("max_thumbnail_requests_per_minute", 60)
+        
+        if max_per_minute <= 0:
+            return  # Rate limiting disabled
+        
+        now_seconds = int(time.time())
+        minute_window = now_seconds - (now_seconds % 60)
+        
+        # Use a separate rate limit key for thumbnails
+        row = self._db.fetch_one(
+            """SELECT upload_count FROM media_rate_limits 
+               WHERE user_id = ? AND window_type = 'thumbnail_minute' AND window_start = ?""",
+            (user_id, minute_window)
+        )
+        
+        current_count = row["upload_count"] if row else 0
+        
+        if current_count >= max_per_minute:
+            raise MediaError(f"Thumbnail rate limit exceeded: max {max_per_minute} per minute")
+    
+    def _update_thumbnail_rate_limit(self, user_id: int) -> None:
+        """Update thumbnail rate limit counter."""
+        now_seconds = int(time.time())
+        minute_window = now_seconds - (now_seconds % 60)
+        
+        self._db.upsert(
+            table="media_rate_limits",
+            columns=["user_id", "window_type", "window_start", "upload_count", "total_size"],
+            values=(user_id, "thumbnail_minute", minute_window, 1, 0),
+            conflict_columns=["user_id", "window_type", "window_start"],
+            update_columns=["upload_count"]
+        )
+        # Increment the count
+        self._db.execute(
+            """UPDATE media_rate_limits 
+               SET upload_count = upload_count + 1 
+               WHERE user_id = ? AND window_type = 'thumbnail_minute' AND window_start = ?""",
+            (user_id, minute_window)
+        )
+
     def create_thumbnail(
         self,
         file_id: int,
         size: int,
+        user_id: Optional[int] = None,
     ) -> Optional[str]:
         """
         Create thumbnail at specific size.
@@ -941,6 +990,7 @@ class MediaManager:
         Args:
             file_id: File ID
             size: Thumbnail size
+            user_id: Optional user ID for rate limiting
 
         Returns:
             Thumbnail URL or None
@@ -951,6 +1001,10 @@ class MediaManager:
         
         if not self._image_processor:
             return None
+        
+        # Check rate limit if user_id provided
+        if user_id is not None:
+            self._check_thumbnail_rate_limit(user_id)
         
         existing = self._db.fetch_one(
             "SELECT * FROM media_thumbnails WHERE media_file_id = ? AND size = ?",
@@ -977,7 +1031,13 @@ class MediaManager:
                 (thumb_id, file_id, size, width, height, thumb_path, now)
             )
             
+            # Update rate limit counter
+            if user_id is not None:
+                self._update_thumbnail_rate_limit(user_id)
+            
             return self._storage.get_url(thumb_path)
+        except MediaError:
+            raise  # Re-raise rate limit errors
         except Exception as e:
             logger.warning(f"Failed to create thumbnail: {e}")
             return None

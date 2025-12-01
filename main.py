@@ -334,6 +334,19 @@ class PlexiChatServer:
                 "image_quality": 85,
                 "image_optimize": True,
                 
+                # Image processing security limits (DoS protection)
+                "image_processing": {
+                    "max_dimension": 16384,  # Max width/height in pixels
+                    "max_pixels": 178956970,  # Max total pixels (~13400x13400)
+                    "max_thumbnail_requests_per_minute": 60  # Rate limit for thumbnail generation
+                },
+                
+                # Video processing security limits
+                "video_processing": {
+                    "ffprobe_timeout": 30,  # Timeout in seconds for ffprobe
+                    "max_size_for_metadata": 524288000  # 500MB max for metadata extraction
+                },
+                
                 # URL signing for secure access
                 "signing_key": "CHANGE_THIS_SIGNING_KEY",
                 "signing_expiry": 3600,  # 1 hour
