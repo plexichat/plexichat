@@ -11,8 +11,12 @@ from .models import RateLimitConfig, BucketType, RateLimitAlgorithm
 
 
 def _get_rate_limit_config() -> dict:
-    """Get rate limiting configuration from config file."""
-    return app_config.get("rate_limiting", {})
+    """Get rate limiting configuration from config file (with fallback for tests)."""
+    try:
+        return app_config.get("rate_limiting", {})
+    except RuntimeError:
+        # Config not set up (e.g., in tests) - return empty dict to use defaults
+        return {}
 
 
 def _build_global_limit() -> RateLimitConfig:
@@ -96,10 +100,58 @@ def should_bypass_internal() -> bool:
     return _get_rate_limit_config().get("internal_bypass", True)
 
 
-# Legacy compatibility - these are now functions but we provide module-level access
-DEFAULT_GLOBAL_LIMIT = _build_global_limit()
-DEFAULT_USER_LIMIT = _build_user_limit()
-DEFAULT_IP_LIMIT = _build_ip_limit()
+# Legacy compatibility - lazy-loaded to avoid import-time config access
+_cached_global_limit = None
+_cached_user_limit = None
+_cached_ip_limit = None
+
+
+def _get_default_global_limit():
+    """Get cached global limit (lazy-loaded)."""
+    global _cached_global_limit
+    if _cached_global_limit is None:
+        _cached_global_limit = _build_global_limit()
+    return _cached_global_limit
+
+
+def _get_default_user_limit():
+    """Get cached user limit (lazy-loaded)."""
+    global _cached_user_limit
+    if _cached_user_limit is None:
+        _cached_user_limit = _build_user_limit()
+    return _cached_user_limit
+
+
+def _get_default_ip_limit():
+    """Get cached IP limit (lazy-loaded)."""
+    global _cached_ip_limit
+    if _cached_ip_limit is None:
+        _cached_ip_limit = _build_ip_limit()
+    return _cached_ip_limit
+
+
+# Module-level properties for backward compatibility
+# These are accessed via functions to enable lazy loading
+class _LazyLimitProxy:
+    """Proxy that lazily loads rate limit configs."""
+    
+    @property
+    def DEFAULT_GLOBAL_LIMIT(self):
+        return _get_default_global_limit()
+    
+    @property
+    def DEFAULT_USER_LIMIT(self):
+        return _get_default_user_limit()
+    
+    @property
+    def DEFAULT_IP_LIMIT(self):
+        return _get_default_ip_limit()
+
+
+# For direct attribute access, use the getter functions
+DEFAULT_GLOBAL_LIMIT = None  # Use get_global_limit() instead
+DEFAULT_USER_LIMIT = None  # Use get_user_limit() instead  
+DEFAULT_IP_LIMIT = None  # Use get_ip_limit() instead
 
 
 DEFAULT_ROUTE_LIMITS: Dict[str, RateLimitConfig] = {

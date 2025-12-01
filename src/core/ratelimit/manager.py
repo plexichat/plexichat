@@ -16,13 +16,14 @@ from .models import (
 )
 from .config import (
     DEFAULT_ROUTE_LIMITS,
-    DEFAULT_GLOBAL_LIMIT,
-    DEFAULT_USER_LIMIT,
     DEFAULT_WEBHOOK_CHANNEL_LIMIT,
     get_route_config,
     get_default_config,
     is_bot_higher_limit_route,
     merge_route_configs,
+    get_global_limit,
+    get_user_limit,
+    get_ip_limit,
 )
 from .storage import MemoryStorage, RateLimitStorage
 
@@ -61,10 +62,9 @@ class RateLimitManager:
             DEFAULT_ROUTE_LIMITS,
             route_configs or {}
         )
-        self._global_config = global_config or DEFAULT_GLOBAL_LIMIT
-        self._user_config = user_config or DEFAULT_USER_LIMIT
-        from .config import DEFAULT_IP_LIMIT
-        self._ip_config = ip_config or DEFAULT_IP_LIMIT
+        self._global_config = global_config or get_global_limit()
+        self._user_config = user_config or get_user_limit()
+        self._ip_config = ip_config or get_ip_limit()
         self._bot_multiplier = bot_multiplier
         self._webhook_multiplier = webhook_multiplier
         self._bypass_check = bypass_check

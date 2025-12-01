@@ -148,6 +148,13 @@ def media_module(modules, temp_upload_dir):
         "signing_expiry": 3600,
         "scanner_enabled": False,
         "proxy_enabled": False,
+        # Higher rate limits for testing (most tests don't test rate limiting)
+        "rate_limit": {
+            "enabled": True,
+            "uploads_per_minute": 1000,
+            "uploads_per_hour": 10000,
+            "max_total_size_per_day": 10 * 1024 * 1024 * 1024  # 10GB for tests
+        }
     }
     
     assert config._config_instance is not None

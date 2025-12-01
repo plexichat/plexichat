@@ -23,11 +23,15 @@ DEFAULT_MAX_DECOMPRESSED_SIZE = 262144  # 256KB max decompressed (4:1 ratio prot
 
 
 def _get_limits() -> Tuple[int, int]:
-    """Get compression limits from config."""
-    ws_config = config.get("websocket", {})
-    max_msg = ws_config.get("max_message_size", DEFAULT_MAX_MESSAGE_SIZE)
-    max_decomp = ws_config.get("max_decompressed_size", DEFAULT_MAX_DECOMPRESSED_SIZE)
-    return max_msg, max_decomp
+    """Get compression limits from config (with fallback for tests)."""
+    try:
+        ws_config = config.get("websocket", {})
+        max_msg = ws_config.get("max_message_size", DEFAULT_MAX_MESSAGE_SIZE)
+        max_decomp = ws_config.get("max_decompressed_size", DEFAULT_MAX_DECOMPRESSED_SIZE)
+        return max_msg, max_decomp
+    except RuntimeError:
+        # Config not set up (e.g., in tests) - use defaults
+        return DEFAULT_MAX_MESSAGE_SIZE, DEFAULT_MAX_DECOMPRESSED_SIZE
 
 
 class CompressionError(Exception):

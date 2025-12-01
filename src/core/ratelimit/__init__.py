@@ -29,11 +29,11 @@ from .models import (
 )
 from .config import (
     DEFAULT_ROUTE_LIMITS,
-    DEFAULT_GLOBAL_LIMIT,
-    DEFAULT_USER_LIMIT,
-    DEFAULT_IP_LIMIT,
     get_route_config,
     get_default_config,
+    get_global_limit,
+    get_user_limit,
+    get_ip_limit,
 )
 from .manager import RateLimitManager
 from .decorators import rate_limit, custom_rate_limit
@@ -60,11 +60,11 @@ __all__ = [
     "rate_limit",
     "custom_rate_limit",
     "DEFAULT_ROUTE_LIMITS",
-    "DEFAULT_GLOBAL_LIMIT",
-    "DEFAULT_USER_LIMIT",
-    "DEFAULT_IP_LIMIT",
     "get_route_config",
     "get_default_config",
+    "get_global_limit",
+    "get_user_limit",
+    "get_ip_limit",
 ]
 
 _manager: Optional[RateLimitManager] = None
