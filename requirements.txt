@@ -1,5 +1,11 @@
 # PlexiChat Server Requirements
 # Install with: pip install -r requirements.txt
+#
+# Optional system dependencies:
+# - ffmpeg/ffprobe: Required for video metadata extraction (duration, resolution)
+#   Install via: apt install ffmpeg (Linux), brew install ffmpeg (macOS),
+#   or download from https://ffmpeg.org/download.html (Windows)
+#   Without ffprobe, video uploads work but metadata won't be extracted.
 
 # Web Framework
 fastapi>=0.109.0

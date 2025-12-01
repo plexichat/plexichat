@@ -17,6 +17,16 @@ pip install -r requirements.txt
 python main.py
 ```
 
+### Optional: Video Processing
+
+For video metadata extraction (duration, resolution, codec), install ffmpeg:
+
+- **Linux**: `apt install ffmpeg` or `yum install ffmpeg`
+- **macOS**: `brew install ffmpeg`
+- **Windows**: Download from https://ffmpeg.org/download.html and add to PATH
+
+Without ffmpeg/ffprobe, video uploads still work but metadata won't be extracted.
+
 The server will start on `http://localhost:8000` with:
 - REST API at `/api/v1`
 - WebSocket gateway at `/gateway`

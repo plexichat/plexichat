@@ -442,14 +442,20 @@ class PlexiChatServer:
         logger.info("All modules initialized successfully")
         logger.info("=" * 60)
         
+        # Get version string from version utility
+        ver = version.current_string()
+        server_line = f"Server: http://{host}:{port}"
+        api_line = f"API:    http://{host}:{port}/api/v1"
+        docs_line = f"Docs:   http://{host}:{port}/docs"
+        
         print(f"""
 +==============================================================+
 |                    PlexiChat API Server                      |
-|                      Version {VERSION:<32}|
+|                      Version {ver:<32}|
 +==============================================================+
-|  Server: http://{host}:{port:<39}|
-|  API:    http://{host}:{port}/api/v1{' ' * 26}|
-|  Docs:   http://{host}:{port}/docs{' ' * 28}|
+|  {server_line:<60}|
+|  {api_line:<60}|
+|  {docs_line:<60}|
 +--------------------------------------------------------------+
 |  Press Ctrl+C for graceful shutdown                          |
 |  Data stored in: ~/.plexichat/                               |
