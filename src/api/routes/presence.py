@@ -34,6 +34,26 @@ def _presence_to_response(pres, user_id: int) -> PresenceResponse:
     )
 
 
+async def _dispatch_presence_event(user_id: int, presence_data: dict, friend_ids: list):
+    """Helper to dispatch presence update events via WebSocket."""
+    try:
+        from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+        from src.core.events.models import Event
+        from src.core.events.types import EventType
+        
+        if ws_is_setup() and friend_ids:
+            dispatcher = get_dispatcher()
+            event = Event(
+                event_type=EventType.PRESENCE_UPDATE,
+                data=presence_data
+            )
+            # Send to all friends who should see this presence update
+            await dispatcher.dispatch_event(event, friend_ids)
+    except Exception as e:
+        import utils.logger as logger
+        logger.debug(f"Failed to dispatch presence event: {e}")
+
+
 @router.put("/users/@me/presence", response_model=PresenceResponse)
 async def update_presence(
     body: PresenceUpdate,
@@ -45,6 +65,7 @@ async def update_presence(
     Sets the user's online status and custom status message.
     """
     presence = api.get_presence()
+    relationships = api.get_relationships()
     if not presence:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Presence module not available"}})
     
@@ -71,7 +92,28 @@ async def update_presence(
                 presence.clear_custom_status(current_user.user_id)
         
         pres = presence.get_presence(current_user.user_id)
-        return _presence_to_response(pres, current_user.user_id)
+        response = _presence_to_response(pres, current_user.user_id)
+        
+        # Dispatch presence update to friends
+        friend_ids = []
+        if relationships:
+            try:
+                friend_ids = relationships.get_friend_ids(current_user.user_id)
+            except Exception:
+                pass
+        
+        # For invisible status, show as offline to friends
+        visible_status = body.status if body.status != "invisible" else "offline"
+        
+        if friend_ids:
+            await _dispatch_presence_event(current_user.user_id, {
+                "user_id": str(current_user.user_id),
+                "status": visible_status,
+                "custom_status": body.custom_status,
+                "custom_emoji": body.custom_emoji,
+            }, friend_ids)
+        
+        return response
     except Exception as e:
         exc_name = type(e).__name__
         if "Invalid" in exc_name:

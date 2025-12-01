@@ -134,6 +134,26 @@ async def get_relationships(current_user: TokenInfo = Depends(get_current_user))
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
 
 
+async def _dispatch_relationship_event(event_type: str, user_id: int, target_id: int, data: dict):
+    """Helper to dispatch relationship events via WebSocket."""
+    try:
+        from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+        from src.core.events.models import Event
+        from src.core.events.types import EventType
+        
+        if ws_is_setup():
+            dispatcher = get_dispatcher()
+            event = Event(
+                event_type=EventType.RELATIONSHIP_ADD if event_type == "add" else EventType.RELATIONSHIP_REMOVE,
+                data=data
+            )
+            # Send to both users involved
+            await dispatcher.dispatch_event(event, [user_id, target_id])
+    except Exception as e:
+        import utils.logger as logger
+        logger.debug(f"Failed to dispatch relationship event: {e}")
+
+
 @router.post("", response_model=RelationshipResponse)
 async def create_relationship(
     body: FriendRequestCreate,
@@ -145,6 +165,7 @@ async def create_relationship(
     Creates a pending friend request to the specified user.
     """
     relationships = api.get_relationships()
+    auth = api.get_auth()
     if not relationships:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Relationships module not available"}})
     
@@ -159,6 +180,37 @@ async def create_relationship(
             recipient_id=target_id,
             message=body.message
         )
+        
+        # Get usernames for the event
+        sender_username = None
+        target_username = None
+        if auth:
+            try:
+                sender = auth.get_user(current_user.user_id)
+                target = auth.get_user(target_id)
+                if sender:
+                    sender_username = sender.username
+                if target:
+                    target_username = target.username
+            except Exception:
+                pass
+        
+        # Dispatch event to recipient (incoming request)
+        await _dispatch_relationship_event("add", target_id, current_user.user_id, {
+            "user_id": str(current_user.user_id),
+            "username": sender_username,
+            "status": "pending_incoming",
+            "message": body.message,
+            "created_at": getattr(request, "created_at", None),
+        })
+        
+        # Dispatch event to sender (outgoing request)
+        await _dispatch_relationship_event("add", current_user.user_id, target_id, {
+            "user_id": str(target_id),
+            "username": target_username,
+            "status": "pending_outgoing",
+            "created_at": getattr(request, "created_at", None),
+        })
         
         return RelationshipResponse(
             user_id=str(target_id),
@@ -186,6 +238,8 @@ async def accept_friend_request(user_id: str, current_user: TokenInfo = Depends(
     Accepts a pending friend request from the specified user.
     """
     relationships = api.get_relationships()
+    auth = api.get_auth()
+    presence = api.get_presence()
     if not relationships:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Relationships module not available"}})
     
@@ -205,7 +259,61 @@ async def accept_friend_request(user_id: str, current_user: TokenInfo = Depends(
         if not request_id:
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Friend request not found"}})
         
-        relationships.accept_friend_request(current_user.user_id, request_id)
+        result = relationships.accept_friend_request(current_user.user_id, request_id)
+        
+        # Get user info for the events
+        sender_username = None
+        accepter_username = None
+        sender_presence = None
+        accepter_presence = None
+        if auth:
+            try:
+                sender = auth.get_user(sender_id)
+                accepter = auth.get_user(current_user.user_id)
+                if sender:
+                    sender_username = sender.username
+                if accepter:
+                    accepter_username = accepter.username
+            except Exception:
+                pass
+        
+        if presence:
+            try:
+                sp = presence.get_visible_presence(current_user.user_id, sender_id)
+                ap = presence.get_visible_presence(sender_id, current_user.user_id)
+                if sp:
+                    status = getattr(sp, "status", None)
+                    if status and hasattr(status, "value"):
+                        status = status.value
+                    sender_presence = {"status": status or "offline"}
+                if ap:
+                    status = getattr(ap, "status", None)
+                    if status and hasattr(status, "value"):
+                        status = status.value
+                    accepter_presence = {"status": status or "offline"}
+            except Exception:
+                pass
+        
+        created_at = getattr(result, "updated_at", None) or getattr(result, "created_at", None)
+        
+        # Dispatch event to the original sender (they now have a friend)
+        await _dispatch_relationship_event("add", sender_id, current_user.user_id, {
+            "user_id": str(current_user.user_id),
+            "username": accepter_username,
+            "status": "friend",
+            "presence": accepter_presence,
+            "created_at": created_at,
+        })
+        
+        # Dispatch event to the accepter (they now have a friend)
+        await _dispatch_relationship_event("add", current_user.user_id, sender_id, {
+            "user_id": str(sender_id),
+            "username": sender_username,
+            "status": "friend",
+            "presence": sender_presence,
+            "created_at": created_at,
+        })
+        
         return {"success": True}
     except HTTPException:
         raise
@@ -240,19 +348,44 @@ async def delete_relationship(user_id: str, current_user: TokenInfo = Depends(ge
         
         if status == "friend":
             relationships.remove_friend(current_user.user_id, target_id)
+            # Notify both users that friendship is removed
+            await _dispatch_relationship_event("remove", current_user.user_id, target_id, {
+                "user_id": str(target_id),
+            })
+            await _dispatch_relationship_event("remove", target_id, current_user.user_id, {
+                "user_id": str(current_user.user_id),
+            })
         elif status == "blocked":
             relationships.unblock_user(current_user.user_id, target_id)
+            # Notify the unblocker
+            await _dispatch_relationship_event("remove", current_user.user_id, target_id, {
+                "user_id": str(target_id),
+            })
         elif status == "pending_incoming":
             pending = relationships.get_pending_requests_incoming(current_user.user_id)
             for r in pending:
                 if getattr(r, "sender_id", 0) == target_id:
                     relationships.decline_friend_request(current_user.user_id, r.id)
+                    # Notify both users
+                    await _dispatch_relationship_event("remove", current_user.user_id, target_id, {
+                        "user_id": str(target_id),
+                    })
+                    await _dispatch_relationship_event("remove", target_id, current_user.user_id, {
+                        "user_id": str(current_user.user_id),
+                    })
                     break
         elif status == "pending_outgoing":
             pending = relationships.get_pending_requests_outgoing(current_user.user_id)
             for r in pending:
                 if getattr(r, "recipient_id", 0) == target_id:
                     relationships.cancel_friend_request(current_user.user_id, r.id)
+                    # Notify both users
+                    await _dispatch_relationship_event("remove", current_user.user_id, target_id, {
+                        "user_id": str(target_id),
+                    })
+                    await _dispatch_relationship_event("remove", target_id, current_user.user_id, {
+                        "user_id": str(current_user.user_id),
+                    })
                     break
         
         return {"success": True}
@@ -280,7 +413,27 @@ async def block_user(body: BlockCreate, current_user: TokenInfo = Depends(get_cu
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid user ID"}})
     
     try:
+        # Check if they were friends before blocking
+        rel = relationships.get_relationship(current_user.user_id, target_id)
+        was_friend = getattr(rel, "status", None)
+        if was_friend and hasattr(was_friend, "value"):
+            was_friend = was_friend.value
+        was_friend = was_friend == "friend"
+        
         block = relationships.block_user(current_user.user_id, target_id)
+        
+        # Notify the blocker about the new blocked status
+        await _dispatch_relationship_event("add", current_user.user_id, target_id, {
+            "user_id": str(target_id),
+            "status": "blocked",
+            "created_at": getattr(block, "created_at", None),
+        })
+        
+        # If they were friends, notify the blocked user that friendship is removed
+        if was_friend:
+            await _dispatch_relationship_event("remove", target_id, current_user.user_id, {
+                "user_id": str(current_user.user_id),
+            })
         
         return RelationshipResponse(
             user_id=str(target_id),

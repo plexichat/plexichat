@@ -19,6 +19,46 @@ from .compression import is_compressed, decompress_payload, validate_message_siz
 router = APIRouter()
 
 
+async def _dispatch_offline_presence(user_id: int, presence_module, dispatcher) -> None:
+    """Dispatch offline presence to friends when user disconnects."""
+    try:
+        import src.api as api
+        relationships = api.get_relationships()
+        
+        if not relationships:
+            return
+        
+        friend_ids = relationships.get_friend_ids(user_id)
+        if not friend_ids:
+            return
+        
+        # Update presence to offline
+        if presence_module:
+            try:
+                from src.core.presence.models import UserStatus
+                presence_module.set_status(user_id, UserStatus.OFFLINE)
+            except Exception:
+                pass
+        
+        # Dispatch presence update to friends
+        from src.core.events.models import Event
+        from src.core.events.types import EventType
+        
+        event = Event(
+            event_type=EventType.PRESENCE_UPDATE,
+            data={
+                "user_id": str(user_id),
+                "status": "offline",
+                "custom_status": None,
+                "custom_emoji": None,
+            }
+        )
+        await dispatcher.dispatch_event(event, friend_ids)
+        logger.debug(f"Dispatched offline presence for user {user_id} to {len(friend_ids)} friends")
+    except Exception as e:
+        logger.debug(f"Failed to dispatch offline presence: {e}")
+
+
 def _get_modules():
     """Get module references from the websocket package."""
     from . import (
@@ -94,6 +134,10 @@ async def gateway_endpoint(websocket: WebSocket):
     except Exception as e:
         logger.error(f"Gateway error for {connection_id}: {e}")
     finally:
+        # Dispatch offline presence to friends when user disconnects
+        if connection.is_authenticated and connection.user_id:
+            await _dispatch_offline_presence(connection.user_id, presence_module, dispatcher)
+        
         connection.set_disconnected()
         session_manager.remove_connection(connection_id)
         logger.debug(f"Connection {connection_id} cleaned up")

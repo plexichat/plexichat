@@ -210,6 +210,89 @@ Authorization: Bearer <token>
 | 403 | Access denied | Not a member |
 | 404 | Server not found | Server doesn't exist |
 
+## GET /servers/{server_id}/members
+
+Get members of a server. Requires membership.
+
+### Headers
+
+```
+Authorization: Bearer <token>
+```
+
+### Query Parameters
+
+| Parameter | Type | Default | Constraints | Description |
+|-----------|------|---------|-------------|-------------|
+| limit | int | 100 | 1-1000 | Max members to return |
+| after | string | null | Snowflake ID | Get members after this user ID |
+
+### Response (200 OK)
+
+```json
+[
+  {
+    "user_id": "123456789012345678",
+    "username": "johndoe",
+    "avatar_url": "https://cdn.example.com/avatars/123.png",
+    "nickname": "John",
+    "roles": ["234567890123456789"],
+    "joined_at": 1704067200
+  }
+]
+```
+
+### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| user_id | string | Member's user ID |
+| username | string | Member's username |
+| avatar_url | string? | Member's avatar URL |
+| nickname | string? | Server-specific nickname |
+| roles | array | Array of role IDs |
+| joined_at | int | Unix timestamp of join |
+
+### Error Responses
+
+| Status | Code | Description |
+|--------|------|-------------|
+| 403 | Access denied | Not a member |
+| 404 | Server not found | Server doesn't exist |
+
+## GET /servers/{server_id}/webhooks
+
+Get all webhooks in a server. Requires manage webhooks permission.
+
+### Headers
+
+```
+Authorization: Bearer <token>
+```
+
+### Response (200 OK)
+
+```json
+[
+  {
+    "id": "123456789012345678",
+    "channel_id": "234567890123456789",
+    "server_id": "123456789012345678",
+    "creator_id": "345678901234567890",
+    "name": "My Webhook",
+    "avatar_url": "https://cdn.example.com/avatars/webhook.png",
+    "created_at": 1704067200
+  }
+]
+```
+
+### Error Responses
+
+| Status | Code | Description |
+|--------|------|-------------|
+| 403 | Permission denied | Missing manage webhooks permission |
+| 404 | Server not found | Server doesn't exist |
+
 ## Server Object
 
 ```json

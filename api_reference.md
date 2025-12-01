@@ -427,6 +427,46 @@ Disable 2FA. Requires authentication.
 - `400` - Password or code required, or 2FA not enabled
 - `401` - Invalid password or code
 
+### GET /auth/sessions
+
+Get all active sessions for the current user. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+[
+  {
+    "id": "123456789012345678",
+    "user_id": "123456789012345678",
+    "ip_address": "192.168.1.1",
+    "user_agent": "Mozilla/5.0...",
+    "created_at": 1704067200000,
+    "last_used_at": 1704153600000,
+    "current": true
+  }
+]
+```
+
+**Note:** The `current` field indicates if this is the session making the request.
+
+### DELETE /auth/sessions/{session_id}
+
+Revoke a specific session. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "success": true
+}
+```
+
+**Error Responses:**
+- `400` - Invalid session ID
+- `404` - Session not found
+
 ---
 
 ## User Endpoints
@@ -499,6 +539,88 @@ Get public user information. Requires authentication.
 
 **Error Responses:**
 - `400` - Invalid user ID
+- `404` - User not found
+
+### GET /users/search
+
+Search for a user by username. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Query Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| username | string | Yes | Username to search for (exact match, case-insensitive) |
+
+**Response (200):**
+```json
+{
+  "id": "123456789012345678",
+  "username": "johndoe",
+  "avatar_url": "https://cdn.example.com/avatars/123.png",
+  "created_at": 1704067200000
+}
+```
+
+**Error Responses:**
+- `400` - Username required
+- `404` - User not found
+
+### GET /users/@me/channels
+
+Get all DM channels for the current user. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+[
+  {
+    "id": "123456789012345678",
+    "type": "dm",
+    "recipient_id": "234567890123456789",
+    "recipient": {
+      "id": "234567890123456789",
+      "username": "janedoe"
+    },
+    "last_message_id": "345678901234567890"
+  }
+]
+```
+
+### POST /users/@me/channels
+
+Create or get a DM channel with a user. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request:**
+```json
+{
+  "recipient_id": "123456789012345678"
+}
+```
+
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| recipient_id | string | Snowflake ID, required | Target user ID |
+
+**Response (200):**
+```json
+{
+  "id": "123456789012345678",
+  "type": "dm",
+  "recipient_id": "234567890123456789",
+  "recipient": {
+    "id": "234567890123456789",
+    "username": "janedoe"
+  }
+}
+```
+
+**Error Responses:**
+- `400` - recipient_id required or invalid
+- `403` - Cannot message this user (blocked)
 - `404` - User not found
 
 ---
@@ -633,6 +755,61 @@ Get all channels in a server. Requires authentication and membership.
 - `403` - Access denied
 - `404` - Server not found
 
+### GET /servers/{server_id}/members
+
+Get members of a server. Requires authentication and membership.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Query Parameters:**
+| Parameter | Type | Default | Constraints | Description |
+|-----------|------|---------|-------------|-------------|
+| limit | int | 100 | 1-1000 | Max members to return |
+| after | string | null | Snowflake ID | Get members after this user ID |
+
+**Response (200):**
+```json
+[
+  {
+    "user_id": "123456789012345678",
+    "username": "johndoe",
+    "avatar_url": "https://cdn.example.com/avatars/123.png",
+    "nickname": "John",
+    "roles": ["234567890123456789"],
+    "joined_at": 1704067200000
+  }
+]
+```
+
+**Error Responses:**
+- `403` - Access denied
+- `404` - Server not found
+
+### GET /servers/{server_id}/webhooks
+
+Get all webhooks in a server. Requires authentication and manage webhooks permission.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+[
+  {
+    "id": "123456789012345678",
+    "channel_id": "234567890123456789",
+    "server_id": "123456789012345678",
+    "creator_id": "345678901234567890",
+    "name": "My Webhook",
+    "avatar_url": "https://cdn.example.com/avatars/webhook.png",
+    "created_at": 1704067200000
+  }
+]
+```
+
+**Error Responses:**
+- `403` - Permission denied
+- `404` - Server not found
+
 ---
 
 ## Channel Endpoints
@@ -706,6 +883,31 @@ Delete a channel. Requires manage channels permission.
 {
   "success": true
 }
+```
+
+**Error Responses:**
+- `403` - Permission denied
+- `404` - Channel not found
+
+### GET /channels/{channel_id}/webhooks
+
+Get all webhooks for a channel. Requires authentication and manage webhooks permission.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+[
+  {
+    "id": "123456789012345678",
+    "channel_id": "123456789012345678",
+    "server_id": "234567890123456789",
+    "creator_id": "345678901234567890",
+    "name": "My Webhook",
+    "avatar_url": "https://cdn.example.com/avatars/webhook.png",
+    "created_at": 1704067200000
+  }
+]
 ```
 
 **Error Responses:**

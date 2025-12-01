@@ -27,6 +27,8 @@ https://api.example.com/api/v1
 | POST | `/auth/login` | Login |
 | POST | `/auth/2fa` | Complete 2FA |
 | POST | `/auth/logout` | Logout |
+| GET | `/auth/sessions` | List active sessions |
+| DELETE | `/auth/sessions/{session_id}` | Revoke session |
 
 ### Users
 
@@ -35,6 +37,9 @@ https://api.example.com/api/v1
 | GET | `/users/@me` | Get current user |
 | PATCH | `/users/@me` | Update current user |
 | GET | `/users/{user_id}` | Get user by ID |
+| GET | `/users/search` | Search user by username |
+| GET | `/users/@me/channels` | List DM channels |
+| POST | `/users/@me/channels` | Create/get DM channel |
 
 ### Servers
 
@@ -46,6 +51,8 @@ https://api.example.com/api/v1
 | PATCH | `/servers/{server_id}` | Update server |
 | DELETE | `/servers/{server_id}` | Delete server |
 | GET | `/servers/{server_id}/channels` | List server channels |
+| GET | `/servers/{server_id}/members` | List server members |
+| GET | `/servers/{server_id}/webhooks` | List server webhooks |
 
 ### Channels
 
@@ -54,6 +61,7 @@ https://api.example.com/api/v1
 | GET | `/channels/{channel_id}` | Get channel |
 | PATCH | `/channels/{channel_id}` | Update channel |
 | DELETE | `/channels/{channel_id}` | Delete channel |
+| GET | `/channels/{channel_id}/webhooks` | List channel webhooks |
 
 ### Messages
 

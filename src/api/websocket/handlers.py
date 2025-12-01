@@ -136,6 +136,9 @@ class OpcodeHandler:
         ready_data = await self._build_ready_payload(user_id, session.session_id)
 
         logger.info(f"User {user_id} identified with session {session.session_id}")
+        
+        # Dispatch online presence to friends
+        await self._dispatch_online_presence(user_id)
 
         return GatewayOpcode.DISPATCH, {
             "t": "READY",
@@ -191,6 +194,8 @@ class OpcodeHandler:
             return None, None, None
 
         status = data.get("status", "online")
+        custom_status = data.get("custom_status")
+        custom_emoji = data.get("custom_emoji")
         activities = data.get("activities", [])
 
         try:
@@ -209,6 +214,14 @@ class OpcodeHandler:
                     details=activity.get("details"),
                     state=activity.get("state"),
                 )
+            
+            # Dispatch presence update to friends
+            await self._dispatch_presence_to_friends(
+                connection.user_id, 
+                status if status != "invisible" else "offline",
+                custom_status,
+                custom_emoji
+            )
         except Exception as e:
             logger.warning(f"Presence update failed: {e}")
 
@@ -452,3 +465,55 @@ class OpcodeHandler:
     ) -> list:
         """Get events to replay after resume."""
         return self._session_manager.get_replay_events(session_id, after_sequence)
+
+    async def _dispatch_online_presence(self, user_id: int) -> None:
+        """Dispatch online presence to friends when user connects."""
+        await self._dispatch_presence_to_friends(user_id, "online", None, None)
+        
+        # Set presence to online
+        if self._presence:
+            try:
+                from src.core.presence.models import UserStatus
+                self._presence.set_status(user_id, UserStatus.ONLINE)
+            except Exception:
+                pass
+
+    async def _dispatch_presence_to_friends(
+        self, 
+        user_id: int, 
+        status: str, 
+        custom_status: Optional[str] = None,
+        custom_emoji: Optional[str] = None
+    ) -> None:
+        """Dispatch presence update to friends."""
+        try:
+            import src.api as api
+            relationships = api.get_relationships()
+            
+            if not relationships:
+                return
+            
+            friend_ids = relationships.get_friend_ids(user_id)
+            if not friend_ids:
+                return
+            
+            # Dispatch presence update to friends
+            from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+            from src.core.events.models import Event
+            from src.core.events.types import EventType
+            
+            if ws_is_setup():
+                dispatcher = get_dispatcher()
+                event = Event(
+                    event_type=EventType.PRESENCE_UPDATE,
+                    data={
+                        "user_id": str(user_id),
+                        "status": status,
+                        "custom_status": custom_status,
+                        "custom_emoji": custom_emoji,
+                    }
+                )
+                await dispatcher.dispatch_event(event, friend_ids)
+                logger.debug(f"Dispatched presence update for user {user_id} to {len(friend_ids)} friends")
+        except Exception as e:
+            logger.debug(f"Failed to dispatch presence: {e}")

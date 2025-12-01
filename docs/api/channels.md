@@ -109,6 +109,39 @@ Authorization: Bearer <token>
 | 403 | Permission denied | Missing manage channels permission |
 | 404 | Channel not found | Channel doesn't exist |
 
+## GET /channels/{channel_id}/webhooks
+
+Get all webhooks for a channel. Requires manage webhooks permission.
+
+### Headers
+
+```
+Authorization: Bearer <token>
+```
+
+### Response (200 OK)
+
+```json
+[
+  {
+    "id": "123456789012345678",
+    "channel_id": "123456789012345678",
+    "server_id": "234567890123456789",
+    "creator_id": "345678901234567890",
+    "name": "My Webhook",
+    "avatar_url": "https://cdn.example.com/avatars/webhook.png",
+    "created_at": 1704067200
+  }
+]
+```
+
+### Error Responses
+
+| Status | Code | Description |
+|--------|------|-------------|
+| 403 | Permission denied | Missing manage webhooks permission |
+| 404 | Channel not found | Channel doesn't exist |
+
 ## Channel Object
 
 ```json

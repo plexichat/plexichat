@@ -175,6 +175,75 @@ Authorization: Bearer <session_token>
 }
 ```
 
+## GET /auth/sessions
+
+Get all active sessions for the current user.
+
+### Headers
+
+```
+Authorization: Bearer <token>
+```
+
+### Response (200 OK)
+
+```json
+[
+  {
+    "id": "123456789012345678",
+    "user_id": "123456789012345678",
+    "ip_address": "192.168.1.1",
+    "user_agent": "Mozilla/5.0...",
+    "created_at": 1704067200,
+    "last_used_at": 1704153600,
+    "current": true
+  }
+]
+```
+
+### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| id | string | Session's snowflake ID |
+| user_id | string | User's ID |
+| ip_address | string | IP address of session |
+| user_agent | string | Browser/client user agent |
+| created_at | int | Unix timestamp of creation |
+| last_used_at | int | Unix timestamp of last use |
+| current | bool | True if this is the current session |
+
+## DELETE /auth/sessions/{session_id}
+
+Revoke a specific session.
+
+### Headers
+
+```
+Authorization: Bearer <token>
+```
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| session_id | string | Session's snowflake ID |
+
+### Response (200 OK)
+
+```json
+{
+  "success": true
+}
+```
+
+### Error Responses
+
+| Status | Code | Description |
+|--------|------|-------------|
+| 400 | Invalid session ID | ID format invalid |
+| 404 | Session not found | Session doesn't exist |
+
 ## Session Management
 
 ### Token Types
