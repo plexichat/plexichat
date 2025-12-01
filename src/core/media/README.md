@@ -158,34 +158,61 @@ elif status == media.ScanStatus.CLEAN:
 
 ## Configuration
 
-Add to `config/config.yaml`:
+All media settings are configured in `config/config.yaml` under the `media` section. The server loads these on startup with sensible defaults.
+
+### Quick Reference
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `storage_backend` | `local` | Primary storage: `local`, `s3`, or `database` |
+| `database_max_size` | `524288` | Max file size for DB storage (512KB) |
+| `auto_route_to_database.enabled` | `false` | Auto-route small text files to DB |
+| `rate_limit.enabled` | `true` | Enable upload rate limiting |
+| `rate_limit.uploads_per_minute` | `10` | Max uploads per minute per user |
+| `rate_limit.max_total_size_per_day` | `536870912` | Max bytes per user per day (512MB) |
+
+### Full Configuration Example
 
 ```yaml
 media:
-  # Storage backend: "local" or "s3"
+  # Primary storage backend: "local", "s3", or "database"
   storage_backend: local
   
   # Local storage settings
-  local_path: uploads
+  local_path: ~/.plexichat/media
   local_url: /media
   
-  # S3 storage settings
+  # S3/MinIO storage settings
   s3_bucket: my-bucket
   s3_access_key: AKIAIOSFODNN7EXAMPLE
   s3_secret_key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
   s3_region: us-east-1
-  s3_endpoint: ""  # Custom endpoint for MinIO, etc.
-  s3_public_url: ""  # Public URL prefix
+  s3_endpoint: ""           # Custom endpoint for MinIO
+  s3_public_url: ""         # Public URL prefix
   
-  # File size limits (bytes)
+  # Database BLOB storage settings
+  database_url: /api/v1/media/blob
+  database_max_size: 524288  # 512KB max
+  
+  # Auto-routing: route small text files to database automatically
+  auto_route_to_database:
+    enabled: false
+    max_size: 524288         # Files under 512KB
+    content_types:           # Only these types get routed
+      - text/plain
+      - application/json
+      - text/markdown
+      - text/csv
+  
+  # File size limits per media type (bytes)
   size_limits:
-    image: 10485760      # 10MB
-    video: 104857600     # 100MB
-    audio: 52428800      # 50MB
-    document: 26214400   # 25MB
-    other: 10485760      # 10MB
+    image: 10485760          # 10MB
+    video: 104857600         # 100MB
+    audio: 52428800          # 50MB
+    document: 26214400       # 25MB
+    other: 10485760          # 10MB
   
-  # Allowed content types
+  # Allowed content types per media type
   allowed_types:
     image:
       - image/jpeg
@@ -200,24 +227,115 @@ media:
       - audio/mpeg
       - audio/ogg
       - audio/wav
+      - audio/webm
     document:
       - application/pdf
       - text/plain
+      - application/zip
+      - text/markdown
+      - application/json
   
-  # Thumbnail sizes to generate
+  # Thumbnail generation
   thumbnail_sizes: [64, 128, 256, 512]
-  
-  # Image processing
   image_quality: 85
   image_optimize: true
   
-  # URL signing
-  signing_key: your-secret-key-here
-  signing_expiry: 3600  # seconds
+  # URL signing for secure access
+  signing_key: CHANGE_THIS_SIGNING_KEY
+  signing_expiry: 3600       # 1 hour
   
   # Malware scanner (ClamAV)
   scanner_enabled: false
   scanner_host: localhost
+  scanner_port: 3310
+  
+  # External URL proxy
+  proxy_enabled: true
+  proxy_cache_ttl: 86400     # 24 hours
+  proxy_max_size: 10485760   # 10MB
+  
+  # Rate limiting
+  rate_limit:
+    enabled: true
+    uploads_per_minute: 10
+    uploads_per_hour: 100
+    max_total_size_per_day: 536870912  # 512MB
+```
+
+### Rate Limiting
+
+Rate limiting prevents abuse by restricting uploads per user:
+
+- **Per minute**: Max uploads in a 60-second window
+- **Per hour**: Max uploads in a 3600-second window  
+- **Daily size**: Max total bytes uploaded in 24 hours
+
+Check a user's rate limit status:
+
+```python
+status = media.get_rate_limit_status(user_id)
+print(f"Uploads remaining this minute: {status['minute']['remaining']}")
+print(f"Bytes remaining today: {status['day']['remaining_bytes']}")
+```
+
+To disable rate limiting:
+
+```yaml
+media:
+  rate_limit:
+    enabled: false
+```
+
+### Auto-Routing to Database
+
+When enabled, small text files (like long messages converted to .txt) are automatically stored in the database instead of the primary storage backend. This keeps simple text content in one place without needing external storage.
+
+```yaml
+media:
+  storage_backend: s3        # Primary backend for images/videos
+  auto_route_to_database:
+    enabled: true
+    max_size: 524288         # Route files under 512KB
+    content_types:
+      - text/plain           # .txt files
+      - application/json     # .json files
+      - text/markdown        # .md files
+```
+
+Files are automatically routed based on content type and size. The `storage_backend` field in the database tracks which backend each file uses.
+
+### Changing Size Limits
+
+To allow larger video uploads (e.g., 500MB):
+
+```yaml
+media:
+  size_limits:
+    video: 524288000  # 500MB in bytes
+```
+
+### Adding Allowed Content Types
+
+To allow SVG images:
+
+```yaml
+media:
+  allowed_types:
+    image:
+      - image/jpeg
+      - image/png
+      - image/gif
+      - image/webp
+      - image/svg+xml  # Added
+```
+
+### Production Checklist
+
+1. **Change signing key**: Replace `CHANGE_THIS_SIGNING_KEY` with a secure random string
+2. **Configure storage**: Set up S3/MinIO for scalable storage
+3. **Review size limits**: Adjust based on your use case
+4. **Enable rate limiting**: Protect against abuse
+5. **Consider malware scanning**: Enable ClamAV for user uploads
   scanner_port: 3310
   
   # External URL proxy

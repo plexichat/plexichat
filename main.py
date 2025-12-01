@@ -72,25 +72,44 @@ class PlexiChatServer:
                 }
             },
             "authentication": {
-                "jwt": {
-                    "secret_key": "CHANGE_THIS_IN_PRODUCTION",
-                    "algorithm": "HS256",
-                    "access_token_expire_minutes": 30,
-                    "refresh_token_expire_days": 7
+                "accounts": {
+                    "allow_registration": True,
+                    "require_email_verification": False,
+                    "max_bots_per_user": 5,
+                    "username_min_length": 3,
+                    "username_max_length": 32
+                },
+                "sessions": {
+                    "token_bytes": 32,
+                    "expire_hours": 168,
+                    "max_per_user": 10,
+                    "extend_on_activity": True,
+                    "extend_threshold_hours": 24
+                },
+                "security": {
+                    "max_failed_attempts": 5,
+                    "lockout_duration_minutes": 15,
+                    "token_cache_ttl": 30,
+                    "token_verify_rate_limit": 100,
+                    "token_binding": False
+                },
+                "totp": {
+                    "issuer": "PlexiChat",
+                    "digits": 6,
+                    "interval": 30,
+                    "backup_code_count": 10
                 },
                 "password": {
                     "min_length": 8,
+                    "max_length": 128,
                     "require_uppercase": True,
                     "require_lowercase": True,
                     "require_digit": True,
                     "require_special": True
                 },
-                "account_lockout": {
-                    "max_failed_attempts": 5,
-                    "lockout_duration_minutes": 15
-                },
-                "session": {
-                    "max_concurrent_sessions": 3
+                "bots": {
+                    "token_bytes": 48,
+                    "require_owner_2fa": False
                 }
             },
             "encryption": {
@@ -110,6 +129,24 @@ class PlexiChatServer:
                     "epoch": "2024-01-01T00:00:00Z",
                     "worker_id": 1,
                     "datacenter_id": 1
+                }
+            },
+            "redis": {
+                "enabled": False,
+                "host": "localhost",
+                "port": 6379,
+                "password": "",
+                "db": 0,
+                "ssl": False,
+                "key_prefix": "plexichat:",
+                "connection_pool": {
+                    "max_connections": 50,
+                    "timeout": 5
+                },
+                "ttl": {
+                    "session": 1800,
+                    "presence": 300,
+                    "cache": 60
                 }
             },
             "api": {
@@ -173,6 +210,102 @@ class PlexiChatServer:
                 },
                 "security": {
                     "require_auth": False
+                }
+            },
+            "media": {
+                # Primary storage backend: "local", "s3", or "database"
+                "storage_backend": "local",
+                
+                # Local filesystem storage
+                "local_path": str(home_dir / "media"),
+                "local_url": "/media",
+                
+                # S3/MinIO storage (used when storage_backend is "s3")
+                "s3_bucket": "",
+                "s3_access_key": "",
+                "s3_secret_key": "",
+                "s3_region": "us-east-1",
+                "s3_endpoint": "",  # Custom endpoint for MinIO
+                "s3_public_url": "",
+                
+                # Database BLOB storage (used when storage_backend is "database")
+                "database_url": "/api/v1/media/blob",
+                "database_max_size": 524288,  # 512KB max for DB storage
+                
+                # Auto-routing: route small files to database regardless of primary backend
+                "auto_route_to_database": {
+                    "enabled": False,
+                    "max_size": 524288,  # Files under 512KB
+                    "content_types": [  # Only these types get routed to DB
+                        "text/plain",
+                        "application/json",
+                        "text/markdown",
+                        "text/csv"
+                    ]
+                },
+                
+                # File size limits per media type (in bytes)
+                "size_limits": {
+                    "image": 10485760,      # 10MB
+                    "video": 104857600,     # 100MB
+                    "audio": 52428800,      # 50MB
+                    "document": 26214400,   # 25MB
+                    "other": 10485760       # 10MB
+                },
+                
+                # Allowed content types per media type
+                "allowed_types": {
+                    "image": [
+                        "image/jpeg",
+                        "image/png",
+                        "image/gif",
+                        "image/webp"
+                    ],
+                    "video": [
+                        "video/mp4",
+                        "video/webm",
+                        "video/quicktime"
+                    ],
+                    "audio": [
+                        "audio/mpeg",
+                        "audio/ogg",
+                        "audio/wav",
+                        "audio/webm"
+                    ],
+                    "document": [
+                        "application/pdf",
+                        "text/plain",
+                        "application/zip",
+                        "text/markdown",
+                        "application/json"
+                    ]
+                },
+                
+                # Thumbnail generation
+                "thumbnail_sizes": [64, 128, 256, 512],
+                "image_quality": 85,
+                "image_optimize": True,
+                
+                # URL signing for secure access
+                "signing_key": "CHANGE_THIS_SIGNING_KEY",
+                "signing_expiry": 3600,  # 1 hour
+                
+                # Malware scanning (ClamAV)
+                "scanner_enabled": False,
+                "scanner_host": "localhost",
+                "scanner_port": 3310,
+                
+                # External URL proxy
+                "proxy_enabled": True,
+                "proxy_cache_ttl": 86400,  # 24 hours
+                "proxy_max_size": 10485760,  # 10MB
+                
+                # Rate limiting for uploads
+                "rate_limit": {
+                    "enabled": True,
+                    "uploads_per_minute": 10,
+                    "uploads_per_hour": 100,
+                    "max_total_size_per_day": 536870912  # 512MB per user per day
                 }
             }
         }
@@ -240,15 +373,6 @@ class PlexiChatServer:
                 db_config["type"] = "sqlite"
                 db_config["path"] = database_url[10:]  # Remove sqlite:///
             config.set("database", db_config)
-        
-        # JWT_SECRET override
-        jwt_secret = os.getenv("JWT_SECRET")
-        if jwt_secret:
-            auth_config = config.get("authentication", {})
-            if "jwt" not in auth_config:
-                auth_config["jwt"] = {}
-            auth_config["jwt"]["secret_key"] = jwt_secret
-            config.set("authentication", auth_config)
         
         # LOG_LEVEL override
         log_level = os.getenv("LOG_LEVEL")

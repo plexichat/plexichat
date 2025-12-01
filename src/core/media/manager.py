@@ -79,6 +79,7 @@ class MediaManager:
         self._config = self._load_config()
         
         self._storage = self._init_storage()
+        self._db_storage = self._init_db_storage()  # For auto-routing
         self._image_processor = self._init_image_processor()
         self._video_processor = self._init_video_processor()
         self._url_signer = self._init_url_signer()
@@ -86,6 +87,7 @@ class MediaManager:
         self._proxy = self._init_proxy()
         
         create_tables(db)
+        self._ensure_rate_limit_table()
         
         logger.info("Media module initialized")
 
@@ -103,6 +105,11 @@ class MediaManager:
             "s3_public_url": "",
             "database_url": "/api/v1/media/blob",
             "database_max_size": 512 * 1024,  # 512KB default for DB storage
+            "auto_route_to_database": {
+                "enabled": False,
+                "max_size": 512 * 1024,
+                "content_types": ["text/plain", "application/json", "text/markdown", "text/csv"]
+            },
             "size_limits": DEFAULT_SIZE_LIMITS.copy(),
             "allowed_types": DEFAULT_ALLOWED_TYPES.copy(),
             "thumbnail_sizes": DEFAULT_THUMBNAIL_SIZES.copy(),
@@ -114,6 +121,12 @@ class MediaManager:
             "proxy_enabled": True,
             "proxy_cache_ttl": 86400,
             "proxy_max_size": 10 * 1024 * 1024,
+            "rate_limit": {
+                "enabled": True,
+                "uploads_per_minute": 10,
+                "uploads_per_hour": 100,
+                "max_total_size_per_day": 512 * 1024 * 1024  # 512MB
+            }
         }
         
         media_config = config.get("media", {})
@@ -125,11 +138,14 @@ class MediaManager:
                     merged[key] = {**merged[key], **value}
                 else:
                     merged[key] = value
+            else:
+                # Allow additional config keys
+                merged[key] = value
         
         return merged
 
     def _init_storage(self) -> StorageBackendBase:
-        """Initialize storage backend."""
+        """Initialize primary storage backend."""
         backend = self._config.get("storage_backend", "local")
         
         if backend == "s3":
@@ -152,6 +168,156 @@ class MediaManager:
                 base_path=self._config.get("local_path", "uploads"),
                 base_url=self._config.get("local_url", "/media"),
             )
+
+    def _init_db_storage(self) -> Optional[DatabaseStorage]:
+        """Initialize database storage for auto-routing (if enabled and not primary)."""
+        auto_route = self._config.get("auto_route_to_database", {})
+        primary_backend = self._config.get("storage_backend", "local")
+        
+        # Only create separate DB storage if auto-routing is enabled and DB isn't primary
+        if auto_route.get("enabled", False) and primary_backend != "database":
+            return DatabaseStorage(
+                db=self._db,
+                base_url=self._config.get("database_url", "/api/v1/media/blob"),
+                max_size=auto_route.get("max_size", 512 * 1024),
+            )
+        return None
+
+    def _ensure_rate_limit_table(self):
+        """Create rate limit tracking table."""
+        self._db.execute("""
+            CREATE TABLE IF NOT EXISTS media_rate_limits (
+                user_id INTEGER NOT NULL,
+                window_type TEXT NOT NULL,
+                window_start INTEGER NOT NULL,
+                upload_count INTEGER NOT NULL DEFAULT 0,
+                total_size INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (user_id, window_type, window_start)
+            )
+        """)
+        self._db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_media_rate_limits_user 
+            ON media_rate_limits(user_id, window_type)
+        """)
+
+    def _should_route_to_database(self, content_type: str, size: int) -> bool:
+        """Check if file should be auto-routed to database storage."""
+        if not self._db_storage:
+            return False
+        
+        auto_route = self._config.get("auto_route_to_database", {})
+        if not auto_route.get("enabled", False):
+            return False
+        
+        max_size = auto_route.get("max_size", 512 * 1024)
+        allowed_types = auto_route.get("content_types", [])
+        
+        return size <= max_size and content_type.lower() in allowed_types
+
+    def _get_storage_for_file(self, content_type: str, size: int) -> Tuple[StorageBackendBase, str]:
+        """Get appropriate storage backend for file based on auto-routing rules."""
+        if self._should_route_to_database(content_type, size):
+            return self._db_storage, "database"
+        return self._storage, self._config.get("storage_backend", "local")
+
+    def _check_rate_limit(self, user_id: int, file_size: int) -> None:
+        """
+        Check if user is within rate limits.
+        
+        Raises:
+            MediaError: If rate limit exceeded
+        """
+        rate_config = self._config.get("rate_limit", {})
+        if not rate_config.get("enabled", True):
+            return
+        
+        now = self._get_timestamp()
+        now_seconds = now // 1000
+        
+        # Check per-minute limit
+        minute_window = now_seconds - (now_seconds % 60)
+        minute_count = self._get_rate_limit_count(user_id, "minute", minute_window)
+        max_per_minute = rate_config.get("uploads_per_minute", 10)
+        if minute_count >= max_per_minute:
+            raise MediaError(f"Rate limit exceeded: max {max_per_minute} uploads per minute")
+        
+        # Check per-hour limit
+        hour_window = now_seconds - (now_seconds % 3600)
+        hour_count = self._get_rate_limit_count(user_id, "hour", hour_window)
+        max_per_hour = rate_config.get("uploads_per_hour", 100)
+        if hour_count >= max_per_hour:
+            raise MediaError(f"Rate limit exceeded: max {max_per_hour} uploads per hour")
+        
+        # Check daily size limit
+        day_window = now_seconds - (now_seconds % 86400)
+        day_size = self._get_rate_limit_size(user_id, "day", day_window)
+        max_daily_size = rate_config.get("max_total_size_per_day", 512 * 1024 * 1024)
+        if day_size + file_size > max_daily_size:
+            remaining = max_daily_size - day_size
+            raise MediaError(
+                f"Daily upload limit exceeded. Remaining: {remaining // (1024*1024)}MB"
+            )
+
+    def _get_rate_limit_count(self, user_id: int, window_type: str, window_start: int) -> int:
+        """Get upload count for rate limit window."""
+        row = self._db.fetch_one(
+            """SELECT upload_count FROM media_rate_limits 
+               WHERE user_id = ? AND window_type = ? AND window_start = ?""",
+            (user_id, window_type, window_start)
+        )
+        return row["upload_count"] if row else 0
+
+    def _get_rate_limit_size(self, user_id: int, window_type: str, window_start: int) -> int:
+        """Get total upload size for rate limit window."""
+        row = self._db.fetch_one(
+            """SELECT total_size FROM media_rate_limits 
+               WHERE user_id = ? AND window_type = ? AND window_start = ?""",
+            (user_id, window_type, window_start)
+        )
+        return row["total_size"] if row else 0
+
+    def _update_rate_limit(self, user_id: int, file_size: int) -> None:
+        """Update rate limit counters after successful upload."""
+        rate_config = self._config.get("rate_limit", {})
+        if not rate_config.get("enabled", True):
+            return
+        
+        now_seconds = self._get_timestamp() // 1000
+        
+        windows = [
+            ("minute", now_seconds - (now_seconds % 60)),
+            ("hour", now_seconds - (now_seconds % 3600)),
+            ("day", now_seconds - (now_seconds % 86400)),
+        ]
+        
+        for window_type, window_start in windows:
+            existing = self._db.fetch_one(
+                """SELECT upload_count, total_size FROM media_rate_limits 
+                   WHERE user_id = ? AND window_type = ? AND window_start = ?""",
+                (user_id, window_type, window_start)
+            )
+            
+            if existing:
+                self._db.execute(
+                    """UPDATE media_rate_limits 
+                       SET upload_count = upload_count + 1, total_size = total_size + ?
+                       WHERE user_id = ? AND window_type = ? AND window_start = ?""",
+                    (file_size, user_id, window_type, window_start)
+                )
+            else:
+                self._db.execute(
+                    """INSERT INTO media_rate_limits 
+                       (user_id, window_type, window_start, upload_count, total_size)
+                       VALUES (?, ?, ?, 1, ?)""",
+                    (user_id, window_type, window_start, file_size)
+                )
+        
+        # Cleanup old rate limit entries (older than 2 days)
+        cutoff = now_seconds - 172800
+        self._db.execute(
+            "DELETE FROM media_rate_limits WHERE window_start < ?",
+            (cutoff,)
+        )
 
     def _init_image_processor(self) -> Optional[ImageProcessor]:
         """Initialize image processor."""
@@ -290,9 +456,13 @@ class MediaManager:
             content_type = content_type or "application/octet-stream"
         
         media_type = self._detect_media_type(content_type)
+        file_size = len(file_data)
         
         self._validate_content_type(content_type, media_type)
-        self._validate_file_size(len(file_data), media_type)
+        self._validate_file_size(file_size, media_type)
+        
+        # Check rate limits before proceeding
+        self._check_rate_limit(user_id, file_size)
         
         scan_status = ScanStatus.SKIPPED
         scan_result = None
@@ -307,10 +477,13 @@ class MediaManager:
                 scan_status = ScanStatus.ERROR
                 scan_result = str(e)
         
+        # Determine storage backend (auto-routing for small text files)
+        storage, storage_backend = self._get_storage_for_file(content_type, file_size)
+        
         storage_path = self._generate_storage_path(filename, media_type)
         checksum = self._compute_checksum(file_data)
         
-        self._storage.store(file_data, storage_path, content_type)
+        storage.store(file_data, storage_path, content_type)
         
         file_id = self._generate_id()
         now = self._get_timestamp()
@@ -354,9 +527,9 @@ class MediaManager:
                 os.path.basename(storage_path),
                 filename,
                 content_type,
-                len(file_data),
+                file_size,
                 media_type.value,
-                self._config.get("storage_backend", "local"),
+                storage_backend,  # Use the actual backend (may be auto-routed)
                 storage_path,
                 checksum,
                 user_id,
@@ -367,19 +540,22 @@ class MediaManager:
             )
         )
         
+        # Update rate limit counters
+        self._update_rate_limit(user_id, file_size)
+        
         thumbnails = {}
         if media_type == MediaType.IMAGE and self._image_processor:
             thumbnails = self._generate_thumbnails(file_id, file_data)
         
-        url = self._storage.get_url(storage_path)
+        url = storage.get_url(storage_path)
         
-        logger.debug(f"File {file_id} uploaded by user {user_id}: {filename}")
+        logger.debug(f"File {file_id} uploaded by user {user_id}: {filename} (backend: {storage_backend})")
         
         return UploadResult(
             file_id=file_id,
             filename=filename,
             content_type=content_type,
-            size=len(file_data),
+            size=file_size,
             url=url,
             thumbnails=thumbnails,
             metadata=metadata,
@@ -513,7 +689,9 @@ class MediaManager:
         if not file:
             raise MediaError("File not found")
         
-        data = self._storage.retrieve(file.storage_path)
+        # Use the correct storage backend for this file
+        storage = self._get_storage_by_backend(file.storage_backend.value)
+        data = storage.retrieve(file.storage_path)
         return data, file.content_type
 
     def delete_file(self, user_id: int, file_id: int) -> bool:
@@ -578,6 +756,57 @@ class MediaManager:
             url=result.url,
             metadata=metadata if metadata else None,
         )
+
+    def get_rate_limit_status(self, user_id: int) -> Dict[str, Any]:
+        """
+        Get current rate limit status for a user.
+
+        Args:
+            user_id: User ID
+
+        Returns:
+            Dict with rate limit info including remaining uploads and size
+        """
+        rate_config = self._config.get("rate_limit", {})
+        if not rate_config.get("enabled", True):
+            return {"enabled": False}
+        
+        now_seconds = self._get_timestamp() // 1000
+        
+        # Get current window stats
+        minute_window = now_seconds - (now_seconds % 60)
+        hour_window = now_seconds - (now_seconds % 3600)
+        day_window = now_seconds - (now_seconds % 86400)
+        
+        minute_count = self._get_rate_limit_count(user_id, "minute", minute_window)
+        hour_count = self._get_rate_limit_count(user_id, "hour", hour_window)
+        day_size = self._get_rate_limit_size(user_id, "day", day_window)
+        
+        max_per_minute = rate_config.get("uploads_per_minute", 10)
+        max_per_hour = rate_config.get("uploads_per_hour", 100)
+        max_daily_size = rate_config.get("max_total_size_per_day", 512 * 1024 * 1024)
+        
+        return {
+            "enabled": True,
+            "minute": {
+                "used": minute_count,
+                "limit": max_per_minute,
+                "remaining": max(0, max_per_minute - minute_count),
+                "resets_in": 60 - (now_seconds % 60)
+            },
+            "hour": {
+                "used": hour_count,
+                "limit": max_per_hour,
+                "remaining": max(0, max_per_hour - hour_count),
+                "resets_in": 3600 - (now_seconds % 3600)
+            },
+            "day": {
+                "used_bytes": day_size,
+                "limit_bytes": max_daily_size,
+                "remaining_bytes": max(0, max_daily_size - day_size),
+                "resets_in": 86400 - (now_seconds % 86400)
+            }
+        }
 
     def sign_url(
         self,
@@ -804,6 +1033,19 @@ class MediaManager:
         
         return status, result
 
+    def _get_storage_by_backend(self, backend: str) -> StorageBackendBase:
+        """Get storage instance for a specific backend type."""
+        if backend == "database":
+            # Return DB storage if available, otherwise fall back to primary
+            return self._db_storage if self._db_storage else self._storage
+        elif backend == self._config.get("storage_backend", "local"):
+            return self._storage
+        else:
+            # Backend doesn't match current config - file may have been uploaded
+            # with different settings. Try to use primary storage.
+            logger.warning(f"File backend '{backend}' differs from current config")
+            return self._storage
+
     def _row_to_media_file(self, row) -> MediaFile:
         """Convert database row to MediaFile."""
         import json
@@ -815,6 +1057,10 @@ class MediaManager:
             except Exception:
                 pass
         
+        # Get the correct storage for this file's backend
+        backend = row["storage_backend"]
+        storage = self._get_storage_by_backend(backend)
+        
         return MediaFile(
             id=row["id"],
             filename=row["filename"],
@@ -822,9 +1068,9 @@ class MediaManager:
             content_type=row["content_type"],
             size=row["size"],
             media_type=MediaType(row["media_type"]),
-            storage_backend=StorageBackend(row["storage_backend"]),
+            storage_backend=StorageBackend(backend),
             storage_path=row["storage_path"],
-            url=self._storage.get_url(row["storage_path"]),
+            url=storage.get_url(row["storage_path"]),
             checksum=row["checksum"],
             uploaded_by=row["uploaded_by"],
             uploaded_at=row["uploaded_at"],
