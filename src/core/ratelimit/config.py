@@ -1,41 +1,105 @@
 """
 Rate limit configuration - Default configurations and route limits.
+
+Configuration is loaded from config.yaml under 'rate_limiting' key.
+Defaults are used if config is not available.
 """
 
 from typing import Dict, Optional
+import utils.config as app_config
 from .models import RateLimitConfig, BucketType, RateLimitAlgorithm
 
 
-DEFAULT_GLOBAL_LIMIT = RateLimitConfig(
-    requests=50,
-    window_seconds=1.0,
-    burst=10,
-    algorithm=RateLimitAlgorithm.TOKEN_BUCKET,
-    scope=BucketType.GLOBAL,
-    include_in_global=False,
-)
+def _get_rate_limit_config() -> dict:
+    """Get rate limiting configuration from config file."""
+    return app_config.get("rate_limiting", {})
 
 
-DEFAULT_USER_LIMIT = RateLimitConfig(
-    requests=120,
-    window_seconds=60.0,
-    burst=20,
-    algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
-    scope=BucketType.USER,
-    hourly_limit=3600,
-    daily_limit=50000,
-)
+def _build_global_limit() -> RateLimitConfig:
+    """Build global rate limit from config."""
+    cfg = _get_rate_limit_config().get("global", {})
+    return RateLimitConfig(
+        requests=cfg.get("requests", 50),
+        window_seconds=cfg.get("window_seconds", 1.0),
+        burst=cfg.get("burst", 10),
+        algorithm=RateLimitAlgorithm.TOKEN_BUCKET,
+        scope=BucketType.GLOBAL,
+        include_in_global=False,
+    )
 
 
-DEFAULT_IP_LIMIT = RateLimitConfig(
-    requests=60,
-    window_seconds=60.0,
-    burst=10,
-    algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
-    scope=BucketType.IP,
-    hourly_limit=1800,
-    daily_limit=10000,
-)
+def _build_user_limit() -> RateLimitConfig:
+    """Build user rate limit from config."""
+    cfg = _get_rate_limit_config().get("user", {})
+    return RateLimitConfig(
+        requests=cfg.get("requests", 120),
+        window_seconds=cfg.get("window_seconds", 60.0),
+        burst=cfg.get("burst", 20),
+        algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
+        scope=BucketType.USER,
+        hourly_limit=cfg.get("hourly_limit", 3600),
+        daily_limit=cfg.get("daily_limit", 50000),
+    )
+
+
+def _build_ip_limit() -> RateLimitConfig:
+    """Build IP rate limit from config."""
+    cfg = _get_rate_limit_config().get("ip", {})
+    return RateLimitConfig(
+        requests=cfg.get("requests", 60),
+        window_seconds=cfg.get("window_seconds", 60.0),
+        burst=cfg.get("burst", 10),
+        algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
+        scope=BucketType.IP,
+        hourly_limit=cfg.get("hourly_limit", 1800),
+        daily_limit=cfg.get("daily_limit", 10000),
+    )
+
+
+def get_global_limit() -> RateLimitConfig:
+    """Get global rate limit configuration."""
+    return _build_global_limit()
+
+
+def get_user_limit() -> RateLimitConfig:
+    """Get user rate limit configuration."""
+    return _build_user_limit()
+
+
+def get_ip_limit() -> RateLimitConfig:
+    """Get IP rate limit configuration."""
+    return _build_ip_limit()
+
+
+def get_bot_multiplier() -> float:
+    """Get bot rate limit multiplier."""
+    return _get_rate_limit_config().get("bot_multiplier", 1.5)
+
+
+def get_webhook_multiplier() -> float:
+    """Get webhook rate limit multiplier."""
+    return _get_rate_limit_config().get("webhook_multiplier", 1.0)
+
+
+def is_rate_limiting_enabled() -> bool:
+    """Check if rate limiting is enabled."""
+    return _get_rate_limit_config().get("enabled", True)
+
+
+def should_bypass_admin() -> bool:
+    """Check if admins should bypass rate limits."""
+    return _get_rate_limit_config().get("admin_bypass", True)
+
+
+def should_bypass_internal() -> bool:
+    """Check if internal requests should bypass rate limits."""
+    return _get_rate_limit_config().get("internal_bypass", True)
+
+
+# Legacy compatibility - these are now functions but we provide module-level access
+DEFAULT_GLOBAL_LIMIT = _build_global_limit()
+DEFAULT_USER_LIMIT = _build_user_limit()
+DEFAULT_IP_LIMIT = _build_ip_limit()
 
 
 DEFAULT_ROUTE_LIMITS: Dict[str, RateLimitConfig] = {

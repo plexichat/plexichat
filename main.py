@@ -53,7 +53,9 @@ class PlexiChatServer:
                 "max_bytes": 10485760,
                 "backup_count": 5,
                 "zip_logs": True,
-                "rotate": True
+                "rotate": True,
+                # SECURITY WARNING: Set to False in production to avoid leaking sensitive info
+                "include_exception_details": True
             },
             "database": {
                 "type": "sqlite",
@@ -155,10 +157,12 @@ class PlexiChatServer:
                 "version": VERSION,
                 "api_prefix": "/api/v1",
                 "debug": True,
-                "cors_origins": ["*"],
+                # SECURITY: In development, allow localhost origins. 
+                # For production, change to specific allowed origins like ["https://yourdomain.com"]
+                "cors_origins": ["http://localhost:5000", "http://127.0.0.1:5000", "http://localhost:8000", "http://127.0.0.1:8000"],
                 "cors_allow_credentials": True,
-                "cors_allow_methods": ["*"],
-                "cors_allow_headers": ["*"],
+                "cors_allow_methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+                "cors_allow_headers": ["Authorization", "Content-Type", "X-Requested-With"],
                 "docs_url": "/docs",
                 "redoc_url": "/redoc",
                 "openapi_url": "/openapi.json"
@@ -168,6 +172,18 @@ class PlexiChatServer:
                 "port": 8000,
                 "workers": 1,
                 "reload": False
+            },
+            "websocket": {
+                "heartbeat_interval_ms": 45000,
+                "session_timeout_ms": 60000,
+                "max_connections_per_user": 5,
+                "rate_limit_per_minute": 120,
+                # Compression security settings
+                "max_message_size": 65536,  # 64KB max message size
+                "max_decompressed_size": 262144,  # 256KB max decompressed size (prevents zip bombs)
+                "compression_enabled": True,
+                # Origin validation (empty = allow all, for dev; set specific origins in production)
+                "allowed_origins": []
             },
             "application": {
                 "name": "PlexiChat",
@@ -183,6 +199,38 @@ class PlexiChatServer:
                 "logs_dir": str(home_dir / "logs"),
                 "media_dir": str(home_dir / "media"),
                 "temp_dir": str(home_dir / "temp")
+            },
+            "rate_limiting": {
+                "enabled": True,
+                # Global rate limit (per user, across all requests)
+                "global": {
+                    "requests": 50,
+                    "window_seconds": 1.0,
+                    "burst": 10
+                },
+                # Per-user general limit
+                "user": {
+                    "requests": 120,
+                    "window_seconds": 60.0,
+                    "burst": 20,
+                    "hourly_limit": 3600,
+                    "daily_limit": 50000
+                },
+                # Per-IP limit (for unauthenticated requests)
+                "ip": {
+                    "requests": 60,
+                    "window_seconds": 60.0,
+                    "burst": 10,
+                    "hourly_limit": 1800,
+                    "daily_limit": 10000
+                },
+                # Bot multiplier (bots get this multiplier on limits)
+                "bot_multiplier": 1.5,
+                # Webhook multiplier
+                "webhook_multiplier": 1.0,
+                # Bypass for admins/internal requests
+                "admin_bypass": True,
+                "internal_bypass": True
             },
             "docs": {
                 "enabled": True,

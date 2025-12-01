@@ -13,7 +13,7 @@ import utils.logger as logger
 from .opcodes import GatewayOpcode, GatewayCloseCode, get_close_message
 from .connection import Connection, ConnectionState
 from .handlers import OpcodeHandler
-from .compression import is_compressed, decompress_payload
+from .compression import is_compressed, decompress_payload, validate_message_size, CompressionError
 
 
 router = APIRouter()
@@ -125,15 +125,31 @@ async def _message_loop(
 
         data = None
         if "text" in message:
+            # Validate text message size
+            text_data = message["text"]
+            if not validate_message_size(text_data.encode("utf-8")):
+                logger.warning(f"Connection {connection.connection_id}: message too large")
+                await _close_connection(connection, GatewayCloseCode.DECODE_ERROR)
+                return
             try:
-                data = json.loads(message["text"])
+                data = json.loads(text_data)
             except json.JSONDecodeError:
                 await _close_connection(connection, GatewayCloseCode.DECODE_ERROR)
                 return
         elif "bytes" in message:
             raw_bytes = message["bytes"]
+            # Validate compressed message size before decompression
+            if not validate_message_size(raw_bytes):
+                logger.warning(f"Connection {connection.connection_id}: compressed message too large")
+                await _close_connection(connection, GatewayCloseCode.DECODE_ERROR)
+                return
             if is_compressed(raw_bytes):
-                data = decompress_payload(raw_bytes)
+                try:
+                    data = decompress_payload(raw_bytes)
+                except CompressionError as e:
+                    logger.warning(f"Connection {connection.connection_id}: {e}")
+                    await _close_connection(connection, GatewayCloseCode.DECODE_ERROR)
+                    return
             else:
                 try:
                     data = json.loads(raw_bytes.decode("utf-8"))

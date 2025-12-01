@@ -391,6 +391,73 @@ class MediaManager:
             return MediaType.DOCUMENT
         return MediaType.OTHER
 
+    def _validate_magic_bytes(self, file_data: bytes, content_type: str) -> bool:
+        """
+        Validate file content matches declared content type using magic bytes.
+        
+        This prevents MIME type spoofing attacks where a malicious file
+        is uploaded with a fake content type.
+        
+        Args:
+            file_data: Raw file bytes
+            content_type: Declared content type
+            
+        Returns:
+            True if magic bytes match content type, False otherwise
+        """
+        if len(file_data) < 12:
+            return True  # Too small to validate, allow through
+        
+        # Magic byte signatures for common file types
+        magic_signatures = {
+            # Images
+            "image/jpeg": [b"\xff\xd8\xff"],
+            "image/png": [b"\x89PNG\r\n\x1a\n"],
+            "image/gif": [b"GIF87a", b"GIF89a"],
+            "image/webp": [b"RIFF"],  # RIFF....WEBP
+            "image/bmp": [b"BM"],
+            "image/tiff": [b"II*\x00", b"MM\x00*"],
+            # Videos
+            "video/mp4": [b"\x00\x00\x00\x18ftypmp4", b"\x00\x00\x00\x1cftypmp4", b"\x00\x00\x00 ftypisom", b"ftyp"],
+            "video/webm": [b"\x1a\x45\xdf\xa3"],
+            "video/quicktime": [b"\x00\x00\x00\x14ftypqt", b"ftypqt"],
+            # Audio
+            "audio/mpeg": [b"\xff\xfb", b"\xff\xfa", b"\xff\xf3", b"\xff\xf2", b"ID3"],
+            "audio/ogg": [b"OggS"],
+            "audio/wav": [b"RIFF"],  # RIFF....WAVE
+            "audio/webm": [b"\x1a\x45\xdf\xa3"],
+            # Documents
+            "application/pdf": [b"%PDF"],
+            "application/zip": [b"PK\x03\x04", b"PK\x05\x06"],
+            # Text types don't have magic bytes, allow through
+            "text/plain": [],
+            "text/markdown": [],
+            "text/csv": [],
+            "application/json": [],
+        }
+        
+        ct_lower = content_type.lower()
+        
+        # If we don't have signatures for this type, allow through
+        if ct_lower not in magic_signatures:
+            return True
+        
+        signatures = magic_signatures[ct_lower]
+        
+        # Text types have no magic bytes
+        if not signatures:
+            return True
+        
+        # Check if file starts with any valid signature
+        for sig in signatures:
+            if file_data[:len(sig)] == sig:
+                return True
+            # Special case for MP4/MOV - ftyp can be at offset 4
+            if ct_lower in ("video/mp4", "video/quicktime") and b"ftyp" in file_data[:12]:
+                return True
+        
+        return False
+
     def _validate_content_type(self, content_type: str, media_type: MediaType):
         """Validate content type is allowed."""
         allowed = self._config.get("allowed_types", DEFAULT_ALLOWED_TYPES)
@@ -460,6 +527,15 @@ class MediaManager:
         
         self._validate_content_type(content_type, media_type)
         self._validate_file_size(file_size, media_type)
+        
+        # SECURITY: Validate magic bytes match content type (prevents MIME spoofing)
+        if not self._validate_magic_bytes(file_data, content_type):
+            logger.warning(f"Magic byte validation failed for {filename} (claimed: {content_type})")
+            raise FileTypeError(
+                f"File content does not match declared type: {content_type}",
+                content_type,
+                ["File signature mismatch - content does not match declared MIME type"]
+            )
         
         # Check rate limits before proceeding
         self._check_rate_limit(user_id, file_size)
