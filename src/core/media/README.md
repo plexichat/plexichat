@@ -252,7 +252,7 @@ uploads/
 
 Works with AWS S3, MinIO, DigitalOcean Spaces, and other S3-compatible services.
 
-```python
+```yaml
 # AWS S3
 media:
   storage_backend: s3
@@ -260,15 +260,230 @@ media:
   s3_access_key: AKIAIOSFODNN7EXAMPLE
   s3_secret_key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
   s3_region: us-east-1
+```
 
-# MinIO
+### MinIO Setup (Recommended for Development/Self-Hosted)
+
+MinIO is an S3-compatible object storage server that runs locally or on your own infrastructure. It's the easiest way to move away from directory-based file storage without needing AWS.
+
+#### Why MinIO?
+
+- S3-compatible API (no code changes needed)
+- Runs locally for development, scales for production
+- Web console for easy file management
+- Free and open source
+- Single binary, minimal setup
+
+#### Installation
+
+**Windows (Recommended: Standalone Binary)**
+```powershell
+# Download MinIO server
+Invoke-WebRequest -Uri "https://dl.min.io/server/minio/release/windows-amd64/minio.exe" -OutFile "minio.exe"
+
+# Create data directory
+mkdir C:\minio-data
+```
+
+**Windows (Docker)**
+```powershell
+docker run -d --name minio `
+  -p 9000:9000 -p 9001:9001 `
+  -v C:\minio-data:/data `
+  -e MINIO_ROOT_USER=minioadmin `
+  -e MINIO_ROOT_PASSWORD=minioadmin `
+  minio/minio server /data --console-address ":9001"
+```
+
+**Linux/macOS (Docker)**
+```bash
+docker run -d --name minio \
+  -p 9000:9000 -p 9001:9001 \
+  -v ~/minio-data:/data \
+  -e MINIO_ROOT_USER=minioadmin \
+  -e MINIO_ROOT_PASSWORD=minioadmin \
+  minio/minio server /data --console-address ":9001"
+```
+
+**Linux (Binary)**
+```bash
+wget https://dl.min.io/server/minio/release/linux-amd64/minio
+chmod +x minio
+mkdir ~/minio-data
+```
+
+**macOS (Homebrew)**
+```bash
+brew install minio/stable/minio
+mkdir ~/minio-data
+```
+
+#### Running MinIO
+
+**Standalone Binary**
+```powershell
+# Windows
+.\minio.exe server C:\minio-data --console-address ":9001"
+
+# Linux/macOS
+./minio server ~/minio-data --console-address ":9001"
+```
+
+**With Custom Credentials**
+```powershell
+# Windows PowerShell
+$env:MINIO_ROOT_USER="plexichat"
+$env:MINIO_ROOT_PASSWORD="your-secure-password-here"
+.\minio.exe server C:\minio-data --console-address ":9001"
+
+# Linux/macOS
+MINIO_ROOT_USER=plexichat MINIO_ROOT_PASSWORD=your-secure-password-here ./minio server ~/minio-data --console-address ":9001"
+```
+
+#### Access Points
+
+| Service | URL | Purpose |
+|---------|-----|---------|
+| API | http://localhost:9000 | S3-compatible API endpoint |
+| Console | http://localhost:9001 | Web UI for management |
+
+Default credentials: `minioadmin` / `minioadmin`
+
+#### Creating a Bucket
+
+**Option 1: Web Console**
+1. Open http://localhost:9001
+2. Login with your credentials
+3. Click "Create Bucket"
+4. Name it `plexichat-media`
+5. Set access policy to "Public" (for direct URL access) or keep "Private" (for signed URLs)
+
+**Option 2: MinIO Client (mc)**
+```bash
+# Install mc (MinIO Client)
+# Windows: Download from https://dl.min.io/client/mc/release/windows-amd64/mc.exe
+# macOS: brew install minio/stable/mc
+# Linux: wget https://dl.min.io/client/mc/release/linux-amd64/mc && chmod +x mc
+
+# Configure alias
+mc alias set local http://localhost:9000 minioadmin minioadmin
+
+# Create bucket
+mc mb local/plexichat-media
+
+# Set public read policy (optional, for direct URL access)
+mc anonymous set download local/plexichat-media
+```
+
+#### PlexiChat Configuration
+
+Add to `config/config.yaml`:
+
+```yaml
 media:
   storage_backend: s3
-  s3_bucket: my-bucket
-  s3_access_key: minioadmin
-  s3_secret_key: minioadmin
+  
+  # MinIO connection
+  s3_bucket: plexichat-media
+  s3_access_key: minioadmin          # Or your custom MINIO_ROOT_USER
+  s3_secret_key: minioadmin          # Or your custom MINIO_ROOT_PASSWORD
+  s3_region: us-east-1               # Required but ignored by MinIO
   s3_endpoint: http://localhost:9000
-  s3_public_url: http://localhost:9000/my-bucket
+  s3_public_url: http://localhost:9000/plexichat-media
+  
+  # Rest of media config...
+  size_limits:
+    image: 10485760
+    video: 104857600
+    audio: 52428800
+    document: 26214400
+    other: 10485760
+```
+
+#### Production Deployment
+
+For production, consider:
+
+1. **Use strong credentials**
+   ```bash
+   MINIO_ROOT_USER=<random-20-char-string>
+   MINIO_ROOT_PASSWORD=<random-40-char-string>
+   ```
+
+2. **Enable TLS**
+   ```bash
+   minio server ~/minio-data --certs-dir ~/.minio/certs
+   ```
+   Place `public.crt` and `private.key` in the certs directory.
+
+3. **Run as a service**
+   
+   Windows (NSSM):
+   ```powershell
+   nssm install MinIO "C:\path\to\minio.exe" "server C:\minio-data --console-address :9001"
+   nssm set MinIO AppEnvironmentExtra MINIO_ROOT_USER=plexichat MINIO_ROOT_PASSWORD=your-password
+   nssm start MinIO
+   ```
+   
+   Linux (systemd):
+   ```ini
+   # /etc/systemd/system/minio.service
+   [Unit]
+   Description=MinIO
+   After=network.target
+   
+   [Service]
+   User=minio
+   Group=minio
+   Environment="MINIO_ROOT_USER=plexichat"
+   Environment="MINIO_ROOT_PASSWORD=your-secure-password"
+   ExecStart=/usr/local/bin/minio server /data --console-address ":9001"
+   Restart=always
+   
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+4. **Distributed mode** (multiple servers for redundancy)
+   ```bash
+   minio server http://server{1...4}/data
+   ```
+
+#### Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| Connection refused | Ensure MinIO is running and port 9000 is not blocked |
+| Access denied | Check credentials match between MinIO and config.yaml |
+| Bucket not found | Create the bucket via console or mc client |
+| CORS errors | Configure bucket CORS policy in MinIO console |
+| boto3 not found | Run `pip install boto3` |
+
+#### Verifying Setup
+
+```python
+# Quick test script
+from src.core.media.storage import S3Storage
+
+storage = S3Storage(
+    bucket="plexichat-media",
+    access_key="minioadmin",
+    secret_key="minioadmin",
+    endpoint_url="http://localhost:9000",
+    public_url="http://localhost:9000/plexichat-media",
+)
+
+# Test upload
+storage.store(b"Hello MinIO!", "test.txt", "text/plain")
+print(f"Uploaded: {storage.get_url('test.txt')}")
+
+# Test retrieve
+data = storage.retrieve("test.txt")
+print(f"Retrieved: {data.decode()}")
+
+# Cleanup
+storage.delete("test.txt")
+print("Test passed!")
 ```
 
 ## Thumbnail Sizes
