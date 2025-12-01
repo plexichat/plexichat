@@ -20,6 +20,7 @@ class StorageBackend(Enum):
     """Storage backend type."""
     LOCAL = "local"
     S3 = "s3"
+    DATABASE = "database"
 
 
 class ThumbnailSize(Enum):

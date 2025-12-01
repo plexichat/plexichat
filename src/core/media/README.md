@@ -486,6 +486,76 @@ storage.delete("test.txt")
 print("Test passed!")
 ```
 
+### Database Storage (Small Files Only)
+
+For very small files like text conversions of long messages, configuration snippets, or tiny documents, you can store files directly in the database as BLOBs. This eliminates external dependencies and keeps everything in one place.
+
+#### When to Use Database Storage
+
+| Good For | Not Good For |
+|----------|--------------|
+| Long messages converted to .txt (<500KB) | Images, videos, audio |
+| Small config/data files | Files needing direct URL streaming |
+| Tiny thumbnails or icons | Anything over 512KB |
+| Single-server deployments | High-throughput file serving |
+
+#### Configuration
+
+```yaml
+media:
+  storage_backend: database
+  database_url: /api/v1/media/blob    # API endpoint for serving
+  database_max_size: 524288            # 512KB max (in bytes)
+```
+
+#### How It Works
+
+1. Files are stored as BLOBs in the `media_blobs` table
+2. Served via an API endpoint (not direct file URLs)
+3. Automatic deduplication via SHA-256 checksums
+4. Same interface as other storage backends
+
+#### API Endpoint
+
+Files stored in the database are served via `/api/v1/media/blob/{encoded_path}`. The path is base64-encoded in the URL.
+
+#### Example Usage
+
+```python
+from src.core.media.storage import DatabaseStorage
+
+# Initialize with database connection
+storage = DatabaseStorage(
+    db=db,
+    base_url="/api/v1/media/blob",
+    max_size=512 * 1024,  # 512KB
+)
+
+# Store a text file (e.g., long message converted to .txt)
+message_text = "Very long message content..." * 1000
+storage.store(message_text.encode(), "messages/12345.txt", "text/plain")
+
+# Retrieve
+data = storage.retrieve("messages/12345.txt")
+
+# Check for duplicates by checksum
+checksum = hashlib.sha256(data).hexdigest()
+existing = storage.get_by_checksum(checksum)
+
+# Get storage stats
+total_size = storage.get_total_size()
+file_count = storage.get_count()
+```
+
+#### Hybrid Approach
+
+You can use database storage alongside other backends. The `storage_backend` in `media_files` table tracks which backend each file uses, so you could:
+
+1. Use `database` for text files under 500KB
+2. Use `s3` or `local` for larger media files
+
+This requires custom logic in your upload handler to choose the backend based on file type/size.
+
 ## Thumbnail Sizes
 
 | Size | Use Case |

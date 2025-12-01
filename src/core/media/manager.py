@@ -40,7 +40,7 @@ from .exceptions import (
     PermissionDeniedError,
 )
 from .schema import create_tables
-from .storage import LocalStorage, S3Storage, StorageBackendBase
+from .storage import LocalStorage, S3Storage, DatabaseStorage, StorageBackendBase
 from .processing import ImageProcessor, VideoProcessor
 from .security import UrlSigner, MalwareScanner, ExternalProxy
 
@@ -101,6 +101,8 @@ class MediaManager:
             "s3_region": "us-east-1",
             "s3_endpoint": "",
             "s3_public_url": "",
+            "database_url": "/api/v1/media/blob",
+            "database_max_size": 512 * 1024,  # 512KB default for DB storage
             "size_limits": DEFAULT_SIZE_LIMITS.copy(),
             "allowed_types": DEFAULT_ALLOWED_TYPES.copy(),
             "thumbnail_sizes": DEFAULT_THUMBNAIL_SIZES.copy(),
@@ -138,6 +140,12 @@ class MediaManager:
                 region=self._config.get("s3_region", "us-east-1"),
                 endpoint_url=self._config.get("s3_endpoint") or None,
                 public_url=self._config.get("s3_public_url") or None,
+            )
+        elif backend == "database":
+            return DatabaseStorage(
+                db=self._db,
+                base_url=self._config.get("database_url", "/api/v1/media/blob"),
+                max_size=self._config.get("database_max_size", 512 * 1024),
             )
         else:
             return LocalStorage(
