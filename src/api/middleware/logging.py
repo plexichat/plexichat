@@ -3,30 +3,25 @@ Logging middleware - Request/response logging.
 """
 
 import time
-import os
-import sys
-
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
-common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
-for path in [project_root, common_utils_path]:
-    if path not in sys.path:
-        sys.path.insert(0, path)
-
-try:
-    import utils.logger as logger
-    _logger_available = True
-except ImportError:
-    logger = None
-    _logger_available = False
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
 
+def _get_logger():
+    """Get the logger module dynamically to ensure we use the configured instance."""
+    try:
+        import utils.logger as logger
+        return logger
+    except ImportError:
+        return None
+
+
 def _log_debug(msg: str):
-    """Log debug message if logger is available."""
-    if _logger_available and logger:
+    """Log debug message if logger is available and configured."""
+    logger = _get_logger()
+    if logger:
         try:
             logger.debug(msg)
         except RuntimeError:
@@ -34,8 +29,9 @@ def _log_debug(msg: str):
 
 
 def _log_warning(msg: str):
-    """Log warning message if logger is available."""
-    if _logger_available and logger:
+    """Log warning message if logger is available and configured."""
+    logger = _get_logger()
+    if logger:
         try:
             logger.warning(msg)
         except RuntimeError:
@@ -43,8 +39,9 @@ def _log_warning(msg: str):
 
 
 def _log_error(msg: str):
-    """Log error message if logger is available."""
-    if _logger_available and logger:
+    """Log error message if logger is available and configured."""
+    logger = _get_logger()
+    if logger:
         try:
             logger.error(msg)
         except RuntimeError:
