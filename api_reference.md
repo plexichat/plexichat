@@ -1624,6 +1624,21 @@ Admins with `admin.*` or `*` permissions are also exempt.
 3. On close code 4017 (SERVER_SHUTDOWN): Wait for server restart
 4. On other resumable codes: Attempt reconnection with exponential backoff
 
+### Graceful Shutdown Handling
+
+When the server shuts down, clients receive notifications in this order:
+
+1. **SERVER_STATUS (opcode 12)** - Sent to all connected clients with shutdown details
+2. **Grace period** - Server waits ~2 seconds for clients to prepare
+3. **Connection close** - WebSocket closed with code 4017 (SERVER_SHUTDOWN)
+
+Clients should:
+1. Listen for opcode 12 messages during the connection
+2. On receiving `state: "shutting_down"`, save any pending state
+3. Display the shutdown message to users
+4. After disconnection, poll `/api/v1/status` to detect when server is back
+5. Reconnect with exponential backoff once status returns to `running`
+
 ### Error Handling
 
 Always check for version-related error codes:

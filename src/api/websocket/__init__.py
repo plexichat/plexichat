@@ -26,6 +26,8 @@ __all__ = [
     "get_session_manager",
     "get_dispatcher",
     "is_setup",
+    "broadcast_server_status",
+    "close_all_connections",
     "GatewayOpcode",
     "GatewayCloseCode",
     "Connection",
@@ -148,3 +150,51 @@ def get_servers_module():
 def is_setup() -> bool:
     """Check if the gateway module is initialized."""
     return _setup_complete
+
+
+async def broadcast_server_status(status_data: dict) -> int:
+    """
+    Broadcast server status to all connected clients.
+    
+    Convenience function that delegates to the dispatcher.
+    
+    Args:
+        status_data: Status information containing:
+            - state: "shutting_down", "restarting", "maintenance"
+            - message: Human-readable message
+            - estimated_downtime_seconds: Optional estimated downtime
+
+    Returns:
+        Number of connections notified
+    """
+    if not _setup_complete or _dispatcher is None:
+        return 0
+    return await _dispatcher.broadcast_server_status(status_data)
+
+
+async def close_all_connections(
+    close_code: int = 4017,
+    reason: str = "Server shutting down",
+    notify_first: bool = True,
+    grace_period_seconds: float = 2.0,
+) -> int:
+    """
+    Gracefully close all WebSocket connections.
+    
+    Args:
+        close_code: WebSocket close code (default: SERVER_SHUTDOWN = 4017)
+        reason: Close reason message
+        notify_first: Whether to send SERVER_STATUS before closing
+        grace_period_seconds: Time to wait after notification before closing
+
+    Returns:
+        Number of connections closed
+    """
+    if not _setup_complete or _dispatcher is None:
+        return 0
+    return await _dispatcher.close_all_connections(
+        close_code=close_code,
+        reason=reason,
+        notify_first=notify_first,
+        grace_period_seconds=grace_period_seconds,
+    )

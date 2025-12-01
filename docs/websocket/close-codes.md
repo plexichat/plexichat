@@ -39,7 +39,7 @@ Server is entering maintenance mode.
 
 **Action:**
 1. Display maintenance message to user
-2. Poll `/status` endpoint every 5 seconds
+2. Poll `/api/v1/status` endpoint every 5 seconds
 3. Reconnect when state returns to `running`
 
 ### 4017 - SERVER_SHUTDOWN
@@ -48,8 +48,39 @@ Server is shutting down.
 
 **Action:**
 1. Display shutdown message to user
-2. Poll `/status` endpoint every 5 seconds
+2. Poll `/api/v1/status` endpoint every 5 seconds
 3. Reconnect when server is back online
+
+## SERVER_STATUS Opcode (12)
+
+Before closing with 4016 or 4017, the server sends a SERVER_STATUS message:
+
+```json
+{
+  "op": 12,
+  "d": {
+    "state": "shutting_down",
+    "message": "Server shutting down for maintenance",
+    "closing_in_seconds": 2.0,
+    "estimated_downtime_seconds": 300
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| state | string | `shutting_down`, `restarting`, or `maintenance` |
+| message | string | Human-readable status message |
+| closing_in_seconds | float | Seconds until connection closes |
+| estimated_downtime_seconds | int | Optional estimated downtime |
+| restart_at | string | Optional ISO timestamp for restart |
+
+**Client handling:**
+1. Listen for opcode 12 messages
+2. Save any pending state (unsent messages, etc.)
+3. Display status message to user
+4. Prepare reconnection logic
+5. After close, use exponential backoff to reconnect
 
 ## Reconnection Strategy
 

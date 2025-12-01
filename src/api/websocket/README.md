@@ -46,6 +46,8 @@ app.include_router(websocket.get_router())
 | 9 | INVALID_SESSION | Server -> Client | Session invalid |
 | 10 | HELLO | Server -> Client | Initial handshake |
 | 11 | HEARTBEAT_ACK | Server -> Client | Heartbeat response |
+| 12 | SERVER_STATUS | Server -> Client | Server status update (shutdown/restart) |
+| 13 | VERSION_CHECK | Server -> Client | Version compatibility check |
 
 ## Connection Lifecycle
 
@@ -103,6 +105,9 @@ app.include_router(websocket.get_router())
 | 4009 | Session Timed Out | Yes |
 | 4013 | Invalid Intents | No |
 | 4014 | Disallowed Intents | No |
+| 4015 | Version Outdated | No |
+| 4016 | Server Maintenance | Yes |
+| 4017 | Server Shutdown | Yes |
 
 ## Compression
 
@@ -134,6 +139,59 @@ gateway:
   max_connections_per_user: 5
   rate_limit_per_minute: 120
 ```
+
+## Server Shutdown Handling
+
+The gateway supports graceful shutdown with client notification:
+
+### SERVER_STATUS Opcode (12)
+
+Sent by server before shutdown/restart:
+
+```json
+{
+    "op": 12,
+    "d": {
+        "state": "shutting_down",
+        "message": "Server shutting down",
+        "closing_in_seconds": 2.0
+    }
+}
+```
+
+Possible states:
+- `shutting_down` - Server is shutting down permanently
+- `restarting` - Server will restart shortly
+- `maintenance` - Server entering maintenance mode
+
+### Programmatic Shutdown
+
+```python
+from src.api import websocket
+
+# Broadcast status to all clients
+await websocket.broadcast_server_status({
+    "state": "restarting",
+    "message": "Server update in progress",
+    "estimated_downtime_seconds": 30
+})
+
+# Close all connections gracefully
+await websocket.close_all_connections(
+    close_code=4017,  # SERVER_SHUTDOWN
+    reason="Server shutting down",
+    notify_first=True,
+    grace_period_seconds=2.0
+)
+```
+
+### Client Handling
+
+Clients should:
+1. Listen for opcode 12 (SERVER_STATUS)
+2. Save any pending state
+3. Prepare for reconnection
+4. On close code 4016/4017, attempt reconnection with exponential backoff
 
 ## Testing
 

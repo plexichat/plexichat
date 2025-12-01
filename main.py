@@ -547,10 +547,9 @@ class PlexiChatServer:
     async def notify_clients_shutdown(self, message: str = "Server shutting down"):
         """Notify connected WebSocket clients about shutdown."""
         try:
-            # Import websocket module if available
-            from src.api.websocket import gateway
-            if hasattr(gateway, 'broadcast_server_status'):
-                await gateway.broadcast_server_status({
+            from src.api import websocket
+            if websocket.is_setup():
+                await websocket.broadcast_server_status({
                     "state": "shutting_down",
                     "message": message,
                     "restart_at": None
@@ -562,9 +561,9 @@ class PlexiChatServer:
     async def notify_clients_restart(self, estimated_seconds: int = 10):
         """Notify connected WebSocket clients about restart."""
         try:
-            from src.api.websocket import gateway
-            if hasattr(gateway, 'broadcast_server_status'):
-                await gateway.broadcast_server_status({
+            from src.api import websocket
+            if websocket.is_setup():
+                await websocket.broadcast_server_status({
                     "state": "restarting",
                     "message": "Server is restarting",
                     "estimated_downtime_seconds": estimated_seconds
@@ -576,6 +575,26 @@ class PlexiChatServer:
     def cleanup(self):
         """Clean up resources on shutdown."""
         logger.info("Cleaning up resources...")
+        
+        # Close all WebSocket connections gracefully
+        try:
+            from src.api import websocket
+            if websocket.is_setup():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    closed = loop.run_until_complete(
+                        websocket.close_all_connections(
+                            reason="Server shutting down",
+                            notify_first=False,  # Already notified in signal handler
+                            grace_period_seconds=0.5,
+                        )
+                    )
+                    logger.info(f"Closed {closed} WebSocket connections")
+                finally:
+                    loop.close()
+        except Exception as e:
+            logger.debug(f"Error closing WebSocket connections: {e}")
         
         # Close database connection
         if self.db:
@@ -608,21 +627,31 @@ class PlexiChatServer:
         
         # Setup signal handlers for graceful shutdown
         def signal_handler(signum, frame):
-            logger.info(f"Received signal {signum}, initiating graceful shutdown...")
+            signal_name = "SIGINT" if signum == signal.SIGINT else f"signal {signum}"
+            logger.info(f"Received {signal_name}, initiating graceful shutdown...")
             self.shutdown_event.set()
             
             # Run async notification in event loop
             try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    asyncio.ensure_future(self.notify_clients_shutdown())
-            except Exception:
-                pass
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            
+            if loop and loop.is_running():
+                # Schedule the notification coroutine
+                asyncio.run_coroutine_threadsafe(
+                    self.notify_clients_shutdown(),
+                    loop
+                )
             
             self.server.should_exit = True
         
+        # Register signal handlers
         signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
+        
+        # SIGTERM is not available on Windows, only register if supported
+        if hasattr(signal, 'SIGTERM'):
+            signal.signal(signal.SIGTERM, signal_handler)
         
         logger.info("All modules initialized successfully")
         logger.info("=" * 60)

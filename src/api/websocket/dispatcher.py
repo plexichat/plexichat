@@ -320,3 +320,88 @@ class GatewayDispatcher:
                     sent_count += 1
 
         return sent_count
+
+    async def broadcast_server_status(
+        self,
+        status_data: Dict[str, Any],
+    ) -> int:
+        """
+        Broadcast server status to all connected clients.
+        
+        Used for shutdown/restart notifications.
+
+        Args:
+            status_data: Status information containing:
+                - state: "shutting_down", "restarting", "maintenance"
+                - message: Human-readable message
+                - estimated_downtime_seconds: Optional estimated downtime
+                - restart_at: Optional restart timestamp
+
+        Returns:
+            Number of connections notified
+        """
+        sent_count = 0
+        
+        with self._lock:
+            connections = list(self._session_manager._connections.values())
+        
+        for conn in connections:
+            if conn.is_authenticated:
+                payload = {
+                    "op": int(GatewayOpcode.SERVER_STATUS),
+                    "d": status_data,
+                }
+                success = await self._send_to_connection(conn, payload)
+                if success:
+                    sent_count += 1
+        
+        logger.info(f"Broadcast server status '{status_data.get('state')}' to {sent_count} connections")
+        return sent_count
+
+    async def close_all_connections(
+        self,
+        close_code: int = 4017,
+        reason: str = "Server shutting down",
+        notify_first: bool = True,
+        grace_period_seconds: float = 2.0,
+    ) -> int:
+        """
+        Gracefully close all WebSocket connections.
+        
+        Args:
+            close_code: WebSocket close code (default: SERVER_SHUTDOWN)
+            reason: Close reason message
+            notify_first: Whether to send SERVER_STATUS before closing
+            grace_period_seconds: Time to wait after notification before closing
+
+        Returns:
+            Number of connections closed
+        """
+        with self._lock:
+            connections = list(self._session_manager._connections.values())
+        
+        if not connections:
+            return 0
+        
+        # Notify clients first if requested
+        if notify_first:
+            await self.broadcast_server_status({
+                "state": "shutting_down",
+                "message": reason,
+                "closing_in_seconds": grace_period_seconds,
+            })
+            # Give clients time to receive the notification
+            await asyncio.sleep(grace_period_seconds)
+        
+        closed_count = 0
+        for conn in connections:
+            try:
+                conn.set_disconnecting()
+                await conn.websocket.close(code=close_code, reason=reason)
+                conn.set_disconnected()
+                closed_count += 1
+            except Exception as e:
+                logger.debug(f"Error closing connection {conn.connection_id}: {e}")
+        
+        logger.info(f"Closed {closed_count} WebSocket connections")
+        return closed_count
