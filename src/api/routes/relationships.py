@@ -80,11 +80,12 @@ async def get_relationships(current_user: TokenInfo = Depends(get_current_user))
         result = []
         
         for f in friends:
-            user_id = getattr(f, "user_id", 0) or getattr(f, "friend_id", 0)
-            username, avatar_url, presence_data = get_user_info(user_id)
+            # friend_id is the OTHER user in the friendship, user_id is the current user
+            friend_user_id = getattr(f, "friend_id", 0) or getattr(f, "user_id", 0)
+            username, avatar_url, presence_data = get_user_info(friend_user_id)
             result.append({
-                "user_id": str(user_id),
-                "username": username or f"User {user_id}",
+                "user_id": str(friend_user_id),
+                "username": username or f"User {friend_user_id}",
                 "avatar_url": avatar_url,
                 "status": "friend",
                 "presence": presence_data,
