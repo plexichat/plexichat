@@ -186,13 +186,22 @@ api:
   version: a.1.0-1
   api_prefix: /api/v1
   debug: false
+  # SECURITY: Specify allowed origins explicitly. Never use ["*"] with credentials in production!
   cors_origins:
-    - "*"
+    - "http://localhost:5000"
+    - "http://localhost:8000"
   cors_allow_credentials: true
   cors_allow_methods:
-    - "*"
+    - "GET"
+    - "POST"
+    - "PUT"
+    - "PATCH"
+    - "DELETE"
+    - "OPTIONS"
   cors_allow_headers:
-    - "*"
+    - "Authorization"
+    - "Content-Type"
+    - "X-Requested-With"
   docs_url: /docs        # Set to null to disable
   redoc_url: /redoc      # Set to null to disable
   openapi_url: /openapi.json
