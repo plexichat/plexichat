@@ -29,6 +29,11 @@ from .exceptions import (
     ReactionLimitError,
     PermissionDeniedError,
     UserBlockedError,
+    EmojiLimitError,
+    EmojiNameExistsError,
+    InvalidEmojiNameError,
+    EmojiFileSizeError,
+    InvalidEmojiFileError,
 )
 from .schema import create_tables
 
@@ -39,7 +44,7 @@ CUSTOM_EMOJI_PATTERN = re.compile(r"^<a?:([a-zA-Z0-9_]+):(\d+)>$")
 class ReactionManager:
     """Core reaction manager handling all operations."""
 
-    def __init__(self, db, messaging_module=None, servers_module=None, relationships_module=None):
+    def __init__(self, db, messaging_module=None, servers_module=None, relationships_module=None, media_module=None):
         """
         Initialize the reaction manager.
 
@@ -48,26 +53,56 @@ class ReactionManager:
             messaging_module: Messaging module for message access
             servers_module: Servers module for permission checks
             relationships_module: Relationships module for block filtering
+            media_module: Media module for emoji image uploads
         """
         self._db = db
         self._messaging = messaging_module
         self._servers = servers_module
         self._relationships = relationships_module
+        self._media = media_module
         self._config = self._load_config()
 
         create_tables(db)
+        self._migrate_emoji_table()
 
         logger.info("Reaction module initialized")
+
+    def _migrate_emoji_table(self):
+        """Add new columns to emoji table if they don't exist."""
+        try:
+            self._db.execute("SELECT url FROM react_custom_emoji LIMIT 1")
+        except Exception:
+            logger.info("Migrating react_custom_emoji table with new columns")
+            migrations = [
+                "ALTER TABLE react_custom_emoji ADD COLUMN url TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE react_custom_emoji ADD COLUMN size INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE react_custom_emoji ADD COLUMN width INTEGER",
+                "ALTER TABLE react_custom_emoji ADD COLUMN height INTEGER",
+                "ALTER TABLE react_custom_emoji ADD COLUMN created_by INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE react_custom_emoji ADD COLUMN available INTEGER NOT NULL DEFAULT 1",
+            ]
+            for sql in migrations:
+                try:
+                    self._db.execute(sql)
+                except Exception:
+                    pass
 
     def _load_config(self) -> Dict[str, Any]:
         """Load reaction configuration."""
         defaults = {
             "max_reactions_per_message": 20,
             "max_users_per_reaction_page": 100,
+            "max_emojis_per_server": 50,
+            "max_animated_emojis_per_server": 50,
+            "max_emoji_size": 262144,  # 256KB
+            "emoji_allowed_formats": ["image/png", "image/gif", "image/webp"],
+            "emoji_max_name_length": 32,
+            "emoji_min_name_length": 2,
         }
 
         reactions_config = config.get("reactions", {})
-        return {**defaults, **reactions_config}
+        emojis_config = config.get("emojis", {})
+        return {**defaults, **reactions_config, **emojis_config}
 
     def _get_timestamp(self) -> int:
         """Get current timestamp in milliseconds."""
@@ -621,28 +656,75 @@ class ReactionManager:
 
         return [self._row_to_reaction(row) for row in rows]
 
+    def _validate_emoji_name(self, name: str) -> str:
+        """Validate and normalize emoji name."""
+        if not name or not name.strip():
+            raise InvalidEmojiNameError("Emoji name cannot be empty")
+        
+        name = name.strip().lower()
+        min_len = self._config.get("emoji_min_name_length", 2)
+        max_len = self._config.get("emoji_max_name_length", 32)
+        
+        if len(name) < min_len or len(name) > max_len:
+            raise InvalidEmojiNameError(f"Emoji name must be {min_len}-{max_len} characters")
+        
+        if not re.match(r"^[a-z0-9_]+$", name):
+            raise InvalidEmojiNameError("Emoji name can only contain lowercase letters, numbers, and underscores")
+        
+        return name
+
+    def _check_emoji_limits(self, server_id: int, animated: bool) -> None:
+        """Check if server has reached emoji limits."""
+        if animated:
+            max_count = self._config.get("max_animated_emojis_per_server", 50)
+            row = self._db.fetch_one(
+                "SELECT COUNT(*) as count FROM react_custom_emoji WHERE server_id = ? AND animated = 1",
+                (server_id,)
+            )
+        else:
+            max_count = self._config.get("max_emojis_per_server", 50)
+            row = self._db.fetch_one(
+                "SELECT COUNT(*) as count FROM react_custom_emoji WHERE server_id = ? AND animated = 0",
+                (server_id,)
+            )
+        
+        current = row["count"] if row else 0
+        if current >= max_count:
+            emoji_type = "animated emojis" if animated else "static emojis"
+            raise EmojiLimitError(
+                f"Server has reached maximum of {max_count} {emoji_type}",
+                max_count,
+                current
+            )
+
     def create_custom_emoji(
         self,
         user_id: int,
         server_id: int,
         name: str,
-        animated: bool = False
+        image_data: bytes,
+        content_type: str,
     ) -> CustomEmoji:
         """
-        Create a custom emoji for a server.
+        Create a custom emoji for a server with image upload.
         
         Args:
             user_id: ID of user creating emoji
             server_id: ID of server
             name: Emoji name (alphanumeric and underscores)
-            animated: Whether emoji is animated
+            image_data: Raw image bytes
+            content_type: MIME type of image
             
         Returns:
             Created CustomEmoji
             
         Raises:
             PermissionDeniedError: No permission
-            InvalidEmojiError: Invalid name
+            InvalidEmojiNameError: Invalid name
+            EmojiLimitError: Server emoji limit reached
+            EmojiFileSizeError: File too large
+            InvalidEmojiFileError: Invalid file format
+            EmojiNameExistsError: Name already taken
         """
         if self._servers:
             if not self._servers.has_permission(user_id, server_id, "server.manage"):
@@ -651,29 +733,127 @@ class ReactionManager:
                     "server.manage"
                 )
 
-        if not name or not re.match(r"^[a-zA-Z0-9_]{2,32}$", name):
-            raise InvalidEmojiError("Emoji name must be 2-32 alphanumeric characters or underscores")
-
+        name = self._validate_emoji_name(name)
+        
+        # Check file size
+        max_size = self._config.get("max_emoji_size", 262144)
+        if len(image_data) > max_size:
+            raise EmojiFileSizeError(
+                f"Emoji file size exceeds {max_size // 1024}KB limit",
+                max_size,
+                len(image_data)
+            )
+        
+        # Check content type
+        allowed_formats = self._config.get("emoji_allowed_formats", ["image/png", "image/gif", "image/webp"])
+        if content_type.lower() not in allowed_formats:
+            raise InvalidEmojiFileError(f"Invalid format. Allowed: {', '.join(allowed_formats)}")
+        
+        # Detect if animated (GIF or animated WebP)
+        animated = content_type.lower() == "image/gif"
+        if content_type.lower() == "image/webp":
+            # Check for animation in WebP
+            animated = b"ANIM" in image_data[:100]
+        
+        # Check limits
+        self._check_emoji_limits(server_id, animated)
+        
+        # Check name uniqueness
         existing = self._db.fetch_one(
             "SELECT 1 FROM react_custom_emoji WHERE server_id = ? AND name = ?",
             (server_id, name)
         )
         if existing:
-            raise InvalidEmojiError("Custom emoji with this name already exists")
+            raise EmojiNameExistsError(f"Emoji with name '{name}' already exists in this server")
 
+        # Upload image via media module or store directly
+        url = ""
+        width = None
+        height = None
+        
+        if self._media:
+            ext = "gif" if animated else content_type.split("/")[-1]
+            filename = f"emoji_{name}.{ext}"
+            try:
+                result = self._media.upload_file(user_id, image_data, filename, content_type)
+                url = result.url
+                if result.metadata:
+                    width = result.metadata.get("width")
+                    height = result.metadata.get("height")
+            except Exception as e:
+                logger.error(f"Failed to upload emoji image: {e}")
+                raise InvalidEmojiFileError(f"Failed to upload emoji: {str(e)}")
+        
         now = self._get_timestamp()
         emoji_id = self._generate_id()
 
         self._db.execute(
-            """INSERT INTO react_custom_emoji (id, server_id, name, animated, created_at)
-               VALUES (?, ?, ?, ?, ?)""",
-            (emoji_id, server_id, name, 1 if animated else 0, now)
+            """INSERT INTO react_custom_emoji 
+               (id, server_id, name, animated, url, size, width, height, created_by, available, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)""",
+            (emoji_id, server_id, name, 1 if animated else 0, url, len(image_data), width, height, user_id, now)
         )
 
         logger.debug(f"Custom emoji {name} created for server {server_id}")
 
         result = self.get_custom_emoji(emoji_id)
-        assert result is not None  # Should exist since we just created it
+        assert result is not None
+        return result
+
+    def update_custom_emoji(
+        self,
+        user_id: int,
+        emoji_id: int,
+        name: Optional[str] = None,
+    ) -> CustomEmoji:
+        """
+        Update a custom emoji's name.
+        
+        Args:
+            user_id: ID of user updating
+            emoji_id: ID of emoji
+            name: New name (optional)
+            
+        Returns:
+            Updated CustomEmoji
+            
+        Raises:
+            CustomEmojiNotFoundError: Emoji not found
+            PermissionDeniedError: No permission
+            InvalidEmojiNameError: Invalid name
+            EmojiNameExistsError: Name already taken
+        """
+        emoji = self.get_custom_emoji(emoji_id)
+        if not emoji:
+            raise CustomEmojiNotFoundError("Custom emoji not found")
+
+        if self._servers:
+            if not self._servers.has_permission(user_id, emoji.server_id, "server.manage"):
+                raise PermissionDeniedError(
+                    "Missing permission to manage server",
+                    "server.manage"
+                )
+
+        if name is not None:
+            name = self._validate_emoji_name(name)
+            
+            # Check uniqueness (excluding current emoji)
+            existing = self._db.fetch_one(
+                "SELECT 1 FROM react_custom_emoji WHERE server_id = ? AND name = ? AND id != ?",
+                (emoji.server_id, name, emoji_id)
+            )
+            if existing:
+                raise EmojiNameExistsError(f"Emoji with name '{name}' already exists in this server")
+            
+            self._db.execute(
+                "UPDATE react_custom_emoji SET name = ? WHERE id = ?",
+                (name, emoji_id)
+            )
+
+        logger.debug(f"Custom emoji {emoji_id} updated")
+        
+        result = self.get_custom_emoji(emoji_id)
+        assert result is not None
         return result
 
     def delete_custom_emoji(
@@ -732,14 +912,37 @@ class ReactionManager:
 
         return self._row_to_custom_emoji(row)
 
-    def get_server_custom_emojis(self, server_id: int) -> List[CustomEmoji]:
+    def get_server_custom_emojis(self, server_id: int, include_unavailable: bool = False) -> List[CustomEmoji]:
         """Get all custom emojis for a server."""
-        rows = self._db.fetch_all(
-            "SELECT * FROM react_custom_emoji WHERE server_id = ? ORDER BY name",
-            (server_id,)
-        )
+        if include_unavailable:
+            rows = self._db.fetch_all(
+                "SELECT * FROM react_custom_emoji WHERE server_id = ? ORDER BY name",
+                (server_id,)
+            )
+        else:
+            rows = self._db.fetch_all(
+                "SELECT * FROM react_custom_emoji WHERE server_id = ? AND available = 1 ORDER BY name",
+                (server_id,)
+            )
 
         return [self._row_to_custom_emoji(row) for row in rows]
+
+    def get_emoji_counts(self, server_id: int) -> Dict[str, int]:
+        """Get emoji counts for a server."""
+        static_row = self._db.fetch_one(
+            "SELECT COUNT(*) as count FROM react_custom_emoji WHERE server_id = ? AND animated = 0",
+            (server_id,)
+        )
+        animated_row = self._db.fetch_one(
+            "SELECT COUNT(*) as count FROM react_custom_emoji WHERE server_id = ? AND animated = 1",
+            (server_id,)
+        )
+        return {
+            "static": static_row["count"] if static_row else 0,
+            "animated": animated_row["count"] if animated_row else 0,
+            "max_static": self._config.get("max_emojis_per_server", 50),
+            "max_animated": self._config.get("max_animated_emojis_per_server", 50),
+        }
 
     def _row_to_reaction(self, row) -> Reaction:
         """Convert database row to Reaction."""
@@ -760,5 +963,11 @@ class ReactionManager:
             server_id=row["server_id"],
             name=row["name"],
             animated=bool(row["animated"]),
+            url=row.get("url", "") or "",
+            size=row.get("size", 0) or 0,
+            width=row.get("width"),
+            height=row.get("height"),
+            created_by=row.get("created_by", 0) or 0,
+            available=bool(row.get("available", 1)),
             created_at=row["created_at"]
         )

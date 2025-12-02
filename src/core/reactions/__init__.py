@@ -32,6 +32,11 @@ from .exceptions import (
     ReactionLimitError,
     PermissionDeniedError,
     UserBlockedError,
+    EmojiLimitError,
+    EmojiNameExistsError,
+    InvalidEmojiNameError,
+    EmojiFileSizeError,
+    InvalidEmojiFileError,
 )
 
 __all__ = [
@@ -51,6 +56,11 @@ __all__ = [
     "ReactionLimitError",
     "PermissionDeniedError",
     "UserBlockedError",
+    "EmojiLimitError",
+    "EmojiNameExistsError",
+    "InvalidEmojiNameError",
+    "EmojiFileSizeError",
+    "InvalidEmojiFileError",
     # Setup
     "setup",
     # Reaction operations
@@ -64,16 +74,18 @@ __all__ = [
     "get_user_reactions",
     # Custom emoji operations
     "create_custom_emoji",
+    "update_custom_emoji",
     "delete_custom_emoji",
     "get_custom_emoji",
     "get_server_custom_emojis",
+    "get_emoji_counts",
 ]
 
 _manager = None
 _setup_complete = False
 
 
-def setup(db, messaging_module=None, servers_module=None, relationships_module=None):
+def setup(db, messaging_module=None, servers_module=None, relationships_module=None, media_module=None):
     """
     Initialize the reactions module.
 
@@ -82,12 +94,13 @@ def setup(db, messaging_module=None, servers_module=None, relationships_module=N
         messaging_module: Optional messaging module for message access
         servers_module: Optional servers module for permission checks
         relationships_module: Optional relationships module for block filtering
+        media_module: Optional media module for emoji image uploads
     """
     global _manager, _setup_complete
 
     from .manager import ReactionManager
 
-    _manager = ReactionManager(db, messaging_module, servers_module, relationships_module)
+    _manager = ReactionManager(db, messaging_module, servers_module, relationships_module, media_module)
     _setup_complete = True
 
 
@@ -156,10 +169,20 @@ def create_custom_emoji(
     user_id: int,
     server_id: int,
     name: str,
-    animated: bool = False
+    image_data: bytes,
+    content_type: str,
 ) -> CustomEmoji:
-    """Create a custom emoji for a server."""
-    return _get_manager().create_custom_emoji(user_id, server_id, name, animated)
+    """Create a custom emoji for a server with image upload."""
+    return _get_manager().create_custom_emoji(user_id, server_id, name, image_data, content_type)
+
+
+def update_custom_emoji(
+    user_id: int,
+    emoji_id: int,
+    name: Optional[str] = None,
+) -> CustomEmoji:
+    """Update a custom emoji's name."""
+    return _get_manager().update_custom_emoji(user_id, emoji_id, name)
 
 
 def delete_custom_emoji(user_id: int, emoji_id: int) -> bool:
@@ -172,6 +195,11 @@ def get_custom_emoji(emoji_id: int) -> Optional[CustomEmoji]:
     return _get_manager().get_custom_emoji(emoji_id)
 
 
-def get_server_custom_emojis(server_id: int) -> List[CustomEmoji]:
+def get_server_custom_emojis(server_id: int, include_unavailable: bool = False) -> List[CustomEmoji]:
     """Get all custom emojis for a server."""
-    return _get_manager().get_server_custom_emojis(server_id)
+    return _get_manager().get_server_custom_emojis(server_id, include_unavailable)
+
+
+def get_emoji_counts(server_id: int) -> dict:
+    """Get emoji counts for a server."""
+    return _get_manager().get_emoji_counts(server_id)

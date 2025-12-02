@@ -29,12 +29,19 @@ CREATE TABLE IF NOT EXISTS react_custom_emoji (
     server_id INTEGER NOT NULL,
     name TEXT NOT NULL,
     animated INTEGER NOT NULL DEFAULT 0,
+    url TEXT NOT NULL DEFAULT '',
+    size INTEGER NOT NULL DEFAULT 0,
+    width INTEGER,
+    height INTEGER,
+    created_by INTEGER NOT NULL DEFAULT 0,
+    available INTEGER NOT NULL DEFAULT 1,
     created_at INTEGER NOT NULL,
     UNIQUE(server_id, name)
 );
 
 -- Custom emoji indexes
 CREATE INDEX IF NOT EXISTS idx_react_custom_server ON react_custom_emoji(server_id);
+CREATE INDEX IF NOT EXISTS idx_react_custom_available ON react_custom_emoji(server_id, available);
 """
 
 

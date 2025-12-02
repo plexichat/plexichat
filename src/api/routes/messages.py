@@ -385,65 +385,71 @@ async def trigger_typing(
     Trigger typing indicator in a channel.
     
     Broadcasts a typing event to other users in the channel.
+    Works for both server channels and DM conversations.
     """
     presence = api.get_presence()
     servers_mod = api.get_servers()
+    messaging = api.get_messaging()
     
     try:
         cid = int(channel_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
     
-    # Verify user has access to channel
+    channel = None
+    user_ids = []
+    
+    # Try server channel first
     if servers_mod:
         try:
             channel = servers_mod.get_channel(cid, current_user.user_id)
-            if not channel:
-                raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
-        except HTTPException:
-            raise
-        except Exception as e:
-            if "NotFound" in type(e).__name__:
-                raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
-            elif "Access" in type(e).__name__ or "Permission" in type(e).__name__:
-                raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": "Access denied"}})
-    
-    # Set typing indicator in presence module
-    if presence:
-        try:
-            presence.set_typing(current_user.user_id, cid)
-        except Exception:
-            pass  # Non-critical, don't fail the request
-    
-    # Broadcast typing event via WebSocket dispatcher
-    try:
-        from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
-        from src.core.events.models import Event
-        from src.core.events.types import EventType
-        
-        if ws_is_setup():
-            dispatcher = get_dispatcher()
-            auth = api.get_auth()
-            user = auth.get_user(current_user.user_id) if auth else None
-            
-            # Get server members to broadcast to
-            if servers_mod and channel:
+            if channel:
                 server_id = getattr(channel, "server_id", None)
                 if server_id:
                     members = servers_mod.get_members(current_user.user_id, server_id)
                     user_ids = [m.user_id for m in (members or []) if m.user_id != current_user.user_id]
-                    
-                    if user_ids:
-                        event = Event(
-                            event_type=EventType.TYPING_START,
-                            data={
-                                "channel_id": str(cid),
-                                "user_id": str(current_user.user_id),
-                                "username": user.username if user else "Unknown"
-                            }
-                        )
-                        await dispatcher.dispatch_event(event, user_ids)
-    except Exception:
-        pass  # Non-critical
+        except Exception:
+            channel = None
+    
+    # If not a server channel, try as DM conversation
+    if not channel and messaging:
+        try:
+            participants = messaging.get_participants(current_user.user_id, cid)
+            if participants:
+                user_ids = [p.user_id for p in participants if p.user_id != current_user.user_id]
+        except Exception:
+            pass
+    
+    # Set typing indicator in presence module
+    if presence:
+        try:
+            presence.start_typing(current_user.user_id, cid)
+        except Exception:
+            pass  # Non-critical, don't fail the request
+    
+    # Broadcast typing event via WebSocket dispatcher
+    if user_ids:
+        try:
+            from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+            from src.core.events.models import Event
+            from src.core.events.types import EventType
+            
+            if ws_is_setup():
+                dispatcher = get_dispatcher()
+                auth = api.get_auth()
+                user = auth.get_user(current_user.user_id) if auth else None
+                
+                event = Event(
+                    event_type=EventType.TYPING_START,
+                    data={
+                        "channel_id": str(cid),
+                        "user_id": str(current_user.user_id),
+                        "username": user.username if user else "Unknown"
+                    }
+                )
+                await dispatcher.dispatch_event(event, user_ids)
+        except Exception as e:
+            import utils.logger as logger
+            logger.debug(f"Failed to dispatch typing event: {e}")
     
     return {"success": True}

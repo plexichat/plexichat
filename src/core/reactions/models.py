@@ -13,6 +13,12 @@ class CustomEmoji:
     server_id: int
     name: str
     animated: bool = False
+    url: str = ""
+    size: int = 0
+    width: Optional[int] = None
+    height: Optional[int] = None
+    created_by: int = 0
+    available: bool = True
     created_at: int = 0
 
 

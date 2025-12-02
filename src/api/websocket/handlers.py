@@ -468,15 +468,17 @@ class OpcodeHandler:
 
     async def _dispatch_online_presence(self, user_id: int) -> None:
         """Dispatch online presence to friends when user connects."""
-        await self._dispatch_presence_to_friends(user_id, "online", None, None)
-        
-        # Set presence to online
+        # Set presence to online FIRST before dispatching
         if self._presence:
             try:
                 from src.core.presence.models import UserStatus
                 self._presence.set_status(user_id, UserStatus.ONLINE)
-            except Exception:
-                pass
+                logger.debug(f"Set user {user_id} presence to ONLINE on connect")
+            except Exception as e:
+                logger.warning(f"Failed to set online presence for user {user_id}: {e}")
+        
+        # Then dispatch to friends
+        await self._dispatch_presence_to_friends(user_id, "online", None, None)
 
     async def _dispatch_presence_to_friends(
         self, 

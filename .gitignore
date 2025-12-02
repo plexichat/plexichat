@@ -14,6 +14,7 @@ build/
 
 # Temp and logs
 temp/
+temp_test/
 logs/
 *.log
 *.log.zip
@@ -31,18 +32,24 @@ logs/
 .coverage
 htmlcov/
 .benchmarks/
+.hypothesis/
 
 # Database files
 *.db
 *.sqlite
 *.sqlite3
 data/
-config/
+
+# Uploads and media
+uploads/
 
 # OS
 .DS_Store
 Thumbs.db
-*.yaml
-# other
-.hypothesis/
+
+# Archives
 *.gz
+*.zip
+
+# Config (user-specific)
+config/

@@ -53,3 +53,36 @@ class PermissionDeniedError(ReactionError):
 class UserBlockedError(ReactionError):
     """Cannot interact due to block relationship."""
     pass
+
+
+class EmojiLimitError(ReactionError):
+    """Maximum emoji limit reached for server."""
+    
+    def __init__(self, message: str, max_allowed: int, current: int):
+        super().__init__(message)
+        self.max_allowed = max_allowed
+        self.current = current
+
+
+class EmojiNameExistsError(ReactionError):
+    """Custom emoji with this name already exists in the server."""
+    pass
+
+
+class InvalidEmojiNameError(ReactionError):
+    """Emoji name is invalid."""
+    pass
+
+
+class EmojiFileSizeError(ReactionError):
+    """Emoji file size exceeds limit."""
+    
+    def __init__(self, message: str, max_size: int, actual_size: int):
+        super().__init__(message)
+        self.max_size = max_size
+        self.actual_size = actual_size
+
+
+class InvalidEmojiFileError(ReactionError):
+    """Emoji file format is invalid."""
+    pass

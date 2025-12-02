@@ -375,11 +375,99 @@ class PresenceManager:
         )
 
     def get_presences(self, user_ids: List[int]) -> List[Presence]:
-        """Get presence information for multiple users."""
+        """Get presence information for multiple users efficiently with batch queries."""
         if not user_ids:
             return []
 
-        return [self.get_presence(uid) for uid in user_ids]
+        # Batch fetch all presence records in a single query
+        placeholders = ",".join("?" * len(user_ids))
+        presence_rows = self._db.fetch_all(
+            f"SELECT * FROM pres_presence WHERE user_id IN ({placeholders})",
+            tuple(user_ids)
+        )
+        presence_map = {row["user_id"]: row for row in presence_rows}
+
+        # Batch fetch all custom statuses
+        self._cleanup_expired_custom_status_batch(user_ids)
+        custom_rows = self._db.fetch_all(
+            f"SELECT * FROM pres_custom_status WHERE user_id IN ({placeholders})",
+            tuple(user_ids)
+        )
+        custom_map = {row["user_id"]: row for row in custom_rows}
+
+        # Batch fetch all activities
+        activity_rows = self._db.fetch_all(
+            f"SELECT * FROM pres_activity WHERE user_id IN ({placeholders})",
+            tuple(user_ids)
+        )
+        activity_map = {row["user_id"]: row for row in activity_rows}
+
+        # Build presence objects
+        results = []
+        for uid in user_ids:
+            pres_row = presence_map.get(uid)
+            if not pres_row:
+                results.append(Presence(
+                    user_id=uid,
+                    status=UserStatus.OFFLINE,
+                    custom_status=None,
+                    activity=None,
+                    last_seen=0,
+                    updated_at=0
+                ))
+                continue
+
+            # Build custom status if exists
+            custom_status = None
+            custom_row = custom_map.get(uid)
+            if custom_row:
+                custom_status = CustomStatus(
+                    text=custom_row["text"],
+                    emoji=custom_row["emoji"],
+                    expires_at=custom_row["expires_at"],
+                    created_at=custom_row["created_at"]
+                )
+
+            # Build activity if exists
+            activity = None
+            activity_row = activity_map.get(uid)
+            if activity_row:
+                activity = Activity(
+                    activity_type=ActivityType(activity_row["activity_type"]),
+                    name=activity_row["name"],
+                    details=activity_row["details"],
+                    url=activity_row["url"],
+                    state=activity_row["state"],
+                    start_timestamp=activity_row["start_timestamp"],
+                    end_timestamp=activity_row["end_timestamp"],
+                    large_image=activity_row["large_image"],
+                    large_text=activity_row["large_text"],
+                    small_image=activity_row["small_image"],
+                    small_text=activity_row["small_text"],
+                    created_at=activity_row["created_at"]
+                )
+
+            results.append(Presence(
+                user_id=uid,
+                status=UserStatus(pres_row["status"]),
+                custom_status=custom_status,
+                activity=activity,
+                last_seen=pres_row["last_seen"],
+                updated_at=pres_row["updated_at"]
+            ))
+
+        return results
+
+    def _cleanup_expired_custom_status_batch(self, user_ids: List[int]) -> None:
+        """Remove expired custom statuses for multiple users."""
+        if not user_ids:
+            return
+        now = self._get_timestamp()
+        placeholders = ",".join("?" * len(user_ids))
+        self._db.execute(
+            f"DELETE FROM pres_custom_status WHERE user_id IN ({placeholders}) AND expires_at IS NOT NULL AND expires_at < ?",
+            tuple(user_ids) + (now,)
+        )
 
     def update_last_seen(self, user_id: int) -> Presence:
         """Update user's last seen timestamp."""

@@ -169,14 +169,72 @@ def validate_username(username: str) -> Tuple[bool, List[str]]:
 
 def validate_email(email: str) -> bool:
     """
-    Validate email format.
+    Validate email format including TLD validation.
     
     Args:
         email: Email to validate
         
     Returns:
-        True if email format is valid
+        True if email format is valid with a recognized TLD
     """
     # Basic email regex - not exhaustive but catches most issues
-    pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-    return bool(re.match(pattern, email))
+    pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.([a-zA-Z]{2,})$"
+    match = re.match(pattern, email)
+    if not match:
+        return False
+    
+    # Extract and validate TLD
+    tld = match.group(1).lower()
+    
+    # Comprehensive list of valid TLDs (common gTLDs, ccTLDs, and new gTLDs)
+    valid_tlds = {
+        # Generic TLDs
+        "com", "org", "net", "edu", "gov", "mil", "int", "info", "biz", "name",
+        "pro", "aero", "coop", "museum", "jobs", "travel", "mobi", "cat", "asia",
+        "tel", "xxx", "post",
+        # Common new gTLDs
+        "app", "dev", "io", "co", "ai", "me", "tv", "cc", "ws", "fm", "am", "ly",
+        "to", "gg", "xyz", "online", "site", "website", "tech", "store", "shop",
+        "blog", "cloud", "digital", "email", "global", "group", "live", "network",
+        "news", "social", "space", "studio", "team", "world", "zone", "agency",
+        "company", "consulting", "design", "engineering", "expert", "marketing",
+        "media", "photography", "services", "software", "solutions", "support",
+        "systems", "technology", "ventures", "works", "academy", "center", "club",
+        "community", "foundation", "institute", "international", "management",
+        "partners", "plus", "pro", "training", "university",
+        # Country code TLDs (comprehensive list)
+        "ac", "ad", "ae", "af", "ag", "al", "am", "ao", "aq", "ar", "as", "at",
+        "au", "aw", "ax", "az", "ba", "bb", "bd", "be", "bf", "bg", "bh", "bi",
+        "bj", "bm", "bn", "bo", "br", "bs", "bt", "bw", "by", "bz", "ca", "cd",
+        "cf", "cg", "ch", "ci", "ck", "cl", "cm", "cn", "cr", "cu", "cv", "cw",
+        "cx", "cy", "cz", "de", "dj", "dk", "dm", "do", "dz", "ec", "ee", "eg",
+        "er", "es", "et", "eu", "fi", "fj", "fk", "fo", "fr", "ga", "gb", "gd",
+        "ge", "gf", "gh", "gi", "gl", "gm", "gn", "gp", "gq", "gr", "gs", "gt",
+        "gu", "gw", "gy", "hk", "hm", "hn", "hr", "ht", "hu", "id", "ie", "il",
+        "im", "in", "iq", "ir", "is", "it", "je", "jm", "jo", "jp", "ke", "kg",
+        "kh", "ki", "km", "kn", "kp", "kr", "kw", "ky", "kz", "la", "lb", "lc",
+        "li", "lk", "lr", "ls", "lt", "lu", "lv", "ly", "ma", "mc", "md", "mg",
+        "mh", "mk", "ml", "mm", "mn", "mo", "mp", "mq", "mr", "ms", "mt", "mu",
+        "mv", "mw", "mx", "my", "mz", "na", "nc", "ne", "nf", "ng", "ni", "nl",
+        "no", "np", "nr", "nu", "nz", "om", "pa", "pe", "pf", "pg", "ph", "pk",
+        "pl", "pm", "pn", "pr", "ps", "pt", "pw", "py", "qa", "re", "ro", "rs",
+        "ru", "rw", "sa", "sb", "sc", "sd", "se", "sg", "sh", "si", "sk", "sl",
+        "sm", "sn", "so", "sr", "ss", "st", "su", "sv", "sx", "sy", "sz", "tc",
+        "td", "tf", "tg", "th", "tj", "tk", "tl", "tm", "tn", "tr", "tt", "tw",
+        "tz", "ua", "ug", "uk", "us", "uy", "uz", "va", "vc", "ve", "vg", "vi",
+        "vn", "vu", "wf", "ws", "ye", "yt", "za", "zm", "zw",
+        # Regional/special TLDs
+        "asia", "eu", "africa", "lat", "scot", "wales", "cymru", "london", "nyc",
+        "paris", "berlin", "tokyo", "moscow", "quebec", "bayern", "nrw", "koeln",
+        "hamburg", "wien", "brussels", "amsterdam", "barcelona", "madrid", "roma",
+        # Brand/corporate TLDs (common ones)
+        "google", "apple", "microsoft", "amazon", "netflix", "youtube", "gmail",
+        # Other common TLDs
+        "link", "click", "help", "how", "here", "page", "web", "one", "top",
+        "vip", "win", "bid", "trade", "review", "date", "download", "stream",
+        "racing", "cricket", "party", "science", "work", "money", "cash", "fund",
+        "financial", "exchange", "market", "capital", "investments", "holdings",
+        "limited", "gmbh", "ltda", "sarl", "srl",
+    }
+    
+    return tld in valid_tlds
