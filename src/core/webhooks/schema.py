@@ -52,7 +52,8 @@ def create_tables(db):
     for statement in statements:
         if statement:
             try:
-                db.execute(statement)
+                converted = db.convert_schema(statement) if hasattr(db, 'convert_schema') else statement
+                db.execute(converted)
             except Exception as e:
                 logger.error(f"Failed to execute schema statement: {e}")
                 raise

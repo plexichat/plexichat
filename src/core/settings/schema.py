@@ -27,7 +27,8 @@ def create_tables(db) -> None:
     """Create user settings tables if they don't exist."""
     for statement in SCHEMA_STATEMENTS:
         if statement:
-            db.execute(statement)
+            converted = db.convert_schema(statement) if hasattr(db, 'convert_schema') else statement
+            db.execute(converted)
 
 
 def drop_tables(db) -> None:
