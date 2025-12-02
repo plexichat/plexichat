@@ -15,8 +15,9 @@ A real-time messaging platform server with REST API and WebSocket gateway.
 - Reactions and embeds
 - Webhooks
 - Rate limiting
-- SQLite or PostgreSQL database support
+- SQLite or PostgreSQL database support (automatic schema type conversion)
 - Optional Redis for caching and sessions
+- S3/MinIO compatible media storage
 
 ## Quick Start
 

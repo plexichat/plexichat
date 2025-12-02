@@ -153,6 +153,31 @@ class Database:
             return query
         return _PLACEHOLDER_PATTERN.sub("%s", query)
 
+    def convert_schema(self, schema: str) -> str:
+        """
+        Convert SQLite schema to PostgreSQL-compatible schema.
+        
+        Handles type conversions:
+        - BLOB -> BYTEA (binary data)
+        - INTEGER PRIMARY KEY -> BIGINT PRIMARY KEY (for snowflake IDs)
+        - AUTOINCREMENT -> SERIAL (if needed)
+        
+        Args:
+            schema: SQL schema string with SQLite types.
+            
+        Returns:
+            Schema with PostgreSQL-compatible types if PostgreSQL, unchanged if SQLite.
+        """
+        if self.type != "postgres":
+            return schema
+        
+        # Convert SQLite types to PostgreSQL equivalents
+        converted = schema
+        converted = re.sub(r'\bBLOB\b', 'BYTEA', converted, flags=re.IGNORECASE)
+        converted = re.sub(r'\bINTEGER\s+PRIMARY\s+KEY\b', 'BIGINT PRIMARY KEY', converted, flags=re.IGNORECASE)
+        
+        return converted
+
     def _ensure_connected(self):
         """Ensure database is connected before operations."""
         if not self.connection:

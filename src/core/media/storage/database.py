@@ -64,7 +64,7 @@ class DatabaseStorage(StorageBackendBase):
     
     def _ensure_table(self):
         """Create the blob storage table if it doesn't exist."""
-        self._db.execute("""
+        schema = """
             CREATE TABLE IF NOT EXISTS media_blobs (
                 path TEXT PRIMARY KEY,
                 content BLOB NOT NULL,
@@ -74,7 +74,10 @@ class DatabaseStorage(StorageBackendBase):
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             )
-        """)
+        """
+        # Convert schema types for PostgreSQL compatibility (BLOB -> BYTEA)
+        converted = self._db.convert_schema(schema) if hasattr(self._db, 'convert_schema') else schema
+        self._db.execute(converted)
         self._db.execute("""
             CREATE INDEX IF NOT EXISTS idx_media_blobs_checksum 
             ON media_blobs(checksum)
