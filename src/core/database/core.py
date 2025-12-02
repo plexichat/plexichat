@@ -159,8 +159,8 @@ class Database:
         
         Handles type conversions:
         - BLOB -> BYTEA (binary data)
-        - INTEGER PRIMARY KEY -> BIGINT PRIMARY KEY (for snowflake IDs)
-        - AUTOINCREMENT -> SERIAL (if needed)
+        - INTEGER -> BIGINT (for snowflake IDs which exceed 32-bit range)
+        - AUTOINCREMENT -> (removed, PostgreSQL uses SERIAL or BIGSERIAL)
         
         Args:
             schema: SQL schema string with SQLite types.
@@ -174,7 +174,8 @@ class Database:
         # Convert SQLite types to PostgreSQL equivalents
         converted = schema
         converted = re.sub(r'\bBLOB\b', 'BYTEA', converted, flags=re.IGNORECASE)
-        converted = re.sub(r'\bINTEGER\s+PRIMARY\s+KEY\b', 'BIGINT PRIMARY KEY', converted, flags=re.IGNORECASE)
+        # Convert all INTEGER to BIGINT (snowflake IDs exceed 32-bit INTEGER range)
+        converted = re.sub(r'\bINTEGER\b', 'BIGINT', converted, flags=re.IGNORECASE)
         
         return converted
 
