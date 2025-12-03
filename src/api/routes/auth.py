@@ -2,6 +2,8 @@
 Authentication routes - Register, login, logout endpoints.
 """
 
+import os
+import sys
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException, Depends
 
@@ -14,6 +16,18 @@ from src.api.schemas.auth import (
     TwoFactorRequest,
     UserResponse,
 )
+
+# Import config utility
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
+common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
+for path in [project_root, common_utils_path]:
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
+try:
+    import utils.config as config_util
+except ImportError:
+    config_util = None
 
 router = APIRouter()
 
@@ -388,3 +402,38 @@ async def revoke_all_sessions(body: dict, current_user: TokenInfo = Depends(get_
         return {"success": True, "revoked_count": revoked}
     except Exception as e:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+@router.get("/password-requirements")
+async def get_password_requirements():
+    """
+    Get server password requirements.
+    
+    Returns the password policy configuration so clients can validate
+    passwords before submission and display requirements to users.
+    """
+    # Default requirements
+    defaults = {
+        "min_length": 8,
+        "max_length": 128,
+        "require_uppercase": True,
+        "require_lowercase": True,
+        "require_digit": True,
+        "require_special": True,
+    }
+    
+    if config_util is None:
+        return defaults
+    
+    try:
+        password_config = config_util.get("authentication.password", {})
+        return {
+            "min_length": password_config.get("min_length", defaults["min_length"]),
+            "max_length": password_config.get("max_length", defaults["max_length"]),
+            "require_uppercase": password_config.get("require_uppercase", defaults["require_uppercase"]),
+            "require_lowercase": password_config.get("require_lowercase", defaults["require_lowercase"]),
+            "require_digit": password_config.get("require_digit", defaults["require_digit"]),
+            "require_special": password_config.get("require_special", defaults["require_special"]),
+        }
+    except Exception:
+        return defaults
