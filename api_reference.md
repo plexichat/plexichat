@@ -810,6 +810,239 @@ Get all webhooks in a server. Requires authentication and manage webhooks permis
 - `403` - Permission denied
 - `404` - Server not found
 
+### POST /servers/{server_id}/icon
+
+Upload a server icon. Requires manage server permission.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request:** Multipart form data with `file` field (JPEG, PNG, GIF, or WebP, max 2MB)
+
+**Response (200):** Updated server object with new `icon_url`
+
+**Error Responses:**
+- `400` - Invalid file type or file too large
+- `403` - Permission denied
+- `404` - Server not found
+
+### GET /servers/{server_id}/roles
+
+Get all roles in a server. Requires authentication and membership.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+[
+  {
+    "id": "123456789012345678",
+    "server_id": "123456789012345678",
+    "name": "Admin",
+    "color": "#FF0000",
+    "position": 1,
+    "permissions": {},
+    "hoist": true,
+    "mentionable": true,
+    "is_default": false
+  }
+]
+```
+
+### POST /servers/{server_id}/roles
+
+Create a new role. Requires manage roles permission.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request:**
+```json
+{
+  "name": "New Role",
+  "color": "#00FF00",
+  "permissions": {},
+  "hoist": false,
+  "mentionable": false
+}
+```
+
+**Response (200):** Created role object
+
+### PATCH /servers/{server_id}/roles/{role_id}
+
+Update a role. Requires manage roles permission.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):** Updated role object
+
+### DELETE /servers/{server_id}/roles/{role_id}
+
+Delete a role. Requires manage roles permission.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "success": true
+}
+```
+
+### GET /servers/{server_id}/bans
+
+Get all bans in a server. Requires ban members permission.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+[
+  {
+    "user_id": "123456789012345678",
+    "reason": "Spam",
+    "banned_by": "234567890123456789",
+    "banned_at": 1704067200000
+  }
+]
+```
+
+### PUT /servers/{server_id}/bans/{user_id}
+
+Ban a user from a server. Requires ban members permission.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request:**
+```json
+{
+  "reason": "Spam",
+  "delete_message_days": 1
+}
+```
+
+**Response (200):**
+```json
+{
+  "success": true
+}
+```
+
+### DELETE /servers/{server_id}/bans/{user_id}
+
+Unban a user from a server. Requires ban members permission.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "success": true
+}
+```
+
+### GET /servers/{server_id}/invites
+
+Get all invites for a server. Requires manage server permission.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+[
+  {
+    "code": "abc123",
+    "server_id": "123456789012345678",
+    "channel_id": "234567890123456789",
+    "inviter_id": "345678901234567890",
+    "uses": 5,
+    "max_uses": 100,
+    "max_age": 86400,
+    "temporary": false,
+    "created_at": 1704067200000,
+    "expires_at": 1704153600000
+  }
+]
+```
+
+---
+
+## Custom Emoji Endpoints
+
+### GET /servers/{server_id}/emojis
+
+Get all custom emojis in a server. Requires authentication and membership.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+[
+  {
+    "id": "123456789012345678",
+    "server_id": "123456789012345678",
+    "name": "custom_emoji",
+    "animated": false,
+    "url": "/api/v1/media/emojis/123.png",
+    "created_by": "234567890123456789",
+    "created_at": 1704067200000
+  }
+]
+```
+
+### GET /servers/{server_id}/emojis/counts
+
+Get emoji counts and limits for a server.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "static_count": 10,
+  "animated_count": 5,
+  "static_limit": 50,
+  "animated_limit": 50
+}
+```
+
+### POST /servers/{server_id}/emojis
+
+Create a custom emoji. Requires manage emojis permission.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request:** Multipart form data with `name` and `image` fields
+
+**Response (200):** Created emoji object
+
+### PATCH /servers/{server_id}/emojis/{emoji_id}
+
+Update emoji name. Requires manage emojis permission.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request:**
+```json
+{
+  "name": "new_name"
+}
+```
+
+**Response (200):** Updated emoji object
+
+### DELETE /servers/{server_id}/emojis/{emoji_id}
+
+Delete a custom emoji. Requires manage emojis permission.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "success": true
+}
+```
+
 ---
 
 ## Channel Endpoints
@@ -913,6 +1146,115 @@ Get all webhooks for a channel. Requires authentication and manage webhooks perm
 **Error Responses:**
 - `403` - Permission denied
 - `404` - Channel not found
+
+### POST /channels/{channel_id}/invites
+
+Create an invite for a channel. Requires create instant invite permission.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request:**
+```json
+{
+  "max_age": 86400,
+  "max_uses": 0,
+  "temporary": false
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| max_age | int | 86400 | Invite expiry in seconds (0 = never) |
+| max_uses | int | 0 | Max uses (0 = unlimited) |
+| temporary | bool | false | Grant temporary membership |
+
+**Response (200):**
+```json
+{
+  "code": "abc123",
+  "channel_id": "123456789012345678",
+  "server_id": "234567890123456789",
+  "max_age": 86400,
+  "max_uses": 0,
+  "temporary": false,
+  "uses": 0,
+  "created_at": 1704067200000
+}
+```
+
+### GET /channels/invites/{invite_code}
+
+Get invite information. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "code": "abc123",
+  "server_id": "123456789012345678",
+  "server_name": "My Server",
+  "channel_id": "234567890123456789",
+  "inviter_id": "345678901234567890",
+  "uses": 5,
+  "max_uses": 100,
+  "expires_at": 1704153600000
+}
+```
+
+**Error Responses:**
+- `404` - Invite not found or expired
+
+### POST /channels/invites/{invite_code}
+
+Join a server via invite code. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "server_id": "123456789012345678"
+}
+```
+
+**Error Responses:**
+- `403` - Banned from server
+- `404` - Invite not found or expired
+- `409` - Already a member
+
+### DELETE /channels/invites/{invite_code}
+
+Delete an invite. Requires manage server permission.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "success": true
+}
+```
+
+### POST /channels/{channel_id}/attachments
+
+Upload a file attachment to a channel. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request:** Multipart form data with `file` field (max 10MB)
+
+**Response (200):**
+```json
+{
+  "id": "abc123def456",
+  "filename": "image.png",
+  "size": 12345,
+  "content_type": "image/png",
+  "url": "/api/v1/media/attachments/abc123def456"
+}
+```
 
 ---
 
@@ -1091,6 +1433,101 @@ Delete a message. Author or moderators can delete.
 **Error Responses:**
 - `403` - Permission denied
 - `404` - Message not found
+
+### GET /channels/{channel_id}/messages/search
+
+Search messages in a channel by content. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Query Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| content | string | Yes | Search query (case-insensitive) |
+| limit | int | No | Max results (1-100, default 25) |
+
+**Response (200):**
+```json
+[
+  {
+    "id": "123456789012345678",
+    "channel_id": "123456789012345678",
+    "author_id": "123456789012345678",
+    "content": "Message containing search term",
+    "created_at": 1704067200000,
+    "edited_at": null,
+    "author_username": "johndoe"
+  }
+]
+```
+
+### GET /channels/{channel_id}/pins
+
+Get all pinned messages in a channel. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+[
+  {
+    "id": "123456789012345678",
+    "channel_id": "123456789012345678",
+    "author_id": "123456789012345678",
+    "content": "Important pinned message",
+    "created_at": 1704067200000,
+    "pinned": true,
+    "author_username": "johndoe"
+  }
+]
+```
+
+### PUT /channels/{channel_id}/pins/{message_id}
+
+Pin a message in a channel. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "success": true
+}
+```
+
+**Error Responses:**
+- `403` - Permission denied
+- `404` - Message not found
+
+### DELETE /channels/{channel_id}/pins/{message_id}
+
+Unpin a message from a channel. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "success": true
+}
+```
+
+**Error Responses:**
+- `403` - Permission denied
+- `404` - Message not found
+
+### POST /channels/{channel_id}/typing
+
+Trigger typing indicator in a channel. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "success": true
+}
+```
 
 ---
 

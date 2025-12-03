@@ -30,13 +30,18 @@ def _message_to_response(msg, author_username: str = None) -> MessageResponse:
                 url=att.url,
             ))
     
+    # Get edited_at from updated_at if message was edited
+    edited_at = None
+    if getattr(msg, "edited", False) or getattr(msg, "edited_at", None):
+        edited_at = getattr(msg, "edited_at", None) or getattr(msg, "updated_at", None)
+    
     response = MessageResponse(
         id=str(msg.id),
         channel_id=str(getattr(msg, "channel_id", 0) or getattr(msg, "conversation_id", 0)),
         author_id=str(msg.author_id),
         content=msg.content,
         created_at=msg.created_at,
-        edited_at=getattr(msg, "edited_at", None),
+        edited_at=edited_at,
         reply_to_id=str(msg.reply_to_id) if getattr(msg, "reply_to_id", None) else None,
         attachments=attachments,
         embeds=getattr(msg, "embeds", []) or [],
