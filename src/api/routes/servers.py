@@ -621,6 +621,49 @@ async def unban_member(server_id: str, user_id: str, current_user: TokenInfo = D
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
 
 
+# ==================== Audit Log ====================
+
+@router.get("/{server_id}/audit-logs")
+async def get_audit_log(
+    server_id: str,
+    limit: int = 50,
+    current_user: TokenInfo = Depends(get_current_user)
+):
+    """Get audit log entries for a server. Requires view audit log permission."""
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
+    
+    try:
+        sid = int(server_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
+    
+    try:
+        entries = servers_mod.get_audit_log(current_user.user_id, sid, limit=limit)
+        return [
+            {
+                "id": str(e.id),
+                "server_id": str(e.server_id),
+                "user_id": str(e.user_id),
+                "action": e.action.value if hasattr(e.action, "value") else str(e.action),
+                "target_type": getattr(e, "target_type", None),
+                "target_id": str(e.target_id) if getattr(e, "target_id", None) else None,
+                "changes": getattr(e, "changes", None),
+                "reason": getattr(e, "reason", None),
+                "created_at": getattr(e, "created_at", None),
+            }
+            for e in (entries or [])
+        ]
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Server not found"}})
+        elif "Permission" in exc_name:
+            raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
 # ==================== Webhook Management ====================
 
 @router.get("/{server_id}/webhooks")
