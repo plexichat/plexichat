@@ -964,6 +964,44 @@ Get all invites for a server. Requires manage server permission.
 ]
 ```
 
+### GET /servers/{server_id}/audit-logs
+
+Get audit log entries for a server. Requires view audit log permission.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| limit | int | 50 | Max entries to return |
+
+**Response (200):**
+```json
+[
+  {
+    "id": "123456789012345678",
+    "server_id": "123456789012345678",
+    "user_id": "234567890123456789",
+    "action": "channel_create",
+    "target_type": "channel",
+    "target_id": "345678901234567890",
+    "changes": null,
+    "reason": null,
+    "created_at": 1704067200000
+  }
+]
+```
+
+**Audit Log Actions:**
+- `server_create`, `server_update`, `server_delete`
+- `channel_create`, `channel_update`, `channel_delete`
+- `role_create`, `role_update`, `role_delete`
+- `member_kick`, `member_ban`, `member_unban`
+- `invite_create`, `invite_delete`
+- `webhook_create`, `webhook_update`, `webhook_delete`
+- `emoji_create`, `emoji_update`, `emoji_delete`
+- `event_create`, `event_update`, `event_delete`
+
 ---
 
 ## Custom Emoji Endpoints
