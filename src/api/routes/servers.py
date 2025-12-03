@@ -619,3 +619,100 @@ async def unban_member(server_id: str, user_id: str, current_user: TokenInfo = D
         elif "Permission" in exc_name:
             raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+# ==================== Webhook Management ====================
+
+@router.get("/{server_id}/webhooks")
+async def get_server_webhooks(server_id: str, current_user: TokenInfo = Depends(get_current_user)):
+    """Get all webhooks in a server. Requires manage webhooks permission."""
+    webhooks_mod = api.get_webhooks()
+    if not webhooks_mod:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Webhooks module not available"}})
+    
+    try:
+        sid = int(server_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
+    
+    try:
+        webhooks = webhooks_mod.get_server_webhooks(current_user.user_id, sid)
+        return [
+            {
+                "id": str(w.id),
+                "channel_id": str(w.channel_id),
+                "server_id": str(w.server_id),
+                "creator_id": str(getattr(w, "creator_id", 0)),
+                "name": w.name,
+                "avatar_url": w.avatar_url,
+                "created_at": w.created_at,
+            }
+            for w in (webhooks or [])
+        ]
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Server not found"}})
+        elif "Permission" in exc_name:
+            raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+# ==================== Server Icon Upload ====================
+
+from fastapi import File, UploadFile
+import os
+import uuid
+from pathlib import Path
+
+
+@router.post("/{server_id}/icon")
+async def upload_server_icon(
+    server_id: str,
+    file: UploadFile = File(...),
+    current_user: TokenInfo = Depends(get_current_user)
+):
+    """Upload a server icon."""
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
+    
+    try:
+        sid = int(server_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
+    
+    # Check file type
+    if file.content_type not in ["image/jpeg", "image/png", "image/gif", "image/webp"]:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid file type. Must be JPEG, PNG, GIF, or WebP"}})
+    
+    # Check file size (2MB limit for icons)
+    content = await file.read()
+    if len(content) > 2 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "File too large (max 2MB)"}})
+    
+    # Generate unique filename
+    ext = os.path.splitext(file.filename)[1] if file.filename else '.png'
+    unique_name = f"server_{sid}_{uuid.uuid4().hex}{ext}"
+    
+    # Save to media directory
+    media_dir = Path.home() / ".plexichat" / "media" / "icons"
+    media_dir.mkdir(parents=True, exist_ok=True)
+    
+    file_path = media_dir / unique_name
+    with open(file_path, "wb") as f:
+        f.write(content)
+    
+    icon_url = f"/api/v1/media/icons/{unique_name}"
+    
+    # Update server with new icon URL
+    try:
+        server = servers_mod.update_server(current_user.user_id, sid, icon_url=icon_url)
+        return _server_to_response(server)
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Server not found"}})
+        elif "Permission" in exc_name:
+            raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})

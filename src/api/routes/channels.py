@@ -124,6 +124,41 @@ async def delete_channel(channel_id: str, current_user: TokenInfo = Depends(get_
         raise
 
 
+@router.get("/{channel_id}/webhooks")
+async def get_channel_webhooks(channel_id: str, current_user: TokenInfo = Depends(get_current_user)):
+    """Get all webhooks for a channel. Requires manage webhooks permission."""
+    webhooks_mod = api.get_webhooks()
+    if not webhooks_mod:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Webhooks module not available"}})
+    
+    try:
+        cid = int(channel_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
+    
+    try:
+        webhooks = webhooks_mod.get_channel_webhooks(current_user.user_id, cid)
+        return [
+            {
+                "id": str(w.id),
+                "channel_id": str(w.channel_id),
+                "server_id": str(w.server_id),
+                "creator_id": str(getattr(w, "creator_id", 0)),
+                "name": w.name,
+                "avatar_url": w.avatar_url,
+                "created_at": w.created_at,
+            }
+            for w in (webhooks or [])
+        ]
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
+        elif "Permission" in exc_name:
+            raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
 @router.post("/{channel_id}/invites")
 async def create_channel_invite(
     channel_id: str,

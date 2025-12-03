@@ -471,13 +471,25 @@ class PlexiChatServer:
     
     def initialize_modules(self):
         """Initialize all core modules in dependency order."""
-        from src.core.database import Database
+        from src.core.database import Database, setup_redis, get_redis_client
         from src.core import auth, messaging, servers, relationships, presence, reactions, embeds, webhooks, settings, media
         
         # Initialize database
         logger.info("Initializing database...")
         self.db = Database()
         self.db.connect()
+        
+        # Initialize Redis if enabled
+        redis_config = config.get("redis") or {}
+        if redis_config.get("enabled", False):
+            logger.info("Initializing Redis...")
+            redis_client = setup_redis()
+            if redis_client and redis_client.ping():
+                logger.info(f"Connected to Redis at {redis_config.get('host', 'localhost')}:{redis_config.get('port', 6379)}")
+            else:
+                logger.warning("Redis is enabled but connection failed - continuing without Redis")
+        else:
+            logger.info("Redis is disabled in configuration")
         
         # Initialize core modules in dependency order
         logger.info("Initializing auth module...")

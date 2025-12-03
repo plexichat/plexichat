@@ -135,6 +135,72 @@ async def get_channel_messages(
     return result
 
 
+@router.get("/channels/{channel_id}/messages/search")
+async def search_messages(
+    channel_id: str,
+    content: str = Query(..., description="Search query"),
+    limit: int = Query(default=25, ge=1, le=100),
+    current_user: TokenInfo = Depends(get_current_user)
+):
+    """Search messages in a channel by content."""
+    messaging = api.get_messaging()
+    servers_mod = api.get_servers()
+    auth = api.get_auth()
+    
+    try:
+        cid = int(channel_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
+    
+    messages = []
+    
+    # Try server channel first
+    if servers_mod:
+        try:
+            all_messages = servers_mod.get_channel_messages(
+                user_id=current_user.user_id,
+                channel_id=cid,
+                limit=500  # Get more messages to search through
+            )
+            if all_messages:
+                search_lower = content.lower()
+                messages = [m for m in all_messages if search_lower in (m.content or "").lower()][:limit]
+        except Exception:
+            pass
+    
+    # If not found in server channels, try DM conversations
+    if not messages and messaging:
+        try:
+            all_messages = messaging.get_messages(
+                user_id=current_user.user_id,
+                conversation_id=cid,
+                limit=500
+            )
+            if all_messages:
+                search_lower = content.lower()
+                messages = [m for m in all_messages if search_lower in (m.content or "").lower()][:limit]
+        except Exception:
+            pass
+    
+    author_cache = {}
+    result = []
+    for m in messages:
+        author_id = m.author_id
+        if author_id not in author_cache:
+            username = None
+            if auth:
+                try:
+                    user = auth.get_user(author_id)
+                    if user:
+                        username = user.username
+                except Exception:
+                    pass
+            author_cache[author_id] = username
+        result.append(_message_to_response(m, author_cache.get(author_id)))
+    
+    return result
+
+
 @router.post("/channels/{channel_id}/messages")
 async def send_channel_message(
     channel_id: str,
@@ -374,6 +440,116 @@ async def delete_message(
         elif "Access" in exc_name or "Permission" in exc_name:
             raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
         raise
+
+
+@router.get("/channels/{channel_id}/pins")
+async def get_pinned_messages(
+    channel_id: str,
+    current_user: TokenInfo = Depends(get_current_user)
+):
+    """Get all pinned messages in a channel."""
+    messaging = api.get_messaging()
+    servers_mod = api.get_servers()
+    auth = api.get_auth()
+    
+    try:
+        cid = int(channel_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
+    
+    messages = []
+    
+    # Try server channel first - get all messages and filter pinned
+    if servers_mod:
+        try:
+            all_messages = servers_mod.get_channel_messages(
+                user_id=current_user.user_id,
+                channel_id=cid,
+                limit=500
+            )
+            if all_messages:
+                messages = [m for m in all_messages if getattr(m, "pinned", False)]
+        except Exception:
+            pass
+    
+    # If not a server channel, try DM conversation
+    if not messages and messaging:
+        try:
+            messages = messaging.get_pinned_messages(current_user.user_id, cid) or []
+        except Exception:
+            pass
+    
+    author_cache = {}
+    result = []
+    for m in messages:
+        author_id = m.author_id
+        if author_id not in author_cache:
+            username = None
+            if auth:
+                try:
+                    user = auth.get_user(author_id)
+                    if user:
+                        username = user.username
+                except Exception:
+                    pass
+            author_cache[author_id] = username
+        result.append(_message_to_response(m, author_cache.get(author_id)))
+    
+    return result
+
+
+@router.put("/channels/{channel_id}/pins/{message_id}")
+async def pin_message(
+    channel_id: str,
+    message_id: str,
+    current_user: TokenInfo = Depends(get_current_user)
+):
+    """Pin a message in a channel."""
+    messaging = api.get_messaging()
+    
+    try:
+        mid = int(message_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid message ID"}})
+    
+    try:
+        if messaging:
+            messaging.pin_message(current_user.user_id, mid)
+        return {"success": True}
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Message not found"}})
+        elif "Permission" in exc_name:
+            raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+@router.delete("/channels/{channel_id}/pins/{message_id}")
+async def unpin_message(
+    channel_id: str,
+    message_id: str,
+    current_user: TokenInfo = Depends(get_current_user)
+):
+    """Unpin a message from a channel."""
+    messaging = api.get_messaging()
+    
+    try:
+        mid = int(message_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid message ID"}})
+    
+    try:
+        if messaging:
+            messaging.unpin_message(current_user.user_id, mid)
+        return {"success": True}
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Message not found"}})
+        elif "Permission" in exc_name:
+            raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
 
 
 @router.post("/channels/{channel_id}/typing")

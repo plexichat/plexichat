@@ -83,7 +83,8 @@ class S3Storage(StorageBackendBase):
         try:
             self._client = boto3.client(**client_kwargs)
             self._client.head_bucket(Bucket=bucket)
-            logger.debug(f"S3Storage initialized for bucket {bucket}")
+            endpoint_info = f" (endpoint: {endpoint_url})" if endpoint_url else ""
+            logger.info(f"Connected to S3 storage: bucket={bucket}{endpoint_info}")
         except Exception as e:
             logger.error(f"Failed to connect to S3: {e}")
             raise StorageConnectionError(f"Failed to connect to S3: {e}", "s3")
