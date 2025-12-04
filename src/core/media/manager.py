@@ -187,11 +187,11 @@ class MediaManager:
         """Create rate limit tracking table."""
         self._db.execute("""
             CREATE TABLE IF NOT EXISTS media_rate_limits (
-                user_id INTEGER NOT NULL,
+                user_id BIGINT NOT NULL,
                 window_type TEXT NOT NULL,
-                window_start INTEGER NOT NULL,
+                window_start BIGINT NOT NULL,
                 upload_count INTEGER NOT NULL DEFAULT 0,
-                total_size INTEGER NOT NULL DEFAULT 0,
+                total_size BIGINT NOT NULL DEFAULT 0,
                 PRIMARY KEY (user_id, window_type, window_start)
             )
         """)
