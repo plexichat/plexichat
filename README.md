@@ -2,6 +2,16 @@
 
 A real-time messaging platform server with REST API and WebSocket gateway.
 
+## Installation
+
+```bash
+# Clone with submodules (required)
+git clone --recurse-submodules https://gitlab.com/plexichat/plexichat.git
+
+# Or if already cloned without submodules:
+git submodule update --init --recursive
+```
+
 ## Features
 
 - REST API for user management, servers, channels, and messages
