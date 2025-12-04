@@ -260,6 +260,13 @@ class PlexiChatServer:
                     "require_auth": False
                 }
             },
+            "feedback": {
+                "enabled": True,
+                "rate_limit": {
+                    "max_per_hour": 5,
+                    "max_per_day": 20
+                }
+            },
             "media": {
                 # Primary storage backend: "local", "s3", or "database"
                 "storage_backend": "local",
