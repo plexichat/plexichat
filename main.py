@@ -473,6 +473,8 @@ class PlexiChatServer:
         """Initialize all core modules in dependency order."""
         from src.core.database import Database, setup_redis, get_redis_client
         from src.core import auth, messaging, servers, relationships, presence, reactions, embeds, webhooks, settings, media
+        from src.core import voice
+        from src.core.voice import signaling
         
         # Initialize database
         logger.info("Initializing database...")
@@ -531,6 +533,34 @@ class PlexiChatServer:
         logger.info("Initializing media module...")
         media.setup(self.db, messaging)
         self._modules['media'] = media
+        
+        # Initialize voice module
+        logger.info("Initializing voice module...")
+        voice.setup(self.db, auth, servers, relationships, presence)
+        self._modules['voice'] = voice
+        
+        # Initialize voice signaling with SFU configuration
+        voice_config = config.get("voice") or {}
+        if voice_config.get("enabled", False):
+            logger.info("Initializing voice signaling module...")
+            signaling.setup(
+                voice_module=voice,
+                events_module=None,  # TODO: Add events module when available
+                sfu_backend=voice_config.get("sfu_backend", "mediasoup"),
+                mediasoup_url=voice_config.get("mediasoup_url", "https://localhost:4443"),
+                janus_url=voice_config.get("janus_url", "http://localhost:8088/janus"),
+                stun_urls=voice_config.get("stun_urls", ["stun:stun.l.google.com:19302"]),
+                turn_urls=voice_config.get("turn_urls", []),
+                turn_secret=voice_config.get("turn_secret", ""),
+                turn_ttl=voice_config.get("turn_ttl", 86400),
+            )
+            self._modules['signaling'] = signaling
+            sfu_url = voice_config.get("mediasoup_url") if voice_config.get("sfu_backend") == "mediasoup" else voice_config.get("janus_url")
+            logger.info(f"Voice signaling initialized with {voice_config.get('sfu_backend', 'mediasoup')} backend at {sfu_url}")
+            if voice_config.get("log_connections", False):
+                logger.info("Voice connection logging enabled")
+        else:
+            logger.info("Voice module disabled in configuration")
         
         return auth, messaging, servers, relationships, presence, reactions, embeds, webhooks, settings, media
     
