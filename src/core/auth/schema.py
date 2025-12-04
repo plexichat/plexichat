@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS auth_users (
     totp_secret_encrypted TEXT,
     totp_enabled INTEGER DEFAULT 0,
     backup_codes_hash TEXT,
-    public_key BLOB
+    public_key BLOB,
+    avatar_url TEXT
 );
 
 -- Sessions table
