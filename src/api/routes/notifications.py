@@ -1,0 +1,33 @@
+"""
+Notifications API routes.
+
+Handles user notifications (placeholder for now).
+"""
+
+from fastapi import APIRouter, Depends
+from typing import List
+
+from src.api.middleware.authentication import get_current_user, TokenInfo
+
+
+router = APIRouter()
+
+
+@router.get("/users/@me/notifications")
+async def get_notifications(
+    limit: int = 20,
+    current_user: TokenInfo = Depends(get_current_user)
+):
+    """
+    Get user notifications.
+    
+    Returns an empty list for now (placeholder).
+    """
+    # Get user ID from token info
+    user_id = getattr(current_user, 'user_id', None) or getattr(current_user, 'id', None)
+    
+    # Return empty notifications list for now
+    return {
+        "notifications": [],
+        "unread_count": 0
+    }

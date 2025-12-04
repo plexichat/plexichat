@@ -99,6 +99,14 @@ async def submit_feedback(
     
     Rate limited to prevent spam.
     """
+    # Get user ID from token info
+    user_id = getattr(current_user, 'user_id', None) or getattr(current_user, 'id', None)
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid user token"
+        )
+    
     # Check if feedback is enabled
     if not config.get("feedback.enabled", True):
         raise HTTPException(
@@ -107,7 +115,7 @@ async def submit_feedback(
         )
     
     # Check rate limit
-    if not _check_rate_limit(current_user.id):
+    if not _check_rate_limit(user_id):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many feedback submissions. Please try again later."
@@ -123,13 +131,13 @@ async def submit_feedback(
     db.execute(
         """INSERT INTO feedback (id, user_id, content, category, rating, created_at)
            VALUES (?, ?, ?, ?, ?, ?)""",
-        (feedback_id, current_user.id, feedback.content, feedback.category, feedback.rating, now)
+        (feedback_id, user_id, feedback.content, feedback.category, feedback.rating, now)
     )
     
     # Record for rate limiting
-    _record_feedback(current_user.id)
+    _record_feedback(user_id)
     
-    logger.info(f"Feedback submitted by user {current_user.id}")
+    logger.info(f"Feedback submitted by user {user_id}")
     
     return FeedbackResponse(
         id=feedback_id,
@@ -147,7 +155,19 @@ async def get_feedback_status(current_user = Depends(get_current_user)):
     max_per_hour = config.get("feedback.rate_limit.max_per_hour", 5)
     max_per_day = config.get("feedback.rate_limit.max_per_day", 20)
     
-    user_submissions = _feedback_rate_limits.get(current_user.id, [])
+    # Get user ID from token info
+    user_id = getattr(current_user, 'user_id', None) or getattr(current_user, 'id', None)
+    if not user_id:
+        return {
+            "enabled": config.get("feedback.enabled", True),
+            "submissions_this_hour": 0,
+            "submissions_today": 0,
+            "max_per_hour": max_per_hour,
+            "max_per_day": max_per_day,
+            "can_submit": True
+        }
+    
+    user_submissions = _feedback_rate_limits.get(user_id, [])
     user_submissions = [t for t in user_submissions if t > day_ago]
     
     hour_count = sum(1 for t in user_submissions if t > hour_ago)
