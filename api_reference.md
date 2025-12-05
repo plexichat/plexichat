@@ -643,6 +643,7 @@ Get all servers the user is a member of. Requires authentication.
     "icon_url": "https://cdn.example.com/icons/123.png",
     "owner_id": "123456789012345678",
     "member_count": 150,
+    "default_channel_id": "234567890123456789",
     "created_at": 1704067200000
   }
 ]
@@ -698,15 +699,23 @@ Update server settings. Requires manage server permission.
 {
   "name": "Updated Name",
   "description": "Updated description",
-  "icon_url": "https://cdn.example.com/icons/updated.png"
+  "icon_url": "https://cdn.example.com/icons/updated.png",
+  "default_channel_id": "123456789012345678"
 }
 ```
+
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| name | string | 2-100 chars, optional | Server name |
+| description | string | Max 1000 chars, optional | Server description |
+| icon_url | string | Optional | Server icon URL |
+| default_channel_id | string | Snowflake ID, optional | Default channel to select when joining server |
 
 **Response (200):** Updated server object
 
 **Error Responses:**
 - `403` - Permission denied
-- `404` - Server not found
+- `404` - Server not found or default channel not found in server
 
 ### DELETE /servers/{server_id}
 
