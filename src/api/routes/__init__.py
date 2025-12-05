@@ -20,6 +20,10 @@ from .settings import router as settings_router
 from .feedback import router as feedback_router
 from .notifications import router as notifications_router
 from .docs import router as docs_router, is_docs_enabled, clear_docs_cache, get_docs_stats
+from .telemetry import router as telemetry_router
+from .admin import router as admin_router
+
+import utils.config as config
 
 
 def create_api_router() -> APIRouter:
@@ -41,6 +45,14 @@ def create_api_router() -> APIRouter:
     api_router.include_router(settings_router, prefix="/users/@me/settings", tags=["Settings"])
     api_router.include_router(feedback_router, tags=["Feedback"])
     api_router.include_router(notifications_router, tags=["Notifications"])
+    api_router.include_router(telemetry_router, tags=["Telemetry"])
+    
+    # Include admin router with configurable path
+    admin_config = config.get("admin_ui", {})
+    if admin_config.get("enabled", False):
+        admin_path = admin_config.get("path", "/admin")
+        # Remove /api/v1 prefix since admin is mounted at root
+        api_router.include_router(admin_router, prefix="/admin", tags=["Admin"])
     
     return api_router
 

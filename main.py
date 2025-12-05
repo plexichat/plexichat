@@ -375,6 +375,32 @@ class PlexiChatServer:
                     "uploads_per_hour": 100,
                     "max_total_size_per_day": 536870912  # 512MB per user per day
                 }
+            },
+            # Telemetry configuration
+            "telemetry": {
+                "enabled": True,
+                "rate_limit": {
+                    "max_per_minute": 10
+                },
+                "retention_days": 30
+            },
+            # Admin UI configuration
+            "admin_ui": {
+                "enabled": True,
+                "path": "/admin",
+                "host_restriction": {
+                    "enabled": True,
+                    "allowed_hosts": ["127.0.0.1", "localhost", "::1"]
+                },
+                "require_admin_role": True
+            },
+            # TLS/HTTPS configuration
+            "tls": {
+                "enabled": False,
+                "auto_generate_self_signed": False,
+                "cert_path": str(home_dir / "certs" / "server.crt"),
+                "key_path": str(home_dir / "certs" / "server.key"),
+                "cert_days": 365
             }
         }
     
@@ -569,6 +595,30 @@ class PlexiChatServer:
         else:
             logger.info("Voice module disabled in configuration")
         
+        # Initialize telemetry module
+        telemetry_config = config.get("telemetry") or {}
+        if telemetry_config.get("enabled", True):
+            logger.info("Initializing telemetry module...")
+            try:
+                from src.core import telemetry
+                telemetry.setup(self.db)
+                self._modules['telemetry'] = telemetry
+                logger.info("Telemetry module initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize telemetry module: {e}")
+        
+        # Initialize admin module
+        admin_config = config.get("admin_ui") or {}
+        if admin_config.get("enabled", True):
+            logger.info("Initializing admin module...")
+            try:
+                from src.core import admin
+                admin.setup(self.db, auth)
+                self._modules['admin'] = admin
+                logger.info(f"Admin module initialized (path: {admin_config.get('path', '/admin')})")
+            except Exception as e:
+                logger.warning(f"Failed to initialize admin module: {e}")
+        
         return auth, messaging, servers, relationships, presence, reactions, embeds, webhooks, settings, media
     
     def create_application(self, auth, messaging, servers, relationships, presence, reactions, embeds, webhooks, settings, media):
@@ -663,13 +713,32 @@ class PlexiChatServer:
         host = host or server_config.get("host", "0.0.0.0")
         port = port or server_config.get("port", 8000)
         
+        # Check TLS configuration
+        ssl_config = {}
+        tls_config = config.get("tls", {})
+        use_https = False
+        
+        if tls_config.get("enabled", False) or tls_config.get("auto_generate_self_signed", False):
+            try:
+                from src.core import tls
+                if tls.is_tls_enabled():
+                    ssl_config = tls.get_tls_config()
+                    if ssl_config:
+                        use_https = True
+                        logger.info("TLS enabled - server will use HTTPS")
+            except ImportError:
+                logger.warning("TLS module not available")
+            except Exception as e:
+                logger.error(f"Failed to configure TLS: {e}")
+        
         # Create uvicorn config
         uvi_config = uvicorn.Config(
             self.app,
             host=host,
             port=port,
             log_level="info",
-            loop="asyncio"
+            loop="asyncio",
+            **ssl_config
         )
         
         self.server = uvicorn.Server(uvi_config)
@@ -707,9 +776,11 @@ class PlexiChatServer:
         
         # Get version string from version utility
         ver = version.current_string()
-        server_line = f"Server: http://{host}:{port}"
-        api_line = f"API:    http://{host}:{port}/api/v1"
-        docs_line = f"Docs:   http://{host}:{port}/docs"
+        protocol = "https" if use_https else "http"
+        server_line = f"Server: {protocol}://{host}:{port}"
+        api_line = f"API:    {protocol}://{host}:{port}/api/v1"
+        docs_line = f"Docs:   {protocol}://{host}:{port}/docs"
+        tls_line = "TLS:    Enabled (self-signed)" if use_https else "TLS:    Disabled"
         
         print(f"""
 +==============================================================+
@@ -719,6 +790,7 @@ class PlexiChatServer:
 |  {server_line:<60}|
 |  {api_line:<60}|
 |  {docs_line:<60}|
+|  {tls_line:<60}|
 +--------------------------------------------------------------+
 |  Press Ctrl+C for graceful shutdown                          |
 |  Data stored in: ~/.plexichat/                               |
