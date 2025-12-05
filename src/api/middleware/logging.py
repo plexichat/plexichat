@@ -34,8 +34,12 @@ def _log_info(msg: str):
     if logger:
         try:
             logger.info(msg)
-        except RuntimeError:
-            pass
+        except RuntimeError as e:
+            print(f"[LOGGING MIDDLEWARE] RuntimeError: {e}")
+        except Exception as e:
+            print(f"[LOGGING MIDDLEWARE] Exception: {e}")
+    else:
+        print(f"[LOGGING MIDDLEWARE] Logger not available: {msg}")
 
 
 def _log_warning(msg: str):
