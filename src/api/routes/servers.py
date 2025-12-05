@@ -20,6 +20,7 @@ router = APIRouter()
 
 def _server_to_response(server) -> ServerResponse:
     """Convert server object to response model."""
+    default_channel_id = getattr(server, "default_channel_id", None)
     return ServerResponse(
         id=str(server.id),
         name=server.name,
@@ -27,6 +28,7 @@ def _server_to_response(server) -> ServerResponse:
         icon_url=getattr(server, "icon_url", None),
         owner_id=str(server.owner_id),
         member_count=getattr(server, "member_count", 0),
+        default_channel_id=str(default_channel_id) if default_channel_id else None,
         created_at=server.created_at,
     )
 

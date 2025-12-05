@@ -22,6 +22,7 @@ class ServerUpdateRequest(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=100, description="Server name")
     description: Optional[str] = Field(None, max_length=1000, description="Server description")
     icon_url: Optional[str] = Field(None, description="Server icon URL")
+    default_channel_id: Optional[str] = Field(None, description="Default channel ID to select when joining")
 
 
 class ServerResponse(BaseModel):
@@ -34,9 +35,10 @@ class ServerResponse(BaseModel):
     icon_url: Optional[str] = Field(None, description="Server icon URL")
     owner_id: str = Field(..., description="Owner user ID")
     member_count: int = Field(0, description="Number of members")
+    default_channel_id: Optional[str] = Field(None, description="Default channel ID")
     created_at: int = Field(..., description="Creation timestamp")
     
-    @field_serializer("id", "owner_id")
+    @field_serializer("id", "owner_id", "default_channel_id")
     def serialize_ids(self, v: Any) -> Optional[str]:
         return str(v) if v else None
 
