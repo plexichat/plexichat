@@ -385,14 +385,24 @@ class PlexiChatServer:
                 "retention_days": 30
             },
             # Admin UI configuration
+            # SECURITY WARNING: The admin panel provides access to sensitive user data
+            # including feedback, telemetry, and system statistics.
+            # NEVER disable host_restriction in production without other security measures!
             "admin_ui": {
                 "enabled": True,
                 "path": "/admin",
                 "host_restriction": {
+                    # WARNING: Disabling this allows ANYONE to access the admin panel!
+                    # Only disable if you have VPN, firewall, or reverse proxy auth in place.
                     "enabled": True,
                     "allowed_hosts": ["127.0.0.1", "localhost", "::1"]
                 },
-                "require_admin_role": True
+                # Rate limiting for admin login attempts
+                "rate_limit": {
+                    "max_attempts": 5,
+                    "window_seconds": 300,
+                    "lockout_seconds": 900
+                }
             },
             # TLS/HTTPS configuration
             "tls": {

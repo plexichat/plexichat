@@ -3,20 +3,38 @@ Admin API routes.
 
 Provides admin-only endpoints for server management.
 Host-restricted by default to localhost only.
+
+SECURITY WARNING: Disabling host_restriction allows ANYONE to access the admin
+panel and view potentially sensitive user data including feedback, telemetry,
+and system statistics. Only disable this if you have other security measures
+in place (VPN, firewall, reverse proxy auth, etc.)
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional
 import time
 
 import utils.config as config
 import utils.logger as logger
-from src.api.dependencies import get_current_user, get_db
+from src.api.dependencies import get_db
 
 
 router = APIRouter(tags=["admin"])
+
+
+class AdminLoginRequest(BaseModel):
+    """Admin login request."""
+    username: str = Field(..., min_length=1, max_length=100)
+    password: str = Field(..., min_length=1, max_length=200)
+
+
+class OTPVerifyRequest(BaseModel):
+    """OTP verification request."""
+    admin_id: int
+    code: str = Field(..., min_length=6, max_length=8)
+    is_setup: bool = False
 
 
 class TicketStatusUpdate(BaseModel):
@@ -53,55 +71,126 @@ class NoteResponse(BaseModel):
     created_at: int
 
 
-def _check_admin_access(request: Request, current_user) -> int:
-    """Check if user has admin access. Returns user_id or raises HTTPException."""
-    # Get admin config
+def _check_host_restriction(request: Request) -> None:
+    """Check if client IP is allowed to access admin UI."""
     admin_config = config.get("admin_ui", {})
     
     if not admin_config.get("enabled", False):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     
-    # Check host restriction
     host_restriction = admin_config.get("host_restriction", {})
     if host_restriction.get("enabled", True):
-        allowed_hosts = host_restriction.get("allowed_hosts", ["127.0.0.1", "localhost"])
+        allowed_hosts = host_restriction.get("allowed_hosts", ["127.0.0.1", "localhost", "::1"])
         client_ip = request.client.host if request.client else "unknown"
         
         from src.core import admin
         if not admin.check_host_restriction(client_ip, allowed_hosts):
             logger.warning(f"Admin access denied from {client_ip}")
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    
-    # Get user ID
-    user_id = getattr(current_user, 'user_id', None) or getattr(current_user, 'id', None)
-    if not user_id:
+
+
+def _get_admin_from_token(request: Request) -> int:
+    """Get admin ID from Authorization header."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
     
-    # Check admin role if required
-    if admin_config.get("require_admin_role", True):
-        from src.core import admin
-        if not admin.is_admin(user_id):
-            logger.warning(f"Non-admin user {user_id} attempted admin access")
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    token = auth_header[7:]
+    from src.core import admin
+    admin_id = admin.validate_session(token)
     
-    return user_id
+    if not admin_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+    
+    return admin_id
 
 
-@router.get("/dashboard")
-async def get_dashboard(
+# ==================== Auth Routes ====================
+
+@router.post("/login")
+async def admin_login(
     request: Request,
-    current_user = Depends(get_current_user),
+    login_data: AdminLoginRequest,
     db = Depends(get_db)
 ):
-    """Get admin dashboard data."""
-    _check_admin_access(request, current_user)
+    """Admin login endpoint."""
+    _check_host_restriction(request)
     
     from src.core import admin
     
-    # Get ticket counts
+    client_ip = request.client.host if request.client else "unknown"
+    result = admin.login(login_data.username, login_data.password, client_ip)
+    
+    if not result.success:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=result.error)
+    
+    if result.requires_otp_setup:
+        return {
+            "status": "otp_setup_required",
+            "admin_id": result.user_id,
+            "otp_secret": result.otp_secret,
+            "otp_qr_uri": result.otp_qr_uri,
+            "message": "Scan the QR code with your authenticator app, then enter the code"
+        }
+    
+    if result.requires_otp_verify:
+        return {
+            "status": "otp_required",
+            "admin_id": result.user_id,
+            "message": "Enter your 2FA code"
+        }
+    
+    return {"status": "success", "token": result.token}
+
+
+@router.post("/verify-otp")
+async def verify_otp(
+    request: Request,
+    otp_data: OTPVerifyRequest,
+    db = Depends(get_db)
+):
+    """Verify OTP code for admin login."""
+    _check_host_restriction(request)
+    
+    from src.core import admin
+    
+    if otp_data.is_setup:
+        result = admin.verify_otp_setup(otp_data.admin_id, otp_data.code)
+    else:
+        result = admin.verify_otp(otp_data.admin_id, otp_data.code)
+    
+    if not result.success:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=result.error)
+    
+    return {"status": "success", "token": result.token}
+
+
+@router.post("/logout")
+async def admin_logout(request: Request, db = Depends(get_db)):
+    """Admin logout endpoint."""
+    _check_host_restriction(request)
+    
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+        from src.core import admin
+        admin.logout(token)
+    
+    return {"success": True}
+
+
+# ==================== Dashboard Routes ====================
+
+@router.get("/dashboard")
+async def get_dashboard(request: Request, db = Depends(get_db)):
+    """Get admin dashboard data."""
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
+    
+    from src.core import admin
+    
     ticket_counts = admin.get_ticket_counts()
     
-    # Get telemetry stats if available
     telemetry_stats = []
     try:
         from src.core import telemetry
@@ -116,15 +205,12 @@ async def get_dashboard(
                     "p95_ms": round(s.p95_response_time_ms, 2),
                     "error_rate": round(s.error_rate * 100, 2)
                 }
-                for s in stats[:20]  # Top 20 endpoints
+                for s in stats[:20]
             ]
     except Exception:
         pass
     
-    return {
-        "tickets": ticket_counts,
-        "telemetry": telemetry_stats
-    }
+    return {"tickets": ticket_counts, "telemetry": telemetry_stats}
 
 
 @router.get("/tickets", response_model=List[TicketResponse])
@@ -133,11 +219,11 @@ async def get_tickets(
     status_filter: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
-    current_user = Depends(get_current_user),
     db = Depends(get_db)
 ):
     """Get feedback tickets."""
-    _check_admin_access(request, current_user)
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
     
     from src.core import admin
     tickets = admin.get_feedback_tickets(status_filter, limit, offset)
@@ -154,14 +240,10 @@ async def get_tickets(
 
 
 @router.get("/tickets/{ticket_id}", response_model=TicketResponse)
-async def get_ticket(
-    ticket_id: int,
-    request: Request,
-    current_user = Depends(get_current_user),
-    db = Depends(get_db)
-):
+async def get_ticket(ticket_id: int, request: Request, db = Depends(get_db)):
     """Get a single ticket."""
-    _check_admin_access(request, current_user)
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
     
     from src.core import admin
     ticket = admin.get_ticket(ticket_id)
@@ -182,11 +264,11 @@ async def update_ticket_status(
     ticket_id: int,
     update: TicketStatusUpdate,
     request: Request,
-    current_user = Depends(get_current_user),
     db = Depends(get_db)
 ):
     """Update ticket status."""
-    admin_id = _check_admin_access(request, current_user)
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
     
     from src.core import admin
     
@@ -200,14 +282,10 @@ async def update_ticket_status(
 
 
 @router.get("/tickets/{ticket_id}/notes", response_model=List[NoteResponse])
-async def get_ticket_notes(
-    ticket_id: int,
-    request: Request,
-    current_user = Depends(get_current_user),
-    db = Depends(get_db)
-):
+async def get_ticket_notes(ticket_id: int, request: Request, db = Depends(get_db)):
     """Get internal notes for a ticket."""
-    _check_admin_access(request, current_user)
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
     
     from src.core import admin
     
@@ -230,11 +308,11 @@ async def add_ticket_note(
     ticket_id: int,
     note: InternalNoteCreate,
     request: Request,
-    current_user = Depends(get_current_user),
     db = Depends(get_db)
 ):
     """Add internal note to a ticket."""
-    admin_id = _check_admin_access(request, current_user)
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
     
     from src.core import admin
     
@@ -256,11 +334,11 @@ async def get_telemetry_stats(
     request: Request,
     hours: int = 24,
     endpoint: Optional[str] = None,
-    current_user = Depends(get_current_user),
     db = Depends(get_db)
 ):
     """Get telemetry statistics."""
-    _check_admin_access(request, current_user)
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
     
     try:
         from src.core import telemetry
@@ -297,11 +375,11 @@ async def get_telemetry_history(
     method: str = "GET",
     hours: int = 24,
     bucket_minutes: int = 5,
-    current_user = Depends(get_current_user),
     db = Depends(get_db)
 ):
     """Get telemetry history for an endpoint."""
-    _check_admin_access(request, current_user)
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
     
     try:
         from src.core import telemetry
@@ -320,71 +398,242 @@ async def get_telemetry_history(
         return {"history": [], "message": "Telemetry module not available"}
 
 
-# Admin UI HTML page
-ADMIN_UI_HTML = """
+# ==================== Admin UI HTML ====================
+
+ADMIN_LOGIN_HTML = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PlexiChat Admin</title>
+    <title>PlexiChat Admin Login</title>
+    <style>
+        :root { --bg: #1a1a2e; --card: #16213e; --accent: #e94560; --text: #eaeaea; --border: #0f3460; --error: #ef4444; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+        .login-card { background: var(--card); border-radius: 12px; padding: 40px; width: 100%; max-width: 400px; border: 1px solid var(--border); }
+        h1 { color: var(--accent); margin-bottom: 8px; font-size: 24px; }
+        .subtitle { color: #888; margin-bottom: 24px; }
+        .form-group { margin-bottom: 16px; }
+        label { display: block; margin-bottom: 6px; font-size: 14px; color: #aaa; }
+        input { width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 16px; }
+        input:focus { outline: none; border-color: var(--accent); }
+        button { width: 100%; padding: 12px; background: var(--accent); color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; margin-top: 8px; }
+        button:hover { opacity: 0.9; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .error { color: var(--error); font-size: 14px; margin-top: 12px; display: none; }
+        .otp-setup { display: none; text-align: center; }
+        .otp-setup img { max-width: 200px; margin: 16px 0; background: white; padding: 8px; border-radius: 8px; }
+        .otp-setup .secret { font-family: monospace; background: var(--bg); padding: 8px; border-radius: 4px; margin: 8px 0; word-break: break-all; }
+        .warning { background: #fbbf24; color: #000; padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <div id="login-form">
+            <h1>PlexiChat Admin</h1>
+            <p class="subtitle">Sign in to access the admin panel</p>
+            <form onsubmit="login(event)">
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" required autocomplete="username">
+                </div>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" required autocomplete="current-password">
+                </div>
+                <button type="submit" id="login-btn">Sign In</button>
+            </form>
+            <div class="error" id="login-error"></div>
+        </div>
+        <div id="otp-setup" class="otp-setup">
+            <h1>Setup 2FA</h1>
+            <p class="subtitle">Scan this QR code with your authenticator app</p>
+            <div class="warning">2FA is required for admin access. This is a one-time setup.</div>
+            <img id="qr-code" src="" alt="QR Code">
+            <p>Or enter this secret manually:</p>
+            <div class="secret" id="otp-secret"></div>
+            <form onsubmit="verifyOTP(event, true)">
+                <div class="form-group">
+                    <label for="setup-code">Enter code from app</label>
+                    <input type="text" id="setup-code" required maxlength="6" pattern="[0-9]{6}" autocomplete="one-time-code">
+                </div>
+                <button type="submit">Verify & Enable 2FA</button>
+            </form>
+            <div class="error" id="setup-error"></div>
+        </div>
+        <div id="otp-verify" class="otp-setup">
+            <h1>Enter 2FA Code</h1>
+            <p class="subtitle">Enter the code from your authenticator app</p>
+            <form onsubmit="verifyOTP(event, false)">
+                <div class="form-group">
+                    <label for="verify-code">6-digit code</label>
+                    <input type="text" id="verify-code" required maxlength="6" pattern="[0-9]{6}" autocomplete="one-time-code">
+                </div>
+                <button type="submit">Verify</button>
+            </form>
+            <div class="error" id="verify-error"></div>
+        </div>
+    </div>
+    <script>
+        let adminId = null;
+        async function login(e) {
+            e.preventDefault();
+            const btn = document.getElementById('login-btn');
+            const err = document.getElementById('login-error');
+            btn.disabled = true; err.style.display = 'none';
+            try {
+                const res = await fetch('/api/v1/admin/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: document.getElementById('username').value,
+                        password: document.getElementById('password').value
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || 'Login failed');
+                if (data.status === 'otp_setup_required') {
+                    adminId = data.admin_id;
+                    document.getElementById('login-form').style.display = 'none';
+                    document.getElementById('otp-setup').style.display = 'block';
+                    document.getElementById('qr-code').src = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(data.otp_qr_uri);
+                    document.getElementById('otp-secret').textContent = data.otp_secret;
+                } else if (data.status === 'otp_required') {
+                    adminId = data.admin_id;
+                    document.getElementById('login-form').style.display = 'none';
+                    document.getElementById('otp-verify').style.display = 'block';
+                } else if (data.token) {
+                    localStorage.setItem('plexichat-admin-token', data.token);
+                    window.location.href = '/admin/dashboard';
+                }
+            } catch (e) { err.textContent = e.message; err.style.display = 'block'; }
+            btn.disabled = false;
+        }
+        async function verifyOTP(e, isSetup) {
+            e.preventDefault();
+            const code = document.getElementById(isSetup ? 'setup-code' : 'verify-code').value;
+            const err = document.getElementById(isSetup ? 'setup-error' : 'verify-error');
+            err.style.display = 'none';
+            try {
+                const res = await fetch('/api/v1/admin/verify-otp', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ admin_id: adminId, code: code, is_setup: isSetup })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || 'Verification failed');
+                localStorage.setItem('plexichat-admin-token', data.token);
+                window.location.href = '/admin/dashboard';
+            } catch (e) { err.textContent = e.message; err.style.display = 'block'; }
+        }
+        // Check if already logged in
+        const token = localStorage.getItem('plexichat-admin-token');
+        if (token) {
+            fetch('/api/v1/admin/dashboard', { headers: { 'Authorization': 'Bearer ' + token } })
+                .then(r => { if (r.ok) window.location.href = '/admin/dashboard'; });
+        }
+    </script>
+</body>
+</html>
+"""
+
+
+ADMIN_DASHBOARD_HTML = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PlexiChat Admin Dashboard</title>
     <style>
         :root { --bg: #1a1a2e; --card: #16213e; --accent: #e94560; --text: #eaeaea; --border: #0f3460; }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
-        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
-        h1 { color: var(--accent); margin-bottom: 20px; }
-        .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
+        .header { background: var(--card); padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); }
+        .header h1 { color: var(--accent); font-size: 20px; }
+        .logout-btn { background: transparent; border: 1px solid var(--border); color: var(--text); padding: 8px 16px; border-radius: 4px; cursor: pointer; }
+        .logout-btn:hover { border-color: var(--accent); }
+        .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+        .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
         .card { background: var(--card); border-radius: 8px; padding: 20px; border: 1px solid var(--border); }
-        .card h3 { font-size: 14px; color: #888; margin-bottom: 8px; }
-        .card .value { font-size: 32px; font-weight: bold; color: var(--accent); }
+        .card h3 { font-size: 12px; color: #888; margin-bottom: 8px; text-transform: uppercase; }
+        .card .value { font-size: 28px; font-weight: bold; color: var(--accent); }
+        .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+        .tab { padding: 10px 20px; background: var(--card); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; color: var(--text); }
+        .tab.active { background: var(--accent); border-color: var(--accent); }
         table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 8px; overflow: hidden; }
         th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--border); }
-        th { background: var(--border); font-weight: 600; }
-        .status { padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+        th { background: var(--border); font-weight: 600; font-size: 12px; text-transform: uppercase; }
+        .status { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; }
         .status.open { background: #fbbf24; color: #000; }
+        .status.in_progress { background: #3b82f6; color: #fff; }
         .status.resolved { background: #4ade80; color: #000; }
-        .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
-        .tab { padding: 10px 20px; background: var(--card); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
-        .tab.active { background: var(--accent); border-color: var(--accent); }
-        #error { color: #ef4444; padding: 10px; display: none; }
+        .status.closed { background: #6b7280; color: #fff; }
+        #error { color: #ef4444; padding: 16px; background: rgba(239,68,68,0.1); border-radius: 8px; margin-bottom: 16px; display: none; }
     </style>
 </head>
 <body>
+    <div class="header">
+        <h1>PlexiChat Admin</h1>
+        <button class="logout-btn" onclick="logout()">Logout</button>
+    </div>
     <div class="container">
-        <h1>PlexiChat Admin Dashboard</h1>
         <div id="error"></div>
         <div class="cards" id="stats"></div>
         <div class="tabs">
-            <button class="tab active" onclick="showTab('tickets')">Tickets</button>
-            <button class="tab" onclick="showTab('telemetry')">Telemetry</button>
+            <button class="tab active" onclick="showTab('tickets', this)">Tickets</button>
+            <button class="tab" onclick="showTab('telemetry', this)">Telemetry</button>
         </div>
-        <div id="tickets-tab"><table id="tickets-table"><thead><tr><th>ID</th><th>User</th><th>Category</th><th>Status</th><th>Created</th></tr></thead><tbody></tbody></table></div>
-        <div id="telemetry-tab" style="display:none"><table id="telemetry-table"><thead><tr><th>Endpoint</th><th>Method</th><th>Count</th><th>Avg (ms)</th><th>P95 (ms)</th><th>Error %</th></tr></thead><tbody></tbody></table></div>
+        <div id="tickets-tab">
+            <table id="tickets-table">
+                <thead><tr><th>ID</th><th>User</th><th>Category</th><th>Status</th><th>Created</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <div id="telemetry-tab" style="display:none">
+            <table id="telemetry-table">
+                <thead><tr><th>Endpoint</th><th>Method</th><th>Count</th><th>Avg (ms)</th><th>P95 (ms)</th><th>Error %</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
     </div>
     <script>
-        const token = localStorage.getItem('plexichat-admin-token') || prompt('Enter admin token:');
-        if (token) localStorage.setItem('plexichat-admin-token', token);
-        const api = (path) => fetch('/api/v1/admin' + path, { headers: { 'Authorization': 'Bearer ' + token } }).then(r => r.json());
+        const token = localStorage.getItem('plexichat-admin-token');
+        if (!token) window.location.href = '/admin';
+        const api = (path) => fetch('/api/v1/admin' + path, { headers: { 'Authorization': 'Bearer ' + token } })
+            .then(r => { if (r.status === 401) { localStorage.removeItem('plexichat-admin-token'); window.location.href = '/admin'; } return r.json(); });
         async function load() {
             try {
                 const data = await api('/dashboard');
                 document.getElementById('stats').innerHTML = `
-                    <div class="card"><h3>Open Tickets</h3><div class="value">${data.tickets.open}</div></div>
+                    <div class="card"><h3>Open</h3><div class="value">${data.tickets.open}</div></div>
                     <div class="card"><h3>In Progress</h3><div class="value">${data.tickets.in_progress}</div></div>
                     <div class="card"><h3>Resolved</h3><div class="value">${data.tickets.resolved}</div></div>
                     <div class="card"><h3>Total</h3><div class="value">${data.tickets.total}</div></div>
                 `;
                 const tickets = await api('/tickets?limit=20');
-                document.querySelector('#tickets-table tbody').innerHTML = tickets.map(t => `<tr><td>${t.id}</td><td>${t.username}</td><td>${t.category || '-'}</td><td><span class="status ${t.status}">${t.status}</span></td><td>${new Date(t.created_at).toLocaleString()}</td></tr>`).join('');
-                document.querySelector('#telemetry-table tbody').innerHTML = data.telemetry.map(t => `<tr><td>${t.endpoint}</td><td>${t.method}</td><td>${t.count}</td><td>${t.avg_ms}</td><td>${t.p95_ms}</td><td>${t.error_rate}%</td></tr>`).join('');
-            } catch (e) { document.getElementById('error').style.display = 'block'; document.getElementById('error').textContent = 'Error: ' + e.message; }
+                document.querySelector('#tickets-table tbody').innerHTML = tickets.map(t => 
+                    `<tr><td>${t.id}</td><td>${t.username}</td><td>${t.category || '-'}</td><td><span class="status ${t.status}">${t.status}</span></td><td>${new Date(t.created_at).toLocaleString()}</td></tr>`
+                ).join('') || '<tr><td colspan="5" style="text-align:center;color:#888">No tickets</td></tr>';
+                document.querySelector('#telemetry-table tbody').innerHTML = data.telemetry.map(t => 
+                    `<tr><td>${t.endpoint}</td><td>${t.method}</td><td>${t.count}</td><td>${t.avg_ms}</td><td>${t.p95_ms}</td><td>${t.error_rate}%</td></tr>`
+                ).join('') || '<tr><td colspan="6" style="text-align:center;color:#888">No telemetry data</td></tr>';
+            } catch (e) { 
+                document.getElementById('error').style.display = 'block'; 
+                document.getElementById('error').textContent = 'Error loading data: ' + e.message; 
+            }
         }
-        function showTab(name) {
+        function showTab(name, btn) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            event.target.classList.add('active');
+            btn.classList.add('active');
             document.getElementById('tickets-tab').style.display = name === 'tickets' ? 'block' : 'none';
             document.getElementById('telemetry-tab').style.display = name === 'telemetry' ? 'block' : 'none';
+        }
+        function logout() {
+            fetch('/api/v1/admin/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
+            localStorage.removeItem('plexichat-admin-token');
+            window.location.href = '/admin';
         }
         load();
     </script>
@@ -394,21 +643,14 @@ ADMIN_UI_HTML = """
 
 
 @router.get("", response_class=HTMLResponse)
-async def admin_ui(request: Request):
-    """Serve the admin UI HTML page."""
-    # Check host restriction only (no auth for initial page load)
-    admin_config = config.get("admin_ui", {})
-    
-    if not admin_config.get("enabled", False):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-    
-    host_restriction = admin_config.get("host_restriction", {})
-    if host_restriction.get("enabled", True):
-        allowed_hosts = host_restriction.get("allowed_hosts", ["127.0.0.1", "localhost"])
-        client_ip = request.client.host if request.client else "unknown"
-        
-        from src.core import admin
-        if not admin.check_host_restriction(client_ip, allowed_hosts):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    
-    return HTMLResponse(content=ADMIN_UI_HTML)
+async def admin_login_page(request: Request):
+    """Serve the admin login page."""
+    _check_host_restriction(request)
+    return HTMLResponse(content=ADMIN_LOGIN_HTML)
+
+
+@router.get("/dashboard", response_class=HTMLResponse)
+async def admin_dashboard_page(request: Request):
+    """Serve the admin dashboard page."""
+    _check_host_restriction(request)
+    return HTMLResponse(content=ADMIN_DASHBOARD_HTML)

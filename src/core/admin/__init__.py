@@ -2,27 +2,46 @@
 Admin module - Administrative functions for PlexiChat server.
 
 This module provides:
-- Admin user management (is_admin flag)
+- Auto-generated admin user with random password on first startup
+- Admin login with rate limiting
+- Mandatory OTP setup on first login
 - Feedback/ticket viewing and management
 - Telemetry dashboard data
 - Host restriction for admin access
+
+SECURITY WARNING: Disabling host_restriction allows ANYONE to access the admin
+panel and view potentially sensitive user data including feedback, telemetry,
+and system statistics. Only disable this if you have other security measures
+in place (VPN, firewall, reverse proxy auth, etc.)
 
 Usage:
     from src.core import admin
     admin.setup(db, auth_module)
     
-    # Check if user is admin
-    if admin.is_admin(user_id):
-        tickets = admin.get_feedback_tickets()
+    # Admin login
+    result = admin.login("admin", "password")
+    if result.requires_otp_setup:
+        # First login - must setup OTP
+        pass
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass
+from pathlib import Path
 import time
+import secrets
+import string
+import os
+
+import utils.logger as logger
 
 _db = None
 _auth = None
 _setup_complete = False
+
+# Rate limiting for admin login
+_login_attempts: Dict[str, List[float]] = {}  # IP -> list of attempt timestamps
+_lockouts: Dict[str, float] = {}  # IP -> lockout until timestamp
 
 
 @dataclass
@@ -52,6 +71,20 @@ class AdminNote:
     created_at: int
 
 
+@dataclass
+class AdminLoginResult:
+    """Result of admin login attempt."""
+    success: bool
+    token: Optional[str] = None
+    user_id: Optional[int] = None
+    requires_otp_setup: bool = False
+    otp_secret: Optional[str] = None
+    otp_qr_uri: Optional[str] = None
+    requires_otp_verify: bool = False
+    challenge_token: Optional[str] = None
+    error: Optional[str] = None
+
+
 def setup(db, auth_module=None) -> None:
     """Initialize the admin module."""
     global _db, _auth, _setup_complete
@@ -59,6 +92,7 @@ def setup(db, auth_module=None) -> None:
     _db = db
     _auth = auth_module
     _create_tables()
+    _ensure_admin_user()
     _setup_complete = True
 
 
@@ -66,13 +100,39 @@ def _create_tables() -> None:
     """Create admin tables if they don't exist."""
     global _db
     
-    # Add is_admin column to auth_users if not exists
-    try:
-        _db.execute("ALTER TABLE auth_users ADD COLUMN is_admin INTEGER DEFAULT 0")
-    except Exception:
-        pass  # Column already exists
+    # Create admin_users table (separate from regular users)
+    admin_schema = """
+    CREATE TABLE IF NOT EXISTS admin_users (
+        id INTEGER PRIMARY KEY,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        email TEXT,
+        totp_secret TEXT,
+        totp_enabled INTEGER DEFAULT 0,
+        backup_codes TEXT,
+        created_at INTEGER NOT NULL,
+        last_login INTEGER,
+        must_setup_otp INTEGER DEFAULT 1
+    )
+    """
+    _db.execute(_db.convert_schema(admin_schema) if hasattr(_db, 'convert_schema') else admin_schema)
     
-    # Ensure feedback table exists first
+    # Create admin_sessions table
+    session_schema = """
+    CREATE TABLE IF NOT EXISTS admin_sessions (
+        id INTEGER PRIMARY KEY,
+        admin_id INTEGER NOT NULL,
+        token TEXT UNIQUE NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        ip_address TEXT,
+        user_agent TEXT,
+        FOREIGN KEY (admin_id) REFERENCES admin_users(id)
+    )
+    """
+    _db.execute(_db.convert_schema(session_schema) if hasattr(_db, 'convert_schema') else session_schema)
+    
+    # Ensure feedback table exists
     feedback_schema = """
     CREATE TABLE IF NOT EXISTS feedback (
         id INTEGER PRIMARY KEY,
@@ -91,7 +151,7 @@ def _create_tables() -> None:
     _db.execute(_db.convert_schema(feedback_schema) if hasattr(_db, 'convert_schema') else feedback_schema)
     
     # Create admin_notes table
-    schema = """
+    notes_schema = """
     CREATE TABLE IF NOT EXISTS admin_notes (
         id INTEGER PRIMARY KEY,
         ticket_id INTEGER NOT NULL,
@@ -99,30 +159,97 @@ def _create_tables() -> None:
         content TEXT NOT NULL,
         created_at INTEGER NOT NULL,
         FOREIGN KEY (ticket_id) REFERENCES feedback(id),
-        FOREIGN KEY (admin_id) REFERENCES auth_users(id)
+        FOREIGN KEY (admin_id) REFERENCES admin_users(id)
     )
     """
-    _db.execute(_db.convert_schema(schema) if hasattr(_db, 'convert_schema') else schema)
-
-    # Add status columns to feedback table if not exists
-    try:
-        _db.execute("ALTER TABLE feedback ADD COLUMN status TEXT DEFAULT 'open'")
-    except Exception:
-        pass
-    try:
-        _db.execute("ALTER TABLE feedback ADD COLUMN resolved_at INTEGER")
-    except Exception:
-        pass
-    try:
-        _db.execute("ALTER TABLE feedback ADD COLUMN resolved_by INTEGER")
-    except Exception:
-        pass
-    try:
-        _db.execute("ALTER TABLE feedback ADD COLUMN internal_notes TEXT")
-    except Exception:
-        pass
+    _db.execute(_db.convert_schema(notes_schema) if hasattr(_db, 'convert_schema') else notes_schema)
     
     _db.execute("CREATE INDEX IF NOT EXISTS idx_admin_notes_ticket ON admin_notes(ticket_id)")
+    _db.execute("CREATE INDEX IF NOT EXISTS idx_admin_sessions_token ON admin_sessions(token)")
+
+
+def _generate_password(length: int = 24) -> str:
+    """Generate a secure random password."""
+    alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+    return ''.join(secrets.choice(alphabet) for _ in range(length))
+
+
+def _ensure_admin_user() -> None:
+    """Ensure admin user exists, create with random password if not."""
+    global _db
+    
+    # Check if admin user exists
+    row = _db.fetch_one("SELECT id FROM admin_users WHERE username = ?", ("admin",))
+    if row:
+        return
+    
+    # Generate random password
+    password = _generate_password()
+    
+    # Hash password using auth module if available, otherwise use basic hash
+    try:
+        from src.utils.encryption import hash_password
+        password_hash = hash_password(password)
+    except ImportError:
+        import hashlib
+        password_hash = hashlib.sha256(password.encode()).hexdigest()
+    
+    # Generate snowflake ID
+    try:
+        from src.utils.encryption import generate_snowflake_id
+        admin_id = generate_snowflake_id()
+    except ImportError:
+        admin_id = int(time.time() * 1000000)
+    
+    now = int(time.time() * 1000)
+    
+    # Create admin user
+    _db.execute(
+        """INSERT INTO admin_users (id, username, password_hash, email, created_at, must_setup_otp)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (admin_id, "admin", password_hash, "admin@example.com", now, 1)
+    )
+    
+    # Save credentials to file
+    _save_admin_credentials(password)
+    
+    logger.info("Created admin user with random password")
+
+
+def _save_admin_credentials(password: str) -> None:
+    """Save admin credentials to a secure file."""
+    home_dir = Path.home() / ".plexichat"
+    creds_file = home_dir / "admin_credentials.txt"
+    
+    # Ensure directory exists
+    home_dir.mkdir(parents=True, exist_ok=True)
+    
+    content = f"""PlexiChat Admin Credentials
+============================
+Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}
+
+Username: admin
+Password: {password}
+Email: admin@example.com (change this in admin settings)
+
+IMPORTANT:
+- Change this password after first login
+- Set up 2FA (required on first login)
+- Delete this file after noting the credentials
+- Keep these credentials secure!
+
+Login URL: https://<your-server>:8000/admin
+"""
+    
+    # Write with restricted permissions
+    creds_file.write_text(content)
+    try:
+        os.chmod(creds_file, 0o600)  # Owner read/write only
+    except Exception:
+        pass  # Windows doesn't support chmod the same way
+    
+    logger.warning(f"Admin credentials saved to: {creds_file}")
+    logger.warning("IMPORTANT: Delete this file after noting the credentials!")
 
 
 def is_setup() -> bool:
@@ -137,23 +264,266 @@ def _get_db():
     return _db
 
 
-def is_admin(user_id: int) -> bool:
-    """Check if a user has admin privileges."""
-    db = _get_db()
-    row = db.fetch_one("SELECT is_admin FROM auth_users WHERE id = ?", (user_id,))
-    if row:
-        val = row["is_admin"] if isinstance(row, dict) else row[0]
-        return bool(val)
-    return False
+def _check_rate_limit(ip: str, max_attempts: int = 5, window_seconds: int = 300, lockout_seconds: int = 900) -> Tuple[bool, Optional[int]]:
+    """Check if IP is rate limited. Returns (allowed, seconds_until_unlock)."""
+    now = time.time()
+    
+    # Check lockout
+    if ip in _lockouts:
+        if now < _lockouts[ip]:
+            return False, int(_lockouts[ip] - now)
+        else:
+            del _lockouts[ip]
+    
+    # Clean old attempts
+    if ip in _login_attempts:
+        _login_attempts[ip] = [t for t in _login_attempts[ip] if now - t < window_seconds]
+    
+    # Check attempt count
+    attempts = _login_attempts.get(ip, [])
+    if len(attempts) >= max_attempts:
+        _lockouts[ip] = now + lockout_seconds
+        return False, lockout_seconds
+    
+    return True, None
 
 
-def set_admin(user_id: int, is_admin_flag: bool) -> bool:
-    """Set or remove admin privileges for a user."""
+def _record_login_attempt(ip: str) -> None:
+    """Record a failed login attempt."""
+    if ip not in _login_attempts:
+        _login_attempts[ip] = []
+    _login_attempts[ip].append(time.time())
+
+
+def _clear_login_attempts(ip: str) -> None:
+    """Clear login attempts after successful login."""
+    if ip in _login_attempts:
+        del _login_attempts[ip]
+    if ip in _lockouts:
+        del _lockouts[ip]
+
+
+def login(username: str, password: str, ip: str = "unknown") -> AdminLoginResult:
+    """Authenticate admin user."""
     db = _get_db()
-    db.execute(
-        "UPDATE auth_users SET is_admin = ? WHERE id = ?",
-        (1 if is_admin_flag else 0, user_id)
+    
+    # Check rate limit
+    allowed, wait_seconds = _check_rate_limit(ip)
+    if not allowed:
+        return AdminLoginResult(
+            success=False,
+            error=f"Too many login attempts. Try again in {wait_seconds} seconds."
+        )
+    
+    # Get admin user
+    row = db.fetch_one(
+        "SELECT id, password_hash, totp_secret, totp_enabled, must_setup_otp FROM admin_users WHERE username = ?",
+        (username,)
     )
+    
+    if not row:
+        _record_login_attempt(ip)
+        return AdminLoginResult(success=False, error="Invalid credentials")
+    
+    if isinstance(row, dict):
+        admin_id = row["id"]
+        password_hash = row["password_hash"]
+        totp_secret = row["totp_secret"]
+        totp_enabled = bool(row["totp_enabled"])
+        must_setup_otp = bool(row["must_setup_otp"])
+    else:
+        admin_id, password_hash, totp_secret, totp_enabled, must_setup_otp = row
+        totp_enabled = bool(totp_enabled)
+        must_setup_otp = bool(must_setup_otp)
+    
+    # Verify password
+    try:
+        from src.utils.encryption import verify_password
+        if not verify_password(password, password_hash):
+            _record_login_attempt(ip)
+            return AdminLoginResult(success=False, error="Invalid credentials")
+    except ImportError:
+        import hashlib
+        if hashlib.sha256(password.encode()).hexdigest() != password_hash:
+            _record_login_attempt(ip)
+            return AdminLoginResult(success=False, error="Invalid credentials")
+    
+    _clear_login_attempts(ip)
+    
+    # Check if OTP setup is required (first login)
+    if must_setup_otp or (not totp_enabled and not totp_secret):
+        # Generate OTP secret
+        import pyotp
+        secret = pyotp.random_base32()
+        totp = pyotp.TOTP(secret)
+        qr_uri = totp.provisioning_uri(name=username, issuer_name="PlexiChat Admin")
+        
+        # Store secret temporarily (not enabled yet)
+        db.execute(
+            "UPDATE admin_users SET totp_secret = ? WHERE id = ?",
+            (secret, admin_id)
+        )
+        
+        # Generate challenge token for OTP setup
+        challenge = secrets.token_urlsafe(32)
+        
+        return AdminLoginResult(
+            success=True,
+            user_id=admin_id,
+            requires_otp_setup=True,
+            otp_secret=secret,
+            otp_qr_uri=qr_uri,
+            challenge_token=challenge
+        )
+    
+    # OTP is enabled, require verification
+    if totp_enabled:
+        challenge = secrets.token_urlsafe(32)
+        # Store challenge temporarily (in memory or session)
+        return AdminLoginResult(
+            success=True,
+            user_id=admin_id,
+            requires_otp_verify=True,
+            challenge_token=challenge
+        )
+    
+    # Should not reach here - OTP should always be required
+    return AdminLoginResult(success=False, error="OTP setup required")
+
+
+def verify_otp_setup(admin_id: int, code: str) -> AdminLoginResult:
+    """Verify OTP code during setup and enable OTP."""
+    db = _get_db()
+    
+    row = db.fetch_one(
+        "SELECT totp_secret FROM admin_users WHERE id = ?",
+        (admin_id,)
+    )
+    
+    if not row:
+        return AdminLoginResult(success=False, error="Admin user not found")
+    
+    secret = row["totp_secret"] if isinstance(row, dict) else row[0]
+    
+    if not secret:
+        return AdminLoginResult(success=False, error="OTP not configured")
+    
+    # Verify code
+    import pyotp
+    totp = pyotp.TOTP(secret)
+    if not totp.verify(code, valid_window=1):
+        return AdminLoginResult(success=False, error="Invalid OTP code")
+    
+    # Enable OTP and clear must_setup flag
+    db.execute(
+        "UPDATE admin_users SET totp_enabled = 1, must_setup_otp = 0 WHERE id = ?",
+        (admin_id,)
+    )
+    
+    # Generate backup codes
+    backup_codes = [secrets.token_hex(4).upper() for _ in range(10)]
+    db.execute(
+        "UPDATE admin_users SET backup_codes = ? WHERE id = ?",
+        (",".join(backup_codes), admin_id)
+    )
+    
+    # Create session
+    token = _create_session(admin_id)
+    
+    return AdminLoginResult(
+        success=True,
+        token=token,
+        user_id=admin_id
+    )
+
+
+def verify_otp(admin_id: int, code: str) -> AdminLoginResult:
+    """Verify OTP code for login."""
+    db = _get_db()
+    
+    row = db.fetch_one(
+        "SELECT totp_secret, backup_codes FROM admin_users WHERE id = ?",
+        (admin_id,)
+    )
+    
+    if not row:
+        return AdminLoginResult(success=False, error="Admin user not found")
+    
+    if isinstance(row, dict):
+        secret = row["totp_secret"]
+        backup_codes = row["backup_codes"]
+    else:
+        secret, backup_codes = row
+    
+    if not secret:
+        return AdminLoginResult(success=False, error="OTP not configured")
+    
+    # Try TOTP code first
+    import pyotp
+    totp = pyotp.TOTP(secret)
+    if totp.verify(code, valid_window=1):
+        token = _create_session(admin_id)
+        db.execute("UPDATE admin_users SET last_login = ? WHERE id = ?", (int(time.time() * 1000), admin_id))
+        return AdminLoginResult(success=True, token=token, user_id=admin_id)
+    
+    # Try backup code
+    if backup_codes:
+        codes = backup_codes.split(",")
+        code_upper = code.upper().replace("-", "")
+        if code_upper in codes:
+            codes.remove(code_upper)
+            db.execute(
+                "UPDATE admin_users SET backup_codes = ?, last_login = ? WHERE id = ?",
+                (",".join(codes), int(time.time() * 1000), admin_id)
+            )
+            token = _create_session(admin_id)
+            return AdminLoginResult(success=True, token=token, user_id=admin_id)
+    
+    return AdminLoginResult(success=False, error="Invalid OTP code")
+
+
+def _create_session(admin_id: int, expires_hours: int = 8) -> str:
+    """Create admin session and return token."""
+    db = _get_db()
+    
+    token = secrets.token_urlsafe(32)
+    now = int(time.time() * 1000)
+    expires = now + (expires_hours * 3600 * 1000)
+    
+    try:
+        from src.utils.encryption import generate_snowflake_id
+        session_id = generate_snowflake_id()
+    except ImportError:
+        session_id = int(time.time() * 1000000)
+    
+    db.execute(
+        """INSERT INTO admin_sessions (id, admin_id, token, created_at, expires_at)
+           VALUES (?, ?, ?, ?, ?)""",
+        (session_id, admin_id, token, now, expires)
+    )
+    
+    return token
+
+
+def validate_session(token: str) -> Optional[int]:
+    """Validate admin session token. Returns admin_id or None."""
+    db = _get_db()
+    
+    now = int(time.time() * 1000)
+    row = db.fetch_one(
+        "SELECT admin_id FROM admin_sessions WHERE token = ? AND expires_at > ?",
+        (token, now)
+    )
+    
+    if row:
+        return row["admin_id"] if isinstance(row, dict) else row[0]
+    return None
+
+
+def logout(token: str) -> bool:
+    """Invalidate admin session."""
+    db = _get_db()
+    db.execute("DELETE FROM admin_sessions WHERE token = ?", (token,))
     return True
 
 
@@ -193,24 +563,16 @@ def get_feedback_tickets(
     for row in rows:
         if isinstance(row, dict):
             tickets.append(FeedbackTicket(
-                id=row["id"],
-                user_id=row["user_id"],
-                username=row["username"] or "Unknown",
-                content=row["content"],
-                category=row["category"],
-                rating=row["rating"],
-                status=row["status"],
-                created_at=row["created_at"],
-                resolved_at=row["resolved_at"],
-                resolved_by=row["resolved_by"],
-                internal_notes=row["internal_notes"]
+                id=row["id"], user_id=row["user_id"], username=row["username"] or "Unknown",
+                content=row["content"], category=row["category"], rating=row["rating"],
+                status=row["status"], created_at=row["created_at"], resolved_at=row["resolved_at"],
+                resolved_by=row["resolved_by"], internal_notes=row["internal_notes"]
             ))
         else:
             tickets.append(FeedbackTicket(
                 id=row[0], user_id=row[1], username=row[2] or "Unknown",
-                content=row[3], category=row[4], rating=row[5],
-                status=row[6], created_at=row[7], resolved_at=row[8],
-                resolved_by=row[9], internal_notes=row[10]
+                content=row[3], category=row[4], rating=row[5], status=row[6],
+                created_at=row[7], resolved_at=row[8], resolved_by=row[9], internal_notes=row[10]
             ))
     return tickets
 
@@ -282,7 +644,7 @@ def add_internal_note(ticket_id: int, admin_id: int, content: str) -> Optional[A
     )
     
     # Get admin username
-    row = db.fetch_one("SELECT username FROM auth_users WHERE id = ?", (admin_id,))
+    row = db.fetch_one("SELECT username FROM admin_users WHERE id = ?", (admin_id,))
     username = (row["username"] if isinstance(row, dict) else row[0]) if row else "Unknown"
     
     return AdminNote(
@@ -298,7 +660,7 @@ def get_ticket_notes(ticket_id: int) -> List[AdminNote]:
     rows = db.fetch_all(
         """SELECT n.id, n.ticket_id, n.admin_id, u.username, n.content, n.created_at
            FROM admin_notes n
-           LEFT JOIN auth_users u ON n.admin_id = u.id
+           LEFT JOIN admin_users u ON n.admin_id = u.id
            WHERE n.ticket_id = ?
            ORDER BY n.created_at ASC""",
         (ticket_id,)
@@ -356,7 +718,6 @@ def check_host_restriction(client_ip: str, allowed_hosts: List[str]) -> bool:
             return True
         # Support CIDR notation (basic)
         if '/' in allowed:
-            # Simple prefix match for now
             prefix = allowed.split('/')[0].rsplit('.', 1)[0]
             if client_ip.startswith(prefix):
                 return True
@@ -365,8 +726,9 @@ def check_host_restriction(client_ip: str, allowed_hosts: List[str]) -> bool:
 
 
 __all__ = [
-    'setup', 'is_setup', 'is_admin', 'set_admin',
+    'setup', 'is_setup', 'login', 'verify_otp_setup', 'verify_otp',
+    'validate_session', 'logout',
     'get_feedback_tickets', 'get_ticket', 'update_ticket_status',
     'add_internal_note', 'get_ticket_notes', 'get_ticket_counts',
-    'check_host_restriction', 'FeedbackTicket', 'AdminNote',
+    'check_host_restriction', 'FeedbackTicket', 'AdminNote', 'AdminLoginResult',
 ]

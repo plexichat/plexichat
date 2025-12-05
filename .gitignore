@@ -15,6 +15,7 @@ build/
 # Temp and logs
 temp/
 temp_test/
+temp_*_test/
 logs/
 *.log
 *.log.zip
@@ -33,6 +34,8 @@ logs/
 htmlcov/
 .benchmarks/
 .hypothesis/
+coverage/
+junit.xml
 
 # Database files
 *.db
@@ -42,6 +45,7 @@ data/
 
 # Uploads and media
 uploads/
+media/
 
 # OS
 .DS_Store
@@ -53,3 +57,13 @@ Thumbs.db
 
 # Config (user-specific)
 config/
+
+# Certificates and secrets
+certs/
+*.crt
+*.key
+*.pem
+admin_credentials.txt
+
+# Node (if any)
+node_modules/
