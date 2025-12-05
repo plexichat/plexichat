@@ -326,9 +326,10 @@ def update_server(
     name: Optional[str] = None,
     description: Optional[str] = None,
     icon_url: Optional[str] = None,
+    default_channel_id: Optional[int] = None,
 ) -> Server:
     """Update server settings."""
-    return _get_manager().update_server(user_id, server_id, name, description, icon_url)
+    return _get_manager().update_server(user_id, server_id, name, description, icon_url, default_channel_id)
 
 
 def delete_server(user_id: int, server_id: int) -> bool:

@@ -99,6 +99,7 @@ class Server:
     channel_count: int = 0
     role_count: int = 0
     default_role_id: Optional[int] = None
+    default_channel_id: Optional[int] = None
     system_channel_id: Optional[int] = None
     verification_level: int = 0
     deleted: bool = False

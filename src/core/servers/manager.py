@@ -350,6 +350,7 @@ class ServerManager:
         name: Optional[str] = None,
         description: Optional[str] = None,
         icon_url: Optional[str] = None,
+        default_channel_id: Optional[int] = None,
     ) -> Server:
         """Update server settings."""
         server = self.get_server(server_id, user_id)
@@ -377,6 +378,19 @@ class ServerManager:
             updates.append("icon_url = ?")
             params.append(icon_url)
             changes["icon_url"] = {"old": server.icon_url, "new": icon_url}
+
+        if default_channel_id is not None:
+            # Verify the channel exists and belongs to this server
+            if default_channel_id != 0:
+                channel = self._db.fetch_one(
+                    "SELECT 1 FROM srv_channels WHERE id = ? AND server_id = ? AND deleted = 0",
+                    (default_channel_id, server_id)
+                )
+                if not channel:
+                    raise ChannelNotFoundError("Default channel not found in this server")
+            updates.append("default_channel_id = ?")
+            params.append(default_channel_id if default_channel_id != 0 else None)
+            changes["default_channel_id"] = {"old": server.default_channel_id, "new": default_channel_id}
 
         if updates:
             updates.append("updated_at = ?")
@@ -1956,6 +1970,13 @@ class ServerManager:
         except (KeyError, IndexError):
             pass
 
+        # Handle default_channel_id which may not exist in older databases
+        default_channel_id = None
+        try:
+            default_channel_id = row["default_channel_id"]
+        except (KeyError, IndexError):
+            pass
+
         return Server(
             id=row["id"],
             name=row["name"],
@@ -1968,6 +1989,7 @@ class ServerManager:
             channel_count=channel_count,
             role_count=role_count,
             default_role_id=row["default_role_id"],
+            default_channel_id=default_channel_id,
             system_channel_id=row["system_channel_id"],
             verification_level=row["verification_level"],
             deleted=bool(row["deleted"]),
