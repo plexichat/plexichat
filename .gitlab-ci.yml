@@ -1,5 +1,5 @@
 # PlexiChat GitLab CI/CD Configuration
-# Full test suite takes ~1+ hour, timeouts set accordingly
+# Pipeline order: lint -> security -> test (fast feedback first)
 
 stages:
   - lint
@@ -32,20 +32,108 @@ default:
     - git submodule update --init --recursive
 
 # =============================================================================
-# LINT STAGE
+# STAGE 1: LINT - Fast code quality checks (runs first for quick feedback)
 # =============================================================================
 
-lint:
+lint:ruff:
   stage: lint
   timeout: 10m
   script:
     - pip install ruff
-    - ruff check src/ --ignore E501,F401 || true
+    - ruff check src/ --ignore E501,F401
+  allow_failure: false
+
+lint:format:
+  stage: lint
+  timeout: 5m
+  script:
+    - pip install ruff
+    - ruff format --check src/ || true
+  allow_failure: true
+
+lint:types:
+  stage: lint
+  timeout: 15m
+  script:
+    - pip install pyright
+    - pyright src/ --outputjson > pyright-report.json || true
+  artifacts:
+    paths:
+      - pyright-report.json
+    expire_in: 7 days
   allow_failure: true
 
 # =============================================================================
-# TEST STAGE
+# STAGE 2: SECURITY - Secret/vulnerability scanning (runs after lint passes)
 # =============================================================================
+
+secret_detection:
+  stage: security
+  image: registry.gitlab.com/gitlab-org/security-products/analyzers/secrets:latest
+  variables:
+    GIT_DEPTH: 50
+  before_script: []
+  script:
+    - /analyzer run
+  artifacts:
+    reports:
+      secret_detection: gl-secret-detection-report.json
+    paths:
+      - gl-secret-detection-report.json
+    expire_in: 30 days
+  allow_failure: false
+  needs: ["lint:ruff"]
+
+sast:
+  stage: security
+  image: registry.gitlab.com/gitlab-org/security-products/analyzers/semgrep:latest
+  variables:
+    SAST_EXCLUDED_PATHS: "venv/,tests/,.cache/"
+  before_script: []
+  script:
+    - /analyzer run
+  artifacts:
+    reports:
+      sast: gl-sast-report.json
+    paths:
+      - gl-sast-report.json
+    expire_in: 30 days
+  allow_failure: true
+  needs: ["lint:ruff"]
+
+dependency_scanning:
+  stage: security
+  timeout: 15m
+  script:
+    - pip install pip-audit safety
+    - pip-audit -r requirements.txt --format json > pip-audit-report.json || true
+    - safety check -r requirements.txt --json > safety-report.json || true
+  artifacts:
+    paths:
+      - pip-audit-report.json
+      - safety-report.json
+    expire_in: 30 days
+  allow_failure: true
+  needs: ["lint:ruff"]
+
+# =============================================================================
+# STAGE 3: TEST - Full test suite (runs last, most expensive)
+# =============================================================================
+
+test:unit:
+  stage: test
+  timeout: 30m
+  script:
+    - pytest src/tests/unit/ -v --tb=short --junitxml=unit-report.xml
+  artifacts:
+    when: always
+    reports:
+      junit: unit-report.xml
+    paths:
+      - unit-report.xml
+    expire_in: 30 days
+  allow_failure: false
+  needs: ["secret_detection"]
 
 test:full:
   stage: test
@@ -64,63 +152,7 @@ test:full:
       - report.xml
       - coverage.xml
     expire_in: 30 days
-
-test:unit:
-  stage: test
-  timeout: 30m
-  script:
-    - pytest src/tests/unit/ -v --tb=short
-  allow_failure: false
-
-# =============================================================================
-# SECURITY STAGE
-# =============================================================================
-
-secret_detection:
-  stage: security
-  image: registry.gitlab.com/gitlab-org/security-products/analyzers/secrets:latest
-  variables:
-    GIT_DEPTH: 50
-  before_script: []
-  script:
-    - /analyzer run
-  artifacts:
-    reports:
-      secret_detection: gl-secret-detection-report.json
-    paths:
-      - gl-secret-detection-report.json
-    expire_in: 30 days
-  allow_failure: false
-
-sast:
-  stage: security
-  image: registry.gitlab.com/gitlab-org/security-products/analyzers/semgrep:latest
-  variables:
-    SAST_EXCLUDED_PATHS: "venv/,tests/,.cache/"
-  before_script: []
-  script:
-    - /analyzer run
-  artifacts:
-    reports:
-      sast: gl-sast-report.json
-    paths:
-      - gl-sast-report.json
-    expire_in: 30 days
-  allow_failure: true
-
-dependency_scanning:
-  stage: security
-  timeout: 15m
-  script:
-    - pip install pip-audit safety
-    - pip-audit -r requirements.txt --format json > pip-audit-report.json || true
-    - safety check -r requirements.txt --json > safety-report.json || true
-  artifacts:
-    paths:
-      - pip-audit-report.json
-      - safety-report.json
-    expire_in: 30 days
-  allow_failure: true
+  needs: ["test:unit"]
 
 # Weekly security scan (runs on schedule)
 security:weekly:
