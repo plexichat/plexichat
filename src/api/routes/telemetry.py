@@ -1,0 +1,146 @@
+"""
+Telemetry API routes.
+
+Handles client-submitted response time telemetry data.
+"""
+
+from fastapi import APIRouter, Depends, HTTPException, status, Request
+from pydantic import BaseModel, Field
+from typing import List, Optional
+import time
+
+import utils.config as config
+import utils.logger as logger
+from src.api.dependencies import get_current_user_optional, get_db
+
+
+router = APIRouter(prefix="/telemetry", tags=["telemetry"])
+
+
+class ResponseTimeEntry(BaseModel):
+    """A single response time measurement."""
+    endpoint: str = Field(..., max_length=255)
+    method: str = Field(..., max_length=10)
+    response_time_ms: float = Field(..., ge=0)
+    status_code: int = Field(..., ge=100, le=599)
+    timestamp: Optional[int] = None
+
+
+class TelemetrySubmission(BaseModel):
+    """Batch submission of response time data."""
+    entries: List[ResponseTimeEntry] = Field(..., max_items=100)
+
+
+class TelemetryResponse(BaseModel):
+    """Response for telemetry submission."""
+    accepted: int
+    message: str
+
+
+# Rate limiting for telemetry submissions (per client IP)
+_telemetry_rate_limits = {}
+
+
+def _check_rate_limit(client_ip: str) -> bool:
+    """Check if client is rate limited for telemetry submissions."""
+    now = time.time()
+    
+    # Allow 10 submissions per minute per IP
+    max_per_minute = config.get("telemetry.rate_limit.max_per_minute", 10)
+    
+    if client_ip not in _telemetry_rate_limits:
+        _telemetry_rate_limits[client_ip] = []
+    
+    # Clean old entries
+    minute_ago = now - 60
+    _telemetry_rate_limits[client_ip] = [
+        t for t in _telemetry_rate_limits[client_ip] if t > minute_ago
+    ]
+    
+    if len(_telemetry_rate_limits[client_ip]) >= max_per_minute:
+        return False
+    
+    return True
+
+
+def _record_submission(client_ip: str):
+    """Record telemetry submission for rate limiting."""
+    now = time.time()
+    if client_ip not in _telemetry_rate_limits:
+        _telemetry_rate_limits[client_ip] = []
+    _telemetry_rate_limits[client_ip].append(now)
+
+
+@router.post("/response-times", response_model=TelemetryResponse)
+async def submit_response_times(
+    submission: TelemetrySubmission,
+    request: Request,
+    current_user = Depends(get_current_user_optional),
+    db = Depends(get_db)
+):
+    """
+    Submit anonymized response time telemetry data.
+    
+    Clients can batch up to 100 entries per submission.
+    Rate limited to prevent abuse.
+    """
+    # Check if telemetry collection is enabled
+    if not config.get("telemetry.enabled", True):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Telemetry collection is currently disabled"
+        )
+    
+    # Get client IP for rate limiting
+    client_ip = request.client.host if request.client else "unknown"
+    
+    # Check rate limit
+    if not _check_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many telemetry submissions. Please try again later."
+        )
+    
+    # Import telemetry module
+    try:
+        from src.core import telemetry
+        if not telemetry.is_setup():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Telemetry system not initialized"
+            )
+    except ImportError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Telemetry module not available"
+        )
+    
+    # Generate anonymized client ID (hash of IP + user agent)
+    import hashlib
+    user_agent = request.headers.get("user-agent", "")
+    client_id = hashlib.sha256(f"{client_ip}:{user_agent}".encode()).hexdigest()[:16]
+    
+    # Convert entries to dict format
+    entries = [
+        {
+            "endpoint": e.endpoint,
+            "method": e.method.upper(),
+            "response_time_ms": e.response_time_ms,
+            "status_code": e.status_code,
+            "timestamp": e.timestamp or int(time.time() * 1000)
+        }
+        for e in submission.entries
+    ]
+    
+    # Submit to telemetry module
+    accepted = telemetry.submit_response_times(entries, client_id)
+    
+    # Record for rate limiting
+    _record_submission(client_ip)
+    
+    logger.debug(f"Telemetry: accepted {accepted}/{len(entries)} entries from {client_id}")
+    
+    return TelemetryResponse(
+        accepted=accepted,
+        message=f"Accepted {accepted} of {len(submission.entries)} entries"
+    )
