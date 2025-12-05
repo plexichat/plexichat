@@ -50,8 +50,12 @@ class TestTLSModule:
     def test_ensure_certificates_generates_files(self):
         """Test certificate generation creates files."""
         from src.core.tls import ensure_certificates
+        import utils.logger as logger
         
+        # Setup logger for test
         with tempfile.TemporaryDirectory() as tmpdir:
+            logger.setup(log_dir=tmpdir, level="ERROR")
+            
             cert_path = os.path.join(tmpdir, "test.crt")
             key_path = os.path.join(tmpdir, "test.key")
             
@@ -85,8 +89,12 @@ class TestTLSModule:
     def test_ensure_certificates_reuses_existing(self):
         """Test that existing valid certificates are reused."""
         from src.core.tls import ensure_certificates
+        import utils.logger as logger
         
         with tempfile.TemporaryDirectory() as tmpdir:
+            # Setup logger for test
+            logger.setup(log_dir=tmpdir, level="ERROR")
+            
             cert_path = os.path.join(tmpdir, "test.crt")
             key_path = os.path.join(tmpdir, "test.key")
             
