@@ -2373,3 +2373,288 @@ GET /channels/{id}/messages?limit=50&after=123456789012345678
 - `before`: Get items with ID less than this value
 - `after`: Get items with ID greater than this value
 - `limit`: Maximum items to return (1-100, default 50)
+
+---
+
+## Telemetry Endpoints
+
+### POST /telemetry/response-times
+
+Submit anonymized response time telemetry data. Clients can batch up to 100 entries per submission.
+
+**Request:**
+```json
+{
+  "entries": [
+    {
+      "endpoint": "/api/v1/users/@me",
+      "method": "GET",
+      "response_time_ms": 45.2,
+      "status_code": 200,
+      "timestamp": 1704067200000
+    }
+  ]
+}
+```
+
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| entries | array | Max 100 items | List of response time measurements |
+| entries[].endpoint | string | Max 255 chars | API endpoint path |
+| entries[].method | string | Max 10 chars | HTTP method |
+| entries[].response_time_ms | float | >= 0 | Response time in milliseconds |
+| entries[].status_code | int | 100-599 | HTTP status code |
+| entries[].timestamp | int | Optional | Unix timestamp in milliseconds |
+
+**Response (200):**
+```json
+{
+  "accepted": 5,
+  "message": "Accepted 5 of 5 entries"
+}
+```
+
+**Error Responses:**
+- `429` - Rate limited (max 10 submissions per minute)
+- `503` - Telemetry collection disabled
+
+---
+
+## Admin Endpoints
+
+Admin endpoints are restricted to localhost by default and require admin privileges.
+
+### GET /admin
+
+Serve the admin UI HTML page. Only accessible from allowed hosts.
+
+**Response:** HTML page
+
+### GET /admin/dashboard
+
+Get admin dashboard summary data.
+
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Response (200):**
+```json
+{
+  "tickets": {
+    "open": 5,
+    "in_progress": 2,
+    "resolved": 10,
+    "closed": 3,
+    "total": 20
+  },
+  "telemetry": [
+    {
+      "endpoint": "/api/v1/users/@me",
+      "method": "GET",
+      "count": 1000,
+      "avg_ms": 45.2,
+      "p95_ms": 120.5,
+      "error_rate": 0.5
+    }
+  ]
+}
+```
+
+### GET /admin/tickets
+
+Get feedback tickets with optional filtering.
+
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| status_filter | string | null | Filter by status (open, in_progress, resolved, closed) |
+| limit | int | 50 | Max tickets to return |
+| offset | int | 0 | Pagination offset |
+
+**Response (200):**
+```json
+[
+  {
+    "id": 123456789012345678,
+    "user_id": 234567890123456789,
+    "username": "johndoe",
+    "content": "Feature request...",
+    "category": "feature",
+    "rating": 4,
+    "status": "open",
+    "created_at": 1704067200000,
+    "resolved_at": null,
+    "resolved_by": null
+  }
+]
+```
+
+### GET /admin/tickets/{ticket_id}
+
+Get a single ticket by ID.
+
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Response (200):** Ticket object
+
+### PATCH /admin/tickets/{ticket_id}/status
+
+Update ticket status.
+
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Request:**
+```json
+{
+  "status": "resolved"
+}
+```
+
+| Field | Type | Values | Description |
+|-------|------|--------|-------------|
+| status | string | open, in_progress, resolved, closed | New status |
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "status": "resolved"
+}
+```
+
+### GET /admin/tickets/{ticket_id}/notes
+
+Get internal notes for a ticket.
+
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Response (200):**
+```json
+[
+  {
+    "id": 123456789012345678,
+    "ticket_id": 234567890123456789,
+    "admin_id": 345678901234567890,
+    "admin_username": "admin",
+    "content": "Contacted user via email",
+    "created_at": 1704067200000
+  }
+]
+```
+
+### POST /admin/tickets/{ticket_id}/notes
+
+Add internal note to a ticket.
+
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Request:**
+```json
+{
+  "content": "Contacted user via email"
+}
+```
+
+**Response (200):** Note object
+
+### GET /admin/telemetry/stats
+
+Get telemetry statistics.
+
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| hours | int | 24 | Hours to look back |
+| endpoint | string | null | Filter by endpoint pattern |
+
+**Response (200):**
+```json
+{
+  "stats": [
+    {
+      "endpoint": "/api/v1/users/@me",
+      "method": "GET",
+      "count": 1000,
+      "avg_ms": 45.2,
+      "min_ms": 10.0,
+      "max_ms": 500.0,
+      "p50_ms": 40.0,
+      "p95_ms": 120.5,
+      "p99_ms": 200.0,
+      "error_rate": 0.5
+    }
+  ]
+}
+```
+
+### GET /admin/telemetry/history
+
+Get response time history for an endpoint.
+
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| endpoint | string | Required | API endpoint path |
+| method | string | GET | HTTP method |
+| hours | int | 24 | Hours to look back |
+| bucket_minutes | int | 5 | Time bucket size in minutes |
+
+**Response (200):**
+```json
+{
+  "history": [
+    {
+      "timestamp": 1704067200000,
+      "avg_response_time_ms": 45.2,
+      "count": 100,
+      "min_response_time_ms": 10.0,
+      "max_response_time_ms": 200.0
+    }
+  ]
+}
+```
+
+---
+
+## Configuration
+
+### Admin UI Configuration
+
+```yaml
+admin_ui:
+  enabled: true
+  path: /admin
+  host_restriction:
+    enabled: true
+    allowed_hosts:
+      - 127.0.0.1
+      - localhost
+      - ::1
+  require_admin_role: true
+```
+
+### Telemetry Configuration
+
+```yaml
+telemetry:
+  enabled: true
+  rate_limit:
+    max_per_minute: 10
+  retention_days: 30
+```
+
+### TLS Configuration
+
+```yaml
+tls:
+  enabled: false
+  auto_generate_self_signed: false
+  cert_path: ~/.plexichat/certs/server.crt
+  key_path: ~/.plexichat/certs/server.key
+  cert_days: 365
+```
