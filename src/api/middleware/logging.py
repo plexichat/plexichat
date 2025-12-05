@@ -28,6 +28,16 @@ def _log_debug(msg: str):
             pass
 
 
+def _log_info(msg: str):
+    """Log info message if logger is available and configured."""
+    logger = _get_logger()
+    if logger:
+        try:
+            logger.info(msg)
+        except RuntimeError:
+            pass
+
+
 def _log_warning(msg: str):
     """Log warning message if logger is available and configured."""
     logger = _get_logger()
@@ -72,7 +82,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             elif status_code >= 400:
                 _log_warning(log_msg)
             else:
-                _log_debug(log_msg)
+                _log_info(log_msg)
             
             return response
             
