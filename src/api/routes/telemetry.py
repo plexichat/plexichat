@@ -11,7 +11,7 @@ import time
 
 import utils.config as config
 import utils.logger as logger
-from src.api.dependencies import get_current_user_optional, get_db
+from src.api.dependencies import get_optional_user, get_db
 
 
 router = APIRouter(prefix="/telemetry", tags=["telemetry"])
@@ -75,7 +75,7 @@ def _record_submission(client_ip: str):
 async def submit_response_times(
     submission: TelemetrySubmission,
     request: Request,
-    current_user = Depends(get_current_user_optional),
+    current_user = Depends(get_optional_user),
     db = Depends(get_db)
 ):
     """

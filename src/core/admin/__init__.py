@@ -72,6 +72,24 @@ def _create_tables() -> None:
     except Exception:
         pass  # Column already exists
     
+    # Ensure feedback table exists first
+    feedback_schema = """
+    CREATE TABLE IF NOT EXISTS feedback (
+        id INTEGER PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        category TEXT,
+        rating INTEGER,
+        created_at INTEGER NOT NULL,
+        status TEXT DEFAULT 'open',
+        resolved_at INTEGER,
+        resolved_by INTEGER,
+        internal_notes TEXT,
+        FOREIGN KEY (user_id) REFERENCES auth_users(id)
+    )
+    """
+    _db.execute(_db.convert_schema(feedback_schema) if hasattr(_db, 'convert_schema') else feedback_schema)
+    
     # Create admin_notes table
     schema = """
     CREATE TABLE IF NOT EXISTS admin_notes (
