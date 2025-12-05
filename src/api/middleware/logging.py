@@ -69,20 +69,25 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         client_ip = request.client.host if request.client else "unknown"
         
+        # Skip logging for health checks to reduce noise
+        skip_paths = ["/api/v1/health", "/health", "/favicon.ico"]
+        should_log = path not in skip_paths
+        
         try:
             response = await call_next(request)
             
-            duration_ms = (time.time() - start_time) * 1000
-            status_code = response.status_code
-            
-            log_msg = f"{method} {path} - {status_code} - {duration_ms:.2f}ms - {client_ip}"
-            
-            if status_code >= 500:
-                _log_error(log_msg)
-            elif status_code >= 400:
-                _log_warning(log_msg)
-            else:
-                _log_info(log_msg)
+            if should_log:
+                duration_ms = (time.time() - start_time) * 1000
+                status_code = response.status_code
+                
+                log_msg = f"{method} {path} - {status_code} - {duration_ms:.2f}ms - {client_ip}"
+                
+                if status_code >= 500:
+                    _log_error(log_msg)
+                elif status_code >= 400:
+                    _log_warning(log_msg)
+                else:
+                    _log_info(log_msg)
             
             return response
             
