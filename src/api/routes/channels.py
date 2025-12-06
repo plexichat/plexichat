@@ -303,6 +303,21 @@ import os
 import uuid
 from pathlib import Path
 
+import utils.config as config
+
+# Default upload size limit (10MB)
+DEFAULT_UPLOAD_LIMIT = 10 * 1024 * 1024
+
+
+def _get_upload_limit() -> int:
+    """Get the upload size limit from config."""
+    try:
+        media_config = config.get("media", {})
+        size_limits = media_config.get("size_limits", {})
+        return size_limits.get("other", DEFAULT_UPLOAD_LIMIT)
+    except Exception:
+        return DEFAULT_UPLOAD_LIMIT
+
 
 @router.post("/{channel_id}/attachments")
 async def upload_attachment(
@@ -346,10 +361,12 @@ async def upload_attachment(
     if not has_access:
         raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
     
-    # Check file size (10MB limit)
+    # Check file size against config limit
     content = await file.read()
-    if len(content) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "File too large (max 10MB)"}})
+    max_size = _get_upload_limit()
+    if len(content) > max_size:
+        max_mb = max_size // (1024 * 1024)
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": f"File too large (max {max_mb}MB)"}})
     
     # Generate unique filename
     ext = os.path.splitext(file.filename)[1] if file.filename else ''

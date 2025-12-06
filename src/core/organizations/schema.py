@@ -107,26 +107,32 @@ def create_tables(db) -> None:
 
 def add_org_columns_to_users(db) -> None:
     """Add org_id and managed_by_org columns to auth_users if they don't exist."""
-    try:
-        # Check if columns exist
-        row = db.fetch_one("SELECT sql FROM sqlite_master WHERE type='table' AND name='auth_users'")
-        if row and row["sql"]:
-            sql = row["sql"].lower()
-            
-            if "org_id" not in sql:
-                db.execute("ALTER TABLE auth_users ADD COLUMN org_id INTEGER")
-                logger.info("Added org_id column to auth_users")
-            
-            if "managed_by_org" not in sql:
-                db.execute("ALTER TABLE auth_users ADD COLUMN managed_by_org INTEGER DEFAULT 0")
-                logger.info("Added managed_by_org column to auth_users")
-    except Exception as e:
-        # For PostgreSQL or if table doesn't exist yet
+    db_type = getattr(db, 'db_type', 'sqlite')
+    
+    if db_type == 'postgres':
+        # PostgreSQL: Use ADD COLUMN IF NOT EXISTS
         try:
             db.execute("ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS org_id INTEGER")
             db.execute("ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS managed_by_org INTEGER DEFAULT 0")
-        except Exception:
+            logger.info("Ensured org columns exist in auth_users (PostgreSQL)")
+        except Exception as e:
             logger.debug(f"Could not add org columns (may already exist): {e}")
+    else:
+        # SQLite: Check sqlite_master first
+        try:
+            row = db.fetch_one("SELECT sql FROM sqlite_master WHERE type='table' AND name='auth_users'")
+            if row and row["sql"]:
+                sql = row["sql"].lower()
+                
+                if "org_id" not in sql:
+                    db.execute("ALTER TABLE auth_users ADD COLUMN org_id INTEGER")
+                    logger.info("Added org_id column to auth_users")
+                
+                if "managed_by_org" not in sql:
+                    db.execute("ALTER TABLE auth_users ADD COLUMN managed_by_org INTEGER DEFAULT 0")
+                    logger.info("Added managed_by_org column to auth_users")
+        except Exception as e:
+            logger.debug(f"Could not add org columns: {e}")
 
 
 def drop_tables(db) -> None:
