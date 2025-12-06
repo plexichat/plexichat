@@ -116,6 +116,22 @@ async def update_current_user(
 
 from fastapi import File, UploadFile
 
+import utils.config as config
+
+# Default avatar size limit (5MB)
+DEFAULT_AVATAR_SIZE_LIMIT = 5 * 1024 * 1024
+
+
+def _get_avatar_size_limit() -> int:
+    """Get the avatar upload size limit from config."""
+    try:
+        media_config = config.get("media", {})
+        size_limits = media_config.get("size_limits", {})
+        return size_limits.get("avatar", DEFAULT_AVATAR_SIZE_LIMIT)
+    except Exception:
+        return DEFAULT_AVATAR_SIZE_LIMIT
+
+
 @router.post("/@me/avatar")
 async def upload_avatar(
     file: UploadFile = File(...),
@@ -145,9 +161,11 @@ async def upload_avatar(
     except Exception as e:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": f"Failed to read file: {str(e)}"}})
     
-    # Check file size (5MB max for avatars)
-    if len(file_data) > 5 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Avatar must be less than 5MB"}})
+    # Check file size against config limit
+    max_size = _get_avatar_size_limit()
+    if len(file_data) > max_size:
+        max_mb = max_size // (1024 * 1024)
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": f"Avatar must be less than {max_mb}MB"}})
     
     try:
         # Upload the file

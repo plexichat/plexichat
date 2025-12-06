@@ -305,6 +305,8 @@ class PlexiChatServer:
                     "video": 104857600,     # 100MB
                     "audio": 52428800,      # 50MB
                     "document": 26214400,   # 25MB
+                    "icon": 2097152,        # 2MB (server/user icons)
+                    "avatar": 5242880,      # 5MB (user avatars)
                     "other": 10485760       # 10MB
                 },
                 

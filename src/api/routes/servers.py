@@ -710,6 +710,21 @@ import os
 import uuid
 from pathlib import Path
 
+import utils.config as config
+
+# Default icon size limit (2MB)
+DEFAULT_ICON_SIZE_LIMIT = 2 * 1024 * 1024
+
+
+def _get_icon_size_limit() -> int:
+    """Get the icon upload size limit from config."""
+    try:
+        media_config = config.get("media", {})
+        size_limits = media_config.get("size_limits", {})
+        return size_limits.get("icon", DEFAULT_ICON_SIZE_LIMIT)
+    except Exception:
+        return DEFAULT_ICON_SIZE_LIMIT
+
 
 @router.post("/{server_id}/icon")
 async def upload_server_icon(
@@ -731,10 +746,12 @@ async def upload_server_icon(
     if file.content_type not in ["image/jpeg", "image/png", "image/gif", "image/webp"]:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid file type. Must be JPEG, PNG, GIF, or WebP"}})
     
-    # Check file size (2MB limit for icons)
+    # Check file size against config limit
     content = await file.read()
-    if len(content) > 2 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "File too large (max 2MB)"}})
+    max_size = _get_icon_size_limit()
+    if len(content) > max_size:
+        max_mb = max_size // (1024 * 1024)
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": f"File too large (max {max_mb}MB)"}})
     
     # Generate unique filename
     ext = os.path.splitext(file.filename)[1] if file.filename else '.png'

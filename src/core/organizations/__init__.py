@@ -93,7 +93,10 @@ def _generate_invite_code(org_name: str, is_registration: bool = False) -> str:
 
 def _ensure_default_org() -> None:
     """Ensure default organization exists."""
-    db = _get_db()
+    # Use _db directly since this is called during setup before _setup_complete is True
+    db = _db
+    if not db:
+        return
     
     default_name = _get_config("default_org_name", "default")
     default_display = _get_config("default_org_display_name", "PlexiChat")
