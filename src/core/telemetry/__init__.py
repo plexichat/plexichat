@@ -103,6 +103,22 @@ def _get_db():
     return _db
 
 
+def _normalize_endpoint(endpoint: str) -> str:
+    """
+    Normalize endpoint by replacing numeric IDs with placeholders.
+    
+    This groups endpoints like /channels/123/messages and /channels/456/messages
+    into a single /channels/{id}/messages entry for better aggregation.
+    """
+    import re
+    # Replace numeric IDs (snowflake IDs are typically 15-20 digits)
+    # Pattern matches path segments that are purely numeric
+    normalized = re.sub(r'/(\d{10,20})(?=/|$)', r'/{id}', endpoint)
+    # Also handle shorter numeric IDs (for backwards compatibility)
+    normalized = re.sub(r'/(\d+)(?=/|$)', r'/{id}', normalized)
+    return normalized
+
+
 def submit_response_times(
     entries: List[Dict[str, Any]],
     client_id: Optional[str] = None
@@ -129,8 +145,9 @@ def submit_response_times(
     
     for entry in entries:
         try:
-            # Validate entry
-            endpoint = str(entry.get("endpoint", ""))[:255]
+            # Validate entry and normalize endpoint
+            raw_endpoint = str(entry.get("endpoint", ""))[:255]
+            endpoint = _normalize_endpoint(raw_endpoint)
             method = str(entry.get("method", "GET"))[:10].upper()
             response_time_ms = float(entry.get("response_time_ms", 0))
             status_code = int(entry.get("status_code", 0))
@@ -167,7 +184,8 @@ def submit_response_times(
 
 def get_endpoint_stats(
     hours: int = 24,
-    endpoint_filter: Optional[str] = None
+    endpoint_filter: Optional[str] = None,
+    aggregate_by_pattern: bool = True
 ) -> List[EndpointStats]:
     """
     Get aggregated statistics for endpoints.
@@ -175,6 +193,8 @@ def get_endpoint_stats(
     Args:
         hours: Number of hours to look back
         endpoint_filter: Optional endpoint pattern to filter by
+        aggregate_by_pattern: If True, aggregate endpoints with IDs into patterns
+                             (e.g., /channels/123/messages -> /channels/{id}/messages)
         
     Returns:
         List of EndpointStats for each endpoint/method combination
@@ -196,54 +216,71 @@ def get_endpoint_stats(
             (cutoff,)
         )
     
+    # If aggregating by pattern, group endpoints that differ only by IDs
+    if aggregate_by_pattern:
+        pattern_groups = {}  # pattern -> list of actual endpoints
+        for row in rows:
+            endpoint = row["endpoint"] if isinstance(row, dict) else row[0]
+            method = row["method"] if isinstance(row, dict) else row[1]
+            pattern = _normalize_endpoint(endpoint)
+            key = (pattern, method)
+            if key not in pattern_groups:
+                pattern_groups[key] = []
+            pattern_groups[key].append(endpoint)
+    else:
+        pattern_groups = {}
+        for row in rows:
+            endpoint = row["endpoint"] if isinstance(row, dict) else row[0]
+            method = row["method"] if isinstance(row, dict) else row[1]
+            pattern_groups[(endpoint, method)] = [endpoint]
+    
     stats = []
-    for row in rows:
-        endpoint = row["endpoint"] if isinstance(row, dict) else row[0]
-        method = row["method"] if isinstance(row, dict) else row[1]
-        
-        # Get all response times for this endpoint
-        times_rows = db.fetch_all(
-            """SELECT response_time_ms, status_code FROM telemetry_response_times 
-               WHERE endpoint = ? AND method = ? AND timestamp > ?
-               ORDER BY response_time_ms""",
-            (endpoint, method, cutoff)
-        )
-        
-        if not times_rows:
-            continue
-        
-        times = []
+    for (pattern, method), endpoints in pattern_groups.items():
+        # Get all response times for all endpoints matching this pattern
+        all_times = []
         error_count = 0
-        for r in times_rows:
-            rt = r["response_time_ms"] if isinstance(r, dict) else r[0]
-            sc = r["status_code"] if isinstance(r, dict) else r[1]
-            times.append(rt)
-            if sc >= 400:
-                error_count += 1
         
-        count = len(times)
-        if count == 0:
+        for endpoint in endpoints:
+            times_rows = db.fetch_all(
+                """SELECT response_time_ms, status_code FROM telemetry_response_times 
+                   WHERE endpoint = ? AND method = ? AND timestamp > ?""",
+                (endpoint, method, cutoff)
+            )
+            
+            for r in times_rows:
+                rt = r["response_time_ms"] if isinstance(r, dict) else r[0]
+                sc = r["status_code"] if isinstance(r, dict) else r[1]
+                all_times.append(rt)
+                if sc >= 400:
+                    error_count += 1
+        
+        if not all_times:
             continue
+        
+        count = len(all_times)
         
         # Calculate percentiles
-        sorted_times = sorted(times)
+        sorted_times = sorted(all_times)
         p50_idx = int(count * 0.50)
         p95_idx = int(count * 0.95)
         p99_idx = int(count * 0.99)
         
         stats.append(EndpointStats(
-            endpoint=endpoint,
+            endpoint=pattern,
             method=method,
             count=count,
-            avg_response_time_ms=sum(times) / count,
-            min_response_time_ms=min(times),
-            max_response_time_ms=max(times),
+            avg_response_time_ms=sum(all_times) / count,
+            min_response_time_ms=min(all_times),
+            max_response_time_ms=max(all_times),
             p50_response_time_ms=sorted_times[min(p50_idx, count - 1)],
             p95_response_time_ms=sorted_times[min(p95_idx, count - 1)],
             p99_response_time_ms=sorted_times[min(p99_idx, count - 1)],
             error_rate=error_count / count if count > 0 else 0,
             last_updated=int(time.time() * 1000)
         ))
+    
+    # Sort by count descending for better visibility
+    stats.sort(key=lambda s: s.count, reverse=True)
     
     return stats
 

@@ -26,7 +26,7 @@ async def add_reaction(
     """
     reactions = api.get_reactions()
     if not reactions:
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Reactions module not available"}})
+        raise HTTPException(status_code=503, detail={"error": {"code": 503, "message": "Reactions module not available"}})
     
     try:
         mid = int(message_id)
@@ -34,7 +34,15 @@ async def add_reaction(
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid message ID"}})
     
     try:
-        reactions.add_reaction(current_user.user_id, mid, emoji)
+        cid = int(channel_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
+    
+    try:
+        # URL decode the emoji if needed (handles encoded emojis like %F0%9F%A5%BA)
+        import urllib.parse
+        decoded_emoji = urllib.parse.unquote(emoji)
+        reactions.add_reaction(current_user.user_id, mid, decoded_emoji)
         return {"success": True}
     except Exception as e:
         exc_name = type(e).__name__
@@ -48,7 +56,10 @@ async def add_reaction(
             raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": str(e)}})
         elif "Limit" in exc_name:
             raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": str(e)}})
-        raise
+        # Log and return a proper error instead of re-raising
+        import utils.logger as logger
+        logger.error(f"Reaction add error: {e}")
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Failed to add reaction"}})
 
 
 @router.delete("/channels/{channel_id}/messages/{message_id}/reactions/{emoji}")
@@ -65,7 +76,7 @@ async def remove_reaction(
     """
     reactions = api.get_reactions()
     if not reactions:
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Reactions module not available"}})
+        raise HTTPException(status_code=503, detail={"error": {"code": 503, "message": "Reactions module not available"}})
     
     try:
         mid = int(message_id)
@@ -73,13 +84,19 @@ async def remove_reaction(
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid message ID"}})
     
     try:
-        reactions.remove_reaction(current_user.user_id, mid, emoji)
+        # URL decode the emoji if needed
+        import urllib.parse
+        decoded_emoji = urllib.parse.unquote(emoji)
+        reactions.remove_reaction(current_user.user_id, mid, decoded_emoji)
         return {"success": True}
     except Exception as e:
         exc_name = type(e).__name__
         if "NotFound" in exc_name:
             return {"success": True}
-        raise
+        # Log and return a proper error instead of re-raising
+        import utils.logger as logger
+        logger.error(f"Reaction remove error: {e}")
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Failed to remove reaction"}})
 
 
 @router.get("/channels/{channel_id}/messages/{message_id}/reactions/{emoji}", response_model=List[ReactionUserResponse])

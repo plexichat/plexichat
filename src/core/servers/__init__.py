@@ -655,9 +655,10 @@ def send_channel_message(
     channel_id: int,
     content: str,
     attachments: Optional[List[Dict[str, Any]]] = None,
+    reply_to_id: Optional[int] = None,
 ) -> Any:
     """Send a message to a text channel."""
-    return _get_manager().send_channel_message(user_id, channel_id, content, attachments)
+    return _get_manager().send_channel_message(user_id, channel_id, content, attachments, reply_to_id)
 
 
 def get_channel_messages(

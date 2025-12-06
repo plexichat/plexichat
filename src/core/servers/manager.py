@@ -1830,6 +1830,7 @@ class ServerManager:
         channel_id: int,
         content: str,
         attachments: Optional[List[Dict[str, Any]]] = None,
+        reply_to_id: Optional[int] = None,
     ) -> Any:
         """Send a message to a text channel."""
         channel = self.get_channel(channel_id, user_id)
@@ -1852,6 +1853,7 @@ class ServerManager:
             user_id=user_id,
             conversation_id=channel.conversation_id,
             content=content,
+            reply_to_id=reply_to_id,
             attachments=attachments,
         )
 

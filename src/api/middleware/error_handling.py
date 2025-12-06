@@ -7,6 +7,8 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+import utils.config as config
+
 
 ERROR_MAPPINGS = {
     "NotFoundError": 404,
@@ -44,6 +46,27 @@ def format_error_response(code: int, message: str) -> dict:
     return {"error": {"code": code, "message": message}}
 
 
+def _get_cors_headers(request: Request) -> dict:
+    """Get CORS headers for error responses."""
+    try:
+        api_conf = config.get("api", {})
+        cors_origins = api_conf.get("cors_origins", ["*"])
+    except Exception:
+        cors_origins = ["*"]
+    
+    origin = request.headers.get("origin", "")
+    
+    # Check if origin is allowed
+    if "*" in cors_origins or origin in cors_origins:
+        return {
+            "Access-Control-Allow-Origin": origin if origin else "*",
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept",
+        }
+    return {}
+
+
 def setup_exception_handlers(app: FastAPI):
     """Setup exception handlers for the FastAPI application."""
     
@@ -51,18 +74,23 @@ def setup_exception_handlers(app: FastAPI):
     async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         """Handle HTTP exceptions."""
         detail = exc.detail
+        headers = _get_cors_headers(request)
+        
         if isinstance(detail, dict) and "error" in detail:
-            return JSONResponse(status_code=exc.status_code, content=detail)
+            return JSONResponse(status_code=exc.status_code, content=detail, headers=headers)
         
         return JSONResponse(
             status_code=exc.status_code,
-            content=format_error_response(exc.status_code, str(detail))
+            content=format_error_response(exc.status_code, str(detail)),
+            headers=headers
         )
     
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
         """Handle request validation errors."""
         errors = exc.errors()
+        headers = _get_cors_headers(request)
+        
         if errors:
             first_error = errors[0]
             loc = first_error.get("loc", [])
@@ -74,7 +102,8 @@ def setup_exception_handlers(app: FastAPI):
         
         return JSONResponse(
             status_code=400,
-            content=format_error_response(400, message)
+            content=format_error_response(400, message),
+            headers=headers
         )
     
     @app.exception_handler(Exception)
@@ -82,8 +111,10 @@ def setup_exception_handlers(app: FastAPI):
         """Handle all other exceptions."""
         status_code = get_status_code_for_exception(exc)
         message = str(exc) if status_code != 500 else "Internal server error"
+        headers = _get_cors_headers(request)
         
         return JSONResponse(
             status_code=status_code,
-            content=format_error_response(status_code, message)
+            content=format_error_response(status_code, message),
+            headers=headers
         )
