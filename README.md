@@ -114,6 +114,17 @@ Connect to `ws://localhost:8000/gateway` for real-time events.
 
 See `docs/` for full API documentation.
 
+## Admin Panel
+
+Built-in admin panel for managing feedback and viewing telemetry.
+
+- Access at `http://localhost:8000/api/v1/admin`
+- Credentials auto-generated on first run (saved to `~/.plexichat/admin_credentials.txt`)
+- 2FA required by default (configurable via `admin_ui.require_otp`)
+- Host-restricted to localhost by default
+
+See root README.md for full configuration options.
+
 ## Testing
 
 ```bash

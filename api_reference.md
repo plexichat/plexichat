@@ -2422,13 +2422,99 @@ Submit anonymized response time telemetry data. Clients can batch up to 100 entr
 
 ## Admin Endpoints
 
-Admin endpoints are restricted to localhost by default and require admin privileges.
+Admin endpoints are restricted to localhost by default and require admin authentication.
 
 ### GET /admin
 
-Serve the admin UI HTML page. Only accessible from allowed hosts.
+Serve the admin login page. Only accessible from allowed hosts.
 
-**Response:** HTML page
+**Response:** HTML login page
+
+### GET /admin/ui
+
+Serve the admin dashboard UI. Only accessible from allowed hosts.
+
+**Response:** HTML dashboard page (requires valid admin token in localStorage)
+
+### POST /admin/login
+
+Authenticate as admin.
+
+**Request:**
+```json
+{
+  "username": "admin",
+  "password": "your_password"
+}
+```
+
+**Response (Success - OTP disabled):**
+```json
+{
+  "status": "success",
+  "token": "admin_session_token"
+}
+```
+
+**Response (OTP Setup Required - first login):**
+```json
+{
+  "status": "otp_setup_required",
+  "admin_id": "123456789012345678",
+  "otp_secret": "JBSWY3DPEHPK3PXP",
+  "otp_qr_uri": "otpauth://totp/PlexiChat%20Admin:admin?secret=...",
+  "message": "Scan the QR code with your authenticator app, then enter the code"
+}
+```
+
+**Response (OTP Verification Required):**
+```json
+{
+  "status": "otp_required",
+  "admin_id": "123456789012345678",
+  "message": "Enter your 2FA code"
+}
+```
+
+### POST /admin/verify-otp
+
+Verify OTP code for admin login.
+
+**Request:**
+```json
+{
+  "admin_id": "123456789012345678",
+  "code": "123456",
+  "is_setup": false
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| admin_id | string | Admin user ID (as string to avoid JS precision loss) |
+| code | string | 6-digit TOTP code or backup code |
+| is_setup | bool | True if this is initial OTP setup |
+
+**Response (200):**
+```json
+{
+  "status": "success",
+  "token": "admin_session_token"
+}
+```
+
+### POST /admin/logout
+
+Logout admin session.
+
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Response (200):**
+```json
+{
+  "success": true
+}
+```
 
 ### GET /admin/dashboard
 
@@ -2629,14 +2715,31 @@ Get response time history for an endpoint.
 admin_ui:
   enabled: true
   path: /admin
+  # Set to false to disable 2FA requirement for admin login
+  # WARNING: Disabling OTP reduces security significantly!
+  require_otp: true
   host_restriction:
+    # WARNING: Disabling this allows ANYONE to access the admin panel!
     enabled: true
     allowed_hosts:
       - 127.0.0.1
       - localhost
-      - ::1
-  require_admin_role: true
+      - "::1"
+  # Allowed origins for admin panel CORS (empty = use main api.cors_origins)
+  allowed_origins: []
+  # Rate limiting for admin login attempts
+  rate_limit:
+    max_attempts: 5       # Max login attempts before lockout
+    window_seconds: 300   # Time window for attempts (5 min)
+    lockout_seconds: 900  # Lockout duration (15 min)
 ```
+
+**First-Time Setup:**
+1. Start the server - admin credentials are auto-generated
+2. Find credentials in `~/.plexichat/admin_credentials.txt`
+3. Access admin panel at `http://localhost:8000/api/v1/admin`
+4. Login and set up 2FA (if `require_otp: true`)
+5. Delete the credentials file after noting them
 
 ### Telemetry Configuration
 

@@ -4,15 +4,30 @@ Admin module - Administrative functions for PlexiChat server.
 This module provides:
 - Auto-generated admin user with random password on first startup
 - Admin login with rate limiting
-- Mandatory OTP setup on first login
+- Optional OTP setup (configurable via require_otp setting)
 - Feedback/ticket viewing and management
 - Telemetry dashboard data
 - Host restriction for admin access
+- Separate listen addresses and allowed origins for admin panel
 
 SECURITY WARNING: Disabling host_restriction allows ANYONE to access the admin
 panel and view potentially sensitive user data including feedback, telemetry,
 and system statistics. Only disable this if you have other security measures
 in place (VPN, firewall, reverse proxy auth, etc.)
+
+Configuration (in config.yaml):
+    admin_ui:
+      enabled: true
+      path: /admin
+      require_otp: true  # Set to false to disable 2FA requirement
+      host_restriction:
+        enabled: true
+        allowed_hosts: ["127.0.0.1", "localhost", "::1"]
+      allowed_origins: []  # Empty = use main CORS origins
+      rate_limit:
+        max_attempts: 5
+        window_seconds: 300
+        lockout_seconds: 900
 
 Usage:
     from src.core import admin
@@ -21,7 +36,7 @@ Usage:
     # Admin login
     result = admin.login("admin", "password")
     if result.requires_otp_setup:
-        # First login - must setup OTP
+        # First login - must setup OTP (if require_otp is true)
         pass
 """
 
@@ -34,6 +49,7 @@ import string
 import os
 
 import utils.logger as logger
+import utils.config as config
 
 _db = None
 _auth = None
@@ -303,12 +319,25 @@ def _clear_login_attempts(ip: str) -> None:
         del _lockouts[ip]
 
 
+def _is_otp_required() -> bool:
+    """Check if OTP is required based on config."""
+    admin_config = config.get("admin_ui", {})
+    return admin_config.get("require_otp", True)
+
+
 def login(username: str, password: str, ip: str = "unknown") -> AdminLoginResult:
     """Authenticate admin user."""
     db = _get_db()
     
+    # Get rate limit config
+    admin_config = config.get("admin_ui", {})
+    rate_config = admin_config.get("rate_limit", {})
+    max_attempts = rate_config.get("max_attempts", 5)
+    window_seconds = rate_config.get("window_seconds", 300)
+    lockout_seconds = rate_config.get("lockout_seconds", 900)
+    
     # Check rate limit
-    allowed, wait_seconds = _check_rate_limit(ip)
+    allowed, wait_seconds = _check_rate_limit(ip, max_attempts, window_seconds, lockout_seconds)
     if not allowed:
         return AdminLoginResult(
             success=False,
@@ -350,7 +379,21 @@ def login(username: str, password: str, ip: str = "unknown") -> AdminLoginResult
     
     _clear_login_attempts(ip)
     
-    # Check if OTP setup is required (first login)
+    # Check if OTP is required by config
+    otp_required = _is_otp_required()
+    
+    # If OTP is not required, skip OTP setup/verification
+    if not otp_required:
+        # Clear the must_setup_otp flag if it was set
+        if must_setup_otp:
+            db.execute("UPDATE admin_users SET must_setup_otp = 0 WHERE id = ?", (admin_id,))
+        
+        # Create session directly
+        token = _create_session(admin_id)
+        db.execute("UPDATE admin_users SET last_login = ? WHERE id = ?", (int(time.time() * 1000), admin_id))
+        return AdminLoginResult(success=True, token=token, user_id=admin_id)
+    
+    # OTP is required - check if setup is needed (first login)
     if must_setup_otp or (not totp_enabled and not totp_secret):
         # Generate OTP secret
         import pyotp
@@ -387,7 +430,7 @@ def login(username: str, password: str, ip: str = "unknown") -> AdminLoginResult
             challenge_token=challenge
         )
     
-    # Should not reach here - OTP should always be required
+    # Should not reach here - OTP should always be required when enabled
     return AdminLoginResult(success=False, error="OTP setup required")
 
 

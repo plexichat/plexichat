@@ -391,12 +391,17 @@ class PlexiChatServer:
             "admin_ui": {
                 "enabled": True,
                 "path": "/admin",
+                # Set to False to disable 2FA requirement for admin login
+                # WARNING: Disabling OTP reduces security significantly!
+                "require_otp": True,
                 "host_restriction": {
                     # WARNING: Disabling this allows ANYONE to access the admin panel!
                     # Only disable if you have VPN, firewall, or reverse proxy auth in place.
                     "enabled": True,
                     "allowed_hosts": ["127.0.0.1", "localhost", "::1"]
                 },
+                # Allowed origins for admin panel CORS (empty = use main api.cors_origins)
+                "allowed_origins": [],
                 # Rate limiting for admin login attempts
                 "rate_limit": {
                     "max_attempts": 5,

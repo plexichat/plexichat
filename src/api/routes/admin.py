@@ -87,6 +87,14 @@ def _check_host_restriction(request: Request) -> None:
         if not admin.check_host_restriction(client_ip, allowed_hosts):
             logger.warning(f"Admin access denied from {client_ip}")
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    
+    # Check origin if allowed_origins is configured
+    allowed_origins = admin_config.get("allowed_origins", [])
+    if allowed_origins:
+        origin = request.headers.get("origin", "")
+        if origin and origin not in allowed_origins:
+            logger.warning(f"Admin access denied - origin {origin} not in allowed_origins")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Origin not allowed")
 
 
 def _get_admin_from_token(request: Request) -> int:
@@ -123,6 +131,10 @@ async def admin_login(
     
     if not result.success:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=result.error)
+    
+    # If token is returned directly (OTP not required), login is complete
+    if result.token:
+        return {"status": "success", "token": result.token}
     
     if result.requires_otp_setup:
         return {
@@ -511,7 +523,7 @@ ADMIN_LOGIN_HTML = """
                     document.getElementById('otp-verify').style.display = 'block';
                 } else if (data.token) {
                     localStorage.setItem('plexichat-admin-token', data.token);
-                    window.location.href = '/api/v1/admin/dashboard';
+                    window.location.href = '/api/v1/admin/ui';
                 }
             } catch (e) { err.textContent = e.message; err.style.display = 'block'; }
             btn.disabled = false;
@@ -530,14 +542,14 @@ ADMIN_LOGIN_HTML = """
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.detail || 'Verification failed');
                 localStorage.setItem('plexichat-admin-token', data.token);
-                window.location.href = '/api/v1/admin/dashboard';
+                window.location.href = '/api/v1/admin/ui';
             } catch (e) { err.textContent = e.message; err.style.display = 'block'; }
         }
         // Check if already logged in
         const token = localStorage.getItem('plexichat-admin-token');
         if (token) {
             fetch('/api/v1/admin/dashboard', { headers: { 'Authorization': 'Bearer ' + token } })
-                .then(r => { if (r.ok) window.location.href = '/api/v1/admin/dashboard'; });
+                .then(r => { if (r.ok) window.location.href = '/api/v1/admin/ui'; });
         }
     </script>
 </body>
@@ -577,6 +589,7 @@ ADMIN_DASHBOARD_HTML = """
         .status.resolved { background: #4ade80; color: #000; }
         .status.closed { background: #6b7280; color: #fff; }
         #error { color: #ef4444; padding: 16px; background: rgba(239,68,68,0.1); border-radius: 8px; margin-bottom: 16px; display: none; }
+        .loading { text-align: center; padding: 40px; color: #888; }
     </style>
 </head>
 <body>
@@ -586,62 +599,105 @@ ADMIN_DASHBOARD_HTML = """
     </div>
     <div class="container">
         <div id="error"></div>
-        <div class="cards" id="stats"></div>
-        <div class="tabs">
-            <button class="tab active" onclick="showTab('tickets', this)">Tickets</button>
-            <button class="tab" onclick="showTab('telemetry', this)">Telemetry</button>
-        </div>
-        <div id="tickets-tab">
-            <table id="tickets-table">
-                <thead><tr><th>ID</th><th>User</th><th>Category</th><th>Status</th><th>Created</th></tr></thead>
-                <tbody></tbody>
-            </table>
-        </div>
-        <div id="telemetry-tab" style="display:none">
-            <table id="telemetry-table">
-                <thead><tr><th>Endpoint</th><th>Method</th><th>Count</th><th>Avg (ms)</th><th>P95 (ms)</th><th>Error %</th></tr></thead>
-                <tbody></tbody>
-            </table>
+        <div id="loading" class="loading">Verifying session...</div>
+        <div id="content" style="display:none">
+            <div class="cards" id="stats"></div>
+            <div class="tabs">
+                <button class="tab active" onclick="showTab('tickets', this)">Tickets</button>
+                <button class="tab" onclick="showTab('telemetry', this)">Telemetry</button>
+            </div>
+            <div id="tickets-tab">
+                <table id="tickets-table">
+                    <thead><tr><th>ID</th><th>User</th><th>Category</th><th>Status</th><th>Created</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div id="telemetry-tab" style="display:none">
+                <table id="telemetry-table">
+                    <thead><tr><th>Endpoint</th><th>Method</th><th>Count</th><th>Avg (ms)</th><th>P95 (ms)</th><th>Error %</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
         </div>
     </div>
     <script>
         const token = localStorage.getItem('plexichat-admin-token');
-        if (!token) window.location.href = '/api/v1/admin';
-        const api = (path) => fetch('/api/v1/admin' + path, { headers: { 'Authorization': 'Bearer ' + token } })
-            .then(r => { if (r.status === 401) { localStorage.removeItem('plexichat-admin-token'); window.location.href = '/api/v1/admin'; } return r.json(); });
-        async function load() {
+        
+        // Redirect to login if no token
+        if (!token) {
+            window.location.replace('/api/v1/admin');
+        }
+        
+        async function verifyAndLoad() {
             try {
-                const data = await api('/dashboard');
+                // First verify the token is valid
+                const res = await fetch('/api/v1/admin/dashboard', { 
+                    headers: { 'Authorization': 'Bearer ' + token },
+                    method: 'GET'
+                });
+                
+                if (res.status === 401) {
+                    // Token invalid/expired - clear and redirect to login
+                    localStorage.removeItem('plexichat-admin-token');
+                    window.location.replace('/api/v1/admin');
+                    return;
+                }
+                
+                if (!res.ok) {
+                    throw new Error('Failed to load dashboard');
+                }
+                
+                // Token valid - show content and load data
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('content').style.display = 'block';
+                
+                const data = await res.json();
                 document.getElementById('stats').innerHTML = `
                     <div class="card"><h3>Open</h3><div class="value">${data.tickets.open}</div></div>
                     <div class="card"><h3>In Progress</h3><div class="value">${data.tickets.in_progress}</div></div>
                     <div class="card"><h3>Resolved</h3><div class="value">${data.tickets.resolved}</div></div>
                     <div class="card"><h3>Total</h3><div class="value">${data.tickets.total}</div></div>
                 `;
-                const tickets = await api('/tickets?limit=20');
+                
+                // Load tickets
+                const ticketsRes = await fetch('/api/v1/admin/tickets?limit=20', { 
+                    headers: { 'Authorization': 'Bearer ' + token } 
+                });
+                if (ticketsRes.status === 401) {
+                    localStorage.removeItem('plexichat-admin-token');
+                    window.location.replace('/api/v1/admin');
+                    return;
+                }
+                const tickets = await ticketsRes.json();
                 document.querySelector('#tickets-table tbody').innerHTML = tickets.map(t => 
                     `<tr><td>${t.id}</td><td>${t.username}</td><td>${t.category || '-'}</td><td><span class="status ${t.status}">${t.status}</span></td><td>${new Date(t.created_at).toLocaleString()}</td></tr>`
                 ).join('') || '<tr><td colspan="5" style="text-align:center;color:#888">No tickets</td></tr>';
+                
                 document.querySelector('#telemetry-table tbody').innerHTML = data.telemetry.map(t => 
                     `<tr><td>${t.endpoint}</td><td>${t.method}</td><td>${t.count}</td><td>${t.avg_ms}</td><td>${t.p95_ms}</td><td>${t.error_rate}%</td></tr>`
                 ).join('') || '<tr><td colspan="6" style="text-align:center;color:#888">No telemetry data</td></tr>';
             } catch (e) { 
+                document.getElementById('loading').style.display = 'none';
                 document.getElementById('error').style.display = 'block'; 
                 document.getElementById('error').textContent = 'Error loading data: ' + e.message; 
             }
         }
+        
         function showTab(name, btn) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             btn.classList.add('active');
             document.getElementById('tickets-tab').style.display = name === 'tickets' ? 'block' : 'none';
             document.getElementById('telemetry-tab').style.display = name === 'telemetry' ? 'block' : 'none';
         }
+        
         function logout() {
             fetch('/api/v1/admin/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
             localStorage.removeItem('plexichat-admin-token');
-            window.location.href = '/api/v1/admin';
+            window.location.replace('/api/v1/admin');
         }
-        load();
+        
+        // Start verification and loading
+        verifyAndLoad();
     </script>
 </body>
 </html>
@@ -655,7 +711,7 @@ async def admin_login_page(request: Request):
     return HTMLResponse(content=ADMIN_LOGIN_HTML)
 
 
-@router.get("/dashboard", response_class=HTMLResponse)
+@router.get("/ui", response_class=HTMLResponse)
 async def admin_dashboard_page(request: Request):
     """Serve the admin dashboard page."""
     _check_host_restriction(request)
