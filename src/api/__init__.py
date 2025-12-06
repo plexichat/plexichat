@@ -38,6 +38,7 @@ _webhooks = None
 _threads = None
 _media = None
 _settings = None
+_organizations = None
 _setup_complete = False
 
 
@@ -54,7 +55,8 @@ def setup(
     webhooks_module=None,
     threads_module=None,
     media_module=None,
-    settings_module=None
+    settings_module=None,
+    organizations_module=None
 ):
     """
     Initialize the API module with all dependencies.
@@ -73,9 +75,10 @@ def setup(
         threads_module: Threads module for thread management
         media_module: Media module for file uploads
         settings_module: Settings module for user preferences
+        organizations_module: Organizations module for org management
     """
     global _db, _auth, _messaging, _servers, _relationships, _presence
-    global _reactions, _embeds, _notifications, _webhooks, _threads, _media, _settings, _setup_complete
+    global _reactions, _embeds, _notifications, _webhooks, _threads, _media, _settings, _organizations, _setup_complete
 
     _db = db
     _auth = auth_module
@@ -90,6 +93,7 @@ def setup(
     _threads = threads_module
     _media = media_module
     _settings = settings_module
+    _organizations = organizations_module
     _setup_complete = True
 
 
@@ -158,6 +162,11 @@ def get_media():
 def get_settings():
     """Get settings module."""
     return _settings
+
+
+def get_organizations():
+    """Get organizations module."""
+    return _organizations
 
 
 def is_setup() -> bool:

@@ -710,6 +710,18 @@ class PlexiChatServer:
         except Exception as e:
             logger.warning(f"Failed to initialize user features module: {e}")
         
+        # Initialize organizations module
+        orgs_config = config.get("organizations") or {}
+        if orgs_config.get("enabled", True):
+            logger.info("Initializing organizations module...")
+            try:
+                from src.core import organizations
+                organizations.setup(self.db, auth)
+                self._modules['organizations'] = organizations
+                logger.info("Organizations module initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize organizations module: {e}")
+        
         logger.info("Initializing media module...")
         media.setup(self.db, messaging)
         self._modules['media'] = media
@@ -785,6 +797,7 @@ class PlexiChatServer:
             webhooks_module=webhooks,
             settings_module=settings,
             media_module=media,
+            organizations_module=self._modules.get('organizations'),
         )
         
         self.app = create_app(enable_rate_limiting=False, enable_docs=True)

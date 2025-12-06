@@ -85,6 +85,25 @@ def get_webhook_multiplier() -> float:
     return _get_rate_limit_config().get("webhook_multiplier", 1.0)
 
 
+def get_user_multiplier(user_id: int) -> float:
+    """
+    Get rate limit multiplier for a specific user based on their tier.
+    
+    Args:
+        user_id: User ID to get multiplier for
+        
+    Returns:
+        Multiplier value (e.g., 1.0 for standard, 2.0 for alpha)
+    """
+    try:
+        from src.core import features
+        if features.is_setup():
+            return features.get_rate_limit_multiplier(user_id)
+    except Exception:
+        pass
+    return 1.0
+
+
 def is_rate_limiting_enabled() -> bool:
     """Check if rate limiting is enabled."""
     return _get_rate_limit_config().get("enabled", True)

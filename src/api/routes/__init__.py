@@ -22,6 +22,8 @@ from .notifications import router as notifications_router
 from .docs import router as docs_router, is_docs_enabled, clear_docs_cache, get_docs_stats
 from .telemetry import router as telemetry_router
 from .admin import router as admin_router
+from .features import router as features_router
+from .organizations import router as organizations_router
 
 import utils.config as config
 
@@ -53,6 +55,14 @@ def create_api_router() -> APIRouter:
         admin_path = admin_config.get("path", "/admin")
         # Remove /api/v1 prefix since admin is mounted at root
         api_router.include_router(admin_router, prefix="/admin", tags=["Admin"])
+    
+    # Include features router (admin endpoints + user features)
+    api_router.include_router(features_router, tags=["Features"])
+    
+    # Include organizations router
+    orgs_config = config.get("organizations", {})
+    if orgs_config.get("enabled", True):
+        api_router.include_router(organizations_router, prefix="/orgs", tags=["Organizations"])
     
     return api_router
 
