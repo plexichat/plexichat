@@ -416,6 +416,128 @@ class PlexiChatServer:
                 "cert_path": str(home_dir / "certs" / "server.crt"),
                 "key_path": str(home_dir / "certs" / "server.key"),
                 "cert_days": 365
+            },
+            # User Features configuration
+            # Controls feature flags, badges, and rate limit tiers for users
+            # Tiers can be customized with specific limits for voice, video, uploads, etc.
+            "user_features": {
+                # Default tier for new users
+                "default_tier": "standard",
+                # Maximum badges displayed on profile
+                "badge_display_limit": 5,
+                # Available badges (admin can assign these to users)
+                "available_badges": [
+                    "alpha_tester",
+                    "early_supporter", 
+                    "staff",
+                    "org_root",
+                    "verified",
+                    "bug_hunter",
+                    "contributor",
+                    "moderator",
+                    "partner"
+                ],
+                # Rate limit tiers - define custom tiers with specific limits
+                # Each tier has a multiplier for general rate limits plus specific feature limits
+                # -1 means unlimited for that feature
+                "rate_limit_tiers": {
+                    "standard": {
+                        "multiplier": 1.0,
+                        "max_voice_minutes_per_day": 120,
+                        "max_video_minutes_per_day": 60,
+                        "max_file_uploads_per_day": 50,
+                        "max_file_size_mb": 10,
+                        "max_servers": 100,
+                        "max_message_length": 2000,
+                        "max_reactions_per_message": 20,
+                        "max_pins_per_channel": 50,
+                        "custom_emoji_slots": 50
+                    },
+                    "alpha": {
+                        "multiplier": 2.0,
+                        "max_voice_minutes_per_day": 480,
+                        "max_video_minutes_per_day": 240,
+                        "max_file_uploads_per_day": 200,
+                        "max_file_size_mb": 25,
+                        "max_servers": 200,
+                        "max_message_length": 4000,
+                        "max_reactions_per_message": 50,
+                        "max_pins_per_channel": 100,
+                        "custom_emoji_slots": 100
+                    },
+                    "premium": {
+                        "multiplier": 3.0,
+                        "max_voice_minutes_per_day": -1,
+                        "max_video_minutes_per_day": -1,
+                        "max_file_uploads_per_day": 500,
+                        "max_file_size_mb": 100,
+                        "max_servers": 500,
+                        "max_message_length": 4000,
+                        "max_reactions_per_message": 100,
+                        "max_pins_per_channel": 200,
+                        "custom_emoji_slots": 250
+                    },
+                    "staff": {
+                        "multiplier": 10.0,
+                        "max_voice_minutes_per_day": -1,
+                        "max_video_minutes_per_day": -1,
+                        "max_file_uploads_per_day": -1,
+                        "max_file_size_mb": 500,
+                        "max_servers": -1,
+                        "max_message_length": 8000,
+                        "max_reactions_per_message": -1,
+                        "max_pins_per_channel": -1,
+                        "custom_emoji_slots": -1
+                    }
+                },
+                # Rate limits for feature management endpoints (admin only)
+                "admin_rate_limit": {
+                    "max_per_minute": 30,
+                    "max_per_hour": 200
+                }
+            },
+            # Organizations configuration (for org ID feature)
+            "organizations": {
+                "enabled": True,
+                "default_org_name": "default",
+                "default_org_display_name": "PlexiChat",
+                # Root user settings
+                "root_user": {
+                    "require_otp": True,
+                    "can_reset_passwords": True,
+                    "can_lock_accounts": True,
+                    "can_manage_servers": True,
+                    "can_view_audit_log": True,
+                    "can_force_logout": True
+                },
+                # Settings that org root can lock for members
+                "manageable_settings": [
+                    "allow_dms",
+                    "allow_friend_requests",
+                    "show_activity",
+                    "theme"
+                ],
+                # Default org behavior
+                "default_org": {
+                    "allow_users_to_leave": False,
+                    "allow_users_to_join_orgs": True
+                },
+                # Invite settings
+                "invites": {
+                    "code_length": 32,
+                    "default_expiry_hours": 168,
+                    "require_two_step": True
+                },
+                # Server restrictions
+                "server_restrictions": {
+                    "enabled": True,
+                    "default_mode": "none"
+                },
+                # Rate limits for org management endpoints
+                "rate_limit": {
+                    "max_invites_per_hour": 20,
+                    "max_member_actions_per_minute": 10
+                }
             }
         }
     
@@ -577,6 +699,16 @@ class PlexiChatServer:
         logger.info("Initializing settings module...")
         settings.setup(self.db)
         self._modules['settings'] = settings
+        
+        # Initialize user features module
+        logger.info("Initializing user features module...")
+        try:
+            from src.core import features
+            features.setup(self.db)
+            self._modules['features'] = features
+            logger.info("User features module initialized")
+        except Exception as e:
+            logger.warning(f"Failed to initialize user features module: {e}")
         
         logger.info("Initializing media module...")
         media.setup(self.db, messaging)
