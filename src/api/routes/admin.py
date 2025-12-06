@@ -32,7 +32,7 @@ class AdminLoginRequest(BaseModel):
 
 class OTPVerifyRequest(BaseModel):
     """OTP verification request."""
-    admin_id: int
+    admin_id: str  # String to avoid JavaScript precision loss with large integers
     code: str = Field(..., min_length=6, max_length=8)
     is_setup: bool = False
 
@@ -127,7 +127,7 @@ async def admin_login(
     if result.requires_otp_setup:
         return {
             "status": "otp_setup_required",
-            "admin_id": result.user_id,
+            "admin_id": str(result.user_id),  # String to avoid JS precision loss
             "otp_secret": result.otp_secret,
             "otp_qr_uri": result.otp_qr_uri,
             "message": "Scan the QR code with your authenticator app, then enter the code"
@@ -136,7 +136,7 @@ async def admin_login(
     if result.requires_otp_verify:
         return {
             "status": "otp_required",
-            "admin_id": result.user_id,
+            "admin_id": str(result.user_id),  # String to avoid JS precision loss
             "message": "Enter your 2FA code"
         }
     
@@ -154,10 +154,16 @@ async def verify_otp(
     
     from src.core import admin
     
+    # Convert string admin_id to int
+    try:
+        admin_id = int(otp_data.admin_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid admin_id")
+    
     if otp_data.is_setup:
-        result = admin.verify_otp_setup(otp_data.admin_id, otp_data.code)
+        result = admin.verify_otp_setup(admin_id, otp_data.code)
     else:
-        result = admin.verify_otp(otp_data.admin_id, otp_data.code)
+        result = admin.verify_otp(admin_id, otp_data.code)
     
     if not result.success:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=result.error)
