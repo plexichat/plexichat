@@ -511,7 +511,7 @@ ADMIN_LOGIN_HTML = """
                     document.getElementById('otp-verify').style.display = 'block';
                 } else if (data.token) {
                     localStorage.setItem('plexichat-admin-token', data.token);
-                    window.location.href = '/admin/dashboard';
+                    window.location.href = '/api/v1/admin/dashboard';
                 }
             } catch (e) { err.textContent = e.message; err.style.display = 'block'; }
             btn.disabled = false;
@@ -530,14 +530,14 @@ ADMIN_LOGIN_HTML = """
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.detail || 'Verification failed');
                 localStorage.setItem('plexichat-admin-token', data.token);
-                window.location.href = '/admin/dashboard';
+                window.location.href = '/api/v1/admin/dashboard';
             } catch (e) { err.textContent = e.message; err.style.display = 'block'; }
         }
         // Check if already logged in
         const token = localStorage.getItem('plexichat-admin-token');
         if (token) {
             fetch('/api/v1/admin/dashboard', { headers: { 'Authorization': 'Bearer ' + token } })
-                .then(r => { if (r.ok) window.location.href = '/admin/dashboard'; });
+                .then(r => { if (r.ok) window.location.href = '/api/v1/admin/dashboard'; });
         }
     </script>
 </body>
@@ -606,9 +606,9 @@ ADMIN_DASHBOARD_HTML = """
     </div>
     <script>
         const token = localStorage.getItem('plexichat-admin-token');
-        if (!token) window.location.href = '/admin';
+        if (!token) window.location.href = '/api/v1/admin';
         const api = (path) => fetch('/api/v1/admin' + path, { headers: { 'Authorization': 'Bearer ' + token } })
-            .then(r => { if (r.status === 401) { localStorage.removeItem('plexichat-admin-token'); window.location.href = '/admin'; } return r.json(); });
+            .then(r => { if (r.status === 401) { localStorage.removeItem('plexichat-admin-token'); window.location.href = '/api/v1/admin'; } return r.json(); });
         async function load() {
             try {
                 const data = await api('/dashboard');
@@ -639,7 +639,7 @@ ADMIN_DASHBOARD_HTML = """
         function logout() {
             fetch('/api/v1/admin/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
             localStorage.removeItem('plexichat-admin-token');
-            window.location.href = '/admin';
+            window.location.href = '/api/v1/admin';
         }
         load();
     </script>
