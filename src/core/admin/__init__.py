@@ -395,15 +395,22 @@ def verify_otp_setup(admin_id: int, code: str) -> AdminLoginResult:
     """Verify OTP code during setup and enable OTP."""
     db = _get_db()
     
+    logger.debug(f"verify_otp_setup called with admin_id={admin_id}, code={code}")
+    
     row = db.fetch_one(
         "SELECT totp_secret FROM admin_users WHERE id = ?",
         (admin_id,)
     )
     
+    logger.debug(f"DB row result: {row}")
+    
     if not row:
+        logger.warning(f"Admin user {admin_id} not found")
         return AdminLoginResult(success=False, error="Admin user not found")
     
     secret = row["totp_secret"] if isinstance(row, dict) else row[0]
+    
+    logger.debug(f"Secret found: {bool(secret)}, length: {len(secret) if secret else 0}")
     
     if not secret:
         return AdminLoginResult(success=False, error="OTP not configured")
@@ -411,7 +418,11 @@ def verify_otp_setup(admin_id: int, code: str) -> AdminLoginResult:
     # Verify code
     import pyotp
     totp = pyotp.TOTP(secret)
+    expected = totp.now()
+    logger.debug(f"Expected OTP: {expected}, Provided: {code}")
+    
     if not totp.verify(code, valid_window=1):
+        logger.warning(f"OTP verification failed for admin {admin_id}")
         return AdminLoginResult(success=False, error="Invalid OTP code")
     
     # Enable OTP and clear must_setup flag
