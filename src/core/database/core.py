@@ -137,7 +137,8 @@ class Database:
                 password=password,
                 dbname=dbname,
                 sslmode=sslmode,
-                cursor_factory=psycopg2.extras.RealDictCursor
+                cursor_factory=psycopg2.extras.RealDictCursor,
+                options="-c client_encoding=UTF8"
             )
             # Get initial connection from pool
             self.connection = self._pool.getconn()
