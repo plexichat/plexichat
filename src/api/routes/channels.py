@@ -309,9 +309,21 @@ import utils.config as config
 DEFAULT_UPLOAD_LIMIT = 10 * 1024 * 1024
 
 
-def _get_upload_limit() -> int:
-    """Get the upload size limit from config."""
+def _get_upload_limit(user_id: int = None) -> int:
+    """Get the upload size limit based on user tier or config default."""
     try:
+        # If user_id provided, check their tier limits
+        if user_id:
+            try:
+                from src.core import features
+                if features.is_setup():
+                    tier_limits = features.get_user_tier_limits(user_id)
+                    if tier_limits and tier_limits.max_file_size_mb:
+                        return tier_limits.max_file_size_mb * 1024 * 1024
+            except Exception:
+                pass
+        
+        # Fall back to config default
         media_config = config.get("media", {})
         size_limits = media_config.get("size_limits", {})
         return size_limits.get("other", DEFAULT_UPLOAD_LIMIT)
@@ -329,6 +341,7 @@ async def upload_attachment(
     Upload a file attachment to a channel.
     
     Returns the URL of the uploaded file.
+    File size limit is based on user's tier (alpha users get 25MB, premium 100MB, etc.)
     """
     servers_mod = api.get_servers()
     messaging = api.get_messaging()
@@ -361,9 +374,9 @@ async def upload_attachment(
     if not has_access:
         raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
     
-    # Check file size against config limit
+    # Check file size against user's tier limit
     content = await file.read()
-    max_size = _get_upload_limit()
+    max_size = _get_upload_limit(current_user.user_id)
     if len(content) > max_size:
         max_mb = max_size // (1024 * 1024)
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": f"File too large (max {max_mb}MB)"}})
