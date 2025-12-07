@@ -398,17 +398,72 @@ async def edit_message(
     Updates the message content. Only the author can edit.
     """
     messaging = api.get_messaging()
+    servers_mod = api.get_servers()
+    auth = api.get_auth()
+    
     if not messaging:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
     
     try:
         mid = int(message_id)
+        cid = int(channel_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid message ID"}})
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid message or channel ID"}})
     
     try:
         msg = messaging.edit_message(current_user.user_id, mid, body.content)
-        return _message_to_response(msg)
+        
+        # Get author username
+        author_username = None
+        if auth:
+            try:
+                user = auth.get_user(current_user.user_id)
+                if user:
+                    author_username = user.username
+            except Exception:
+                pass
+        
+        response = _message_to_response(msg, author_username, channel_id=cid)
+        
+        # Broadcast MESSAGE_UPDATE event via WebSocket
+        try:
+            from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+            from src.core.events.models import Event
+            from src.core.events.types import EventType
+            
+            if ws_is_setup():
+                dispatcher = get_dispatcher()
+                
+                # Get users to broadcast to
+                user_ids = []
+                if servers_mod:
+                    try:
+                        channel = servers_mod.get_channel(cid, current_user.user_id)
+                        if channel:
+                            server_id = getattr(channel, "server_id", None)
+                            if server_id:
+                                user_ids = servers_mod.get_member_user_ids(server_id)
+                    except Exception:
+                        pass
+                
+                if not user_ids and messaging:
+                    try:
+                        participants = messaging.get_participants(cid)
+                        user_ids = [p.user_id for p in (participants or [])]
+                    except Exception:
+                        pass
+                
+                if user_ids:
+                    event = Event(
+                        event_type=EventType.MESSAGE_UPDATE,
+                        data=response
+                    )
+                    await dispatcher.dispatch_event(event, user_ids)
+        except Exception as e:
+            import utils.logger as logger
+            logger.debug(f"Failed to broadcast MESSAGE_UPDATE: {e}")
+        
+        return response
     except Exception as e:
         exc_name = type(e).__name__
         if "NotFound" in exc_name:
