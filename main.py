@@ -1033,6 +1033,9 @@ def main():
     logger.info(f"Environment: {app_config.get('environment', 'development')}")
     logger.info(f"Config file: {config_path}")
     
+    # Security warnings for default/placeholder keys
+    _check_security_keys()
+    
     # Setup utilities
     server.setup_utilities()
     
@@ -1055,6 +1058,49 @@ def main():
         os.execv(sys.executable, [sys.executable] + sys.argv)
     
     logger.info("Server shutdown complete")
+
+
+def _check_security_keys():
+    """Check for default/placeholder security keys and warn if found."""
+    warnings = []
+    
+    # Check media signing key
+    media_config = config.get("media", {})
+    signing_key = media_config.get("signing_key", "")
+    if signing_key in ["", "CHANGE_THIS_SIGNING_KEY", "change-me", "changeme"]:
+        warnings.append("media.signing_key is using a default/placeholder value")
+    
+    # Check Redis password (if enabled)
+    redis_config = config.get("redis", {})
+    if redis_config.get("enabled", False):
+        redis_pass = redis_config.get("password", "")
+        if not redis_pass:
+            warnings.append("redis.password is empty (Redis is enabled)")
+    
+    # Check database password (if PostgreSQL)
+    db_config = config.get("database", {})
+    if db_config.get("type") == "postgres":
+        pg_config = db_config.get("postgres", {})
+        pg_pass = pg_config.get("password", "")
+        if not pg_pass or pg_pass in ["password", "postgres", "changeme"]:
+            warnings.append("database.postgres.password is using a weak/default value")
+    
+    # Check TURN secret (if voice enabled with TURN)
+    voice_config = config.get("voice", {})
+    if voice_config.get("enabled", False) and voice_config.get("turn_urls"):
+        turn_secret = voice_config.get("turn_secret", "")
+        if not turn_secret:
+            warnings.append("voice.turn_secret is empty (TURN is configured)")
+    
+    # Log warnings
+    if warnings:
+        logger.warning("=" * 60)
+        logger.warning("SECURITY WARNING: Default/placeholder keys detected!")
+        logger.warning("=" * 60)
+        for warning in warnings:
+            logger.warning(f"  - {warning}")
+        logger.warning("Please update these values in your config file for production use.")
+        logger.warning("=" * 60)
 
 
 if __name__ == "__main__":
