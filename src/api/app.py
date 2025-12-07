@@ -108,18 +108,78 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             response["api_docs"] = docs_path
         return response
     
-    # Serve uploaded media files
+    # Serve uploaded media files (requires authentication)
     from fastapi.responses import FileResponse
+    from fastapi import Request, HTTPException
     from pathlib import Path
     
     @app.get("/api/v1/media/attachments/{filename}")
-    async def serve_attachment(filename: str):
-        """Serve uploaded attachment files."""
+    async def serve_attachment(filename: str, request: Request):
+        """Serve uploaded attachment files. Requires authentication."""
+        # Check for authentication token
+        auth_header = request.headers.get("Authorization")
+        token = None
+        
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+        elif "token" in request.query_params:
+            # Allow token in query param for direct image/video embeds
+            token = request.query_params.get("token")
+        
+        if not token:
+            raise HTTPException(
+                status_code=401, 
+                detail={"error": {"code": 401, "message": "Authentication required"}}
+            )
+        
+        # Verify token
+        try:
+            import src.api as api_module
+            auth = api_module.get_auth()
+            if auth:
+                token_info = auth.verify_token(token)
+                if not token_info:
+                    raise HTTPException(
+                        status_code=401, 
+                        detail={"error": {"code": 401, "message": "Invalid or expired token"}}
+                    )
+            else:
+                raise HTTPException(
+                    status_code=500, 
+                    detail={"error": {"code": 500, "message": "Auth module not available"}}
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=401, 
+                detail={"error": {"code": 401, "message": "Invalid or expired token"}}
+            )
+        
+        # Serve the file
         media_dir = Path.home() / ".plexichat" / "media" / "attachments"
         file_path = media_dir / filename
+        
+        # Security: prevent path traversal
+        try:
+            file_path = file_path.resolve()
+            if not str(file_path).startswith(str(media_dir.resolve())):
+                raise HTTPException(
+                    status_code=403, 
+                    detail={"error": {"code": 403, "message": "Access denied"}}
+                )
+        except Exception:
+            raise HTTPException(
+                status_code=403, 
+                detail={"error": {"code": 403, "message": "Access denied"}}
+            )
+        
         if not file_path.exists():
-            from fastapi import HTTPException
-            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "File not found"}})
+            raise HTTPException(
+                status_code=404, 
+                detail={"error": {"code": 404, "message": "File not found"}}
+            )
+        
         return FileResponse(file_path)
     
     return app
