@@ -412,9 +412,9 @@ async def get_password_requirements():
     Returns the password policy configuration so clients can validate
     passwords before submission and display requirements to users.
     """
-    # Default requirements
+    # Default requirements (should match main.py defaults)
     defaults = {
-        "min_length": 8,
+        "min_length": 12,
         "max_length": 128,
         "require_uppercase": True,
         "require_lowercase": True,
@@ -426,7 +426,10 @@ async def get_password_requirements():
         return defaults
     
     try:
-        password_config = config_util.get("authentication.password", {})
+        # Try to get the nested authentication.password config
+        auth_config = config_util.get("authentication", {})
+        password_config = auth_config.get("password", {}) if isinstance(auth_config, dict) else {}
+        
         return {
             "min_length": password_config.get("min_length", defaults["min_length"]),
             "max_length": password_config.get("max_length", defaults["max_length"]),
