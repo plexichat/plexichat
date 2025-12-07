@@ -386,6 +386,18 @@ class PlexiChatServer:
                 },
                 "retention_days": 30
             },
+            # Voice/Video configuration
+            "voice": {
+                "enabled": True,
+                "sfu_backend": "mediasoup",
+                "mediasoup_url": "https://localhost:4443",
+                "janus_url": "http://localhost:8088/janus",
+                "stun_urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"],
+                "turn_urls": [],
+                "turn_secret": "",
+                "turn_ttl": 86400,
+                "log_connections": False
+            },
             # Admin UI configuration
             # SECURITY WARNING: The admin panel provides access to sensitive user data
             # including feedback, telemetry, and system statistics.

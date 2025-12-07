@@ -17,7 +17,7 @@ from src.api.schemas.messages import (
 router = APIRouter()
 
 
-def _message_to_response(msg, author_username: str = None) -> MessageResponse:
+def _message_to_response(msg, author_username: str = None, channel_id: int = None) -> MessageResponse:
     """Convert message object to response model."""
     attachments = []
     if hasattr(msg, "attachments") and msg.attachments:
@@ -35,9 +35,12 @@ def _message_to_response(msg, author_username: str = None) -> MessageResponse:
     if getattr(msg, "edited", False) or getattr(msg, "edited_at", None):
         edited_at = getattr(msg, "edited_at", None) or getattr(msg, "updated_at", None)
     
+    # Use explicit channel_id if provided, otherwise fall back to message attributes
+    effective_channel_id = channel_id or getattr(msg, "channel_id", 0) or getattr(msg, "conversation_id", 0)
+    
     response = MessageResponse(
         id=str(msg.id),
-        channel_id=str(getattr(msg, "channel_id", 0) or getattr(msg, "conversation_id", 0)),
+        channel_id=str(effective_channel_id),
         author_id=str(msg.author_id),
         content=msg.content,
         created_at=msg.created_at,
@@ -300,7 +303,7 @@ async def send_channel_message(
         except Exception:
             pass
     
-    response = _message_to_response(msg, author_username)
+    response = _message_to_response(msg, author_username, channel_id=cid)
     
     # Broadcast MESSAGE_CREATE event via WebSocket
     try:
