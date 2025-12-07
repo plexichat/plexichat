@@ -102,7 +102,7 @@ class PlexiChatServer:
                     "backup_code_count": 10
                 },
                 "password": {
-                    "min_length": 8,
+                    "min_length": 12,
                     "max_length": 128,
                     "require_uppercase": True,
                     "require_lowercase": True,
