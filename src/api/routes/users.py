@@ -45,6 +45,10 @@ def _user_to_public_response(user) -> UserPublicResponse:
 
 def _user_to_dict(user) -> dict:
     """Convert user object to JSON-serializable dict for caching."""
+    account_type = getattr(user, "account_type", None)
+    # Convert AccountType enum to string if needed
+    if hasattr(account_type, 'value'):
+        account_type = account_type.value
     return {
         "id": user.id,
         "username": user.username,
@@ -53,7 +57,7 @@ def _user_to_dict(user) -> dict:
         "created_at": user.created_at,
         "email_verified": getattr(user, "email_verified", False),
         "totp_enabled": getattr(user, "totp_enabled", False),
-        "account_type": getattr(user, "account_type", None),
+        "account_type": account_type,
         "permissions": getattr(user, "permissions", {}),
     }
 

@@ -17,7 +17,7 @@ from src.api.schemas.messages import (
 router = APIRouter()
 
 
-def _message_to_response(msg, author_username: str = None, channel_id: int = None) -> MessageResponse:
+def _message_to_response(msg, author_username: str = None, channel_id: int = None, reactions_data=None) -> MessageResponse:
     """Convert message object to response model."""
     attachments = []
     if hasattr(msg, "attachments") and msg.attachments:
@@ -29,15 +29,15 @@ def _message_to_response(msg, author_username: str = None, channel_id: int = Non
                 size=getattr(att, "size", 0),
                 url=att.url,
             ))
-    
+
     # Get edited_at from updated_at if message was edited
     edited_at = None
     if getattr(msg, "edited", False) or getattr(msg, "edited_at", None):
         edited_at = getattr(msg, "edited_at", None) or getattr(msg, "updated_at", None)
-    
+
     # Use explicit channel_id if provided, otherwise fall back to message attributes
     effective_channel_id = channel_id or getattr(msg, "channel_id", 0) or getattr(msg, "conversation_id", 0)
-    
+
     response = MessageResponse(
         id=str(msg.id),
         channel_id=str(effective_channel_id),
@@ -50,10 +50,17 @@ def _message_to_response(msg, author_username: str = None, channel_id: int = Non
         embeds=getattr(msg, "embeds", []) or [],
         pinned=getattr(msg, "pinned", False),
     )
-    
+
     # Add author_username as extra field (not in schema but useful for client)
     response_dict = response.model_dump()
     response_dict["author_username"] = author_username or getattr(msg, "author_username", None) or f"User {msg.author_id}"
+
+    # Add reactions data if provided
+    if reactions_data is not None:
+        response_dict["reactions"] = reactions_data
+    else:
+        response_dict["reactions"] = []
+
     return response_dict
 
 
@@ -131,11 +138,29 @@ async def get_channel_messages(
             author_cache = {uid: u.username for uid, u in users.items()}
         except Exception:
             pass
-    
+
+    # Fetch reactions for all messages
+    reactions_module = api.get_reactions()
+    reactions_cache = {}
+    if reactions_module:
+        for m in messages:
+            try:
+                msg_reactions = reactions_module.get_reactions(current_user.user_id, m.id)
+                reactions_cache[m.id] = [
+                    {"emoji": r.emoji, "count": r.count, "me": r.me}
+                    for r in msg_reactions.reactions
+                ]
+            except Exception:
+                reactions_cache[m.id] = []
+
     result = []
     for m in messages:
-        result.append(_message_to_response(m, author_cache.get(m.author_id)))
-    
+        result.append(_message_to_response(
+            m,
+            author_cache.get(m.author_id),
+            reactions_data=reactions_cache.get(m.id, [])
+        ))
+
     return result
 
 
