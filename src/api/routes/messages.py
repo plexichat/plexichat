@@ -362,7 +362,7 @@ async def send_channel_message(
             
             if user_ids:
                 import utils.logger as logger
-                logger.debug(f"Broadcasting MESSAGE_CREATE to {len(user_ids)} users")
+                logger.info(f"Broadcasting MESSAGE_CREATE to {len(user_ids)} users for channel {cid}")
                 event = Event(
                     event_type=EventType.MESSAGE_CREATE,
                     data=response
@@ -371,7 +371,7 @@ async def send_channel_message(
                 async def dispatch_with_logging():
                     try:
                         count = await dispatcher.dispatch_event(event, user_ids)
-                        logger.debug(f"MESSAGE_CREATE dispatched to {count} connections")
+                        logger.info(f"MESSAGE_CREATE dispatched to {count} connections")
                     except Exception as e:
                         logger.warning(f"Failed to dispatch MESSAGE_CREATE: {e}")
                 
