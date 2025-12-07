@@ -159,10 +159,18 @@ class PlexiChatServer:
                 "debug": True,
                 # SECURITY: In development, allow localhost origins. 
                 # For production, change to specific allowed origins like ["https://yourdomain.com"]
-                "cors_origins": ["http://localhost:5000", "http://127.0.0.1:5000", "http://localhost:8000", "http://127.0.0.1:8000"],
+                "cors_origins": [
+                    "http://localhost:5000", 
+                    "http://127.0.0.1:5000", 
+                    "http://localhost:8000", 
+                    "http://127.0.0.1:8000",
+                    "https://plexichat-app.tail79f345.ts.net:8443",
+                    "http://192.168.3.221:5000",
+                    "http://192.168.3.221:8000"
+                ],
                 "cors_allow_credentials": True,
                 "cors_allow_methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-                "cors_allow_headers": ["Authorization", "Content-Type", "X-Requested-With"],
+                "cors_allow_headers": ["Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin"],
                 "docs_url": "/docs",
                 "redoc_url": "/redoc",
                 "openapi_url": "/openapi.json"
