@@ -41,23 +41,39 @@ class TelemetryResponse(BaseModel):
 _telemetry_rate_limits = {}
 
 
+def _get_rate_limit_config():
+    """Get rate limit configuration with defaults."""
+    telemetry_config = config.get("telemetry", {})
+    rate_limit_config = telemetry_config.get("rate_limit", {})
+    return {
+        "max_per_minute": rate_limit_config.get("max_per_minute", 2),  # Reduced from 10
+        "max_per_hour": rate_limit_config.get("max_per_hour", 10),  # New hourly limit
+        "max_entries_per_submission": rate_limit_config.get("max_entries_per_submission", 100),
+    }
+
+
 def _check_rate_limit(client_ip: str) -> bool:
     """Check if client is rate limited for telemetry submissions."""
     now = time.time()
-    
-    # Allow 10 submissions per minute per IP
-    max_per_minute = config.get("telemetry.rate_limit.max_per_minute", 10)
+    rate_config = _get_rate_limit_config()
     
     if client_ip not in _telemetry_rate_limits:
         _telemetry_rate_limits[client_ip] = []
     
-    # Clean old entries
-    minute_ago = now - 60
+    # Clean old entries (keep last hour)
+    hour_ago = now - 3600
     _telemetry_rate_limits[client_ip] = [
-        t for t in _telemetry_rate_limits[client_ip] if t > minute_ago
+        t for t in _telemetry_rate_limits[client_ip] if t > hour_ago
     ]
     
-    if len(_telemetry_rate_limits[client_ip]) >= max_per_minute:
+    # Check hourly limit
+    if len(_telemetry_rate_limits[client_ip]) >= rate_config["max_per_hour"]:
+        return False
+    
+    # Check per-minute limit
+    minute_ago = now - 60
+    recent_count = sum(1 for t in _telemetry_rate_limits[client_ip] if t > minute_ago)
+    if recent_count >= rate_config["max_per_minute"]:
         return False
     
     return True

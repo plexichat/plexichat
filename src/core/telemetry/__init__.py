@@ -1,4 +1,4 @@
-"""
+﻿"""
 Telemetry module - Collects anonymized response time data from clients.
 
 This module provides:
@@ -108,8 +108,7 @@ def _normalize_endpoint(endpoint: str) -> str:
     Normalize endpoint by replacing numeric IDs and emojis with placeholders.
     
     This groups endpoints like /channels/123/messages and /channels/456/messages
-    into a single /channels/{id}/messages entry for better aggregation.
-    Also normalizes emoji paths like /reactions/🤯 to /reactions/{emoji}.
+    into a single /channels/:id/messages entry for better aggregation.
     """
     import re
     import urllib.parse
@@ -120,21 +119,36 @@ def _normalize_endpoint(endpoint: str) -> str:
     except Exception:
         pass
     
+    # Remove query parameters for cleaner grouping
+    if '?' in endpoint:
+        endpoint = endpoint.split('?')[0]
+    
     # Replace numeric IDs (snowflake IDs are typically 15-20 digits)
-    # Pattern matches path segments that are purely numeric
-    normalized = re.sub(r'/(\d{10,20})(?=/|$)', r'/{id}', endpoint)
-    # Also handle shorter numeric IDs (for backwards compatibility)
-    normalized = re.sub(r'/(\d+)(?=/|$)', r'/{id}', normalized)
+    normalized = re.sub(r'/(\d{10,20})(?=/|$)', r'/:id', endpoint)
+    # Also handle shorter numeric IDs
+    normalized = re.sub(r'/(\d+)(?=/|$)', r'/:id', normalized)
     
     # Normalize emoji paths in reactions endpoints
-    # Match /reactions/ followed by any non-slash characters (emoji or encoded emoji)
     if '/reactions/' in normalized:
-        # Replace the emoji part after /reactions/ with {emoji}
-        normalized = re.sub(r'/reactions/[^/]+', '/reactions/{emoji}', normalized)
+        normalized = re.sub(r'/reactions/[^/]+', '/reactions/:emoji', normalized)
     
-    # Normalize invite codes (alphanumeric strings after /invites/)
+    # Normalize invite codes
     if '/invites/' in normalized:
-        normalized = re.sub(r'/invites/[a-zA-Z0-9]+$', '/reactions/{emoji}', normalized)
+        normalized = re.sub(r'/invites/[a-zA-Z0-9]+', '/invites/:code', normalized)
+    
+    # Normalize settings keys
+    if '/settings/' in normalized:
+        normalized = re.sub(r'/settings/[^/]+$', '/settings/:key', normalized)
+    
+    # Normalize media attachment paths (UUIDs/hashes)
+    if '/media/' in normalized:
+        normalized = re.sub(r'/media/attachments/[a-f0-9]+\.[a-z]+', '/media/attachments/:file', normalized)
+        normalized = re.sub(r'/media/avatars/[a-f0-9]+\.[a-z]+', '/media/avatars/:file', normalized)
+        normalized = re.sub(r'/media/icons/[a-f0-9]+\.[a-z]+', '/media/icons/:file', normalized)
+    
+    # Normalize user search queries
+    if '/users/search' in normalized:
+        normalized = '/users/search'
     
     return normalized
 
@@ -215,8 +229,7 @@ def get_endpoint_stats(
         hours: Number of hours to look back
         endpoint_filter: Optional endpoint pattern to filter by
         aggregate_by_pattern: If True, aggregate endpoints with IDs into patterns
-                             (e.g., /channels/123/messages -> /channels/{id}/messages)
-        client_id_filter: Optional client_id to filter by (e.g., "server" for server-side only)
+        client_id_filter: Optional client_id to filter by
         
     Returns:
         List of EndpointStats for each endpoint/method combination
@@ -241,7 +254,7 @@ def get_endpoint_stats(
     
     # If aggregating by pattern, group endpoints that differ only by IDs
     if aggregate_by_pattern:
-        pattern_groups = {}  # pattern -> list of actual endpoints
+        pattern_groups = {}
         for row in rows:
             endpoint = row["endpoint"] if isinstance(row, dict) else row[0]
             method = row["method"] if isinstance(row, dict) else row[1]
@@ -259,12 +272,10 @@ def get_endpoint_stats(
     
     stats = []
     for (pattern, method), endpoints in pattern_groups.items():
-        # Get all response times for all endpoints matching this pattern
         all_times = []
         error_count = 0
         
         for endpoint in endpoints:
-            # Build query with optional client_id filter
             times_query = """SELECT response_time_ms, status_code FROM telemetry_response_times 
                    WHERE endpoint = ? AND method = ? AND timestamp > ?"""
             times_params: list = [endpoint, method, cutoff]
@@ -286,8 +297,6 @@ def get_endpoint_stats(
             continue
         
         count = len(all_times)
-        
-        # Calculate percentiles
         sorted_times = sorted(all_times)
         p50_idx = int(count * 0.50)
         p95_idx = int(count * 0.95)
@@ -307,9 +316,7 @@ def get_endpoint_stats(
             last_updated=int(time.time() * 1000)
         ))
     
-    # Sort by count descending for better visibility
     stats.sort(key=lambda s: s.count, reverse=True)
-    
     return stats
 
 
@@ -346,7 +353,6 @@ def get_response_time_history(
     if not rows:
         return []
     
-    # Bucket the data
     buckets = {}
     for row in rows:
         ts = row["timestamp"] if isinstance(row, dict) else row[0]
@@ -357,7 +363,6 @@ def get_response_time_history(
             buckets[bucket_key] = []
         buckets[bucket_key].append(rt)
     
-    # Calculate averages
     result = []
     for bucket_ts, times in sorted(buckets.items()):
         result.append({

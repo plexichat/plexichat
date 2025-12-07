@@ -180,6 +180,16 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 detail={"error": {"code": 404, "message": "File not found"}}
             )
         
+        # Check if download is requested
+        download = request.query_params.get("download", "0") == "1"
+        
+        if download:
+            return FileResponse(
+                file_path, 
+                filename=filename,
+                media_type="application/octet-stream"
+            )
+        
         return FileResponse(file_path)
     
     return app
