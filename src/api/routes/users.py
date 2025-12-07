@@ -13,35 +13,58 @@ from src.core.database import cached, invalidate_pattern
 router = APIRouter()
 
 
+def _get_attr(obj, key, default=None):
+    """Get attribute from object or dict."""
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
 def _user_to_response(user, include_private: bool = False) -> UserResponse:
-    """Convert user object to response model."""
+    """Convert user object or dict to response model."""
     return UserResponse(
-        id=str(user.id),
-        username=user.username,
-        email=getattr(user, "email", None) if include_private else None,
-        avatar_url=getattr(user, "avatar_url", None),
-        created_at=user.created_at,
-        email_verified=getattr(user, "email_verified", False) if include_private else False,
-        totp_enabled=getattr(user, "totp_enabled", False) if include_private else False,
+        id=str(_get_attr(user, "id")),
+        username=_get_attr(user, "username"),
+        email=_get_attr(user, "email") if include_private else None,
+        avatar_url=_get_attr(user, "avatar_url"),
+        created_at=_get_attr(user, "created_at"),
+        email_verified=_get_attr(user, "email_verified", False) if include_private else False,
+        totp_enabled=_get_attr(user, "totp_enabled", False) if include_private else False,
     )
 
 
 def _user_to_public_response(user) -> UserPublicResponse:
-    """Convert user object to public response model."""
+    """Convert user object or dict to public response model."""
     return UserPublicResponse(
-        id=str(user.id),
-        username=user.username,
-        avatar_url=getattr(user, "avatar_url", None),
-        created_at=user.created_at,
+        id=str(_get_attr(user, "id")),
+        username=_get_attr(user, "username"),
+        avatar_url=_get_attr(user, "avatar_url"),
+        created_at=_get_attr(user, "created_at"),
     )
 
 
+def _user_to_dict(user) -> dict:
+    """Convert user object to JSON-serializable dict for caching."""
+    return {
+        "id": user.id,
+        "username": user.username,
+        "email": getattr(user, "email", None),
+        "avatar_url": getattr(user, "avatar_url", None),
+        "created_at": user.created_at,
+        "email_verified": getattr(user, "email_verified", False),
+        "totp_enabled": getattr(user, "totp_enabled", False),
+        "account_type": getattr(user, "account_type", None),
+        "permissions": getattr(user, "permissions", {}),
+    }
+
+
 def _get_user_cached(user_id: int):
-    """Get user with caching - separate function for @cached decorator."""
+    """Get user with caching - returns JSON-serializable dict."""
     auth = api.get_auth()
     if not auth:
         return None
-    return auth.get_user(user_id)
+    user = auth.get_user(user_id)
+    return _user_to_dict(user) if user else None
 
 
 # Apply caching to the internal function (60s TTL for user data)
