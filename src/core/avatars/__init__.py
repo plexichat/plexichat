@@ -92,13 +92,11 @@ def _create_tables() -> None:
             size INTEGER NOT NULL,
             checksum TEXT NOT NULL,
             animated INTEGER NOT NULL DEFAULT 0,
-            uploaded_at BIGINT NOT NULL,
-            CONSTRAINT fk_user_avatars_user FOREIGN KEY (user_id) 
-                REFERENCES auth_users(id) ON DELETE CASCADE
+            uploaded_at BIGINT NOT NULL
         )
     """)
     
-    # Server icons table
+    # Server icons table - no FK constraint since servers table may not exist yet
     db.execute("""
         CREATE TABLE IF NOT EXISTS server_icons (
             id BIGINT PRIMARY KEY,
@@ -110,9 +108,7 @@ def _create_tables() -> None:
             size INTEGER NOT NULL,
             checksum TEXT NOT NULL,
             animated INTEGER NOT NULL DEFAULT 0,
-            uploaded_at BIGINT NOT NULL,
-            CONSTRAINT fk_server_icons_server FOREIGN KEY (server_id) 
-                REFERENCES servers(id) ON DELETE CASCADE
+            uploaded_at BIGINT NOT NULL
         )
     """)
     
