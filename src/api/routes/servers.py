@@ -320,6 +320,115 @@ async def get_server_members(
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
 
 
+# ==================== Member Management ====================
+
+@router.delete("/{server_id}/members/{member_id}")
+async def kick_member(
+    server_id: str,
+    member_id: str,
+    current_user: TokenInfo = Depends(get_current_user)
+):
+    """
+    Kick a member from a server.
+    
+    Removes the member from the server. Requires kick members permission.
+    """
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
+    
+    try:
+        sid = int(server_id)
+        mid = int(member_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid ID"}})
+    
+    try:
+        servers_mod.kick_member(current_user.user_id, sid, mid)
+        return {"success": True}
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Member not found"}})
+        elif "Permission" in exc_name or "Hierarchy" in exc_name or "Owner" in exc_name:
+            raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+@router.put("/{server_id}/members/{member_id}/roles/{role_id}")
+async def assign_role_to_member(
+    server_id: str,
+    member_id: str,
+    role_id: str,
+    current_user: TokenInfo = Depends(get_current_user)
+):
+    """
+    Assign a role to a member.
+    
+    Adds the specified role to the member. Requires manage roles permission.
+    """
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
+    
+    try:
+        sid = int(server_id)
+        mid = int(member_id)
+        rid = int(role_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid ID"}})
+    
+    try:
+        servers_mod.assign_role(current_user.user_id, sid, mid, rid)
+        return {"success": True}
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Member or role not found"}})
+        elif "Permission" in exc_name or "Hierarchy" in exc_name:
+            raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
+        elif "Exists" in exc_name:
+            return {"success": True}  # Already has role, treat as success
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+@router.delete("/{server_id}/members/{member_id}/roles/{role_id}")
+async def remove_role_from_member(
+    server_id: str,
+    member_id: str,
+    role_id: str,
+    current_user: TokenInfo = Depends(get_current_user)
+):
+    """
+    Remove a role from a member.
+    
+    Removes the specified role from the member. Requires manage roles permission.
+    """
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
+    
+    try:
+        sid = int(server_id)
+        mid = int(member_id)
+        rid = int(role_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid ID"}})
+    
+    try:
+        servers_mod.remove_role(current_user.user_id, sid, mid, rid)
+        return {"success": True}
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Member or role not found"}})
+        elif "Permission" in exc_name or "Hierarchy" in exc_name or "Default" in exc_name:
+            raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+# ==================== Channel Management ====================
+
 @router.post("/{server_id}/channels")
 async def create_server_channel(
     server_id: str,

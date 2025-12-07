@@ -683,28 +683,45 @@ class MessagingManager:
         if cached is not None:
             return cached
         
-        # First check direct participants table
+        # Optimized single query: check direct participant OR server membership
+        # This combines both checks into one database round-trip
         row = self._db.fetch_one(
-            "SELECT 1 FROM msg_participants WHERE conversation_id = ? AND user_id = ?",
-            (conversation_id, user_id)
+            """SELECT 
+                CASE 
+                    WHEN EXISTS (SELECT 1 FROM msg_participants WHERE conversation_id = ? AND user_id = ?) THEN 1
+                    ELSE 0
+                END as is_direct_participant,
+                c.metadata
+            FROM msg_conversations c WHERE c.id = ?""",
+            (conversation_id, user_id, conversation_id)
         )
-        if row:
+        
+        if not row:
+            self._cache_set(self._participant_cache, cache_key, False)
+            return False
+        
+        # Check direct participant first (most common case)
+        if row.get("is_direct_participant") == 1:
             self._cache_set(self._participant_cache, cache_key, True)
             return True
         
-        # Check if this is a server channel conversation (single optimized query)
-        conv_row = self._db.fetch_one(
-            """SELECT c.metadata, 
-                      CASE WHEN c.metadata IS NOT NULL THEN 
-                          (SELECT 1 FROM srv_members m WHERE m.user_id = ? 
-                           AND m.server_id = CAST(json_extract(c.metadata, '$.server_id') AS INTEGER))
-                      END as is_server_member
-               FROM msg_conversations c WHERE c.id = ?""",
-            (user_id, conversation_id)
-        )
-        if conv_row and conv_row.get("is_server_member"):
-            self._cache_set(self._participant_cache, cache_key, True)
-            return True
+        # Check server membership if this is a server channel
+        metadata = row.get("metadata")
+        if metadata:
+            try:
+                if isinstance(metadata, str):
+                    metadata = json.loads(metadata)
+                server_id = metadata.get("server_id")
+                if server_id:
+                    member_row = self._db.fetch_one(
+                        "SELECT 1 FROM srv_members WHERE server_id = ? AND user_id = ?",
+                        (int(server_id), user_id)
+                    )
+                    if member_row:
+                        self._cache_set(self._participant_cache, cache_key, True)
+                        return True
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass  # Invalid metadata, not a server channel
         
         self._cache_set(self._participant_cache, cache_key, False)
         return False
@@ -859,8 +876,7 @@ class MessagingManager:
             deleted=False,
             pinned=False,
             metadata=metadata if metadata else None,
-            attachments=attachment_list,
-            embeds=[]
+            attachments=attachment_list
         )
     
     def edit_message(self, user_id: int, message_id: int, content: str) -> Message:
