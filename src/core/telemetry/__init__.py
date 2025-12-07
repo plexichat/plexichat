@@ -130,7 +130,11 @@ def _normalize_endpoint(endpoint: str) -> str:
     # Match /reactions/ followed by any non-slash characters (emoji or encoded emoji)
     if '/reactions/' in normalized:
         # Replace the emoji part after /reactions/ with {emoji}
-        normalized = re.sub(r'/reactions/[^/]+$', '/reactions/{emoji}', normalized)
+        normalized = re.sub(r'/reactions/[^/]+', '/reactions/{emoji}', normalized)
+    
+    # Normalize invite codes (alphanumeric strings after /invites/)
+    if '/invites/' in normalized:
+        normalized = re.sub(r'/invites/[a-zA-Z0-9]+$', '/reactions/{emoji}', normalized)
     
     return normalized
 

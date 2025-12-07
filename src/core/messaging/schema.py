@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS msg_messages (
     deleted INTEGER DEFAULT 0,
     deleted_at INTEGER,
     reply_to_id INTEGER,
+    webhook_id INTEGER,
     metadata TEXT,
     FOREIGN KEY (conversation_id) REFERENCES msg_conversations(id) ON DELETE CASCADE,
     FOREIGN KEY (author_id) REFERENCES auth_users(id) ON DELETE CASCADE,
@@ -156,6 +157,8 @@ CREATE INDEX IF NOT EXISTS idx_msg_status_user ON msg_message_status(user_id);
 CREATE INDEX IF NOT EXISTS idx_msg_pinned_conv ON msg_pinned(conversation_id);
 
 CREATE INDEX IF NOT EXISTS idx_msg_attachments_message ON msg_attachments(message_id);
+
+CREATE INDEX IF NOT EXISTS idx_msg_messages_webhook ON msg_messages(webhook_id);
 
 CREATE INDEX IF NOT EXISTS idx_msg_dm_lookup_users ON msg_dm_lookup(user1_id, user2_id);
 

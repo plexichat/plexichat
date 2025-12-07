@@ -99,8 +99,8 @@ class MessagingManager:
             "max_attachment_size": 10485760,  # 10MB
             "max_attachments_per_message": 10,
             "dm_auto_create": True,
-            "encrypt_messages": True,
-            "encrypt_attachments": True,
+            "encrypt_messages": False,  # Disabled by default - requires encryption key setup
+            "encrypt_attachments": False,  # Disabled by default - requires encryption key setup
             "message_preview_length": 100,
         }
         
