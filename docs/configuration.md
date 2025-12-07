@@ -220,6 +220,97 @@ docs:
     require_auth: false  # Public docs by default
 ```
 
+### Messaging
+
+```yaml
+messaging:
+  max_message_length: 4000
+  max_group_participants: 100
+  max_attachment_size: 10485760  # 10MB
+  max_attachments_per_message: 10
+  dm_auto_create: true
+  encrypt_messages: true         # Enable message encryption at rest
+  encrypt_attachments: true      # Enable attachment URL encryption
+  message_preview_length: 100
+```
+
+#### Message Encryption
+
+When `encrypt_messages` is enabled, message content is encrypted using AES-256-GCM before being stored in the database. The encryption key is automatically generated and stored in `~/.plexichat/data/.encryption_key`.
+
+**Important:** Back up this key file! If lost, encrypted messages cannot be recovered.
+
+The server will show a security warning on startup reminding you to back up the encryption key.
+
+### User Features
+
+```yaml
+user_features:
+  alpha_registration_enabled: true  # Allow new users to register as alpha testers
+  default_tier: standard
+  badge_display_limit: 5
+  available_badges:
+    - alpha_tester
+    - early_supporter
+    - staff
+    - verified
+  rate_limit_tiers:
+    standard:
+      multiplier: 1.0
+      max_voice_minutes_per_day: 120
+      max_file_uploads_per_day: 50
+      max_file_size_mb: 10
+    alpha:
+      multiplier: 2.0
+      max_voice_minutes_per_day: 480
+      max_file_uploads_per_day: 200
+      max_file_size_mb: 25
+    premium:
+      multiplier: 3.0
+      max_voice_minutes_per_day: -1  # Unlimited
+      max_file_uploads_per_day: 500
+      max_file_size_mb: 100
+```
+
+### Media Storage
+
+```yaml
+media:
+  storage_backend: local         # local or s3
+  signing_key: CHANGE_THIS       # Key for signing media URLs
+  
+  # S3/MinIO settings (when storage_backend: s3)
+  s3_bucket: plexichat
+  s3_access_key: your_access_key
+  s3_secret_key: your_secret_key
+  s3_region: us-east-1
+  s3_endpoint: http://localhost:9000  # For MinIO
+  s3_public_url: http://localhost:9000/plexichat
+  
+  size_limits:
+    avatar: 5242880              # 5MB
+    attachment: 10485760         # 10MB
+    server_icon: 5242880         # 5MB
+```
+
+### Voice/Video
+
+```yaml
+voice:
+  enabled: true
+  sfu_backend: mediasoup         # mediasoup or janus
+  mediasoup_url: https://localhost:4443
+  stun_urls:
+    - stun:stun.l.google.com:19302
+  turn_urls:
+    - turn:your-turn-server:3478
+  turn_username: username
+  turn_credential: password
+  turn_secret: your_turn_secret  # For time-limited credentials
+  log_connections: true
+  log_quality_metrics: true
+```
+
 ## Rate Limits
 
 Rate limits are configured per-endpoint. See [Rate Limits](rate-limits.md) for details.
@@ -273,6 +364,33 @@ Before deploying to production:
    logging:
      level: WARNING
    ```
+
+7. **Back up encryption key**
+   
+   The message encryption key is stored at `~/.plexichat/data/.encryption_key`. 
+   Back this up securely - if lost, encrypted messages cannot be recovered.
+
+8. **Set media signing key**
+   ```yaml
+   media:
+     signing_key: <generate-secure-random-key>
+   ```
+
+9. **Configure TURN secret (for voice)**
+   ```yaml
+   voice:
+     turn_secret: <your-turn-server-secret>
+   ```
+
+## Security Warnings
+
+On startup, the server checks for default/placeholder security keys and logs warnings:
+
+- `media.signing_key` - Used for signing media URLs
+- `voice.turn_secret` - Used for TURN server authentication  
+- `messaging.encryption_key` - Auto-generated, but should be backed up
+- `redis.password` - Should be set if Redis is enabled
+- `database.postgres.password` - Should be strong for PostgreSQL
 
 ## Environment Variables
 
