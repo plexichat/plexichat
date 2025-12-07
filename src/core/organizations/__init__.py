@@ -109,7 +109,13 @@ def _ensure_default_org() -> None:
     admin_row = db.fetch_one(
         "SELECT id FROM auth_users ORDER BY created_at ASC LIMIT 1"
     )
-    root_user_id = admin_row["id"] if admin_row else 1
+    
+    # If no users exist yet, skip creating default org - it will be created when first user registers
+    if not admin_row:
+        logger.info("No users exist yet, skipping default organization creation")
+        return
+    
+    root_user_id = admin_row["id"]
     
     from src.utils.encryption import generate_snowflake_id
     org_id = generate_snowflake_id()
