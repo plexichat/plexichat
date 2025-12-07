@@ -613,29 +613,35 @@ async def trigger_typing(
         except Exception:
             pass  # Non-critical, don't fail the request
     
-    # Broadcast typing event via WebSocket dispatcher
+    # Broadcast typing event via WebSocket dispatcher (fire and forget)
     if user_ids:
-        try:
-            from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
-            from src.core.events.models import Event
-            from src.core.events.types import EventType
-            
-            if ws_is_setup():
-                dispatcher = get_dispatcher()
-                auth = api.get_auth()
-                user = auth.get_user(current_user.user_id) if auth else None
+        import asyncio
+        
+        async def dispatch_typing():
+            try:
+                from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+                from src.core.events.models import Event
+                from src.core.events.types import EventType
                 
-                event = Event(
-                    event_type=EventType.TYPING_START,
-                    data={
-                        "channel_id": str(cid),
-                        "user_id": str(current_user.user_id),
-                        "username": user.username if user else "Unknown"
-                    }
-                )
-                await dispatcher.dispatch_event(event, user_ids)
-        except Exception as e:
-            import utils.logger as logger
-            logger.debug(f"Failed to dispatch typing event: {e}")
+                if ws_is_setup():
+                    dispatcher = get_dispatcher()
+                    auth = api.get_auth()
+                    user = auth.get_user(current_user.user_id) if auth else None
+                    
+                    event = Event(
+                        event_type=EventType.TYPING_START,
+                        data={
+                            "channel_id": str(cid),
+                            "user_id": str(current_user.user_id),
+                            "username": user.username if user else "Unknown"
+                        }
+                    )
+                    await dispatcher.dispatch_event(event, user_ids)
+            except Exception as e:
+                import utils.logger as logger
+                logger.debug(f"Failed to dispatch typing event: {e}")
+        
+        # Fire and forget - don't wait for dispatch to complete
+        asyncio.create_task(dispatch_typing())
     
     return {"success": True}
