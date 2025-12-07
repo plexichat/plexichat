@@ -131,6 +131,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         path = request.url.path
         method = request.method
+        
+        # Skip OPTIONS requests (CORS preflight) - they should not be rate limited
+        if method == "OPTIONS":
+            return await call_next(request)
+        
         if self._should_exclude(path):
             return await call_next(request)
         user_info = self._get_user_info(request)
@@ -189,6 +194,12 @@ class RateLimitMiddlewareASGI:
             return
         path = scope.get("path", "")
         method = scope.get("method", "GET")
+        
+        # Skip OPTIONS requests (CORS preflight) - they should not be rate limited
+        if method == "OPTIONS":
+            await self.app(scope, receive, send)
+            return
+        
         if path in self._exclude_paths:
             await self.app(scope, receive, send)
             return
