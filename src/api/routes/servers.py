@@ -54,20 +54,56 @@ def _channel_to_response(channel) -> ChannelResponse:
     )
 
 
+def _server_to_dict(server) -> dict:
+    """Convert server object to JSON-serializable dict for caching."""
+    default_channel_id = getattr(server, "default_channel_id", None)
+    return {
+        "id": server.id,
+        "name": server.name,
+        "description": getattr(server, "description", None),
+        "icon_url": getattr(server, "icon_url", None),
+        "owner_id": server.owner_id,
+        "member_count": getattr(server, "member_count", 0),
+        "default_channel_id": default_channel_id,
+        "created_at": server.created_at,
+    }
+
+
+def _channel_to_dict(channel) -> dict:
+    """Convert channel object to JSON-serializable dict for caching."""
+    channel_type = getattr(channel, "channel_type", None)
+    if channel_type is not None and hasattr(channel_type, "value"):
+        channel_type = channel_type.value
+    return {
+        "id": channel.id,
+        "server_id": channel.server_id,
+        "name": channel.name,
+        "channel_type": channel_type or "text",
+        "topic": getattr(channel, "topic", None),
+        "position": getattr(channel, "position", 0),
+        "category_id": getattr(channel, "category_id", None),
+        "nsfw": getattr(channel, "nsfw", False),
+        "slowmode_seconds": getattr(channel, "slowmode_seconds", 0),
+        "created_at": channel.created_at,
+    }
+
+
 def _get_servers_cached(user_id: int):
-    """Get user's servers with caching."""
+    """Get user's servers as JSON-serializable dicts for caching."""
     servers_mod = api.get_servers()
     if not servers_mod:
         return None
-    return servers_mod.get_servers(user_id)
+    servers = servers_mod.get_servers(user_id)
+    return [_server_to_dict(s) for s in servers] if servers else []
 
 
 def _get_channels_cached(user_id: int, server_id: int):
-    """Get server channels with caching."""
+    """Get server channels as JSON-serializable dicts for caching."""
     servers_mod = api.get_servers()
     if not servers_mod:
         return None
-    return servers_mod.get_channels(user_id, server_id)
+    channels = servers_mod.get_channels(user_id, server_id)
+    return [_channel_to_dict(c) for c in channels] if channels else []
 
 
 # Apply caching (30s TTL for server lists, 30s for channels)
@@ -90,7 +126,17 @@ async def get_servers(current_user: TokenInfo = Depends(get_current_user)):
         servers = _get_servers_cached(current_user.user_id)
         if servers is None:
             raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Failed to fetch servers"}})
-        return [_server_to_response(s) for s in servers]
+        # Cached data is already dict format, convert to response
+        return [ServerResponse(
+            id=str(s["id"]),
+            name=s["name"],
+            description=s.get("description"),
+            icon_url=s.get("icon_url"),
+            owner_id=str(s["owner_id"]),
+            member_count=s.get("member_count", 0),
+            default_channel_id=str(s["default_channel_id"]) if s.get("default_channel_id") else None,
+            created_at=s["created_at"],
+        ) for s in servers]
     except HTTPException:
         raise
     except Exception as e:
@@ -238,7 +284,19 @@ async def get_server_channels(server_id: str, current_user: TokenInfo = Depends(
         channels = _get_channels_cached(current_user.user_id, sid)
         if channels is None:
             raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Failed to fetch channels"}})
-        return [_channel_to_response(c) for c in channels]
+        # Cached data is already dict format, convert to response
+        return [ChannelResponse(
+            id=str(c["id"]),
+            server_id=str(c["server_id"]),
+            name=c["name"],
+            channel_type=c.get("channel_type", "text"),
+            topic=c.get("topic"),
+            position=c.get("position", 0),
+            category_id=str(c["category_id"]) if c.get("category_id") else None,
+            nsfw=c.get("nsfw", False),
+            slowmode_seconds=c.get("slowmode_seconds", 0),
+            created_at=c["created_at"],
+        ) for c in channels]
     except HTTPException:
         raise
     except Exception as e:

@@ -862,11 +862,13 @@ class MessagingManager:
                     uploaded_at=now
                 ))
         
+        # Return the original sanitized content (not "[encrypted]") so the sender sees their message
+        # The encrypted_content field contains the actual encrypted data for storage
         return Message(
             id=msg_id,
             conversation_id=conversation_id,
             author_id=user_id,
-            content=final_content,
+            content=content_result.sanitized_content,  # Return original content, not "[encrypted]"
             content_encrypted=encrypted_content,
             message_type=message_type,
             created_at=now,
