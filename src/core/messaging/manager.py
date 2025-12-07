@@ -1012,11 +1012,32 @@ class MessagingManager:
         
         messages = [self._row_to_message(row) for row in rows]
         
-        # Load attachments for each message
-        for msg in messages:
-            msg.attachments = self.get_attachments(user_id, msg.id)
+        # Batch load attachments for all messages in a single query (fixes N+1)
+        if messages:
+            message_ids = [msg.id for msg in messages]
+            attachments_map = self._get_attachments_batch(message_ids)
+            for msg in messages:
+                msg.attachments = attachments_map.get(msg.id, [])
         
         return messages
+    
+    def _get_attachments_batch(self, message_ids: List[int]) -> Dict[int, List[Attachment]]:
+        """Batch load attachments for multiple messages (avoids N+1 queries)."""
+        if not message_ids:
+            return {}
+        
+        placeholders = ",".join("?" * len(message_ids))
+        rows = self._db.fetch_all(
+            f"SELECT * FROM msg_attachments WHERE message_id IN ({placeholders}) AND deleted = 0",
+            tuple(message_ids)
+        )
+        
+        result: Dict[int, List[Attachment]] = {mid: [] for mid in message_ids}
+        for row in rows:
+            att = self._row_to_attachment(row)
+            result[att.message_id].append(att)
+        
+        return result
     
     def pin_message(self, user_id: int, message_id: int) -> bool:
         """Pin a message in its conversation."""
@@ -1125,48 +1146,54 @@ class MessagingManager:
         return count
     
     def mark_read(self, user_id: int, conversation_id: int, up_to_message_id: Optional[int] = None) -> int:
-        """Mark messages as read."""
+        """Mark messages as read (optimized batch operation)."""
         if not self._is_participant(conversation_id, user_id):
             raise ConversationAccessDeniedError("Not a participant in this conversation")
         
         now = self._get_timestamp()
         
-        # Get messages to mark as read
-        query = """SELECT id FROM msg_messages 
-                   WHERE conversation_id = ? AND author_id != ? AND deleted = 0"""
+        # Build the message filter
+        msg_filter = "conversation_id = ? AND author_id != ? AND deleted = 0"
         params = [conversation_id, user_id]
         
         if up_to_message_id:
-            query += " AND id <= ?"
+            msg_filter += " AND id <= ?"
             params.append(up_to_message_id)
         
-        rows = self._db.fetch_all(query, tuple(params))
+        # Batch update existing statuses that aren't already READ
+        self._db.execute(
+            f"""UPDATE msg_message_status 
+                SET status = ?, timestamp = ?
+                WHERE user_id = ? AND status != ?
+                AND message_id IN (SELECT id FROM msg_messages WHERE {msg_filter})""",
+            (MessageStatusType.READ.value, now, user_id, MessageStatusType.READ.value) + tuple(params)
+        )
         
-        count = 0
-        for row in rows:
-            msg_id = row["id"]
-            
-            existing = self._db.fetch_one(
-                "SELECT status FROM msg_message_status WHERE message_id = ? AND user_id = ?",
-                (msg_id, user_id)
-            )
-            
-            if existing and existing["status"] == MessageStatusType.READ.value:
-                continue
-            
-            if existing:
-                self._db.execute(
-                    "UPDATE msg_message_status SET status = ?, timestamp = ? WHERE message_id = ? AND user_id = ?",
-                    (MessageStatusType.READ.value, now, msg_id, user_id)
-                )
-            else:
-                status_id = self._generate_id()
-                self._db.execute(
-                    """INSERT INTO msg_message_status (id, message_id, user_id, status, timestamp)
-                       VALUES (?, ?, ?, ?, ?)""",
-                    (status_id, msg_id, user_id, MessageStatusType.READ.value, now)
-                )
-            count += 1
+        # Batch insert new statuses for messages without any status
+        # Use INSERT OR IGNORE to handle race conditions
+        self._db.execute(
+            f"""INSERT OR IGNORE INTO msg_message_status (id, message_id, user_id, status, timestamp)
+                SELECT 
+                    abs(random()) % 9223372036854775807,
+                    m.id,
+                    ?,
+                    ?,
+                    ?
+                FROM msg_messages m
+                WHERE m.{msg_filter}
+                AND NOT EXISTS (
+                    SELECT 1 FROM msg_message_status s 
+                    WHERE s.message_id = m.id AND s.user_id = ?
+                )""",
+            (user_id, MessageStatusType.READ.value, now) + tuple(params) + (user_id,)
+        )
+        
+        # Get count of affected messages
+        count_row = self._db.fetch_one(
+            f"SELECT COUNT(*) as cnt FROM msg_messages WHERE {msg_filter}",
+            tuple(params)
+        )
+        count = count_row["cnt"] if count_row else 0
         
         # Update participant's last read
         last_msg_id = up_to_message_id
@@ -1186,45 +1213,51 @@ class MessagingManager:
         return count
     
     def get_unread_count(self, user_id: int, conversation_id: Optional[int] = None) -> Dict[int, int]:
-        """Get unread message counts."""
+        """Get unread message counts (optimized batch query)."""
         result = {}
         
         if conversation_id:
             if not self._is_participant(conversation_id, user_id):
                 return result
-            conversations = [(conversation_id,)]
-        else:
-            conversations = self._db.fetch_all(
-                "SELECT conversation_id FROM msg_participants WHERE user_id = ?",
-                (user_id,)
+            # Single conversation - use optimized single query
+            row = self._db.fetch_one(
+                """SELECT 
+                    p.conversation_id,
+                    COALESCE(
+                        (SELECT COUNT(*) FROM msg_messages m 
+                         WHERE m.conversation_id = p.conversation_id 
+                         AND m.author_id != ? 
+                         AND m.deleted = 0
+                         AND (p.last_read_message_id IS NULL OR m.id > p.last_read_message_id)
+                        ), 0
+                    ) as unread_count
+                FROM msg_participants p
+                WHERE p.conversation_id = ? AND p.user_id = ?""",
+                (user_id, conversation_id, user_id)
             )
+            if row:
+                result[row["conversation_id"]] = row["unread_count"]
+            return result
         
-        for conv_row in conversations:
-            conv_id = conv_row[0] if isinstance(conv_row, tuple) else conv_row["conversation_id"]
-            
-            # Get last read message ID
-            participant = self._db.fetch_one(
-                "SELECT last_read_message_id FROM msg_participants WHERE conversation_id = ? AND user_id = ?",
-                (conv_id, user_id)
-            )
-            
-            last_read = participant["last_read_message_id"] if participant else None
-            
-            # Count unread messages
-            if last_read:
-                count_row = self._db.fetch_one(
-                    """SELECT COUNT(*) as cnt FROM msg_messages 
-                       WHERE conversation_id = ? AND id > ? AND author_id != ? AND deleted = 0""",
-                    (conv_id, last_read, user_id)
-                )
-            else:
-                count_row = self._db.fetch_one(
-                    """SELECT COUNT(*) as cnt FROM msg_messages 
-                       WHERE conversation_id = ? AND author_id != ? AND deleted = 0""",
-                    (conv_id, user_id)
-                )
-            
-            result[conv_id] = count_row["cnt"] if count_row else 0
+        # Batch query for all conversations (fixes N+1)
+        rows = self._db.fetch_all(
+            """SELECT 
+                p.conversation_id,
+                COALESCE(
+                    (SELECT COUNT(*) FROM msg_messages m 
+                     WHERE m.conversation_id = p.conversation_id 
+                     AND m.author_id != ? 
+                     AND m.deleted = 0
+                     AND (p.last_read_message_id IS NULL OR m.id > p.last_read_message_id)
+                    ), 0
+                ) as unread_count
+            FROM msg_participants p
+            WHERE p.user_id = ?""",
+            (user_id, user_id)
+        )
+        
+        for row in rows:
+            result[row["conversation_id"]] = row["unread_count"]
         
         return result
     
