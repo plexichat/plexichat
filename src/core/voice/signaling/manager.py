@@ -51,6 +51,8 @@ class SignalingManager:
         turn_urls: Optional[List[str]] = None,
         turn_secret: str = "",
         turn_ttl: int = 86400,
+        turn_username: str = "",
+        turn_credential: str = "",
     ):
         """
         Initialize the signaling manager.
@@ -63,8 +65,10 @@ class SignalingManager:
             janus_url: Janus API URL
             stun_urls: List of STUN server URLs
             turn_urls: List of TURN server URLs
-            turn_secret: Shared secret for TURN credentials
+            turn_secret: Shared secret for time-limited TURN credentials (coturn)
             turn_ttl: TURN credential TTL in seconds
+            turn_username: Static TURN username (for services like metered.ca)
+            turn_credential: Static TURN credential/password
         """
         self._voice = voice_module
         self._events = events_module
@@ -84,6 +88,8 @@ class SignalingManager:
             turn_urls=turn_urls,
             turn_secret=turn_secret,
             turn_ttl=turn_ttl,
+            turn_username=turn_username,
+            turn_credential=turn_credential,
         )
         
         # ICE candidate manager

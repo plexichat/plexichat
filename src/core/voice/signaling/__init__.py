@@ -104,6 +104,8 @@ def setup(
     turn_urls: Optional[List[str]] = None,
     turn_secret: str = "",
     turn_ttl: int = 86400,
+    turn_username: str = "",
+    turn_credential: str = "",
 ):
     """
     Initialize the signaling module.
@@ -116,8 +118,10 @@ def setup(
         janus_url: Janus API URL
         stun_urls: List of STUN server URLs
         turn_urls: List of TURN server URLs
-        turn_secret: Shared secret for TURN credential generation
+        turn_secret: Shared secret for time-limited TURN credentials (coturn)
         turn_ttl: TURN credential TTL in seconds
+        turn_username: Static TURN username (for services like metered.ca)
+        turn_credential: Static TURN credential/password
     """
     global _manager, _setup_complete
     
@@ -133,6 +137,8 @@ def setup(
         turn_urls=turn_urls or [],
         turn_secret=turn_secret,
         turn_ttl=turn_ttl,
+        turn_username=turn_username,
+        turn_credential=turn_credential,
     )
     _setup_complete = True
 

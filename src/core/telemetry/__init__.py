@@ -105,17 +105,33 @@ def _get_db():
 
 def _normalize_endpoint(endpoint: str) -> str:
     """
-    Normalize endpoint by replacing numeric IDs with placeholders.
+    Normalize endpoint by replacing numeric IDs and emojis with placeholders.
     
     This groups endpoints like /channels/123/messages and /channels/456/messages
     into a single /channels/{id}/messages entry for better aggregation.
+    Also normalizes emoji paths like /reactions/🤯 to /reactions/{emoji}.
     """
     import re
+    import urllib.parse
+    
+    # First decode any URL-encoded characters for consistent handling
+    try:
+        endpoint = urllib.parse.unquote(endpoint)
+    except Exception:
+        pass
+    
     # Replace numeric IDs (snowflake IDs are typically 15-20 digits)
     # Pattern matches path segments that are purely numeric
     normalized = re.sub(r'/(\d{10,20})(?=/|$)', r'/{id}', endpoint)
     # Also handle shorter numeric IDs (for backwards compatibility)
     normalized = re.sub(r'/(\d+)(?=/|$)', r'/{id}', normalized)
+    
+    # Normalize emoji paths in reactions endpoints
+    # Match /reactions/ followed by any non-slash characters (emoji or encoded emoji)
+    if '/reactions/' in normalized:
+        # Replace the emoji part after /reactions/ with {emoji}
+        normalized = re.sub(r'/reactions/[^/]+$', '/reactions/{emoji}', normalized)
+    
     return normalized
 
 

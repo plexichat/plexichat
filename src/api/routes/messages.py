@@ -305,46 +305,52 @@ async def send_channel_message(
     
     response = _message_to_response(msg, author_username, channel_id=cid)
     
-    # Broadcast MESSAGE_CREATE event via WebSocket
-    try:
-        from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
-        from src.core.events.models import Event
-        from src.core.events.types import EventType
-        
-        if ws_is_setup():
-            dispatcher = get_dispatcher()
+    # Broadcast MESSAGE_CREATE event via WebSocket (fire and forget for lower latency)
+    import asyncio
+    
+    async def dispatch_message_create():
+        try:
+            from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+            from src.core.events.models import Event
+            from src.core.events.types import EventType
             
-            # Get users to broadcast to
-            user_ids = []
-            if servers_mod:
-                try:
-                    # Get server channel info
-                    channel = servers_mod.get_channel(cid, current_user.user_id)
-                    if channel:
-                        server_id = getattr(channel, "server_id", None)
-                        if server_id:
-                            members = servers_mod.get_members(current_user.user_id, server_id)
-                            user_ids = [m.user_id for m in (members or [])]
-                except Exception:
-                    pass
-            
-            if not user_ids and messaging:
-                # For DM conversations, get participants
-                try:
-                    participants = messaging.get_participants(cid)
-                    user_ids = [p.user_id for p in (participants or [])]
-                except Exception:
-                    pass
-            
-            if user_ids:
-                event = Event(
-                    event_type=EventType.MESSAGE_CREATE,
-                    data=response
-                )
-                await dispatcher.dispatch_event(event, user_ids)
-    except Exception as e:
-        import utils.logger as logger
-        logger.debug(f"Failed to broadcast MESSAGE_CREATE: {e}")
+            if ws_is_setup():
+                dispatcher = get_dispatcher()
+                
+                # Get users to broadcast to - use optimized method
+                user_ids = []
+                if servers_mod:
+                    try:
+                        # Get server channel info
+                        channel = servers_mod.get_channel(cid, current_user.user_id)
+                        if channel:
+                            server_id = getattr(channel, "server_id", None)
+                            if server_id:
+                                # Use optimized method that only fetches user IDs
+                                user_ids = servers_mod.get_member_user_ids(server_id)
+                    except Exception:
+                        pass
+                
+                if not user_ids and messaging:
+                    # For DM conversations, get participants
+                    try:
+                        participants = messaging.get_participants(cid)
+                        user_ids = [p.user_id for p in (participants or [])]
+                    except Exception:
+                        pass
+                
+                if user_ids:
+                    event = Event(
+                        event_type=EventType.MESSAGE_CREATE,
+                        data=response
+                    )
+                    await dispatcher.dispatch_event(event, user_ids)
+        except Exception as e:
+            import utils.logger as logger
+            logger.debug(f"Failed to broadcast MESSAGE_CREATE: {e}")
+    
+    # Fire and forget - don't wait for WebSocket dispatch
+    asyncio.create_task(dispatch_message_create())
     
     return response
 
@@ -425,43 +431,48 @@ async def edit_message(
         
         response = _message_to_response(msg, author_username, channel_id=cid)
         
-        # Broadcast MESSAGE_UPDATE event via WebSocket
-        try:
-            from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
-            from src.core.events.models import Event
-            from src.core.events.types import EventType
-            
-            if ws_is_setup():
-                dispatcher = get_dispatcher()
+        # Broadcast MESSAGE_UPDATE event via WebSocket (fire and forget)
+        import asyncio
+        
+        async def dispatch_message_update():
+            try:
+                from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+                from src.core.events.models import Event
+                from src.core.events.types import EventType
                 
-                # Get users to broadcast to
-                user_ids = []
-                if servers_mod:
-                    try:
-                        channel = servers_mod.get_channel(cid, current_user.user_id)
-                        if channel:
-                            server_id = getattr(channel, "server_id", None)
-                            if server_id:
-                                user_ids = servers_mod.get_member_user_ids(server_id)
-                    except Exception:
-                        pass
-                
-                if not user_ids and messaging:
-                    try:
-                        participants = messaging.get_participants(cid)
-                        user_ids = [p.user_id for p in (participants or [])]
-                    except Exception:
-                        pass
-                
-                if user_ids:
-                    event = Event(
-                        event_type=EventType.MESSAGE_UPDATE,
-                        data=response
-                    )
-                    await dispatcher.dispatch_event(event, user_ids)
-        except Exception as e:
-            import utils.logger as logger
-            logger.debug(f"Failed to broadcast MESSAGE_UPDATE: {e}")
+                if ws_is_setup():
+                    dispatcher = get_dispatcher()
+                    
+                    # Get users to broadcast to
+                    user_ids = []
+                    if servers_mod:
+                        try:
+                            channel = servers_mod.get_channel(cid, current_user.user_id)
+                            if channel:
+                                server_id = getattr(channel, "server_id", None)
+                                if server_id:
+                                    user_ids = servers_mod.get_member_user_ids(server_id)
+                        except Exception:
+                            pass
+                    
+                    if not user_ids and messaging:
+                        try:
+                            participants = messaging.get_participants(cid)
+                            user_ids = [p.user_id for p in (participants or [])]
+                        except Exception:
+                            pass
+                    
+                    if user_ids:
+                        event = Event(
+                            event_type=EventType.MESSAGE_UPDATE,
+                            data=response
+                        )
+                        await dispatcher.dispatch_event(event, user_ids)
+            except Exception as e:
+                import utils.logger as logger
+                logger.debug(f"Failed to broadcast MESSAGE_UPDATE: {e}")
+        
+        asyncio.create_task(dispatch_message_update())
         
         return response
     except Exception as e:
@@ -614,6 +625,209 @@ async def unpin_message(
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Message not found"}})
         elif "Permission" in exc_name:
             raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+@router.post("/channels/{channel_id}/messages/ack")
+async def acknowledge_messages(
+    channel_id: str,
+    message_id: Optional[str] = Query(default=None, description="Mark as read up to this message ID"),
+    current_user: TokenInfo = Depends(get_current_user)
+):
+    """
+    Mark messages as read in a channel (read receipts).
+    
+    If message_id is provided, marks all messages up to and including that message as read.
+    If not provided, marks all messages in the channel as read.
+    """
+    messaging = api.get_messaging()
+    if not messaging:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
+    
+    try:
+        cid = int(channel_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
+    
+    up_to_id = int(message_id) if message_id else None
+    
+    try:
+        count = messaging.mark_read(current_user.user_id, cid, up_to_id)
+        return {"success": True, "messages_marked": count}
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name or "Access" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+@router.get("/channels/{channel_id}/messages/unread")
+async def get_unread_count(
+    channel_id: str,
+    current_user: TokenInfo = Depends(get_current_user)
+):
+    """
+    Get unread message count for a channel.
+    """
+    messaging = api.get_messaging()
+    if not messaging:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
+    
+    try:
+        cid = int(channel_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
+    
+    try:
+        counts = messaging.get_unread_count(current_user.user_id, cid)
+        return {"channel_id": channel_id, "unread_count": counts.get(cid, 0)}
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name or "Access" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+@router.get("/users/@me/unread")
+async def get_all_unread_counts(
+    current_user: TokenInfo = Depends(get_current_user)
+):
+    """
+    Get unread message counts for all conversations.
+    """
+    messaging = api.get_messaging()
+    if not messaging:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
+    
+    try:
+        counts = messaging.get_unread_count(current_user.user_id)
+        # Convert int keys to string for JSON
+        return {"unread_counts": {str(k): v for k, v in counts.items()}}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+@router.post("/channels/{channel_id}/messages/ack")
+async def acknowledge_messages(
+    channel_id: str,
+    body: dict,
+    current_user: TokenInfo = Depends(get_current_user)
+):
+    """
+    Mark messages as read in a channel.
+    
+    Marks all messages up to the specified message_id as read.
+    If no message_id is provided, marks all messages as read.
+    """
+    messaging = api.get_messaging()
+    if not messaging:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
+    
+    try:
+        cid = int(channel_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
+    
+    message_id = body.get("message_id")
+    up_to_message_id = int(message_id) if message_id else None
+    
+    try:
+        count = messaging.mark_read(current_user.user_id, cid, up_to_message_id)
+        
+        # Broadcast read receipt event via WebSocket
+        try:
+            from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+            from src.core.events.models import Event
+            from src.core.events.types import EventType
+            
+            if ws_is_setup():
+                dispatcher = get_dispatcher()
+                servers_mod = api.get_servers()
+                
+                # Get users to broadcast to (message authors in this channel)
+                user_ids = []
+                if servers_mod:
+                    try:
+                        channel = servers_mod.get_channel(cid, current_user.user_id)
+                        if channel:
+                            server_id = getattr(channel, "server_id", None)
+                            if server_id:
+                                user_ids = servers_mod.get_member_user_ids(server_id)
+                    except Exception:
+                        pass
+                
+                if not user_ids and messaging:
+                    try:
+                        participants = messaging.get_participants(current_user.user_id, cid)
+                        user_ids = [p.user_id for p in (participants or [])]
+                    except Exception:
+                        pass
+                
+                if user_ids:
+                    event = Event(
+                        event_type=EventType.MESSAGE_ACK,
+                        data={
+                            "channel_id": str(cid),
+                            "user_id": str(current_user.user_id),
+                            "message_id": str(up_to_message_id) if up_to_message_id else None,
+                        }
+                    )
+                    await dispatcher.dispatch_event(event, user_ids)
+        except Exception as e:
+            import utils.logger as logger
+            logger.debug(f"Failed to broadcast MESSAGE_ACK: {e}")
+        
+        return {"success": True, "messages_read": count}
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name or "Access" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+@router.get("/channels/{channel_id}/messages/unread")
+async def get_unread_count(
+    channel_id: str,
+    current_user: TokenInfo = Depends(get_current_user)
+):
+    """
+    Get unread message count for a channel.
+    """
+    messaging = api.get_messaging()
+    if not messaging:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
+    
+    try:
+        cid = int(channel_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
+    
+    try:
+        counts = messaging.get_unread_count(current_user.user_id, cid)
+        return {"channel_id": channel_id, "unread_count": counts.get(cid, 0)}
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name or "Access" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+@router.get("/users/@me/unread")
+async def get_all_unread_counts(
+    current_user: TokenInfo = Depends(get_current_user)
+):
+    """
+    Get unread message counts for all channels the user is in.
+    """
+    messaging = api.get_messaging()
+    if not messaging:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
+    
+    try:
+        counts = messaging.get_unread_count(current_user.user_id)
+        # Convert int keys to string for JSON
+        return {"unread_counts": {str(k): v for k, v in counts.items()}}
+    except Exception as e:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
 
 

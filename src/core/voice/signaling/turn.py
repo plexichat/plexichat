@@ -129,6 +129,8 @@ class ICEServerBuilder:
         turn_urls: Optional[List[str]] = None,
         turn_secret: str = "",
         turn_ttl: int = 86400,
+        turn_username: str = "",
+        turn_credential: str = "",
     ):
         """
         Initialize the ICE server builder.
@@ -136,13 +138,18 @@ class ICEServerBuilder:
         Args:
             stun_urls: List of STUN server URLs
             turn_urls: List of TURN server URLs
-            turn_secret: Shared secret for TURN credentials
+            turn_secret: Shared secret for time-limited TURN credentials (coturn)
             turn_ttl: TURN credential TTL in seconds
+            turn_username: Static TURN username (for services like metered.ca)
+            turn_credential: Static TURN credential/password
         """
         self._stun_urls = stun_urls or ["stun:stun.l.google.com:19302"]
         self._turn_urls = turn_urls or []
         self._turn_generator = None
+        self._static_username = turn_username
+        self._static_credential = turn_credential
         
+        # Use time-limited credentials if secret is provided, otherwise use static
         if turn_secret and turn_urls:
             self._turn_generator = TURNCredentialGenerator(
                 secret=turn_secret,
@@ -167,13 +174,22 @@ class ICEServerBuilder:
             servers.append(ICEServer(urls=self._stun_urls.copy()))
         
         # Add TURN servers with credentials
-        if self._turn_generator:
-            creds = self._turn_generator.generate(user_id)
-            servers.append(ICEServer(
-                urls=creds.urls,
-                username=creds.username,
-                credential=creds.credential,
-            ))
+        if self._turn_urls:
+            if self._turn_generator:
+                # Use time-limited credentials (coturn with static-auth-secret)
+                creds = self._turn_generator.generate(user_id)
+                servers.append(ICEServer(
+                    urls=creds.urls,
+                    username=creds.username,
+                    credential=creds.credential,
+                ))
+            elif self._static_username and self._static_credential:
+                # Use static credentials (metered.ca, Twilio, etc.)
+                servers.append(ICEServer(
+                    urls=self._turn_urls.copy(),
+                    username=self._static_username,
+                    credential=self._static_credential,
+                ))
         
         return servers
     
@@ -187,10 +203,20 @@ class ICEServerBuilder:
         Returns:
             TURNCredentials or None if TURN not configured
         """
-        if not self._turn_generator:
-            return None
+        if self._turn_generator:
+            return self._turn_generator.generate(user_id)
         
-        return self._turn_generator.generate(user_id)
+        # Return static credentials as TURNCredentials
+        if self._turn_urls and self._static_username and self._static_credential:
+            return TURNCredentials(
+                username=self._static_username,
+                credential=self._static_credential,
+                urls=self._turn_urls.copy(),
+                ttl=0,  # Static credentials don't expire
+                expires_at=0,
+            )
+        
+        return None
 
 
 def generate_turn_credentials(

@@ -392,8 +392,25 @@ class PlexiChatServer:
                 "sfu_backend": "mediasoup",
                 "mediasoup_url": "https://localhost:4443",
                 "janus_url": "http://localhost:8088/janus",
-                "stun_urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"],
-                "turn_urls": [],
+                # STUN servers for NAT traversal (free Google servers)
+                "stun_urls": [
+                    "stun:stun.l.google.com:19302",
+                    "stun:stun1.l.google.com:19302",
+                    "stun:stun2.l.google.com:19302",
+                    "stun:stun3.l.google.com:19302"
+                ],
+                # TURN servers for relay (required for restrictive NATs/firewalls)
+                # Using metered.ca free TURN servers - replace with your own coturn for production
+                "turn_urls": [
+                    "turn:openrelay.metered.ca:80",
+                    "turn:openrelay.metered.ca:443",
+                    "turns:openrelay.metered.ca:443"
+                ],
+                # Static TURN credentials (for metered.ca free tier)
+                # For coturn with time-limited credentials, use turn_secret instead
+                "turn_username": "openrelayproject",
+                "turn_credential": "openrelayproject",
+                # TURN secret for time-limited credentials (coturn static-auth-secret)
                 "turn_secret": "",
                 "turn_ttl": 86400,
                 "log_connections": False
@@ -759,10 +776,14 @@ class PlexiChatServer:
                 turn_urls=voice_config.get("turn_urls", []),
                 turn_secret=voice_config.get("turn_secret", ""),
                 turn_ttl=voice_config.get("turn_ttl", 86400),
+                turn_username=voice_config.get("turn_username", ""),
+                turn_credential=voice_config.get("turn_credential", ""),
             )
             self._modules['signaling'] = signaling
             sfu_url = voice_config.get("mediasoup_url") if voice_config.get("sfu_backend") == "mediasoup" else voice_config.get("janus_url")
             logger.info(f"Voice signaling initialized with {voice_config.get('sfu_backend', 'mediasoup')} backend at {sfu_url}")
+            if voice_config.get("turn_urls"):
+                logger.info(f"TURN servers configured: {len(voice_config.get('turn_urls', []))} servers")
             if voice_config.get("log_connections", False):
                 logger.info("Voice connection logging enabled")
         else:

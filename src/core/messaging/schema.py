@@ -158,6 +158,11 @@ CREATE INDEX IF NOT EXISTS idx_msg_pinned_conv ON msg_pinned(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_msg_attachments_message ON msg_attachments(message_id);
 
 CREATE INDEX IF NOT EXISTS idx_msg_dm_lookup_users ON msg_dm_lookup(user1_id, user2_id);
+
+-- Additional performance indexes for read receipts and unread counts
+CREATE INDEX IF NOT EXISTS idx_msg_messages_conv_author ON msg_messages(conversation_id, author_id);
+CREATE INDEX IF NOT EXISTS idx_msg_messages_conv_id_deleted ON msg_messages(conversation_id, id, deleted);
+CREATE INDEX IF NOT EXISTS idx_msg_participants_last_read ON msg_participants(conversation_id, user_id, last_read_message_id);
 """
 
 SCHEMA_STATEMENTS = [stmt.strip() for stmt in SCHEMA_SQLITE.split(";") if stmt.strip()]

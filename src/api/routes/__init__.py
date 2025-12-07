@@ -24,6 +24,7 @@ from .telemetry import router as telemetry_router
 from .admin import router as admin_router
 from .features import router as features_router
 from .organizations import router as organizations_router
+from .voice import router as voice_router
 
 import utils.config as config
 
@@ -48,6 +49,7 @@ def create_api_router() -> APIRouter:
     api_router.include_router(feedback_router, tags=["Feedback"])
     api_router.include_router(notifications_router, tags=["Notifications"])
     api_router.include_router(telemetry_router, tags=["Telemetry"])
+    api_router.include_router(voice_router, tags=["Voice"])
     
     # Include admin router with configurable path
     admin_config = config.get("admin_ui", {})
