@@ -386,6 +386,20 @@ class PlexiChatServer:
                     "max_total_size_per_day": 536870912  # 512MB per user per day
                 }
             },
+            # Avatars configuration (user avatars and server icons stored in database)
+            "avatars": {
+                # Maximum dimension for avatars (width and height)
+                "max_size": 512,
+                # Maximum file size before processing (5MB)
+                "max_file_size": 5242880,
+                # Allowed content types
+                "allowed_types": [
+                    "image/jpeg",
+                    "image/png",
+                    "image/gif",
+                    "image/webp"
+                ]
+            },
             # Telemetry configuration
             "telemetry": {
                 "enabled": True,
@@ -770,6 +784,16 @@ class PlexiChatServer:
         media.setup(self.db, messaging)
         self._modules['media'] = media
         
+        # Initialize avatars module
+        logger.info("Initializing avatars module...")
+        try:
+            from src.core import avatars
+            avatars.setup(self.db)
+            self._modules['avatars'] = avatars
+            logger.info("Avatars module initialized")
+        except Exception as e:
+            logger.warning(f"Failed to initialize avatars module: {e}")
+        
         # Initialize voice module
         logger.info("Initializing voice module...")
         voice.setup(self.db, auth, servers, relationships, presence)
@@ -847,6 +871,7 @@ class PlexiChatServer:
             media_module=media,
             organizations_module=self._modules.get('organizations'),
             features_module=self._modules.get('features'),
+            avatars_module=self._modules.get('avatars'),
         )
         
         self.app = create_app(enable_rate_limiting=False, enable_docs=True)

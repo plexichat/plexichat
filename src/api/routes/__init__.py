@@ -25,6 +25,7 @@ from .admin import router as admin_router
 from .features import router as features_router
 from .organizations import router as organizations_router
 from .voice import router as voice_router
+from .avatars import router as avatars_router
 
 import utils.config as config
 
@@ -65,6 +66,9 @@ def create_api_router() -> APIRouter:
     orgs_config = config.get("organizations", {})
     if orgs_config.get("enabled", True):
         api_router.include_router(organizations_router, prefix="/orgs", tags=["Organizations"])
+    
+    # Include avatars router
+    api_router.include_router(avatars_router, prefix="/avatars", tags=["Avatars"])
     
     return api_router
 

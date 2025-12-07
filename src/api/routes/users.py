@@ -194,21 +194,6 @@ async def update_current_user(
 
 from fastapi import File, UploadFile
 
-import utils.config as config
-
-# Default avatar size limit (5MB)
-DEFAULT_AVATAR_SIZE_LIMIT = 5 * 1024 * 1024
-
-
-def _get_avatar_size_limit() -> int:
-    """Get the avatar upload size limit from config."""
-    try:
-        media_config = config.get("media", {})
-        size_limits = media_config.get("size_limits", {})
-        return size_limits.get("avatar", DEFAULT_AVATAR_SIZE_LIMIT)
-    except Exception:
-        return DEFAULT_AVATAR_SIZE_LIMIT
-
 
 @router.post("/@me/avatar")
 async def upload_avatar(
@@ -218,16 +203,13 @@ async def upload_avatar(
     """
     Upload user avatar.
     
-    Accepts image file upload and updates the user's avatar.
+    Accepts image file upload and stores it in the database.
+    Uses the avatars module for processing and storage.
     """
-    auth = api.get_auth()
-    media = api.get_media()
+    avatars = api.get_avatars()
     
-    if not auth:
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
-    
-    if not media:
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Media module not available. Please restart the server to initialize the media module."}})
+    if not avatars:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Avatars module not available"}})
     
     # Validate file type
     if not file.content_type or not file.content_type.startswith('image/'):
@@ -239,43 +221,27 @@ async def upload_avatar(
     except Exception as e:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": f"Failed to read file: {str(e)}"}})
     
-    # Check file size against config limit
-    max_size = _get_avatar_size_limit()
-    if len(file_data) > max_size:
-        max_mb = max_size // (1024 * 1024)
-        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": f"Avatar must be less than {max_mb}MB"}})
-    
     try:
-        # Upload the file
-        result = media.upload_file(
+        result = avatars.upload_user_avatar(
             user_id=current_user.user_id,
-            file_data=file_data,
-            filename=file.filename or "avatar.png",
+            image_data=file_data,
             content_type=file.content_type
         )
-        
-        # Update user's avatar_url in database
-        db = api.get_db()
-        if db and result.url:
-            db.execute(
-                "UPDATE auth_users SET avatar_url = ? WHERE id = ?",
-                (result.url, current_user.user_id)
-            )
         
         # Invalidate user cache so the new avatar_url is returned immediately
         invalidate_pattern(f"user:*{current_user.user_id}*")
         
         return {
             "success": True,
-            "avatar_url": result.url,
-            "file_id": str(result.file_id)
+            "avatar_url": result["url"],
+            "width": result["width"],
+            "height": result["height"],
+            "size": result["size"],
+            "animated": result["animated"]
         }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": str(e)}})
     except Exception as e:
-        exc_name = type(e).__name__
-        if "Size" in exc_name:
-            raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": str(e)}})
-        elif "Type" in exc_name:
-            raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": str(e)}})
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": f"Upload failed: {str(e)}"}})
 
 
