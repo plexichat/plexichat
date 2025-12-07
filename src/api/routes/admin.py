@@ -581,6 +581,10 @@ ADMIN_DASHBOARD_HTML = """
         .card { background: var(--card); border-radius: 8px; padding: 20px; border: 1px solid var(--border); }
         .card h3 { font-size: 12px; color: #888; margin-bottom: 8px; text-transform: uppercase; }
         .card .value { font-size: 28px; font-weight: bold; color: var(--accent); }
+        .card .value.good { color: var(--good); }
+        .card .value.warn { color: var(--warn); }
+        .card .value.bad { color: var(--bad); }
+        .card .subtitle { font-size: 11px; color: #666; margin-top: 4px; }
         .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
         .tab { padding: 10px 20px; background: var(--card); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; color: var(--text); }
         .tab.active { background: var(--accent); border-color: var(--accent); }
@@ -594,10 +598,12 @@ ADMIN_DASHBOARD_HTML = """
         .status.closed { background: #6b7280; color: #fff; }
         #error { color: #ef4444; padding: 16px; background: rgba(239,68,68,0.1); border-radius: 8px; margin-bottom: 16px; display: none; }
         .loading { text-align: center; padding: 40px; color: #888; }
-        .chart-container { background: var(--card); border-radius: 8px; padding: 20px; border: 1px solid var(--border); margin-bottom: 24px; }
+        .chart-container { background: var(--card); border-radius: 8px; padding: 20px; border: 1px solid var(--border); margin-bottom: 16px; }
         .chart-container h3 { font-size: 14px; color: #888; margin-bottom: 16px; text-transform: uppercase; }
-        .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
-        @media (max-width: 900px) { .chart-row { grid-template-columns: 1fr; } }
+        .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+        .chart-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+        @media (max-width: 1200px) { .chart-row-3 { grid-template-columns: 1fr 1fr; } }
+        @media (max-width: 900px) { .chart-row, .chart-row-3 { grid-template-columns: 1fr; } }
         .latency-good { color: var(--good); }
         .latency-warn { color: var(--warn); }
         .latency-bad { color: var(--bad); }
@@ -606,6 +612,14 @@ ADMIN_DASHBOARD_HTML = """
         .endpoint-row.selected { background: rgba(233,69,96,0.2); }
         .emoji-cell { font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif; }
         #history-chart-container { display: none; }
+        .summary-row { display: flex; gap: 24px; margin-bottom: 16px; flex-wrap: wrap; }
+        .summary-item { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+        .summary-dot { width: 12px; height: 12px; border-radius: 50%; }
+        .filter-row { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; }
+        .filter-row select, .filter-row input { padding: 8px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); }
+        .filter-row select:focus, .filter-row input:focus { outline: none; border-color: var(--accent); }
+        .refresh-btn { padding: 8px 16px; background: var(--accent); border: none; border-radius: 4px; color: white; cursor: pointer; }
+        .refresh-btn:hover { opacity: 0.9; }
     </style>
 </head>
 <body>
@@ -629,14 +643,35 @@ ADMIN_DASHBOARD_HTML = """
                 </table>
             </div>
             <div id="telemetry-tab" style="display:none">
+                <div class="filter-row">
+                    <select id="time-range" onchange="loadTelemetryStats()">
+                        <option value="1">Last 1 hour</option>
+                        <option value="6">Last 6 hours</option>
+                        <option value="24" selected>Last 24 hours</option>
+                        <option value="72">Last 3 days</option>
+                        <option value="168">Last 7 days</option>
+                    </select>
+                    <button class="refresh-btn" onclick="loadTelemetryStats()">Refresh</button>
+                </div>
+                <div class="cards" id="telemetry-summary"></div>
                 <div class="chart-row">
                     <div class="chart-container">
-                        <h3>Average Latency by Endpoint</h3>
+                        <h3>Latency Distribution (Avg vs P95)</h3>
                         <canvas id="latency-chart"></canvas>
                     </div>
                     <div class="chart-container">
-                        <h3>Request Count by Endpoint</h3>
+                        <h3>Request Volume</h3>
                         <canvas id="count-chart"></canvas>
+                    </div>
+                </div>
+                <div class="chart-row">
+                    <div class="chart-container">
+                        <h3>Error Rate by Endpoint</h3>
+                        <canvas id="error-chart"></canvas>
+                    </div>
+                    <div class="chart-container">
+                        <h3>Slowest Endpoints (P95)</h3>
+                        <canvas id="slow-chart"></canvas>
                     </div>
                 </div>
                 <div class="chart-container" id="history-chart-container">
@@ -652,7 +687,7 @@ ADMIN_DASHBOARD_HTML = """
     </div>
     <script>
         const token = localStorage.getItem('plexichat-admin-token');
-        let latencyChart = null, countChart = null, historyChart = null;
+        let latencyChart = null, countChart = null, historyChart = null, errorChart = null, slowChart = null;
         let telemetryData = [];
         
         if (!token) {
@@ -660,12 +695,24 @@ ADMIN_DASHBOARD_HTML = """
         }
         
         function formatEndpoint(endpoint) {
-            // Decode URL-encoded emojis for display
+            // Decode URL-encoded emojis and normalize display
             try {
-                return decodeURIComponent(endpoint);
+                let decoded = decodeURIComponent(endpoint);
+                // Replace {id} placeholders with cleaner display
+                decoded = decoded.replace(/\\{id\\}/g, ':id');
+                // Replace {emoji} placeholder
+                decoded = decoded.replace(/\\{emoji\\}/g, ':emoji');
+                return decoded;
             } catch (e) {
                 return endpoint;
             }
+        }
+        
+        function shortEndpoint(endpoint) {
+            // Shorten endpoint for chart labels
+            let short = formatEndpoint(endpoint).replace('/api/v1', '');
+            if (short.length > 25) short = short.substring(0, 22) + '...';
+            return short;
         }
         
         function getLatencyClass(ms) {
@@ -680,19 +727,51 @@ ADMIN_DASHBOARD_HTML = """
             return '#ef4444';
         }
         
+        function getValueClass(ms) {
+            if (ms < 100) return 'good';
+            if (ms < 500) return 'warn';
+            return 'bad';
+        }
+        
         async function loadTelemetryStats() {
+            const hours = document.getElementById('time-range')?.value || 24;
             try {
-                const res = await fetch('/api/v1/admin/telemetry/stats?hours=24', {
+                const res = await fetch(`/api/v1/admin/telemetry/stats?hours=${hours}`, {
                     headers: { 'Authorization': 'Bearer ' + token }
                 });
                 if (!res.ok) return;
                 const data = await res.json();
                 telemetryData = data.stats || [];
+                renderTelemetrySummary();
                 renderTelemetryTable();
                 renderCharts();
             } catch (e) {
                 console.error('Failed to load telemetry stats:', e);
             }
+        }
+        
+        function renderTelemetrySummary() {
+            const container = document.getElementById('telemetry-summary');
+            if (!telemetryData.length) {
+                container.innerHTML = '';
+                return;
+            }
+            
+            const totalRequests = telemetryData.reduce((sum, t) => sum + t.count, 0);
+            const avgLatency = telemetryData.reduce((sum, t) => sum + t.avg_ms * t.count, 0) / totalRequests;
+            const maxP95 = Math.max(...telemetryData.map(t => t.p95_ms));
+            const avgErrorRate = telemetryData.reduce((sum, t) => sum + t.error_rate * t.count, 0) / totalRequests;
+            const slowEndpoints = telemetryData.filter(t => t.avg_ms > 500).length;
+            const errorEndpoints = telemetryData.filter(t => t.error_rate > 5).length;
+            
+            container.innerHTML = `
+                <div class="card"><h3>Total Requests</h3><div class="value">${totalRequests.toLocaleString()}</div></div>
+                <div class="card"><h3>Avg Latency</h3><div class="value ${getValueClass(avgLatency)}">${avgLatency.toFixed(0)}ms</div></div>
+                <div class="card"><h3>Max P95</h3><div class="value ${getValueClass(maxP95)}">${maxP95.toFixed(0)}ms</div></div>
+                <div class="card"><h3>Avg Error Rate</h3><div class="value ${avgErrorRate > 5 ? 'bad' : avgErrorRate > 1 ? 'warn' : 'good'}">${avgErrorRate.toFixed(1)}%</div></div>
+                <div class="card"><h3>Slow Endpoints</h3><div class="value ${slowEndpoints > 0 ? 'bad' : 'good'}">${slowEndpoints}</div><div class="subtitle">&gt;500ms avg</div></div>
+                <div class="card"><h3>Error Endpoints</h3><div class="value ${errorEndpoints > 0 ? 'bad' : 'good'}">${errorEndpoints}</div><div class="subtitle">&gt;5% errors</div></div>
+            `;
         }
         
         function renderTelemetryTable() {
@@ -701,15 +780,17 @@ ADMIN_DASHBOARD_HTML = """
                 tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#888">No telemetry data</td></tr>';
                 return;
             }
-            tbody.innerHTML = telemetryData.map((t, i) => {
+            // Sort by avg latency descending for visibility of slow endpoints
+            const sorted = [...telemetryData].sort((a, b) => b.avg_ms - a.avg_ms);
+            tbody.innerHTML = sorted.map((t, i) => {
                 const displayEndpoint = formatEndpoint(t.endpoint);
                 const avgClass = getLatencyClass(t.avg_ms);
                 const p95Class = getLatencyClass(t.p95_ms);
                 const errorClass = t.error_rate > 10 ? 'latency-bad' : (t.error_rate > 1 ? 'latency-warn' : 'latency-good');
-                return `<tr class="endpoint-row" onclick="showHistory('${t.endpoint}', '${t.method}', ${i})">
+                return `<tr class="endpoint-row" onclick="showHistory('${encodeURIComponent(t.endpoint)}', '${t.method}', ${i})">
                     <td class="emoji-cell">${displayEndpoint}</td>
                     <td>${t.method}</td>
-                    <td>${t.count}</td>
+                    <td>${t.count.toLocaleString()}</td>
                     <td class="${avgClass}">${t.avg_ms.toFixed(1)}</td>
                     <td>${(t.p50_ms || 0).toFixed(1)}</td>
                     <td class="${p95Class}">${t.p95_ms.toFixed(1)}</td>
@@ -722,76 +803,166 @@ ADMIN_DASHBOARD_HTML = """
         function renderCharts() {
             if (!telemetryData.length) return;
             
-            const top10 = telemetryData.slice(0, 10);
-            const labels = top10.map(t => formatEndpoint(t.endpoint).replace('/api/v1', '').substring(0, 30));
-            const avgData = top10.map(t => t.avg_ms);
-            const p95Data = top10.map(t => t.p95_ms);
-            const countData = top10.map(t => t.count);
-            const colors = avgData.map(v => getLatencyColor(v));
+            // Sort by request count for main charts
+            const byCount = [...telemetryData].sort((a, b) => b.count - a.count).slice(0, 10);
+            // Sort by P95 latency for slow endpoints chart
+            const byP95 = [...telemetryData].sort((a, b) => b.p95_ms - a.p95_ms).slice(0, 8);
+            // Sort by error rate for error chart
+            const byError = [...telemetryData].filter(t => t.error_rate > 0).sort((a, b) => b.error_rate - a.error_rate).slice(0, 8);
+            
+            const labels = byCount.map(t => shortEndpoint(t.endpoint));
+            const avgData = byCount.map(t => t.avg_ms);
+            const p95Data = byCount.map(t => t.p95_ms);
+            const countData = byCount.map(t => t.count);
             
             const chartOptions = {
                 responsive: true,
                 maintainAspectRatio: true,
                 plugins: { legend: { labels: { color: '#eaeaea' } } },
                 scales: {
-                    x: { ticks: { color: '#888' }, grid: { color: '#0f3460' } },
+                    x: { ticks: { color: '#888', maxRotation: 45 }, grid: { color: '#0f3460' } },
                     y: { ticks: { color: '#888' }, grid: { color: '#0f3460' } }
                 }
             };
             
+            const horizontalOptions = {
+                ...chartOptions,
+                indexAxis: 'y',
+                scales: {
+                    x: { ticks: { color: '#888' }, grid: { color: '#0f3460' } },
+                    y: { ticks: { color: '#888', font: { size: 10 } }, grid: { color: '#0f3460' } }
+                }
+            };
+            
+            // Latency chart - Avg vs P95 comparison
             if (latencyChart) latencyChart.destroy();
             latencyChart = new Chart(document.getElementById('latency-chart'), {
                 type: 'bar',
                 data: {
                     labels,
                     datasets: [
-                        { label: 'Avg (ms)', data: avgData, backgroundColor: colors, borderRadius: 4 },
-                        { label: 'P95 (ms)', data: p95Data, backgroundColor: 'rgba(233,69,96,0.5)', borderRadius: 4 }
+                        { label: 'Avg (ms)', data: avgData, backgroundColor: '#3b82f6', borderRadius: 4 },
+                        { label: 'P95 (ms)', data: p95Data, backgroundColor: '#e94560', borderRadius: 4 }
                     ]
                 },
-                options: { ...chartOptions, indexAxis: 'y' }
+                options: horizontalOptions
             });
             
+            // Request count chart - Doughnut
             if (countChart) countChart.destroy();
             countChart = new Chart(document.getElementById('count-chart'), {
                 type: 'doughnut',
                 data: {
                     labels,
-                    datasets: [{ data: countData, backgroundColor: ['#e94560','#3b82f6','#4ade80','#fbbf24','#8b5cf6','#06b6d4','#f97316','#ec4899','#84cc16','#6366f1'] }]
+                    datasets: [{ 
+                        data: countData, 
+                        backgroundColor: ['#e94560','#3b82f6','#4ade80','#fbbf24','#8b5cf6','#06b6d4','#f97316','#ec4899','#84cc16','#6366f1']
+                    }]
                 },
-                options: { responsive: true, plugins: { legend: { position: 'right', labels: { color: '#eaeaea', font: { size: 10 } } } } }
+                options: { 
+                    responsive: true, 
+                    plugins: { 
+                        legend: { position: 'right', labels: { color: '#eaeaea', font: { size: 10 } } }
+                    }
+                }
+            });
+            
+            // Error rate chart
+            if (errorChart) errorChart.destroy();
+            if (byError.length > 0) {
+                errorChart = new Chart(document.getElementById('error-chart'), {
+                    type: 'bar',
+                    data: {
+                        labels: byError.map(t => shortEndpoint(t.endpoint)),
+                        datasets: [{
+                            label: 'Error Rate %',
+                            data: byError.map(t => t.error_rate),
+                            backgroundColor: byError.map(t => t.error_rate > 10 ? '#ef4444' : t.error_rate > 5 ? '#fbbf24' : '#4ade80'),
+                            borderRadius: 4
+                        }]
+                    },
+                    options: horizontalOptions
+                });
+            } else {
+                // No errors - show empty state
+                const ctx = document.getElementById('error-chart').getContext('2d');
+                ctx.fillStyle = '#888';
+                ctx.font = '14px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('No errors recorded', ctx.canvas.width / 2, ctx.canvas.height / 2);
+            }
+            
+            // Slowest endpoints chart (P95)
+            if (slowChart) slowChart.destroy();
+            slowChart = new Chart(document.getElementById('slow-chart'), {
+                type: 'bar',
+                data: {
+                    labels: byP95.map(t => shortEndpoint(t.endpoint)),
+                    datasets: [{
+                        label: 'P95 Latency (ms)',
+                        data: byP95.map(t => t.p95_ms),
+                        backgroundColor: byP95.map(t => getLatencyColor(t.p95_ms)),
+                        borderRadius: 4
+                    }]
+                },
+                options: horizontalOptions
             });
         }
         
         async function showHistory(endpoint, method, rowIndex) {
             document.querySelectorAll('.endpoint-row').forEach((r, i) => r.classList.toggle('selected', i === rowIndex));
             document.getElementById('history-chart-container').style.display = 'block';
-            document.getElementById('history-endpoint').textContent = formatEndpoint(endpoint) + ' (' + method + ')';
+            // Decode the endpoint for display (it was encoded in the onclick)
+            const decodedEndpoint = decodeURIComponent(endpoint);
+            document.getElementById('history-endpoint').textContent = formatEndpoint(decodedEndpoint) + ' (' + method + ')';
+            
+            const hours = document.getElementById('time-range')?.value || 24;
+            const bucketMinutes = hours <= 6 ? 5 : hours <= 24 ? 15 : 60;
             
             try {
-                const res = await fetch(`/api/v1/admin/telemetry/history?endpoint=${encodeURIComponent(endpoint)}&method=${method}&hours=24&bucket_minutes=15`, {
+                const res = await fetch(`/api/v1/admin/telemetry/history?endpoint=${endpoint}&method=${method}&hours=${hours}&bucket_minutes=${bucketMinutes}`, {
                     headers: { 'Authorization': 'Bearer ' + token }
                 });
                 if (!res.ok) return;
                 const data = await res.json();
                 const history = data.history || [];
                 
+                if (history.length === 0) {
+                    document.getElementById('history-chart-container').innerHTML = '<h3>Latency History: ' + formatEndpoint(decodedEndpoint) + '</h3><p style="color:#888;text-align:center;padding:40px">No history data available</p><canvas id="history-chart"></canvas>';
+                    return;
+                }
+                
                 if (historyChart) historyChart.destroy();
                 historyChart = new Chart(document.getElementById('history-chart'), {
                     type: 'line',
                     data: {
-                        labels: history.map(h => new Date(h.timestamp).toLocaleTimeString()),
+                        labels: history.map(h => {
+                            const d = new Date(h.timestamp);
+                            return hours <= 24 ? d.toLocaleTimeString() : d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                        }),
                         datasets: [
-                            { label: 'Avg (ms)', data: history.map(h => h.avg_response_time_ms), borderColor: '#e94560', tension: 0.3, fill: false },
-                            { label: 'Max (ms)', data: history.map(h => h.max_response_time_ms), borderColor: '#fbbf24', tension: 0.3, fill: false, borderDash: [5,5] }
+                            { label: 'Avg (ms)', data: history.map(h => h.avg_response_time_ms), borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', tension: 0.3, fill: true },
+                            { label: 'Max (ms)', data: history.map(h => h.max_response_time_ms), borderColor: '#e94560', tension: 0.3, fill: false, borderDash: [5,5] },
+                            { label: 'Min (ms)', data: history.map(h => h.min_response_time_ms), borderColor: '#4ade80', tension: 0.3, fill: false, borderDash: [2,2] }
                         ]
                     },
                     options: {
                         responsive: true,
-                        plugins: { legend: { labels: { color: '#eaeaea' } } },
+                        interaction: { intersect: false, mode: 'index' },
+                        plugins: { 
+                            legend: { labels: { color: '#eaeaea' } },
+                            tooltip: {
+                                callbacks: {
+                                    afterBody: function(context) {
+                                        const idx = context[0].dataIndex;
+                                        return 'Requests: ' + history[idx].count;
+                                    }
+                                }
+                            }
+                        },
                         scales: {
-                            x: { ticks: { color: '#888', maxTicksLimit: 12 }, grid: { color: '#0f3460' } },
-                            y: { ticks: { color: '#888' }, grid: { color: '#0f3460' }, title: { display: true, text: 'ms', color: '#888' } }
+                            x: { ticks: { color: '#888', maxTicksLimit: 12, maxRotation: 45 }, grid: { color: '#0f3460' } },
+                            y: { ticks: { color: '#888' }, grid: { color: '#0f3460' }, title: { display: true, text: 'Latency (ms)', color: '#888' } }
                         }
                     }
                 });
