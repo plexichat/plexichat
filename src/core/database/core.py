@@ -95,7 +95,21 @@ class Database:
         try:
             self.connection = sqlite3.connect(path, check_same_thread=False)
             self.connection.row_factory = sqlite3.Row
-            logger.info(f"Connected to SQLite at {path}")
+            
+            # Enable WAL mode for better concurrent read/write performance
+            self.connection.execute("PRAGMA journal_mode=WAL")
+            # Set synchronous to NORMAL for better performance (still safe with WAL)
+            self.connection.execute("PRAGMA synchronous=NORMAL")
+            # Increase cache size (negative = KB, so -64000 = 64MB)
+            self.connection.execute("PRAGMA cache_size=-64000")
+            # Enable memory-mapped I/O for faster reads (256MB)
+            self.connection.execute("PRAGMA mmap_size=268435456")
+            # Store temp tables in memory
+            self.connection.execute("PRAGMA temp_store=MEMORY")
+            # Enable foreign keys
+            self.connection.execute("PRAGMA foreign_keys=ON")
+            
+            logger.info(f"Connected to SQLite at {path} (WAL mode enabled)")
         except sqlite3.Error as e:
             logger.error(f"Failed to connect to SQLite: {e}")
             raise

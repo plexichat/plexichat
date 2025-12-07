@@ -1288,6 +1288,14 @@ class ServerManager:
             "DELETE FROM srv_members WHERE server_id = ? AND user_id = ?",
             (server_id, member_user_id),
         )
+        
+        # Invalidate caches for the kicked member
+        self._cache_invalidate(self._member_cache, (server_id, member_user_id))
+        self._cache_invalidate(self._permission_cache, (member_user_id, server_id, None))
+        # Also invalidate any channel-specific permission caches
+        for key in list(self._permission_cache.keys()):
+            if key[0] == member_user_id and key[1] == server_id:
+                self._cache_invalidate(self._permission_cache, key)
 
         self._log_audit(
             server_id,
@@ -1347,6 +1355,12 @@ class ServerManager:
                 "DELETE FROM srv_members WHERE server_id = ? AND user_id = ?",
                 (server_id, member_user_id),
             )
+            
+            # Invalidate caches for the banned member
+            self._cache_invalidate(self._member_cache, (server_id, member_user_id))
+            for key in list(self._permission_cache.keys()):
+                if key[0] == member_user_id and key[1] == server_id:
+                    self._cache_invalidate(self._permission_cache, key)
 
         now = self._get_timestamp()
         ban_id = self._generate_id()
@@ -1456,6 +1470,11 @@ class ServerManager:
                VALUES (?, ?, ?, ?, ?)""",
             (mr_id, member.id, role_id, now, user_id),
         )
+        
+        # Invalidate permission cache for the affected member
+        for key in list(self._permission_cache.keys()):
+            if key[0] == member_user_id and key[1] == server_id:
+                self._cache_invalidate(self._permission_cache, key)
 
         self._log_audit(
             server_id,
@@ -1502,6 +1521,11 @@ class ServerManager:
             "DELETE FROM srv_member_roles WHERE member_id = ? AND role_id = ?",
             (member.id, role_id),
         )
+        
+        # Invalidate permission cache for the affected member
+        for key in list(self._permission_cache.keys()):
+            if key[0] == member_user_id and key[1] == server_id:
+                self._cache_invalidate(self._permission_cache, key)
 
         self._log_audit(
             server_id,
