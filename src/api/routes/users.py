@@ -8,6 +8,7 @@ import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.auth import UserResponse
 from src.api.schemas.users import UserUpdateRequest, UserPublicResponse
+from src.core.database import cached, invalidate_pattern
 
 router = APIRouter()
 
@@ -35,6 +36,18 @@ def _user_to_public_response(user) -> UserPublicResponse:
     )
 
 
+def _get_user_cached(user_id: int):
+    """Get user with caching - separate function for @cached decorator."""
+    auth = api.get_auth()
+    if not auth:
+        return None
+    return auth.get_user(user_id)
+
+
+# Apply caching to the internal function (60s TTL for user data)
+_get_user_cached = cached(ttl=60, prefix="user")(_get_user_cached)
+
+
 @router.get("/@me", response_model=UserResponse)
 async def get_current_user_info(current_user: TokenInfo = Depends(get_current_user)):
     """
@@ -47,7 +60,7 @@ async def get_current_user_info(current_user: TokenInfo = Depends(get_current_us
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
     
     try:
-        user = auth.get_user(current_user.user_id)
+        user = _get_user_cached(current_user.user_id)
         if not user:
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
         

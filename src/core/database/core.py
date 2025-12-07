@@ -58,6 +58,7 @@ class Database:
         
         self.type = self.config.get("type", "sqlite")
         self.connection: Optional[DbConnection] = None
+        self._pool = None  # PostgreSQL connection pool
         self._cursor = None
         self._in_transaction = False
         logger.info(f"Database initialized with type: {self.type}")
@@ -100,10 +101,11 @@ class Database:
             raise
 
     def _connect_postgres(self):
-        """Connect to PostgreSQL database using psycopg2."""
+        """Connect to PostgreSQL database using psycopg2 with connection pooling."""
         try:
             import psycopg2
             import psycopg2.extras
+            import psycopg2.pool
         except ImportError:
             logger.error("psycopg2 is not installed. Cannot connect to PostgreSQL.")
             raise ImportError(
@@ -118,9 +120,17 @@ class Database:
         password = pg_config.get("password", "")
         dbname = pg_config.get("dbname", "plexichat")
         sslmode = pg_config.get("sslmode", "prefer")
+        
+        # Connection pool settings
+        pool_config = self.config.get("connection_pool", {})
+        min_conn = pool_config.get("min_connections", 2)
+        max_conn = pool_config.get("max_connections", 20)
 
         try:
-            self.connection = psycopg2.connect(
+            # Use ThreadedConnectionPool for thread-safe connection pooling
+            self._pool = psycopg2.pool.ThreadedConnectionPool(
+                minconn=min_conn,
+                maxconn=max_conn,
                 host=host,
                 port=port,
                 user=user,
@@ -129,9 +139,11 @@ class Database:
                 sslmode=sslmode,
                 cursor_factory=psycopg2.extras.RealDictCursor
             )
+            # Get initial connection from pool
+            self.connection = self._pool.getconn()
             # Set autocommit off by default (matches SQLite behavior)
             self.connection.autocommit = False
-            logger.info(f"Connected to PostgreSQL at {host}:{port}/{dbname} (sslmode={sslmode})")
+            logger.info(f"Connected to PostgreSQL at {host}:{port}/{dbname} (sslmode={sslmode}, pool={min_conn}-{max_conn})")
         except psycopg2.Error as e:
             logger.error(f"Failed to connect to PostgreSQL: {e}")
             raise
@@ -406,9 +418,15 @@ class Database:
         self.execute(query, values)
 
     def close(self):
-        """Close the database connection."""
+        """Close the database connection and pool."""
         if self.connection:
-            self.connection.close()
+            if self._pool:
+                # Return connection to pool and close pool
+                self._pool.putconn(self.connection)
+                self._pool.closeall()
+                self._pool = None
+            else:
+                self.connection.close()
             self.connection = None
             logger.info("Database connection closed.")
 

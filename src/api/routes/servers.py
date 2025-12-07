@@ -14,6 +14,7 @@ from src.api.schemas.servers import (
     ChannelResponse,
 )
 from src.core.servers.models import ChannelType
+from src.core.database import cached, invalidate_pattern
 
 router = APIRouter()
 
@@ -53,6 +54,27 @@ def _channel_to_response(channel) -> ChannelResponse:
     )
 
 
+def _get_servers_cached(user_id: int):
+    """Get user's servers with caching."""
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        return None
+    return servers_mod.get_servers(user_id)
+
+
+def _get_channels_cached(user_id: int, server_id: int):
+    """Get server channels with caching."""
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        return None
+    return servers_mod.get_channels(user_id, server_id)
+
+
+# Apply caching (30s TTL for server lists, 30s for channels)
+_get_servers_cached = cached(ttl=30, prefix="servers")(_get_servers_cached)
+_get_channels_cached = cached(ttl=30, prefix="channels")(_get_channels_cached)
+
+
 @router.get("", response_model=List[ServerResponse])
 async def get_servers(current_user: TokenInfo = Depends(get_current_user)):
     """
@@ -65,8 +87,12 @@ async def get_servers(current_user: TokenInfo = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
     
     try:
-        servers = servers_mod.get_servers(current_user.user_id)
+        servers = _get_servers_cached(current_user.user_id)
+        if servers is None:
+            raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Failed to fetch servers"}})
         return [_server_to_response(s) for s in servers]
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
 
@@ -209,8 +235,12 @@ async def get_server_channels(server_id: str, current_user: TokenInfo = Depends(
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
     
     try:
-        channels = servers_mod.get_channels(current_user.user_id, sid)
+        channels = _get_channels_cached(current_user.user_id, sid)
+        if channels is None:
+            raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Failed to fetch channels"}})
         return [_channel_to_response(c) for c in channels]
+    except HTTPException:
+        raise
     except Exception as e:
         exc_name = type(e).__name__
         if "NotFound" in exc_name:
