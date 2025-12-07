@@ -42,13 +42,12 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         openapi_url=config.openapi_url,
     )
     
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=config.cors_origins,
-        allow_credentials=config.cors_allow_credentials,
-        allow_methods=config.cors_allow_methods,
-        allow_headers=config.cors_allow_headers,
-    )
+    # Middleware order matters! They run in REVERSE order of addition.
+    # So we add them in this order: Logging -> Auth -> RateLimit -> CORS
+    # Which means they execute: CORS -> RateLimit -> Auth -> Logging
+    
+    app.add_middleware(LoggingMiddleware)
+    app.add_middleware(AuthenticationMiddleware)
     
     if enable_rate_limiting:
         from src.core import ratelimit
@@ -56,8 +55,14 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             RateLimitMiddleware = create_rate_limit_middleware()
             app.add_middleware(RateLimitMiddleware)
     
-    app.add_middleware(AuthenticationMiddleware)
-    app.add_middleware(LoggingMiddleware)
+    # CORS must be added LAST so it runs FIRST (handles OPTIONS preflight)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=config.cors_origins,
+        allow_credentials=config.cors_allow_credentials,
+        allow_methods=config.cors_allow_methods,
+        allow_headers=config.cors_allow_headers,
+    )
     
     setup_exception_handlers(app)
     
