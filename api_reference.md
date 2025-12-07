@@ -1290,7 +1290,12 @@ Upload a file attachment to a channel. Requires authentication.
 
 **Headers:** `Authorization: Bearer <token>`
 
-**Request:** Multipart form data with `file` field (max 10MB)
+**Request:** Multipart form data with `file` field
+
+**File Size Limits:** Based on user tier:
+- Standard: 10MB
+- Alpha: 25MB
+- Premium: 100MB
 
 **Response (200):**
 ```json
@@ -1300,6 +1305,28 @@ Upload a file attachment to a channel. Requires authentication.
   "size": 12345,
   "content_type": "image/png",
   "url": "/api/v1/media/attachments/abc123def456"
+}
+```
+
+### GET /media/attachments/{filename}
+
+Retrieve an uploaded attachment. Requires authentication.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Alternative:** Pass token as query parameter: `?token=<token>`
+
+This is useful for embedding images/videos in HTML where headers cannot be set.
+
+**Response (200):** File content with appropriate Content-Type header
+
+**Response (401):** Authentication required
+```json
+{
+  "error": {
+    "code": 401,
+    "message": "Authentication required"
+  }
 }
 ```
 
