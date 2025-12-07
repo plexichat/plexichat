@@ -3,6 +3,8 @@ Logging middleware - Request/response logging with accurate timing.
 
 This middleware measures the COMPLETE request duration from when the request
 is received until the response body is fully sent to the client.
+
+Also collects server-side telemetry for comparison with client-reported latency.
 """
 
 import time
@@ -21,6 +23,22 @@ def _get_logger():
         return logger
     except ImportError:
         return None
+
+
+def _submit_server_telemetry(endpoint: str, method: str, response_time_ms: float, status_code: int):
+    """Submit server-side telemetry data."""
+    try:
+        from src.core import telemetry
+        if telemetry.is_setup():
+            telemetry.submit_response_times([{
+                "endpoint": endpoint,
+                "method": method,
+                "response_time_ms": response_time_ms,
+                "status_code": status_code,
+                "timestamp": int(time.time() * 1000)
+            }], client_id="server")
+    except Exception:
+        pass  # Don't let telemetry errors affect requests
 
 
 def _log_debug(msg: str):
@@ -131,6 +149,10 @@ class LoggingMiddleware:
                         _log_warning(log_msg)
                     else:
                         _log_info(log_msg)
+                    
+                    # Submit server-side telemetry for API endpoints
+                    if path.startswith("/api/"):
+                        _submit_server_telemetry(path, method, duration_ms, status_code)
             
             await send(message)
         

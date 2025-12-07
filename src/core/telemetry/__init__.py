@@ -201,7 +201,8 @@ def submit_response_times(
 def get_endpoint_stats(
     hours: int = 24,
     endpoint_filter: Optional[str] = None,
-    aggregate_by_pattern: bool = True
+    aggregate_by_pattern: bool = True,
+    client_id_filter: Optional[str] = None
 ) -> List[EndpointStats]:
     """
     Get aggregated statistics for endpoints.
@@ -211,6 +212,7 @@ def get_endpoint_stats(
         endpoint_filter: Optional endpoint pattern to filter by
         aggregate_by_pattern: If True, aggregate endpoints with IDs into patterns
                              (e.g., /channels/123/messages -> /channels/{id}/messages)
+        client_id_filter: Optional client_id to filter by (e.g., "server" for server-side only)
         
     Returns:
         List of EndpointStats for each endpoint/method combination
@@ -219,18 +221,19 @@ def get_endpoint_stats(
     
     cutoff = int((time.time() - hours * 3600) * 1000)
     
-    # Get all unique endpoint/method combinations
+    # Build query based on filters
+    query = "SELECT DISTINCT endpoint, method FROM telemetry_response_times WHERE timestamp > ?"
+    params: list = [cutoff]
+    
     if endpoint_filter:
-        rows = db.fetch_all(
-            """SELECT DISTINCT endpoint, method FROM telemetry_response_times 
-               WHERE timestamp > ? AND endpoint LIKE ?""",
-            (cutoff, f"%{endpoint_filter}%")
-        )
-    else:
-        rows = db.fetch_all(
-            "SELECT DISTINCT endpoint, method FROM telemetry_response_times WHERE timestamp > ?",
-            (cutoff,)
-        )
+        query += " AND endpoint LIKE ?"
+        params.append(f"%{endpoint_filter}%")
+    
+    if client_id_filter:
+        query += " AND client_id = ?"
+        params.append(client_id_filter)
+    
+    rows = db.fetch_all(query, tuple(params))
     
     # If aggregating by pattern, group endpoints that differ only by IDs
     if aggregate_by_pattern:
@@ -257,11 +260,16 @@ def get_endpoint_stats(
         error_count = 0
         
         for endpoint in endpoints:
-            times_rows = db.fetch_all(
-                """SELECT response_time_ms, status_code FROM telemetry_response_times 
-                   WHERE endpoint = ? AND method = ? AND timestamp > ?""",
-                (endpoint, method, cutoff)
-            )
+            # Build query with optional client_id filter
+            times_query = """SELECT response_time_ms, status_code FROM telemetry_response_times 
+                   WHERE endpoint = ? AND method = ? AND timestamp > ?"""
+            times_params: list = [endpoint, method, cutoff]
+            
+            if client_id_filter:
+                times_query += " AND client_id = ?"
+                times_params.append(client_id_filter)
+            
+            times_rows = db.fetch_all(times_query, tuple(times_params))
             
             for r in times_rows:
                 rt = r["response_time_ms"] if isinstance(r, dict) else r[0]

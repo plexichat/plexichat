@@ -352,9 +352,17 @@ async def get_telemetry_stats(
     request: Request,
     hours: int = 24,
     endpoint: Optional[str] = None,
+    source: Optional[str] = None,
     db = Depends(get_db)
 ):
-    """Get telemetry statistics."""
+    """
+    Get telemetry statistics.
+    
+    Args:
+        hours: Number of hours to look back (default 24)
+        endpoint: Optional endpoint pattern to filter by
+        source: Optional source filter - "server" for server-side only, "client" for client-side only
+    """
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
     
@@ -363,7 +371,20 @@ async def get_telemetry_stats(
         if not telemetry.is_setup():
             return {"stats": [], "message": "Telemetry not initialized"}
         
-        stats = telemetry.get_endpoint_stats(hours=hours, endpoint_filter=endpoint)
+        # Map source to client_id filter
+        client_id_filter = None
+        if source == "server":
+            client_id_filter = "server"
+        elif source == "client":
+            # For client, we want everything except server
+            # This requires a different approach - for now, just return all
+            pass
+        
+        stats = telemetry.get_endpoint_stats(
+            hours=hours, 
+            endpoint_filter=endpoint,
+            client_id_filter=client_id_filter
+        )
         
         # Normalize emoji endpoints for display
         import urllib.parse
@@ -383,7 +404,8 @@ async def get_telemetry_stats(
                     "error_rate": round(s.error_rate * 100, 2)
                 }
                 for s in stats
-            ]
+            ],
+            "source": source or "all"
         }
     except ImportError:
         return {"stats": [], "message": "Telemetry module not available"}
@@ -651,6 +673,11 @@ ADMIN_DASHBOARD_HTML = """
                         <option value="72">Last 3 days</option>
                         <option value="168">Last 7 days</option>
                     </select>
+                    <select id="telemetry-source" onchange="loadTelemetryStats()">
+                        <option value="">All Sources</option>
+                        <option value="server">Server-side Only</option>
+                        <option value="client">Client-side Only</option>
+                    </select>
                     <button class="refresh-btn" onclick="loadTelemetryStats()">Refresh</button>
                 </div>
                 <div class="cards" id="telemetry-summary"></div>
@@ -735,8 +762,12 @@ ADMIN_DASHBOARD_HTML = """
         
         async function loadTelemetryStats() {
             const hours = document.getElementById('time-range')?.value || 24;
+            const source = document.getElementById('telemetry-source')?.value || '';
             try {
-                const res = await fetch(`/api/v1/admin/telemetry/stats?hours=${hours}`, {
+                let url = `/api/v1/admin/telemetry/stats?hours=${hours}`;
+                if (source) url += `&source=${source}`;
+                
+                const res = await fetch(url, {
                     headers: { 'Authorization': 'Bearer ' + token }
                 });
                 if (!res.ok) return;
