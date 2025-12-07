@@ -485,6 +485,14 @@ def get_members(
     return _get_manager().get_members(user_id, server_id, limit, after_id)
 
 
+def get_member_user_ids(
+    server_id: int,
+    exclude_user_id: Optional[int] = None,
+) -> List[int]:
+    """Get just the user IDs of server members (optimized for typing/presence dispatch)."""
+    return _get_manager().get_member_user_ids(server_id, exclude_user_id)
+
+
 def update_member(
     user_id: int,
     server_id: int,

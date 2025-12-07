@@ -1104,6 +1104,26 @@ class ServerManager:
 
         return [self._row_to_member(row) for row in rows]
 
+    def get_member_user_ids(
+        self,
+        server_id: int,
+        exclude_user_id: Optional[int] = None,
+    ) -> List[int]:
+        """
+        Get just the user IDs of server members (optimized for typing/presence dispatch).
+        
+        This is faster than get_members() as it only fetches user_id column.
+        """
+        query = "SELECT user_id FROM srv_members WHERE server_id = ?"
+        params = [server_id]
+        
+        if exclude_user_id:
+            query += " AND user_id != ?"
+            params.append(exclude_user_id)
+        
+        rows = self._db.fetch_all(query, tuple(params))
+        return [row["user_id"] for row in rows]
+
     def update_member(
         self,
         user_id: int,

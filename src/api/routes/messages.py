@@ -592,8 +592,8 @@ async def trigger_typing(
             if channel:
                 server_id = getattr(channel, "server_id", None)
                 if server_id:
-                    members = servers_mod.get_members(current_user.user_id, server_id)
-                    user_ids = [m.user_id for m in (members or []) if m.user_id != current_user.user_id]
+                    # Use optimized function that only fetches user IDs
+                    user_ids = servers_mod.get_member_user_ids(server_id, exclude_user_id=current_user.user_id)
         except Exception:
             channel = None
     
