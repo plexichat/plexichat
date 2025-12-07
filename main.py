@@ -452,7 +452,12 @@ class PlexiChatServer:
             # Controls feature flags, badges, and rate limit tiers for users
             # Tiers can be customized with specific limits for voice, video, uploads, etc.
             "user_features": {
-                # Default tier for new users
+                # Alpha registration mode - when enabled, new users automatically get:
+                # - The 'alpha' tier (higher limits)
+                # - The 'alpha_tester' badge
+                # Set to true during alpha testing, false to disable for new registrations
+                "alpha_registration_enabled": False,
+                # Default tier for new users (when alpha_registration_enabled is false)
                 "default_tier": "standard",
                 # Maximum badges displayed on profile
                 "badge_display_limit": 5,
@@ -833,6 +838,7 @@ class PlexiChatServer:
             settings_module=settings,
             media_module=media,
             organizations_module=self._modules.get('organizations'),
+            features_module=self._modules.get('features'),
         )
         
         self.app = create_app(enable_rate_limiting=False, enable_docs=True)

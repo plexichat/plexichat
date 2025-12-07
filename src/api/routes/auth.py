@@ -51,6 +51,7 @@ async def register(request: Request, body: RegisterRequest):
     Register a new user account.
     
     Creates a new user with the provided credentials and returns a session token.
+    If alpha registration mode is enabled, automatically grants alpha tier and badge.
     """
     auth = api.get_auth()
     if not auth:
@@ -65,6 +66,14 @@ async def register(request: Request, body: RegisterRequest):
             password=body.password,
             ip_address=ip_address
         )
+        
+        # Apply alpha tester features if enabled
+        features = api.get_features()
+        if features:
+            try:
+                features.apply_new_user_features(user.id)
+            except Exception:
+                pass  # Non-critical, don't fail registration
         
         result = auth.login(
             username=body.username,

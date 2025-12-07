@@ -14,6 +14,7 @@ Features are stored separately from auth_users to allow:
 
 Configuration (in config.yaml):
     user_features:
+      alpha_registration_enabled: false  # Set true to auto-grant alpha tier to new users
       rate_limit_tiers:
         standard:
           multiplier: 1.0
@@ -166,6 +167,59 @@ def get_tier_limits(tier: str) -> TierLimits:
 def get_default_tier() -> str:
     """Get the default tier for new users."""
     return _get_config("default_tier", "standard")
+
+
+def is_alpha_registration_enabled() -> bool:
+    """
+    Check if alpha registration mode is enabled.
+    
+    When enabled, new user registrations automatically receive:
+    - The 'alpha' tier (higher limits)
+    - The 'alpha_tester' badge
+    
+    Returns:
+        True if alpha registration mode is active
+    """
+    return _get_config("alpha_registration_enabled", False)
+
+
+def apply_new_user_features(user_id: int) -> Optional[UserFeatures]:
+    """
+    Apply default features to a newly registered user.
+    
+    Called automatically after user registration. If alpha registration
+    mode is enabled, grants alpha tier and alpha_tester badge.
+    
+    Args:
+        user_id: The newly registered user's ID
+        
+    Returns:
+        UserFeatures if any were applied, None otherwise
+    """
+    if not is_alpha_registration_enabled():
+        return None
+    
+    db = _get_db()
+    now = int(time.time())
+    
+    from src.utils.encryption import generate_snowflake_id
+    feature_id = generate_snowflake_id()
+    
+    # Grant alpha tier and alpha_tester badge
+    badges = json.dumps(["alpha_tester"])
+    
+    db.execute(
+        """INSERT INTO user_features 
+           (id, user_id, can_create_org, rate_limit_tier, badges, 
+            granted_by, granted_at, expires_at, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (feature_id, user_id, 0, "alpha", badges, 
+         None, now, None, "Auto-granted: Alpha registration")
+    )
+    
+    logger.info(f"Applied alpha tester features to new user {user_id}")
+    
+    return get_user_features(user_id)
 
 
 # === User Features ===
@@ -490,6 +544,7 @@ __all__ = [
     'has_feature', 'get_user_badges',
     'set_user_features', 'add_badge', 'remove_badge', 'set_user_tier',
     'get_rate_limit_multiplier',
+    'is_alpha_registration_enabled', 'apply_new_user_features',
     'UserFeatures', 'TierLimits', 'Badge',
     'FeatureError', 'InvalidTierError', 'InvalidBadgeError',
 ]

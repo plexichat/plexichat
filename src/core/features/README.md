@@ -17,6 +17,9 @@ In `config.yaml` or `main.py` default config:
 
 ```yaml
 user_features:
+  # Alpha registration mode - auto-grants alpha tier + badge to new users
+  alpha_registration_enabled: false
+  
   default_tier: standard
   badge_display_limit: 5
   available_badges:
@@ -52,6 +55,23 @@ user_features:
       max_file_uploads_per_day: 500
       max_file_size_mb: 100
       max_servers: 500
+```
+
+## Alpha Registration Mode
+
+When `alpha_registration_enabled: true`, all new user registrations automatically receive:
+- The `alpha` tier (2x rate limits, 25MB uploads, etc.)
+- The `alpha_tester` badge on their profile
+
+This is permanent for those users - disabling the setting only affects future registrations.
+
+```python
+# Check if alpha registration is active
+if features.is_alpha_registration_enabled():
+    print("New users will get alpha tier")
+
+# Manually apply to a user (called automatically on registration)
+features.apply_new_user_features(user_id)
 ```
 
 ## Usage
