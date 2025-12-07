@@ -441,6 +441,202 @@ async def get_telemetry_history(
         return {"history": [], "message": "Telemetry module not available"}
 
 
+@router.post("/telemetry/reset")
+async def reset_telemetry_stats(request: Request, db = Depends(get_db)):
+    """Reset all telemetry statistics."""
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
+    
+    try:
+        from src.core import telemetry
+        if not telemetry.is_setup():
+            return {"success": False, "message": "Telemetry not initialized"}
+        
+        deleted_count = telemetry.reset_all_stats()
+        logger.info(f"Admin {admin_id} reset telemetry stats, deleted {deleted_count} records")
+        
+        return {"success": True, "deleted_count": deleted_count}
+    except ImportError:
+        return {"success": False, "message": "Telemetry module not available"}
+
+
+@router.get("/telemetry/export")
+async def export_telemetry_stats(
+    request: Request,
+    format: str = "json",
+    hours: int = 24,
+    db = Depends(get_db)
+):
+    """
+    Export telemetry statistics in various formats.
+    
+    Args:
+        format: Export format - "json", "html", "txt", or "csv"
+        hours: Number of hours to include
+    """
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
+    
+    try:
+        from src.core import telemetry
+        if not telemetry.is_setup():
+            raise HTTPException(status_code=500, detail="Telemetry not initialized")
+        
+        stats = telemetry.get_endpoint_stats(hours=hours)
+        export_time = time.strftime('%Y-%m-%d %H:%M:%S')
+        
+        if format == "json":
+            return {
+                "export_time": export_time,
+                "hours": hours,
+                "stats": [
+                    {
+                        "endpoint": s.endpoint,
+                        "method": s.method,
+                        "count": s.count,
+                        "avg_ms": round(s.avg_response_time_ms, 2),
+                        "min_ms": round(s.min_response_time_ms, 2),
+                        "max_ms": round(s.max_response_time_ms, 2),
+                        "p50_ms": round(s.p50_response_time_ms, 2),
+                        "p95_ms": round(s.p95_response_time_ms, 2),
+                        "p99_ms": round(s.p99_response_time_ms, 2),
+                        "error_rate": round(s.error_rate * 100, 2)
+                    }
+                    for s in stats
+                ]
+            }
+        
+        elif format == "csv":
+            import csv
+            import io
+            output = io.StringIO()
+            writer = csv.writer(output)
+            writer.writerow(["Endpoint", "Method", "Count", "Avg (ms)", "Min (ms)", "Max (ms)", "P50 (ms)", "P95 (ms)", "P99 (ms)", "Error %"])
+            for s in stats:
+                writer.writerow([
+                    s.endpoint, s.method, s.count,
+                    round(s.avg_response_time_ms, 2),
+                    round(s.min_response_time_ms, 2),
+                    round(s.max_response_time_ms, 2),
+                    round(s.p50_response_time_ms, 2),
+                    round(s.p95_response_time_ms, 2),
+                    round(s.p99_response_time_ms, 2),
+                    round(s.error_rate * 100, 2)
+                ])
+            return Response(
+                content=output.getvalue(),
+                media_type="text/csv",
+                headers={"Content-Disposition": f"attachment; filename=telemetry_{export_time.replace(' ', '_').replace(':', '-')}.csv"}
+            )
+        
+        elif format == "txt":
+            lines = [
+                f"PlexiChat Telemetry Report",
+                f"Generated: {export_time}",
+                f"Time Range: Last {hours} hours",
+                f"",
+                f"{'Endpoint':<50} {'Method':<8} {'Count':>8} {'Avg':>10} {'P95':>10} {'Error%':>8}",
+                f"{'-'*50} {'-'*8} {'-'*8} {'-'*10} {'-'*10} {'-'*8}",
+            ]
+            for s in stats:
+                lines.append(
+                    f"{s.endpoint[:50]:<50} {s.method:<8} {s.count:>8} {s.avg_response_time_ms:>9.1f}ms {s.p95_response_time_ms:>9.1f}ms {s.error_rate*100:>7.1f}%"
+                )
+            
+            # Summary
+            if stats:
+                total_requests = sum(s.count for s in stats)
+                avg_latency = sum(s.avg_response_time_ms * s.count for s in stats) / total_requests if total_requests else 0
+                avg_error = sum(s.error_rate * s.count for s in stats) / total_requests * 100 if total_requests else 0
+                lines.extend([
+                    f"",
+                    f"Summary:",
+                    f"  Total Requests: {total_requests:,}",
+                    f"  Average Latency: {avg_latency:.1f}ms",
+                    f"  Average Error Rate: {avg_error:.1f}%",
+                    f"  Endpoints Tracked: {len(stats)}",
+                ])
+            
+            return Response(
+                content="\n".join(lines),
+                media_type="text/plain",
+                headers={"Content-Disposition": f"attachment; filename=telemetry_{export_time.replace(' ', '_').replace(':', '-')}.txt"}
+            )
+        
+        elif format == "html":
+            # Generate HTML report
+            total_requests = sum(s.count for s in stats) if stats else 0
+            avg_latency = sum(s.avg_response_time_ms * s.count for s in stats) / total_requests if total_requests else 0
+            avg_error = sum(s.error_rate * s.count for s in stats) / total_requests * 100 if total_requests else 0
+            
+            rows_html = ""
+            for s in stats:
+                latency_class = "good" if s.avg_response_time_ms < 100 else "warn" if s.avg_response_time_ms < 500 else "bad"
+                error_class = "good" if s.error_rate < 0.01 else "warn" if s.error_rate < 0.05 else "bad"
+                rows_html += f"""
+                <tr>
+                    <td>{s.endpoint}</td>
+                    <td>{s.method}</td>
+                    <td>{s.count:,}</td>
+                    <td class="{latency_class}">{s.avg_response_time_ms:.1f}</td>
+                    <td>{s.min_response_time_ms:.1f}</td>
+                    <td>{s.max_response_time_ms:.1f}</td>
+                    <td>{s.p50_response_time_ms:.1f}</td>
+                    <td class="{latency_class}">{s.p95_response_time_ms:.1f}</td>
+                    <td>{s.p99_response_time_ms:.1f}</td>
+                    <td class="{error_class}">{s.error_rate*100:.1f}%</td>
+                </tr>"""
+            
+            html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>PlexiChat Telemetry Report - {export_time}</title>
+    <style>
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eaeaea; padding: 20px; }}
+        h1 {{ color: #e94560; }}
+        .summary {{ display: flex; gap: 20px; margin: 20px 0; flex-wrap: wrap; }}
+        .stat {{ background: #16213e; padding: 15px 25px; border-radius: 8px; border: 1px solid #0f3460; }}
+        .stat h3 {{ font-size: 12px; color: #888; margin: 0 0 5px 0; text-transform: uppercase; }}
+        .stat .value {{ font-size: 24px; font-weight: bold; color: #e94560; }}
+        table {{ width: 100%; border-collapse: collapse; background: #16213e; border-radius: 8px; overflow: hidden; margin-top: 20px; }}
+        th, td {{ padding: 10px 12px; text-align: left; border-bottom: 1px solid #0f3460; }}
+        th {{ background: #0f3460; font-size: 12px; text-transform: uppercase; }}
+        .good {{ color: #4ade80; }}
+        .warn {{ color: #fbbf24; }}
+        .bad {{ color: #ef4444; }}
+        @media print {{ body {{ background: white; color: black; }} table {{ background: white; }} th {{ background: #eee; }} }}
+    </style>
+</head>
+<body>
+    <h1>PlexiChat Telemetry Report</h1>
+    <p>Generated: {export_time} | Time Range: Last {hours} hours</p>
+    <div class="summary">
+        <div class="stat"><h3>Total Requests</h3><div class="value">{total_requests:,}</div></div>
+        <div class="stat"><h3>Avg Latency</h3><div class="value">{avg_latency:.0f}ms</div></div>
+        <div class="stat"><h3>Avg Error Rate</h3><div class="value">{avg_error:.1f}%</div></div>
+        <div class="stat"><h3>Endpoints</h3><div class="value">{len(stats)}</div></div>
+    </div>
+    <table>
+        <thead>
+            <tr><th>Endpoint</th><th>Method</th><th>Count</th><th>Avg (ms)</th><th>Min</th><th>Max</th><th>P50</th><th>P95</th><th>P99</th><th>Error %</th></tr>
+        </thead>
+        <tbody>{rows_html}</tbody>
+    </table>
+</body>
+</html>"""
+            return Response(
+                content=html,
+                media_type="text/html",
+                headers={"Content-Disposition": f"attachment; filename=telemetry_{export_time.replace(' ', '_').replace(':', '-')}.html"}
+            )
+        
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported format: {format}. Use json, csv, txt, or html")
+            
+    except ImportError:
+        raise HTTPException(status_code=500, detail="Telemetry module not available")
+
+
 # ==================== Admin UI HTML ====================
 
 ADMIN_LOGIN_HTML = """
@@ -679,6 +875,14 @@ ADMIN_DASHBOARD_HTML = """
                         <option value="client">Client-side Only</option>
                     </select>
                     <button class="refresh-btn" onclick="loadTelemetryStats()">Refresh</button>
+                    <select id="export-format" style="margin-left:auto">
+                        <option value="json">JSON</option>
+                        <option value="csv">CSV</option>
+                        <option value="html">HTML</option>
+                        <option value="txt">Text</option>
+                    </select>
+                    <button class="refresh-btn" onclick="exportStats()" style="background:#3b82f6">Export</button>
+                    <button class="refresh-btn" onclick="resetStats()" style="background:#ef4444">Reset All</button>
                 </div>
                 <div class="cards" id="telemetry-summary"></div>
                 <div class="chart-row">
@@ -1056,6 +1260,63 @@ ADMIN_DASHBOARD_HTML = """
             document.getElementById('tickets-tab').style.display = name === 'tickets' ? 'block' : 'none';
             document.getElementById('telemetry-tab').style.display = name === 'telemetry' ? 'block' : 'none';
             if (name === 'telemetry' && !telemetryData.length) loadTelemetryStats();
+        }
+        
+        async function exportStats() {
+            const hours = document.getElementById('time-range')?.value || 24;
+            const format = document.getElementById('export-format')?.value || 'json';
+            try {
+                const res = await fetch(`/api/v1/admin/telemetry/export?format=${format}&hours=${hours}`, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!res.ok) throw new Error('Export failed');
+                
+                if (format === 'json') {
+                    const data = await res.json();
+                    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `telemetry_${new Date().toISOString().slice(0,19).replace(/[T:]/g, '-')}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                } else {
+                    const blob = await res.blob();
+                    const disposition = res.headers.get('Content-Disposition');
+                    let filename = `telemetry_export.${format}`;
+                    if (disposition) {
+                        const match = disposition.match(/filename=([^;]+)/);
+                        if (match) filename = match[1];
+                    }
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                }
+            } catch (e) {
+                alert('Export failed: ' + e.message);
+            }
+        }
+        
+        async function resetStats() {
+            if (!confirm('Are you sure you want to reset ALL telemetry statistics? This cannot be undone.')) return;
+            try {
+                const res = await fetch('/api/v1/admin/telemetry/reset', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                const data = await res.json();
+                if (data.success) {
+                    alert(`Reset complete. Deleted ${data.deleted_count} records.`);
+                    loadTelemetryStats();
+                } else {
+                    alert('Reset failed: ' + (data.message || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Reset failed: ' + e.message);
+            }
         }
         
         function logout() {

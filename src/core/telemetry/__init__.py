@@ -424,6 +424,74 @@ def cleanup_old_data(days: int = 30) -> int:
     return cursor.rowcount if hasattr(cursor, 'rowcount') else 0
 
 
+def reset_all_stats() -> int:
+    """
+    Reset all telemetry statistics by deleting all data.
+    
+    Returns:
+        Number of rows deleted
+    """
+    db = _get_db()
+    
+    # Get count first
+    count_row = db.fetch_one("SELECT COUNT(*) as count FROM telemetry_response_times")
+    count = count_row["count"] if isinstance(count_row, dict) else count_row[0] if count_row else 0
+    
+    db.execute("DELETE FROM telemetry_response_times")
+    
+    return count
+
+
+def get_raw_data(hours: int = 24, limit: int = 10000) -> List[Dict[str, Any]]:
+    """
+    Get raw telemetry data for export.
+    
+    Args:
+        hours: Number of hours to look back
+        limit: Maximum number of records to return
+        
+    Returns:
+        List of raw telemetry entries
+    """
+    db = _get_db()
+    
+    cutoff = int((time.time() - hours * 3600) * 1000)
+    
+    rows = db.fetch_all(
+        """SELECT id, endpoint, method, response_time_ms, status_code, timestamp, client_id
+           FROM telemetry_response_times 
+           WHERE timestamp > ?
+           ORDER BY timestamp DESC
+           LIMIT ?""",
+        (cutoff, limit)
+    )
+    
+    result = []
+    for row in rows:
+        if isinstance(row, dict):
+            result.append({
+                "id": row["id"],
+                "endpoint": row["endpoint"],
+                "method": row["method"],
+                "response_time_ms": row["response_time_ms"],
+                "status_code": row["status_code"],
+                "timestamp": row["timestamp"],
+                "client_id": row["client_id"]
+            })
+        else:
+            result.append({
+                "id": row[0],
+                "endpoint": row[1],
+                "method": row[2],
+                "response_time_ms": row[3],
+                "status_code": row[4],
+                "timestamp": row[5],
+                "client_id": row[6]
+            })
+    
+    return result
+
+
 __all__ = [
     'setup',
     'is_setup',
@@ -431,6 +499,8 @@ __all__ = [
     'get_endpoint_stats',
     'get_response_time_history',
     'cleanup_old_data',
+    'reset_all_stats',
+    'get_raw_data',
     'ResponseTimeEntry',
     'EndpointStats',
 ]
