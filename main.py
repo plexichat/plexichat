@@ -1119,6 +1119,15 @@ def _check_security_keys():
         if not turn_secret:
             warnings.append("voice.turn_secret is empty (TURN is configured)")
     
+    # Check messaging encryption key
+    messaging_config = config.get("messaging", {})
+    encryption_key = messaging_config.get("encryption_key", "")
+    default_keys = ["", "CHANGE_ME_DEFAULT_ENCRYPTION_KEY_32B", "changeme", "change-me"]
+    if encryption_key in default_keys:
+        # Note: If no key is configured, the system auto-generates one in ~/.plexichat/data/.encryption_key
+        # This is secure but the warning helps users know to back up this key
+        warnings.append("messaging.encryption_key is using auto-generated key (back up ~/.plexichat/data/.encryption_key)")
+    
     # Log warnings
     if warnings:
         logger.warning("=" * 60)
