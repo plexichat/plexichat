@@ -220,6 +220,9 @@ async def upload_avatar(
                 (result.url, current_user.user_id)
             )
         
+        # Invalidate user cache so the new avatar_url is returned immediately
+        invalidate_pattern(f"user:*{current_user.user_id}*")
+        
         return {
             "success": True,
             "avatar_url": result.url,
