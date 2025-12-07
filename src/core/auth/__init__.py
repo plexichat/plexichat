@@ -385,6 +385,11 @@ def get_user_by_username(username: str) -> Optional[User]:
     return _get_manager().get_user_by_username(username)
 
 
+def get_users_bulk(user_ids: List[int]) -> Dict[int, 'User']:
+    """Get multiple users by ID in a single query."""
+    return _get_manager().get_users_bulk(user_ids)
+
+
 def has_capability(token_info: TokenInfo, capability: str) -> bool:
     """Check if token has a specific capability/permission."""
     return has_permission(token_info.permissions, capability)

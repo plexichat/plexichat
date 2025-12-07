@@ -8,7 +8,7 @@ import os
 import sys
 import time
 import json
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 # Add paths for imports
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
@@ -74,10 +74,31 @@ class AuthManager:
         self.db = db
         self.email_sender = email_sender
         
+        # In-memory cache for user lookups (reduces DB queries)
+        self._user_cache: Dict[int, Tuple[Any, float]] = {}
+        self._user_cache_ttl = 60.0  # 60 second TTL
+        
         # Create tables if they don't exist
         logger.info("Initializing authentication module")
         create_tables(db)
         logger.info("Authentication tables ready")
+    
+    def _cache_get_user(self, user_id: int) -> Optional[Any]:
+        """Get user from cache if not expired."""
+        if user_id in self._user_cache:
+            user, expires = self._user_cache[user_id]
+            if time.time() < expires:
+                return user
+            del self._user_cache[user_id]
+        return None
+    
+    def _cache_set_user(self, user_id: int, user: Any):
+        """Set user in cache with TTL."""
+        self._user_cache[user_id] = (user, time.time() + self._user_cache_ttl)
+    
+    def _cache_invalidate_user(self, user_id: int):
+        """Invalidate user cache entry."""
+        self._user_cache.pop(user_id, None)
     
     def _get_config(self, key: str, default: Any = None) -> Any:
         """Get auth configuration value."""
@@ -1759,7 +1780,12 @@ class AuthManager:
     # === Utility ===
     
     def get_user(self, user_id: int) -> Optional[User]:
-        """Get a user by ID."""
+        """Get a user by ID (cached)."""
+        # Check cache first
+        cached = self._cache_get_user(user_id)
+        if cached is not None:
+            return cached
+        
         row = self.db.fetch_one(
             """SELECT id, account_type, username, email, permissions, created_at,
                       updated_at, email_verified, account_locked, locked_until,
@@ -1771,7 +1797,9 @@ class AuthManager:
         if not row:
             return None
         
-        return self._row_to_user(row)
+        user = self._row_to_user(row)
+        self._cache_set_user(user_id, user)
+        return user
     
     def get_user_by_username(self, username: str) -> Optional[User]:
         """Get a user by username."""
@@ -1787,6 +1815,48 @@ class AuthManager:
             return None
         
         return self._row_to_user(row)
+    
+    def get_users_bulk(self, user_ids: List[int]) -> Dict[int, User]:
+        """
+        Get multiple users by ID in a single query (optimized for bulk lookups).
+        
+        Args:
+            user_ids: List of user IDs to fetch
+            
+        Returns:
+            Dict mapping user_id to User object
+        """
+        if not user_ids:
+            return {}
+        
+        result = {}
+        uncached_ids = []
+        
+        # Check cache first
+        for uid in user_ids:
+            cached = self._cache_get_user(uid)
+            if cached is not None:
+                result[uid] = cached
+            else:
+                uncached_ids.append(uid)
+        
+        # Fetch uncached users in single query
+        if uncached_ids:
+            placeholders = ",".join("?" * len(uncached_ids))
+            rows = self.db.fetch_all(
+                f"""SELECT id, account_type, username, email, permissions, created_at,
+                          updated_at, email_verified, account_locked, locked_until,
+                          failed_login_attempts, last_login_at, totp_enabled
+                   FROM auth_users WHERE id IN ({placeholders})""",
+                tuple(uncached_ids)
+            )
+            
+            for row in rows:
+                user = self._row_to_user(row)
+                result[user.id] = user
+                self._cache_set_user(user.id, user)
+        
+        return result
     
     def _row_to_user(self, row) -> User:
         """Convert database row to User model."""

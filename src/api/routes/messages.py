@@ -122,23 +122,19 @@ async def get_channel_messages(
     if messages is None:
         raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
     
-    # Cache author usernames for efficiency
+    # Bulk fetch all author usernames in single query (avoids N+1)
+    author_ids = list(set(m.author_id for m in messages))
     author_cache = {}
+    if auth and author_ids:
+        try:
+            users = auth.get_users_bulk(author_ids)
+            author_cache = {uid: u.username for uid, u in users.items()}
+        except Exception:
+            pass
+    
     result = []
     for m in messages:
-        author_id = m.author_id
-        if author_id not in author_cache:
-            username = None
-            if auth:
-                try:
-                    user = auth.get_user(author_id)
-                    if user:
-                        username = user.username
-                except Exception:
-                    pass
-            author_cache[author_id] = username
-        
-        result.append(_message_to_response(m, author_cache.get(author_id)))
+        result.append(_message_to_response(m, author_cache.get(m.author_id)))
     
     return result
 
