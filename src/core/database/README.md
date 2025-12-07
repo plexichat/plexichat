@@ -622,3 +622,99 @@ pytest src/tests/test_redis.py -v
 ```
 
 Tests use `fakeredis` for unit tests (no real Redis required). Integration tests with real Redis are skipped if Redis is unavailable.
+
+
+---
+
+# RAM Cache Module
+
+In-memory caching for small, frequently-read reference tables that rarely change.
+
+## When to Use RAM Cache vs Redis
+
+| Use Case | RAM Cache | Redis |
+|----------|-----------|-------|
+| Static reference data (categories, config) | ✓ | |
+| User-specific data (settings, presence) | | ✓ |
+| Session data | | ✓ |
+| Data shared across server instances | | ✓ |
+| Data that changes frequently | | ✓ |
+| Tiny tables (< 100 rows) read 1000x/sec | ✓ | |
+
+## Usage
+
+```python
+from src.core.database import RAMCache, create_cache, get_cache
+
+# Create a cache for categories (1 hour TTL)
+cache = create_cache("categories", ttl=3600)
+
+# Load data from database
+cache.load(db, "SELECT * FROM search_categories ORDER BY position")
+
+# Get all items
+all_categories = cache.get_all()
+
+# Get by field value
+gaming = cache.get("id", "gaming")
+
+# Get multiple by field
+selected = cache.get_many("id", ["gaming", "music", "tech"])
+
+# Filter with predicate
+popular = cache.filter(lambda x: x["server_count"] > 100)
+
+# Invalidate on write
+cache.invalidate()
+```
+
+## Thread Safety
+
+The RAM cache is thread-safe using `threading.RLock`. Multiple threads can safely read and write concurrently.
+
+## Auto-Reload
+
+If the cache expires and has a stored query, it will automatically reload from the database on the next access.
+
+---
+
+# Caching Strategy
+
+PlexiChat uses a multi-tier caching strategy:
+
+## Tier 1: RAM Cache (In-Process)
+- **TTL**: 1 hour
+- **Data**: Static reference tables (search_categories)
+- **Latency**: ~1 nanosecond
+
+## Tier 2: Redis Cache (External)
+- **TTL**: 30 seconds to 10 minutes depending on data type
+- **Data**: User data, server info, notification settings, sessions, presence
+- **Latency**: ~0.5-2ms
+
+## Tier 3: Database (PostgreSQL)
+- **TTL**: Permanent
+- **Data**: All persistent data
+- **Latency**: ~5-50ms
+
+## Cache Keys
+
+| Data Type | Key Pattern | TTL |
+|-----------|-------------|-----|
+| User profile | `user:{user_id}` | 60s |
+| Server info | `server:{server_id}` | 300s |
+| Notification settings | `notif_settings:{user_id}:{server_id}` | 600s |
+| Session | `session:{session_id}` | 1800s |
+| Presence | `presence:{user_id}` | 300s |
+| Token verification | `token:{hash}` | 30s |
+
+## Cache Invalidation
+
+Caches are invalidated on writes:
+- User update → invalidate `user:*{user_id}*`
+- Server update → invalidate `server:{server_id}`
+- Settings update → invalidate `notif_settings:{user_id}:*`
+
+## Graceful Degradation
+
+If Redis is unavailable, all operations fall back to direct database queries. The application continues to function, just with higher latency.
