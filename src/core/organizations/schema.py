@@ -107,7 +107,7 @@ def create_tables(db) -> None:
 
 def add_org_columns_to_users(db) -> None:
     """Add org_id and managed_by_org columns to auth_users if they don't exist."""
-    db_type = getattr(db, 'db_type', 'sqlite')
+    db_type = getattr(db, 'type', 'sqlite')
     
     if db_type == 'postgres':
         # PostgreSQL: Use ADD COLUMN IF NOT EXISTS
