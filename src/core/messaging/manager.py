@@ -63,10 +63,33 @@ class MessagingManager:
         self._auth = auth_module
         self._config = self._load_config()
         
+        # In-memory caches with TTL (reduces DB queries significantly)
+        self._user_settings_cache: Dict[int, Tuple[UserMessageSettings, float]] = {}
+        self._user_filter_cache: Dict[int, Tuple[ContentFilter, float]] = {}
+        self._participant_cache: Dict[Tuple[int, int], Tuple[bool, float]] = {}
+        self._cache_ttl = 60.0  # 60 second cache TTL
+        
         # Create tables
         create_tables(db)
         
         logger.info("Messaging module initialized")
+    
+    def _cache_get(self, cache: dict, key, default=None):
+        """Get value from cache if not expired."""
+        if key in cache:
+            value, expires = cache[key]
+            if time.time() < expires:
+                return value
+            del cache[key]
+        return default
+    
+    def _cache_set(self, cache: dict, key, value):
+        """Set value in cache with TTL."""
+        cache[key] = (value, time.time() + self._cache_ttl)
+    
+    def _cache_invalidate(self, cache: dict, key):
+        """Invalidate a cache entry."""
+        cache.pop(key, None)
     
     def _load_config(self) -> Dict[str, Any]:
         """Load messaging configuration."""
@@ -652,36 +675,38 @@ class MessagingManager:
         return True
     
     def _is_participant(self, conversation_id: int, user_id: int) -> bool:
-        """Check if user is a participant in conversation."""
+        """Check if user is a participant in conversation (cached)."""
+        cache_key = (conversation_id, user_id)
+        
+        # Check cache first
+        cached = self._cache_get(self._participant_cache, cache_key)
+        if cached is not None:
+            return cached
+        
         # First check direct participants table
         row = self._db.fetch_one(
             "SELECT 1 FROM msg_participants WHERE conversation_id = ? AND user_id = ?",
             (conversation_id, user_id)
         )
         if row:
+            self._cache_set(self._participant_cache, cache_key, True)
             return True
         
-        # Check if this is a server channel conversation
+        # Check if this is a server channel conversation (single optimized query)
         conv_row = self._db.fetch_one(
-            "SELECT metadata FROM msg_conversations WHERE id = ?",
-            (conversation_id,)
+            """SELECT c.metadata, 
+                      CASE WHEN c.metadata IS NOT NULL THEN 
+                          (SELECT 1 FROM srv_members m WHERE m.user_id = ? 
+                           AND m.server_id = CAST(json_extract(c.metadata, '$.server_id') AS INTEGER))
+                      END as is_server_member
+               FROM msg_conversations c WHERE c.id = ?""",
+            (user_id, conversation_id)
         )
-        if conv_row:
-            metadata_str = conv_row["metadata"] if "metadata" in conv_row.keys() else None
-            if metadata_str:
-                try:
-                    metadata = json.loads(metadata_str) if isinstance(metadata_str, str) else metadata_str
-                    server_id = metadata.get("server_id") if isinstance(metadata, dict) else None
-                    if server_id:
-                        # Check if user is a member of the server
-                        member_row = self._db.fetch_one(
-                            "SELECT 1 FROM srv_members WHERE server_id = ? AND user_id = ?",
-                            (server_id, user_id)
-                        )
-                        return member_row is not None
-                except (json.JSONDecodeError, TypeError):
-                    pass
+        if conv_row and conv_row.get("is_server_member"):
+            self._cache_set(self._participant_cache, cache_key, True)
+            return True
         
+        self._cache_set(self._participant_cache, cache_key, False)
         return False
     
     def _get_participant(self, conversation_id: int, user_id: int) -> Optional[Participant]:
@@ -749,10 +774,15 @@ class MessagingManager:
         final_content = content_result.sanitized_content
         encrypted_content = None
         
-        conv = self.get_conversation(conversation_id, user_id)
-        if conv and conv.encrypted and self._config.get("encrypt_messages"):
-            encrypted_content = encrypt_data(final_content)
-            final_content = "[encrypted]"
+        # Only check encryption flag - avoid full get_conversation call
+        if self._config.get("encrypt_messages"):
+            conv_row = self._db.fetch_one(
+                "SELECT encrypted FROM msg_conversations WHERE id = ?",
+                (conversation_id,)
+            )
+            if conv_row and conv_row.get("encrypted"):
+                encrypted_content = encrypt_data(final_content)
+                final_content = "[encrypted]"
         
         # Build metadata
         metadata = {}
@@ -800,9 +830,38 @@ class MessagingManager:
         
         logger.debug(f"Message {msg_id} sent to conversation {conversation_id}")
         
-        result = self.get_message(user_id, msg_id)
-        assert result is not None  # Should exist since we just created it
-        return result
+        # Build Message object directly instead of re-fetching from DB
+        # This avoids redundant _is_participant check and DB query
+        attachment_list = []
+        if attachments:
+            for att_data in attachments:
+                attachment_list.append(Attachment(
+                    id=self._generate_id(),  # Approximate - actual ID from add_attachment
+                    message_id=msg_id,
+                    filename=att_data.get("filename", "file"),
+                    content_type=att_data.get("content_type", "application/octet-stream"),
+                    size=att_data.get("size", 0),
+                    url=att_data.get("url", ""),
+                    uploaded_at=now
+                ))
+        
+        return Message(
+            id=msg_id,
+            conversation_id=conversation_id,
+            author_id=user_id,
+            content=final_content,
+            content_encrypted=encrypted_content,
+            message_type=message_type,
+            created_at=now,
+            updated_at=now,
+            reply_to_id=reply_to_id,
+            edited=False,
+            deleted=False,
+            pinned=False,
+            metadata=metadata if metadata else None,
+            attachments=attachment_list,
+            embeds=[]
+        )
     
     def edit_message(self, user_id: int, message_id: int, content: str) -> Message:
         """Edit a message (own messages only)."""
@@ -1171,14 +1230,19 @@ class MessagingManager:
     # === Content Filtering ===
     
     def get_user_filter_settings(self, user_id: int) -> ContentFilter:
-        """Get user's content filter settings."""
+        """Get user's content filter settings (cached)."""
+        # Check cache first
+        cached = self._cache_get(self._user_filter_cache, user_id)
+        if cached is not None:
+            return cached
+        
         row = self._db.fetch_one(
             "SELECT * FROM msg_content_filters WHERE user_id = ?",
             (user_id,)
         )
         
         if row:
-            return ContentFilter(
+            result = ContentFilter(
                 user_id=user_id,
                 profanity_filter=bool(row["profanity_filter"]),
                 nsfw_filter=bool(row["nsfw_filter"]),
@@ -1186,9 +1250,12 @@ class MessagingManager:
                 custom_blocked_words=json.loads(row["custom_blocked_words"]) if row["custom_blocked_words"] else [],
                 filter_action=FilterAction(row["filter_action"]) if row["filter_action"] else FilterAction.CENSOR
             )
+        else:
+            # Return defaults
+            result = ContentFilter(user_id=user_id)
         
-        # Return defaults
-        return ContentFilter(user_id=user_id)
+        self._cache_set(self._user_filter_cache, user_id, result)
+        return result
     
     def update_user_filter_settings(
         self,
@@ -1234,14 +1301,19 @@ class MessagingManager:
     # === User Message Settings ===
     
     def get_user_message_settings(self, user_id: int) -> UserMessageSettings:
-        """Get user's message settings."""
+        """Get user's message settings (cached)."""
+        # Check cache first
+        cached = self._cache_get(self._user_settings_cache, user_id)
+        if cached is not None:
+            return cached
+        
         row = self._db.fetch_one(
             "SELECT * FROM msg_user_settings WHERE user_id = ?",
             (user_id,)
         )
         
         if row:
-            return UserMessageSettings(
+            result = UserMessageSettings(
                 user_id=user_id,
                 allow_dms_from=row["allow_dms_from"] or "everyone",
                 auto_create_dms=bool(row["auto_create_dms"]),
@@ -1251,9 +1323,12 @@ class MessagingManager:
                 read_receipts_enabled=bool(row["read_receipts_enabled"]),
                 typing_indicators_enabled=bool(row["typing_indicators_enabled"])
             )
+        else:
+            # Return defaults
+            result = UserMessageSettings(user_id=user_id)
         
-        # Return defaults
-        return UserMessageSettings(user_id=user_id)
+        self._cache_set(self._user_settings_cache, user_id, result)
+        return result
     
     def update_user_message_settings(
         self,

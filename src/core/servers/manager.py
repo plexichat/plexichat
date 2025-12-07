@@ -82,10 +82,36 @@ class ServerManager:
         self._auth = auth_module
         self._messaging = messaging_module
         self._config = self._load_config()
+        
+        # In-memory caches with TTL (reduces DB queries significantly)
+        self._member_cache: Dict[Tuple[int, int], Tuple[Any, float]] = {}
+        self._permission_cache: Dict[Tuple[int, int, Optional[int]], Tuple[Dict[str, bool], float]] = {}
+        self._channel_cache: Dict[int, Tuple[Any, float]] = {}
+        self._cache_ttl = 30.0  # 30 second cache TTL for server data
 
         create_tables(db)
 
         logger.info("Server module initialized")
+    
+    def _cache_get(self, cache: dict, key, default=None):
+        """Get value from cache if not expired."""
+        if key in cache:
+            value, expires = cache[key]
+            if time.time() < expires:
+                return value
+            del cache[key]
+        return default
+    
+    def _cache_set(self, cache: dict, key, value):
+        """Set value in cache with TTL."""
+        cache[key] = (value, time.time() + self._cache_ttl)
+    
+    def _cache_invalidate(self, cache: dict, key=None):
+        """Invalidate cache entry or entire cache."""
+        if key is None:
+            cache.clear()
+        else:
+            cache.pop(key, None)
 
     def _load_config(self) -> Dict[str, Any]:
         """Load server configuration."""
@@ -1643,7 +1669,12 @@ class ServerManager:
         server_id: int,
         channel_id: Optional[int] = None,
     ) -> Dict[str, bool]:
-        """Get all permissions for a user in a server/channel."""
+        """Get all permissions for a user in a server/channel (cached)."""
+        cache_key = (user_id, server_id, channel_id)
+        cached = self._cache_get(self._permission_cache, cache_key)
+        if cached is not None:
+            return cached
+        
         server = self._db.fetch_one(
             "SELECT owner_id FROM srv_servers WHERE id = ? AND deleted = 0",
             (server_id,),
@@ -1661,11 +1692,18 @@ class ServerManager:
         base_perms = calculate_base_permissions(role_rows, is_owner)
 
         if not channel_id:
+            self._cache_set(self._permission_cache, cache_key, base_perms)
             return base_perms
 
-        # Get channel overrides
-        member = self.get_member(server_id, user_id)
-        if not member:
+        # Get channel overrides - use cached member if available
+        member_cache_key = (server_id, user_id)
+        member = self._cache_get(self._member_cache, member_cache_key)
+        if member is None or member is False:
+            member = self.get_member(server_id, user_id)
+            if member:
+                self._cache_set(self._member_cache, member_cache_key, member)
+        
+        if not member or member is False:
             return {}
 
         # Get role overrides for this channel
@@ -1689,7 +1727,9 @@ class ServerManager:
         )
         member_override = dict(member_override_row) if member_override_row else None
 
-        return apply_channel_overrides(base_perms, role_overrides, member_override)
+        result = apply_channel_overrides(base_perms, role_overrides, member_override)
+        self._cache_set(self._permission_cache, cache_key, result)
+        return result
 
     def require_permission(
         self,
@@ -1949,12 +1989,19 @@ class ServerManager:
     # === Helper Methods ===
 
     def _is_member(self, server_id: int, user_id: int) -> bool:
-        """Check if user is a member of a server."""
+        """Check if user is a member of a server (cached)."""
+        cache_key = (server_id, user_id)
+        cached = self._cache_get(self._member_cache, cache_key)
+        if cached is not None:
+            return cached is not False  # False means not a member
+        
         row = self._db.fetch_one(
             "SELECT 1 FROM srv_members WHERE server_id = ? AND user_id = ?",
             (server_id, user_id),
         )
-        return row is not None
+        result = row is not None
+        self._cache_set(self._member_cache, cache_key, result if result else False)
+        return result
 
     def _get_member_role_rows(self, server_id: int, user_id: int) -> List[Dict]:
         """Get raw role rows for a member."""
