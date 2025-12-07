@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS rel_friend_requests (
 -- Friend requests indexes
 CREATE INDEX IF NOT EXISTS idx_rel_requests_sender ON rel_friend_requests(sender_id);
 CREATE INDEX IF NOT EXISTS idx_rel_requests_recipient ON rel_friend_requests(recipient_id);
-CREATE INDEX IF NOT EXISTS idx_rel_requests_status ON rel_friend_requests(status);
+-- Note: idx_rel_requests_status removed - low cardinality (pending/accepted/declined), rarely queried alone
 
 -- Blocked users table
 CREATE TABLE IF NOT EXISTS rel_blocked (

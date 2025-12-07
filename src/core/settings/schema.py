@@ -16,8 +16,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
 );
 
 -- Indexes for performance
+-- Note: idx_user_settings_key removed - redundant with UNIQUE(user_id, key) constraint
 CREATE INDEX IF NOT EXISTS idx_user_settings_user ON user_settings(user_id);
-CREATE INDEX IF NOT EXISTS idx_user_settings_key ON user_settings(user_id, key);
 """
 
 SCHEMA_STATEMENTS = [stmt.strip() for stmt in SCHEMA_SQLITE.split(";") if stmt.strip()]

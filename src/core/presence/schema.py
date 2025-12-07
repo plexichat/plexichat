@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS pres_presence (
 );
 
 -- Presence indexes
-CREATE INDEX IF NOT EXISTS idx_pres_presence_status ON pres_presence(status);
+-- Note: idx_pres_presence_status removed - low cardinality (online/offline/idle/dnd), rarely queried alone
 CREATE INDEX IF NOT EXISTS idx_pres_presence_last_seen ON pres_presence(last_seen);
 
 -- Custom status table

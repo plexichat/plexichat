@@ -22,6 +22,7 @@ git submodule update --init --recursive
 - Friend relationships and blocking
 - Presence and typing indicators
 - File attachments and media uploads
+- User avatars and server icons (database-stored)
 - Reactions and embeds
 - Webhooks
 - Rate limiting
@@ -108,6 +109,12 @@ plexichat/
 - `POST /api/v1/servers` - Create server
 - `GET /api/v1/channels/{id}/messages` - Get messages
 - `POST /api/v1/channels/{id}/messages` - Send message
+
+### Avatars
+- `GET /api/v1/avatars/users/{id}` - Get user avatar (public)
+- `POST /api/v1/avatars/users/@me` - Upload user avatar
+- `GET /api/v1/avatars/servers/{id}` - Get server icon (public)
+- `POST /api/v1/avatars/servers/{id}` - Upload server icon
 
 ### WebSocket Gateway
 Connect to `ws://localhost:8000/gateway` for real-time events.

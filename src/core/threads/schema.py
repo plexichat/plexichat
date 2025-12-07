@@ -31,8 +31,7 @@ CREATE INDEX IF NOT EXISTS idx_thread_channel ON thread_threads(channel_id);
 CREATE INDEX IF NOT EXISTS idx_thread_server ON thread_threads(server_id);
 CREATE INDEX IF NOT EXISTS idx_thread_owner ON thread_threads(owner_id);
 CREATE INDEX IF NOT EXISTS idx_thread_parent_message ON thread_threads(parent_message_id);
-CREATE INDEX IF NOT EXISTS idx_thread_state ON thread_threads(state);
-CREATE INDEX IF NOT EXISTS idx_thread_type ON thread_threads(thread_type);
+-- Note: idx_thread_state and idx_thread_type removed - low cardinality, rarely queried alone
 CREATE INDEX IF NOT EXISTS idx_thread_archived_at ON thread_threads(archived_at);
 CREATE INDEX IF NOT EXISTS idx_thread_last_message ON thread_threads(last_message_at);
 
