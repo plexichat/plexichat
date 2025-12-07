@@ -35,6 +35,7 @@ from .exceptions import (
 )
 from .schema import create_tables
 from .parser import parse_mentions as _parse_mentions
+from src.core.database import cache_get, cache_set, cache_delete, redis_available
 
 
 class NotificationManager:
@@ -765,7 +766,23 @@ class NotificationManager:
     # === Settings Operations ===
 
     def get_notification_settings(self, user_id: int, server_id: Optional[int] = None) -> NotificationSettings:
-        """Get notification settings for a user."""
+        """Get notification settings for a user (cached for 10 minutes)."""
+        # Try cache first
+        cache_key = f"notif_settings:{user_id}:{server_id or 'global'}"
+        if redis_available():
+            cached = cache_get(cache_key)
+            if cached:
+                return NotificationSettings(
+                    user_id=cached["user_id"],
+                    server_id=cached.get("server_id"),
+                    level=NotificationLevel(cached["level"]),
+                    dm_notifications=cached["dm_notifications"],
+                    suppress_everyone=cached["suppress_everyone"],
+                    suppress_roles=cached["suppress_roles"],
+                    mobile_push=cached["mobile_push"]
+                )
+        
+        # Cache miss - fetch from DB
         if server_id:
             row = self._db.fetch_one(
                 "SELECT * FROM notif_settings WHERE user_id = ? AND server_id = ?",
@@ -778,17 +795,31 @@ class NotificationManager:
             )
 
         if row:
-            return self._row_to_settings(row)
-
-        return NotificationSettings(
-            user_id=user_id,
-            server_id=server_id,
-            level=NotificationLevel.ALL_MESSAGES,
-            dm_notifications=True,
-            suppress_everyone=False,
-            suppress_roles=False,
-            mobile_push=True
-        )
+            settings = self._row_to_settings(row)
+        else:
+            settings = NotificationSettings(
+                user_id=user_id,
+                server_id=server_id,
+                level=NotificationLevel.ALL_MESSAGES,
+                dm_notifications=True,
+                suppress_everyone=False,
+                suppress_roles=False,
+                mobile_push=True
+            )
+        
+        # Cache the result (10 minute TTL)
+        if redis_available():
+            cache_set(cache_key, {
+                "user_id": settings.user_id,
+                "server_id": settings.server_id,
+                "level": settings.level.value,
+                "dm_notifications": settings.dm_notifications,
+                "suppress_everyone": settings.suppress_everyone,
+                "suppress_roles": settings.suppress_roles,
+                "mobile_push": settings.mobile_push
+            }, ttl=600)
+        
+        return settings
 
     def update_notification_settings(
         self,
@@ -838,6 +869,11 @@ class NotificationManager:
                 (settings_id, user_id, server_id, level.value, 1 if dm_notifications else 0,
                  1 if suppress_everyone else 0, 1 if suppress_roles else 0, 1 if mobile_push else 0, now, now)
             )
+
+        # Invalidate cache
+        cache_key = f"notif_settings:{user_id}:{server_id or 'global'}"
+        if redis_available():
+            cache_delete(cache_key)
 
         return self.get_notification_settings(user_id, server_id)
 

@@ -64,6 +64,7 @@ from .permissions import (
     can_manage_role,
     can_manage_member,
 )
+from src.core.database import cache_get, cache_set, cache_delete, invalidate_pattern, redis_available
 
 
 class ServerManager:
@@ -331,9 +332,16 @@ class ServerManager:
         return result
 
     def get_server(self, server_id: int, user_id: int) -> Optional[Server]:
-        """Get a server by ID if user has access."""
+        """Get a server by ID if user has access (cached for 5 minutes)."""
         if not self._is_member(server_id, user_id):
             return None
+
+        # Try cache first
+        cache_key = f"server:{server_id}"
+        if redis_available():
+            cached = cache_get(cache_key)
+            if cached:
+                return self._dict_to_server(cached)
 
         row = self._db.fetch_one(
             """SELECT s.*,
@@ -348,7 +356,13 @@ class ServerManager:
         if not row:
             return None
 
-        return self._row_to_server(row)
+        server = self._row_to_server(row)
+        
+        # Cache the server data (5 minute TTL)
+        if redis_available():
+            cache_set(cache_key, self._server_to_dict(server), ttl=300)
+        
+        return server
 
     def get_servers(self, user_id: int, limit: int = 100) -> List[Server]:
         """Get all servers a user is a member of."""
@@ -436,6 +450,10 @@ class ServerManager:
                 server_id,
                 changes,
             )
+            
+            # Invalidate server cache
+            if redis_available():
+                cache_delete(f"server:{server_id}")
 
         result = self.get_server(server_id, user_id)
         assert result is not None  # Should exist since we just updated it
@@ -455,6 +473,10 @@ class ServerManager:
             "UPDATE srv_servers SET deleted = 1, deleted_at = ? WHERE id = ?",
             (now, server_id),
         )
+
+        # Invalidate server cache
+        if redis_available():
+            cache_delete(f"server:{server_id}")
 
         self._log_audit(server_id, user_id, AuditLogAction.SERVER_DELETE)
 
@@ -2088,6 +2110,50 @@ class ServerManager:
             deleted=bool(row["deleted"]),
             deleted_at=row["deleted_at"],
             metadata=json.loads(row["metadata"]) if row["metadata"] else None,
+        )
+
+    def _server_to_dict(self, server: Server) -> Dict:
+        """Convert Server model to dict for caching."""
+        return {
+            "id": server.id,
+            "name": server.name,
+            "owner_id": server.owner_id,
+            "description": server.description,
+            "icon_url": server.icon_url,
+            "created_at": server.created_at,
+            "updated_at": server.updated_at,
+            "member_count": server.member_count,
+            "channel_count": server.channel_count,
+            "role_count": server.role_count,
+            "default_role_id": server.default_role_id,
+            "default_channel_id": server.default_channel_id,
+            "system_channel_id": server.system_channel_id,
+            "verification_level": server.verification_level,
+            "deleted": server.deleted,
+            "deleted_at": server.deleted_at,
+            "metadata": server.metadata,
+        }
+
+    def _dict_to_server(self, data: Dict) -> Server:
+        """Convert cached dict to Server model."""
+        return Server(
+            id=data["id"],
+            name=data["name"],
+            owner_id=data["owner_id"],
+            description=data.get("description"),
+            icon_url=data.get("icon_url"),
+            created_at=data["created_at"],
+            updated_at=data["updated_at"],
+            member_count=data.get("member_count", 0),
+            channel_count=data.get("channel_count", 0),
+            role_count=data.get("role_count", 0),
+            default_role_id=data.get("default_role_id"),
+            default_channel_id=data.get("default_channel_id"),
+            system_channel_id=data.get("system_channel_id"),
+            verification_level=data.get("verification_level", 0),
+            deleted=data.get("deleted", False),
+            deleted_at=data.get("deleted_at"),
+            metadata=data.get("metadata"),
         )
 
     def _row_to_channel(self, row: Dict) -> Channel:
