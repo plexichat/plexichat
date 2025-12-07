@@ -29,3 +29,11 @@ from .cache import (
     reset_rate_limit,
     CacheError,
 )
+from .ram_cache import (
+    RAMCache,
+    get_cache,
+    create_cache,
+    invalidate_all as invalidate_all_ram_caches,
+    clear_all as clear_all_ram_caches,
+    all_stats as ram_cache_stats,
+)
