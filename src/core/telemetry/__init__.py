@@ -174,10 +174,17 @@ def submit_response_times(
     """
     db = _get_db()
     
-    stored = 0
     now = int(time.time() * 1000)
+    batch_data = []
     
-    for entry in entries:
+    # Pre-import snowflake generator
+    try:
+        from src.utils.encryption import generate_snowflake_id
+        use_snowflake = True
+    except ImportError:
+        use_snowflake = False
+    
+    for idx, entry in enumerate(entries):
         try:
             # Validate entry and normalize endpoint
             raw_endpoint = str(entry.get("endpoint", ""))[:255]
@@ -195,25 +202,44 @@ def submit_response_times(
             if abs(timestamp - now) > 3600000:
                 timestamp = now
             
-            # Generate ID using snowflake if available
-            try:
-                from src.utils.encryption import generate_snowflake_id
+            # Generate ID
+            if use_snowflake:
                 entry_id = generate_snowflake_id()
-            except ImportError:
-                entry_id = int(time.time() * 1000000) + stored
+            else:
+                entry_id = int(time.time() * 1000000) + idx
             
-            db.execute(
-                """INSERT INTO telemetry_response_times 
-                   (id, endpoint, method, response_time_ms, status_code, timestamp, client_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (entry_id, endpoint, method, response_time_ms, status_code, timestamp, client_id)
-            )
-            stored += 1
+            batch_data.append((entry_id, endpoint, method, response_time_ms, status_code, timestamp, client_id))
             
         except Exception:
             continue
     
-    return stored
+    if not batch_data:
+        return 0
+    
+    # Batch insert for better performance
+    try:
+        db.executemany(
+            """INSERT INTO telemetry_response_times 
+               (id, endpoint, method, response_time_ms, status_code, timestamp, client_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            batch_data
+        )
+        return len(batch_data)
+    except AttributeError:
+        # Fallback to individual inserts if executemany not available
+        stored = 0
+        for data in batch_data:
+            try:
+                db.execute(
+                    """INSERT INTO telemetry_response_times 
+                       (id, endpoint, method, response_time_ms, status_code, timestamp, client_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    data
+                )
+                stored += 1
+            except Exception:
+                continue
+        return stored
 
 
 def get_endpoint_stats(
