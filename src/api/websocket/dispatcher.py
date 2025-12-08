@@ -83,8 +83,14 @@ class GatewayDispatcher:
         Returns:
             Number of connections event was sent to
         """
+        # Ensure user_ids are integers for lookup
+        user_ids = [int(uid) for uid in user_ids]
+        
         connections = self._session_manager.get_connections_for_users(user_ids)
+        logger.debug(f"dispatch_event: {event.event_type} to {len(user_ids)} users, found {len(connections)} connections")
+        
         if not connections:
+            logger.debug(f"No connections found for users: {user_ids[:5]}...")
             return 0
 
         sent_count = 0
@@ -92,9 +98,11 @@ class GatewayDispatcher:
 
         for connection in connections:
             if not filter_event_by_intents(event, connection.intents):
+                logger.debug(f"Event filtered by intents for connection {connection.id}")
                 continue
 
             if not connection.check_rate_limit(self._rate_limit_per_minute):
+                logger.debug(f"Rate limited connection {connection.id}")
                 continue
 
             payload = self._build_dispatch_payload(connection, event)
@@ -103,6 +111,7 @@ class GatewayDispatcher:
         if tasks:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             sent_count = sum(1 for r in results if r is True)
+            logger.debug(f"Dispatched {event.event_type} to {sent_count}/{len(tasks)} connections")
 
         return sent_count
 
