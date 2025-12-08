@@ -343,9 +343,12 @@ async def send_channel_message(
                 try:
                     # Get users to broadcast to - this is now async and doesn't block response
                     user_ids = []
+                    logger.debug(f"broadcast_message: server_id={server_id}, cid={cid}")
+                    
                     if server_id and servers_mod:
                         try:
                             user_ids = servers_mod.get_member_user_ids(server_id)
+                            logger.debug(f"Got {len(user_ids)} server members for server {server_id}")
                         except Exception as e:
                             logger.debug(f"Failed to get server members: {e}")
                     
@@ -353,24 +356,29 @@ async def send_channel_message(
                         try:
                             participants = messaging.get_participants(cid)
                             user_ids = [p.user_id for p in (participants or [])]
+                            logger.debug(f"Got {len(user_ids)} DM participants for channel {cid}")
                         except Exception as e:
                             logger.debug(f"Failed to get DM participants: {e}")
                     
                     if user_ids:
-                        logger.info(f"Broadcasting MESSAGE_CREATE to {len(user_ids)} users for channel {cid}")
+                        logger.info(f"Broadcasting MESSAGE_CREATE to {len(user_ids)} users for channel {cid}: {user_ids[:5]}...")
                         event = Event(
                             event_type=EventType.MESSAGE_CREATE,
                             data=response
                         )
                         count = await dispatcher.dispatch_event(event, user_ids)
                         logger.info(f"MESSAGE_CREATE dispatched to {count} connections")
+                    else:
+                        logger.warning(f"No user_ids found for MESSAGE_CREATE broadcast in channel {cid}")
                 except Exception as e:
-                    logger.warning(f"Failed to broadcast MESSAGE_CREATE: {e}")
+                    logger.warning(f"Failed to broadcast MESSAGE_CREATE: {e}", exc_info=True)
             
-            asyncio.create_task(broadcast_message())
+            # Schedule the broadcast task
+            task = asyncio.create_task(broadcast_message())
+            logger.debug(f"Created broadcast task for message in channel {cid}")
     except Exception as e:
         import utils.logger as logger
-        logger.warning(f"Failed to setup MESSAGE_CREATE broadcast: {e}")
+        logger.warning(f"Failed to setup MESSAGE_CREATE broadcast: {e}", exc_info=True)
     
     return response
 
