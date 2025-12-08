@@ -332,6 +332,7 @@ async def send_channel_message(
         from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
         from src.core.events.models import Event
         from src.core.events.types import EventType
+        import utils.logger as logger
         import asyncio
         
         if ws_is_setup():
@@ -339,26 +340,25 @@ async def send_channel_message(
             
             # Create async task that handles everything - response returns immediately
             async def broadcast_message():
-                import utils.logger as logger
                 try:
                     # Get users to broadcast to - this is now async and doesn't block response
                     user_ids = []
-                    logger.debug(f"broadcast_message: server_id={server_id}, cid={cid}")
+                    logger.info(f"broadcast_message: server_id={server_id}, cid={cid}")
                     
                     if server_id and servers_mod:
                         try:
                             user_ids = servers_mod.get_member_user_ids(server_id)
-                            logger.debug(f"Got {len(user_ids)} server members for server {server_id}")
+                            logger.info(f"Got {len(user_ids)} server members for server {server_id}")
                         except Exception as e:
-                            logger.debug(f"Failed to get server members: {e}")
+                            logger.warning(f"Failed to get server members: {e}")
                     
                     if not user_ids and messaging:
                         try:
                             participants = messaging.get_participants(cid)
                             user_ids = [p.user_id for p in (participants or [])]
-                            logger.debug(f"Got {len(user_ids)} DM participants for channel {cid}")
+                            logger.info(f"Got {len(user_ids)} DM participants for channel {cid}")
                         except Exception as e:
-                            logger.debug(f"Failed to get DM participants: {e}")
+                            logger.warning(f"Failed to get DM participants: {e}")
                     
                     if user_ids:
                         logger.info(f"Broadcasting MESSAGE_CREATE to {len(user_ids)} users for channel {cid}: {user_ids[:5]}...")
@@ -375,7 +375,7 @@ async def send_channel_message(
             
             # Schedule the broadcast task
             task = asyncio.create_task(broadcast_message())
-            logger.debug(f"Created broadcast task for message in channel {cid}")
+            logger.info(f"Created broadcast task for message in channel {cid}")
     except Exception as e:
         import utils.logger as logger
         logger.warning(f"Failed to setup MESSAGE_CREATE broadcast: {e}", exc_info=True)

@@ -87,10 +87,10 @@ class GatewayDispatcher:
         user_ids = [int(uid) for uid in user_ids]
         
         connections = self._session_manager.get_connections_for_users(user_ids)
-        logger.debug(f"dispatch_event: {event.event_type} to {len(user_ids)} users, found {len(connections)} connections")
+        logger.info(f"dispatch_event: {event.event_type} to {len(user_ids)} users, found {len(connections)} connections")
         
         if not connections:
-            logger.debug(f"No connections found for users: {user_ids[:5]}...")
+            logger.info(f"No connections found for users: {user_ids[:5]}...")
             return 0
 
         sent_count = 0
@@ -111,7 +111,7 @@ class GatewayDispatcher:
         if tasks:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             sent_count = sum(1 for r in results if r is True)
-            logger.debug(f"Dispatched {event.event_type} to {sent_count}/{len(tasks)} connections")
+            logger.info(f"Dispatched {event.event_type} to {sent_count}/{len(tasks)} connections")
 
         return sent_count
 
