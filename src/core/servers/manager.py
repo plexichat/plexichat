@@ -88,6 +88,8 @@ class ServerManager:
         self._member_cache: Dict[Tuple[int, int], Tuple[Any, float]] = {}
         self._permission_cache: Dict[Tuple[int, int, Optional[int]], Tuple[Dict[str, bool], float]] = {}
         self._channel_cache: Dict[int, Tuple[Any, float]] = {}
+        self._server_owner_cache: Dict[int, Tuple[int, float]] = {}  # server_id -> owner_id
+        self._member_roles_cache: Dict[Tuple[int, int], Tuple[list, float]] = {}  # (server_id, user_id) -> roles
         self._cache_ttl = 30.0  # 30 second cache TTL for server data
 
         create_tables(db)
@@ -636,32 +638,34 @@ class ServerManager:
         return self._row_to_category(row)
 
     def get_channel(self, channel_id: int, user_id: int) -> Optional[Channel]:
-        """Get a channel by ID if user has access."""
-        row = self._db.fetch_one(
-            "SELECT * FROM srv_channels WHERE id = ? AND deleted = 0",
-            (channel_id,),
-        )
-
-        if not row:
-            return None
-
-        server_id = row["server_id"]
+        """Get a channel by ID if user has access (cached)."""
+        # Check channel cache first (channel data rarely changes)
+        cache_key = channel_id
+        cached_row = self._cache_get(self._channel_cache, cache_key)
         
+        if cached_row is None:
+            row = self._db.fetch_one(
+                "SELECT * FROM srv_channels WHERE id = ? AND deleted = 0",
+                (channel_id,),
+            )
+            if not row:
+                return None
+            # Cache the raw row data
+            self._cache_set(self._channel_cache, cache_key, dict(row))
+            cached_row = dict(row)
+        
+        server_id = cached_row["server_id"]
+        
+        # Membership check is already cached in _is_member
         if not self._is_member(server_id, user_id):
             return None
 
-        # Check if user is server owner (owners have all permissions)
-        server = self._db.fetch_one(
-            "SELECT owner_id FROM srv_servers WHERE id = ? AND deleted = 0",
-            (server_id,),
-        )
-        if server and server["owner_id"] == user_id:
-            return self._row_to_channel(row)
-
+        # Check if user is server owner (use cached permission check)
+        # has_permission already handles owner check internally
         if not self.has_permission(user_id, server_id, "channels.view", channel_id):
             return None
 
-        return self._row_to_channel(row)
+        return self._row_to_channel(cached_row)
 
     def get_channels(
         self,
@@ -1721,18 +1725,26 @@ class ServerManager:
         if cached is not None:
             return cached
         
-        server = self._db.fetch_one(
-            "SELECT owner_id FROM srv_servers WHERE id = ? AND deleted = 0",
-            (server_id,),
-        )
+        # Check server owner cache first
+        owner_id = self._cache_get(self._server_owner_cache, server_id)
+        if owner_id is None:
+            server = self._db.fetch_one(
+                "SELECT owner_id FROM srv_servers WHERE id = ? AND deleted = 0",
+                (server_id,),
+            )
+            if not server:
+                return {}
+            owner_id = server["owner_id"]
+            self._cache_set(self._server_owner_cache, server_id, owner_id)
 
-        if not server:
-            return {}
+        is_owner = owner_id == user_id
 
-        is_owner = server["owner_id"] == user_id
-
-        # Get member's roles
-        role_rows = self._get_member_role_rows(server_id, user_id)
+        # Get member's roles (cached)
+        roles_cache_key = (server_id, user_id)
+        role_rows = self._cache_get(self._member_roles_cache, roles_cache_key)
+        if role_rows is None:
+            role_rows = self._get_member_role_rows(server_id, user_id)
+            self._cache_set(self._member_roles_cache, roles_cache_key, role_rows)
 
         # Calculate base permissions
         base_perms = calculate_base_permissions(role_rows, is_owner)

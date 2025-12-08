@@ -270,21 +270,27 @@ async def send_channel_message(
     
     msg = None
     server_id = None  # Track server_id for broadcast optimization
+    conversation_id = None  # Track conversation_id to avoid redundant lookups
     
-    # Try server channel first
+    # Try server channel first - optimized to avoid duplicate get_channel calls
     if servers_mod:
         try:
-            # Get channel info first (cached) to get server_id for broadcast
+            # Get channel info once (this does permission check internally)
             channel = servers_mod.get_channel(cid, current_user.user_id)
             if channel:
                 server_id = getattr(channel, "server_id", None)
-                msg = servers_mod.send_channel_message(
-                    user_id=current_user.user_id,
-                    channel_id=cid,
-                    content=body.content or "",
-                    attachments=attachments,
-                    reply_to_id=reply_to
-                )
+                conversation_id = getattr(channel, "conversation_id", None)
+                
+                # Send directly to messaging module using cached conversation_id
+                # This avoids the duplicate get_channel() call in send_channel_message()
+                if conversation_id and messaging:
+                    msg = messaging.send_message(
+                        user_id=current_user.user_id,
+                        conversation_id=conversation_id,
+                        content=body.content or "",
+                        reply_to_id=reply_to,
+                        attachments=attachments
+                    )
         except Exception as e:
             exc_name = type(e).__name__
             if "NotFound" not in exc_name:
