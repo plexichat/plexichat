@@ -139,19 +139,16 @@ async def get_channel_messages(
         except Exception:
             pass
 
-    # Fetch reactions for all messages
+    # Fetch reactions for all messages in a single batch query (avoids N+1)
     reactions_module = api.get_reactions()
     reactions_cache = {}
-    if reactions_module:
-        for m in messages:
-            try:
-                msg_reactions = reactions_module.get_reactions(current_user.user_id, m.id)
-                reactions_cache[m.id] = [
-                    {"emoji": r.emoji, "count": r.count, "me": r.me}
-                    for r in msg_reactions.reactions
-                ]
-            except Exception:
-                reactions_cache[m.id] = []
+    if reactions_module and messages:
+        try:
+            message_ids = [m.id for m in messages]
+            reactions_cache = reactions_module.get_reactions_batch(current_user.user_id, message_ids)
+        except Exception:
+            # Fallback to empty reactions if batch fails
+            reactions_cache = {m.id: [] for m in messages}
 
     result = []
     for m in messages:
@@ -314,15 +311,8 @@ async def send_channel_message(
     if msg is None:
         raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
     
-    # Get author username
-    author_username = None
-    if auth:
-        try:
-            user = auth.get_user(current_user.user_id)
-            if user:
-                author_username = user.username
-        except Exception:
-            pass
+    # Use username from token - no need for extra DB lookup!
+    author_username = current_user.username
     
     response = _message_to_response(msg, author_username, channel_id=cid)
     
@@ -668,6 +658,8 @@ async def acknowledge_messages(
     If message_id is provided, marks all messages up to and including that message as read.
     If not provided, marks all messages in the channel as read.
     """
+    import utils.logger as logger
+    
     messaging = api.get_messaging()
     if not messaging:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
@@ -681,6 +673,54 @@ async def acknowledge_messages(
     
     try:
         count = messaging.mark_read(current_user.user_id, cid, up_to_id)
+        logger.debug(f"User {current_user.user_id} marked {count} messages as read in channel {cid}")
+        
+        # Broadcast read receipt event via WebSocket (fire and forget)
+        import asyncio
+        
+        async def dispatch_ack():
+            try:
+                from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+                from src.core.events.models import Event
+                from src.core.events.types import EventType
+                
+                if ws_is_setup():
+                    dispatcher = get_dispatcher()
+                    servers_mod = api.get_servers()
+                    
+                    user_ids = []
+                    if servers_mod:
+                        try:
+                            channel = servers_mod.get_channel(cid, current_user.user_id)
+                            if channel:
+                                server_id = getattr(channel, "server_id", None)
+                                if server_id:
+                                    user_ids = servers_mod.get_member_user_ids(server_id)
+                        except Exception:
+                            pass
+                    
+                    if not user_ids and messaging:
+                        try:
+                            participants = messaging.get_participants(current_user.user_id, cid)
+                            user_ids = [p.user_id for p in (participants or [])]
+                        except Exception:
+                            pass
+                    
+                    if user_ids:
+                        event = Event(
+                            event_type=EventType.MESSAGE_ACK,
+                            data={
+                                "channel_id": str(cid),
+                                "user_id": str(current_user.user_id),
+                                "message_id": str(up_to_id) if up_to_id else None,
+                            }
+                        )
+                        await dispatcher.dispatch_event(event, user_ids)
+            except Exception as e:
+                logger.debug(f"Failed to broadcast MESSAGE_ACK: {e}")
+        
+        asyncio.create_task(dispatch_ack())
+        
         return {"success": True, "messages_marked": count}
     except Exception as e:
         exc_name = type(e).__name__
@@ -722,130 +762,6 @@ async def get_all_unread_counts(
 ):
     """
     Get unread message counts for all conversations.
-    """
-    messaging = api.get_messaging()
-    if not messaging:
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
-    
-    try:
-        counts = messaging.get_unread_count(current_user.user_id)
-        # Convert int keys to string for JSON
-        return {"unread_counts": {str(k): v for k, v in counts.items()}}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
-
-
-@router.post("/channels/{channel_id}/messages/ack")
-async def acknowledge_messages(
-    channel_id: str,
-    body: dict,
-    current_user: TokenInfo = Depends(get_current_user)
-):
-    """
-    Mark messages as read in a channel.
-    
-    Marks all messages up to the specified message_id as read.
-    If no message_id is provided, marks all messages as read.
-    """
-    messaging = api.get_messaging()
-    if not messaging:
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
-    
-    try:
-        cid = int(channel_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
-    
-    message_id = body.get("message_id")
-    up_to_message_id = int(message_id) if message_id else None
-    
-    try:
-        count = messaging.mark_read(current_user.user_id, cid, up_to_message_id)
-        
-        # Broadcast read receipt event via WebSocket
-        try:
-            from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
-            from src.core.events.models import Event
-            from src.core.events.types import EventType
-            
-            if ws_is_setup():
-                dispatcher = get_dispatcher()
-                servers_mod = api.get_servers()
-                
-                # Get users to broadcast to (message authors in this channel)
-                user_ids = []
-                if servers_mod:
-                    try:
-                        channel = servers_mod.get_channel(cid, current_user.user_id)
-                        if channel:
-                            server_id = getattr(channel, "server_id", None)
-                            if server_id:
-                                user_ids = servers_mod.get_member_user_ids(server_id)
-                    except Exception:
-                        pass
-                
-                if not user_ids and messaging:
-                    try:
-                        participants = messaging.get_participants(current_user.user_id, cid)
-                        user_ids = [p.user_id for p in (participants or [])]
-                    except Exception:
-                        pass
-                
-                if user_ids:
-                    event = Event(
-                        event_type=EventType.MESSAGE_ACK,
-                        data={
-                            "channel_id": str(cid),
-                            "user_id": str(current_user.user_id),
-                            "message_id": str(up_to_message_id) if up_to_message_id else None,
-                        }
-                    )
-                    await dispatcher.dispatch_event(event, user_ids)
-        except Exception as e:
-            import utils.logger as logger
-            logger.debug(f"Failed to broadcast MESSAGE_ACK: {e}")
-        
-        return {"success": True, "messages_read": count}
-    except Exception as e:
-        exc_name = type(e).__name__
-        if "NotFound" in exc_name or "Access" in exc_name:
-            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
-
-
-@router.get("/channels/{channel_id}/messages/unread")
-async def get_unread_count(
-    channel_id: str,
-    current_user: TokenInfo = Depends(get_current_user)
-):
-    """
-    Get unread message count for a channel.
-    """
-    messaging = api.get_messaging()
-    if not messaging:
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
-    
-    try:
-        cid = int(channel_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
-    
-    try:
-        counts = messaging.get_unread_count(current_user.user_id, cid)
-        return {"channel_id": channel_id, "unread_count": counts.get(cid, 0)}
-    except Exception as e:
-        exc_name = type(e).__name__
-        if "NotFound" in exc_name or "Access" in exc_name:
-            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
-
-
-@router.get("/users/@me/unread")
-async def get_all_unread_counts(
-    current_user: TokenInfo = Depends(get_current_user)
-):
-    """
-    Get unread message counts for all channels the user is in.
     """
     messaging = api.get_messaging()
     if not messaging:
@@ -914,6 +830,9 @@ async def trigger_typing(
     if user_ids:
         import asyncio
         
+        # Capture username from token - no extra DB lookup needed!
+        username = current_user.username
+        
         async def dispatch_typing():
             try:
                 from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
@@ -922,15 +841,13 @@ async def trigger_typing(
                 
                 if ws_is_setup():
                     dispatcher = get_dispatcher()
-                    auth = api.get_auth()
-                    user = auth.get_user(current_user.user_id) if auth else None
                     
                     event = Event(
                         event_type=EventType.TYPING_START,
                         data={
                             "channel_id": str(cid),
                             "user_id": str(current_user.user_id),
-                            "username": user.username if user else "Unknown"
+                            "username": username
                         }
                     )
                     await dispatcher.dispatch_event(event, user_ids)

@@ -944,6 +944,81 @@ class ReactionManager:
             "max_animated": self._config.get("max_animated_emojis_per_server", 50),
         }
 
+    def get_reactions_batch(
+        self,
+        user_id: int,
+        message_ids: List[int]
+    ) -> Dict[int, List[Dict[str, Any]]]:
+        """
+        Get reactions for multiple messages in a single batch query.
+        
+        This is optimized to avoid N+1 queries when loading message lists.
+        
+        Args:
+            user_id: ID of user requesting (for 'me' field)
+            message_ids: List of message IDs to get reactions for
+            
+        Returns:
+            Dict mapping message_id to list of reaction dicts with emoji, count, me
+        """
+        if not message_ids:
+            return {}
+        
+        logger.debug(f"Batch fetching reactions for {len(message_ids)} messages")
+        
+        # Get blocked users for filtering
+        blocked_users = set()
+        if self._relationships:
+            blocked_ids = self._relationships.get_blocked_user_ids(user_id)
+            blocked_users.update(blocked_ids)
+            rows = self._db.fetch_all(
+                "SELECT blocker_id FROM rel_blocked WHERE blocked_id = ?",
+                (user_id,)
+            )
+            for row in rows:
+                blocked_users.add(row["blocker_id"])
+        
+        # Build query with placeholders
+        placeholders = ",".join("?" * len(message_ids))
+        
+        # Single query to get all reactions grouped by message and emoji
+        rows = self._db.fetch_all(
+            f"""SELECT message_id, emoji, is_custom, custom_emoji_id, 
+                       COUNT(*) as count,
+                       MAX(CASE WHEN user_id = ? THEN 1 ELSE 0 END) as me
+                FROM react_reactions 
+                WHERE message_id IN ({placeholders})
+                GROUP BY message_id, emoji, is_custom, custom_emoji_id
+                ORDER BY message_id, MIN(created_at)""",
+            (user_id,) + tuple(message_ids)
+        )
+        
+        # Build result dict
+        result: Dict[int, List[Dict[str, Any]]] = {mid: [] for mid in message_ids}
+        
+        for row in rows:
+            msg_id = row["message_id"]
+            
+            # If we have blocked users, we need to get accurate count excluding them
+            if blocked_users:
+                actual_count = self._db.fetch_one(
+                    f"""SELECT COUNT(*) as count FROM react_reactions 
+                        WHERE message_id = ? AND emoji = ? AND user_id NOT IN ({",".join("?" * len(blocked_users))})""",
+                    (msg_id, row["emoji"]) + tuple(blocked_users)
+                )
+                count = actual_count["count"] if actual_count else 0
+            else:
+                count = row["count"]
+            
+            if count > 0:
+                result[msg_id].append({
+                    "emoji": row["emoji"],
+                    "count": count,
+                    "me": bool(row["me"])
+                })
+        
+        return result
+
     def _row_to_reaction(self, row) -> Reaction:
         """Convert database row to Reaction."""
         return Reaction(

@@ -13,7 +13,7 @@ Usage:
     reaction = reactions.add_reaction(user_id=1, message_id=123, emoji="thumbsup")
 """
 
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 from .models import (
     Reaction,
@@ -144,6 +144,16 @@ def get_reaction(reaction_id: int) -> Optional[Reaction]:
 def get_reactions(user_id: int, message_id: int) -> MessageReactions:
     """Get all reactions on a message with counts."""
     return _get_manager().get_reactions(user_id, message_id)
+
+
+def get_reactions_batch(user_id: int, message_ids: List[int]) -> Dict[int, List[Dict]]:
+    """
+    Get reactions for multiple messages in a single batch query.
+    
+    Optimized to avoid N+1 queries when loading message lists.
+    Returns dict mapping message_id to list of reaction dicts.
+    """
+    return _get_manager().get_reactions_batch(user_id, message_ids)
 
 
 def get_reaction_users(
