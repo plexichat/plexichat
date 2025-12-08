@@ -130,7 +130,7 @@ def cached(
                 cached_value = client.get_json(cache_key)
                 if cached_value is not None:
                     _cache_stats["hits"] += 1
-                    logger.debug(f"Cache HIT: {cache_key}")
+                    logger.info(f"CACHE HIT: {cache_key} (total hits: {_cache_stats['hits']})")
                     return cached_value
             except RedisOperationError:
                 _cache_stats["errors"] += 1
@@ -138,7 +138,7 @@ def cached(
             
             # Cache miss - execute function
             _cache_stats["misses"] += 1
-            logger.debug(f"Cache MISS: {cache_key}")
+            logger.info(f"CACHE MISS: {cache_key} (total misses: {_cache_stats['misses']})")
             
             result = func(*args, **kwargs)
             
