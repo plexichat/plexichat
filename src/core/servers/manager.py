@@ -90,7 +90,7 @@ class ServerManager:
         self._channel_cache: Dict[int, Tuple[Any, float]] = {}
         self._server_owner_cache: Dict[int, Tuple[int, float]] = {}  # server_id -> owner_id
         self._member_roles_cache: Dict[Tuple[int, int], Tuple[list, float]] = {}  # (server_id, user_id) -> roles
-        self._cache_ttl = 30.0  # 30 second cache TTL for server data
+        self._cache_ttl = 60.0  # 60 second cache TTL for server data (longer = fewer DB queries)
 
         create_tables(db)
 

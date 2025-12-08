@@ -142,6 +142,7 @@ class Database:
 
         try:
             # Use ThreadedConnectionPool for thread-safe connection pooling
+            # Set synchronous_commit=off for faster commits (data is still durable, just async)
             self._pool = psycopg2.pool.ThreadedConnectionPool(
                 minconn=min_conn,
                 maxconn=max_conn,
@@ -152,7 +153,7 @@ class Database:
                 dbname=dbname,
                 sslmode=sslmode,
                 cursor_factory=psycopg2.extras.RealDictCursor,
-                options="-c client_encoding=UTF8"
+                options="-c client_encoding=UTF8 -c synchronous_commit=off"
             )
             # Get initial connection from pool
             self.connection = self._pool.getconn()
