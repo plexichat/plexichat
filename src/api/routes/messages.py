@@ -269,17 +269,22 @@ async def send_channel_message(
         ]
     
     msg = None
+    server_id = None  # Track server_id for broadcast optimization
     
     # Try server channel first
     if servers_mod:
         try:
-            msg = servers_mod.send_channel_message(
-                user_id=current_user.user_id,
-                channel_id=cid,
-                content=body.content or "",
-                attachments=attachments,
-                reply_to_id=reply_to
-            )
+            # Get channel info first (cached) to get server_id for broadcast
+            channel = servers_mod.get_channel(cid, current_user.user_id)
+            if channel:
+                server_id = getattr(channel, "server_id", None)
+                msg = servers_mod.send_channel_message(
+                    user_id=current_user.user_id,
+                    channel_id=cid,
+                    content=body.content or "",
+                    attachments=attachments,
+                    reply_to_id=reply_to
+                )
         except Exception as e:
             exc_name = type(e).__name__
             if "NotFound" not in exc_name:
@@ -328,15 +333,10 @@ async def send_channel_message(
             
             # Get users to broadcast to - use optimized method
             user_ids = []
-            if servers_mod:
+            if server_id and servers_mod:
                 try:
-                    # Get server channel info
-                    channel = servers_mod.get_channel(cid, current_user.user_id)
-                    if channel:
-                        server_id = getattr(channel, "server_id", None)
-                        if server_id:
-                            # Use optimized method that only fetches user IDs
-                            user_ids = servers_mod.get_member_user_ids(server_id)
+                    # Use cached server_id from earlier - no extra DB lookup!
+                    user_ids = servers_mod.get_member_user_ids(server_id)
                 except Exception as e:
                     import utils.logger as logger
                     logger.debug(f"Failed to get server members: {e}")
