@@ -810,40 +810,52 @@ class MessagingManager:
         if content_result.filtered_words:
             metadata["filtered"] = True
         
-        self._db.execute(
-            """INSERT INTO msg_messages 
-               (id, conversation_id, author_id, content, content_encrypted, message_type, 
-                created_at, updated_at, reply_to_id, metadata)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (msg_id, conversation_id, user_id, final_content, encrypted_content,
-             message_type.value, now, now, reply_to_id, json.dumps(metadata) if metadata else None)
-        )
-        
-        # Update conversation
-        self._db.execute(
-            "UPDATE msg_conversations SET last_message_id = ?, last_message_at = ?, updated_at = ? WHERE id = ?",
-            (msg_id, now, now, conversation_id)
-        )
-        
-        # Add attachments
-        if attachments:
-            for att_data in attachments:
-                self.add_attachment(
-                    user_id, msg_id,
-                    att_data.get("filename", "file"),
-                    att_data.get("content_type", "application/octet-stream"),
-                    att_data.get("size", 0),
-                    att_data.get("url", ""),
-                    att_data.get("metadata")
-                )
-        
-        # Create initial status (sent)
-        status_id = self._generate_id()
-        self._db.execute(
-            """INSERT INTO msg_message_status (id, message_id, user_id, status, timestamp)
-               VALUES (?, ?, ?, ?, ?)""",
-            (status_id, msg_id, user_id, MessageStatusType.SENT.value, now)
-        )
+        # Use transaction for all DB writes to reduce round-trips
+        try:
+            self._db.begin_transaction()
+            
+            self._db.execute(
+                """INSERT INTO msg_messages 
+                   (id, conversation_id, author_id, content, content_encrypted, message_type, 
+                    created_at, updated_at, reply_to_id, metadata)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (msg_id, conversation_id, user_id, final_content, encrypted_content,
+                 message_type.value, now, now, reply_to_id, json.dumps(metadata) if metadata else None),
+                auto_commit=False
+            )
+            
+            # Update conversation
+            self._db.execute(
+                "UPDATE msg_conversations SET last_message_id = ?, last_message_at = ?, updated_at = ? WHERE id = ?",
+                (msg_id, now, now, conversation_id),
+                auto_commit=False
+            )
+            
+            # Add attachments
+            if attachments:
+                for att_data in attachments:
+                    self._add_attachment_no_commit(
+                        user_id, msg_id,
+                        att_data.get("filename", "file"),
+                        att_data.get("content_type", "application/octet-stream"),
+                        att_data.get("size", 0),
+                        att_data.get("url", ""),
+                        att_data.get("metadata")
+                    )
+            
+            # Create initial status (sent)
+            status_id = self._generate_id()
+            self._db.execute(
+                """INSERT INTO msg_message_status (id, message_id, user_id, status, timestamp)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (status_id, msg_id, user_id, MessageStatusType.SENT.value, now),
+                auto_commit=False
+            )
+            
+            self._db.commit()
+        except Exception as e:
+            self._db.rollback()
+            raise
         
         logger.debug(f"Message {msg_id} sent to conversation {conversation_id}")
         
@@ -1486,6 +1498,36 @@ class MessagingManager:
         result = self._get_attachment(att_id)
         assert result is not None  # Should exist since we just created it
         return result
+    
+    def _add_attachment_no_commit(
+        self,
+        user_id: int,
+        message_id: int,
+        filename: str,
+        content_type: str,
+        size: int,
+        url: str,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> int:
+        """Add an attachment without committing (for use in transactions)."""
+        now = self._get_timestamp()
+        att_id = self._generate_id()
+        
+        # Encrypt URL if enabled
+        encrypted_url = None
+        if self._config.get("encrypt_attachments"):
+            encrypted_url = encrypt_data(url)
+            url = "[encrypted]"
+        
+        self._db.execute(
+            """INSERT INTO msg_attachments 
+               (id, message_id, filename, content_type, size, url, url_encrypted, created_at, metadata)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (att_id, message_id, filename, content_type, size, url, encrypted_url, now,
+             json.dumps(metadata) if metadata else None),
+            auto_commit=False
+        )
+        return att_id
     
     def get_attachments(self, user_id: int, message_id: int) -> List[Attachment]:
         """Get attachments for a message."""
