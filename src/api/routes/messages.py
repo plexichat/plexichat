@@ -321,7 +321,7 @@ async def send_channel_message(
     
     response = _message_to_response(msg, author_username, channel_id=cid)
     
-    # Broadcast MESSAGE_CREATE event via WebSocket
+    # Broadcast MESSAGE_CREATE event via WebSocket (fully async - doesn't block response)
     try:
         from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
         from src.core.events.models import Event
@@ -331,41 +331,37 @@ async def send_channel_message(
         if ws_is_setup():
             dispatcher = get_dispatcher()
             
-            # Get users to broadcast to - use optimized method
-            user_ids = []
-            if server_id and servers_mod:
-                try:
-                    # Use cached server_id from earlier - no extra DB lookup!
-                    user_ids = servers_mod.get_member_user_ids(server_id)
-                except Exception as e:
-                    import utils.logger as logger
-                    logger.debug(f"Failed to get server members: {e}")
-            
-            if not user_ids and messaging:
-                # For DM conversations, get participants
-                try:
-                    participants = messaging.get_participants(cid)
-                    user_ids = [p.user_id for p in (participants or [])]
-                except Exception as e:
-                    import utils.logger as logger
-                    logger.debug(f"Failed to get DM participants: {e}")
-            
-            if user_ids:
+            # Create async task that handles everything - response returns immediately
+            async def broadcast_message():
                 import utils.logger as logger
-                logger.info(f"Broadcasting MESSAGE_CREATE to {len(user_ids)} users for channel {cid}")
-                event = Event(
-                    event_type=EventType.MESSAGE_CREATE,
-                    data=response
-                )
-                # Use asyncio.create_task with proper error handling
-                async def dispatch_with_logging():
-                    try:
+                try:
+                    # Get users to broadcast to - this is now async and doesn't block response
+                    user_ids = []
+                    if server_id and servers_mod:
+                        try:
+                            user_ids = servers_mod.get_member_user_ids(server_id)
+                        except Exception as e:
+                            logger.debug(f"Failed to get server members: {e}")
+                    
+                    if not user_ids and messaging:
+                        try:
+                            participants = messaging.get_participants(cid)
+                            user_ids = [p.user_id for p in (participants or [])]
+                        except Exception as e:
+                            logger.debug(f"Failed to get DM participants: {e}")
+                    
+                    if user_ids:
+                        logger.info(f"Broadcasting MESSAGE_CREATE to {len(user_ids)} users for channel {cid}")
+                        event = Event(
+                            event_type=EventType.MESSAGE_CREATE,
+                            data=response
+                        )
                         count = await dispatcher.dispatch_event(event, user_ids)
                         logger.info(f"MESSAGE_CREATE dispatched to {count} connections")
-                    except Exception as e:
-                        logger.warning(f"Failed to dispatch MESSAGE_CREATE: {e}")
-                
-                asyncio.create_task(dispatch_with_logging())
+                except Exception as e:
+                    logger.warning(f"Failed to broadcast MESSAGE_CREATE: {e}")
+            
+            asyncio.create_task(broadcast_message())
     except Exception as e:
         import utils.logger as logger
         logger.warning(f"Failed to setup MESSAGE_CREATE broadcast: {e}")
