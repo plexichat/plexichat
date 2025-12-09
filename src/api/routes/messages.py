@@ -17,7 +17,7 @@ from src.api.schemas.messages import (
 router = APIRouter()
 
 
-def _message_to_response(msg, author_username: str = None, channel_id: int = None, reactions_data=None) -> MessageResponse:
+def _message_to_response(msg, author_username: str = None, author_avatar_url: str = None, channel_id: int = None, reactions_data=None) -> MessageResponse:
     """Convert message object to response model."""
     attachments = []
     if hasattr(msg, "attachments") and msg.attachments:
@@ -51,9 +51,10 @@ def _message_to_response(msg, author_username: str = None, channel_id: int = Non
         pinned=getattr(msg, "pinned", False),
     )
 
-    # Add author_username as extra field (not in schema but useful for client)
+    # Add author_username and author_avatar_url as extra fields (not in schema but useful for client)
     response_dict = response.model_dump()
     response_dict["author_username"] = author_username or getattr(msg, "author_username", None) or f"User {msg.author_id}"
+    response_dict["author_avatar_url"] = author_avatar_url or getattr(msg, "author_avatar_url", None)
 
     # Add reactions data if provided
     if reactions_data is not None:
@@ -129,13 +130,16 @@ async def get_channel_messages(
     if messages is None:
         raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
     
-    # Bulk fetch all author usernames in single query (avoids N+1)
+    # Bulk fetch all author usernames and avatars in single query (avoids N+1)
     author_ids = list(set(m.author_id for m in messages))
-    author_cache = {}
+    author_cache = {}  # {user_id: {"username": str, "avatar_url": str}}
     if auth and author_ids:
         try:
             users = auth.get_users_bulk(author_ids)
-            author_cache = {uid: u.username for uid, u in users.items()}
+            author_cache = {
+                uid: {"username": u.username, "avatar_url": getattr(u, "avatar_url", None)}
+                for uid, u in users.items()
+            }
         except Exception:
             pass
 
@@ -152,9 +156,11 @@ async def get_channel_messages(
 
     result = []
     for m in messages:
+        author_info = author_cache.get(m.author_id, {})
         result.append(_message_to_response(
             m,
-            author_cache.get(m.author_id),
+            author_username=author_info.get("username"),
+            author_avatar_url=author_info.get("avatar_url"),
             reactions_data=reactions_cache.get(m.id, [])
         ))
 
@@ -208,21 +214,23 @@ async def search_messages(
         except Exception:
             pass
     
-    author_cache = {}
+    author_cache = {}  # {user_id: {"username": str, "avatar_url": str}}
     result = []
     for m in messages:
         author_id = m.author_id
         if author_id not in author_cache:
-            username = None
+            author_info = {"username": None, "avatar_url": None}
             if auth:
                 try:
                     user = auth.get_user(author_id)
                     if user:
-                        username = user.username
+                        author_info["username"] = user.username
+                        author_info["avatar_url"] = getattr(user, "avatar_url", None)
                 except Exception:
                     pass
-            author_cache[author_id] = username
-        result.append(_message_to_response(m, author_cache.get(author_id)))
+            author_cache[author_id] = author_info
+        info = author_cache.get(author_id, {})
+        result.append(_message_to_response(m, info.get("username"), info.get("avatar_url")))
     
     return result
 
@@ -322,10 +330,22 @@ async def send_channel_message(
     if msg is None:
         raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
     
-    # Use username from token - no need for extra DB lookup!
+    # Use username and avatar from token/auth - no need for extra DB lookup!
     author_username = current_user.username
+    author_avatar_url = getattr(current_user, "avatar_url", None)
     
-    response = _message_to_response(msg, author_username, channel_id=cid)
+    # If avatar not in token, try to get from auth
+    if not author_avatar_url:
+        auth = api.get_auth()
+        if auth:
+            try:
+                user = auth.get_user(current_user.user_id)
+                if user:
+                    author_avatar_url = getattr(user, "avatar_url", None)
+            except Exception:
+                pass
+    
+    response = _message_to_response(msg, author_username, author_avatar_url, channel_id=cid)
     
     # Broadcast MESSAGE_CREATE event via WebSocket (fully async - doesn't block response)
     try:
@@ -449,17 +469,19 @@ async def edit_message(
     try:
         msg = messaging.edit_message(current_user.user_id, mid, body.content)
         
-        # Get author username
+        # Get author username and avatar
         author_username = None
+        author_avatar_url = None
         if auth:
             try:
                 user = auth.get_user(current_user.user_id)
                 if user:
                     author_username = user.username
+                    author_avatar_url = getattr(user, "avatar_url", None)
             except Exception:
                 pass
         
-        response = _message_to_response(msg, author_username, channel_id=cid)
+        response = _message_to_response(msg, author_username, author_avatar_url, channel_id=cid)
         
         # Broadcast MESSAGE_UPDATE event via WebSocket (fire and forget)
         import asyncio
@@ -597,21 +619,23 @@ async def get_pinned_messages(
         except Exception:
             pass
     
-    author_cache = {}
+    author_cache = {}  # {user_id: {"username": str, "avatar_url": str}}
     result = []
     for m in messages:
         author_id = m.author_id
         if author_id not in author_cache:
-            username = None
+            author_info = {"username": None, "avatar_url": None}
             if auth:
                 try:
                     user = auth.get_user(author_id)
                     if user:
-                        username = user.username
+                        author_info["username"] = user.username
+                        author_info["avatar_url"] = getattr(user, "avatar_url", None)
                 except Exception:
                     pass
-            author_cache[author_id] = username
-        result.append(_message_to_response(m, author_cache.get(author_id)))
+            author_cache[author_id] = author_info
+        info = author_cache.get(author_id, {})
+        result.append(_message_to_response(m, info.get("username"), info.get("avatar_url")))
     
     return result
 
