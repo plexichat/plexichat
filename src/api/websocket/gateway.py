@@ -20,16 +20,39 @@ router = APIRouter()
 
 
 async def _dispatch_offline_presence(user_id: int, presence_module, dispatcher) -> None:
-    """Dispatch offline presence to friends when user disconnects."""
+    """Dispatch offline presence to friends and server members when user disconnects."""
     try:
         import src.api as api
+        
+        # Collect all user IDs who should receive this presence update
+        target_user_ids = set()
+        
+        # Add friends
         relationships = api.get_relationships()
+        if relationships:
+            try:
+                friend_ids = relationships.get_friend_ids(user_id)
+                if friend_ids:
+                    target_user_ids.update(friend_ids)
+            except Exception:
+                pass
         
-        if not relationships:
-            return
+        # Add server members (users in shared servers)
+        servers = api.get_servers()
+        if servers:
+            try:
+                user_servers = servers.get_servers(user_id)
+                if user_servers:
+                    for server in user_servers:
+                        members = servers.get_members(user_id, server.id)
+                        if members:
+                            for member in members:
+                                if member.user_id != user_id:
+                                    target_user_ids.add(member.user_id)
+            except Exception:
+                pass
         
-        friend_ids = relationships.get_friend_ids(user_id)
-        if not friend_ids:
+        if not target_user_ids:
             return
         
         # Update presence to offline
@@ -40,7 +63,7 @@ async def _dispatch_offline_presence(user_id: int, presence_module, dispatcher) 
             except Exception:
                 pass
         
-        # Dispatch presence update to friends
+        # Dispatch presence update to all relevant users
         from src.core.events.models import Event
         from src.core.events.types import EventType
         
@@ -53,8 +76,8 @@ async def _dispatch_offline_presence(user_id: int, presence_module, dispatcher) 
                 "custom_emoji": None,
             }
         )
-        await dispatcher.dispatch_event(event, friend_ids)
-        logger.debug(f"Dispatched offline presence for user {user_id} to {len(friend_ids)} friends")
+        await dispatcher.dispatch_event(event, list(target_user_ids))
+        logger.debug(f"Dispatched offline presence for user {user_id} to {len(target_user_ids)} users")
     except Exception as e:
         logger.debug(f"Failed to dispatch offline presence: {e}")
 

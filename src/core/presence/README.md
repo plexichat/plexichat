@@ -195,6 +195,48 @@ can_see = presence.can_see_presence(viewer_id, target_id)
 3. Invisible users appear offline to others
 4. Invisible users can still see others' presence
 
+## Real-Time WebSocket Updates
+
+Presence changes are automatically broadcast via WebSocket to:
+
+- **Friends** - All users in the friend list
+- **Server members** - All users in shared servers
+
+### Events Triggered
+
+| Action | Event | Recipients |
+|--------|-------|------------|
+| User connects | PRESENCE_UPDATE (online) | Friends + server members |
+| Status change | PRESENCE_UPDATE | Friends + server members |
+| User disconnects | PRESENCE_UPDATE (offline) | Friends + server members |
+
+### Event Payload
+
+```json
+{
+    "user_id": "123456789",
+    "status": "online",
+    "custom_status": "Working on a project",
+    "custom_emoji": ":computer:"
+}
+```
+
+### Client Integration
+
+```javascript
+// Handle presence update from WebSocket
+function handlePresenceUpdate(data) {
+    // Update relationships array
+    const rel = AppState.relationships.find(r => r.user_id === data.user_id);
+    if (rel) {
+        rel.presence = { status: data.status, custom_status: data.custom_status };
+    }
+    
+    // Update UI elements
+    updateFriendPresence(data.user_id, data.status);
+}
+```
+
 ## Configuration
 
 Settings in `config/config.yaml` under `presence`:

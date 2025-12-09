@@ -39,7 +39,7 @@ app.include_router(websocket.get_router())
 | 0 | DISPATCH | Server -> Client | Event dispatch |
 | 1 | HEARTBEAT | Client -> Server | Keep alive |
 | 2 | IDENTIFY | Client -> Server | Authentication |
-| 3 | PRESENCE_UPDATE | Client -> Server | Update presence |
+| 3 | PRESENCE_UPDATE | Bidirectional | Update/receive presence |
 | 4 | VOICE_STATE_UPDATE | Client -> Server | Voice state |
 | 6 | RESUME | Client -> Server | Resume session |
 | 7 | RECONNECT | Server -> Client | Request reconnect |
@@ -164,6 +164,50 @@ gateway:
   max_connections_per_user: 5
   rate_limit_per_minute: 120
 ```
+
+## Real-Time Presence Updates
+
+The gateway automatically broadcasts presence updates to relevant users when:
+
+1. **User connects** - Status set to "online" and broadcast to friends and server members
+2. **User updates presence** - Status changes broadcast via PRESENCE_UPDATE event
+3. **User disconnects** - Status set to "offline" and broadcast to friends and server members
+
+### PRESENCE_UPDATE Event
+
+Dispatched to friends and server members when a user's presence changes:
+
+```json
+{
+    "op": 0,
+    "t": "PRESENCE_UPDATE",
+    "s": 42,
+    "d": {
+        "user_id": "123456789",
+        "status": "online",
+        "custom_status": "Working on a project",
+        "custom_emoji": ":computer:"
+    }
+}
+```
+
+### Client-Side Handling
+
+Clients should listen for PRESENCE_UPDATE events and update their UI accordingly:
+
+```javascript
+case 'PRESENCE_UPDATE':
+    handlePresenceUpdate(data);
+    // Update friend list presence indicators
+    updateFriendPresence(data.user_id, data.status);
+    break;
+```
+
+### Presence Visibility
+
+- **Invisible users** appear as "offline" to others
+- **Blocked users** see the target as "offline"
+- Users always see their own real presence
 
 ## Server Shutdown Handling
 

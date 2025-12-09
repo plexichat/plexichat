@@ -487,19 +487,38 @@ class OpcodeHandler:
         custom_status: Optional[str] = None,
         custom_emoji: Optional[str] = None
     ) -> None:
-        """Dispatch presence update to friends."""
+        """Dispatch presence update to friends and server members."""
         try:
             import src.api as api
             relationships = api.get_relationships()
             
-            if not relationships:
+            # Collect all user IDs who should receive this presence update
+            target_user_ids = set()
+            
+            # Add friends
+            if relationships:
+                friend_ids = relationships.get_friend_ids(user_id)
+                if friend_ids:
+                    target_user_ids.update(friend_ids)
+            
+            # Add server members (users in shared servers)
+            if self._servers:
+                try:
+                    user_servers = self._servers.get_servers(user_id)
+                    if user_servers:
+                        for server in user_servers:
+                            members = self._servers.get_members(user_id, server.id)
+                            if members:
+                                for member in members:
+                                    if member.user_id != user_id:
+                                        target_user_ids.add(member.user_id)
+                except Exception as e:
+                    logger.debug(f"Failed to get server members for presence: {e}")
+            
+            if not target_user_ids:
                 return
             
-            friend_ids = relationships.get_friend_ids(user_id)
-            if not friend_ids:
-                return
-            
-            # Dispatch presence update to friends
+            # Dispatch presence update
             from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
             from src.core.events.models import Event
             from src.core.events.types import EventType
@@ -515,7 +534,7 @@ class OpcodeHandler:
                         "custom_emoji": custom_emoji,
                     }
                 )
-                await dispatcher.dispatch_event(event, friend_ids)
-                logger.debug(f"Dispatched presence update for user {user_id} to {len(friend_ids)} friends")
+                await dispatcher.dispatch_event(event, list(target_user_ids))
+                logger.debug(f"Dispatched presence update for user {user_id} to {len(target_user_ids)} users")
         except Exception as e:
             logger.debug(f"Failed to dispatch presence: {e}")
