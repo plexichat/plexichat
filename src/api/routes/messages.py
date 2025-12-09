@@ -354,7 +354,7 @@ async def send_channel_message(
                     
                     if not user_ids and messaging:
                         try:
-                            participants = messaging.get_participants(cid)
+                            participants = messaging.get_participants(current_user.user_id, cid)
                             user_ids = [p.user_id for p in (participants or [])]
                             logger.info(f"Got {len(user_ids)} DM participants for channel {cid}")
                         except Exception as e:
@@ -364,7 +364,9 @@ async def send_channel_message(
                         logger.info(f"Broadcasting MESSAGE_CREATE to {len(user_ids)} users for channel {cid}: {user_ids[:5]}...")
                         event = Event(
                             event_type=EventType.MESSAGE_CREATE,
-                            data=response
+                            data=response,
+                            server_id=server_id,  # Set for proper intent filtering
+                            channel_id=cid,
                         )
                         count = await dispatcher.dispatch_event(event, user_ids)
                         logger.info(f"MESSAGE_CREATE dispatched to {count} connections")
@@ -485,15 +487,27 @@ async def edit_message(
                     
                     if not user_ids and messaging:
                         try:
-                            participants = messaging.get_participants(cid)
+                            participants = messaging.get_participants(current_user.user_id, cid)
                             user_ids = [p.user_id for p in (participants or [])]
                         except Exception:
                             pass
                     
                     if user_ids:
+                        # Determine server_id for intent filtering
+                        event_server_id = None
+                        if servers_mod:
+                            try:
+                                channel = servers_mod.get_channel(cid, current_user.user_id)
+                                if channel:
+                                    event_server_id = getattr(channel, "server_id", None)
+                            except Exception:
+                                pass
+                        
                         event = Event(
                             event_type=EventType.MESSAGE_UPDATE,
-                            data=response
+                            data=response,
+                            server_id=event_server_id,
+                            channel_id=cid,
                         )
                         await dispatcher.dispatch_event(event, user_ids)
             except Exception as e:
@@ -852,13 +866,20 @@ async def trigger_typing(
                 if ws_is_setup():
                     dispatcher = get_dispatcher()
                     
+                    # Determine server_id for intent filtering
+                    event_server_id = None
+                    if channel:
+                        event_server_id = getattr(channel, "server_id", None)
+                    
                     event = Event(
                         event_type=EventType.TYPING_START,
                         data={
                             "channel_id": str(cid),
                             "user_id": str(current_user.user_id),
                             "username": username
-                        }
+                        },
+                        server_id=event_server_id,
+                        channel_id=cid,
                     )
                     await dispatcher.dispatch_event(event, user_ids)
             except Exception as e:
