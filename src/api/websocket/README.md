@@ -66,7 +66,7 @@ app.include_router(websocket.get_router())
     "op": 2,
     "d": {
         "token": "user_session_token",
-        "intents": 513,
+        "intents": 32509,
         "properties": {
             "os": "windows",
             "browser": "chrome",
@@ -76,6 +76,31 @@ app.include_router(websocket.get_router())
     }
 }
 ```
+
+## Gateway Intents
+
+Intents control which events the client receives. Use a bitfield value:
+
+| Intent | Value | Description |
+|--------|-------|-------------|
+| GUILDS | 1 | Server/channel events |
+| GUILD_MEMBERS | 2 | Member events (privileged) |
+| GUILD_BANS | 4 | Ban events |
+| GUILD_EMOJIS | 8 | Emoji events |
+| GUILD_INTEGRATIONS | 16 | Integration events |
+| GUILD_WEBHOOKS | 32 | Webhook events |
+| GUILD_INVITES | 64 | Invite events |
+| GUILD_VOICE_STATES | 128 | Voice state events |
+| GUILD_PRESENCES | 256 | Presence events (privileged) |
+| GUILD_MESSAGES | 512 | Server message events |
+| GUILD_MESSAGE_REACTIONS | 1024 | Server reaction events |
+| GUILD_MESSAGE_TYPING | 2048 | Server typing events |
+| DIRECT_MESSAGES | 4096 | DM message events |
+| DIRECT_MESSAGE_REACTIONS | 8192 | DM reaction events |
+| DIRECT_MESSAGE_TYPING | 16384 | DM typing events |
+| MESSAGE_CONTENT | 32768 | Message content (privileged) |
+
+**Recommended value:** `32509` (all non-privileged intents)
 
 ## Resume Payload
 

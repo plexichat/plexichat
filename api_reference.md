@@ -2189,10 +2189,75 @@ wss://gateway.example.com/gateway
 
 1. Connect to WebSocket endpoint
 2. Receive HELLO (opcode 10) with heartbeat interval
-3. Send IDENTIFY (opcode 2) with token
+3. Send IDENTIFY (opcode 2) with token and intents
 4. Receive DISPATCH with READY event
 5. Send HEARTBEAT (opcode 1) at specified interval
 6. Receive HEARTBEAT_ACK (opcode 11) for each heartbeat
+
+### Gateway Intents
+
+Intents control which events the client receives. Pass the `intents` field in the IDENTIFY payload as a bitfield.
+
+**IDENTIFY Payload Example:**
+```json
+{
+  "op": 2,
+  "d": {
+    "token": "your_session_token",
+    "intents": 32509,
+    "properties": {
+      "os": "Windows",
+      "browser": "PlexiChat Web Client",
+      "device": "web"
+    }
+  }
+}
+```
+
+**Intent Flags:**
+
+| Intent | Value | Description | Privileged |
+|--------|-------|-------------|------------|
+| GUILDS | 1 | Server create/update/delete, channel events | No |
+| GUILD_MEMBERS | 2 | Member add/remove/update events | Yes |
+| GUILD_BANS | 4 | Ban add/remove events | No |
+| GUILD_EMOJIS | 8 | Emoji update events | No |
+| GUILD_INTEGRATIONS | 16 | Integration events | No |
+| GUILD_WEBHOOKS | 32 | Webhook events | No |
+| GUILD_INVITES | 64 | Invite create/delete events | No |
+| GUILD_VOICE_STATES | 128 | Voice state update events | No |
+| GUILD_PRESENCES | 256 | Presence update events | Yes |
+| GUILD_MESSAGES | 512 | Message events in servers | No |
+| GUILD_MESSAGE_REACTIONS | 1024 | Reaction events in servers | No |
+| GUILD_MESSAGE_TYPING | 2048 | Typing events in servers | No |
+| DIRECT_MESSAGES | 4096 | Message events in DMs | No |
+| DIRECT_MESSAGE_REACTIONS | 8192 | Reaction events in DMs | No |
+| DIRECT_MESSAGE_TYPING | 16384 | Typing events in DMs | No |
+| MESSAGE_CONTENT | 32768 | Access to message content | Yes |
+
+**Recommended Intents:**
+
+For a full-featured client, use `32509` which includes all non-privileged intents:
+- GUILDS (1)
+- GUILD_BANS (4)
+- GUILD_EMOJIS (8)
+- GUILD_INTEGRATIONS (16)
+- GUILD_WEBHOOKS (32)
+- GUILD_INVITES (64)
+- GUILD_VOICE_STATES (128)
+- GUILD_MESSAGES (512)
+- GUILD_MESSAGE_REACTIONS (1024)
+- GUILD_MESSAGE_TYPING (2048)
+- DIRECT_MESSAGES (4096)
+- DIRECT_MESSAGE_REACTIONS (8192)
+- DIRECT_MESSAGE_TYPING (16384)
+
+**Privileged Intents:**
+
+The following intents require special approval:
+- `GUILD_MEMBERS` (2) - Access to member lists
+- `GUILD_PRESENCES` (256) - Access to presence updates
+- `MESSAGE_CONTENT` (32768) - Access to message content
 
 ### Server Status Event (Opcode 12)
 
