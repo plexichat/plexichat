@@ -245,6 +245,39 @@ async def upload_avatar(
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": f"Upload failed: {str(e)}"}})
 
 
+@router.get("/@me/notes")
+async def get_notes_channel(current_user: TokenInfo = Depends(get_current_user)):
+    """
+    Get or create the personal notes channel for the current user.
+    
+    Personal notes are a single-user conversation for storing private notes
+    that sync across devices.
+    """
+    messaging = api.get_messaging()
+    
+    if not messaging:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
+    
+    try:
+        # Get or create notes conversation
+        if hasattr(messaging, 'get_or_create_notes'):
+            channel = messaging.get_or_create_notes(current_user.user_id)
+        else:
+            raise HTTPException(status_code=501, detail={"error": {"code": 501, "message": "Notes not implemented"}})
+        
+        return {
+            "id": str(channel.id),
+            "type": "notes",
+            "name": "Personal Notes",
+            "last_message_id": str(channel.last_message_id) if channel.last_message_id else None,
+            "last_message_at": channel.last_message_at,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
 @router.get("/@me/channels")
 async def get_dm_channels(current_user: TokenInfo = Depends(get_current_user)):
     """

@@ -204,6 +204,60 @@ class MessagingManager:
             return self.get_conversation(row["conversation_id"], user_id)
         return None
     
+    def get_or_create_notes(self, user_id: int) -> Conversation:
+        """
+        Get or create a personal notes conversation for a user.
+        
+        Personal notes are single-participant conversations where the user
+        can store private notes that sync across devices.
+        
+        Args:
+            user_id: ID of the user
+            
+        Returns:
+            The notes Conversation
+        """
+        # Check if notes conversation already exists
+        existing = self._db.fetch_one(
+            """SELECT c.id FROM msg_conversations c
+               INNER JOIN msg_participants p ON c.id = p.conversation_id
+               WHERE c.conversation_type = ? AND p.user_id = ? AND c.deleted = 0""",
+            (ConversationType.NOTES.value, user_id)
+        )
+        
+        if existing:
+            conv = self.get_conversation(existing["id"], user_id)
+            if conv:
+                return conv
+        
+        # Create new notes conversation
+        now = self._get_timestamp()
+        conv_id = self._generate_id()
+        
+        self._db.execute(
+            """INSERT INTO msg_conversations 
+               (id, conversation_type, name, created_at, updated_at, max_participants, encrypted)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (conv_id, ConversationType.NOTES.value, "Personal Notes", now, now, 1,
+             1 if self._config.get("encrypt_messages") else 0)
+        )
+        
+        # Add user as sole participant
+        part_id = self._generate_id()
+        self._db.execute(
+            """INSERT INTO msg_participants 
+               (id, conversation_id, user_id, role, joined_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (part_id, conv_id, user_id, ParticipantRole.OWNER.value, now)
+        )
+        
+        logger.debug(f"Created notes conversation {conv_id} for user {user_id}")
+        
+        conversation = self.get_conversation(conv_id, user_id)
+        if conversation is None:
+            raise ConversationNotFoundError(f"Failed to retrieve created notes conversation {conv_id}")
+        return conversation
+    
     def create_group(
         self,
         owner_id: int,

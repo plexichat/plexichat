@@ -14,6 +14,7 @@ class ConversationType(Enum):
     """Type of conversation."""
     DM = "dm"
     GROUP = "group"
+    NOTES = "notes"  # Personal notes - single user conversation
 
 
 class MessageType(Enum):

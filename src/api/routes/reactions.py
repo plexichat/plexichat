@@ -12,6 +12,82 @@ from src.api.schemas.reactions import ReactionResponse, ReactionUserResponse
 router = APIRouter()
 
 
+async def _dispatch_reaction_event(event_type: str, user_id: int, message_id: int, channel_id: int, emoji: str):
+    """Helper to dispatch reaction events via WebSocket."""
+    try:
+        from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+        from src.core.events.models import Event
+        from src.core.events.types import EventType
+        
+        if not ws_is_setup():
+            return
+            
+        dispatcher = get_dispatcher()
+        
+        # Get conversation participants to dispatch to
+        db = api.get_db()
+        if not db:
+            return
+            
+        # Get the message to find conversation_id
+        msg_row = db.fetch_one(
+            "SELECT conversation_id FROM msg_messages WHERE id = ?",
+            (message_id,)
+        )
+        if not msg_row:
+            return
+            
+        conversation_id = msg_row["conversation_id"]
+        
+        # Get all participants in the conversation
+        participant_rows = db.fetch_all(
+            "SELECT user_id FROM msg_participants WHERE conversation_id = ?",
+            (conversation_id,)
+        )
+        participant_ids = [row["user_id"] for row in participant_rows]
+        
+        # Also check if this is a server channel and get server members
+        import json
+        conv_row = db.fetch_one(
+            "SELECT metadata FROM msg_conversations WHERE id = ?",
+            (conversation_id,)
+        )
+        if conv_row and conv_row.get("metadata"):
+            try:
+                metadata = json.loads(conv_row["metadata"]) if isinstance(conv_row["metadata"], str) else conv_row["metadata"]
+                server_id = metadata.get("server_id") if isinstance(metadata, dict) else None
+                if server_id:
+                    member_rows = db.fetch_all(
+                        "SELECT user_id FROM srv_members WHERE server_id = ?",
+                        (server_id,)
+                    )
+                    for row in member_rows:
+                        if row["user_id"] not in participant_ids:
+                            participant_ids.append(row["user_id"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        
+        if not participant_ids:
+            return
+        
+        # Create and dispatch the event
+        evt_type = EventType.MESSAGE_REACTION_ADD if event_type == "add" else EventType.MESSAGE_REACTION_REMOVE
+        event = Event(
+            event_type=evt_type,
+            data={
+                "user_id": str(user_id),
+                "message_id": str(message_id),
+                "channel_id": str(channel_id),
+                "emoji": emoji,
+            }
+        )
+        await dispatcher.dispatch_event(event, participant_ids)
+        
+    except Exception as e:
+        import utils.logger as logger
+        logger.debug(f"Failed to dispatch reaction event: {e}")
+
+
 @router.put("/channels/{channel_id}/messages/{message_id}/reactions/{emoji:path}")
 async def add_reaction(
     channel_id: str,
@@ -46,6 +122,10 @@ async def add_reaction(
         decoded_emoji = urllib.parse.unquote(emoji)
         logger.debug(f"Adding reaction: user={current_user.user_id}, message={mid}, emoji={decoded_emoji}")
         reactions.add_reaction(current_user.user_id, mid, decoded_emoji)
+        
+        # Dispatch WebSocket event
+        await _dispatch_reaction_event("add", current_user.user_id, mid, cid, decoded_emoji)
+        
         return {"success": True}
     except Exception as e:
         exc_name = type(e).__name__
@@ -91,10 +171,19 @@ async def remove_reaction(
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid message ID"}})
     
     try:
+        cid = int(channel_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
+    
+    try:
         # URL decode the emoji if needed
         import urllib.parse
         decoded_emoji = urllib.parse.unquote(emoji)
         reactions.remove_reaction(current_user.user_id, mid, decoded_emoji)
+        
+        # Dispatch WebSocket event
+        await _dispatch_reaction_event("remove", current_user.user_id, mid, cid, decoded_emoji)
+        
         return {"success": True}
     except Exception as e:
         exc_name = type(e).__name__
