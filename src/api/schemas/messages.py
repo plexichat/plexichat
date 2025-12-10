@@ -42,6 +42,7 @@ class AttachmentResponse(BaseModel):
     content_type: str = Field(..., description="MIME type")
     size: int = Field(..., description="File size in bytes")
     url: str = Field(..., description="File URL")
+    hash: Optional[str] = Field(None, description="SHA-256 hash for content reporting")
     
     @field_serializer("id")
     def serialize_id(self, v: Any) -> Optional[str]:

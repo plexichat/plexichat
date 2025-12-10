@@ -540,6 +540,24 @@ class MediaManager:
         # Check rate limits before proceeding
         self._check_rate_limit(user_id, file_size)
         
+        # SECURITY: Check for blocked/duplicate content using deduplication module
+        try:
+            from .deduplication import DeduplicationManager
+            dedup_manager = DeduplicationManager(self._db)
+            dedup_result = dedup_manager.check_duplicate(file_data, content_type)
+            
+            if dedup_result.is_blocked:
+                logger.warning(f"Blocked content upload attempt by user {user_id}: {dedup_result.block_reason}")
+                raise FileUploadError(
+                    f"This content has been blocked: {dedup_result.block_reason}",
+                    filename
+                )
+        except ImportError:
+            dedup_result = None
+        except Exception as e:
+            logger.warning(f"Deduplication check failed: {e}")
+            dedup_result = None
+        
         scan_status = ScanStatus.SKIPPED
         scan_result = None
         
@@ -553,13 +571,39 @@ class MediaManager:
                 scan_status = ScanStatus.ERROR
                 scan_result = str(e)
         
+        # OPTIMIZATION: Apply compression if enabled
+        compressed_data = file_data
+        compression_applied = False
+        try:
+            from .compression import CompressionManager
+            compression_manager = CompressionManager()
+            if compression_manager.is_enabled():
+                compression_result = compression_manager.compress(file_data, content_type)
+                if compression_result.success and compression_result.data:
+                    # Only use compressed version if it's actually smaller
+                    if compression_result.compressed_size < file_size:
+                        compressed_data = compression_result.data
+                        compression_applied = True
+                        logger.debug(f"Compression applied: {file_size} -> {compression_result.compressed_size} bytes ({compression_result.savings_percent:.1f}% saved)")
+                        # Update content type if format changed
+                        if compression_result.format:
+                            content_type = compression_result.format
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.warning(f"Compression failed, using original: {e}")
+        
+        # Use compressed data for storage
+        final_data = compressed_data
+        final_size = len(final_data)
+        
         # Determine storage backend (auto-routing for small text files)
-        storage, storage_backend = self._get_storage_for_file(content_type, file_size)
+        storage, storage_backend = self._get_storage_for_file(content_type, final_size)
         
         storage_path = self._generate_storage_path(filename, media_type)
-        checksum = self._compute_checksum(file_data)
+        checksum = self._compute_checksum(final_data)
         
-        storage.store(file_data, storage_path, content_type)
+        storage.store(final_data, storage_path, content_type)
         
         file_id = self._generate_id()
         now = self._get_timestamp()
@@ -603,7 +647,7 @@ class MediaManager:
                 os.path.basename(storage_path),
                 filename,
                 content_type,
-                file_size,
+                final_size,
                 media_type.value,
                 storage_backend,  # Use the actual backend (may be auto-routed)
                 storage_path,
@@ -616,25 +660,41 @@ class MediaManager:
             )
         )
         
+        # Register file hash for deduplication tracking
+        if dedup_result:
+            try:
+                dedup_manager.register_file(
+                    hash_value=checksum,
+                    file_size=final_size,
+                    content_type=content_type,
+                    storage_path=storage_path,
+                    storage_backend=storage_backend,
+                    timestamp=now
+                )
+            except Exception as e:
+                logger.warning(f"Failed to register file hash: {e}")
+        
         # Update rate limit counters
-        self._update_rate_limit(user_id, file_size)
+        self._update_rate_limit(user_id, final_size)
         
         thumbnails = {}
         if media_type == MediaType.IMAGE and self._image_processor:
-            thumbnails = self._generate_thumbnails(file_id, file_data)
+            thumbnails = self._generate_thumbnails(file_id, final_data)
         
         url = storage.get_url(storage_path)
         
-        logger.debug(f"File {file_id} uploaded by user {user_id}: {filename} (backend: {storage_backend})")
+        compression_info = f", compressed from {file_size}" if compression_applied else ""
+        logger.debug(f"File {file_id} uploaded by user {user_id}: {filename} (backend: {storage_backend}, size: {final_size}{compression_info})")
         
         return UploadResult(
             file_id=file_id,
             filename=filename,
             content_type=content_type,
-            size=file_size,
+            size=final_size,
             url=url,
             thumbnails=thumbnails,
             metadata=metadata,
+            checksum=checksum,  # Include hash for client-side reporting
         )
 
     def upload_stream(

@@ -779,10 +779,250 @@ def check_host_restriction(client_ip: str, allowed_hosts: List[str]) -> bool:
     return False
 
 
+# ==================== Hash Reports (Content Moderation) ====================
+
+@dataclass
+class HashReport:
+    """A content hash report for moderation."""
+    id: int
+    hash_value: str
+    reporter_id: int
+    reporter_username: Optional[str]
+    reason: str
+    details: Optional[str]
+    status: str  # 'pending', 'reviewed', 'blocked', 'cleared'
+    reported_at: int
+    reviewed_at: Optional[int]
+    reviewed_by: Optional[int]
+    admin_notes: Optional[str]
+
+
+@dataclass
+class BlockedHash:
+    """A blocked content hash."""
+    hash_value: str
+    reason: str
+    blocked_at: int
+    blocked_by: Optional[int]
+    auto_blocked: bool
+
+
+def get_hash_reports(
+    status_filter: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0
+) -> List[HashReport]:
+    """Get hash reports for admin review."""
+    db = _get_db()
+    
+    if status_filter:
+        rows = db.fetch_all(
+            """SELECT r.id, r.hash_value, r.reporter_id, u.username, r.reason, 
+                      r.details, r.status, r.reported_at, r.reviewed_at, 
+                      r.reviewed_by, r.admin_notes
+               FROM media_hash_reports r
+               LEFT JOIN auth_users u ON r.reporter_id = u.id
+               WHERE r.status = ?
+               ORDER BY r.reported_at DESC
+               LIMIT ? OFFSET ?""",
+            (status_filter, limit, offset)
+        )
+    else:
+        rows = db.fetch_all(
+            """SELECT r.id, r.hash_value, r.reporter_id, u.username, r.reason, 
+                      r.details, r.status, r.reported_at, r.reviewed_at, 
+                      r.reviewed_by, r.admin_notes
+               FROM media_hash_reports r
+               LEFT JOIN auth_users u ON r.reporter_id = u.id
+               ORDER BY r.reported_at DESC
+               LIMIT ? OFFSET ?""",
+            (limit, offset)
+        )
+    
+    reports = []
+    for row in rows:
+        if isinstance(row, dict):
+            reports.append(HashReport(
+                id=row["id"], hash_value=row["hash_value"],
+                reporter_id=row["reporter_id"], reporter_username=row["username"],
+                reason=row["reason"], details=row["details"], status=row["status"],
+                reported_at=row["reported_at"], reviewed_at=row["reviewed_at"],
+                reviewed_by=row["reviewed_by"], admin_notes=row["admin_notes"]
+            ))
+        else:
+            reports.append(HashReport(
+                id=row[0], hash_value=row[1], reporter_id=row[2],
+                reporter_username=row[3], reason=row[4], details=row[5],
+                status=row[6], reported_at=row[7], reviewed_at=row[8],
+                reviewed_by=row[9], admin_notes=row[10]
+            ))
+    
+    return reports
+
+
+def get_hash_report_counts() -> Dict[str, int]:
+    """Get counts of hash reports by status."""
+    db = _get_db()
+    
+    counts = {'pending': 0, 'reviewed': 0, 'blocked': 0, 'cleared': 0, 'total': 0}
+    
+    try:
+        rows = db.fetch_all(
+            "SELECT status, COUNT(*) as count FROM media_hash_reports GROUP BY status"
+        )
+        
+        for row in rows:
+            status = row["status"] if isinstance(row, dict) else row[0]
+            count = row["count"] if isinstance(row, dict) else row[1]
+            if status in counts:
+                counts[status] = count
+            counts['total'] += count
+    except Exception:
+        # Table may not exist yet
+        pass
+    
+    return counts
+
+
+def get_blocked_hashes(limit: int = 100, offset: int = 0) -> List[BlockedHash]:
+    """Get list of blocked hashes."""
+    db = _get_db()
+    
+    try:
+        rows = db.fetch_all(
+            """SELECT hash_value, reason, blocked_at, blocked_by, auto_blocked
+               FROM media_blocked_hashes
+               ORDER BY blocked_at DESC
+               LIMIT ? OFFSET ?""",
+            (limit, offset)
+        )
+        
+        result = []
+        for row in rows:
+            if isinstance(row, dict):
+                result.append(BlockedHash(
+                    hash_value=row["hash_value"],
+                    reason=row["reason"],
+                    blocked_at=row["blocked_at"],
+                    blocked_by=row["blocked_by"],
+                    auto_blocked=bool(row["auto_blocked"])
+                ))
+            else:
+                result.append(BlockedHash(
+                    hash_value=row[0], reason=row[1], blocked_at=row[2],
+                    blocked_by=row[3], auto_blocked=bool(row[4])
+                ))
+        return result
+    except Exception:
+        return []
+
+
+def get_blocked_hash_count() -> int:
+    """Get count of blocked hashes."""
+    db = _get_db()
+    try:
+        row = db.fetch_one("SELECT COUNT(*) as count FROM media_blocked_hashes")
+        return row["count"] if isinstance(row, dict) else row[0] if row else 0
+    except Exception:
+        return 0
+
+
+def review_hash_report(
+    report_id: int,
+    admin_id: int,
+    action: str,
+    notes: Optional[str] = None
+) -> bool:
+    """
+    Review a hash report.
+    
+    Args:
+        report_id: Report ID
+        admin_id: Admin user ID
+        action: 'block', 'clear', or 'dismiss'
+        notes: Admin notes
+    """
+    db = _get_db()
+    now = int(time.time() * 1000)
+    
+    # Get report
+    row = db.fetch_one(
+        "SELECT hash_value FROM media_hash_reports WHERE id = ?",
+        (report_id,)
+    )
+    if not row:
+        return False
+    
+    hash_value = row["hash_value"] if isinstance(row, dict) else row[0]
+    
+    if action == "block":
+        # Block the hash
+        try:
+            db.execute(
+                """INSERT OR REPLACE INTO media_blocked_hashes 
+                   (hash_value, reason, blocked_at, blocked_by, auto_blocked)
+                   VALUES (?, ?, ?, ?, 0)""",
+                (hash_value, notes or "Blocked by admin", now, admin_id)
+            )
+        except Exception as e:
+            logger.error(f"Failed to block hash: {e}")
+            return False
+        status = "blocked"
+    elif action == "clear":
+        status = "cleared"
+    else:
+        status = "reviewed"
+    
+    db.execute(
+        """UPDATE media_hash_reports 
+           SET status = ?, reviewed_at = ?, reviewed_by = ?, admin_notes = ?
+           WHERE id = ?""",
+        (status, now, admin_id, notes, report_id)
+    )
+    
+    return True
+
+
+def unblock_hash(hash_value: str) -> bool:
+    """Unblock a hash."""
+    db = _get_db()
+    try:
+        db.execute(
+            "DELETE FROM media_blocked_hashes WHERE hash_value = ?",
+            (hash_value,)
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Failed to unblock hash: {e}")
+        return False
+
+
+def block_hash(hash_value: str, reason: str, admin_id: int) -> bool:
+    """Manually block a hash."""
+    db = _get_db()
+    now = int(time.time() * 1000)
+    
+    try:
+        db.execute(
+            """INSERT OR REPLACE INTO media_blocked_hashes 
+               (hash_value, reason, blocked_at, blocked_by, auto_blocked)
+               VALUES (?, ?, ?, ?, 0)""",
+            (hash_value, reason, now, admin_id)
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Failed to block hash: {e}")
+        return False
+
+
 __all__ = [
     'setup', 'is_setup', 'login', 'verify_otp_setup', 'verify_otp',
     'validate_session', 'logout',
     'get_feedback_tickets', 'get_ticket', 'update_ticket_status',
     'add_internal_note', 'get_ticket_notes', 'get_ticket_counts',
     'check_host_restriction', 'FeedbackTicket', 'AdminNote', 'AdminLoginResult',
+    # Hash reports
+    'get_hash_reports', 'get_hash_report_counts', 'get_blocked_hashes',
+    'get_blocked_hash_count', 'review_hash_report', 'unblock_hash', 'block_hash',
+    'HashReport', 'BlockedHash',
 ]

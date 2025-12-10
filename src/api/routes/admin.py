@@ -47,6 +47,18 @@ class InternalNoteCreate(BaseModel):
     content: str = Field(..., min_length=1, max_length=2000)
 
 
+class HashReportReviewRequest(BaseModel):
+    """Review a hash report."""
+    action: str = Field(..., pattern="^(block|clear|dismiss)$")
+    notes: Optional[str] = Field(None, max_length=2000)
+
+
+class ManualBlockHashRequest(BaseModel):
+    """Manually block a hash."""
+    hash_value: str = Field(..., min_length=64, max_length=128)
+    reason: str = Field(..., min_length=1, max_length=500)
+
+
 class TicketResponse(BaseModel):
     """Feedback ticket response."""
     id: int
@@ -637,6 +649,144 @@ async def export_telemetry_stats(
         raise HTTPException(status_code=500, detail="Telemetry module not available")
 
 
+# ==================== Hash Reports Routes ====================
+
+@router.get("/hash-reports")
+async def get_hash_reports(
+    request: Request,
+    status_filter: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    db = Depends(get_db)
+):
+    """Get hash reports for admin review."""
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
+    
+    from src.core import admin
+    reports = admin.get_hash_reports(status_filter, limit, offset)
+    
+    return [
+        {
+            "id": r.id,
+            "hash_value": r.hash_value,
+            "reporter_id": r.reporter_id,
+            "reporter_username": r.reporter_username,
+            "reason": r.reason,
+            "details": r.details,
+            "status": r.status,
+            "reported_at": r.reported_at,
+            "reviewed_at": r.reviewed_at,
+            "reviewed_by": r.reviewed_by,
+            "admin_notes": r.admin_notes
+        }
+        for r in reports
+    ]
+
+
+@router.get("/hash-reports/counts")
+async def get_hash_report_counts(request: Request, db = Depends(get_db)):
+    """Get counts of hash reports by status."""
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
+    
+    from src.core import admin
+    return admin.get_hash_report_counts()
+
+
+@router.post("/hash-reports/{report_id}/review")
+async def review_hash_report(
+    report_id: int,
+    review: HashReportReviewRequest,
+    request: Request,
+    db = Depends(get_db)
+):
+    """Review a hash report (block, clear, or dismiss)."""
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
+    
+    from src.core import admin
+    
+    success = admin.review_hash_report(report_id, admin_id, review.action, review.notes)
+    
+    if not success:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+    
+    logger.info(f"Admin {admin_id} reviewed hash report {report_id}: {review.action}")
+    
+    return {"success": True, "action": review.action}
+
+
+@router.get("/blocked-hashes")
+async def get_blocked_hashes(
+    request: Request,
+    limit: int = 100,
+    offset: int = 0,
+    db = Depends(get_db)
+):
+    """Get list of blocked hashes."""
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
+    
+    from src.core import admin
+    hashes = admin.get_blocked_hashes(limit, offset)
+    
+    return [
+        {
+            "hash_value": h.hash_value,
+            "reason": h.reason,
+            "blocked_at": h.blocked_at,
+            "blocked_by": h.blocked_by,
+            "auto_blocked": h.auto_blocked
+        }
+        for h in hashes
+    ]
+
+
+@router.post("/blocked-hashes")
+async def block_hash_manually(
+    block_request: ManualBlockHashRequest,
+    request: Request,
+    db = Depends(get_db)
+):
+    """Manually block a hash."""
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
+    
+    from src.core import admin
+    
+    success = admin.block_hash(block_request.hash_value, block_request.reason, admin_id)
+    
+    if not success:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to block hash")
+    
+    logger.info(f"Admin {admin_id} manually blocked hash {block_request.hash_value[:16]}...")
+    
+    return {"success": True, "hash_value": block_request.hash_value}
+
+
+@router.delete("/blocked-hashes/{hash_value}")
+async def unblock_hash(
+    hash_value: str,
+    request: Request,
+    db = Depends(get_db)
+):
+    """Unblock a hash."""
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
+    
+    from src.core import admin
+    
+    success = admin.unblock_hash(hash_value)
+    
+    if not success:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to unblock hash")
+    
+    logger.info(f"Admin {admin_id} unblocked hash {hash_value[:16]}...")
+    
+    return {"success": True}
+
+
 # ==================== Admin UI HTML ====================
 
 ADMIN_LOGIN_HTML = """
@@ -853,12 +1003,55 @@ ADMIN_DASHBOARD_HTML = """
             <div class="tabs">
                 <button class="tab active" onclick="showTab('tickets', this)">Tickets</button>
                 <button class="tab" onclick="showTab('telemetry', this)">Telemetry</button>
+                <button class="tab" onclick="showTab('hash-reports', this)">Hash Reports</button>
             </div>
             <div id="tickets-tab">
                 <table id="tickets-table">
                     <thead><tr><th>ID</th><th>User</th><th>Category</th><th>Status</th><th>Created</th></tr></thead>
                     <tbody></tbody>
                 </table>
+            </div>
+            <div id="hash-reports-tab" style="display:none">
+                <div class="filter-row">
+                    <select id="hash-status-filter" onchange="loadHashReports()">
+                        <option value="">All Status</option>
+                        <option value="pending">Pending</option>
+                        <option value="reviewed">Reviewed</option>
+                        <option value="blocked">Blocked</option>
+                        <option value="cleared">Cleared</option>
+                    </select>
+                    <button class="refresh-btn" onclick="loadHashReports()">Refresh</button>
+                    <button class="refresh-btn" onclick="showBlockHashModal()" style="background:#ef4444;margin-left:auto">Block Hash</button>
+                </div>
+                <div class="cards" id="hash-report-stats"></div>
+                <h3 style="margin:16px 0 8px;color:#888;font-size:14px">PENDING REPORTS</h3>
+                <table id="hash-reports-table">
+                    <thead><tr><th>Hash</th><th>Reporter</th><th>Reason</th><th>Status</th><th>Reported</th><th>Actions</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+                <h3 style="margin:24px 0 8px;color:#888;font-size:14px">BLOCKED HASHES</h3>
+                <table id="blocked-hashes-table">
+                    <thead><tr><th>Hash</th><th>Reason</th><th>Blocked At</th><th>Auto</th><th>Actions</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <!-- Block Hash Modal -->
+            <div id="block-hash-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center">
+                <div style="background:var(--card);border-radius:12px;padding:24px;width:100%;max-width:500px;border:1px solid var(--border)">
+                    <h2 style="color:var(--accent);margin-bottom:16px">Block Hash</h2>
+                    <div class="form-group" style="margin-bottom:16px">
+                        <label style="display:block;margin-bottom:6px;color:#aaa">SHA-256 Hash</label>
+                        <input type="text" id="block-hash-value" style="width:100%;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:monospace" placeholder="Enter 64-character hash">
+                    </div>
+                    <div class="form-group" style="margin-bottom:16px">
+                        <label style="display:block;margin-bottom:6px;color:#aaa">Reason</label>
+                        <input type="text" id="block-hash-reason" style="width:100%;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text)" placeholder="Reason for blocking">
+                    </div>
+                    <div style="display:flex;gap:12px;justify-content:flex-end">
+                        <button onclick="hideBlockHashModal()" style="padding:10px 20px;background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--text);cursor:pointer">Cancel</button>
+                        <button onclick="blockHashManually()" style="padding:10px 20px;background:var(--accent);border:none;border-radius:4px;color:white;cursor:pointer">Block Hash</button>
+                    </div>
+                </div>
             </div>
             <div id="telemetry-tab" style="display:none">
                 <div class="filter-row">
@@ -1259,7 +1452,163 @@ ADMIN_DASHBOARD_HTML = """
             btn.classList.add('active');
             document.getElementById('tickets-tab').style.display = name === 'tickets' ? 'block' : 'none';
             document.getElementById('telemetry-tab').style.display = name === 'telemetry' ? 'block' : 'none';
+            document.getElementById('hash-reports-tab').style.display = name === 'hash-reports' ? 'block' : 'none';
             if (name === 'telemetry' && !telemetryData.length) loadTelemetryStats();
+            if (name === 'hash-reports') loadHashReports();
+        }
+        
+        // ==================== Hash Reports Functions ====================
+        let hashReportsData = [];
+        let blockedHashesData = [];
+        
+        async function loadHashReports() {
+            const statusFilter = document.getElementById('hash-status-filter')?.value || '';
+            try {
+                // Load report counts
+                const countsRes = await fetch('/api/v1/admin/hash-reports/counts', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (countsRes.ok) {
+                    const counts = await countsRes.json();
+                    document.getElementById('hash-report-stats').innerHTML = `
+                        <div class="card"><h3>Pending</h3><div class="value ${counts.pending > 0 ? 'warn' : ''}">${counts.pending}</div></div>
+                        <div class="card"><h3>Blocked</h3><div class="value">${counts.blocked}</div></div>
+                        <div class="card"><h3>Cleared</h3><div class="value">${counts.cleared}</div></div>
+                        <div class="card"><h3>Total Reports</h3><div class="value">${counts.total}</div></div>
+                    `;
+                }
+                
+                // Load reports
+                let url = '/api/v1/admin/hash-reports?limit=50';
+                if (statusFilter) url += `&status_filter=${statusFilter}`;
+                const reportsRes = await fetch(url, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (reportsRes.ok) {
+                    hashReportsData = await reportsRes.json();
+                    renderHashReportsTable();
+                }
+                
+                // Load blocked hashes
+                const blockedRes = await fetch('/api/v1/admin/blocked-hashes?limit=50', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (blockedRes.ok) {
+                    blockedHashesData = await blockedRes.json();
+                    renderBlockedHashesTable();
+                }
+            } catch (e) {
+                console.error('Failed to load hash reports:', e);
+            }
+        }
+        
+        function renderHashReportsTable() {
+            const tbody = document.querySelector('#hash-reports-table tbody');
+            if (!hashReportsData.length) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#888">No reports</td></tr>';
+                return;
+            }
+            tbody.innerHTML = hashReportsData.map(r => {
+                const shortHash = r.hash_value.substring(0, 16) + '...';
+                const statusClass = r.status === 'pending' ? 'warn' : r.status === 'blocked' ? 'bad' : r.status === 'cleared' ? 'good' : '';
+                const date = new Date(r.reported_at).toLocaleString();
+                const actions = r.status === 'pending' ? `
+                    <button onclick="reviewReport(${r.id}, 'block')" style="padding:4px 8px;background:#ef4444;border:none;border-radius:4px;color:white;cursor:pointer;margin-right:4px">Block</button>
+                    <button onclick="reviewReport(${r.id}, 'clear')" style="padding:4px 8px;background:#4ade80;border:none;border-radius:4px;color:#000;cursor:pointer;margin-right:4px">Clear</button>
+                    <button onclick="reviewReport(${r.id}, 'dismiss')" style="padding:4px 8px;background:#6b7280;border:none;border-radius:4px;color:white;cursor:pointer">Dismiss</button>
+                ` : '<span style="color:#888">Reviewed</span>';
+                return `<tr>
+                    <td style="font-family:monospace;font-size:12px" title="${r.hash_value}">${shortHash}</td>
+                    <td>${r.reporter_username || 'Unknown'}</td>
+                    <td>${r.reason}</td>
+                    <td><span class="status ${r.status}" style="background:${r.status === 'pending' ? '#fbbf24' : r.status === 'blocked' ? '#ef4444' : r.status === 'cleared' ? '#4ade80' : '#6b7280'};color:${r.status === 'pending' || r.status === 'cleared' ? '#000' : '#fff'}">${r.status}</span></td>
+                    <td>${date}</td>
+                    <td>${actions}</td>
+                </tr>`;
+            }).join('');
+        }
+        
+        function renderBlockedHashesTable() {
+            const tbody = document.querySelector('#blocked-hashes-table tbody');
+            if (!blockedHashesData.length) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#888">No blocked hashes</td></tr>';
+                return;
+            }
+            tbody.innerHTML = blockedHashesData.map(h => {
+                const shortHash = h.hash_value.substring(0, 16) + '...';
+                const date = new Date(h.blocked_at).toLocaleString();
+                return `<tr>
+                    <td style="font-family:monospace;font-size:12px" title="${h.hash_value}">${shortHash}</td>
+                    <td>${h.reason}</td>
+                    <td>${date}</td>
+                    <td>${h.auto_blocked ? '<span style="color:#fbbf24">Auto</span>' : 'Manual'}</td>
+                    <td><button onclick="unblockHash('${h.hash_value}')" style="padding:4px 8px;background:#3b82f6;border:none;border-radius:4px;color:white;cursor:pointer">Unblock</button></td>
+                </tr>`;
+            }).join('');
+        }
+        
+        async function reviewReport(reportId, action) {
+            const notes = action === 'block' ? prompt('Enter reason for blocking (optional):') : null;
+            try {
+                const res = await fetch(`/api/v1/admin/hash-reports/${reportId}/review`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action, notes })
+                });
+                if (!res.ok) throw new Error('Review failed');
+                loadHashReports();
+            } catch (e) {
+                alert('Failed to review report: ' + e.message);
+            }
+        }
+        
+        async function unblockHash(hashValue) {
+            if (!confirm('Are you sure you want to unblock this hash?')) return;
+            try {
+                const res = await fetch(`/api/v1/admin/blocked-hashes/${hashValue}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!res.ok) throw new Error('Unblock failed');
+                loadHashReports();
+            } catch (e) {
+                alert('Failed to unblock hash: ' + e.message);
+            }
+        }
+        
+        function showBlockHashModal() {
+            document.getElementById('block-hash-modal').style.display = 'flex';
+        }
+        
+        function hideBlockHashModal() {
+            document.getElementById('block-hash-modal').style.display = 'none';
+            document.getElementById('block-hash-value').value = '';
+            document.getElementById('block-hash-reason').value = '';
+        }
+        
+        async function blockHashManually() {
+            const hashValue = document.getElementById('block-hash-value').value.trim();
+            const reason = document.getElementById('block-hash-reason').value.trim();
+            if (!hashValue || hashValue.length < 64) {
+                alert('Please enter a valid SHA-256 hash (64 characters)');
+                return;
+            }
+            if (!reason) {
+                alert('Please enter a reason');
+                return;
+            }
+            try {
+                const res = await fetch('/api/v1/admin/blocked-hashes', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ hash_value: hashValue, reason })
+                });
+                if (!res.ok) throw new Error('Block failed');
+                hideBlockHashModal();
+                loadHashReports();
+            } catch (e) {
+                alert('Failed to block hash: ' + e.message);
+            }
         }
         
         async function exportStats() {

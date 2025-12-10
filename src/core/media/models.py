@@ -137,6 +137,7 @@ class UploadResult:
     url: str
     thumbnails: Dict[int, str] = field(default_factory=dict)
     metadata: Optional[Dict[str, Any]] = None
+    checksum: Optional[str] = None  # SHA-256 hash for content reporting
 
 
 @dataclass

@@ -26,6 +26,7 @@ from .features import router as features_router
 from .organizations import router as organizations_router
 from .voice import router as voice_router
 from .avatars import router as avatars_router
+from .media import router as media_router
 
 import utils.config as config
 
@@ -69,6 +70,9 @@ def create_api_router() -> APIRouter:
     
     # Include avatars router
     api_router.include_router(avatars_router, prefix="/avatars", tags=["Avatars"])
+    
+    # Include media router
+    api_router.include_router(media_router, tags=["Media"])
     
     return api_router
 

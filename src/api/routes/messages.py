@@ -28,6 +28,7 @@ def _message_to_response(msg, author_username: str = None, author_avatar_url: st
                 content_type=getattr(att, "content_type", "application/octet-stream"),
                 size=getattr(att, "size", 0),
                 url=att.url,
+                hash=getattr(att, "checksum", None) or getattr(att, "hash", None),
             ))
 
     # Get edited_at from updated_at if message was edited

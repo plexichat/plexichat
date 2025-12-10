@@ -116,9 +116,24 @@ __all__ = [
     "get_proxied_content",
     # Scanning
     "scan_file",
+    # Deduplication
+    "check_duplicate",
+    "report_hash",
+    "is_hash_blocked",
+    # Compression
+    "compress_file",
+    "get_compression_status",
+    # Chunked uploads
+    "create_upload_session",
+    "upload_chunk",
+    "complete_upload_session",
+    "cancel_upload_session",
 ]
 
 _manager = None
+_dedup_manager = None
+_compression_manager = None
+_chunked_manager = None
 _setup_complete = False
 
 
@@ -130,11 +145,17 @@ def setup(db, messaging_module=None):
         db: Database instance (must be connected)
         messaging_module: Optional messaging module for attachment integration
     """
-    global _manager, _setup_complete
+    global _manager, _dedup_manager, _compression_manager, _chunked_manager, _setup_complete
 
     from .manager import MediaManager
+    from .deduplication import DeduplicationManager
+    from .compression import CompressionManager
+    from .chunked import ChunkedUploadManager
 
     _manager = MediaManager(db, messaging_module)
+    _dedup_manager = DeduplicationManager(db)
+    _compression_manager = CompressionManager()
+    _chunked_manager = ChunkedUploadManager(db)
     _setup_complete = True
 
 
@@ -387,3 +408,156 @@ def scan_file(file_id: int) -> Tuple[ScanStatus, Optional[str]]:
         Tuple of (ScanStatus, threat_name or None)
     """
     return _get_manager().scan_file(file_id)
+
+
+# === Deduplication ===
+
+
+def _get_dedup_manager():
+    """Get the deduplication manager instance."""
+    if not _setup_complete or _dedup_manager is None:
+        raise RuntimeError("Media module not initialized. Call media.setup(db) first.")
+    return _dedup_manager
+
+
+def check_duplicate(file_data: bytes, content_type: str):
+    """
+    Check if file is a duplicate or blocked.
+
+    Args:
+        file_data: Raw file bytes
+        content_type: MIME type
+
+    Returns:
+        DeduplicationResult with duplicate/block status
+    """
+    return _get_dedup_manager().check_duplicate(file_data, content_type)
+
+
+def report_hash(hash_value: str, reporter_id: int, reason: str, details: Optional[str] = None) -> int:
+    """
+    Report a file hash for content moderation.
+
+    Args:
+        hash_value: SHA-256 hash of the file
+        reporter_id: User ID of reporter
+        reason: Reason for report
+        details: Additional details
+
+    Returns:
+        Report ID
+    """
+    return _get_dedup_manager().report_hash(hash_value, reporter_id, reason, details)
+
+
+def is_hash_blocked(hash_value: str) -> Tuple[bool, Optional[str]]:
+    """
+    Check if a hash is blocked.
+
+    Args:
+        hash_value: SHA-256 hash
+
+    Returns:
+        Tuple of (is_blocked, reason)
+    """
+    return _get_dedup_manager().is_blocked(hash_value)
+
+
+# === Compression ===
+
+
+def _get_compression_manager():
+    """Get the compression manager instance."""
+    if not _setup_complete or _compression_manager is None:
+        raise RuntimeError("Media module not initialized. Call media.setup(db) first.")
+    return _compression_manager
+
+
+def compress_file(file_data: bytes, content_type: str, quality: Optional[str] = None):
+    """
+    Compress a file.
+
+    Args:
+        file_data: Raw file bytes
+        content_type: MIME type
+        quality: Quality preset ('low', 'medium', 'high', 'original')
+
+    Returns:
+        CompressionResult with compressed data
+    """
+    from .compression import CompressionQuality
+    q = CompressionQuality(quality) if quality else None
+    return _get_compression_manager().compress(file_data, content_type, q)
+
+
+def get_compression_status() -> Dict[str, Any]:
+    """Get compression system status."""
+    return _get_compression_manager().get_status()
+
+
+# === Chunked Uploads ===
+
+
+def _get_chunked_manager():
+    """Get the chunked upload manager instance."""
+    if not _setup_complete or _chunked_manager is None:
+        raise RuntimeError("Media module not initialized. Call media.setup(db) first.")
+    return _chunked_manager
+
+
+def create_upload_session(user_id: int, filename: str, content_type: str, total_size: int):
+    """
+    Create a chunked upload session.
+
+    Args:
+        user_id: User ID
+        filename: Original filename
+        content_type: MIME type
+        total_size: Total file size in bytes
+
+    Returns:
+        UploadSession or None
+    """
+    return _get_chunked_manager().create_session(user_id, filename, content_type, total_size)
+
+
+def upload_chunk(
+    session_id: str,
+    user_id: int,
+    chunk_index: int,
+    chunk_data: bytes,
+    chunk_checksum: Optional[str] = None
+):
+    """
+    Upload a chunk to a session.
+
+    Args:
+        session_id: Session ID
+        user_id: User ID
+        chunk_index: Zero-based chunk index
+        chunk_data: Chunk bytes
+        chunk_checksum: Optional MD5 checksum
+
+    Returns:
+        ChunkUploadResult
+    """
+    return _get_chunked_manager().upload_chunk(session_id, user_id, chunk_index, chunk_data, chunk_checksum)
+
+
+def complete_upload_session(session_id: str, user_id: int) -> Optional[bytes]:
+    """
+    Complete an upload session and return the assembled file.
+
+    Args:
+        session_id: Session ID
+        user_id: User ID
+
+    Returns:
+        Complete file bytes or None
+    """
+    return _get_chunked_manager().complete_session(session_id, user_id)
+
+
+def cancel_upload_session(session_id: str, user_id: int) -> bool:
+    """Cancel an upload session."""
+    return _get_chunked_manager().cancel_session(session_id, user_id)
