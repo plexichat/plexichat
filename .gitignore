@@ -45,7 +45,7 @@ data/
 
 # Uploads and media
 uploads/
-media/
+/media/
 
 # OS
 .DS_Store
