@@ -346,8 +346,8 @@ async def get_server_members(
                 except Exception:
                     pass
             
-            # Get presence info
-            presence_data = None
+            # Get presence info - default to offline if not found
+            presence_data = {"status": "offline"}
             if presence:
                 try:
                     pres = presence.get_visible_presence(current_user.user_id, user_id)

@@ -58,6 +58,8 @@ async def get_relationships(current_user: TokenInfo = Depends(get_current_user))
             except Exception:
                 pass
         
+        # Default to offline if presence not found
+        presence_data = {"status": "offline"}
         if presence:
             try:
                 pres = presence.get_visible_presence(current_user.user_id, user_id)
