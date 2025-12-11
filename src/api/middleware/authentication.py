@@ -14,7 +14,7 @@ security = HTTPBearer(auto_error=False)
 
 class TokenInfo:
     """Token information attached to request state."""
-    
+
     def __init__(
         self,
         user_id: int,
@@ -36,37 +36,37 @@ class TokenInfo:
 
 class AuthenticationMiddleware:
     """Middleware for token validation."""
-    
+
     def __init__(self, app):
         self.app = app
-    
+
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http":
             request = Request(scope, receive)
             await self._process_auth(request)
         await self.app(scope, receive, send)
-    
+
     async def _process_auth(self, request: Request):
         """Process authentication header and attach user info to request state."""
         auth_header = request.headers.get("Authorization")
         if not auth_header:
             request.state.user = None
             return
-        
+
         token = self._extract_token(auth_header)
         if not token:
             request.state.user = None
             return
-        
+
         auth = api.get_auth()
         if not auth:
             request.state.user = None
             return
-        
+
         try:
             ip_address = request.client.host if request.client else None
             token_info = auth.verify_token(token, ip_address)
-            
+
             request.state.user = TokenInfo(
                 user_id=token_info.user_id,
                 token_type=token_info.token_type,
@@ -78,17 +78,17 @@ class AuthenticationMiddleware:
             )
         except Exception:
             request.state.user = None
-    
+
     def _extract_token(self, auth_header: str) -> Optional[str]:
         """Extract token from Authorization header."""
         parts = auth_header.split()
         if len(parts) != 2:
             return None
-        
+
         scheme = parts[0].lower()
         if scheme not in ("bearer", "bot"):
             return None
-        
+
         return parts[1]
 
 
@@ -99,24 +99,24 @@ async def get_current_user(
     """Dependency to get current authenticated user."""
     if hasattr(request.state, "user") and request.state.user:
         return request.state.user
-    
+
     if not credentials:
         raise HTTPException(
             status_code=401,
             detail={"error": {"code": 401, "message": "Authentication required"}}
         )
-    
+
     auth = api.get_auth()
     if not auth:
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Auth module not available"}}
         )
-    
+
     try:
         ip_address = request.client.host if request.client else None
         token_info = auth.verify_token(credentials.credentials, ip_address)
-        
+
         user = TokenInfo(
             user_id=token_info.user_id,
             token_type=token_info.token_type,
@@ -154,18 +154,18 @@ async def get_optional_user(
     """Dependency to get current user if authenticated, None otherwise."""
     if hasattr(request.state, "user") and request.state.user:
         return request.state.user
-    
+
     if not credentials:
         return None
-    
+
     auth = api.get_auth()
     if not auth:
         return None
-    
+
     try:
         ip_address = request.client.host if request.client else None
         token_info = auth.verify_token(credentials.credentials, ip_address)
-        
+
         user = TokenInfo(
             user_id=token_info.user_id,
             token_type=token_info.token_type,

@@ -150,7 +150,7 @@ CREATE INDEX IF NOT EXISTS idx_app_webhook_deliveries_interaction ON app_webhook
 def create_tables(db):
     """Create all application tables."""
     statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
-    
+
     for statement in statements:
         if statement:
             try:
@@ -158,7 +158,7 @@ def create_tables(db):
             except Exception as e:
                 logger.error(f"Failed to execute schema statement: {e}")
                 raise
-    
+
     logger.info("Application tables created successfully")
 
 

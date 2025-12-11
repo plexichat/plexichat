@@ -5,7 +5,7 @@ Provides lazy initialization of core modules to avoid
 loading everything when only a subset is needed.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 
 class ModuleRegistry:
@@ -20,16 +20,16 @@ class ModuleRegistry:
         auth = modules.auth  # Initializes auth module
         messaging = modules.messaging  # Initializes messaging (and auth if needed)
     """
-    
+
     def __init__(self, db):
         self._db = db
         self._cache: Dict[str, Any] = {}
-    
+
     def _reset_module(self, module):
         """Reset a module's internal state for fresh initialization."""
         module._manager = None
         module._setup_complete = False
-    
+
     @property
     def auth(self):
         """Get the auth module (lazy loaded)."""
@@ -39,7 +39,7 @@ class ModuleRegistry:
             auth.setup(self._db)
             self._cache['auth'] = auth
         return self._cache['auth']
-    
+
     @property
     def messaging(self):
         """Get the messaging module (lazy loaded)."""
@@ -49,7 +49,7 @@ class ModuleRegistry:
             messaging.setup(self._db, self.auth)
             self._cache['messaging'] = messaging
         return self._cache['messaging']
-    
+
     @property
     def servers(self):
         """Get the servers module (lazy loaded)."""
@@ -59,7 +59,7 @@ class ModuleRegistry:
             servers.setup(self._db, self.auth, self.messaging)
             self._cache['servers'] = servers
         return self._cache['servers']
-    
+
     @property
     def relationships(self):
         """Get the relationships module (lazy loaded)."""
@@ -69,7 +69,7 @@ class ModuleRegistry:
             relationships.setup(self._db, self.auth, self.servers)
             self._cache['relationships'] = relationships
         return self._cache['relationships']
-    
+
     @property
     def presence(self):
         """Get the presence module (lazy loaded)."""
@@ -79,7 +79,7 @@ class ModuleRegistry:
             presence.setup(self._db, self.auth, self.relationships, self.servers)
             self._cache['presence'] = presence
         return self._cache['presence']
-    
+
     @property
     def reactions(self):
         """Get the reactions module (lazy loaded)."""
@@ -89,7 +89,7 @@ class ModuleRegistry:
             reactions.setup(self._db, self.messaging, self.servers, self.relationships)
             self._cache['reactions'] = reactions
         return self._cache['reactions']
-    
+
     @property
     def embeds(self):
         """Get the embeds module (lazy loaded)."""
@@ -99,7 +99,7 @@ class ModuleRegistry:
             embeds.setup(self._db, self.messaging, self.servers)
             self._cache['embeds'] = embeds
         return self._cache['embeds']
-    
+
     @property
     def webhooks(self):
         """Get the webhooks module (lazy loaded)."""
@@ -109,7 +109,7 @@ class ModuleRegistry:
             webhooks.setup(self._db, self.auth, self.messaging, self.servers, self.embeds)
             self._cache['webhooks'] = webhooks
         return self._cache['webhooks']
-    
+
     @property
     def threads(self):
         """Get the threads module (lazy loaded)."""
@@ -119,7 +119,7 @@ class ModuleRegistry:
             threads.setup(self._db, self.auth, self.messaging, self.servers)
             self._cache['threads'] = threads
         return self._cache['threads']
-    
+
     @property
     def notifications(self):
         """Get the notifications module (lazy loaded)."""
@@ -129,7 +129,7 @@ class ModuleRegistry:
             notifications.setup(self._db, self.auth, self.messaging, self.servers)
             self._cache['notifications'] = notifications
         return self._cache['notifications']
-    
+
     @property
     def ratelimit(self):
         """Get the ratelimit module (lazy loaded)."""
@@ -145,7 +145,7 @@ class ModuleRegistry:
             )
             self._cache['ratelimit'] = ratelimit
         return self._cache['ratelimit']
-    
+
     @property
     def voice(self):
         """Get the voice module (lazy loaded)."""
@@ -155,7 +155,7 @@ class ModuleRegistry:
             voice.setup(self._db, self.auth, self.servers)
             self._cache['voice'] = voice
         return self._cache['voice']
-    
+
     @property
     def events(self):
         """Get the events module (lazy loaded)."""
@@ -169,7 +169,7 @@ class ModuleRegistry:
             )
             self._cache['events'] = events
         return self._cache['events']
-    
+
     @property
     def media(self):
         """Get the media module (lazy loaded)."""
@@ -179,7 +179,7 @@ class ModuleRegistry:
             media.setup(self._db, self.messaging)
             self._cache['media'] = media
         return self._cache['media']
-    
+
     @property
     def search(self):
         """Get the search module (lazy loaded)."""
@@ -249,7 +249,7 @@ class ModuleRegistry:
         """
         if 'api' not in self._cache:
             import src.api as api
-            
+
             api.setup(
                 db=self._db,
                 auth_module=self.auth,
@@ -264,7 +264,7 @@ class ModuleRegistry:
             )
             self._cache['api'] = api
         return self._cache['api']
-    
+
     def reset_all(self):
         """
         Reset all cached modules.
@@ -278,7 +278,7 @@ class ModuleRegistry:
                 except AttributeError:
                     pass
         self._cache.clear()
-    
+
     def is_loaded(self, module_name: str) -> bool:
         """Check if a module has been loaded."""
         return module_name in self._cache

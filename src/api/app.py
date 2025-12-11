@@ -16,7 +16,6 @@ from .routes import create_api_router, create_docs_router, is_docs_enabled
 from .routes.docs import get_docs_config
 
 import utils.logger as logger
-import utils.config as app_config
 
 
 def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> FastAPI:
@@ -32,7 +31,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         Configured FastAPI application instance.
     """
     config = get_api_config()
-    
+
     app = FastAPI(
         title=config.title,
         description=config.description,
@@ -41,20 +40,20 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         redoc_url=config.redoc_url,
         openapi_url=config.openapi_url,
     )
-    
+
     # Middleware order matters! They run in REVERSE order of addition.
     # So we add them in this order: Logging -> Auth -> RateLimit -> CORS
     # Which means they execute: CORS -> RateLimit -> Auth -> Logging
-    
+
     app.add_middleware(LoggingMiddleware)
     app.add_middleware(AuthenticationMiddleware)
-    
+
     if enable_rate_limiting:
         from src.core import ratelimit
         if ratelimit.is_setup():
             RateLimitMiddleware = create_rate_limit_middleware()
             app.add_middleware(RateLimitMiddleware)
-    
+
     # CORS must be added LAST so it runs FIRST (handles OPTIONS preflight)
     app.add_middleware(
         CORSMiddleware,
@@ -63,12 +62,12 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         allow_methods=config.cors_allow_methods,
         allow_headers=config.cors_allow_headers,
     )
-    
+
     setup_exception_handlers(app)
-    
+
     api_router = create_api_router()
     app.include_router(api_router, prefix=config.api_prefix)
-    
+
     # Include WebSocket gateway router
     try:
         from src.api import websocket
@@ -85,7 +84,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         logger.info("WebSocket gateway enabled at /gateway")
     except Exception as e:
         logger.warning(f"WebSocket gateway not available: {e}")
-    
+
     # Mount documentation router if enabled
     # Path is configurable via config.yaml docs.path
     docs_path = "/docs/api"  # Default
@@ -95,11 +94,11 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             docs_path = docs_conf.path
         except Exception:
             pass
-        
+
         docs_router = create_docs_router()
         app.include_router(docs_router, prefix=docs_path, tags=["Documentation"])
         logger.info(f"Documentation server enabled at {docs_path}")
-    
+
     @app.get("/")
     async def root():
         """Root endpoint with API information."""
@@ -112,31 +111,31 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         if enable_docs and is_docs_enabled():
             response["api_docs"] = docs_path
         return response
-    
+
     # Serve uploaded media files (requires authentication)
     from fastapi.responses import FileResponse
     from fastapi import Request, HTTPException
     from pathlib import Path
-    
+
     @app.get("/api/v1/media/attachments/{filename}")
     async def serve_attachment(filename: str, request: Request):
         """Serve uploaded attachment files. Requires authentication."""
         # Check for authentication token
         auth_header = request.headers.get("Authorization")
         token = None
-        
+
         if auth_header and auth_header.startswith("Bearer "):
             token = auth_header[7:]
         elif "token" in request.query_params:
             # Allow token in query param for direct image/video embeds
             token = request.query_params.get("token")
-        
+
         if not token:
             raise HTTPException(
-                status_code=401, 
+                status_code=401,
                 detail={"error": {"code": 401, "message": "Authentication required"}}
             )
-        
+
         # Verify token
         try:
             import src.api as api_module
@@ -145,56 +144,56 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 token_info = auth.verify_token(token)
                 if not token_info:
                     raise HTTPException(
-                        status_code=401, 
+                        status_code=401,
                         detail={"error": {"code": 401, "message": "Invalid or expired token"}}
                     )
             else:
                 raise HTTPException(
-                    status_code=500, 
+                    status_code=500,
                     detail={"error": {"code": 500, "message": "Auth module not available"}}
                 )
         except HTTPException:
             raise
         except Exception as e:
             raise HTTPException(
-                status_code=401, 
+                status_code=401,
                 detail={"error": {"code": 401, "message": "Invalid or expired token"}}
             )
-        
+
         # Serve the file
         media_dir = Path.home() / ".plexichat" / "media" / "attachments"
         file_path = media_dir / filename
-        
+
         # Security: prevent path traversal
         try:
             file_path = file_path.resolve()
             if not str(file_path).startswith(str(media_dir.resolve())):
                 raise HTTPException(
-                    status_code=403, 
+                    status_code=403,
                     detail={"error": {"code": 403, "message": "Access denied"}}
                 )
         except Exception:
             raise HTTPException(
-                status_code=403, 
+                status_code=403,
                 detail={"error": {"code": 403, "message": "Access denied"}}
             )
-        
+
         if not file_path.exists():
             raise HTTPException(
-                status_code=404, 
+                status_code=404,
                 detail={"error": {"code": 404, "message": "File not found"}}
             )
-        
+
         # Check if download is requested
         download = request.query_params.get("download", "0") == "1"
-        
+
         if download:
             return FileResponse(
-                file_path, 
+                file_path,
                 filename=filename,
                 media_type="application/octet-stream"
             )
-        
+
         return FileResponse(file_path)
-    
+
     return app

@@ -5,7 +5,6 @@ Uses the session-scoped fixtures from root conftest for efficiency.
 """
 
 import pytest
-import uuid
 
 
 @pytest.fixture

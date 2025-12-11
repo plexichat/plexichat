@@ -126,9 +126,9 @@ def parse_token(token: str) -> Optional[dict]:
     """
     if not token or not isinstance(token, str):
         return None
-    
+
     parts = token.split(".")
-    
+
     # Bot token: bot.<id>.<secret>
     if len(parts) == 3 and parts[0] == "bot":
         try:
@@ -140,7 +140,7 @@ def parse_token(token: str) -> Optional[dict]:
             }
         except ValueError:
             return None
-    
+
     # Email token: email.<id>.<secret>
     if len(parts) == 3 and parts[0] == "email":
         try:
@@ -152,7 +152,7 @@ def parse_token(token: str) -> Optional[dict]:
             }
         except ValueError:
             return None
-    
+
     # 2FA challenge token: 2fa.<id>.<secret>
     if len(parts) == 3 and parts[0] == "2fa":
         try:
@@ -164,7 +164,7 @@ def parse_token(token: str) -> Optional[dict]:
             }
         except ValueError:
             return None
-    
+
     # Session token: <id>.<secret>
     if len(parts) == 2:
         try:
@@ -176,7 +176,7 @@ def parse_token(token: str) -> Optional[dict]:
             }
         except ValueError:
             return None
-    
+
     return None
 
 
@@ -209,9 +209,9 @@ def _constant_time_compare(a: str, b: str) -> bool:
     """
     if len(a) != len(b):
         return False
-    
+
     result = 0
     for x, y in zip(a.encode("utf-8"), b.encode("utf-8")):
         result |= x ^ y
-    
+
     return result == 0

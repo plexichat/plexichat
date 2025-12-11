@@ -34,7 +34,7 @@ def _get_image_config() -> dict:
 
 class ImageProcessor:
     """Image processing using Pillow with security limits."""
-    
+
     SUPPORTED_FORMATS = {
         "image/jpeg": "JPEG",
         "image/png": "PNG",
@@ -43,7 +43,7 @@ class ImageProcessor:
         "image/bmp": "BMP",
         "image/tiff": "TIFF",
     }
-    
+
     FORMAT_EXTENSIONS = {
         "JPEG": ".jpg",
         "PNG": ".png",
@@ -52,7 +52,7 @@ class ImageProcessor:
         "BMP": ".bmp",
         "TIFF": ".tiff",
     }
-    
+
     def __init__(
         self,
         quality: int = 85,
@@ -71,7 +71,7 @@ class ImageProcessor:
         """
         self._quality = quality
         self._optimize = optimize
-        
+
         # Load security limits from config
         img_config = _get_image_config()
         self._max_dimension = max_dimension or img_config.get(
@@ -80,7 +80,7 @@ class ImageProcessor:
         self._max_pixels = max_pixels or img_config.get(
             "max_pixels", DEFAULT_MAX_IMAGE_PIXELS
         )
-        
+
         try:
             from PIL import Image
             self._Image = Image
@@ -91,7 +91,7 @@ class ImageProcessor:
                 "Pillow is required for image processing. Install with: pip install Pillow",
                 "init"
             )
-    
+
     def _validate_image_dimensions(self, img) -> None:
         """
         Validate image dimensions are within safe limits.
@@ -105,14 +105,14 @@ class ImageProcessor:
                 f"allowed ({self._max_dimension}x{self._max_dimension})",
                 "validation"
             )
-        
+
         total_pixels = img.width * img.height
         if total_pixels > self._max_pixels:
             raise ImageProcessingError(
                 f"Image has too many pixels ({total_pixels:,}) - maximum is {self._max_pixels:,}",
                 "validation"
             )
-    
+
     def get_metadata(self, image_data: bytes) -> ImageMetadata:
         """
         Extract metadata from image.
@@ -125,17 +125,17 @@ class ImageProcessor:
         """
         try:
             img = self._Image.open(io.BytesIO(image_data))
-            
+
             # Security: Validate dimensions before processing
             self._validate_image_dimensions(img)
-            
+
             has_alpha = img.mode in ("RGBA", "LA", "PA") or (
                 img.mode == "P" and "transparency" in img.info
             )
-            
+
             animated = getattr(img, "is_animated", False)
             frame_count = getattr(img, "n_frames", 1)
-            
+
             exif_data = None
             if hasattr(img, "_getexif"):
                 raw_exif = getattr(img, "_getexif")()
@@ -150,7 +150,7 @@ class ImageProcessor:
                             exif_data[tag] = value
                         except Exception:
                             pass
-            
+
             return ImageMetadata(
                 width=img.width,
                 height=img.height,
@@ -164,7 +164,7 @@ class ImageProcessor:
         except Exception as e:
             logger.error(f"Failed to extract image metadata: {e}")
             raise ImageProcessingError(f"Failed to extract metadata: {e}", "metadata")
-    
+
     def create_thumbnail(
         self,
         image_data: bytes,
@@ -186,40 +186,40 @@ class ImageProcessor:
         """
         try:
             img = self._Image.open(io.BytesIO(image_data))
-            
+
             # Security: Validate dimensions before processing
             self._validate_image_dimensions(img)
-            
+
             if img.mode == "P" and "transparency" in img.info:
                 img = img.convert("RGBA")
-            
+
             if maintain_aspect:
                 img.thumbnail((size, size), self._Image.Resampling.LANCZOS)
             else:
                 img = img.resize((size, size), self._Image.Resampling.LANCZOS)
-            
+
             if output_format == "JPEG" and img.mode in ("RGBA", "LA", "P"):
                 background = self._Image.new("RGB", img.size, (255, 255, 255))
                 if img.mode == "P":
                     img = img.convert("RGBA")
                 background.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
                 img = background
-            
+
             output = io.BytesIO()
             save_kwargs: Dict[str, Any] = {"format": output_format}
-            
+
             if output_format in ("JPEG", "WEBP"):
                 save_kwargs["quality"] = self._quality
             if self._optimize and output_format in ("JPEG", "PNG"):
                 save_kwargs["optimize"] = True
-            
+
             img.save(output, **save_kwargs)
-            
+
             return output.getvalue(), img.width, img.height
         except Exception as e:
             logger.error(f"Failed to create thumbnail: {e}")
             raise ImageProcessingError(f"Failed to create thumbnail: {e}", "thumbnail")
-    
+
     def create_thumbnails(
         self,
         image_data: bytes,
@@ -239,16 +239,16 @@ class ImageProcessor:
         """
         if sizes is None:
             sizes = [s.value for s in ThumbnailSize]
-        
+
         results = {}
         for size in sizes:
             try:
                 results[size] = self.create_thumbnail(image_data, size, output_format)
             except ImageProcessingError:
                 logger.warning(f"Failed to create thumbnail at size {size}")
-        
+
         return results
-    
+
     def resize(
         self,
         image_data: bytes,
@@ -272,15 +272,15 @@ class ImageProcessor:
         """
         if width is None and height is None:
             raise ImageProcessingError("Must specify width or height", "resize")
-        
+
         try:
             img = self._Image.open(io.BytesIO(image_data))
-            
+
             # Security: Validate dimensions before processing
             self._validate_image_dimensions(img)
-            
+
             original_format = img.format
-            
+
             if maintain_aspect:
                 orig_w, orig_h = img.size
                 if width and height:
@@ -299,33 +299,33 @@ class ImageProcessor:
             else:
                 new_w = width or img.width
                 new_h = height or img.height
-            
+
             img = img.resize((new_w, new_h), self._Image.Resampling.LANCZOS)
-            
+
             out_format = output_format or original_format or "PNG"
-            
+
             if out_format == "JPEG" and img.mode in ("RGBA", "LA", "P"):
                 background = self._Image.new("RGB", img.size, (255, 255, 255))
                 if img.mode == "P":
                     img = img.convert("RGBA")
                 background.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
                 img = background
-            
+
             output = io.BytesIO()
             save_kwargs: Dict[str, Any] = {"format": out_format}
-            
+
             if out_format in ("JPEG", "WEBP"):
                 save_kwargs["quality"] = self._quality
             if self._optimize and out_format in ("JPEG", "PNG"):
                 save_kwargs["optimize"] = True
-            
+
             img.save(output, **save_kwargs)
-            
+
             return output.getvalue(), img.width, img.height
         except Exception as e:
             logger.error(f"Failed to resize image: {e}")
             raise ImageProcessingError(f"Failed to resize image: {e}", "resize")
-    
+
     def convert_format(
         self,
         image_data: bytes,
@@ -345,29 +345,29 @@ class ImageProcessor:
         """
         try:
             img = self._Image.open(io.BytesIO(image_data))
-            
+
             if output_format == "JPEG" and img.mode in ("RGBA", "LA", "P"):
                 background = self._Image.new("RGB", img.size, (255, 255, 255))
                 if img.mode == "P":
                     img = img.convert("RGBA")
                 background.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
                 img = background
-            
+
             output = io.BytesIO()
             save_kwargs: Dict[str, Any] = {"format": output_format}
-            
+
             if output_format in ("JPEG", "WEBP"):
                 save_kwargs["quality"] = quality or self._quality
             if self._optimize and output_format in ("JPEG", "PNG"):
                 save_kwargs["optimize"] = True
-            
+
             img.save(output, **save_kwargs)
-            
+
             return output.getvalue()
         except Exception as e:
             logger.error(f"Failed to convert image format: {e}")
             raise ImageProcessingError(f"Failed to convert format: {e}", "convert")
-    
+
     def strip_metadata(self, image_data: bytes, output_format: Optional[str] = None) -> bytes:
         """
         Strip EXIF and other metadata from image.
@@ -382,30 +382,30 @@ class ImageProcessor:
         try:
             img = self._Image.open(io.BytesIO(image_data))
             original_format = img.format
-            
+
             data = list(img.getdata())
             img_no_exif = self._Image.new(img.mode, img.size)
             img_no_exif.putdata(data)
-            
+
             out_format = output_format or original_format or "PNG"
-            
+
             output = io.BytesIO()
             save_kwargs: Dict[str, Any] = {"format": out_format}
-            
+
             if out_format in ("JPEG", "WEBP"):
                 save_kwargs["quality"] = self._quality
-            
+
             img_no_exif.save(output, **save_kwargs)
-            
+
             return output.getvalue()
         except Exception as e:
             logger.error(f"Failed to strip metadata: {e}")
             raise ImageProcessingError(f"Failed to strip metadata: {e}", "strip_metadata")
-    
+
     def is_supported(self, content_type: str) -> bool:
         """Check if content type is supported."""
         return content_type.lower() in self.SUPPORTED_FORMATS
-    
+
     def get_format_extension(self, format_name: str) -> str:
         """Get file extension for format."""
         return self.FORMAT_EXTENSIONS.get(format_name.upper(), ".bin")

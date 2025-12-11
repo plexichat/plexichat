@@ -180,7 +180,7 @@ def create_tables(db) -> None:
         if statement:
             converted = db.convert_schema(statement) if hasattr(db, 'convert_schema') else statement
             db.execute(converted)
-    
+
     # Run migrations for columns added after initial schema
     _run_migrations(db)
 

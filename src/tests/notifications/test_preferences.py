@@ -2,8 +2,7 @@
 Tests for user notification settings.
 """
 
-import pytest
-from src.core.notifications import NotificationLevel, MentionType
+from src.core.notifications import NotificationLevel
 
 
 class TestGetNotificationSettings:

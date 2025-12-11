@@ -2,7 +2,7 @@
 OAuth2 scopes - Scope definitions and validation.
 """
 
-from typing import List, Tuple, Set
+from typing import List, Tuple
 
 
 VALID_SCOPES = {
@@ -50,18 +50,18 @@ def validate_scopes(scopes: List[str]) -> Tuple[bool, List[str]]:
         Tuple of (valid, issues)
     """
     issues = []
-    
+
     if not scopes:
         issues.append("At least one scope is required")
         return False, issues
-    
+
     invalid = set(scopes) - VALID_SCOPES
     if invalid:
         issues.append(f"Invalid scopes: {', '.join(sorted(invalid))}")
-    
+
     if "bot" in scopes and len(scopes) == 1:
         pass
-    
+
     return len(issues) == 0, issues
 
 

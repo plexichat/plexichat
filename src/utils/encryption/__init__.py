@@ -58,39 +58,39 @@ def setup(
         argon2_parallelism (int): Parallelism factor for Argon2.
     """
     global _encryption_manager, _snowflake_generator, _setup_called
-    
+
     _encryption_manager = EncryptionManager(
         argon2_time_cost=argon2_time_cost,
         argon2_memory_cost=argon2_memory_cost,
         argon2_parallelism=argon2_parallelism
     )
-    
+
     _snowflake_generator = SnowflakeGenerator(
         worker_id=worker_id,
         datacenter_id=datacenter_id,
         epoch_timestamp=epoch_timestamp
     )
-    
+
     _setup_called = True
 
 def _get_manager() -> EncryptionManager:
     """Internal: Get or create encryption manager instance."""
     global _encryption_manager, _setup_called
-    
+
     if not _setup_called:
         _encryption_manager = EncryptionManager()
         _setup_called = True
-    
+
     assert _encryption_manager is not None
     return _encryption_manager
 
 def _get_snowflake() -> SnowflakeGenerator:
     """Internal: Get or create snowflake generator instance."""
     global _snowflake_generator, _setup_called
-    
+
     if _snowflake_generator is None:
         _snowflake_generator = SnowflakeGenerator()
-    
+
     return _snowflake_generator
 
 def hash_password(password: str) -> str:

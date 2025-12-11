@@ -3,14 +3,13 @@ Opcode handlers - Handle incoming gateway messages.
 """
 
 from typing import Optional, Dict, Any, Tuple
-import time
 
 import utils.logger as logger
 
 from .opcodes import GatewayOpcode, GatewayCloseCode
 from .connection import Connection, ConnectionState
 from .session import SessionManager
-from .intents import validate_intents, has_privileged_intents, DEFAULT_INTENTS
+from .intents import validate_intents, DEFAULT_INTENTS
 
 
 class OpcodeHandler:
@@ -136,7 +135,7 @@ class OpcodeHandler:
         ready_data = await self._build_ready_payload(user_id, session.session_id)
 
         logger.info(f"User {user_id} identified with session {session.session_id}")
-        
+
         # Dispatch online presence to friends
         await self._dispatch_online_presence(user_id)
 
@@ -214,10 +213,10 @@ class OpcodeHandler:
                     details=activity.get("details"),
                     state=activity.get("state"),
                 )
-            
+
             # Dispatch presence update to friends
             await self._dispatch_presence_to_friends(
-                connection.user_id, 
+                connection.user_id,
                 status if status != "invisible" else "offline",
                 custom_status,
                 custom_emoji
@@ -476,14 +475,14 @@ class OpcodeHandler:
                 logger.debug(f"Set user {user_id} presence to ONLINE on connect")
             except Exception as e:
                 logger.warning(f"Failed to set online presence for user {user_id}: {e}")
-        
+
         # Then dispatch to friends
         await self._dispatch_presence_to_friends(user_id, "online", None, None)
 
     async def _dispatch_presence_to_friends(
-        self, 
-        user_id: int, 
-        status: str, 
+        self,
+        user_id: int,
+        status: str,
         custom_status: Optional[str] = None,
         custom_emoji: Optional[str] = None
     ) -> None:
@@ -491,16 +490,16 @@ class OpcodeHandler:
         try:
             import src.api as api
             relationships = api.get_relationships()
-            
+
             # Collect all user IDs who should receive this presence update
             target_user_ids = set()
-            
+
             # Add friends
             if relationships:
                 friend_ids = relationships.get_friend_ids(user_id)
                 if friend_ids:
                     target_user_ids.update(friend_ids)
-            
+
             # Add server members (users in shared servers)
             if self._servers:
                 try:
@@ -514,15 +513,15 @@ class OpcodeHandler:
                                         target_user_ids.add(member.user_id)
                 except Exception as e:
                     logger.debug(f"Failed to get server members for presence: {e}")
-            
+
             if not target_user_ids:
                 return
-            
+
             # Dispatch presence update
             from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
             from src.core.events.models import Event
             from src.core.events.types import EventType
-            
+
             if ws_is_setup():
                 dispatcher = get_dispatcher()
                 event = Event(

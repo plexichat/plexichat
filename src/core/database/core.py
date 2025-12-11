@@ -49,13 +49,13 @@ class Database:
         
         db.close()
     """
-    
+
     def __init__(self):
         """Initialize the database manager with configuration."""
         self.config = config.get("database")
         if not self.config:
             raise ValueError("Database configuration not found. Ensure config is set up.")
-        
+
         self.type = self.config.get("type", "sqlite")
         self.connection: Optional[DbConnection] = None
         self._pool = None  # PostgreSQL connection pool
@@ -73,7 +73,7 @@ class Database:
             psycopg2.Error: If PostgreSQL connection fails.
         """
         logger.info(f"Connecting to {self.type} database...")
-        
+
         if self.type == "sqlite":
             self._connect_sqlite()
         elif self.type == "postgres":
@@ -86,16 +86,16 @@ class Database:
     def _connect_sqlite(self):
         """Connect to SQLite database, creating directories if needed."""
         path = self.config.get("path", "data/database.db")
-        
+
         db_dir = os.path.dirname(path)
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir, exist_ok=True)
             logger.debug(f"Created database directory: {db_dir}")
-        
+
         try:
             self.connection = sqlite3.connect(path, check_same_thread=False)
             self.connection.row_factory = sqlite3.Row
-            
+
             # Enable WAL mode for better concurrent read/write performance
             self.connection.execute("PRAGMA journal_mode=WAL")
             # Set synchronous to NORMAL for better performance (still safe with WAL)
@@ -108,7 +108,7 @@ class Database:
             self.connection.execute("PRAGMA temp_store=MEMORY")
             # Enable foreign keys
             self.connection.execute("PRAGMA foreign_keys=ON")
-            
+
             logger.info(f"Connected to SQLite at {path} (WAL mode enabled)")
         except sqlite3.Error as e:
             logger.error(f"Failed to connect to SQLite: {e}")
@@ -134,7 +134,7 @@ class Database:
         password = pg_config.get("password", "")
         dbname = pg_config.get("dbname", "plexichat")
         sslmode = pg_config.get("sslmode", "prefer")
-        
+
         # Connection pool settings
         pool_config = self.config.get("connection_pool", {})
         min_conn = pool_config.get("min_connections", 2)
@@ -198,13 +198,13 @@ class Database:
         """
         if self.type != "postgres":
             return schema
-        
+
         # Convert SQLite types to PostgreSQL equivalents
         converted = schema
         converted = re.sub(r'\bBLOB\b', 'BYTEA', converted, flags=re.IGNORECASE)
         # Convert all INTEGER to BIGINT (snowflake IDs exceed 32-bit INTEGER range)
         converted = re.sub(r'\bINTEGER\b', 'BIGINT', converted, flags=re.IGNORECASE)
-        
+
         return converted
 
     def _ensure_connected(self):
@@ -231,10 +231,10 @@ class Database:
         """
         self._ensure_connected()
         assert self.connection is not None  # Type narrowing for pyright
-        
+
         # Convert ? to %s for PostgreSQL
         converted_query = self._convert_placeholders(query)
-        
+
         cursor = self.connection.cursor()
         try:
             if params:
@@ -264,10 +264,10 @@ class Database:
         """
         self._ensure_connected()
         assert self.connection is not None  # Type narrowing for pyright
-        
+
         # Convert ? to %s for PostgreSQL
         converted_query = self._convert_placeholders(query)
-        
+
         cursor = self.connection.cursor()
         try:
             cursor.executemany(converted_query, params_list)
@@ -323,7 +323,7 @@ class Database:
             True if table exists, False otherwise.
         """
         self._ensure_connected()
-        
+
         if self.type == "sqlite":
             query = "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
             result = self.fetch_one(query, (table_name,))
@@ -336,7 +336,7 @@ class Database:
             result = self.fetch_one(query, (table_name,))
         else:
             return False
-        
+
         return result is not None
 
     def begin_transaction(self):
@@ -379,23 +379,23 @@ class Database:
             True if row was inserted, False if ignored due to conflict.
         """
         self._ensure_connected()
-        
+
         placeholders = ", ".join(["?"] * len(columns))
         cols = ", ".join(columns)
-        
+
         if self.type == "sqlite":
             query = f"INSERT OR IGNORE INTO {table} ({cols}) VALUES ({placeholders})"
         elif self.type == "postgres":
             query = f"INSERT INTO {table} ({cols}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
         else:
             raise ValueError(f"Unsupported database type: {self.type}")
-        
+
         cursor = self.execute(query, values)
         inserted = cursor.rowcount > 0
         cursor.close()
         return inserted
 
-    def upsert(self, table: str, columns: List[str], values: Tuple, 
+    def upsert(self, table: str, columns: List[str], values: Tuple,
                conflict_columns: List[str], update_columns: Optional[List[str]] = None) -> None:
         """
         Insert a row or update it if it already exists.
@@ -410,13 +410,13 @@ class Database:
             update_columns: Columns to update on conflict. If None, updates all non-conflict columns.
         """
         self._ensure_connected()
-        
+
         placeholders = ", ".join(["?"] * len(columns))
         cols = ", ".join(columns)
-        
+
         if update_columns is None:
             update_columns = [c for c in columns if c not in conflict_columns]
-        
+
         if self.type == "sqlite":
             query = f"INSERT OR REPLACE INTO {table} ({cols}) VALUES ({placeholders})"
         elif self.type == "postgres":
@@ -430,7 +430,7 @@ class Database:
                            ON CONFLICT ({conflict_cols}) DO NOTHING"""
         else:
             raise ValueError(f"Unsupported database type: {self.type}")
-        
+
         self.execute(query, values)
 
     def close(self):

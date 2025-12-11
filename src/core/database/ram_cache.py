@@ -38,7 +38,7 @@ class RAMCache:
     """
     Thread-safe in-memory cache for small reference tables.
     """
-    
+
     def __init__(self, name: str, ttl: int = 300, max_items: int = 1000):
         """
         Initialize RAM cache.
@@ -57,7 +57,7 @@ class RAMCache:
         self._lock = threading.RLock()
         self._query: Optional[str] = None
         self._db = None
-    
+
     def load(self, db, query: str, params: tuple = None) -> int:
         """
         Load data from database into cache.
@@ -73,31 +73,31 @@ class RAMCache:
         with self._lock:
             self._db = db
             self._query = query
-            
+
             try:
                 rows = db.fetch_all(query, params) if params else db.fetch_all(query)
-                
+
                 if len(rows) > self.max_items:
                     logger.warning(
                         f"RAMCache '{self.name}': Query returned {len(rows)} rows, "
                         f"exceeds max_items={self.max_items}. Truncating."
                     )
                     rows = rows[:self.max_items]
-                
+
                 # Convert rows to dicts
                 self._data = [dict(row) for row in rows]
                 self._index = {}
                 self._loaded_at = time.time()
-                
+
                 logger.debug(f"RAMCache '{self.name}': Loaded {len(self._data)} items")
                 return len(self._data)
-                
+
             except Exception as e:
                 logger.error(f"RAMCache '{self.name}': Failed to load - {e}")
                 self._data = []
                 self._index = {}
                 raise
-    
+
     def _ensure_index(self, field: str) -> None:
         """Build index for a field if not exists."""
         if field not in self._index:
@@ -105,13 +105,13 @@ class RAMCache:
             for row in self._data:
                 if field in row:
                     self._index[field][row[field]] = row
-    
+
     def is_valid(self) -> bool:
         """Check if cache is still valid (not expired)."""
         if not self._data:
             return False
         return (time.time() - self._loaded_at) < self.ttl
-    
+
     def _maybe_reload(self) -> None:
         """Reload cache if expired and we have db/query."""
         if not self.is_valid() and self._db and self._query:
@@ -119,13 +119,13 @@ class RAMCache:
                 self.load(self._db, self._query)
             except Exception as e:
                 logger.warning(f"RAMCache '{self.name}': Auto-reload failed - {e}")
-    
+
     def get_all(self) -> List[Dict[str, Any]]:
         """Get all cached items."""
         with self._lock:
             self._maybe_reload()
             return self._data.copy()
-    
+
     def get(self, field: str, value: Any) -> Optional[Dict[str, Any]]:
         """
         Get item by field value.
@@ -141,7 +141,7 @@ class RAMCache:
             self._maybe_reload()
             self._ensure_index(field)
             return self._index.get(field, {}).get(value)
-    
+
     def get_many(self, field: str, values: List[Any]) -> List[Dict[str, Any]]:
         """
         Get multiple items by field values.
@@ -158,7 +158,7 @@ class RAMCache:
             self._ensure_index(field)
             index = self._index.get(field, {})
             return [index[v] for v in values if v in index]
-    
+
     def filter(self, predicate: Callable[[Dict[str, Any]], bool]) -> List[Dict[str, Any]]:
         """
         Filter items by predicate function.
@@ -172,13 +172,13 @@ class RAMCache:
         with self._lock:
             self._maybe_reload()
             return [row for row in self._data if predicate(row)]
-    
+
     def invalidate(self) -> None:
         """Invalidate cache (force reload on next access)."""
         with self._lock:
             self._loaded_at = 0
             logger.debug(f"RAMCache '{self.name}': Invalidated")
-    
+
     def clear(self) -> None:
         """Clear all cached data."""
         with self._lock:
@@ -186,7 +186,7 @@ class RAMCache:
             self._index = {}
             self._loaded_at = 0
             logger.debug(f"RAMCache '{self.name}': Cleared")
-    
+
     def stats(self) -> Dict[str, Any]:
         """Get cache statistics."""
         with self._lock:

@@ -9,7 +9,7 @@ import time
 import hashlib
 import mimetypes
 import uuid
-from typing import Optional, List, Dict, Any, BinaryIO, Tuple
+from typing import Optional, Dict, Any, BinaryIO, Tuple
 
 import utils.config as config
 import utils.logger as logger
@@ -19,12 +19,9 @@ from .models import (
     MediaFile,
     MediaType,
     StorageBackend,
-    Thumbnail,
-    ThumbnailSize,
     ScanStatus,
     UploadResult,
     AttachmentData,
-    ImageMetadata,
     VideoMetadata,
     SignedUrl,
     ProxiedContent,
@@ -34,9 +31,7 @@ from .exceptions import (
     FileUploadError,
     FileSizeError,
     FileTypeError,
-    StorageError,
     ImageProcessingError,
-    VideoProcessingError,
     PermissionDeniedError,
 )
 from .schema import create_tables
@@ -77,7 +72,7 @@ class MediaManager:
         self._db = db
         self._messaging = messaging_module
         self._config = self._load_config()
-        
+
         self._storage = self._init_storage()
         self._db_storage = self._init_db_storage()  # For auto-routing
         self._image_processor = self._init_image_processor()
@@ -85,10 +80,10 @@ class MediaManager:
         self._url_signer = self._init_url_signer()
         self._scanner = self._init_scanner()
         self._proxy = self._init_proxy()
-        
+
         create_tables(db)
         self._ensure_rate_limit_table()
-        
+
         logger.info("Media module initialized")
 
     def _load_config(self) -> Dict[str, Any]:
@@ -128,9 +123,9 @@ class MediaManager:
                 "max_total_size_per_day": 512 * 1024 * 1024  # 512MB
             }
         }
-        
+
         media_config = config.get("media", {})
-        
+
         merged = defaults.copy()
         for key, value in media_config.items():
             if key in merged:
@@ -141,13 +136,13 @@ class MediaManager:
             else:
                 # Allow additional config keys
                 merged[key] = value
-        
+
         return merged
 
     def _init_storage(self) -> StorageBackendBase:
         """Initialize primary storage backend."""
         backend = self._config.get("storage_backend", "local")
-        
+
         if backend == "s3":
             return S3Storage(
                 bucket=self._config["s3_bucket"],
@@ -173,7 +168,7 @@ class MediaManager:
         """Initialize database storage for auto-routing (if enabled and not primary)."""
         auto_route = self._config.get("auto_route_to_database", {})
         primary_backend = self._config.get("storage_backend", "local")
-        
+
         # Only create separate DB storage if auto-routing is enabled and DB isn't primary
         if auto_route.get("enabled", False) and primary_backend != "database":
             return DatabaseStorage(
@@ -204,14 +199,14 @@ class MediaManager:
         """Check if file should be auto-routed to database storage."""
         if not self._db_storage:
             return False
-        
+
         auto_route = self._config.get("auto_route_to_database", {})
         if not auto_route.get("enabled", False):
             return False
-        
+
         max_size = auto_route.get("max_size", 512 * 1024)
         allowed_types = auto_route.get("content_types", [])
-        
+
         return size <= max_size and content_type.lower() in allowed_types
 
     def _get_storage_for_file(self, content_type: str, size: int) -> Tuple[StorageBackendBase, str]:
@@ -230,24 +225,24 @@ class MediaManager:
         rate_config = self._config.get("rate_limit", {})
         if not rate_config.get("enabled", True):
             return
-        
+
         now = self._get_timestamp()
         now_seconds = now // 1000
-        
+
         # Check per-minute limit
         minute_window = now_seconds - (now_seconds % 60)
         minute_count = self._get_rate_limit_count(user_id, "minute", minute_window)
         max_per_minute = rate_config.get("uploads_per_minute", 10)
         if minute_count >= max_per_minute:
             raise MediaError(f"Rate limit exceeded: max {max_per_minute} uploads per minute")
-        
+
         # Check per-hour limit
         hour_window = now_seconds - (now_seconds % 3600)
         hour_count = self._get_rate_limit_count(user_id, "hour", hour_window)
         max_per_hour = rate_config.get("uploads_per_hour", 100)
         if hour_count >= max_per_hour:
             raise MediaError(f"Rate limit exceeded: max {max_per_hour} uploads per hour")
-        
+
         # Check daily size limit
         day_window = now_seconds - (now_seconds % 86400)
         day_size = self._get_rate_limit_size(user_id, "day", day_window)
@@ -281,22 +276,22 @@ class MediaManager:
         rate_config = self._config.get("rate_limit", {})
         if not rate_config.get("enabled", True):
             return
-        
+
         now_seconds = self._get_timestamp() // 1000
-        
+
         windows = [
             ("minute", now_seconds - (now_seconds % 60)),
             ("hour", now_seconds - (now_seconds % 3600)),
             ("day", now_seconds - (now_seconds % 86400)),
         ]
-        
+
         for window_type, window_start in windows:
             existing = self._db.fetch_one(
                 """SELECT upload_count, total_size FROM media_rate_limits 
                    WHERE user_id = ? AND window_type = ? AND window_start = ?""",
                 (user_id, window_type, window_start)
             )
-            
+
             if existing:
                 self._db.execute(
                     """UPDATE media_rate_limits 
@@ -311,7 +306,7 @@ class MediaManager:
                        VALUES (?, ?, ?, 1, ?)""",
                     (user_id, window_type, window_start, file_size)
                 )
-        
+
         # Cleanup old rate limit entries (older than 2 days)
         cutoff = now_seconds - 172800
         self._db.execute(
@@ -358,7 +353,7 @@ class MediaManager:
         """Initialize external proxy."""
         if not self._config.get("proxy_enabled", True):
             return None
-        
+
         try:
             return ExternalProxy(
                 storage_backend=self._storage,
@@ -407,7 +402,7 @@ class MediaManager:
         """
         if len(file_data) < 12:
             return True  # Too small to validate, allow through
-        
+
         # Magic byte signatures for common file types
         magic_signatures = {
             # Images
@@ -435,19 +430,19 @@ class MediaManager:
             "text/csv": [],
             "application/json": [],
         }
-        
+
         ct_lower = content_type.lower()
-        
+
         # If we don't have signatures for this type, allow through
         if ct_lower not in magic_signatures:
             return True
-        
+
         signatures = magic_signatures[ct_lower]
-        
+
         # Text types have no magic bytes
         if not signatures:
             return True
-        
+
         # Check if file starts with any valid signature
         for sig in signatures:
             if file_data[:len(sig)] == sig:
@@ -455,14 +450,14 @@ class MediaManager:
             # Special case for MP4/MOV - ftyp can be at offset 4
             if ct_lower in ("video/mp4", "video/quicktime") and b"ftyp" in file_data[:12]:
                 return True
-        
+
         return False
 
     def _validate_content_type(self, content_type: str, media_type: MediaType):
         """Validate content type is allowed."""
         allowed = self._config.get("allowed_types", DEFAULT_ALLOWED_TYPES)
         type_key = media_type.value
-        
+
         if type_key in allowed:
             if content_type.lower() not in allowed[type_key]:
                 raise FileTypeError(
@@ -476,7 +471,7 @@ class MediaManager:
         limits = self._config.get("size_limits", DEFAULT_SIZE_LIMITS)
         type_key = media_type.value
         max_size = limits.get(type_key, limits.get("other", 10 * 1024 * 1024))
-        
+
         if size > max_size:
             raise FileSizeError(
                 f"File size {size} exceeds limit {max_size}",
@@ -489,10 +484,10 @@ class MediaManager:
         ext = os.path.splitext(filename)[1].lower() or ".bin"
         unique_id = uuid.uuid4().hex[:16]
         timestamp = int(time.time())
-        
+
         type_dir = media_type.value
         date_dir = time.strftime("%Y/%m/%d")
-        
+
         return f"{type_dir}/{date_dir}/{unique_id}{ext}"
 
     def _compute_checksum(self, data: bytes) -> str:
@@ -521,13 +516,13 @@ class MediaManager:
         if not content_type:
             content_type, _ = mimetypes.guess_type(filename)
             content_type = content_type or "application/octet-stream"
-        
+
         media_type = self._detect_media_type(content_type)
         file_size = len(file_data)
-        
+
         self._validate_content_type(content_type, media_type)
         self._validate_file_size(file_size, media_type)
-        
+
         # SECURITY: Validate magic bytes match content type (prevents MIME spoofing)
         if not self._validate_magic_bytes(file_data, content_type):
             logger.warning(f"Magic byte validation failed for {filename} (claimed: {content_type})")
@@ -536,16 +531,16 @@ class MediaManager:
                 content_type,
                 ["File signature mismatch - content does not match declared MIME type"]
             )
-        
+
         # Check rate limits before proceeding
         self._check_rate_limit(user_id, file_size)
-        
+
         # SECURITY: Check for blocked/duplicate content using deduplication module
         try:
             from .deduplication import DeduplicationManager
             dedup_manager = DeduplicationManager(self._db)
             dedup_result = dedup_manager.check_duplicate(file_data, content_type)
-            
+
             if dedup_result.is_blocked:
                 logger.warning(f"Blocked content upload attempt by user {user_id}: {dedup_result.block_reason}")
                 raise FileUploadError(
@@ -557,10 +552,10 @@ class MediaManager:
         except Exception as e:
             logger.warning(f"Deduplication check failed: {e}")
             dedup_result = None
-        
+
         scan_status = ScanStatus.SKIPPED
         scan_result = None
-        
+
         if self._scanner and self._scanner.is_available():
             try:
                 scan_status, scan_result = self._scanner.scan_bytes(file_data)
@@ -570,7 +565,7 @@ class MediaManager:
                 logger.warning(f"Scan failed: {e}")
                 scan_status = ScanStatus.ERROR
                 scan_result = str(e)
-        
+
         # OPTIMIZATION: Apply compression if enabled
         compressed_data = file_data
         compression_applied = False
@@ -592,22 +587,22 @@ class MediaManager:
             pass
         except Exception as e:
             logger.warning(f"Compression failed, using original: {e}")
-        
+
         # Use compressed data for storage
         final_data = compressed_data
         final_size = len(final_data)
-        
+
         # Determine storage backend (auto-routing for small text files)
         storage, storage_backend = self._get_storage_for_file(content_type, final_size)
-        
+
         storage_path = self._generate_storage_path(filename, media_type)
         checksum = self._compute_checksum(final_data)
-        
+
         storage.store(final_data, storage_path, content_type)
-        
+
         file_id = self._generate_id()
         now = self._get_timestamp()
-        
+
         metadata = {}
         if media_type == MediaType.IMAGE and self._image_processor:
             try:
@@ -632,10 +627,10 @@ class MediaManager:
                 }
             except Exception as e:
                 logger.warning(f"Failed to extract video metadata: {e}")
-        
+
         import json
         metadata_json = json.dumps(metadata) if metadata else None
-        
+
         self._db.execute(
             """INSERT INTO media_files
                (id, filename, original_filename, content_type, size, media_type,
@@ -659,7 +654,7 @@ class MediaManager:
                 scan_result,
             )
         )
-        
+
         # Register file hash for deduplication tracking
         if dedup_result:
             try:
@@ -673,19 +668,19 @@ class MediaManager:
                 )
             except Exception as e:
                 logger.warning(f"Failed to register file hash: {e}")
-        
+
         # Update rate limit counters
         self._update_rate_limit(user_id, final_size)
-        
+
         thumbnails = {}
         if media_type == MediaType.IMAGE and self._image_processor:
             thumbnails = self._generate_thumbnails(file_id, final_data)
-        
+
         url = storage.get_url(storage_path)
-        
+
         compression_info = f", compressed from {file_size}" if compression_applied else ""
         logger.debug(f"File {file_id} uploaded by user {user_id}: {filename} (backend: {storage_backend}, size: {final_size}{compression_info})")
-        
+
         return UploadResult(
             file_id=file_id,
             filename=filename,
@@ -719,17 +714,17 @@ class MediaManager:
             UploadResult with file info and URLs
         """
         media_type = self._detect_media_type(content_type)
-        
+
         self._validate_content_type(content_type, media_type)
         self._validate_file_size(size, media_type)
-        
+
         storage_path = self._generate_storage_path(filename, media_type)
-        
+
         self._storage.store_stream(stream, storage_path, content_type, size)
-        
+
         file_id = self._generate_id()
         now = self._get_timestamp()
-        
+
         self._db.execute(
             """INSERT INTO media_files
                (id, filename, original_filename, content_type, size, media_type,
@@ -753,11 +748,11 @@ class MediaManager:
                 None,
             )
         )
-        
+
         url = self._storage.get_url(storage_path)
-        
+
         logger.debug(f"File {file_id} uploaded via stream by user {user_id}: {filename}")
-        
+
         return UploadResult(
             file_id=file_id,
             filename=filename,
@@ -772,31 +767,31 @@ class MediaManager:
         """Generate thumbnails for image."""
         if not self._image_processor:
             return {}
-        
+
         sizes = self._config.get("thumbnail_sizes", DEFAULT_THUMBNAIL_SIZES)
         thumbnails = {}
-        
+
         try:
             results = self._image_processor.create_thumbnails(image_data, sizes)
-            
+
             for size, (thumb_data, width, height) in results.items():
                 thumb_path = f"thumbnails/{file_id}/{size}.jpg"
                 self._storage.store(thumb_data, thumb_path, "image/jpeg")
-                
+
                 thumb_id = self._generate_id()
                 now = self._get_timestamp()
-                
+
                 self._db.execute(
                     """INSERT INTO media_thumbnails
                        (id, media_file_id, size, width, height, storage_path, created_at)
                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
                     (thumb_id, file_id, size, width, height, thumb_path, now)
                 )
-                
+
                 thumbnails[size] = self._storage.get_url(thumb_path)
         except Exception as e:
             logger.warning(f"Failed to generate thumbnails: {e}")
-        
+
         return thumbnails
 
     def get_file(self, file_id: int) -> Optional[MediaFile]:
@@ -805,10 +800,10 @@ class MediaManager:
             "SELECT * FROM media_files WHERE id = ? AND deleted = 0",
             (file_id,)
         )
-        
+
         if not row:
             return None
-        
+
         return self._row_to_media_file(row)
 
     def get_file_data(self, file_id: int) -> Tuple[bytes, str]:
@@ -824,7 +819,7 @@ class MediaManager:
         file = self.get_file(file_id)
         if not file:
             raise MediaError("File not found")
-        
+
         # Use the correct storage backend for this file
         storage = self._get_storage_by_backend(file.storage_backend.value)
         data = storage.retrieve(file.storage_path)
@@ -844,19 +839,19 @@ class MediaManager:
         file = self.get_file(file_id)
         if not file:
             return False
-        
+
         if file.uploaded_by != user_id:
             raise PermissionDeniedError("Can only delete own files")
-        
+
         now = self._get_timestamp()
-        
+
         self._db.execute(
             "UPDATE media_files SET deleted = 1, deleted_at = ? WHERE id = ?",
             (now, file_id)
         )
-        
+
         logger.debug(f"File {file_id} deleted by user {user_id}")
-        
+
         return True
 
     def upload_attachment(
@@ -879,12 +874,12 @@ class MediaManager:
             AttachmentData compatible with messaging module
         """
         result = self.upload_file(user_id, file_data, filename, content_type)
-        
+
         metadata = result.metadata or {}
         if result.thumbnails:
             metadata["thumbnails"] = result.thumbnails
         metadata["file_id"] = result.file_id
-        
+
         return AttachmentData(
             filename=result.filename,
             content_type=result.content_type,
@@ -906,22 +901,22 @@ class MediaManager:
         rate_config = self._config.get("rate_limit", {})
         if not rate_config.get("enabled", True):
             return {"enabled": False}
-        
+
         now_seconds = self._get_timestamp() // 1000
-        
+
         # Get current window stats
         minute_window = now_seconds - (now_seconds % 60)
         hour_window = now_seconds - (now_seconds % 3600)
         day_window = now_seconds - (now_seconds % 86400)
-        
+
         minute_count = self._get_rate_limit_count(user_id, "minute", minute_window)
         hour_count = self._get_rate_limit_count(user_id, "hour", hour_window)
         day_size = self._get_rate_limit_size(user_id, "day", day_window)
-        
+
         max_per_minute = rate_config.get("uploads_per_minute", 10)
         max_per_hour = rate_config.get("uploads_per_hour", 100)
         max_daily_size = rate_config.get("max_total_size_per_day", 512 * 1024 * 1024)
-        
+
         return {
             "enabled": True,
             "minute": {
@@ -962,7 +957,7 @@ class MediaManager:
         file = self.get_file(file_id)
         if not file:
             raise MediaError("File not found")
-        
+
         url = self._storage.get_url(file.storage_path)
         return self._url_signer.sign_url(url, file_id, expires_in)
 
@@ -984,7 +979,7 @@ class MediaManager:
             "SELECT * FROM media_thumbnails WHERE media_file_id = ?",
             (file_id,)
         )
-        
+
         return {
             row["size"]: self._storage.get_url(row["storage_path"])
             for row in rows
@@ -999,30 +994,30 @@ class MediaManager:
         """
         img_config = self._config.get("image_processing", {})
         max_per_minute = img_config.get("max_thumbnail_requests_per_minute", 60)
-        
+
         if max_per_minute <= 0:
             return  # Rate limiting disabled
-        
+
         now_seconds = int(time.time())
         minute_window = now_seconds - (now_seconds % 60)
-        
+
         # Use a separate rate limit key for thumbnails
         row = self._db.fetch_one(
             """SELECT upload_count FROM media_rate_limits 
                WHERE user_id = ? AND window_type = 'thumbnail_minute' AND window_start = ?""",
             (user_id, minute_window)
         )
-        
+
         current_count = row["upload_count"] if row else 0
-        
+
         if current_count >= max_per_minute:
             raise MediaError(f"Thumbnail rate limit exceeded: max {max_per_minute} per minute")
-    
+
     def _update_thumbnail_rate_limit(self, user_id: int) -> None:
         """Update thumbnail rate limit counter."""
         now_seconds = int(time.time())
         minute_window = now_seconds - (now_seconds % 60)
-        
+
         self._db.upsert(
             table="media_rate_limits",
             columns=["user_id", "window_type", "window_start", "upload_count", "total_size"],
@@ -1058,43 +1053,43 @@ class MediaManager:
         file = self.get_file(file_id)
         if not file or file.media_type != MediaType.IMAGE:
             return None
-        
+
         if not self._image_processor:
             return None
-        
+
         # Check rate limit if user_id provided
         if user_id is not None:
             self._check_thumbnail_rate_limit(user_id)
-        
+
         existing = self._db.fetch_one(
             "SELECT * FROM media_thumbnails WHERE media_file_id = ? AND size = ?",
             (file_id, size)
         )
-        
+
         if existing:
             return self._storage.get_url(existing["storage_path"])
-        
+
         try:
             image_data = self._storage.retrieve(file.storage_path)
             thumb_data, width, height = self._image_processor.create_thumbnail(image_data, size)
-            
+
             thumb_path = f"thumbnails/{file_id}/{size}.jpg"
             self._storage.store(thumb_data, thumb_path, "image/jpeg")
-            
+
             thumb_id = self._generate_id()
             now = self._get_timestamp()
-            
+
             self._db.execute(
                 """INSERT INTO media_thumbnails
                    (id, media_file_id, size, width, height, storage_path, created_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (thumb_id, file_id, size, width, height, thumb_path, now)
             )
-            
+
             # Update rate limit counter
             if user_id is not None:
                 self._update_thumbnail_rate_limit(user_id)
-            
+
             return self._storage.get_url(thumb_path)
         except MediaError:
             raise  # Re-raise rate limit errors
@@ -1122,10 +1117,10 @@ class MediaManager:
         file = self.get_file(file_id)
         if not file or file.media_type != MediaType.IMAGE:
             raise MediaError("File not found or not an image")
-        
+
         if not self._image_processor:
             raise ImageProcessingError("Image processing not available", "resize")
-        
+
         image_data = self._storage.retrieve(file.storage_path)
         resized, _, _ = self._image_processor.resize(image_data, width, height)
         return resized
@@ -1148,10 +1143,10 @@ class MediaManager:
         file = self.get_file(file_id)
         if not file or file.media_type != MediaType.IMAGE:
             raise MediaError("File not found or not an image")
-        
+
         if not self._image_processor:
             raise ImageProcessingError("Image processing not available", "convert")
-        
+
         image_data = self._storage.retrieve(file.storage_path)
         return self._image_processor.convert_format(image_data, output_format)
 
@@ -1160,10 +1155,10 @@ class MediaManager:
         file = self.get_file(file_id)
         if not file or file.media_type != MediaType.VIDEO:
             return None
-        
+
         if not self._video_processor or not self._video_processor.is_available():
             return None
-        
+
         try:
             video_data = self._storage.retrieve(file.storage_path)
             return self._video_processor.get_metadata_from_bytes(video_data)
@@ -1184,7 +1179,7 @@ class MediaManager:
         """
         if not self._proxy:
             raise MediaError("Proxy not available")
-        
+
         return self._proxy.fetch(url, force_refresh)
 
     def get_proxied_content(self, url: str) -> Tuple[bytes, str]:
@@ -1199,7 +1194,7 @@ class MediaManager:
         """
         if not self._proxy:
             raise MediaError("Proxy not available")
-        
+
         return self._proxy.get_content(url)
 
     def scan_file(self, file_id: int) -> Tuple[ScanStatus, Optional[str]]:
@@ -1215,18 +1210,18 @@ class MediaManager:
         file = self.get_file(file_id)
         if not file:
             raise MediaError("File not found")
-        
+
         if not self._scanner:
             return ScanStatus.SKIPPED, None
-        
+
         file_data = self._storage.retrieve(file.storage_path)
         status, result = self._scanner.scan_bytes(file_data)
-        
+
         self._db.execute(
             "UPDATE media_files SET scan_status = ?, scan_result = ? WHERE id = ?",
             (status.value, result, file_id)
         )
-        
+
         return status, result
 
     def _get_storage_by_backend(self, backend: str) -> StorageBackendBase:
@@ -1245,18 +1240,18 @@ class MediaManager:
     def _row_to_media_file(self, row) -> MediaFile:
         """Convert database row to MediaFile."""
         import json
-        
+
         metadata = None
         if row["metadata"]:
             try:
                 metadata = json.loads(row["metadata"])
             except Exception:
                 pass
-        
+
         # Get the correct storage for this file's backend
         backend = row["storage_backend"]
         storage = self._get_storage_by_backend(backend)
-        
+
         return MediaFile(
             id=row["id"],
             filename=row["filename"],

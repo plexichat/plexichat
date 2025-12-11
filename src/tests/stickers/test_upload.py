@@ -3,13 +3,10 @@ Tests for sticker upload and management.
 """
 
 import pytest
-import uuid
 from src.core.stickers import (
     StickerNotFoundError,
     InvalidStickerNameError,
-    InvalidStickerFormatError,
     StickerTooLargeError,
-    StickerLimitError,
     StickerFormat,
 )
 

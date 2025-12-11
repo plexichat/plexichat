@@ -85,12 +85,12 @@ async def get_current_user_info(current_user: TokenInfo = Depends(get_current_us
     auth = api.get_auth()
     if not auth:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
-    
+
     try:
         user = _get_user_cached(current_user.user_id)
         if not user:
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
-        
+
         return _user_to_response(user, include_private=True)
     except HTTPException:
         raise
@@ -112,10 +112,10 @@ async def update_current_user(
     db = api.get_db()
     if not auth:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
-    
+
     try:
         update_data = body.model_dump(exclude_unset=True)
-        
+
         if "password" in update_data and update_data["password"]:
             if not update_data.get("current_password"):
                 raise HTTPException(
@@ -130,16 +130,16 @@ async def update_current_user(
             del update_data["password"]
             if "current_password" in update_data:
                 del update_data["current_password"]
-        
+
         if "current_password" in update_data:
             del update_data["current_password"]
-        
+
         # Update profile fields directly in database
         if update_data and db:
             allowed_fields = {"username", "email"}
             updates = []
             params = []
-            
+
             for field, value in update_data.items():
                 if field in allowed_fields and value is not None:
                     # Check for uniqueness of username/email
@@ -163,10 +163,10 @@ async def update_current_user(
                                 status_code=409,
                                 detail={"error": {"code": 409, "message": "Email already taken"}}
                             )
-                    
+
                     updates.append(f"{field} = ?")
                     params.append(value)
-            
+
             if updates:
                 params.append(current_user.user_id)
                 db.execute(
@@ -175,11 +175,11 @@ async def update_current_user(
                 )
                 # Invalidate user cache
                 invalidate_pattern(f"user:*{current_user.user_id}*")
-        
+
         user = auth.get_user(current_user.user_id)
         if not user:
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
-        
+
         return _user_to_response(user, include_private=True)
     except HTTPException:
         raise
@@ -207,30 +207,30 @@ async def upload_avatar(
     Uses the avatars module for processing and storage.
     """
     avatars = api.get_avatars()
-    
+
     if not avatars:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Avatars module not available"}})
-    
+
     # Validate file type
     if not file.content_type or not file.content_type.startswith('image/'):
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "File must be an image"}})
-    
+
     # Read file data
     try:
         file_data = await file.read()
     except Exception as e:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": f"Failed to read file: {str(e)}"}})
-    
+
     try:
         result = avatars.upload_user_avatar(
             user_id=current_user.user_id,
             image_data=file_data,
             content_type=file.content_type
         )
-        
+
         # Invalidate user cache so the new avatar_url is returned immediately
         invalidate_pattern(f"user:*{current_user.user_id}*")
-        
+
         return {
             "success": True,
             "avatar_url": result["url"],
@@ -254,17 +254,17 @@ async def get_notes_channel(current_user: TokenInfo = Depends(get_current_user))
     that sync across devices.
     """
     messaging = api.get_messaging()
-    
+
     if not messaging:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
-    
+
     try:
         # Get or create notes conversation
         if hasattr(messaging, 'get_or_create_notes'):
             channel = messaging.get_or_create_notes(current_user.user_id)
         else:
             raise HTTPException(status_code=501, detail={"error": {"code": 501, "message": "Notes not implemented"}})
-        
+
         return {
             "id": str(channel.id),
             "type": "notes",
@@ -284,10 +284,10 @@ async def get_dm_channels(current_user: TokenInfo = Depends(get_current_user)):
     Get all DM channels for the current user.
     """
     messaging = api.get_messaging()
-    
+
     if not messaging:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
-    
+
     try:
         # Try to get DM conversations if the method exists
         if hasattr(messaging, 'get_dm_channels'):
@@ -299,7 +299,7 @@ async def get_dm_channels(current_user: TokenInfo = Depends(get_current_user)):
         else:
             # DM channels not yet implemented
             return []
-        
+
         auth = api.get_auth()
         result = []
         for ch in (channels or []):
@@ -312,7 +312,7 @@ async def get_dm_channels(current_user: TokenInfo = Depends(get_current_user)):
                         recipient_username = user.username
                 except Exception:
                     pass
-            
+
             result.append({
                 "id": str(ch.id),
                 "type": "dm",
@@ -335,19 +335,19 @@ async def create_dm_channel(body: dict, current_user: TokenInfo = Depends(get_cu
     """
     messaging = api.get_messaging()
     auth = api.get_auth()
-    
+
     if not messaging:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
-    
+
     recipient_id = body.get("recipient_id")
     if not recipient_id:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "recipient_id required"}})
-    
+
     try:
         rid = int(recipient_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid recipient ID"}})
-    
+
     try:
         # Try different method names
         if hasattr(messaging, 'get_or_create_dm'):
@@ -356,7 +356,7 @@ async def create_dm_channel(body: dict, current_user: TokenInfo = Depends(get_cu
             channel = messaging.create_dm(current_user.user_id, rid)
         else:
             raise HTTPException(status_code=501, detail={"error": {"code": 501, "message": "DM creation not implemented"}})
-        
+
         recipient_username = None
         if auth:
             try:
@@ -365,7 +365,7 @@ async def create_dm_channel(body: dict, current_user: TokenInfo = Depends(get_cu
                     recipient_username = user.username
             except Exception:
                 pass
-        
+
         return {
             "id": str(channel.id),
             "type": "dm",
@@ -399,10 +399,10 @@ async def search_user_by_username(
     auth = api.get_auth()
     if not auth:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
-    
+
     if not username:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Username required"}})
-    
+
     try:
         # Try to find user by username
         if hasattr(auth, 'get_user_by_username'):
@@ -423,10 +423,10 @@ async def search_user_by_username(
                         "created_at": row.get("created_at"),
                     }
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
-        
+
         if not user:
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
-        
+
         return _user_to_public_response(user)
     except HTTPException:
         raise
@@ -446,17 +446,17 @@ async def get_user(user_id: str, current_user: TokenInfo = Depends(get_current_u
     auth = api.get_auth()
     if not auth:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
-    
+
     try:
         uid = int(user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid user ID"}})
-    
+
     try:
         user = auth.get_user(uid)
         if not user:
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
-        
+
         return _user_to_public_response(user)
     except HTTPException:
         raise

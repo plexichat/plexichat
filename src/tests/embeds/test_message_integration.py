@@ -74,7 +74,7 @@ class TestAttachEmbedToMessage:
 
         with pytest.raises(EmbedLimitError) as exc_info:
             embeds.attach_embed_to_message(user1.id, msg.id, extra_embed.id)
-        
+
         assert exc_info.value.max_allowed == 10
         assert exc_info.value.current == 10
 
@@ -83,7 +83,7 @@ class TestAttachEmbedToMessage:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"att1_{unique_id}",
             email=f"att1_{unique_id}@example.com",
@@ -174,7 +174,7 @@ class TestRemoveEmbedFromMessage:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"rem1_{unique_id}",
             email=f"rem1_{unique_id}@example.com",
@@ -318,7 +318,7 @@ class TestDeleteEmbed:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"del1_{unique_id}",
             email=f"del1_{unique_id}@example.com",
@@ -348,7 +348,7 @@ class TestDeleteEmbed:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user1 = auth.register(
             username=f"del2_{unique_id}",
             email=f"del2_{unique_id}@example.com",
@@ -370,7 +370,7 @@ class TestDeleteEmbed:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"del4_{unique_id}",
             email=f"del4_{unique_id}@example.com",

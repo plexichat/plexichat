@@ -3,7 +3,6 @@ Tests for FastAPI middleware integration.
 """
 
 import pytest
-import time
 
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient

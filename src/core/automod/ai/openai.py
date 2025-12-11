@@ -18,11 +18,11 @@ from ..exceptions import AIBackendError, AIBackendUnavailableError, AIBackendTim
 
 class OpenAIAdapter(BaseAIAdapter):
     """Adapter for OpenAI Moderation API."""
-    
+
     backend_type = AIBackendType.OPENAI
-    
+
     DEFAULT_API_URL = "https://api.openai.com/v1/moderations"
-    
+
     CATEGORIES = {
         "hate": "Content that expresses hate toward a group",
         "hate/threatening": "Hateful content with threats of violence",
@@ -36,14 +36,14 @@ class OpenAIAdapter(BaseAIAdapter):
         "violence": "Violent content",
         "violence/graphic": "Graphic violent content",
     }
-    
+
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self._api_key = config.get("api_key", "")
         self._api_url = config.get("api_url", self.DEFAULT_API_URL)
         self._model = config.get("model", "text-moderation-latest")
         self._threshold = config.get("threshold", 0.5)
-    
+
     def check_content(self, content: str, context: Optional[Dict[str, Any]] = None) -> AICheckResult:
         """Check content using OpenAI Moderation API."""
         if not self.is_available():
@@ -51,13 +51,13 @@ class OpenAIAdapter(BaseAIAdapter):
                 "OpenAI API key not configured",
                 backend="openai"
             )
-        
+
         try:
             request_data = json.dumps({
                 "input": content,
                 "model": self._model
             }).encode("utf-8")
-            
+
             request = Request(
                 self._api_url,
                 data=request_data,
@@ -67,12 +67,12 @@ class OpenAIAdapter(BaseAIAdapter):
                 },
                 method="POST"
             )
-            
+
             with urlopen(request, timeout=self._timeout) as response:
                 response_data = json.loads(response.read().decode("utf-8"))
-            
+
             return self._parse_response(response_data)
-            
+
         except HTTPError as e:
             logger.error(f"OpenAI API HTTP error: {e.code} - {e.reason}")
             raise AIBackendError(
@@ -97,30 +97,30 @@ class OpenAIAdapter(BaseAIAdapter):
                 "Failed to parse OpenAI API response",
                 backend="openai"
             )
-    
+
     def _parse_response(self, response: Dict[str, Any]) -> AICheckResult:
         """Parse OpenAI moderation response."""
         results = response.get("results", [{}])[0]
-        
+
         categories = results.get("categories", {})
         scores = results.get("category_scores", {})
         flagged = results.get("flagged", False)
-        
+
         flagged_categories = {
             cat: flagged_val
             for cat, flagged_val in categories.items()
         }
-        
+
         category_scores = {
             cat: score
             for cat, score in scores.items()
         }
-        
+
         above_threshold = any(
             score >= self._threshold
             for score in category_scores.values()
         )
-        
+
         return AICheckResult(
             flagged=flagged or above_threshold,
             categories=flagged_categories,
@@ -128,11 +128,11 @@ class OpenAIAdapter(BaseAIAdapter):
             backend=self.backend_type or AIBackendType.OPENAI,
             raw_response=response
         )
-    
+
     def is_available(self) -> bool:
         """Check if OpenAI API is configured."""
         return bool(self._api_key)
-    
+
     def get_categories(self) -> Dict[str, str]:
         """Get OpenAI moderation categories."""
         return self.CATEGORIES.copy()

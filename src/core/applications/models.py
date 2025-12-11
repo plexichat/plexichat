@@ -114,7 +114,7 @@ class Application:
     interactions_endpoint_url: Optional[str]
     created_at: int
     updated_at: int
-    
+
     client_secret: Optional[str] = field(default=None, repr=False)
     client_secret_hash: Optional[str] = field(default=None, repr=False)
 
@@ -193,7 +193,7 @@ class Interaction:
     server_locale: Optional[str]
     created_at: int
     responded: bool = False
-    
+
     token_hash: Optional[str] = field(default=None, repr=False)
 
 
@@ -286,7 +286,7 @@ class OAuth2Token:
     expires_at: int
     created_at: int
     revoked: bool = False
-    
+
     access_token: Optional[str] = field(default=None, repr=False)
     refresh_token: Optional[str] = field(default=None, repr=False)
 
@@ -303,7 +303,7 @@ class OAuth2AuthorizationCode:
     expires_at: int
     created_at: int
     used: bool = False
-    
+
     code: Optional[str] = field(default=None, repr=False)
 
 

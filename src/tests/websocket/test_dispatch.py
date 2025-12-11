@@ -1,12 +1,10 @@
 """Tests for gateway event dispatching."""
 
 import pytest
-import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 from src.api.websocket.opcodes import GatewayOpcode
 from src.api.websocket.connection import Connection, ConnectionState
-from src.api.websocket.dispatcher import GatewayDispatcher
 from src.core import events
 from src.core.events.types import GatewayIntent
 

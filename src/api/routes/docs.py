@@ -8,16 +8,14 @@ This module provides a configurable documentation server that:
 - Supports caching, theming, and logging
 """
 
-import os
 import re
 import time
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 from dataclasses import dataclass, field
 
-from fastapi import APIRouter, HTTPException, Request, Response, Depends
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, Field
 
 import utils.logger as logger
 import utils.config as config
@@ -131,7 +129,7 @@ def _load_docs_config() -> DocsConfig:
         docs_conf = config.get("docs", {})
     except RuntimeError:
         docs_conf = {}
-    
+
     # Theme
     theme_conf = docs_conf.get("theme", {})
     theme = ThemeConfig(
@@ -144,7 +142,7 @@ def _load_docs_config() -> DocsConfig:
         font_family=theme_conf.get("font_family", "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"),
         code_font=theme_conf.get("code_font", "'Fira Code', 'Consolas', monospace"),
     )
-    
+
     # Rate limit
     rl_conf = docs_conf.get("rate_limit", {})
     rate_limit = RateLimitConfig(
@@ -155,7 +153,7 @@ def _load_docs_config() -> DocsConfig:
         per_ip=rl_conf.get("per_ip", True),
         whitelist=rl_conf.get("whitelist", []),
     )
-    
+
     # Cache
     cache_conf = docs_conf.get("cache", {})
     cache = CacheConfig(
@@ -165,7 +163,7 @@ def _load_docs_config() -> DocsConfig:
         cache_html=cache_conf.get("cache_html", True),
         max_entries=cache_conf.get("max_entries", 100),
     )
-    
+
     # Logging
     log_conf = docs_conf.get("logging", {})
     logging_config = LoggingConfig(
@@ -176,7 +174,7 @@ def _load_docs_config() -> DocsConfig:
         log_cache_hits=log_conf.get("log_cache_hits", False),
         log_client_ip=log_conf.get("log_client_ip", True),
     )
-    
+
     # Security
     sec_conf = docs_conf.get("security", {})
     security = SecurityConfig(
@@ -184,7 +182,7 @@ def _load_docs_config() -> DocsConfig:
         block_traversal=sec_conf.get("block_traversal", True),
         require_auth=sec_conf.get("require_auth", False),
     )
-    
+
     # Navigation
     nav_conf = docs_conf.get("navigation", {})
     nav_items = []
@@ -204,7 +202,7 @@ def _load_docs_config() -> DocsConfig:
         show_nav=nav_conf.get("show_nav", True),
         items=nav_items,
     )
-    
+
     # Features
     feat_conf = docs_conf.get("features", {})
     features = FeaturesConfig(
@@ -214,7 +212,7 @@ def _load_docs_config() -> DocsConfig:
         show_last_updated=feat_conf.get("show_last_updated", True),
         syntax_highlighting=feat_conf.get("syntax_highlighting", True),
     )
-    
+
     return DocsConfig(
         enabled=docs_conf.get("enabled", True),
         path=docs_conf.get("path", "/docs/api"),
@@ -260,7 +258,7 @@ def get_api_rate_limits() -> Dict[str, Any]:
             DEFAULT_GLOBAL_LIMIT,
             DEFAULT_USER_LIMIT,
         )
-        
+
         limits = {
             "global": {
                 "requests": DEFAULT_GLOBAL_LIMIT.requests,
@@ -278,7 +276,7 @@ def get_api_rate_limits() -> Dict[str, Any]:
             },
             "routes": {}
         }
-        
+
         for route, cfg in DEFAULT_ROUTE_LIMITS.items():
             limits["routes"][route] = {
                 "requests": cfg.requests,
@@ -288,7 +286,7 @@ def get_api_rate_limits() -> Dict[str, Any]:
                 "hourly_limit": getattr(cfg, 'hourly_limit', None),
                 "daily_limit": getattr(cfg, 'daily_limit', None),
             }
-        
+
         return limits
     except ImportError:
         return {}
@@ -302,13 +300,13 @@ def get_app_config() -> Dict[str, Any]:
     try:
         app_conf = config.get("application", {})
         auth_conf = config.get("authentication", {})
-        
+
         import utils.version as version
         try:
             current_ver = version.current_string()
         except RuntimeError:
             current_ver = "unknown"
-        
+
         return {
             "name": app_conf.get("name", "PlexiChat"),
             "version": current_ver,
@@ -338,28 +336,28 @@ def _check_rate_limit(request: Request, conf: DocsConfig) -> bool:
     """Check if request is rate limited."""
     if not conf.rate_limit.enabled:
         return True
-    
+
     client_ip = request.client.host if request.client else "unknown"
-    
+
     # Check whitelist
     if client_ip in conf.rate_limit.whitelist:
         return True
-    
+
     now = time.time()
     window_start = now - conf.rate_limit.window_seconds
-    
+
     if client_ip not in _request_counts:
         _request_counts[client_ip] = []
-    
+
     # Clean old entries
     _request_counts[client_ip] = [
         ts for ts in _request_counts[client_ip] if ts > window_start
     ]
-    
+
     # Check limit
     if len(_request_counts[client_ip]) >= conf.rate_limit.requests:
         return False
-    
+
     # Record request
     _request_counts[client_ip].append(now)
     return True
@@ -378,12 +376,12 @@ def _validate_path(path: str, conf: DocsConfig) -> bool:
     """Validate a file path for security."""
     if conf.security.block_traversal and ".." in path:
         return False
-    
+
     # Check extension
     ext = Path(path).suffix.lower()
     if ext and ext not in conf.security.allowed_extensions:
         return False
-    
+
     return True
 
 
@@ -391,7 +389,7 @@ def _read_markdown_file(file_path: Path, conf: DocsConfig) -> Optional[str]:
     """Read a markdown file with caching."""
     path_str = str(file_path)
     now = time.time()
-    
+
     # Check cache
     if conf.cache.enabled and conf.cache.cache_markdown and path_str in _docs_cache:
         content, timestamp = _docs_cache[path_str]
@@ -399,14 +397,14 @@ def _read_markdown_file(file_path: Path, conf: DocsConfig) -> Optional[str]:
             if conf.logging.log_cache_hits:
                 logger.debug(f"Cache hit for {path_str}")
             return content
-    
+
     # Read file
     if not file_path.exists() or not file_path.is_file():
         return None
-    
+
     try:
         content = file_path.read_text(encoding="utf-8")
-        
+
         # Manage cache size
         if conf.cache.enabled and conf.cache.cache_markdown:
             if len(_docs_cache) >= conf.cache.max_entries:
@@ -414,7 +412,7 @@ def _read_markdown_file(file_path: Path, conf: DocsConfig) -> Optional[str]:
                 oldest_key = min(_docs_cache.keys(), key=lambda k: _docs_cache[k][1])
                 del _docs_cache[oldest_key]
             _docs_cache[path_str] = (content, now)
-        
+
         return content
     except Exception as e:
         if conf.logging.log_errors:
@@ -427,10 +425,10 @@ def _generate_dynamic_rate_limits_content() -> str:
     limits = get_api_rate_limits()
     app_config = get_app_config()
     docs_conf = get_docs_config()
-    
+
     if not limits:
         return ""
-    
+
     content = f"""# Rate Limits
 
 PlexiChat uses rate limiting to ensure fair usage and protect the API from abuse.
@@ -453,14 +451,14 @@ PlexiChat uses rate limiting to ensure fair usage and protect the API from abuse
 | Per Second | {limits.get('global', {}).get('requests', 50)} | {limits.get('global', {}).get('window_seconds', 1)}s | {limits.get('global', {}).get('burst', 10)} | {limits.get('global', {}).get('algorithm', 'token_bucket')} |
 
 """
-    
+
     # Group routes by category
     auth_routes = {}
     message_routes = {}
     user_routes = {}
     server_routes = {}
     other_routes = {}
-    
+
     for route, cfg in limits.get('routes', {}).items():
         if '/auth/' in route:
             auth_routes[route] = cfg
@@ -472,7 +470,7 @@ PlexiChat uses rate limiting to ensure fair usage and protect the API from abuse
             server_routes[route] = cfg
         else:
             other_routes[route] = cfg
-    
+
     if auth_routes:
         content += "## Authentication Endpoints\n\n"
         content += "| Endpoint | Requests | Window | Burst | Hourly | Daily |\n"
@@ -482,7 +480,7 @@ PlexiChat uses rate limiting to ensure fair usage and protect the API from abuse
             daily = cfg.get('daily_limit') or '-'
             content += f"| {route} | {cfg['requests']} | {cfg['window_seconds']}s | {cfg['burst']} | {hourly} | {daily} |\n"
         content += "\n"
-    
+
     if message_routes:
         content += "## Message & Channel Endpoints\n\n"
         content += "| Endpoint | Requests | Window | Burst | Algorithm |\n"
@@ -490,7 +488,7 @@ PlexiChat uses rate limiting to ensure fair usage and protect the API from abuse
         for route, cfg in message_routes.items():
             content += f"| {route} | {cfg['requests']} | {cfg['window_seconds']}s | {cfg['burst']} | {cfg['algorithm']} |\n"
         content += "\n"
-    
+
     if user_routes:
         content += "## User Endpoints\n\n"
         content += "| Endpoint | Requests | Window | Burst | Hourly |\n"
@@ -499,7 +497,7 @@ PlexiChat uses rate limiting to ensure fair usage and protect the API from abuse
             hourly = cfg.get('hourly_limit') or '-'
             content += f"| {route} | {cfg['requests']} | {cfg['window_seconds']}s | {cfg['burst']} | {hourly} |\n"
         content += "\n"
-    
+
     if server_routes:
         content += "## Server Endpoints\n\n"
         content += "| Endpoint | Requests | Window | Burst | Daily |\n"
@@ -508,7 +506,7 @@ PlexiChat uses rate limiting to ensure fair usage and protect the API from abuse
             daily = cfg.get('daily_limit') or '-'
             content += f"| {route} | {cfg['requests']} | {cfg['window_seconds']}s | {cfg['burst']} | {daily} |\n"
         content += "\n"
-    
+
     if other_routes:
         content += "## Other Endpoints\n\n"
         content += "| Endpoint | Requests | Window | Burst | Algorithm |\n"
@@ -516,11 +514,11 @@ PlexiChat uses rate limiting to ensure fair usage and protect the API from abuse
         for route, cfg in other_routes.items():
             content += f"| {route} | {cfg['requests']} | {cfg['window_seconds']}s | {cfg['burst']} | {cfg['algorithm']} |\n"
         content += "\n"
-    
+
     # Add hourly/daily limits section
     user_hourly = limits.get('user', {}).get('hourly_limit')
     user_daily = limits.get('user', {}).get('daily_limit')
-    
+
     if user_hourly or user_daily:
         content += "## User Aggregate Limits\n\n"
         content += "| Scope | Limit |\n"
@@ -530,7 +528,7 @@ PlexiChat uses rate limiting to ensure fair usage and protect the API from abuse
         if user_daily:
             content += f"| Daily | {user_daily} requests |\n"
         content += "\n"
-    
+
     content += """## Rate Limit Headers
 
 All responses include rate limit information:
@@ -602,7 +600,7 @@ WebSocket connections have separate limits:
 
 Exceeding WebSocket rate limits results in close code 4008 (RATE_LIMITED).
 """
-    
+
     return content
 
 
@@ -610,32 +608,32 @@ def _build_nav_html(conf: DocsConfig, current_path: str = "") -> str:
     """Build navigation HTML from config."""
     if not conf.navigation.show_nav:
         return ""
-    
+
     nav_items = []
     for item in conf.navigation.items:
         active = "active" if item.path == current_path else ""
         nav_items.append(f'<a href="{conf.path}{item.path}" class="{active}">{item.label}</a>')
-    
+
     return f'<nav class="nav">{" ".join(nav_items)}</nav>'
 
 
 def _build_footer_html(conf: DocsConfig) -> str:
     """Build footer HTML."""
     parts = []
-    
+
     if conf.features.show_version:
         app_config = get_app_config()
         version = app_config.get("version", "unknown")
         parts.append(f"<span>API Version: {version}</span>")
-    
+
     if conf.features.show_last_updated:
         import datetime
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
         parts.append(f"<span>Generated: {now}</span>")
-    
+
     if not parts:
         return ""
-    
+
     return f'<footer class="footer">{" | ".join(parts)}</footer>'
 
 
@@ -643,23 +641,23 @@ def _convert_markdown_links(text: str, conf: DocsConfig, current_path: str = "")
     """Convert markdown links to proper HTML links with correct paths."""
     # Pattern to match markdown links: [text](url)
     link_pattern = r'\[([^\]]+)\]\(([^)]+)\)'
-    
+
     def replace_link(match):
         link_text = match.group(1)
         link_url = match.group(2)
-        
+
         # Skip external links and anchors
         if link_url.startswith(('http://', 'https://', '#', 'mailto:')):
             return f'<a href="{link_url}">{link_text}</a>'
-        
+
         # Convert .md links to proper paths
         if link_url.endswith('.md'):
             link_url = link_url[:-3]  # Remove .md extension
-        
+
         # Handle relative paths
         if link_url.startswith('./'):
             link_url = link_url[2:]
-        
+
         # Map file paths to URL paths
         path_mappings = {
             'getting-started': '/getting-started',
@@ -670,7 +668,7 @@ def _convert_markdown_links(text: str, conf: DocsConfig, current_path: str = "")
             'api/index': '/reference',
             'websocket/index': '/websocket',
         }
-        
+
         # Check for direct mapping
         if link_url in path_mappings:
             link_url = path_mappings[link_url]
@@ -689,11 +687,11 @@ def _convert_markdown_links(text: str, conf: DocsConfig, current_path: str = "")
             link_url = f'/websocket/{link_url}'
         else:
             link_url = f'/{link_url}'
-        
+
         # Prepend docs path
         full_url = f'{conf.path}{link_url}'
         return f'<a href="{full_url}">{link_text}</a>'
-    
+
     return re.sub(link_pattern, replace_link, text)
 
 
@@ -701,16 +699,16 @@ def _markdown_to_html(markdown_content: str, title: str, conf: DocsConfig, curre
     """Convert markdown to HTML with configurable styling."""
     import html as html_module
     content = html_module.escape(markdown_content)
-    
+
     # Convert markdown links before processing lines
     content = _convert_markdown_links(content, conf, current_path)
-    
+
     lines = content.split("\n")
     html_lines = []
     in_code_block = False
     in_table = False
     code_lang = ""
-    
+
     for line in lines:
         if line.startswith("```"):
             if not in_code_block:
@@ -721,11 +719,11 @@ def _markdown_to_html(markdown_content: str, title: str, conf: DocsConfig, curre
                 html_lines.append("</code></pre>")
                 in_code_block = False
             continue
-        
+
         if in_code_block:
             html_lines.append(line)
             continue
-        
+
         # Headers
         if line.startswith("### "):
             html_lines.append(f"<h3>{line[4:]}</h3>")
@@ -762,15 +760,15 @@ def _markdown_to_html(markdown_content: str, title: str, conf: DocsConfig, curre
                 html_lines.append("</table>")
                 in_table = False
             html_lines.append("")
-    
+
     if in_table:
         html_lines.append("</table>")
-    
+
     body = "\n".join(html_lines)
     nav_html = _build_nav_html(conf, current_path)
     footer_html = _build_footer_html(conf)
     theme = conf.theme
-    
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -883,7 +881,7 @@ def _log_request(request: Request, path: str, status: int, conf: DocsConfig):
     """Log documentation request."""
     if not conf.logging.enabled or not conf.logging.log_requests:
         return
-    
+
     if conf.logging.log_client_ip:
         client_ip = request.client.host if request.client else "unknown"
         logger.info(f"Docs request: {request.method} {path} from {client_ip} -> {status}")
@@ -894,19 +892,19 @@ def _log_request(request: Request, path: str, status: int, conf: DocsConfig):
 async def _serve_page(request: Request, file_path: Path, title: str, current_path: str = "") -> HTMLResponse:
     """Common page serving logic."""
     conf = get_docs_config()
-    
+
     if not conf.enabled:
         raise HTTPException(status_code=404, detail="Documentation is disabled")
-    
+
     if not _check_rate_limit(request, conf):
         _log_request(request, current_path, 429, conf)
         raise HTTPException(status_code=429, detail="Rate limited")
-    
+
     content = _read_markdown_file(file_path, conf)
     if not content:
         _log_request(request, current_path, 404, conf)
         raise HTTPException(status_code=404, detail="Page not found")
-    
+
     html = _markdown_to_html(content, f"{title} - {conf.title}", conf, current_path)
     _log_request(request, current_path, 200, conf)
     return HTMLResponse(content=html)
@@ -947,10 +945,10 @@ async def docs_api_reference(request: Request):
 async def docs_api_page(request: Request, page: str):
     """API reference page."""
     conf = get_docs_config()
-    
+
     if not _validate_path(page, conf):
         raise HTTPException(status_code=400, detail="Invalid page name")
-    
+
     docs_path = _get_docs_path()
     title = page.replace("-", " ").title()
     return await _serve_page(request, docs_path / "api" / f"{page}.md", title, f"/reference/{page}")
@@ -967,10 +965,10 @@ async def docs_websocket_index(request: Request):
 async def docs_websocket_page(request: Request, page: str):
     """WebSocket documentation page."""
     conf = get_docs_config()
-    
+
     if not _validate_path(page, conf):
         raise HTTPException(status_code=400, detail="Invalid page name")
-    
+
     docs_path = _get_docs_path()
     title = page.replace("-", " ").title()
     return await _serve_page(request, docs_path / "websocket" / f"{page}.md", title, f"/websocket/{page}")
@@ -985,25 +983,25 @@ async def docs_rate_limits(request: Request):
     rate limit configuration, ensuring documentation is always accurate.
     """
     conf = get_docs_config()
-    
+
     if not conf.enabled:
         raise HTTPException(status_code=404, detail="Documentation is disabled")
-    
+
     if not _check_rate_limit(request, conf):
         _log_request(request, "/rate-limits", 429, conf)
         raise HTTPException(status_code=429, detail="Rate limited")
-    
+
     # Generate dynamic content from actual rate limit config
     content = _generate_dynamic_rate_limits_content()
-    
+
     if not content:
         # Fallback to static file
         docs_path = _get_docs_path()
         content = _read_markdown_file(docs_path / "rate-limits.md", conf)
-    
+
     if not content:
         raise HTTPException(status_code=404, detail="Page not found")
-    
+
     html = _markdown_to_html(content, f"Rate Limits - {conf.title}", conf, "/rate-limits")
     _log_request(request, "/rate-limits", 200, conf)
     return HTMLResponse(content=html)
@@ -1034,16 +1032,16 @@ async def docs_api_config(request: Request):
     that are useful for API consumers.
     """
     conf = get_docs_config()
-    
+
     if not conf.enabled:
         raise HTTPException(status_code=404, detail="Documentation is disabled")
-    
+
     if not _check_rate_limit(request, conf):
         raise HTTPException(status_code=429, detail="Rate limited")
-    
+
     app_config = get_app_config()
     rate_limits = get_api_rate_limits()
-    
+
     _log_request(request, "/api/config", 200, conf)
     return JSONResponse(content={
         "application": app_config,
@@ -1061,15 +1059,15 @@ async def docs_api_rate_limits_json(request: Request):
     Returns the actual rate limit configuration from the server.
     """
     conf = get_docs_config()
-    
+
     if not conf.enabled:
         raise HTTPException(status_code=404, detail="Documentation is disabled")
-    
+
     if not _check_rate_limit(request, conf):
         raise HTTPException(status_code=429, detail="Rate limited")
-    
+
     rate_limits = get_api_rate_limits()
-    
+
     _log_request(request, "/api/rate-limits", 200, conf)
     return JSONResponse(content=rate_limits)
 
@@ -1082,31 +1080,31 @@ async def docs_raw(request: Request, path: str):
     Useful for programmatic access to documentation.
     """
     conf = get_docs_config()
-    
+
     if not conf.enabled:
         raise HTTPException(status_code=404, detail="Documentation is disabled")
-    
+
     if not conf.features.enable_raw_endpoint:
         raise HTTPException(status_code=404, detail="Raw endpoint is disabled")
-    
+
     if not _check_rate_limit(request, conf):
         raise HTTPException(status_code=429, detail="Rate limited")
-    
+
     if not _validate_path(path, conf):
         raise HTTPException(status_code=400, detail="Invalid path")
-    
+
     docs_path = _get_docs_path()
-    
+
     # Add .md extension if not present
     if not path.endswith(".md"):
         path = f"{path}.md"
-    
+
     file_path = docs_path / path
-    
+
     content = _read_markdown_file(file_path, conf)
     if not content:
         raise HTTPException(status_code=404, detail="Page not found")
-    
+
     _log_request(request, f"/raw/{path}", 200, conf)
     return JSONResponse(content={
         "path": path,

@@ -25,7 +25,7 @@ from ..exceptions import SearchIndexError, SearchBackendError
 
 class ElasticsearchIndexer(BaseIndexer):
     """Elasticsearch full-text search indexer."""
-    
+
     def __init__(
         self,
         hosts: Optional[List[str]] = None,
@@ -38,25 +38,25 @@ class ElasticsearchIndexer(BaseIndexer):
         self._index_prefix = index_prefix
         self._http_client = http_client
         self._initialized = False
-        
+
         self._message_index = f"{index_prefix}_messages"
         self._user_index = f"{index_prefix}_users"
         self._server_index = f"{index_prefix}_servers"
-    
+
     def initialize(self) -> bool:
         """Initialize Elasticsearch indices."""
         if self._initialized:
             return True
-        
+
         try:
             self._create_message_index()
             self._create_user_index()
             self._create_server_index()
-            
+
             self._initialized = True
             logger.info("Elasticsearch indexer initialized")
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to initialize Elasticsearch: {e}")
             raise SearchBackendError(
@@ -64,11 +64,11 @@ class ElasticsearchIndexer(BaseIndexer):
                 backend="elasticsearch",
                 original_error=e
             )
-    
+
     def close(self):
         """Close the indexer."""
         self._initialized = False
-    
+
     def _request(
         self,
         method: str,
@@ -81,17 +81,17 @@ class ElasticsearchIndexer(BaseIndexer):
                 url = f"{self._hosts[0]}{path}"
                 data = json.dumps(body).encode() if body else None
                 headers = {"Content-Type": "application/json"}
-                
+
                 req = urllib.request.Request(
                     url,
                     data=data,
                     headers=headers,
                     method=method
                 )
-                
+
                 with urllib.request.urlopen(req, timeout=30) as response:
                     return json.loads(response.read().decode())
-                    
+
             except urllib.error.HTTPError as e:
                 error_body = e.read().decode() if e.fp else ""
                 raise SearchBackendError(
@@ -107,7 +107,7 @@ class ElasticsearchIndexer(BaseIndexer):
                 )
         else:
             return self._http_client.request(method, path, body)
-    
+
     def _create_message_index(self):
         """Create message index with mappings."""
         mapping = {
@@ -133,13 +133,13 @@ class ElasticsearchIndexer(BaseIndexer):
                 "number_of_replicas": 0,
             }
         }
-        
+
         try:
             self._request("PUT", f"/{self._message_index}", mapping)
         except SearchBackendError as e:
             if "resource_already_exists" not in str(e).lower():
                 raise
-    
+
     def _create_user_index(self):
         """Create user index with mappings."""
         mapping = {
@@ -156,13 +156,13 @@ class ElasticsearchIndexer(BaseIndexer):
                 "number_of_replicas": 0,
             }
         }
-        
+
         try:
             self._request("PUT", f"/{self._user_index}", mapping)
         except SearchBackendError as e:
             if "resource_already_exists" not in str(e).lower():
                 raise
-    
+
     def _create_server_index(self):
         """Create server index with mappings."""
         mapping = {
@@ -182,13 +182,13 @@ class ElasticsearchIndexer(BaseIndexer):
                 "number_of_replicas": 0,
             }
         }
-        
+
         try:
             self._request("PUT", f"/{self._server_index}", mapping)
         except SearchBackendError as e:
             if "resource_already_exists" not in str(e).lower():
                 raise
-    
+
     def index_message(self, message: IndexedMessage) -> bool:
         """Index a single message."""
         try:
@@ -207,26 +207,26 @@ class ElasticsearchIndexer(BaseIndexer):
                 "mentions": [str(m) for m in message.mentions] if message.mentions else [],
                 "is_pinned": message.is_pinned,
             }
-            
+
             self._request(
                 "PUT",
                 f"/{self._message_index}/_doc/{message.message_id}",
                 doc
             )
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to index message {message.message_id}: {e}")
             raise SearchIndexError(
                 f"Failed to index message: {e}",
                 item_id=message.message_id
             )
-    
+
     def index_messages_batch(self, messages: List[IndexedMessage]) -> int:
         """Index multiple messages using bulk API."""
         if not messages:
             return 0
-        
+
         try:
             bulk_body = []
             for message in messages:
@@ -250,9 +250,9 @@ class ElasticsearchIndexer(BaseIndexer):
                     "mentions": [str(m) for m in message.mentions] if message.mentions else [],
                     "is_pinned": message.is_pinned,
                 }))
-            
+
             bulk_data = "\n".join(bulk_body) + "\n"
-            
+
             import urllib.request
             url = f"{self._hosts[0]}/_bulk"
             req = urllib.request.Request(
@@ -261,16 +261,16 @@ class ElasticsearchIndexer(BaseIndexer):
                 headers={"Content-Type": "application/x-ndjson"},
                 method="POST"
             )
-            
+
             with urllib.request.urlopen(req, timeout=60) as response:
                 result = json.loads(response.read().decode())
-                
+
             if result.get("errors"):
                 failed = sum(1 for item in result.get("items", []) if "error" in item.get("index", {}))
                 return len(messages) - failed
-            
+
             return len(messages)
-            
+
         except Exception as e:
             logger.error(f"Bulk indexing failed: {e}")
             indexed = 0
@@ -281,7 +281,7 @@ class ElasticsearchIndexer(BaseIndexer):
                 except SearchIndexError:
                     continue
             return indexed
-    
+
     def remove_message(self, message_id: int) -> bool:
         """Remove a message from the index."""
         try:
@@ -290,11 +290,11 @@ class ElasticsearchIndexer(BaseIndexer):
         except Exception as e:
             logger.error(f"Failed to remove message {message_id}: {e}")
             return False
-    
+
     def update_message(self, message: IndexedMessage) -> bool:
         """Update an indexed message."""
         return self.index_message(message)
-    
+
     def search_messages(
         self,
         query: str,
@@ -308,7 +308,7 @@ class ElasticsearchIndexer(BaseIndexer):
         """Search messages using Elasticsearch."""
         try:
             must: List[Dict[str, Any]] = [{"match": {"content": query}}]
-            
+
             if conversation_ids:
                 must.append({"terms": {"conversation_id": [str(c) for c in conversation_ids]}})
             if server_ids:
@@ -317,20 +317,20 @@ class ElasticsearchIndexer(BaseIndexer):
                 must.append({"terms": {"channel_id": [str(c) for c in channel_ids]}})
             if author_ids:
                 must.append({"terms": {"author_id": [str(a) for a in author_ids]}})
-            
+
             search_body = {
                 "query": {"bool": {"must": must}},
                 "from": offset,
                 "size": limit,
                 "sort": [{"_score": "desc"}, {"created_at": "desc"}],
             }
-            
+
             result = self._request(
                 "POST",
                 f"/{self._message_index}/_search",
                 search_body
             )
-            
+
             results = []
             for hit in result.get("hits", {}).get("hits", []):
                 source = hit.get("_source", {})
@@ -347,13 +347,13 @@ class ElasticsearchIndexer(BaseIndexer):
                     is_pinned=source.get("is_pinned", False),
                     score=hit.get("_score", 0.0),
                 ))
-            
+
             return results
-            
+
         except Exception as e:
             logger.error(f"Elasticsearch search failed: {e}")
             return []
-    
+
     def index_user(self, user: IndexedUser) -> bool:
         """Index a user."""
         try:
@@ -363,14 +363,14 @@ class ElasticsearchIndexer(BaseIndexer):
                 "display_name": user.display_name or "",
                 "is_bot": user.is_bot,
             }
-            
+
             self._request("PUT", f"/{self._user_index}/_doc/{user.user_id}", doc)
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to index user {user.user_id}: {e}")
             return False
-    
+
     def remove_user(self, user_id: int) -> bool:
         """Remove a user from the index."""
         try:
@@ -378,7 +378,7 @@ class ElasticsearchIndexer(BaseIndexer):
             return True
         except Exception:
             return False
-    
+
     def search_users(
         self,
         query: str,
@@ -397,9 +397,9 @@ class ElasticsearchIndexer(BaseIndexer):
                 "from": offset,
                 "size": limit,
             }
-            
+
             result = self._request("POST", f"/{self._user_index}/_search", search_body)
-            
+
             results = []
             for hit in result.get("hits", {}).get("hits", []):
                 source = hit.get("_source", {})
@@ -411,13 +411,13 @@ class ElasticsearchIndexer(BaseIndexer):
                     is_bot=source.get("is_bot", False),
                     score=hit.get("_score", 0.0),
                 ))
-            
+
             return results
-            
+
         except Exception as e:
             logger.error(f"Elasticsearch user search failed: {e}")
             return []
-    
+
     def index_server(self, server: IndexedServer) -> bool:
         """Index a server."""
         try:
@@ -430,14 +430,14 @@ class ElasticsearchIndexer(BaseIndexer):
                 "member_count": server.member_count,
                 "is_public": server.is_public,
             }
-            
+
             self._request("PUT", f"/{self._server_index}/_doc/{server.server_id}", doc)
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to index server {server.server_id}: {e}")
             return False
-    
+
     def remove_server(self, server_id: int) -> bool:
         """Remove a server from the index."""
         try:
@@ -445,7 +445,7 @@ class ElasticsearchIndexer(BaseIndexer):
             return True
         except Exception:
             return False
-    
+
     def search_servers(
         self,
         query: str,
@@ -464,20 +464,20 @@ class ElasticsearchIndexer(BaseIndexer):
                     }
                 }
             ]
-            
+
             if public_only:
                 must.append({"term": {"is_public": True}})
             if category:
                 must.append({"term": {"category": category}})
-            
+
             search_body = {
                 "query": {"bool": {"must": must}},
                 "from": offset,
                 "size": limit,
             }
-            
+
             result = self._request("POST", f"/{self._server_index}/_search", search_body)
-            
+
             results = []
             for hit in result.get("hits", {}).get("hits", []):
                 source = hit.get("_source", {})
@@ -491,20 +491,20 @@ class ElasticsearchIndexer(BaseIndexer):
                     member_count=source.get("member_count", 0),
                     score=hit.get("_score", 0.0),
                 ))
-            
+
             return results
-            
+
         except Exception as e:
             logger.error(f"Elasticsearch server search failed: {e}")
             return []
-    
+
     def get_stats(self) -> Dict[str, Any]:
         """Get indexer statistics."""
         try:
             msg_stats = self._request("GET", f"/{self._message_index}/_count")
             user_stats = self._request("GET", f"/{self._user_index}/_count")
             server_stats = self._request("GET", f"/{self._server_index}/_count")
-            
+
             return {
                 "backend": "elasticsearch",
                 "message_count": msg_stats.get("count", 0),
@@ -512,7 +512,7 @@ class ElasticsearchIndexer(BaseIndexer):
                 "server_count": server_stats.get("count", 0),
                 "healthy": True,
             }
-            
+
         except Exception as e:
             return {
                 "backend": "elasticsearch",

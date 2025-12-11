@@ -2,7 +2,6 @@
 Tests for poll results.
 """
 
-import pytest
 import uuid
 from src.core.polls import PollResultsVisibility
 

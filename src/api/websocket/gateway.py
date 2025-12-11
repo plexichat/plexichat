@@ -2,7 +2,6 @@
 Gateway endpoint - WebSocket endpoint handler.
 """
 
-from typing import Optional
 import asyncio
 import json
 
@@ -23,10 +22,10 @@ async def _dispatch_offline_presence(user_id: int, presence_module, dispatcher) 
     """Dispatch offline presence to friends and server members when user disconnects."""
     try:
         import src.api as api
-        
+
         # Collect all user IDs who should receive this presence update
         target_user_ids = set()
-        
+
         # Add friends
         relationships = api.get_relationships()
         if relationships:
@@ -36,7 +35,7 @@ async def _dispatch_offline_presence(user_id: int, presence_module, dispatcher) 
                     target_user_ids.update(friend_ids)
             except Exception:
                 pass
-        
+
         # Add server members (users in shared servers)
         servers = api.get_servers()
         if servers:
@@ -51,10 +50,10 @@ async def _dispatch_offline_presence(user_id: int, presence_module, dispatcher) 
                                     target_user_ids.add(member.user_id)
             except Exception:
                 pass
-        
+
         if not target_user_ids:
             return
-        
+
         # Update presence to offline
         if presence_module:
             try:
@@ -62,11 +61,11 @@ async def _dispatch_offline_presence(user_id: int, presence_module, dispatcher) 
                 presence_module.set_status(user_id, UserStatus.OFFLINE)
             except Exception:
                 pass
-        
+
         # Dispatch presence update to all relevant users
         from src.core.events.models import Event
         from src.core.events.types import EventType
-        
+
         event = Event(
             event_type=EventType.PRESENCE_UPDATE,
             data={
@@ -160,7 +159,7 @@ async def gateway_endpoint(websocket: WebSocket):
         # Dispatch offline presence to friends when user disconnects
         if connection.is_authenticated and connection.user_id:
             await _dispatch_offline_presence(connection.user_id, presence_module, dispatcher)
-        
+
         connection.set_disconnected()
         session_manager.remove_connection(connection_id)
         logger.debug(f"Connection {connection_id} cleaned up")

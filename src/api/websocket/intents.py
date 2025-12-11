@@ -2,9 +2,8 @@
 Gateway intents - Intent validation and filtering.
 """
 
-from typing import Optional
 
-from src.core.events.types import GatewayIntent, EventType
+from src.core.events.types import GatewayIntent
 from src.core.events.models import Event
 from src.core.events.router import filter_by_intents as _filter_by_intents
 

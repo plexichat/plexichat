@@ -9,7 +9,6 @@ from src.core.threads import (
     ThreadState,
     ThreadNameError,
     ChannelNotFoundError,
-    ThreadError,
 )
 
 

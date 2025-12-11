@@ -90,7 +90,7 @@ _setup_complete = False
 def setup(db) -> None:
     """Initialize the features module."""
     global _db, _setup_complete
-    
+
     _db = db
     create_tables(db)
     _setup_complete = True
@@ -141,13 +141,13 @@ def get_tier_limits(tier: str) -> TierLimits:
         TierLimits object with all limits for that tier
     """
     tiers_config = _get_config("rate_limit_tiers", {})
-    
+
     if tier not in tiers_config:
         # Fall back to defaults
         if tier in DEFAULT_TIER_LIMITS:
             return DEFAULT_TIER_LIMITS[tier]
         raise InvalidTierError(f"Unknown tier: {tier}")
-    
+
     tier_config = tiers_config[tier]
     return TierLimits(
         name=tier,
@@ -198,27 +198,27 @@ def apply_new_user_features(user_id: int) -> Optional[UserFeatures]:
     """
     if not is_alpha_registration_enabled():
         return None
-    
+
     db = _get_db()
     now = int(time.time())
-    
+
     from src.utils.encryption import generate_snowflake_id
     feature_id = generate_snowflake_id()
-    
+
     # Grant alpha tier and alpha_tester badge
     badges = json.dumps(["alpha_tester"])
-    
+
     db.execute(
         """INSERT INTO user_features 
            (id, user_id, can_create_org, rate_limit_tier, badges, 
             granted_by, granted_at, expires_at, notes)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (feature_id, user_id, 0, "alpha", badges, 
+        (feature_id, user_id, 0, "alpha", badges,
          None, now, None, "Auto-granted: Alpha registration")
     )
-    
+
     logger.info(f"Applied alpha tester features to new user {user_id}")
-    
+
     return get_user_features(user_id)
 
 
@@ -235,24 +235,24 @@ def get_user_features(user_id: int) -> Optional[UserFeatures]:
         UserFeatures object or None if no features set
     """
     db = _get_db()
-    
+
     row = db.fetch_one(
         """SELECT id, user_id, can_create_org, rate_limit_tier, badges,
                   granted_by, granted_at, expires_at, notes
            FROM user_features WHERE user_id = ?""",
         (user_id,)
     )
-    
+
     if not row:
         return None
-    
+
     badges = []
     if row["badges"]:
         try:
             badges = json.loads(row["badges"])
         except (json.JSONDecodeError, TypeError):
             badges = []
-    
+
     return UserFeatures(
         id=row["id"],
         user_id=row["user_id"],
@@ -313,11 +313,11 @@ def has_feature(user_id: int, feature: str) -> bool:
     features = get_user_features(user_id)
     if not features:
         return False
-    
+
     # Check expiration
     if features.expires_at and features.expires_at < int(time.time()):
         return False
-    
+
     return getattr(features, feature, False)
 
 
@@ -334,7 +334,7 @@ def get_user_badges(user_id: int) -> List[str]:
     features = get_user_features(user_id)
     if not features:
         return []
-    
+
     # Respect display limit
     limit = _get_config("badge_display_limit", 5)
     return features.badges[:limit]
@@ -365,69 +365,69 @@ def set_user_features(
         Updated UserFeatures object
     """
     db = _get_db()
-    
+
     # Validate tier if provided
     if rate_limit_tier:
         available = get_available_tiers()
         if rate_limit_tier not in available:
             raise InvalidTierError(f"Invalid tier '{rate_limit_tier}'. Available: {available}")
-    
+
     existing = get_user_features(user_id)
     now = int(time.time())
-    
+
     if existing:
         # Update existing
         updates = []
         params = []
-        
+
         if can_create_org is not None:
             updates.append("can_create_org = ?")
             params.append(1 if can_create_org else 0)
-        
+
         if rate_limit_tier is not None:
             updates.append("rate_limit_tier = ?")
             params.append(rate_limit_tier)
-        
+
         if expires_at is not None:
             updates.append("expires_at = ?")
             params.append(expires_at)
-        
+
         if notes is not None:
             updates.append("notes = ?")
             params.append(notes)
-        
+
         updates.append("granted_by = ?")
         params.append(admin_id)
         updates.append("granted_at = ?")
         params.append(now)
-        
+
         params.append(user_id)
-        
+
         db.execute(
             f"UPDATE user_features SET {', '.join(updates)} WHERE user_id = ?",
             tuple(params)
         )
-        
+
         logger.info(f"Updated features for user {user_id} by admin {admin_id}")
     else:
         # Create new
         from src.utils.encryption import generate_snowflake_id
         feature_id = generate_snowflake_id()
-        
+
         db.execute(
             """INSERT INTO user_features 
                (id, user_id, can_create_org, rate_limit_tier, badges, 
                 granted_by, granted_at, expires_at, notes)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (feature_id, user_id, 
+            (feature_id, user_id,
              1 if can_create_org else 0,
              rate_limit_tier or get_default_tier(),
              "[]",  # Empty badges
              admin_id, now, expires_at, notes)
         )
-        
+
         logger.info(f"Created features for user {user_id} by admin {admin_id}")
-    
+
     return get_user_features(user_id)
 
 
@@ -444,30 +444,30 @@ def add_badge(user_id: int, admin_id: int, badge: str) -> List[str]:
         Updated list of badges
     """
     db = _get_db()
-    
+
     # Validate badge
     available = _get_config("available_badges", AVAILABLE_BADGES)
     if badge not in available:
         raise InvalidBadgeError(f"Invalid badge '{badge}'. Available: {available}")
-    
+
     features = get_user_features(user_id)
-    
+
     if not features:
         # Create features entry first
         set_user_features(user_id, admin_id)
         features = get_user_features(user_id)
-    
+
     badges = features.badges.copy()
     if badge not in badges:
         badges.append(badge)
-        
+
         db.execute(
             "UPDATE user_features SET badges = ?, granted_by = ?, granted_at = ? WHERE user_id = ?",
             (json.dumps(badges), admin_id, int(time.time()), user_id)
         )
-        
+
         logger.info(f"Added badge '{badge}' to user {user_id} by admin {admin_id}")
-    
+
     return badges
 
 
@@ -484,22 +484,22 @@ def remove_badge(user_id: int, admin_id: int, badge: str) -> List[str]:
         Updated list of badges
     """
     db = _get_db()
-    
+
     features = get_user_features(user_id)
     if not features:
         return []
-    
+
     badges = features.badges.copy()
     if badge in badges:
         badges.remove(badge)
-        
+
         db.execute(
             "UPDATE user_features SET badges = ?, granted_by = ?, granted_at = ? WHERE user_id = ?",
             (json.dumps(badges), admin_id, int(time.time()), user_id)
         )
-        
+
         logger.info(f"Removed badge '{badge}' from user {user_id} by admin {admin_id}")
-    
+
     return badges
 
 

@@ -12,9 +12,9 @@ from ..models import ActionType, RuleAction, Violation
 
 class BaseAction(ABC):
     """Abstract base class for all automod actions."""
-    
+
     action_type: Optional[ActionType] = None
-    
+
     def __init__(self, db, servers_module=None, messaging_module=None, notifications_module=None):
         """
         Initialize the action executor.
@@ -29,7 +29,7 @@ class BaseAction(ABC):
         self._servers = servers_module
         self._messaging = messaging_module
         self._notifications = notifications_module
-    
+
     @abstractmethod
     def execute(
         self,
@@ -49,7 +49,7 @@ class BaseAction(ABC):
             True if action was executed successfully
         """
         pass
-    
+
     def can_execute(
         self,
         action: RuleAction,

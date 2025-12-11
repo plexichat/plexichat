@@ -25,7 +25,7 @@ class InvalidWebhookTokenError(WebhookError):
 
 class WebhookNameError(WebhookError):
     """Webhook name is invalid."""
-    
+
     def __init__(self, message: str, max_length: int = 80):
         super().__init__(message)
         self.max_length = max_length
@@ -38,7 +38,7 @@ class WebhookAvatarError(WebhookError):
 
 class WebhookLimitError(WebhookError):
     """Maximum webhooks limit reached."""
-    
+
     def __init__(self, message: str, max_allowed: int, current: int):
         super().__init__(message)
         self.max_allowed = max_allowed
@@ -52,7 +52,7 @@ class ChannelNotFoundError(WebhookError):
 
 class PermissionDeniedError(WebhookError):
     """User does not have permission to perform this action."""
-    
+
     def __init__(self, message: str, permission: str | None = None):
         super().__init__(message)
         self.permission = permission
@@ -60,7 +60,7 @@ class PermissionDeniedError(WebhookError):
 
 class InvalidContentError(WebhookError):
     """Message content is invalid."""
-    
+
     def __init__(self, message: str, issues: list | None = None):
         super().__init__(message)
         self.issues = issues or []
@@ -68,7 +68,7 @@ class InvalidContentError(WebhookError):
 
 class EmbedLimitError(WebhookError):
     """Too many embeds in message."""
-    
+
     def __init__(self, message: str, max_allowed: int, current: int):
         super().__init__(message)
         self.max_allowed = max_allowed

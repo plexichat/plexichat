@@ -15,7 +15,7 @@ class ThreadNotFoundError(ThreadError):
 
 class ThreadAccessDeniedError(ThreadError):
     """User does not have permission to access this thread."""
-    
+
     def __init__(self, message: str = "Access denied"):
         super().__init__(message)
 
@@ -42,7 +42,7 @@ class ThreadMemberExistsError(ThreadError):
 
 class ThreadNameError(ThreadError):
     """Invalid thread name."""
-    
+
     def __init__(self, message: str, name: str = ""):
         super().__init__(message)
         self.name = name
@@ -60,7 +60,7 @@ class ChannelNotFoundError(ThreadError):
 
 class PermissionDeniedError(ThreadError):
     """User does not have the required permission."""
-    
+
     def __init__(self, message: str, permission: str = ""):
         super().__init__(message)
         self.permission = permission
@@ -68,7 +68,7 @@ class PermissionDeniedError(ThreadError):
 
 class InvalidThreadTypeError(ThreadError):
     """Invalid thread type for this operation."""
-    
+
     def __init__(self, message: str, expected: str = "", actual: str = ""):
         super().__init__(message)
         self.expected = expected

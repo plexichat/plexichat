@@ -1,10 +1,8 @@
 """Tests for event routing logic."""
 
-import pytest
 from src.core import events
 from src.core.events.types import EventType, GatewayIntent
 from src.core.events.router import (
-    EventRouter,
     get_required_intent,
     get_dm_intent,
     filter_by_intents,

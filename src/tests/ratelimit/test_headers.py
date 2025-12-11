@@ -2,18 +2,14 @@
 Tests for rate limit header generation.
 """
 
-import pytest
 import time
 
 from src.core.ratelimit.models import (
     RateLimitConfig,
-    RateLimitResult,
     RateLimitHeaders,
-    BucketType,
     RateLimitAlgorithm,
 )
 from src.core.ratelimit.manager import RateLimitManager
-from src.core import ratelimit
 
 
 class TestHeaderGeneration:

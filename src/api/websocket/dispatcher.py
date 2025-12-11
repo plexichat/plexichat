@@ -9,7 +9,6 @@ import threading
 import utils.logger as logger
 
 from src.core.events.models import Event
-from src.core.events.types import EventType
 
 from .opcodes import GatewayOpcode
 from .connection import Connection
@@ -85,10 +84,10 @@ class GatewayDispatcher:
         """
         # Ensure user_ids are integers for lookup
         user_ids = [int(uid) for uid in user_ids]
-        
+
         connections = self._session_manager.get_connections_for_users(user_ids)
         logger.info(f"dispatch_event: {event.event_type} to {len(user_ids)} users, found {len(connections)} connections")
-        
+
         if not connections:
             logger.info(f"No connections found for users: {user_ids[:5]}...")
             return 0
@@ -350,10 +349,10 @@ class GatewayDispatcher:
             Number of connections notified
         """
         sent_count = 0
-        
+
         with self._lock:
             connections = list(self._session_manager._connections.values())
-        
+
         for conn in connections:
             if conn.is_authenticated:
                 payload = {
@@ -363,7 +362,7 @@ class GatewayDispatcher:
                 success = await self._send_to_connection(conn, payload)
                 if success:
                     sent_count += 1
-        
+
         logger.info(f"Broadcast server status '{status_data.get('state')}' to {sent_count} connections")
         return sent_count
 
@@ -388,10 +387,10 @@ class GatewayDispatcher:
         """
         with self._lock:
             connections = list(self._session_manager._connections.values())
-        
+
         if not connections:
             return 0
-        
+
         # Notify clients first if requested
         if notify_first:
             await self.broadcast_server_status({
@@ -401,7 +400,7 @@ class GatewayDispatcher:
             })
             # Give clients time to receive the notification
             await asyncio.sleep(grace_period_seconds)
-        
+
         closed_count = 0
         for conn in connections:
             try:
@@ -411,6 +410,6 @@ class GatewayDispatcher:
                 closed_count += 1
             except Exception as e:
                 logger.debug(f"Error closing connection {conn.connection_id}: {e}")
-        
+
         logger.info(f"Closed {closed_count} WebSocket connections")
         return closed_count

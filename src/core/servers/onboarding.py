@@ -7,7 +7,6 @@ import json
 from typing import Optional, List, Dict, Any
 
 import utils.config as config
-import utils.logger as logger
 from src.utils.encryption import generate_snowflake_id
 
 from .models import (
@@ -19,10 +18,8 @@ from .models import (
 )
 from .exceptions import (
     ServerNotFoundError,
-    WelcomeScreenNotFoundError,
     OnboardingStepNotFoundError,
     OnboardingError,
-    PermissionDeniedError,
     ChannelNotFoundError,
     RoleNotFoundError,
 )

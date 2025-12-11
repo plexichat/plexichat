@@ -2,8 +2,6 @@
 Tests for unread and mention counts.
 """
 
-import pytest
-from src.core.notifications import MentionType
 
 
 class TestGetUnreadCount:

@@ -50,7 +50,7 @@ class RoleAccessDeniedError(ServerError):
 
 class RoleHierarchyError(ServerError):
     """Cannot modify role due to hierarchy constraints."""
-    
+
     def __init__(self, message: str, user_position: int = 0, target_position: int = 0):
         super().__init__(message)
         self.user_position = user_position
@@ -79,7 +79,7 @@ class InviteNotFoundError(ServerError):
 
 class InviteExpiredError(ServerError):
     """Invite has expired."""
-    
+
     def __init__(self, message: str, expired_at: int = 0):
         super().__init__(message)
         self.expired_at = expired_at
@@ -87,7 +87,7 @@ class InviteExpiredError(ServerError):
 
 class InviteMaxUsesError(ServerError):
     """Invite has reached maximum uses."""
-    
+
     def __init__(self, message: str, max_uses: int = 0, current_uses: int = 0):
         super().__init__(message)
         self.max_uses = max_uses
@@ -106,7 +106,7 @@ class UserBannedError(ServerError):
 
 class InvalidServerNameError(ServerError):
     """Server name is invalid."""
-    
+
     def __init__(self, message: str, name: str = ""):
         super().__init__(message)
         self.name = name
@@ -114,7 +114,7 @@ class InvalidServerNameError(ServerError):
 
 class InvalidChannelNameError(ServerError):
     """Channel name is invalid."""
-    
+
     def __init__(self, message: str, name: str = ""):
         super().__init__(message)
         self.name = name
@@ -122,7 +122,7 @@ class InvalidChannelNameError(ServerError):
 
 class InvalidRoleNameError(ServerError):
     """Role name is invalid."""
-    
+
     def __init__(self, message: str, name: str = ""):
         super().__init__(message)
         self.name = name
@@ -130,7 +130,7 @@ class InvalidRoleNameError(ServerError):
 
 class PermissionDeniedError(ServerError):
     """User does not have the required permission."""
-    
+
     def __init__(self, message: str, permission: str = ""):
         super().__init__(message)
         self.permission = permission
@@ -158,7 +158,7 @@ class ScheduledEventError(ServerError):
 
 class InvalidEventTimeError(ServerError):
     """Event time is invalid."""
-    
+
     def __init__(self, message: str, start_time: int = 0, end_time: int = 0):
         super().__init__(message)
         self.start_time = start_time
@@ -177,7 +177,7 @@ class TemplateError(ServerError):
 
 class InvalidTemplateCodeError(ServerError):
     """Template code is invalid."""
-    
+
     def __init__(self, message: str, code: str = ""):
         super().__init__(message)
         self.code = code

@@ -4,10 +4,7 @@ Tests for error handling and edge cases.
 
 import pytest
 from src.core.embeds import (
-    EmbedError,
     EmbedNotFoundError,
-    EmbedValidationError,
-    EmbedLimitError,
     MessageNotFoundError,
     PermissionDeniedError,
 )
@@ -21,7 +18,7 @@ class TestEmptyEmbed:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"edge1_{unique_id}",
             email=f"edge1_{unique_id}@example.com",
@@ -39,7 +36,7 @@ class TestEmptyEmbed:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"edge2_{unique_id}",
             email=f"edge2_{unique_id}@example.com",
@@ -55,7 +52,7 @@ class TestEmptyEmbed:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"edge3_{unique_id}",
             email=f"edge3_{unique_id}@example.com",
@@ -75,7 +72,7 @@ class TestUpdateEmbed:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"upd1_{unique_id}",
             email=f"upd1_{unique_id}@example.com",
@@ -92,7 +89,7 @@ class TestUpdateEmbed:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"upd2_{unique_id}",
             email=f"upd2_{unique_id}@example.com",
@@ -109,7 +106,7 @@ class TestUpdateEmbed:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"upd3_{unique_id}",
             email=f"upd3_{unique_id}@example.com",
@@ -131,7 +128,7 @@ class TestUpdateEmbed:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"upd4_{unique_id}",
             email=f"upd4_{unique_id}@example.com",
@@ -146,7 +143,7 @@ class TestUpdateEmbed:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user1 = auth.register(
             username=f"upd5_{unique_id}",
             email=f"upd5_{unique_id}@example.com",
@@ -168,7 +165,7 @@ class TestUpdateEmbed:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"upd7_{unique_id}",
             email=f"upd7_{unique_id}@example.com",
@@ -212,7 +209,7 @@ class TestSpecialCharacters:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"spec1_{unique_id}",
             email=f"spec1_{unique_id}@example.com",
@@ -231,7 +228,7 @@ class TestSpecialCharacters:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"spec2_{unique_id}",
             email=f"spec2_{unique_id}@example.com",
@@ -250,7 +247,7 @@ class TestSpecialCharacters:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"spec3_{unique_id}",
             email=f"spec3_{unique_id}@example.com",
@@ -273,7 +270,7 @@ class TestBoundaryConditions:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"bound1_{unique_id}",
             email=f"bound1_{unique_id}@example.com",
@@ -290,7 +287,7 @@ class TestBoundaryConditions:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"bound2_{unique_id}",
             email=f"bound2_{unique_id}@example.com",
@@ -307,7 +304,7 @@ class TestBoundaryConditions:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"bound3_{unique_id}",
             email=f"bound3_{unique_id}@example.com",
@@ -335,7 +332,7 @@ class TestBoundaryConditions:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"bound4_{unique_id}",
             email=f"bound4_{unique_id}@example.com",
@@ -365,7 +362,7 @@ class TestConcurrentOperations:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"conc1_{unique_id}",
             email=f"conc1_{unique_id}@example.com",
@@ -383,7 +380,7 @@ class TestConcurrentOperations:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user1 = auth.register(
             username=f"conc2_{unique_id}",
             email=f"conc2_{unique_id}@example.com",
@@ -410,7 +407,7 @@ class TestEmbedRetrieval:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"ret1_{unique_id}",
             email=f"ret1_{unique_id}@example.com",
@@ -436,7 +433,7 @@ class TestEmbedRetrieval:
         user1, user2, dm, msg, embeds, messaging = fresh_users_with_dm
         import uuid
         from src.core import auth
-        
+
         unique_id = uuid.uuid4().hex[:8]
         outsider = auth.register(
             username=f"out_{unique_id}",

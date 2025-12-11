@@ -82,7 +82,7 @@ def create_tables(db) -> None:
             except Exception as e:
                 logger.error(f"Failed to execute schema statement: {e}")
                 raise
-    
+
     logger.info("User features tables created successfully")
 
 

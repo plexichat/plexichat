@@ -4,7 +4,6 @@ Tests for thread membership functionality.
 
 import pytest
 from src.core.threads import (
-    ThreadType,
     ThreadMemberExistsError,
     ThreadMemberNotFoundError,
     ThreadAccessDeniedError,

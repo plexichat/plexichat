@@ -9,7 +9,7 @@ Provides endpoints for:
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request, UploadFile, File
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional
 
 import utils.logger as logger
 from src.api.dependencies import get_db, get_current_user
@@ -83,7 +83,7 @@ async def report_content_hash(
     Multiple reports on the same hash may trigger automatic blocking.
     """
     from src.core import media
-    
+
     try:
         report_id = media.report_hash(
             hash_value=report.hash_value,
@@ -91,9 +91,9 @@ async def report_content_hash(
             reason=report.reason,
             details=report.details
         )
-        
+
         logger.info(f"User {user['id']} reported hash {report.hash_value[:16]}...")
-        
+
         return HashReportResponse(
             success=True,
             report_id=report_id,
@@ -115,9 +115,9 @@ async def check_hash_status(
 ):
     """Check if a hash is blocked."""
     from src.core import media
-    
+
     is_blocked, reason = media.is_hash_blocked(hash_value)
-    
+
     return {
         "hash_value": hash_value,
         "is_blocked": is_blocked,
@@ -140,20 +140,20 @@ async def create_upload_session(
     Use the session_id to upload chunks via POST /media/upload/chunk.
     """
     from src.core import media
-    
+
     session = media.create_upload_session(
         user_id=user["id"],
         filename=session_request.filename,
         content_type=session_request.content_type,
         total_size=session_request.total_size
     )
-    
+
     if not session:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Failed to create upload session. File may be too large."
         )
-    
+
     return ChunkedUploadSessionResponse(
         session_id=session.id,
         chunk_size=session.chunk_size,
@@ -181,9 +181,9 @@ async def upload_chunk(
         file: The chunk data
     """
     from src.core import media
-    
+
     chunk_data = await file.read()
-    
+
     result = media.upload_chunk(
         session_id=session_id,
         user_id=user["id"],
@@ -191,7 +191,7 @@ async def upload_chunk(
         chunk_data=chunk_data,
         chunk_checksum=chunk_checksum
     )
-    
+
     return ChunkUploadResponse(
         success=result.success,
         chunk_index=result.chunk_index,
@@ -215,21 +215,20 @@ async def complete_upload_session(
     Returns the final upload result with file URL.
     """
     from src.core import media
-    
+
     # Get the assembled file data
     file_data = media.complete_upload_session(session_id, user["id"])
-    
+
     if file_data is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Upload session not complete or not found"
         )
-    
+
     # Get session info for filename/content_type
-    from src.core.media.chunked import ChunkedUploadManager
     # We need to get session info before completing - this is a limitation
     # For now, return the raw data size
-    
+
     return {
         "success": True,
         "size": len(file_data),
@@ -245,15 +244,15 @@ async def cancel_upload_session(
 ):
     """Cancel an upload session and clean up resources."""
     from src.core import media
-    
+
     success = media.cancel_upload_session(session_id, user["id"])
-    
+
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found"
         )
-    
+
     return {"success": True, "message": "Upload session cancelled"}
 
 
@@ -263,14 +262,13 @@ async def get_user_upload_sessions(
     db = Depends(get_db)
 ):
     """Get all active upload sessions for the current user."""
-    from src.core.media.chunked import ChunkedUploadManager
-    
+
     # Access the chunked manager directly
     from src.core import media as media_module
     manager = media_module._get_chunked_manager()
-    
+
     sessions = manager.get_user_sessions(user["id"])
-    
+
     return {
         "sessions": [
             {
@@ -298,9 +296,9 @@ async def get_compression_status(
 ):
     """Get compression system status."""
     from src.core import media
-    
+
     status = media.get_compression_status()
-    
+
     return CompressionStatusResponse(
         enabled=status["enabled"],
         image_compression=status["image_compression"],

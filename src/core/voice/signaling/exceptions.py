@@ -15,7 +15,7 @@ class SDPError(SignalingError):
 
 class SDPParseError(SDPError):
     """Failed to parse SDP message."""
-    
+
     def __init__(self, message: str, line: int = 0, detail: str = ""):
         super().__init__(message)
         self.line = line
@@ -24,7 +24,7 @@ class SDPParseError(SDPError):
 
 class SDPValidationError(SDPError):
     """SDP message failed validation."""
-    
+
     def __init__(self, message: str, field: str = "", reason: str = ""):
         super().__init__(message)
         self.field = field
@@ -38,7 +38,7 @@ class ICEError(SignalingError):
 
 class ICECandidateError(ICEError):
     """Invalid or failed ICE candidate."""
-    
+
     def __init__(self, message: str, candidate: str = ""):
         super().__init__(message)
         self.candidate = candidate
@@ -61,7 +61,7 @@ class SFUError(SignalingError):
 
 class SFUConnectionError(SFUError):
     """Failed to connect to SFU server."""
-    
+
     def __init__(self, message: str, backend: str = "", url: str = ""):
         super().__init__(message)
         self.backend = backend
@@ -70,7 +70,7 @@ class SFUConnectionError(SFUError):
 
 class SFUTimeoutError(SFUError):
     """SFU operation timed out."""
-    
+
     def __init__(self, message: str, operation: str = "", timeout_ms: int = 0):
         super().__init__(message)
         self.operation = operation
@@ -84,7 +84,7 @@ class ConnectionError(SignalingError):
 
 class NotConnectedError(ConnectionError):
     """User is not connected to voice."""
-    
+
     def __init__(self, message: str, user_id: int = 0, channel_id: int = 0):
         super().__init__(message)
         self.user_id = user_id
@@ -93,7 +93,7 @@ class NotConnectedError(ConnectionError):
 
 class AlreadyConnectedError(ConnectionError):
     """User is already connected to voice."""
-    
+
     def __init__(self, message: str, user_id: int = 0, channel_id: int = 0):
         super().__init__(message)
         self.user_id = user_id
@@ -102,7 +102,7 @@ class AlreadyConnectedError(ConnectionError):
 
 class ScreenShareError(SignalingError):
     """Screen sharing operation failed."""
-    
+
     def __init__(self, message: str, user_id: int = 0, reason: str = ""):
         super().__init__(message)
         self.user_id = user_id

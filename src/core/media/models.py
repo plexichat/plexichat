@@ -3,7 +3,7 @@ Media models - Dataclasses for all media-related entities.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, Any
 from enum import Enum
 
 

@@ -29,10 +29,10 @@ class IndexerConfig:
 
 class BaseIndexer(ABC):
     """Abstract base class for search indexers."""
-    
+
     def __init__(self, config: Optional[IndexerConfig] = None):
         self.config = config or IndexerConfig()
-    
+
     @abstractmethod
     def initialize(self) -> bool:
         """
@@ -42,12 +42,12 @@ class BaseIndexer(ABC):
             True if initialization successful
         """
         pass
-    
+
     @abstractmethod
     def close(self):
         """Close the indexer and release resources."""
         pass
-    
+
     @abstractmethod
     def index_message(self, message: IndexedMessage) -> bool:
         """
@@ -60,7 +60,7 @@ class BaseIndexer(ABC):
             True if indexed successfully
         """
         pass
-    
+
     @abstractmethod
     def index_messages_batch(self, messages: List[IndexedMessage]) -> int:
         """
@@ -73,7 +73,7 @@ class BaseIndexer(ABC):
             Number of messages indexed
         """
         pass
-    
+
     @abstractmethod
     def remove_message(self, message_id: int) -> bool:
         """
@@ -86,7 +86,7 @@ class BaseIndexer(ABC):
             True if removed successfully
         """
         pass
-    
+
     @abstractmethod
     def update_message(self, message: IndexedMessage) -> bool:
         """
@@ -99,7 +99,7 @@ class BaseIndexer(ABC):
             True if updated successfully
         """
         pass
-    
+
     @abstractmethod
     def search_messages(
         self,
@@ -127,7 +127,7 @@ class BaseIndexer(ABC):
             List of search results
         """
         pass
-    
+
     @abstractmethod
     def index_user(self, user: IndexedUser) -> bool:
         """
@@ -140,7 +140,7 @@ class BaseIndexer(ABC):
             True if indexed successfully
         """
         pass
-    
+
     @abstractmethod
     def remove_user(self, user_id: int) -> bool:
         """
@@ -153,7 +153,7 @@ class BaseIndexer(ABC):
             True if removed successfully
         """
         pass
-    
+
     @abstractmethod
     def search_users(
         self,
@@ -173,7 +173,7 @@ class BaseIndexer(ABC):
             List of user search results
         """
         pass
-    
+
     @abstractmethod
     def index_server(self, server: IndexedServer) -> bool:
         """
@@ -186,7 +186,7 @@ class BaseIndexer(ABC):
             True if indexed successfully
         """
         pass
-    
+
     @abstractmethod
     def remove_server(self, server_id: int) -> bool:
         """
@@ -199,7 +199,7 @@ class BaseIndexer(ABC):
             True if removed successfully
         """
         pass
-    
+
     @abstractmethod
     def search_servers(
         self,
@@ -223,7 +223,7 @@ class BaseIndexer(ABC):
             List of server search results
         """
         pass
-    
+
     @abstractmethod
     def get_stats(self) -> Dict[str, Any]:
         """
@@ -233,7 +233,7 @@ class BaseIndexer(ABC):
             Dict with stats (message_count, user_count, server_count, etc.)
         """
         pass
-    
+
     def health_check(self) -> bool:
         """
         Check if indexer is healthy.

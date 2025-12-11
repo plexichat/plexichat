@@ -2,7 +2,6 @@
 Tests for @role mention parsing and notifications.
 """
 
-import pytest
 from src.core.notifications import MentionType
 
 

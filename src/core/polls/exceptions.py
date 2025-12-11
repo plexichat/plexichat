@@ -40,7 +40,7 @@ class InvalidPollOptionError(PollError):
 
 class PollOptionLimitError(PollError):
     """Poll option count is invalid."""
-    
+
     def __init__(self, message: str, min_options: int, max_options: int, actual: int):
         super().__init__(message)
         self.min_options = min_options
@@ -50,7 +50,7 @@ class PollOptionLimitError(PollError):
 
 class InvalidPollDurationError(PollError):
     """Poll duration is invalid."""
-    
+
     def __init__(self, message: str, min_hours: int, max_hours: int):
         super().__init__(message)
         self.min_hours = min_hours

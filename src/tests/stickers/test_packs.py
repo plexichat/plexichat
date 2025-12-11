@@ -7,7 +7,6 @@ import uuid
 from src.core.stickers import (
     PackNotFoundError,
     InvalidPackNameError,
-    PackLimitError,
     PermissionDeniedError,
     PackType,
 )

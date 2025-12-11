@@ -2,7 +2,6 @@
 Tests for #channel mention parsing.
 """
 
-import pytest
 from src.core.notifications import MentionType
 
 

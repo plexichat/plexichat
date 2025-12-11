@@ -2,9 +2,8 @@
 Tests for per-channel notification overrides.
 """
 
-import pytest
 import time
-from src.core.notifications import NotificationLevel, MentionType
+from src.core.notifications import NotificationLevel
 
 
 class TestGetChannelOverride:

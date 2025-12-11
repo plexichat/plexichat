@@ -1,14 +1,12 @@
 """Tests for gateway edge cases and error handling."""
 
 import pytest
-from unittest.mock import AsyncMock
 
 from src.api.websocket.opcodes import (
     GatewayOpcode,
     GatewayCloseCode,
     is_resumable,
     get_close_message,
-    RESUMABLE_CLOSE_CODES,
 )
 from src.api.websocket.connection import Connection, ConnectionState
 from src.api.websocket.compression import (

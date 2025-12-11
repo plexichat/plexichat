@@ -4,7 +4,6 @@ Tests for sound cooldowns.
 
 import pytest
 import uuid
-import time
 from src.core.soundboard import SoundFormat, SoundCooldownError
 
 

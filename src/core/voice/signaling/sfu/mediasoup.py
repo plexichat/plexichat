@@ -5,8 +5,7 @@ Makes actual HTTP requests to the mediasoup API.
 """
 
 import asyncio
-import json
-from typing import Dict, List, Optional, Any
+from typing import Dict, Optional, Any
 
 import utils.logger as logger
 
@@ -29,7 +28,7 @@ class MediasoupAdapter(SFUAdapter):
     Expects a mediasoup server with a REST API following the common
     mediasoup-demo patterns.
     """
-    
+
     def __init__(self, api_url: str, timeout: int = 10):
         """
         Initialize the mediasoup adapter.
@@ -41,7 +40,7 @@ class MediasoupAdapter(SFUAdapter):
         self._api_url = api_url.rstrip("/")
         self._timeout = timeout
         self._session = None
-    
+
     async def _get_session(self):
         """Get or create aiohttp session."""
         if self._session is None:
@@ -57,7 +56,7 @@ class MediasoupAdapter(SFUAdapter):
                     url=self._api_url
                 )
         return self._session
-    
+
     async def _request(
         self,
         method: str,
@@ -77,7 +76,7 @@ class MediasoupAdapter(SFUAdapter):
         """
         session = await self._get_session()
         url = f"{self._api_url}{endpoint}"
-        
+
         try:
             async with session.request(
                 method,
@@ -92,11 +91,11 @@ class MediasoupAdapter(SFUAdapter):
                         backend="mediasoup",
                         url=url
                     )
-                
+
                 if response.content_type == "application/json":
                     return await response.json()
                 return {}
-                
+
         except asyncio.TimeoutError:
             raise SFUTimeoutError(
                 f"Mediasoup request timed out",
@@ -111,7 +110,7 @@ class MediasoupAdapter(SFUAdapter):
                 backend="mediasoup",
                 url=url
             )
-    
+
     async def create_room(self, room_id: str) -> RoomInfo:
         """Create a new room on the mediasoup server."""
         result = await self._request(
@@ -119,21 +118,21 @@ class MediasoupAdapter(SFUAdapter):
             "/rooms",
             {"roomId": room_id}
         )
-        
+
         logger.debug(f"Created mediasoup room: {room_id}")
-        
+
         return RoomInfo(
             id=room_id,
             peers=result.get("peers", []),
             producers=result.get("producers", []),
         )
-    
+
     async def close_room(self, room_id: str) -> bool:
         """Close a room on the mediasoup server."""
         await self._request("DELETE", f"/rooms/{room_id}")
         logger.debug(f"Closed mediasoup room: {room_id}")
         return True
-    
+
     async def join_room(self, room_id: str, peer_id: str) -> Dict[str, Any]:
         """Join a peer to a room."""
         result = await self._request(
@@ -141,21 +140,21 @@ class MediasoupAdapter(SFUAdapter):
             f"/rooms/{room_id}/peers",
             {"peerId": peer_id}
         )
-        
+
         logger.debug(f"Peer {peer_id} joined room {room_id}")
-        
+
         return {
             "routerRtpCapabilities": result.get("routerRtpCapabilities", {}),
             "peers": result.get("peers", []),
             "producers": result.get("producers", []),
         }
-    
+
     async def leave_room(self, room_id: str, peer_id: str) -> bool:
         """Remove a peer from a room."""
         await self._request("DELETE", f"/rooms/{room_id}/peers/{peer_id}")
         logger.debug(f"Peer {peer_id} left room {room_id}")
         return True
-    
+
     async def create_transport(
         self,
         room_id: str,
@@ -171,7 +170,7 @@ class MediasoupAdapter(SFUAdapter):
                 "sctpCapabilities": None,
             }
         )
-        
+
         transport = SFUTransport(
             id=result["id"],
             direction=direction,
@@ -180,11 +179,11 @@ class MediasoupAdapter(SFUAdapter):
             dtls_parameters=result.get("dtlsParameters", {}),
             sctp_parameters=result.get("sctpParameters"),
         )
-        
+
         logger.debug(f"Created transport {transport.id} for peer {peer_id}")
-        
+
         return transport
-    
+
     async def connect_transport(
         self,
         room_id: str,
@@ -198,10 +197,10 @@ class MediasoupAdapter(SFUAdapter):
             f"/rooms/{room_id}/peers/{peer_id}/transports/{transport_id}/connect",
             {"dtlsParameters": dtls_parameters}
         )
-        
+
         logger.debug(f"Connected transport {transport_id}")
         return True
-    
+
     async def produce(
         self,
         room_id: str,
@@ -219,18 +218,18 @@ class MediasoupAdapter(SFUAdapter):
                 "rtpParameters": rtp_parameters,
             }
         )
-        
+
         producer = SFUProducer(
             id=result["id"],
             kind=kind,
             rtp_parameters=rtp_parameters,
             paused=result.get("paused", False),
         )
-        
+
         logger.debug(f"Created producer {producer.id} ({kind.value})")
-        
+
         return producer
-    
+
     async def consume(
         self,
         room_id: str,
@@ -248,7 +247,7 @@ class MediasoupAdapter(SFUAdapter):
                 "rtpCapabilities": rtp_capabilities,
             }
         )
-        
+
         consumer = SFUConsumer(
             id=result["id"],
             producer_id=producer_id,
@@ -256,11 +255,11 @@ class MediasoupAdapter(SFUAdapter):
             rtp_parameters=result.get("rtpParameters", {}),
             paused=result.get("paused", False),
         )
-        
+
         logger.debug(f"Created consumer {consumer.id} for producer {producer_id}")
-        
+
         return consumer
-    
+
     async def pause_producer(
         self,
         room_id: str,
@@ -273,7 +272,7 @@ class MediasoupAdapter(SFUAdapter):
             f"/rooms/{room_id}/peers/{peer_id}/producers/{producer_id}/pause",
         )
         return True
-    
+
     async def resume_producer(
         self,
         room_id: str,
@@ -286,7 +285,7 @@ class MediasoupAdapter(SFUAdapter):
             f"/rooms/{room_id}/peers/{peer_id}/producers/{producer_id}/resume",
         )
         return True
-    
+
     async def close_producer(
         self,
         room_id: str,
@@ -299,7 +298,7 @@ class MediasoupAdapter(SFUAdapter):
             f"/rooms/{room_id}/peers/{peer_id}/producers/{producer_id}",
         )
         return True
-    
+
     async def get_room_info(self, room_id: str) -> Optional[RoomInfo]:
         """Get information about a room."""
         try:
@@ -311,12 +310,12 @@ class MediasoupAdapter(SFUAdapter):
             )
         except SFUConnectionError:
             return None
-    
+
     async def get_router_capabilities(self, room_id: str) -> Dict[str, Any]:
         """Get RTP capabilities for a room's router."""
         result = await self._request("GET", f"/rooms/{room_id}/routerCapabilities")
         return result.get("rtpCapabilities", {})
-    
+
     async def set_preferred_layers(
         self,
         room_id: str,
@@ -335,7 +334,7 @@ class MediasoupAdapter(SFUAdapter):
             }
         )
         return True
-    
+
     async def health_check(self) -> bool:
         """Check if the mediasoup server is healthy."""
         try:
@@ -343,7 +342,7 @@ class MediasoupAdapter(SFUAdapter):
             return True
         except Exception:
             return False
-    
+
     async def close(self) -> None:
         """Close the HTTP session."""
         if self._session:

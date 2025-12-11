@@ -147,7 +147,7 @@ DEFAULT_CATEGORIES = [
 def create_tables(db):
     """Create all search tables including FTS5 virtual tables."""
     statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
-    
+
     for statement in statements:
         if statement:
             try:
@@ -156,9 +156,9 @@ def create_tables(db):
                 if "already exists" not in str(e).lower():
                     logger.error(f"Failed to execute schema statement: {e}")
                     raise
-    
+
     _seed_categories(db)
-    
+
     logger.info("Search tables created successfully")
 
 
@@ -167,7 +167,7 @@ def _seed_categories(db):
     existing = db.fetch_one("SELECT COUNT(*) as count FROM search_categories")
     if existing and existing["count"] > 0:
         return
-    
+
     for cat_id, name, description, icon, position in DEFAULT_CATEGORIES:
         try:
             db.insert_or_ignore(

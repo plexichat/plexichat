@@ -16,7 +16,7 @@ def _channel_to_response(channel) -> ChannelResponse:
     channel_type = getattr(channel, "channel_type", None)
     if channel_type is not None and hasattr(channel_type, "value"):
         channel_type = channel_type.value
-    
+
     return ChannelResponse(
         id=str(channel.id),
         server_id=str(channel.server_id),
@@ -41,12 +41,12 @@ async def get_channel(channel_id: str, current_user: TokenInfo = Depends(get_cur
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         cid = int(channel_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
-    
+
     try:
         channel = servers_mod.get_channel(cid, current_user.user_id)
         if not channel:
@@ -77,12 +77,12 @@ async def update_channel(
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         cid = int(channel_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
-    
+
     try:
         update_data = body.model_dump(exclude_unset=True)
         channel = servers_mod.update_channel(current_user.user_id, cid, **update_data)
@@ -106,12 +106,12 @@ async def delete_channel(channel_id: str, current_user: TokenInfo = Depends(get_
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         cid = int(channel_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
-    
+
     try:
         servers_mod.delete_channel(current_user.user_id, cid)
         return {"success": True}
@@ -130,12 +130,12 @@ async def get_channel_webhooks(channel_id: str, current_user: TokenInfo = Depend
     webhooks_mod = api.get_webhooks()
     if not webhooks_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Webhooks module not available"}})
-    
+
     try:
         cid = int(channel_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
-    
+
     try:
         webhooks = webhooks_mod.get_channel_webhooks(current_user.user_id, cid)
         return [
@@ -171,17 +171,17 @@ async def create_channel_invite(
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         cid = int(channel_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
-    
+
     body = body or {}
     max_age = body.get("max_age", 86400)
     max_uses = body.get("max_uses", 0)
     temporary = body.get("temporary", False)
-    
+
     try:
         invite = servers_mod.create_invite(
             user_id=current_user.user_id,
@@ -222,12 +222,12 @@ async def get_invite_info(invite_code: str, current_user: TokenInfo = Depends(ge
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         invite = servers_mod.get_invite(invite_code)
         if not invite:
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Invite not found or expired"}})
-        
+
         return {
             "code": invite.code,
             "server_id": str(invite.server_id) if hasattr(invite, "server_id") else None,
@@ -255,7 +255,7 @@ async def join_server_via_invite(invite_code: str, current_user: TokenInfo = Dep
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         result = servers_mod.use_invite(current_user.user_id, invite_code)
         return {
@@ -283,7 +283,7 @@ async def delete_invite(invite_code: str, current_user: TokenInfo = Depends(get_
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         servers_mod.delete_invite(current_user.user_id, invite_code)
         return {"success": True}
@@ -322,7 +322,7 @@ def _get_upload_limit(user_id: int = None) -> int:
                         return tier_limits.max_file_size_mb * 1024 * 1024
             except Exception:
                 pass
-        
+
         # Fall back to config default
         media_config = config.get("media", {})
         size_limits = media_config.get("size_limits", {})
@@ -345,15 +345,15 @@ async def upload_attachment(
     """
     servers_mod = api.get_servers()
     messaging = api.get_messaging()
-    
+
     try:
         cid = int(channel_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
-    
+
     # Verify user has access to channel (try server channel first, then DM)
     has_access = False
-    
+
     if servers_mod:
         try:
             channel = servers_mod.get_channel(cid, current_user.user_id)
@@ -361,7 +361,7 @@ async def upload_attachment(
                 has_access = True
         except Exception:
             pass
-    
+
     # If not a server channel, check if it's a DM conversation
     if not has_access and messaging:
         try:
@@ -370,29 +370,29 @@ async def upload_attachment(
                 has_access = True
         except Exception:
             pass
-    
+
     if not has_access:
         raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
-    
+
     # Check file size against user's tier limit
     content = await file.read()
     max_size = _get_upload_limit(current_user.user_id)
     if len(content) > max_size:
         max_mb = max_size // (1024 * 1024)
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": f"File too large (max {max_mb}MB)"}})
-    
+
     # Generate unique filename
     ext = os.path.splitext(file.filename)[1] if file.filename else ''
     unique_name = f"{uuid.uuid4().hex}{ext}"
-    
+
     # Save to media directory
     media_dir = Path.home() / ".plexichat" / "media" / "attachments"
     media_dir.mkdir(parents=True, exist_ok=True)
-    
+
     file_path = media_dir / unique_name
     with open(file_path, "wb") as f:
         f.write(content)
-    
+
     # Return URL (relative to API)
     return {
         "id": unique_name,

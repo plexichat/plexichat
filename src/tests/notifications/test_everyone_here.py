@@ -2,7 +2,6 @@
 Tests for @everyone and @here mentions with permissions.
 """
 
-import pytest
 from src.core.notifications import MentionType
 
 

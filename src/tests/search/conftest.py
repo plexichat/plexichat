@@ -21,11 +21,11 @@ def users_with_dm(modules, user_pool):
     user2 = user_pool.get_user()
 
     dm = modules.messaging.create_dm(user1.id, user2.id)
-    
+
     msg1 = modules.messaging.send_message(user1.id, dm.id, "Hello world from Alice")
     msg2 = modules.messaging.send_message(user2.id, dm.id, "Hi Alice, this is Bob")
     msg3 = modules.messaging.send_message(user1.id, dm.id, "Check out this link https://example.com")
-    
+
     modules.search.index_message(msg1.id, msg1.content, {
         "author_id": user1.id,
         "conversation_id": dm.id,

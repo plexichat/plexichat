@@ -102,17 +102,17 @@ class ZlibDecompressor:
         try:
             # Use max_length parameter to limit decompression (zip bomb protection)
             decompressed = self._decompressor.decompress(
-                bytes(self._buffer), 
+                bytes(self._buffer),
                 max_length=self._max_size
             )
-            
+
             # Check if there's more data (indicates we hit the limit)
             if self._decompressor.unconsumed_tail:
                 self._buffer.clear()
                 self.reset()
                 logger.warning(f"Decompression exceeded max size limit ({self._max_size} bytes) - possible zip bomb")
                 raise CompressionError(f"Decompressed data exceeds maximum size of {self._max_size} bytes")
-            
+
             self._buffer.clear()
             return json.loads(decompressed.decode("utf-8"))
         except zlib.error as e:
@@ -145,7 +145,7 @@ def compress_payload(data: dict) -> bytes:
 
 
 def decompress_payload(
-    data: bytes, 
+    data: bytes,
     max_size: Optional[int] = None
 ) -> Optional[dict]:
     """
@@ -163,17 +163,17 @@ def decompress_payload(
     """
     _, default_max = _get_limits()
     limit = max_size or default_max
-    
+
     try:
         # Create decompressor with size limit
         decompressor = zlib.decompressobj()
         decompressed = decompressor.decompress(data, max_length=limit)
-        
+
         # Check for unconsumed data (hit the limit)
         if decompressor.unconsumed_tail:
             logger.warning(f"Payload decompression exceeded max size ({limit} bytes)")
             raise CompressionError(f"Decompressed data exceeds maximum size of {limit} bytes")
-        
+
         return json.loads(decompressed.decode("utf-8"))
     except zlib.error as e:
         logger.debug(f"Zlib error: {e}")

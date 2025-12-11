@@ -8,7 +8,6 @@ with proper validation, permission checks, and database interactions.
 import time
 from typing import Optional, List, Dict, Any
 
-import utils.config as config
 import utils.logger as logger
 from src.utils.encryption import generate_snowflake_id
 
@@ -19,7 +18,6 @@ from .models import (
     VoiceRegion,
     SpeakerRequest,
     VoiceChannelType,
-    AFKSettings,
     DEFAULT_VOICE_REGIONS,
 )
 from .exceptions import (
@@ -158,7 +156,7 @@ class VoiceManager:
         """Convert database rows to VoiceChannel."""
         channel_type = VoiceChannelType.STAGE if channel_row["channel_type"] == "stage" else VoiceChannelType.VOICE
         user_count = self._get_channel_user_count(channel_row["id"])
-        
+
         return VoiceChannel(
             id=channel_row["id"],
             server_id=channel_row["server_id"],
@@ -280,7 +278,7 @@ class VoiceManager:
         current = self.get_voice_state(user_id)
         if current:
             self.leave_channel(user_id)
-        
+
         return self.join_channel(user_id, channel_id)
 
     def get_channel_users(self, channel_id: int) -> List[VoiceState]:
@@ -1106,7 +1104,7 @@ class VoiceManager:
 
         now = self._get_timestamp()
         timeout_ms = afk_settings["timeout_seconds"] * 1000
-        
+
         if now - state.last_activity < timeout_ms:
             return None
 

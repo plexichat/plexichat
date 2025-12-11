@@ -5,7 +5,6 @@ Tests for thread listing functionality.
 import pytest
 from src.core.threads import (
     ThreadType,
-    ThreadState,
     ChannelNotFoundError,
 )
 

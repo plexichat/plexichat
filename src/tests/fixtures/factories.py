@@ -6,7 +6,7 @@ with optional pooling for frequently-used entities.
 """
 
 import uuid
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, List, Optional
 from dataclasses import dataclass, field
 
 from .config import TEST_PASSWORD
@@ -20,12 +20,12 @@ class UserFactory:
     Supports both pooled users (pre-created, fast) and
     fresh users (created on demand, slower but isolated).
     """
-    
+
     auth_module: Any
     _pool: List[Any] = field(default_factory=list)
     _pool_index: int = 0
     _created: List[Any] = field(default_factory=list)
-    
+
     def create(
         self,
         username: Optional[str] = None,
@@ -52,12 +52,12 @@ class UserFactory:
             user = self._pool[self._pool_index]
             self._pool_index += 1
             return user
-        
+
         # Create new user
         unique_id = uuid.uuid4().hex[:8]
         username = username or f"user_{unique_id}"
         email = email or f"{username}@test.example.com"
-        
+
         user = self.auth_module.register(
             username=username,
             email=email,
@@ -66,11 +66,11 @@ class UserFactory:
         )
         self._created.append(user)
         return user
-    
+
     def create_many(self, count: int, **kwargs) -> List[Any]:
         """Create multiple users."""
         return [self.create(**kwargs) for _ in range(count)]
-    
+
     def create_with_login(
         self,
         username: Optional[str] = None,
@@ -86,7 +86,7 @@ class UserFactory:
         user = self.create(username=username, password=password, use_pool=False, **kwargs)
         result = self.auth_module.login(user.username, password)
         return user, result.token
-    
+
     def populate_pool(self, size: int = 50):
         """
         Pre-populate the user pool.
@@ -100,7 +100,7 @@ class UserFactory:
                 password=TEST_PASSWORD
             )
             self._pool.append(user)
-    
+
     def reset_pool_index(self):
         """Reset pool index to reuse pooled users."""
         self._pool_index = 0
@@ -109,10 +109,10 @@ class UserFactory:
 @dataclass
 class ServerFactory:
     """Factory for creating test servers."""
-    
+
     servers_module: Any
     user_factory: UserFactory
-    
+
     def create(
         self,
         owner: Optional[Any] = None,
@@ -134,18 +134,18 @@ class ServerFactory:
         """
         if owner is None:
             owner = self.user_factory.create()
-        
+
         assert owner is not None  # Created above if None
         unique_id = uuid.uuid4().hex[:6]
         name = name or f"Test Server {unique_id}"
-        
+
         return self.servers_module.create_server(
             owner_id=owner.id,
             name=name,
             description=description,
             **kwargs
         )
-    
+
     def create_with_members(
         self,
         owner: Optional[Any] = None,
@@ -160,17 +160,17 @@ class ServerFactory:
         """
         if owner is None:
             owner = self.user_factory.create()
-        
+
         server = self.create(owner=owner, **kwargs)
-        
+
         members = []
         for _ in range(member_count):
             member = self.user_factory.create()
             self.servers_module.add_member(server.id, member.id)
             members.append(member)
-        
+
         return server, owner, members
-    
+
     def create_with_channels(
         self,
         owner: Optional[Any] = None,
@@ -185,13 +185,13 @@ class ServerFactory:
         """
         if owner is None:
             owner = self.user_factory.create()
-        
+
         assert owner is not None  # Created above if None
         server = self.create(owner=owner, **kwargs)
-        
+
         # Get default general channel
         channels = self.servers_module.get_channels(owner.id, server.id)
-        
+
         # Create additional channels
         channel_names = channel_names or ["announcements", "random"]
         for name in channel_names:
@@ -201,17 +201,17 @@ class ServerFactory:
                 name=name
             )
             channels.append(channel)
-        
+
         return server, owner, channels
 
 
-@dataclass  
+@dataclass
 class ConversationFactory:
     """Factory for creating test conversations (DMs and groups)."""
-    
+
     messaging_module: Any
     user_factory: UserFactory
-    
+
     def create_dm(
         self,
         user1: Optional[Any] = None,
@@ -227,12 +227,12 @@ class ConversationFactory:
             user1 = self.user_factory.create()
         if user2 is None:
             user2 = self.user_factory.create()
-        
+
         assert user1 is not None
         assert user2 is not None
         dm = self.messaging_module.create_dm(user1.id, user2.id)
         return dm, user1, user2
-    
+
     def create_group(
         self,
         owner: Optional[Any] = None,
@@ -247,30 +247,30 @@ class ConversationFactory:
         """
         if owner is None:
             owner = self.user_factory.create()
-        
+
         assert owner is not None
         participants = self.user_factory.create_many(participant_count)
         participant_ids = [p.id for p in participants]
-        
+
         unique_id = uuid.uuid4().hex[:6]
         name = name or f"Test Group {unique_id}"
-        
+
         group = self.messaging_module.create_group(
             owner_id=owner.id,
             name=name,
             participant_ids=participant_ids
         )
-        
+
         return group, owner, participants
 
 
 @dataclass
 class WebhookFactory:
     """Factory for creating test webhooks."""
-    
+
     webhooks_module: Any
     server_factory: ServerFactory
-    
+
     def create(
         self,
         user: Optional[Any] = None,
@@ -291,17 +291,17 @@ class WebhookFactory:
         else:
             server = None
             owner = user
-        
+
         assert user is not None
         assert channel is not None
         unique_id = uuid.uuid4().hex[:6]
         name = name or f"Test Webhook {unique_id}"
-        
+
         webhook = self.webhooks_module.create_webhook(
             user_id=user.id,
             channel_id=channel.id,
             name=name,
             **kwargs
         )
-        
+
         return webhook, channel, server, owner

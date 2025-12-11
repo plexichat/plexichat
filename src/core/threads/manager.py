@@ -8,7 +8,6 @@ with proper validation, permission checks, and database interactions.
 import time
 from typing import Optional, List, Dict, Any
 
-import utils.config as config
 import utils.logger as logger
 from src.utils.encryption import generate_snowflake_id
 
@@ -23,7 +22,6 @@ from .exceptions import (
     ThreadError,
     ThreadNotFoundError,
     ThreadAccessDeniedError,
-    ThreadArchivedError,
     ThreadLockedError,
     ThreadMemberNotFoundError,
     ThreadMemberExistsError,
@@ -31,7 +29,6 @@ from .exceptions import (
     MessageNotFoundError,
     ChannelNotFoundError,
     PermissionDeniedError,
-    InvalidThreadTypeError,
 )
 from .schema import create_tables
 

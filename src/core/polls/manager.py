@@ -15,16 +15,13 @@ from src.utils.encryption import generate_snowflake_id
 from .models import (
     Poll,
     PollOption,
-    PollVote,
     PollResults,
     PollResultsVisibility,
 )
 from .exceptions import (
-    PollError,
     PollNotFoundError,
     PollOptionNotFoundError,
     PollEndedError,
-    PollNotEndedError,
     InvalidPollQuestionError,
     InvalidPollOptionError,
     PollOptionLimitError,

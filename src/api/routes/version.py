@@ -17,7 +17,6 @@ from ..schemas.version import (
     ServerState,
     VersionInfo,
     VersionErrorResponse,
-    VersionErrorDetail,
 )
 
 router = APIRouter(tags=["Version"])
@@ -54,7 +53,7 @@ async def get_server_version():
     """
     current = version_util.current()
     min_supported = version_util.min_supported()
-    
+
     return ServerVersionResponse(
         version=_version_to_info(current),
         min_supported_version=_version_to_info(min_supported) if min_supported else None,
@@ -90,13 +89,13 @@ async def negotiate_version(request: VersionNegotiateRequest):
                 }
             },
         )
-    
+
     server_ver = version_util.current()
     min_supported = version_util.min_supported()
-    
+
     # Check compatibility
     is_compatible = version_util.is_client_compatible(request.client_version)
-    
+
     # Determine if update is recommended (client is older than server)
     update_recommended = False
     if is_compatible:
@@ -105,7 +104,7 @@ async def negotiate_version(request: VersionNegotiateRequest):
             version_util.current_string()
         )
         update_recommended = comparison < 0
-    
+
     message = None
     if not is_compatible:
         min_version_str = version_util.format_version(min_supported) if min_supported else "latest"
@@ -113,7 +112,7 @@ async def negotiate_version(request: VersionNegotiateRequest):
             f"Client version {request.client_version} is no longer supported. "
             f"Please update to at least {min_version_str}."
         )
-    
+
     response = VersionNegotiateResponse(
         compatible=is_compatible,
         server_version=_version_to_info(server_ver),
@@ -124,7 +123,7 @@ async def negotiate_version(request: VersionNegotiateRequest):
         update_url=_update_url,
         message=message,
     )
-    
+
     if not is_compatible:
         raise HTTPException(
             status_code=426,  # Upgrade Required
@@ -139,7 +138,7 @@ async def negotiate_version(request: VersionNegotiateRequest):
                 }
             },
         )
-    
+
     if update_recommended:
         response.message = (
             f"A newer version ({version_util.current_string()}) is available. "
@@ -147,7 +146,7 @@ async def negotiate_version(request: VersionNegotiateRequest):
         )
     else:
         response.message = "Client version is compatible."
-    
+
     return response
 
 
@@ -164,7 +163,7 @@ async def get_server_status():
     """
     current = version_util.current()
     uptime = int(time.time() - _server_start_time)
-    
+
     return ServerStatusResponse(
         state=_server_state,
         version=_version_to_info(current),

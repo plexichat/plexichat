@@ -6,7 +6,6 @@ import pytest
 from src.core.embeds import (
     EmbedValidationError,
     EmbedSanitizationError,
-    InvalidUrlError,
 )
 
 
@@ -18,7 +17,7 @@ class TestXssPrevention:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"xss1_{unique_id}",
             email=f"xss1_{unique_id}@example.com",
@@ -36,7 +35,7 @@ class TestXssPrevention:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"xss2_{unique_id}",
             email=f"xss2_{unique_id}@example.com",
@@ -54,7 +53,7 @@ class TestXssPrevention:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"xss3_{unique_id}",
             email=f"xss3_{unique_id}@example.com",
@@ -72,7 +71,7 @@ class TestXssPrevention:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"xss4_{unique_id}",
             email=f"xss4_{unique_id}@example.com",
@@ -90,7 +89,7 @@ class TestXssPrevention:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"xss5_{unique_id}",
             email=f"xss5_{unique_id}@example.com",
@@ -108,7 +107,7 @@ class TestXssPrevention:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"xss6_{unique_id}",
             email=f"xss6_{unique_id}@example.com",
@@ -126,7 +125,7 @@ class TestXssPrevention:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"xss7_{unique_id}",
             email=f"xss7_{unique_id}@example.com",
@@ -145,7 +144,7 @@ class TestXssPrevention:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"xss8_{unique_id}",
             email=f"xss8_{unique_id}@example.com",
@@ -164,7 +163,7 @@ class TestXssPrevention:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"xss9_{unique_id}",
             email=f"xss9_{unique_id}@example.com",
@@ -183,7 +182,7 @@ class TestXssPrevention:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"xss10_{unique_id}",
             email=f"xss10_{unique_id}@example.com",
@@ -206,7 +205,7 @@ class TestUrlSanitization:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"san1_{unique_id}",
             email=f"san1_{unique_id}@example.com",
@@ -225,7 +224,7 @@ class TestUrlSanitization:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"san2_{unique_id}",
             email=f"san2_{unique_id}@example.com",
@@ -244,7 +243,7 @@ class TestUrlSanitization:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"san3_{unique_id}",
             email=f"san3_{unique_id}@example.com",
@@ -263,7 +262,7 @@ class TestUrlSanitization:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"san4_{unique_id}",
             email=f"san4_{unique_id}@example.com",
@@ -282,7 +281,7 @@ class TestUrlSanitization:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"san5_{unique_id}",
             email=f"san5_{unique_id}@example.com",
@@ -301,7 +300,7 @@ class TestUrlSanitization:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"san6_{unique_id}",
             email=f"san6_{unique_id}@example.com",
@@ -320,7 +319,7 @@ class TestUrlSanitization:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"san7_{unique_id}",
             email=f"san7_{unique_id}@example.com",
@@ -368,7 +367,7 @@ class TestCaseInsensitiveXss:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"case1_{unique_id}",
             email=f"case1_{unique_id}@example.com",
@@ -386,7 +385,7 @@ class TestCaseInsensitiveXss:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"case2_{unique_id}",
             email=f"case2_{unique_id}@example.com",
@@ -404,7 +403,7 @@ class TestCaseInsensitiveXss:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"case3_{unique_id}",
             email=f"case3_{unique_id}@example.com",

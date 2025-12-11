@@ -1,12 +1,9 @@
 """Tests for gateway identify flow."""
 
 import pytest
-from unittest.mock import MagicMock
-from dataclasses import dataclass
 
 from src.api.websocket.opcodes import GatewayOpcode, GatewayCloseCode
 from src.api.websocket.connection import ConnectionState
-from src.core.events.types import GatewayIntent
 
 
 class TestIdentifyHandler:

@@ -31,15 +31,10 @@ from .models import (
 from .exceptions import (
     RuleNotFoundError,
     RuleValidationError,
-    RuleDisabledError,
-    ActionExecutionError,
     ExemptionError,
-    ConfigurationError,
-    PermissionDeniedError,
 )
 from .schema import create_tables
 from .rules import (
-    BaseRule,
     KeywordRule,
     RegexRule,
     MessageSpamRule,
@@ -51,7 +46,6 @@ from .rules import (
     RepeatedCharsRule,
 )
 from .actions import (
-    BaseAction,
     DeleteMessageAction,
     TimeoutUserAction,
     KickUserAction,
@@ -63,7 +57,7 @@ from .ai import OpenAIAdapter, PerspectiveAdapter, CustomAdapter
 
 class AutoModManager:
     """Core auto-moderation manager."""
-    
+
     RULE_CLASSES = {
         RuleType.KEYWORD: KeywordRule,
         RuleType.REGEX: RegexRule,
@@ -75,7 +69,7 @@ class AutoModManager:
         RuleType.MASS_EMOJI: MassEmojiRule,
         RuleType.REPEATED_CHARS: RepeatedCharsRule,
     }
-    
+
     ACTION_CLASSES = {
         ActionType.DELETE_MESSAGE: DeleteMessageAction,
         ActionType.TIMEOUT_USER: TimeoutUserAction,
@@ -83,7 +77,7 @@ class AutoModManager:
         ActionType.BAN_USER: BanUserAction,
         ActionType.ALERT_MODERATORS: AlertModeratorsAction,
     }
-    
+
     def __init__(
         self,
         db,
@@ -106,12 +100,12 @@ class AutoModManager:
         self._notifications = notifications_module
         self._config = self._load_config()
         self._ai_adapters = {}
-        
+
         create_tables(db)
         self._init_ai_adapters()
-        
+
         logger.info("AutoMod module initialized")
-    
+
     def _load_config(self) -> Dict[str, Any]:
         """Load automod configuration."""
         defaults = {
@@ -122,27 +116,27 @@ class AutoModManager:
             "reputation_decay_interval": 86400,
             "max_violations_before_action": 3,
         }
-        
+
         automod_config = config.get("automod", {})
         return {**defaults, **automod_config}
-    
+
     def _init_ai_adapters(self):
         """Initialize configured AI adapters."""
         ai_config = self._config.get("ai", {})
-        
+
         if ai_config.get("openai", {}).get("api_key"):
             self._ai_adapters["openai"] = OpenAIAdapter(ai_config["openai"])
-        
+
         if ai_config.get("perspective", {}).get("api_key"):
             self._ai_adapters["perspective"] = PerspectiveAdapter(ai_config["perspective"])
-        
+
         if ai_config.get("custom", {}).get("endpoint_url"):
             self._ai_adapters["custom"] = CustomAdapter(ai_config["custom"])
-    
+
     def _get_timestamp(self) -> int:
         """Get current timestamp in milliseconds."""
         return int(time.time() * 1000)
-    
+
     def _generate_id(self) -> int:
         """Generate a new Snowflake ID."""
         return generate_snowflake_id()
@@ -172,48 +166,48 @@ class AutoModManager:
         """
         if not self._config.get("enabled", True):
             return CheckResult(passed=True, violations=[], actions_to_take=[])
-        
+
         validation_result = validator.validate(content)
         if not validation_result.is_valid:
             logger.warning(
                 f"Message from user {user_id} failed validation: {validation_result.error_message}"
             )
-        
+
         if self._is_exempt(server_id, user_id, channel_id):
             return CheckResult(passed=True, violations=[], actions_to_take=[])
-        
+
         rules = self._get_server_rules(server_id, enabled_only=True)
         rules.sort(key=lambda r: r.priority, reverse=True)
-        
+
         violations = []
         actions_to_take = []
         context = context or {}
-        
+
         for rule in rules:
             if self._is_exempt_from_rule(rule, user_id, channel_id):
                 continue
-            
+
             match = self._evaluate_rule(rule, content, user_id, channel_id, context)
-            
+
             if match.matched:
                 violations.append(match)
                 actions_to_take.extend(rule.actions)
-                
+
                 if not rule.check_all:
                     break
-        
+
         if not violations:
             return CheckResult(passed=True, violations=[], actions_to_take=[])
-        
+
         should_delete = any(a.action_type == ActionType.DELETE_MESSAGE for a in actions_to_take)
         should_timeout = any(a.action_type == ActionType.TIMEOUT_USER for a in actions_to_take)
         timeout_duration = None
-        
+
         for action in actions_to_take:
             if action.action_type == ActionType.TIMEOUT_USER and action.duration_seconds:
                 timeout_duration = action.duration_seconds
                 break
-        
+
         return CheckResult(
             passed=False,
             violations=violations,
@@ -222,7 +216,7 @@ class AutoModManager:
             should_timeout=should_timeout,
             timeout_duration=timeout_duration
         )
-    
+
     def _evaluate_rule(
         self,
         rule: Rule,
@@ -233,17 +227,17 @@ class AutoModManager:
     ) -> RuleMatch:
         """Evaluate a single rule against content."""
         rule_class = self.RULE_CLASSES.get(rule.rule_type)
-        
+
         if not rule_class:
             return RuleMatch(
                 rule_id=rule.id,
                 rule_type=rule.rule_type,
                 matched=False
             )
-        
+
         rule_instance = rule_class(rule)
         return rule_instance.check(content, user_id, channel_id, context)
-    
+
     def process_violation(
         self,
         server_id: int,
@@ -271,14 +265,14 @@ class AutoModManager:
         """
         now = self._get_timestamp()
         violation_id = self._generate_id()
-        
+
         actions_taken = []
-        
+
         for action in actions:
             if action.action_type == ActionType.LOG_ONLY:
                 actions_taken.append(ActionType.LOG_ONLY)
                 continue
-            
+
             success = self._execute_action(
                 action,
                 Violation(
@@ -296,10 +290,10 @@ class AutoModManager:
                 ),
                 context
             )
-            
+
             if success:
                 actions_taken.append(action.action_type)
-        
+
         self._db.execute(
             """INSERT INTO automod_violations 
                (id, server_id, channel_id, user_id, message_id, rule_id, rule_type,
@@ -320,9 +314,9 @@ class AutoModManager:
                 now
             )
         )
-        
+
         self._update_reputation(user_id, server_id, match.severity)
-        
+
         return Violation(
             id=violation_id,
             server_id=server_id,
@@ -337,7 +331,7 @@ class AutoModManager:
             created_at=now,
             metadata=match.match_details
         )
-    
+
     def _execute_action(
         self,
         action: RuleAction,
@@ -346,23 +340,23 @@ class AutoModManager:
     ) -> bool:
         """Execute a single action."""
         action_class = self.ACTION_CLASSES.get(action.action_type)
-        
+
         if not action_class:
             logger.warning(f"Unknown action type: {action.action_type}")
             return False
-        
+
         executor = action_class(
             self._db,
             self._servers,
             self._messaging,
             self._notifications
         )
-        
+
         can_execute, reason = executor.can_execute(action, violation, context)
         if not can_execute:
             logger.debug(f"Cannot execute {action.action_type.value}: {reason}")
             return False
-        
+
         return executor.execute(action, violation, context)
 
     def create_rule(
@@ -401,7 +395,7 @@ class AutoModManager:
             valid, issues = rule_class.validate_config(rule_config)
             if not valid:
                 raise RuleValidationError("Invalid rule configuration", issues)
-        
+
         parsed_actions = []
         for action_data in actions:
             action_type_str = action_data.get("action_type", action_data.get("type"))
@@ -409,7 +403,7 @@ class AutoModManager:
                 action_type = ActionType(action_type_str)
             except ValueError:
                 raise RuleValidationError(f"Invalid action type: {action_type_str}")
-            
+
             parsed_actions.append(RuleAction(
                 action_type=action_type,
                 duration_seconds=action_data.get("duration_seconds"),
@@ -417,10 +411,10 @@ class AutoModManager:
                 notify_user=action_data.get("notify_user", True),
                 metadata=action_data.get("metadata", {})
             ))
-        
+
         now = self._get_timestamp()
         rule_id = self._generate_id()
-        
+
         actions_json = json.dumps([
             {
                 "action_type": a.action_type.value,
@@ -431,7 +425,7 @@ class AutoModManager:
             }
             for a in parsed_actions
         ])
-        
+
         self._db.execute(
             """INSERT INTO automod_rules 
                (id, server_id, name, rule_type, enabled, config, actions,
@@ -454,25 +448,25 @@ class AutoModManager:
                 user_id
             )
         )
-        
+
         logger.debug(f"Created automod rule {rule_id} for server {server_id}")
-        
+
         result = self.get_rule(rule_id)
         assert result is not None  # Should exist since we just created it
         return result
-    
+
     def get_rule(self, rule_id: int) -> Optional[Rule]:
         """Get a rule by ID."""
         row = self._db.fetch_one(
             "SELECT * FROM automod_rules WHERE id = ?",
             (rule_id,)
         )
-        
+
         if not row:
             return None
-        
+
         return self._row_to_rule(row)
-    
+
     def update_rule(
         self,
         user_id: int,
@@ -489,14 +483,14 @@ class AutoModManager:
         rule = self.get_rule(rule_id)
         if not rule:
             raise RuleNotFoundError("Rule not found")
-        
+
         updates = []
         params = []
-        
+
         if name is not None:
             updates.append("name = ?")
             params.append(name)
-        
+
         if rule_config is not None:
             rule_class = self.RULE_CLASSES.get(rule.rule_type)
             if rule_class:
@@ -505,7 +499,7 @@ class AutoModManager:
                     raise RuleValidationError("Invalid rule configuration", issues)
             updates.append("config = ?")
             params.append(json.dumps(rule_config))
-        
+
         if actions is not None:
             parsed_actions = []
             for action_data in actions:
@@ -523,77 +517,77 @@ class AutoModManager:
                 })
             updates.append("actions = ?")
             params.append(json.dumps(parsed_actions))
-        
+
         if exempt_roles is not None:
             updates.append("exempt_roles = ?")
             params.append(json.dumps(exempt_roles))
-        
+
         if exempt_channels is not None:
             updates.append("exempt_channels = ?")
             params.append(json.dumps(exempt_channels))
-        
+
         if priority is not None:
             updates.append("priority = ?")
             params.append(priority)
-        
+
         if check_all is not None:
             updates.append("check_all = ?")
             params.append(1 if check_all else 0)
-        
+
         if updates:
             updates.append("updated_at = ?")
             params.append(self._get_timestamp())
             params.append(rule_id)
-            
+
             self._db.execute(
                 f"UPDATE automod_rules SET {', '.join(updates)} WHERE id = ?",
                 tuple(params)
             )
-        
+
         result = self.get_rule(rule_id)
         assert result is not None  # Should exist since we just updated it
         return result
-    
+
     def delete_rule(self, user_id: int, rule_id: int) -> bool:
         """Delete a rule."""
         rule = self.get_rule(rule_id)
         if not rule:
             raise RuleNotFoundError("Rule not found")
-        
+
         self._db.execute("DELETE FROM automod_rules WHERE id = ?", (rule_id,))
         self._db.execute("DELETE FROM automod_exemptions WHERE rule_id = ?", (rule_id,))
-        
+
         logger.debug(f"Deleted automod rule {rule_id}")
         return True
-    
+
     def get_server_rules(self, server_id: int) -> List[Rule]:
         """Get all rules for a server."""
         return self._get_server_rules(server_id, enabled_only=False)
-    
+
     def _get_server_rules(self, server_id: int, enabled_only: bool = False) -> List[Rule]:
         """Internal method to get server rules."""
         query = "SELECT * FROM automod_rules WHERE server_id = ?"
         params = [server_id]
-        
+
         if enabled_only:
             query += " AND enabled = 1"
-        
+
         query += " ORDER BY priority DESC"
-        
+
         rows = self._db.fetch_all(query, tuple(params))
         return [self._row_to_rule(row) for row in rows]
-    
+
     def set_rule_enabled(self, user_id: int, rule_id: int, enabled: bool) -> Rule:
         """Enable or disable a rule."""
         rule = self.get_rule(rule_id)
         if not rule:
             raise RuleNotFoundError("Rule not found")
-        
+
         self._db.execute(
             "UPDATE automod_rules SET enabled = ?, updated_at = ? WHERE id = ?",
             (1 if enabled else 0, self._get_timestamp(), rule_id)
         )
-        
+
         result = self.get_rule(rule_id)
         assert result is not None  # Should exist since we just updated it
         return result
@@ -621,26 +615,26 @@ class AutoModManager:
         """
         if target_type not in ["role", "channel"]:
             raise ExemptionError("target_type must be 'role' or 'channel'")
-        
+
         existing = self._db.fetch_one(
             """SELECT id FROM automod_exemptions 
                WHERE server_id = ? AND target_type = ? AND target_id = ? AND rule_id IS ?""",
             (server_id, target_type, target_id, rule_id)
         )
-        
+
         if existing:
             raise ExemptionError("Exemption already exists")
-        
+
         now = self._get_timestamp()
         exemption_id = self._generate_id()
-        
+
         self._db.execute(
             """INSERT INTO automod_exemptions 
                (id, server_id, rule_id, target_type, target_id, created_at, created_by)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (exemption_id, server_id, rule_id, target_type, target_id, now, user_id)
         )
-        
+
         return Exemption(
             id=exemption_id,
             server_id=server_id,
@@ -650,20 +644,20 @@ class AutoModManager:
             created_at=now,
             created_by=user_id
         )
-    
+
     def remove_exemption(self, user_id: int, exemption_id: int) -> bool:
         """Remove an exemption."""
         existing = self._db.fetch_one(
             "SELECT id FROM automod_exemptions WHERE id = ?",
             (exemption_id,)
         )
-        
+
         if not existing:
             raise ExemptionError("Exemption not found")
-        
+
         self._db.execute("DELETE FROM automod_exemptions WHERE id = ?", (exemption_id,))
         return True
-    
+
     def _is_exempt(self, server_id: int, user_id: int, channel_id: int) -> bool:
         """Check if user/channel is globally exempt."""
         server = self._db.fetch_one(
@@ -672,13 +666,13 @@ class AutoModManager:
         )
         if server and server["owner_id"] == user_id:
             return True
-        
+
         user_roles = self._db.fetch_all(
             "SELECT role_id FROM srv_member_roles WHERE server_id = ? AND user_id = ?",
             (server_id, user_id)
         )
         role_ids = [r["role_id"] for r in user_roles]
-        
+
         if role_ids:
             placeholders = ",".join("?" * len(role_ids))
             admin_role = self._db.fetch_one(
@@ -688,7 +682,7 @@ class AutoModManager:
             )
             if admin_role:
                 return True
-        
+
         channel_exempt = self._db.fetch_one(
             """SELECT id FROM automod_exemptions 
                WHERE server_id = ? AND target_type = 'channel' AND target_id = ? AND rule_id IS NULL""",
@@ -696,7 +690,7 @@ class AutoModManager:
         )
         if channel_exempt:
             return True
-        
+
         if role_ids:
             placeholders = ",".join("?" * len(role_ids))
             role_exempt = self._db.fetch_one(
@@ -706,23 +700,23 @@ class AutoModManager:
             )
             if role_exempt:
                 return True
-        
+
         return False
-    
+
     def _is_exempt_from_rule(self, rule: Rule, user_id: int, channel_id: int) -> bool:
         """Check if user/channel is exempt from a specific rule."""
         if channel_id in rule.exempt_channels:
             return True
-        
+
         user_roles = self._db.fetch_all(
             "SELECT role_id FROM srv_member_roles WHERE server_id = ? AND user_id = ?",
             (rule.server_id, user_id)
         )
         user_role_ids = {r["role_id"] for r in user_roles}
-        
+
         if user_role_ids & set(rule.exempt_roles):
             return True
-        
+
         channel_exempt = self._db.fetch_one(
             """SELECT id FROM automod_exemptions 
                WHERE server_id = ? AND target_type = 'channel' AND target_id = ? AND rule_id = ?""",
@@ -730,7 +724,7 @@ class AutoModManager:
         )
         if channel_exempt:
             return True
-        
+
         if user_role_ids:
             placeholders = ",".join("?" * len(user_role_ids))
             role_exempt = self._db.fetch_one(
@@ -740,9 +734,9 @@ class AutoModManager:
             )
             if role_exempt:
                 return True
-        
+
         return False
-    
+
     def get_violations(
         self,
         server_id: int,
@@ -753,28 +747,28 @@ class AutoModManager:
         """Get violations for a server."""
         query = "SELECT * FROM automod_violations WHERE server_id = ?"
         params = [server_id]
-        
+
         if user_id is not None:
             query += " AND user_id = ?"
             params.append(user_id)
-        
+
         if before_id is not None:
             query += " AND id < ?"
             params.append(before_id)
-        
+
         query += " ORDER BY created_at DESC LIMIT ?"
         params.append(min(limit, 100))
-        
+
         rows = self._db.fetch_all(query, tuple(params))
         return [self._row_to_violation(row) for row in rows]
-    
+
     def get_user_reputation(self, user_id: int, server_id: int) -> UserReputation:
         """Get user's reputation score for a server."""
         row = self._db.fetch_one(
             "SELECT * FROM automod_reputation WHERE user_id = ? AND server_id = ?",
             (user_id, server_id)
         )
-        
+
         if not row:
             now = self._get_timestamp()
             return UserReputation(
@@ -787,9 +781,9 @@ class AutoModManager:
                 created_at=now,
                 updated_at=now
             )
-        
+
         return self._row_to_reputation(row)
-    
+
     def _update_reputation(self, user_id: int, server_id: int, severity: ViolationSeverity):
         """Update user reputation after a violation."""
         penalty_map = {
@@ -799,14 +793,14 @@ class AutoModManager:
             ViolationSeverity.CRITICAL: 40,
         }
         penalty = penalty_map.get(severity, 10)
-        
+
         now = self._get_timestamp()
-        
+
         existing = self._db.fetch_one(
             "SELECT * FROM automod_reputation WHERE user_id = ? AND server_id = ?",
             (user_id, server_id)
         )
-        
+
         if existing:
             new_score = max(0, existing["score"] - penalty)
             self._db.execute(
@@ -824,7 +818,7 @@ class AutoModManager:
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (user_id, server_id, 100 - penalty, 1, now, now, now, now)
             )
-    
+
     def decay_reputation(self, server_id: Optional[int] = None) -> int:
         """
         Apply reputation decay to restore scores over time.
@@ -837,25 +831,25 @@ class AutoModManager:
         """
         decay_rate = self._config.get("reputation_decay_rate", 1.0)
         decay_interval = self._config.get("reputation_decay_interval", 86400) * 1000
-        
+
         now = self._get_timestamp()
         cutoff = now - decay_interval
-        
+
         query = """
             UPDATE automod_reputation 
             SET score = MIN(100, score + ?), last_decay_at = ?, updated_at = ?
             WHERE last_decay_at < ? AND score < 100
         """
         params = [decay_rate, now, now, cutoff]
-        
+
         if server_id is not None:
             query = query.replace("WHERE", "WHERE server_id = ? AND")
             params.insert(0, server_id)
-        
+
         self._db.execute(query, tuple(params))
-        
+
         return self._db.fetch_one("SELECT changes() as count")["count"]
-    
+
     def get_audit_log(
         self,
         server_id: int,
@@ -866,18 +860,18 @@ class AutoModManager:
         """Get automod audit log entries."""
         query = "SELECT * FROM automod_audit WHERE server_id = ?"
         params: List[Any] = [server_id]
-        
+
         if action_type is not None:
             query += " AND action_type = ?"
             params.append(action_type.value)
-        
+
         if before_id is not None:
             query += " AND id < ?"
             params.append(before_id)
-        
+
         query += " ORDER BY created_at DESC LIMIT ?"
         params.append(min(limit, 100))
-        
+
         rows = self._db.fetch_all(query, tuple(params))
         return [self._row_to_audit_entry(row) for row in rows]
 
@@ -911,7 +905,7 @@ class AutoModManager:
             duration_seconds=duration_seconds,
             reason=reason
         )
-        
+
         now = self._get_timestamp()
         violation = Violation(
             id=self._generate_id(),
@@ -926,9 +920,9 @@ class AutoModManager:
             severity=ViolationSeverity.MEDIUM,
             created_at=now
         )
-        
+
         success = self._execute_action(action, violation, context)
-        
+
         if success:
             audit_id = self._generate_id()
             self._db.execute(
@@ -947,9 +941,9 @@ class AutoModManager:
                     now
                 )
             )
-        
+
         return success
-    
+
     def scan_messages_bulk(
         self,
         server_id: int,
@@ -970,22 +964,22 @@ class AutoModManager:
             BulkScanResult with scan results
         """
         start_time = self._get_timestamp()
-        
+
         messages_flagged = []
         user_violations = {}
-        
+
         for message_id in message_ids:
             msg = self._db.fetch_one(
                 "SELECT * FROM msg_messages WHERE id = ? AND deleted = 0",
                 (message_id,)
             )
-            
+
             if not msg:
                 continue
-            
+
             content = msg.get("content", "")
             user_id = msg["author_id"]
-            
+
             result = self.check_message(
                 server_id=server_id,
                 channel_id=channel_id,
@@ -994,13 +988,13 @@ class AutoModManager:
                 message_id=message_id,
                 context=context
             )
-            
+
             if not result.passed:
                 messages_flagged.append(message_id)
                 user_violations[user_id] = user_violations.get(user_id, 0) + 1
-        
+
         end_time = self._get_timestamp()
-        
+
         return BulkScanResult(
             total_scanned=len(message_ids),
             violations_found=len(messages_flagged),
@@ -1008,7 +1002,7 @@ class AutoModManager:
             user_violations=user_violations,
             scan_duration_ms=end_time - start_time
         )
-    
+
     def check_user(self, user_id: int, server_id: int) -> Dict[str, Any]:
         """
         Get user's automod status for a server.
@@ -1021,13 +1015,13 @@ class AutoModManager:
             Dict with reputation, violation count, etc.
         """
         reputation = self.get_user_reputation(user_id, server_id)
-        
+
         recent_violations = self._db.fetch_one(
             """SELECT COUNT(*) as count FROM automod_violations 
                WHERE user_id = ? AND server_id = ? AND created_at > ?""",
             (user_id, server_id, self._get_timestamp() - 86400000)
         )
-        
+
         return {
             "user_id": user_id,
             "server_id": server_id,
@@ -1037,7 +1031,7 @@ class AutoModManager:
             "last_violation_at": reputation.last_violation_at,
             "is_exempt": self._is_exempt(server_id, user_id, 0)
         }
-    
+
     def check_ai(
         self,
         content: str,
@@ -1056,16 +1050,16 @@ class AutoModManager:
             AICheckResult from the backend
         """
         adapter = self._ai_adapters.get(backend)
-        
+
         if not adapter:
             from .exceptions import AIBackendUnavailableError
             raise AIBackendUnavailableError(
                 f"AI backend '{backend}' not configured",
                 backend=backend
             )
-        
+
         return adapter.check_content(content, context)
-    
+
     def _row_to_rule(self, row) -> Rule:
         """Convert database row to Rule."""
         actions_data = json.loads(row["actions"])
@@ -1079,7 +1073,7 @@ class AutoModManager:
             )
             for a in actions_data
         ]
-        
+
         return Rule(
             id=row["id"],
             server_id=row["server_id"],
@@ -1096,7 +1090,7 @@ class AutoModManager:
             created_by=row["created_by"],
             check_all=bool(row["check_all"])
         )
-    
+
     def _row_to_violation(self, row) -> Violation:
         """Convert database row to Violation."""
         return Violation(
@@ -1113,7 +1107,7 @@ class AutoModManager:
             created_at=row["created_at"],
             metadata=json.loads(row["metadata"]) if row["metadata"] else {}
         )
-    
+
     def _row_to_reputation(self, row) -> UserReputation:
         """Convert database row to UserReputation."""
         return UserReputation(
@@ -1126,7 +1120,7 @@ class AutoModManager:
             created_at=row["created_at"],
             updated_at=row["updated_at"]
         )
-    
+
     def _row_to_audit_entry(self, row) -> AuditEntry:
         """Convert database row to AuditEntry."""
         return AuditEntry(

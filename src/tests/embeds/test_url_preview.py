@@ -6,7 +6,6 @@ import pytest
 from src.core.embeds import (
     EmbedType,
     InvalidUrlError,
-    EmbedValidationError,
 )
 
 
@@ -18,7 +17,7 @@ class TestCreateUrlPreview:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"url1_{unique_id}",
             email=f"url1_{unique_id}@example.com",
@@ -39,7 +38,7 @@ class TestCreateUrlPreview:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"url2_{unique_id}",
             email=f"url2_{unique_id}@example.com",
@@ -58,7 +57,7 @@ class TestCreateUrlPreview:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"url3_{unique_id}",
             email=f"url3_{unique_id}@example.com",
@@ -79,7 +78,7 @@ class TestCreateUrlPreview:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"url4_{unique_id}",
             email=f"url4_{unique_id}@example.com",
@@ -99,7 +98,7 @@ class TestCreateUrlPreview:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"url5_{unique_id}",
             email=f"url5_{unique_id}@example.com",
@@ -132,7 +131,7 @@ class TestCreateUrlPreview:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"url6_{unique_id}",
             email=f"url6_{unique_id}@example.com",
@@ -150,7 +149,7 @@ class TestCreateUrlPreview:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"url7_{unique_id}",
             email=f"url7_{unique_id}@example.com",
@@ -211,7 +210,7 @@ class TestUrlPreviewTypes:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"type1_{unique_id}",
             email=f"type1_{unique_id}@example.com",
@@ -230,7 +229,7 @@ class TestUrlPreviewTypes:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"type2_{unique_id}",
             email=f"type2_{unique_id}@example.com",
@@ -249,7 +248,7 @@ class TestUrlPreviewTypes:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"type3_{unique_id}",
             email=f"type3_{unique_id}@example.com",
@@ -272,7 +271,7 @@ class TestUrlPreviewProvider:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"prov1_{unique_id}",
             email=f"prov1_{unique_id}@example.com",
@@ -292,7 +291,7 @@ class TestUrlPreviewProvider:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"prov2_{unique_id}",
             email=f"prov2_{unique_id}@example.com",
@@ -315,7 +314,7 @@ class TestUrlPreviewImage:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"img1_{unique_id}",
             email=f"img1_{unique_id}@example.com",
@@ -335,7 +334,7 @@ class TestUrlPreviewImage:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"img2_{unique_id}",
             email=f"img2_{unique_id}@example.com",

@@ -2,10 +2,9 @@
 Tests for time window behavior and reset.
 """
 
-import pytest
 import time
 
-from src.core.ratelimit.models import RateLimitConfig, RateLimitAlgorithm, BucketType
+from src.core.ratelimit.models import RateLimitConfig, RateLimitAlgorithm
 from src.core.ratelimit.manager import RateLimitManager
 
 

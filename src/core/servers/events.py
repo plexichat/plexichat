@@ -26,7 +26,6 @@ from .exceptions import (
     ScheduledEventError,
     InvalidEventTimeError,
     ChannelNotFoundError,
-    PermissionDeniedError,
 )
 
 

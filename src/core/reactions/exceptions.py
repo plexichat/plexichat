@@ -35,7 +35,7 @@ class CustomEmojiNotFoundError(ReactionError):
 
 class ReactionLimitError(ReactionError):
     """Maximum reactions limit reached."""
-    
+
     def __init__(self, message: str, max_allowed: int, current: int):
         super().__init__(message)
         self.max_allowed = max_allowed
@@ -44,7 +44,7 @@ class ReactionLimitError(ReactionError):
 
 class PermissionDeniedError(ReactionError):
     """User does not have permission to perform this action."""
-    
+
     def __init__(self, message: str, permission: str | None = None):
         super().__init__(message)
         self.permission = permission
@@ -57,7 +57,7 @@ class UserBlockedError(ReactionError):
 
 class EmojiLimitError(ReactionError):
     """Maximum emoji limit reached for server."""
-    
+
     def __init__(self, message: str, max_allowed: int, current: int):
         super().__init__(message)
         self.max_allowed = max_allowed
@@ -76,7 +76,7 @@ class InvalidEmojiNameError(ReactionError):
 
 class EmojiFileSizeError(ReactionError):
     """Emoji file size exceeds limit."""
-    
+
     def __init__(self, message: str, max_size: int, actual_size: int):
         super().__init__(message)
         self.max_size = max_size

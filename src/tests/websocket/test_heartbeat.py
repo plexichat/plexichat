@@ -3,7 +3,7 @@
 import pytest
 import time
 
-from src.api.websocket.opcodes import GatewayOpcode, GatewayCloseCode
+from src.api.websocket.opcodes import GatewayOpcode
 from src.api.websocket.connection import ConnectionState
 
 

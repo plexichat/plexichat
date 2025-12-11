@@ -5,8 +5,6 @@ Tests for embed validation - field limits, total char limits.
 import pytest
 from src.core.embeds import (
     EmbedValidationError,
-    InvalidUrlError,
-    InvalidColorError,
 )
 
 
@@ -18,7 +16,7 @@ class TestTitleValidation:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"val1_{unique_id}",
             email=f"val1_{unique_id}@example.com",
@@ -35,7 +33,7 @@ class TestTitleValidation:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"val2_{unique_id}",
             email=f"val2_{unique_id}@example.com",
@@ -46,7 +44,7 @@ class TestTitleValidation:
 
         with pytest.raises(EmbedValidationError) as exc_info:
             embeds.create_embed(user_id=user.id, title=title)
-        
+
         assert "title" in str(exc_info.value).lower() or any("title" in i.lower() for i in exc_info.value.issues)
 
 
@@ -58,7 +56,7 @@ class TestDescriptionValidation:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"val3_{unique_id}",
             email=f"val3_{unique_id}@example.com",
@@ -75,7 +73,7 @@ class TestDescriptionValidation:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"val4_{unique_id}",
             email=f"val4_{unique_id}@example.com",
@@ -86,7 +84,7 @@ class TestDescriptionValidation:
 
         with pytest.raises(EmbedValidationError) as exc_info:
             embeds.create_embed(user_id=user.id, description=desc)
-        
+
         assert len(exc_info.value.issues) > 0
 
 
@@ -98,7 +96,7 @@ class TestUrlValidation:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"val5_{unique_id}",
             email=f"val5_{unique_id}@example.com",
@@ -118,7 +116,7 @@ class TestUrlValidation:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"val6_{unique_id}",
             email=f"val6_{unique_id}@example.com",
@@ -138,7 +136,7 @@ class TestUrlValidation:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"val7_{unique_id}",
             email=f"val7_{unique_id}@example.com",
@@ -157,7 +155,7 @@ class TestUrlValidation:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"val8_{unique_id}",
             email=f"val8_{unique_id}@example.com",
@@ -176,7 +174,7 @@ class TestUrlValidation:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"val9_{unique_id}",
             email=f"val9_{unique_id}@example.com",
@@ -199,7 +197,7 @@ class TestColorValidation:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"val10_{unique_id}",
             email=f"val10_{unique_id}@example.com",
@@ -219,7 +217,7 @@ class TestColorValidation:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"val11_{unique_id}",
             email=f"val11_{unique_id}@example.com",
@@ -239,7 +237,7 @@ class TestColorValidation:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"val12_{unique_id}",
             email=f"val12_{unique_id}@example.com",
@@ -259,7 +257,7 @@ class TestColorValidation:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"val13_{unique_id}",
             email=f"val13_{unique_id}@example.com",
@@ -278,7 +276,7 @@ class TestColorValidation:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"val14_{unique_id}",
             email=f"val14_{unique_id}@example.com",
@@ -301,7 +299,7 @@ class TestTimestampValidation:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"val15_{unique_id}",
             email=f"val15_{unique_id}@example.com",
@@ -321,7 +319,7 @@ class TestTimestampValidation:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"val16_{unique_id}",
             email=f"val16_{unique_id}@example.com",
@@ -341,7 +339,7 @@ class TestTimestampValidation:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"val17_{unique_id}",
             email=f"val17_{unique_id}@example.com",
@@ -364,7 +362,7 @@ class TestTotalCharacterLimit:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"val18_{unique_id}",
             email=f"val18_{unique_id}@example.com",
@@ -390,7 +388,7 @@ class TestTotalCharacterLimit:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"val19_{unique_id}",
             email=f"val19_{unique_id}@example.com",
@@ -409,7 +407,7 @@ class TestTotalCharacterLimit:
                 description=desc,
                 footer={"text": footer_text}
             )
-        
+
         assert any("6000" in issue or "character" in issue.lower() for issue in exc_info.value.issues)
 
 

@@ -20,7 +20,6 @@ from .models import (
     Webhook,
     WebhookMessage,
     WebhookType,
-    WebhookExecution,
 )
 from .exceptions import (
     WebhookNotFoundError,
@@ -108,11 +107,11 @@ class WebhookManager:
         """Parse a webhook token into components."""
         if not token:
             return None
-        
+
         parts = token.split(".")
         if len(parts) != 3 or parts[0] != "webhook":
             return None
-        
+
         try:
             webhook_id = int(parts[1])
             secret = parts[2]
@@ -124,29 +123,29 @@ class WebhookManager:
         """Validate and sanitize webhook name."""
         if not name or not name.strip():
             raise WebhookNameError("Webhook name cannot be empty")
-        
+
         name = name.strip()
-        
+
         if len(name) > WEBHOOK_NAME_MAX_LENGTH:
             raise WebhookNameError(
                 f"Webhook name cannot exceed {WEBHOOK_NAME_MAX_LENGTH} characters",
                 WEBHOOK_NAME_MAX_LENGTH
             )
-        
+
         name = re.sub(r'<[^>]*>', '', name)
         name = re.sub(r'javascript:', '', name, flags=re.IGNORECASE)
-        
+
         return name
 
     def _validate_avatar_url(self, url: Optional[str]) -> Optional[str]:
         """Validate avatar URL."""
         if not url:
             return None
-        
+
         url = url.strip()
         if not url:
             return None
-        
+
         try:
             parsed = urlparse(url)
             if parsed.scheme not in ("http", "https"):
@@ -157,10 +156,10 @@ class WebhookManager:
             if isinstance(e, WebhookAvatarError):
                 raise
             raise WebhookAvatarError(f"Invalid avatar URL: {str(e)}")
-        
+
         if "javascript:" in url.lower() or "data:" in url.lower():
             raise WebhookAvatarError("Invalid avatar URL scheme")
-        
+
         return url
 
     def _get_channel(self, channel_id: int) -> Optional[Dict]:
@@ -269,7 +268,7 @@ class WebhookManager:
                (id, channel_id, server_id, creator_id, name, webhook_type, 
                 avatar_url, token_hash, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (webhook_id, channel_id, server_id, user_id, name, 
+            (webhook_id, channel_id, server_id, user_id, name,
              WebhookType.INCOMING.value, avatar_url, token_hash, now, now)
         )
 
@@ -468,16 +467,16 @@ class WebhookManager:
             new_channel = self._get_channel(channel_id)
             if not new_channel:
                 raise ChannelNotFoundError("Target channel not found")
-            
+
             if new_channel["server_id"] != row["server_id"]:
                 raise PermissionDeniedError("Cannot move webhook to a different server")
-            
+
             if not self._check_manage_webhooks_permission(user_id, row["server_id"], channel_id):
                 raise PermissionDeniedError(
                     "Missing permission to manage webhooks in target channel",
                     "webhooks.manage"
                 )
-            
+
             max_per_channel = self._config.get("max_webhooks_per_channel", 10)
             channel_count = self._get_channel_webhook_count(channel_id)
             if channel_count >= max_per_channel:
@@ -486,7 +485,7 @@ class WebhookManager:
                     max_per_channel,
                     channel_count
                 )
-            
+
             updates.append("channel_id = ?")
             params.append(channel_id)
 
@@ -698,7 +697,7 @@ class WebhookManager:
                        (id, conversation_id, author_id, content, created_at, updated_at, 
                         deleted, edited, webhook_id)
                        VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?)""",
-                    (message_id, channel_id, row["creator_id"], content or "", 
+                    (message_id, channel_id, row["creator_id"], content or "",
                      now, now, webhook_id)
                 )
             except Exception:

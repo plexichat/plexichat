@@ -65,7 +65,7 @@ CREATE INDEX IF NOT EXISTS idx_sticker_usage_message ON sticker_usage(message_id
 def create_tables(db):
     """Create all sticker tables."""
     statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
-    
+
     for statement in statements:
         if statement:
             try:
@@ -73,5 +73,5 @@ def create_tables(db):
             except Exception as e:
                 logger.error(f"Failed to execute schema statement: {e}")
                 raise
-    
+
     logger.info("Sticker tables created successfully")

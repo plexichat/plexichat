@@ -19,7 +19,7 @@ class RuleNotFoundError(AutoModError):
 
 class RuleValidationError(AutoModError):
     """Raised when rule configuration is invalid."""
-    
+
     def __init__(self, message: str, issues: Optional[list] = None):
         super().__init__(message)
         self.issues = issues or []
@@ -32,7 +32,7 @@ class RuleDisabledError(AutoModError):
 
 class ActionExecutionError(AutoModError):
     """Raised when an action fails to execute."""
-    
+
     def __init__(self, message: str, action_type: Optional[str] = None):
         super().__init__(message)
         self.action_type = action_type
@@ -55,7 +55,7 @@ class ReputationError(AutoModError):
 
 class AIBackendError(AutoModError):
     """Raised when AI moderation backend fails."""
-    
+
     def __init__(self, message: str, backend: Optional[str] = None, status_code: Optional[int] = None):
         super().__init__(message)
         self.backend = backend
@@ -99,7 +99,7 @@ class UserNotFoundError(AutoModError):
 
 class PermissionDeniedError(AutoModError):
     """Raised when user lacks permission for automod operation."""
-    
+
     def __init__(self, message: str, permission: Optional[str] = None):
         super().__init__(message)
         self.permission = permission

@@ -2,7 +2,6 @@
 Tests for presence integration with relationships and servers.
 """
 
-import pytest
 from src.core.presence import UserStatus
 
 

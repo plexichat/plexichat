@@ -8,11 +8,7 @@ Also collects server-side telemetry for comparison with client-reported latency.
 """
 
 import time
-from typing import Callable
 
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import Response, StreamingResponse
 from starlette.types import ASGIApp, Receive, Send, Scope, Message
 
 
@@ -98,38 +94,38 @@ class LoggingMiddleware:
     The previous BaseHTTPMiddleware approach only measured until the response
     object was created, not until it was fully transmitted.
     """
-    
+
     def __init__(self, app: ASGIApp):
         self.app = app
-    
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        
+
         # Extract request info
         method = scope.get("method", "UNKNOWN")
         path = scope.get("path", "/")
-        
+
         # Get client IP
         client = scope.get("client")
         client_ip = client[0] if client else "unknown"
-        
+
         # Check if we should log this request
         should_log = path not in SKIP_PATHS
-        
+
         if not should_log:
             await self.app(scope, receive, send)
             return
-        
+
         # Start timing from when request is received
         start_time = time.perf_counter()
         status_code = 0
         response_started = False
-        
+
         async def send_wrapper(message: Message) -> None:
             nonlocal status_code, response_started
-            
+
             if message["type"] == "http.response.start":
                 status_code = message.get("status", 0)
                 response_started = True
@@ -140,22 +136,22 @@ class LoggingMiddleware:
                     # Response is complete - log the timing now
                     end_time = time.perf_counter()
                     duration_ms = (end_time - start_time) * 1000
-                    
+
                     log_msg = f"{method} {path} - {status_code} - {duration_ms:.2f}ms - {client_ip}"
-                    
+
                     if status_code >= 500:
                         _log_error(log_msg)
                     elif status_code >= 400:
                         _log_warning(log_msg)
                     else:
                         _log_info(log_msg)
-                    
+
                     # Submit server-side telemetry for API endpoints
                     if path.startswith("/api/"):
                         _submit_server_telemetry(path, method, duration_ms, status_code)
-            
+
             await send(message)
-        
+
         try:
             await self.app(scope, receive, send_wrapper)
         except Exception as e:

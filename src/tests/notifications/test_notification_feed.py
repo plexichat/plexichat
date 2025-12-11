@@ -3,7 +3,6 @@ Tests for notification feed functionality.
 """
 
 import pytest
-from src.core.notifications import MentionType
 
 
 class TestGetNotificationFeed:

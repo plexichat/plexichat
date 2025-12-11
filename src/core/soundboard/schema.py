@@ -60,7 +60,7 @@ CREATE INDEX IF NOT EXISTS idx_soundboard_usage_channel ON soundboard_usage(chan
 def create_tables(db):
     """Create all soundboard tables."""
     statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
-    
+
     for statement in statements:
         if statement:
             try:
@@ -68,5 +68,5 @@ def create_tables(db):
             except Exception as e:
                 logger.error(f"Failed to execute schema statement: {e}")
                 raise
-    
+
     logger.info("Soundboard tables created successfully")

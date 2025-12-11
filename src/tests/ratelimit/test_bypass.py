@@ -2,12 +2,9 @@
 Tests for admin bypass and internal requests.
 """
 
-import pytest
-import time
 
 from src.core.ratelimit.models import RateLimitConfig, RateLimitAlgorithm
 from src.core.ratelimit.manager import RateLimitManager
-from src.core.ratelimit.storage import MemoryStorage
 from src.core import ratelimit
 
 

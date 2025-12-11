@@ -11,33 +11,31 @@ from unittest.mock import patch, MagicMock
 from src.core.automod.ai.openai import OpenAIAdapter
 from src.core.automod.models import AIBackendType
 from src.core.automod.exceptions import (
-    AIBackendError,
     AIBackendUnavailableError,
-    AIBackendTimeoutError,
 )
 
 
 @pytest.mark.automod
 class TestOpenAIAdapter:
     """Tests for OpenAIAdapter."""
-    
+
     def test_is_available_with_key(self):
         """Test adapter is available when API key is set."""
         adapter = OpenAIAdapter({"api_key": "sk-test-key"})
         assert adapter.is_available()
-    
+
     def test_is_not_available_without_key(self):
         """Test adapter is not available without API key."""
         adapter = OpenAIAdapter({})
         assert not adapter.is_available()
-    
+
     def test_raises_unavailable_without_key(self):
         """Test check_content raises when no API key."""
         adapter = OpenAIAdapter({})
-        
+
         with pytest.raises(AIBackendUnavailableError):
             adapter.check_content("test content")
-    
+
     @patch("src.core.automod.ai.openai.urlopen")
     def test_successful_moderation_check(self, mock_urlopen):
         """Test successful moderation API call."""
@@ -58,15 +56,15 @@ class TestOpenAIAdapter:
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_response
-        
+
         adapter = OpenAIAdapter({"api_key": "sk-test-key"})
         result = adapter.check_content("violent content")
-        
+
         assert result.flagged
         assert result.backend == AIBackendType.OPENAI
         assert result.categories["violence"] is True
         assert result.scores["violence"] == 0.8
-    
+
     @patch("src.core.automod.ai.openai.urlopen")
     def test_clean_content_not_flagged(self, mock_urlopen):
         """Test clean content is not flagged."""
@@ -87,12 +85,12 @@ class TestOpenAIAdapter:
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_response
-        
+
         adapter = OpenAIAdapter({"api_key": "sk-test-key"})
         result = adapter.check_content("hello world")
-        
+
         assert not result.flagged
-    
+
     @patch("src.core.automod.ai.openai.urlopen")
     def test_threshold_based_flagging(self, mock_urlopen):
         """Test content flagged based on threshold."""
@@ -107,17 +105,17 @@ class TestOpenAIAdapter:
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_response
-        
+
         adapter = OpenAIAdapter({"api_key": "sk-test-key", "threshold": 0.5})
         result = adapter.check_content("borderline content")
-        
+
         assert result.flagged
-    
+
     def test_get_categories(self):
         """Test getting supported categories."""
         adapter = OpenAIAdapter({"api_key": "sk-test-key"})
         categories = adapter.get_categories()
-        
+
         assert "hate" in categories
         assert "violence" in categories
         assert "sexual" in categories

@@ -4,7 +4,6 @@ Tests for permission checks in server channels.
 
 import pytest
 from src.core.reactions import PermissionDeniedError
-from src.core.servers import ChannelType
 
 
 class TestServerPermissions:

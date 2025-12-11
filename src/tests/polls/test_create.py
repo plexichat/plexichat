@@ -3,11 +3,8 @@ Tests for poll creation.
 """
 
 import pytest
-import uuid
 from src.core.polls import (
-    PollNotFoundError,
     InvalidPollQuestionError,
-    InvalidPollOptionError,
     PollOptionLimitError,
     InvalidPollDurationError,
     PollResultsVisibility,

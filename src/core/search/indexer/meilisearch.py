@@ -25,7 +25,7 @@ from ..exceptions import SearchIndexError, SearchBackendError
 
 class MeilisearchIndexer(BaseIndexer):
     """Meilisearch full-text search indexer."""
-    
+
     def __init__(
         self,
         host: str = "http://localhost:7700",
@@ -40,25 +40,25 @@ class MeilisearchIndexer(BaseIndexer):
         self._index_prefix = index_prefix
         self._http_client = http_client
         self._initialized = False
-        
+
         self._message_index = f"{index_prefix}_messages"
         self._user_index = f"{index_prefix}_users"
         self._server_index = f"{index_prefix}_servers"
-    
+
     def initialize(self) -> bool:
         """Initialize Meilisearch indices."""
         if self._initialized:
             return True
-        
+
         try:
             self._create_message_index()
             self._create_user_index()
             self._create_server_index()
-            
+
             self._initialized = True
             logger.info("Meilisearch indexer initialized")
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to initialize Meilisearch: {e}")
             raise SearchBackendError(
@@ -66,11 +66,11 @@ class MeilisearchIndexer(BaseIndexer):
                 backend="meilisearch",
                 original_error=e
             )
-    
+
     def close(self):
         """Close the indexer."""
         self._initialized = False
-    
+
     def _request(
         self,
         method: str,
@@ -80,28 +80,28 @@ class MeilisearchIndexer(BaseIndexer):
         """Make HTTP request to Meilisearch."""
         if self._http_client is not None:
             return self._http_client.request(method, path, body)
-        
+
         try:
             url = f"{self._host}{path}"
             data = json.dumps(body).encode() if body else None
             headers = {"Content-Type": "application/json"}
-            
+
             if self._api_key:
                 headers["Authorization"] = f"Bearer {self._api_key}"
-            
+
             req = urllib.request.Request(
                 url,
                 data=data,
                 headers=headers,
                 method=method
             )
-            
+
             with urllib.request.urlopen(req, timeout=30) as response:
                 response_data = response.read().decode()
                 if response_data:
                     return json.loads(response_data)
                 return {}
-                
+
         except urllib.error.HTTPError as e:
             error_body = e.read().decode() if e.fp else ""
             raise SearchBackendError(
@@ -115,7 +115,7 @@ class MeilisearchIndexer(BaseIndexer):
                 backend="meilisearch",
                 original_error=e
             )
-    
+
     def _create_message_index(self):
         """Create message index with settings."""
         try:
@@ -126,7 +126,7 @@ class MeilisearchIndexer(BaseIndexer):
         except SearchBackendError as e:
             if "already exists" not in str(e).lower():
                 raise
-        
+
         self._request("PATCH", f"/indexes/{self._message_index}/settings", {
             "searchableAttributes": ["content", "author_username"],
             "filterableAttributes": [
@@ -135,7 +135,7 @@ class MeilisearchIndexer(BaseIndexer):
             ],
             "sortableAttributes": ["created_at"],
         })
-    
+
     def _create_user_index(self):
         """Create user index with settings."""
         try:
@@ -146,12 +146,12 @@ class MeilisearchIndexer(BaseIndexer):
         except SearchBackendError as e:
             if "already exists" not in str(e).lower():
                 raise
-        
+
         self._request("PATCH", f"/indexes/{self._user_index}/settings", {
             "searchableAttributes": ["username", "display_name"],
             "filterableAttributes": ["is_bot"],
         })
-    
+
     def _create_server_index(self):
         """Create server index with settings."""
         try:
@@ -162,13 +162,13 @@ class MeilisearchIndexer(BaseIndexer):
         except SearchBackendError as e:
             if "already exists" not in str(e).lower():
                 raise
-        
+
         self._request("PATCH", f"/indexes/{self._server_index}/settings", {
             "searchableAttributes": ["name", "description", "tags"],
             "filterableAttributes": ["category", "is_public"],
             "sortableAttributes": ["member_count"],
         })
-    
+
     def index_message(self, message: IndexedMessage) -> bool:
         """Index a single message."""
         try:
@@ -187,22 +187,22 @@ class MeilisearchIndexer(BaseIndexer):
                 "mentions": [str(m) for m in message.mentions] if message.mentions else [],
                 "is_pinned": message.is_pinned,
             }
-            
+
             self._request("POST", f"/indexes/{self._message_index}/documents", [doc])
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to index message {message.message_id}: {e}")
             raise SearchIndexError(
                 f"Failed to index message: {e}",
                 item_id=message.message_id
             )
-    
+
     def index_messages_batch(self, messages: List[IndexedMessage]) -> int:
         """Index multiple messages in batch."""
         if not messages:
             return 0
-        
+
         try:
             docs = []
             for message in messages:
@@ -220,10 +220,10 @@ class MeilisearchIndexer(BaseIndexer):
                     "mentions": [str(m) for m in message.mentions] if message.mentions else [],
                     "is_pinned": message.is_pinned,
                 })
-            
+
             self._request("POST", f"/indexes/{self._message_index}/documents", docs)
             return len(messages)
-            
+
         except Exception as e:
             logger.error(f"Batch indexing failed: {e}")
             indexed = 0
@@ -234,7 +234,7 @@ class MeilisearchIndexer(BaseIndexer):
                 except SearchIndexError:
                     continue
             return indexed
-    
+
     def remove_message(self, message_id: int) -> bool:
         """Remove a message from the index."""
         try:
@@ -246,11 +246,11 @@ class MeilisearchIndexer(BaseIndexer):
         except Exception as e:
             logger.error(f"Failed to remove message {message_id}: {e}")
             return False
-    
+
     def update_message(self, message: IndexedMessage) -> bool:
         """Update an indexed message."""
         return self.index_message(message)
-    
+
     def search_messages(
         self,
         query: str,
@@ -264,47 +264,47 @@ class MeilisearchIndexer(BaseIndexer):
         """Search messages using Meilisearch."""
         try:
             filters = []
-            
+
             if conversation_ids:
                 conv_filter = " OR ".join(
                     f'conversation_id = "{c}"' for c in conversation_ids
                 )
                 filters.append(f"({conv_filter})")
-            
+
             if server_ids:
                 server_filter = " OR ".join(
                     f'server_id = "{s}"' for s in server_ids
                 )
                 filters.append(f"({server_filter})")
-            
+
             if channel_ids:
                 channel_filter = " OR ".join(
                     f'channel_id = "{c}"' for c in channel_ids
                 )
                 filters.append(f"({channel_filter})")
-            
+
             if author_ids:
                 author_filter = " OR ".join(
                     f'author_id = "{a}"' for a in author_ids
                 )
                 filters.append(f"({author_filter})")
-            
+
             search_body = {
                 "q": query,
                 "limit": limit,
                 "offset": offset,
                 "sort": ["created_at:desc"],
             }
-            
+
             if filters:
                 search_body["filter"] = " AND ".join(filters)
-            
+
             result = self._request(
                 "POST",
                 f"/indexes/{self._message_index}/search",
                 search_body
             )
-            
+
             results = []
             for hit in result.get("hits", []):
                 results.append(MessageSearchResult(
@@ -320,13 +320,13 @@ class MeilisearchIndexer(BaseIndexer):
                     is_pinned=hit.get("is_pinned", False),
                     score=1.0,
                 ))
-            
+
             return results
-            
+
         except Exception as e:
             logger.error(f"Meilisearch search failed: {e}")
             return []
-    
+
     def index_user(self, user: IndexedUser) -> bool:
         """Index a user."""
         try:
@@ -336,14 +336,14 @@ class MeilisearchIndexer(BaseIndexer):
                 "display_name": user.display_name or "",
                 "is_bot": user.is_bot,
             }
-            
+
             self._request("POST", f"/indexes/{self._user_index}/documents", [doc])
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to index user {user.user_id}: {e}")
             return False
-    
+
     def remove_user(self, user_id: int) -> bool:
         """Remove a user from the index."""
         try:
@@ -351,7 +351,7 @@ class MeilisearchIndexer(BaseIndexer):
             return True
         except Exception:
             return False
-    
+
     def search_users(
         self,
         query: str,
@@ -365,7 +365,7 @@ class MeilisearchIndexer(BaseIndexer):
                 f"/indexes/{self._user_index}/search",
                 {"q": query, "limit": limit, "offset": offset}
             )
-            
+
             results = []
             for hit in result.get("hits", []):
                 results.append(UserSearchResult(
@@ -376,13 +376,13 @@ class MeilisearchIndexer(BaseIndexer):
                     is_bot=hit.get("is_bot", False),
                     score=1.0,
                 ))
-            
+
             return results
-            
+
         except Exception as e:
             logger.error(f"Meilisearch user search failed: {e}")
             return []
-    
+
     def index_server(self, server: IndexedServer) -> bool:
         """Index a server."""
         try:
@@ -395,14 +395,14 @@ class MeilisearchIndexer(BaseIndexer):
                 "member_count": server.member_count,
                 "is_public": server.is_public,
             }
-            
+
             self._request("POST", f"/indexes/{self._server_index}/documents", [doc])
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to index server {server.server_id}: {e}")
             return False
-    
+
     def remove_server(self, server_id: int) -> bool:
         """Remove a server from the index."""
         try:
@@ -410,7 +410,7 @@ class MeilisearchIndexer(BaseIndexer):
             return True
         except Exception:
             return False
-    
+
     def search_servers(
         self,
         query: str,
@@ -422,27 +422,27 @@ class MeilisearchIndexer(BaseIndexer):
         """Search servers using Meilisearch."""
         try:
             filters = []
-            
+
             if public_only:
                 filters.append("is_public = true")
             if category:
                 filters.append(f'category = "{category}"')
-            
+
             search_body = {
                 "q": query,
                 "limit": limit,
                 "offset": offset,
             }
-            
+
             if filters:
                 search_body["filter"] = " AND ".join(filters)
-            
+
             result = self._request(
                 "POST",
                 f"/indexes/{self._server_index}/search",
                 search_body
             )
-            
+
             results = []
             for hit in result.get("hits", []):
                 results.append(ServerSearchResult(
@@ -455,20 +455,20 @@ class MeilisearchIndexer(BaseIndexer):
                     member_count=hit.get("member_count", 0),
                     score=1.0,
                 ))
-            
+
             return results
-            
+
         except Exception as e:
             logger.error(f"Meilisearch server search failed: {e}")
             return []
-    
+
     def get_stats(self) -> Dict[str, Any]:
         """Get indexer statistics."""
         try:
             msg_stats = self._request("GET", f"/indexes/{self._message_index}/stats")
             user_stats = self._request("GET", f"/indexes/{self._user_index}/stats")
             server_stats = self._request("GET", f"/indexes/{self._server_index}/stats")
-            
+
             return {
                 "backend": "meilisearch",
                 "message_count": msg_stats.get("numberOfDocuments", 0),
@@ -476,7 +476,7 @@ class MeilisearchIndexer(BaseIndexer):
                 "server_count": server_stats.get("numberOfDocuments", 0),
                 "healthy": True,
             }
-            
+
         except Exception as e:
             return {
                 "backend": "meilisearch",

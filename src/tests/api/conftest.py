@@ -8,7 +8,6 @@ Provides API-specific fixtures for test client and authentication.
 import pytest
 import uuid
 
-from src.tests.fixtures.config import TEST_PASSWORD
 
 
 @pytest.fixture(scope="module")
@@ -21,10 +20,10 @@ def test_user(modules, session_users):
     """
     # Get a user from the pool (already created with real Argon2)
     user, username, password = session_users[0]
-    
+
     # Login to get token
     result = modules.auth.login(username, password)
-    
+
     return {
         "user": user,
         "token": result.token,
@@ -38,7 +37,7 @@ def second_test_user(modules, session_users):
     """Get a second test user for relationship/interaction tests."""
     user, username, password = session_users[1]
     result = modules.auth.login(username, password)
-    
+
     return {
         "user": user,
         "token": result.token,
@@ -51,15 +50,15 @@ def second_test_user(modules, session_users):
 def test_server(modules, test_user):
     """Create a test server."""
     unique_id = uuid.uuid4().hex[:8]
-    
+
     server = modules.servers.create_server(
         owner_id=test_user["user"].id,
         name=f"Test Server {unique_id}"
     )
-    
+
     channels = modules.servers.get_channels(test_user["user"].id, server.id)
     channel = channels[0] if channels else None
-    
+
     return {
         "server": server,
         "channel": channel,

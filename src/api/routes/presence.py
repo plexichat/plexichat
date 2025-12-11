@@ -2,7 +2,6 @@
 Presence routes - User status and presence endpoints.
 """
 
-from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends
 
 import src.api as api
@@ -17,14 +16,14 @@ def _presence_to_response(pres, user_id: int) -> PresenceResponse:
     status = getattr(pres, "status", None)
     if status is not None and hasattr(status, "value"):
         status = status.value
-    
+
     custom = getattr(pres, "custom_status", None)
     custom_text = None
     custom_emoji = None
     if custom:
         custom_text = getattr(custom, "text", None)
         custom_emoji = getattr(custom, "emoji", None)
-    
+
     return PresenceResponse(
         user_id=str(user_id),
         status=status or "offline",
@@ -40,7 +39,7 @@ async def _dispatch_presence_event(user_id: int, presence_data: dict, target_use
         from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
         from src.core.events.models import Event
         from src.core.events.types import EventType
-        
+
         if ws_is_setup() and target_user_ids:
             dispatcher = get_dispatcher()
             event = Event(
@@ -57,7 +56,7 @@ async def _dispatch_presence_event(user_id: int, presence_data: dict, target_use
 async def _get_presence_targets(user_id: int) -> list:
     """Get all user IDs who should receive presence updates for a user."""
     target_user_ids = set()
-    
+
     # Add friends
     relationships = api.get_relationships()
     if relationships:
@@ -67,7 +66,7 @@ async def _get_presence_targets(user_id: int) -> list:
                 target_user_ids.update(friend_ids)
         except Exception:
             pass
-    
+
     # Add server members (users in shared servers)
     servers = api.get_servers()
     if servers:
@@ -82,7 +81,7 @@ async def _get_presence_targets(user_id: int) -> list:
                                 target_user_ids.add(member.user_id)
         except Exception:
             pass
-    
+
     return list(target_user_ids)
 
 
@@ -100,19 +99,19 @@ async def update_presence(
     relationships = api.get_relationships()
     if not presence:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Presence module not available"}})
-    
+
     valid_statuses = ["online", "idle", "dnd", "invisible", "offline"]
     if body.status not in valid_statuses:
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": 400, "message": f"Invalid status. Must be one of: {', '.join(valid_statuses)}"}}
         )
-    
+
     try:
         from src.core.presence.models import UserStatus
         status_enum = UserStatus(body.status)
         presence.set_status(current_user.user_id, status_enum)
-        
+
         if body.custom_status is not None or body.custom_emoji is not None:
             if body.custom_status or body.custom_emoji:
                 presence.set_custom_status(
@@ -122,16 +121,16 @@ async def update_presence(
                 )
             else:
                 presence.clear_custom_status(current_user.user_id)
-        
+
         pres = presence.get_presence(current_user.user_id)
         response = _presence_to_response(pres, current_user.user_id)
-        
+
         # Get all users who should receive this presence update
         target_user_ids = await _get_presence_targets(current_user.user_id)
-        
+
         # For invisible status, show as offline to others
         visible_status = body.status if body.status != "invisible" else "offline"
-        
+
         if target_user_ids:
             await _dispatch_presence_event(current_user.user_id, {
                 "user_id": str(current_user.user_id),
@@ -139,7 +138,7 @@ async def update_presence(
                 "custom_status": body.custom_status,
                 "custom_emoji": body.custom_emoji,
             }, target_user_ids)
-        
+
         return response
     except Exception as e:
         exc_name = type(e).__name__
@@ -158,12 +157,12 @@ async def get_user_presence(user_id: str, current_user: TokenInfo = Depends(get_
     presence = api.get_presence()
     if not presence:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Presence module not available"}})
-    
+
     try:
         uid = int(user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid user ID"}})
-    
+
     try:
         pres = presence.get_visible_presence(current_user.user_id, uid)
         if not pres:

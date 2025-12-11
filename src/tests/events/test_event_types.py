@@ -1,6 +1,5 @@
 """Tests for event types and intents."""
 
-import pytest
 from src.core.events.types import EventType, GatewayIntent
 
 

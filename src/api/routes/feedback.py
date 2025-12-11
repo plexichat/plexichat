@@ -38,14 +38,14 @@ _feedback_rate_limits = {}
 def _check_rate_limit(user_id: int) -> bool:
     """Check if user is rate limited for feedback."""
     now = time.time()
-    
+
     # Get config
     max_per_hour = config.get("feedback.rate_limit.max_per_hour", 5)
     max_per_day = config.get("feedback.rate_limit.max_per_day", 20)
-    
+
     if user_id not in _feedback_rate_limits:
         _feedback_rate_limits[user_id] = []
-    
+
     # Clean old entries
     hour_ago = now - 3600
     day_ago = now - 86400
@@ -56,12 +56,12 @@ def _check_rate_limit(user_id: int) -> bool:
     # Check limits
     hour_count = sum(1 for t in _feedback_rate_limits[user_id] if t > hour_ago)
     day_count = len(_feedback_rate_limits[user_id])
-    
+
     if hour_count >= max_per_hour:
         return False
     if day_count >= max_per_day:
         return False
-    
+
     return True
 
 
@@ -106,39 +106,39 @@ async def submit_feedback(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid user token"
         )
-    
+
     # Check if feedback is enabled
     if not config.get("feedback.enabled", True):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Feedback submission is currently disabled"
         )
-    
+
     # Check rate limit
     if not _check_rate_limit(user_id):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many feedback submissions. Please try again later."
         )
-    
+
     # Ensure table exists
     _ensure_feedback_table(db)
-    
+
     # Create feedback entry
     feedback_id = generate_snowflake_id()
     now = int(time.time() * 1000)
-    
+
     db.execute(
         """INSERT INTO feedback (id, user_id, content, category, rating, created_at)
            VALUES (?, ?, ?, ?, ?, ?)""",
         (feedback_id, user_id, feedback.content, feedback.category, feedback.rating, now)
     )
-    
+
     # Record for rate limiting
     _record_feedback(user_id)
-    
+
     logger.info(f"Feedback submitted by user {user_id}")
-    
+
     return FeedbackResponse(
         id=feedback_id,
         message="Thank you for your feedback!"
@@ -151,10 +151,10 @@ async def get_feedback_status(current_user = Depends(get_current_user)):
     now = time.time()
     hour_ago = now - 3600
     day_ago = now - 86400
-    
+
     max_per_hour = config.get("feedback.rate_limit.max_per_hour", 5)
     max_per_day = config.get("feedback.rate_limit.max_per_day", 20)
-    
+
     # Get user ID from token info
     user_id = getattr(current_user, 'user_id', None) or getattr(current_user, 'id', None)
     if not user_id:
@@ -166,13 +166,13 @@ async def get_feedback_status(current_user = Depends(get_current_user)):
             "max_per_day": max_per_day,
             "can_submit": True
         }
-    
+
     user_submissions = _feedback_rate_limits.get(user_id, [])
     user_submissions = [t for t in user_submissions if t > day_ago]
-    
+
     hour_count = sum(1 for t in user_submissions if t > hour_ago)
     day_count = len(user_submissions)
-    
+
     return {
         "enabled": config.get("feedback.enabled", True),
         "submissions_this_hour": hour_count,

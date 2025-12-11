@@ -44,7 +44,7 @@ DEFAULT_ALLOWED_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"]
 def setup(db) -> None:
     """Initialize the avatars module."""
     global _db, _setup_complete
-    
+
     _db = db
     _create_tables()
     _setup_complete = True
@@ -79,7 +79,7 @@ def _get_config(key: str, default: Any = None) -> Any:
 def _create_tables() -> None:
     """Create avatar tables."""
     db = _db
-    
+
     # User avatars table
     db.execute("""
         CREATE TABLE IF NOT EXISTS user_avatars (
@@ -95,7 +95,7 @@ def _create_tables() -> None:
             uploaded_at BIGINT NOT NULL
         )
     """)
-    
+
     # Server icons table - no FK constraint since servers table may not exist yet
     db.execute("""
         CREATE TABLE IF NOT EXISTS server_icons (
@@ -111,11 +111,11 @@ def _create_tables() -> None:
             uploaded_at BIGINT NOT NULL
         )
     """)
-    
+
     # Indexes
     db.execute("CREATE INDEX IF NOT EXISTS idx_user_avatars_user ON user_avatars(user_id)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_server_icons_server ON server_icons(server_id)")
-    
+
     logger.info("Avatar tables created successfully")
 
 
@@ -151,17 +151,17 @@ def _process_image(image_data: bytes, content_type: str) -> Tuple[bytes, int, in
     except ImportError:
         logger.warning("Pillow not installed, storing avatar without processing")
         return image_data, 0, 0, False
-    
+
     max_size = _get_max_size()
-    
+
     # Open image
     img = Image.open(io.BytesIO(image_data))
     original_format = img.format
     is_animated = getattr(img, 'is_animated', False) or (hasattr(img, 'n_frames') and img.n_frames > 1)
-    
+
     # Get original dimensions
     width, height = img.size
-    
+
     # Check if resize needed
     if width > max_size or height > max_size:
         # Calculate new dimensions maintaining aspect ratio
@@ -171,12 +171,12 @@ def _process_image(image_data: bytes, content_type: str) -> Tuple[bytes, int, in
         else:
             new_height = max_size
             new_width = int(width * (max_size / height))
-        
+
         if is_animated and original_format == 'GIF':
             # Handle animated GIF - resize all frames
             frames = []
             durations = []
-            
+
             try:
                 for frame_num in range(img.n_frames):
                     img.seek(frame_num)
@@ -184,7 +184,7 @@ def _process_image(image_data: bytes, content_type: str) -> Tuple[bytes, int, in
                     frame = frame.resize((new_width, new_height), Image.Resampling.LANCZOS)
                     frames.append(frame)
                     durations.append(img.info.get('duration', 100))
-                
+
                 # Save animated GIF
                 output = io.BytesIO()
                 frames[0].save(
@@ -200,14 +200,14 @@ def _process_image(image_data: bytes, content_type: str) -> Tuple[bytes, int, in
                 logger.warning(f"Failed to process animated GIF: {e}, using first frame")
                 img.seek(0)
                 is_animated = False
-        
+
         # Resize static image
         img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
         width, height = new_width, new_height
-    
+
     # Convert to appropriate format for output
     output = io.BytesIO()
-    
+
     if content_type == 'image/gif' and is_animated:
         img.save(output, format='GIF')
     elif content_type == 'image/png' or img.mode == 'RGBA':
@@ -221,7 +221,7 @@ def _process_image(image_data: bytes, content_type: str) -> Tuple[bytes, int, in
             img = img.convert('RGB')
         img.save(output, format='JPEG', quality=90, optimize=True)
         content_type = 'image/jpeg'
-    
+
     return output.getvalue(), width, height, is_animated
 
 
@@ -245,27 +245,27 @@ def upload_user_avatar(user_id: int, image_data: bytes, content_type: str) -> Di
         Dict with avatar info including URL
     """
     db = _get_db()
-    
+
     # Validate content type
     if not _validate_content_type(content_type):
         raise ValueError(f"Content type '{content_type}' not allowed. Allowed: {_get_allowed_types()}")
-    
+
     # Validate file size
     max_file_size = _get_max_file_size()
     if len(image_data) > max_file_size:
         raise ValueError(f"File too large. Max size: {max_file_size // (1024*1024)}MB")
-    
+
     # Process image
     processed_data, width, height, is_animated = _process_image(image_data, content_type)
-    
+
     # Compute checksum
     checksum = _compute_checksum(processed_data)
-    
+
     # Check if avatar already exists
     existing = db.fetch_one("SELECT id FROM user_avatars WHERE user_id = ?", (user_id,))
-    
+
     now = int(time.time() * 1000)
-    
+
     if existing:
         # Update existing avatar
         db.execute("""
@@ -273,7 +273,7 @@ def upload_user_avatar(user_id: int, image_data: bytes, content_type: str) -> Di
             SET avatar_data = ?, content_type = ?, width = ?, height = ?, 
                 size = ?, checksum = ?, animated = ?, uploaded_at = ?
             WHERE user_id = ?
-        """, (processed_data, content_type, width, height, 
+        """, (processed_data, content_type, width, height,
               len(processed_data), checksum, 1 if is_animated else 0, now, user_id))
         avatar_id = existing["id"]
     else:
@@ -285,13 +285,13 @@ def upload_user_avatar(user_id: int, image_data: bytes, content_type: str) -> Di
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (avatar_id, user_id, processed_data, content_type, width, height,
               len(processed_data), checksum, 1 if is_animated else 0, now))
-    
+
     # Update user's avatar_url in auth_users to point to new endpoint
     avatar_url = f"/api/v1/avatars/users/{user_id}"
     db.execute("UPDATE auth_users SET avatar_url = ? WHERE id = ?", (avatar_url, user_id))
-    
+
     logger.info(f"Avatar uploaded for user {user_id}: {width}x{height}, {len(processed_data)} bytes")
-    
+
     return {
         "id": str(avatar_id),
         "user_id": str(user_id),
@@ -307,15 +307,15 @@ def upload_user_avatar(user_id: int, image_data: bytes, content_type: str) -> Di
 def get_user_avatar(user_id: int) -> Optional[Dict[str, Any]]:
     """Get user avatar metadata."""
     db = _get_db()
-    
+
     row = db.fetch_one("""
         SELECT id, user_id, content_type, width, height, size, checksum, animated, uploaded_at
         FROM user_avatars WHERE user_id = ?
     """, (user_id,))
-    
+
     if not row:
         return None
-    
+
     return {
         "id": str(row["id"]),
         "user_id": str(row["user_id"]),
@@ -336,21 +336,21 @@ def get_user_avatar_data(user_id: int) -> Optional[Tuple[bytes, str]]:
     Returns: (avatar_bytes, content_type) or None
     """
     db = _get_db()
-    
+
     row = db.fetch_one("""
         SELECT avatar_data, content_type FROM user_avatars WHERE user_id = ?
     """, (user_id,))
-    
+
     if not row:
         return None
-    
+
     return row["avatar_data"], row["content_type"]
 
 
 def get_user_avatar_url(user_id: int) -> Optional[str]:
     """Get user avatar URL if exists."""
     db = _get_db()
-    
+
     row = db.fetch_one("SELECT id FROM user_avatars WHERE user_id = ?", (user_id,))
     if row:
         return f"/api/v1/avatars/users/{user_id}"
@@ -360,16 +360,16 @@ def get_user_avatar_url(user_id: int) -> Optional[str]:
 def delete_user_avatar(user_id: int) -> bool:
     """Delete user avatar."""
     db = _get_db()
-    
+
     result = db.execute("DELETE FROM user_avatars WHERE user_id = ?", (user_id,))
-    
+
     # Clear avatar_url in auth_users
     db.execute("UPDATE auth_users SET avatar_url = NULL WHERE id = ?", (user_id,))
-    
+
     deleted = result.rowcount if hasattr(result, 'rowcount') else 0
     if deleted:
         logger.info(f"Avatar deleted for user {user_id}")
-    
+
     return deleted > 0
 
 
@@ -388,27 +388,27 @@ def upload_server_icon(server_id: int, image_data: bytes, content_type: str) -> 
         Dict with icon info including URL
     """
     db = _get_db()
-    
+
     # Validate content type
     if not _validate_content_type(content_type):
         raise ValueError(f"Content type '{content_type}' not allowed. Allowed: {_get_allowed_types()}")
-    
+
     # Validate file size
     max_file_size = _get_max_file_size()
     if len(image_data) > max_file_size:
         raise ValueError(f"File too large. Max size: {max_file_size // (1024*1024)}MB")
-    
+
     # Process image
     processed_data, width, height, is_animated = _process_image(image_data, content_type)
-    
+
     # Compute checksum
     checksum = _compute_checksum(processed_data)
-    
+
     # Check if icon already exists
     existing = db.fetch_one("SELECT id FROM server_icons WHERE server_id = ?", (server_id,))
-    
+
     now = int(time.time() * 1000)
-    
+
     if existing:
         # Update existing icon
         db.execute("""
@@ -416,7 +416,7 @@ def upload_server_icon(server_id: int, image_data: bytes, content_type: str) -> 
             SET icon_data = ?, content_type = ?, width = ?, height = ?, 
                 size = ?, checksum = ?, animated = ?, uploaded_at = ?
             WHERE server_id = ?
-        """, (processed_data, content_type, width, height, 
+        """, (processed_data, content_type, width, height,
               len(processed_data), checksum, 1 if is_animated else 0, now, server_id))
         icon_id = existing["id"]
     else:
@@ -428,13 +428,13 @@ def upload_server_icon(server_id: int, image_data: bytes, content_type: str) -> 
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (icon_id, server_id, processed_data, content_type, width, height,
               len(processed_data), checksum, 1 if is_animated else 0, now))
-    
+
     # Update server's icon_url
     icon_url = f"/api/v1/avatars/servers/{server_id}"
     db.execute("UPDATE servers SET icon_url = ? WHERE id = ?", (icon_url, server_id))
-    
+
     logger.info(f"Icon uploaded for server {server_id}: {width}x{height}, {len(processed_data)} bytes")
-    
+
     return {
         "id": str(icon_id),
         "server_id": str(server_id),
@@ -450,15 +450,15 @@ def upload_server_icon(server_id: int, image_data: bytes, content_type: str) -> 
 def get_server_icon(server_id: int) -> Optional[Dict[str, Any]]:
     """Get server icon metadata."""
     db = _get_db()
-    
+
     row = db.fetch_one("""
         SELECT id, server_id, content_type, width, height, size, checksum, animated, uploaded_at
         FROM server_icons WHERE server_id = ?
     """, (server_id,))
-    
+
     if not row:
         return None
-    
+
     return {
         "id": str(row["id"]),
         "server_id": str(row["server_id"]),
@@ -479,21 +479,21 @@ def get_server_icon_data(server_id: int) -> Optional[Tuple[bytes, str]]:
     Returns: (icon_bytes, content_type) or None
     """
     db = _get_db()
-    
+
     row = db.fetch_one("""
         SELECT icon_data, content_type FROM server_icons WHERE server_id = ?
     """, (server_id,))
-    
+
     if not row:
         return None
-    
+
     return row["icon_data"], row["content_type"]
 
 
 def get_server_icon_url(server_id: int) -> Optional[str]:
     """Get server icon URL if exists."""
     db = _get_db()
-    
+
     row = db.fetch_one("SELECT id FROM server_icons WHERE server_id = ?", (server_id,))
     if row:
         return f"/api/v1/avatars/servers/{server_id}"
@@ -503,14 +503,14 @@ def get_server_icon_url(server_id: int) -> Optional[str]:
 def delete_server_icon(server_id: int) -> bool:
     """Delete server icon."""
     db = _get_db()
-    
+
     result = db.execute("DELETE FROM server_icons WHERE server_id = ?", (server_id,))
-    
+
     # Clear icon_url in servers
     db.execute("UPDATE servers SET icon_url = NULL WHERE id = ?", (server_id,))
-    
+
     deleted = result.rowcount if hasattr(result, 'rowcount') else 0
     if deleted:
         logger.info(f"Icon deleted for server {server_id}")
-    
+
     return deleted > 0

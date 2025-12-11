@@ -9,7 +9,7 @@ from typing import Optional, List, Dict, Any
 import utils.logger as logger
 from src.utils.encryption import generate_snowflake_id
 
-from ..models import Command, CommandType, CommandOption
+from ..models import Command, CommandType
 from ..exceptions import (
     CommandNotFoundError,
     CommandLimitError,
@@ -17,12 +17,12 @@ from ..exceptions import (
     ApplicationNotFoundError,
 )
 from .validation import validate_command, validate_command_update
-from .options import options_to_dict, options_from_dict
+from .options import options_from_dict
 
 
 class CommandRegistry:
     """Handles command registration and management."""
-    
+
     def __init__(self, db, config: Dict[str, Any]):
         """
         Initialize command registry.
@@ -33,11 +33,11 @@ class CommandRegistry:
         """
         self._db = db
         self._config = config
-    
+
     def _current_time(self) -> int:
         """Get current Unix timestamp."""
         return int(time.time())
-    
+
     def register_command(
         self,
         application_id: int,
@@ -78,7 +78,7 @@ class CommandRegistry:
         )
         if not app:
             raise ApplicationNotFoundError("Application not found")
-        
+
         command_data = {
             "name": name,
             "description": description,
@@ -86,11 +86,11 @@ class CommandRegistry:
             "options": options or [],
             "default_member_permissions": default_member_permissions,
         }
-        
+
         valid, issues = validate_command(command_data)
         if not valid:
             raise CommandValidationError("Command validation failed", issues)
-        
+
         max_commands = self._config.get("max_commands_per_app", 100)
         if server_id:
             count = self._db.fetch_one(
@@ -104,14 +104,14 @@ class CommandRegistry:
                    WHERE application_id = ? AND server_id IS NULL""",
                 (application_id,)
             )
-        
+
         current = count["count"] if count else 0
         if current >= max_commands:
             raise CommandLimitError(
                 f"Maximum of {max_commands} commands per application",
                 max_commands, current
             )
-        
+
         existing = self._db.fetch_one(
             """SELECT id FROM app_commands
                WHERE application_id = ? AND name = ? AND server_id IS ?""",
@@ -122,12 +122,12 @@ class CommandRegistry:
                 "Command with this name already exists",
                 ["Duplicate command name"]
             )
-        
+
         command_id = generate_snowflake_id()
         now = self._current_time()
-        
+
         options_json = json.dumps(options or [])
-        
+
         self._db.execute(
             """INSERT INTO app_commands
                (id, application_id, name, description, command_type, server_id,
@@ -139,13 +139,13 @@ class CommandRegistry:
              server_id, options_json, default_member_permissions,
              1 if dm_permission else 0, 1 if nsfw else 0, 1, now, now)
         )
-        
+
         logger.info(f"Command registered: {name} for app {application_id}")
-        
+
         result = self.get_command(command_id)
         assert result is not None  # Should exist since we just created it
         return result
-    
+
     def get_command(self, command_id: int) -> Optional[Command]:
         """
         Get a command by ID.
@@ -163,12 +163,12 @@ class CommandRegistry:
                FROM app_commands WHERE id = ?""",
             (command_id,)
         )
-        
+
         if not row:
             return None
-        
+
         return self._row_to_command(row)
-    
+
     def get_commands(
         self,
         application_id: int,
@@ -216,9 +216,9 @@ class CommandRegistry:
                    ORDER BY name""",
                 (application_id, server_id)
             )
-        
+
         return [self._row_to_command(row) for row in rows]
-    
+
     def update_command(
         self,
         command_id: int,
@@ -251,7 +251,7 @@ class CommandRegistry:
         command = self.get_command(command_id)
         if not command:
             raise CommandNotFoundError("Command not found")
-        
+
         update_data = {}
         if name is not None:
             update_data["name"] = name
@@ -261,13 +261,13 @@ class CommandRegistry:
             update_data["options"] = options
         if default_member_permissions is not None:
             update_data["default_member_permissions"] = default_member_permissions
-        
+
         if update_data:
             update_data["command_type"] = command.command_type
             valid, issues = validate_command_update(update_data)
             if not valid:
                 raise CommandValidationError("Command validation failed", issues)
-        
+
         if name is not None and name.lower() != command.name:
             existing = self._db.fetch_one(
                 """SELECT id FROM app_commands
@@ -279,51 +279,51 @@ class CommandRegistry:
                     "Command with this name already exists",
                     ["Duplicate command name"]
                 )
-        
+
         updates = []
         params = []
-        
+
         if name is not None:
             updates.append("name = ?")
             params.append(name.lower())
-        
+
         if description is not None:
             updates.append("description = ?")
             params.append(description)
-        
+
         if options is not None:
             updates.append("options = ?")
             params.append(json.dumps(options))
-        
+
         if default_member_permissions is not None:
             updates.append("default_member_permissions = ?")
             params.append(default_member_permissions)
-        
+
         if dm_permission is not None:
             updates.append("dm_permission = ?")
             params.append(1 if dm_permission else 0)
-        
+
         if nsfw is not None:
             updates.append("nsfw = ?")
             params.append(1 if nsfw else 0)
-        
+
         if updates:
             updates.append("version = version + 1")
             updates.append("updated_at = ?")
             params.append(self._current_time())
             params.append(command_id)
-            
+
             self._db.execute(
                 f"UPDATE app_commands SET {', '.join(updates)} WHERE id = ?",
                 tuple(params)
             )
-            
+
             logger.debug(f"Command updated: {command_id}")
-        
+
         result = self.get_command(command_id)
         assert result is not None  # Should exist since we just updated it
         return result
-    
+
     def delete_command(self, command_id: int) -> bool:
         """
         Delete a command.
@@ -340,15 +340,15 @@ class CommandRegistry:
         command = self.get_command(command_id)
         if not command:
             raise CommandNotFoundError("Command not found")
-        
+
         self._db.execute(
             "DELETE FROM app_commands WHERE id = ?",
             (command_id,)
         )
-        
+
         logger.info(f"Command deleted: {command.name} ({command_id})")
         return True
-    
+
     def bulk_overwrite_commands(
         self,
         application_id: int,
@@ -373,7 +373,7 @@ class CommandRegistry:
                     f"Command '{cmd_data.get('name', 'unknown')}' validation failed",
                     issues
                 )
-        
+
         if server_id:
             self._db.execute(
                 "DELETE FROM app_commands WHERE application_id = ? AND server_id = ?",
@@ -384,7 +384,7 @@ class CommandRegistry:
                 "DELETE FROM app_commands WHERE application_id = ? AND server_id IS NULL",
                 (application_id,)
             )
-        
+
         result = []
         for cmd_data in commands:
             command = self.register_command(
@@ -399,15 +399,15 @@ class CommandRegistry:
                 nsfw=cmd_data.get("nsfw", False),
             )
             result.append(command)
-        
+
         logger.info(f"Bulk overwrote {len(result)} commands for app {application_id}")
         return result
-    
+
     def _row_to_command(self, row) -> Command:
         """Convert database row to Command."""
         options_data = json.loads(row["options"]) if row["options"] else []
         options = options_from_dict(options_data)
-        
+
         return Command(
             id=row["id"],
             application_id=row["application_id"],

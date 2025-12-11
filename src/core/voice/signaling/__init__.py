@@ -124,9 +124,9 @@ def setup(
         turn_credential: Static TURN credential/password
     """
     global _manager, _setup_complete
-    
+
     from .manager import SignalingManager
-    
+
     _manager = SignalingManager(
         voice_module=voice_module,
         events_module=events_module,

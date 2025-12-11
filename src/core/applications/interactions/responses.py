@@ -35,7 +35,7 @@ def create_message_response(
         InteractionResponse
     """
     flags = EPHEMERAL_FLAG if ephemeral else 0
-    
+
     return InteractionResponse(
         response_type=InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
         content=content,
@@ -63,12 +63,12 @@ def create_deferred_response(
         InteractionResponse
     """
     flags = EPHEMERAL_FLAG if ephemeral else 0
-    
+
     response_type = (
         InteractionResponseType.DEFERRED_UPDATE_MESSAGE if update
         else InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
     )
-    
+
     return InteractionResponse(
         response_type=response_type,
         flags=flags,
@@ -157,7 +157,7 @@ def response_to_dict(response: InteractionResponse) -> Dict[str, Any]:
     result: Dict[str, Any] = {
         "type": response.response_type.value if isinstance(response.response_type, InteractionResponseType) else response.response_type,
     }
-    
+
     if response.response_type == InteractionResponseType.MODAL:
         result["data"] = {
             "custom_id": response.custom_id,
@@ -194,5 +194,5 @@ def response_to_dict(response: InteractionResponse) -> Dict[str, Any]:
     ):
         if response.flags:
             result["data"] = {"flags": response.flags}
-    
+
     return result

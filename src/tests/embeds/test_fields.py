@@ -14,7 +14,7 @@ class TestCreateEmbedWithFields:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"fld1_{unique_id}",
             email=f"fld1_{unique_id}@example.com",
@@ -37,7 +37,7 @@ class TestCreateEmbedWithFields:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"fld2_{unique_id}",
             email=f"fld2_{unique_id}@example.com",
@@ -57,7 +57,7 @@ class TestCreateEmbedWithFields:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"fld3_{unique_id}",
             email=f"fld3_{unique_id}@example.com",
@@ -84,7 +84,7 @@ class TestCreateEmbedWithFields:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"fld4_{unique_id}",
             email=f"fld4_{unique_id}@example.com",
@@ -106,7 +106,7 @@ class TestCreateEmbedWithFields:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"fld5_{unique_id}",
             email=f"fld5_{unique_id}@example.com",
@@ -121,7 +121,7 @@ class TestCreateEmbedWithFields:
                 title="Too Many Fields",
                 fields=fields
             )
-        
+
         assert any("25" in issue or "field" in issue.lower() for issue in exc_info.value.issues)
 
 
@@ -133,7 +133,7 @@ class TestFieldNameValidation:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"fld6_{unique_id}",
             email=f"fld6_{unique_id}@example.com",
@@ -155,7 +155,7 @@ class TestFieldNameValidation:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"fld7_{unique_id}",
             email=f"fld7_{unique_id}@example.com",
@@ -176,7 +176,7 @@ class TestFieldNameValidation:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"fld8_{unique_id}",
             email=f"fld8_{unique_id}@example.com",
@@ -199,7 +199,7 @@ class TestFieldValueValidation:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"fld9_{unique_id}",
             email=f"fld9_{unique_id}@example.com",
@@ -221,7 +221,7 @@ class TestFieldValueValidation:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"fld10_{unique_id}",
             email=f"fld10_{unique_id}@example.com",
@@ -242,7 +242,7 @@ class TestFieldValueValidation:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"fld11_{unique_id}",
             email=f"fld11_{unique_id}@example.com",
@@ -265,7 +265,7 @@ class TestFieldOrdering:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"fld12_{unique_id}",
             email=f"fld12_{unique_id}@example.com",
@@ -291,7 +291,7 @@ class TestFieldOrdering:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"fld13_{unique_id}",
             email=f"fld13_{unique_id}@example.com",
@@ -323,7 +323,7 @@ class TestFieldInlineLayout:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"fld14_{unique_id}",
             email=f"fld14_{unique_id}@example.com",
@@ -351,7 +351,7 @@ class TestFieldInlineLayout:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"fld15_{unique_id}",
             email=f"fld15_{unique_id}@example.com",
@@ -374,7 +374,7 @@ class TestFieldInlineLayout:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"fld16_{unique_id}",
             email=f"fld16_{unique_id}@example.com",

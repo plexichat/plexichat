@@ -7,9 +7,7 @@ applications, commands, interactions, and OAuth flows.
 
 import pytest
 import uuid
-from typing import Dict, Any
 
-from src.tests.fixtures.config import TEST_PASSWORD
 
 
 @pytest.fixture

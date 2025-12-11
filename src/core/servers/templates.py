@@ -16,9 +16,6 @@ from .models import (
     ServerTemplate,
     TemplateData,
     Server,
-    Channel,
-    Role,
-    ChannelCategory,
     ChannelType,
     AuditLogAction,
 )
@@ -26,7 +23,6 @@ from .exceptions import (
     ServerNotFoundError,
     TemplateNotFoundError,
     TemplateError,
-    InvalidTemplateCodeError,
     PermissionDeniedError,
 )
 

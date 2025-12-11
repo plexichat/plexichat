@@ -8,7 +8,6 @@ from src.core.soundboard import (
     SoundFormat,
     SoundNotFoundError,
     ChannelNotFoundError,
-    PermissionDeniedError,
 )
 
 

@@ -2,11 +2,9 @@
 API dependencies - Dependency injection utilities.
 """
 
-from typing import Optional
-from fastapi import Depends
 
 import src.api as api
-from src.api.middleware.authentication import get_current_user, get_optional_user, TokenInfo
+from src.api.middleware.authentication import get_current_user, get_optional_user
 
 
 def get_db():

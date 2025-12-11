@@ -18,9 +18,9 @@ from ..models import ActionType, RuleAction, Violation
 
 class AlertModeratorsAction(BaseAction):
     """Action that alerts moderators about a violation."""
-    
+
     action_type = ActionType.ALERT_MODERATORS
-    
+
     def execute(
         self,
         action: RuleAction,
@@ -30,41 +30,41 @@ class AlertModeratorsAction(BaseAction):
         """Send alert to moderators."""
         try:
             moderator_ids = self._get_moderator_ids(violation.server_id)
-            
+
             if not moderator_ids:
                 logger.debug(f"No moderators to alert for server {violation.server_id}")
                 return True
-            
+
             alert_channel_id = self._get_alert_channel(violation.server_id)
-            
+
             if alert_channel_id and self._messaging:
                 self._send_channel_alert(alert_channel_id, violation, context)
-            
+
             if self._notifications:
                 self._send_notifications(moderator_ids, violation, context)
-            
+
             self._log_alert(violation, moderator_ids)
-            
+
             logger.debug(
                 f"Alerted {len(moderator_ids)} moderators about violation {violation.id}"
             )
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to alert moderators: {e}")
             return False
-    
+
     def _get_moderator_ids(self, server_id: int) -> List[int]:
         """Get IDs of users with moderation permissions."""
         server = self._db.fetch_one(
             "SELECT owner_id FROM srv_servers WHERE id = ?",
             (server_id,)
         )
-        
+
         mod_ids = set()
         if server:
             mod_ids.add(server["owner_id"])
-        
+
         mod_roles = self._db.fetch_all(
             """SELECT id FROM srv_roles 
                WHERE server_id = ? AND (
@@ -74,9 +74,9 @@ class AlertModeratorsAction(BaseAction):
                )""",
             (server_id,)
         )
-        
+
         role_ids = [r["id"] for r in mod_roles]
-        
+
         if role_ids:
             placeholders = ",".join("?" * len(role_ids))
             members = self._db.fetch_all(
@@ -86,18 +86,18 @@ class AlertModeratorsAction(BaseAction):
             )
             for m in members:
                 mod_ids.add(m["user_id"])
-        
+
         return list(mod_ids)
-    
+
     def _get_alert_channel(self, server_id: int) -> Optional[int]:
         """Get the configured alert channel for a server."""
         automod_config = config.get("automod", {})
-        
+
         server_config = self._db.fetch_one(
             "SELECT config FROM automod_rules WHERE server_id = ? LIMIT 1",
             (server_id,)
         )
-        
+
         if server_config:
             try:
                 cfg = json.loads(server_config["config"])
@@ -105,9 +105,9 @@ class AlertModeratorsAction(BaseAction):
                     return cfg["alert_channel_id"]
             except (json.JSONDecodeError, KeyError):
                 pass
-        
+
         return automod_config.get("default_alert_channel_id")
-    
+
     def _send_channel_alert(
         self,
         channel_id: int,
@@ -116,7 +116,7 @@ class AlertModeratorsAction(BaseAction):
     ):
         """Send alert message to channel."""
         content = self._format_alert_message(violation)
-        
+
         try:
             bot_user_id = context.get("bot_user_id") if context else None
             if bot_user_id and self._messaging:
@@ -132,7 +132,7 @@ class AlertModeratorsAction(BaseAction):
                     )
         except Exception as e:
             logger.warning(f"Failed to send channel alert: {e}")
-    
+
     def _send_notifications(
         self,
         moderator_ids: List[int],
@@ -141,7 +141,7 @@ class AlertModeratorsAction(BaseAction):
     ):
         """Send notifications to moderators."""
         pass
-    
+
     def _format_alert_message(self, violation: Violation) -> str:
         """Format the alert message."""
         return (
@@ -151,12 +151,12 @@ class AlertModeratorsAction(BaseAction):
             f"Severity: {violation.severity.value}\n"
             f"Content: {violation.matched_content[:100]}"
         )
-    
+
     def _log_alert(self, violation: Violation, moderator_ids: List[int]):
         """Log the alert in the database."""
         now = int(time.time() * 1000)
         alert_id = generate_snowflake_id()
-        
+
         self._db.execute(
             """INSERT INTO automod_audit 
                (id, server_id, action_type, target_user_id, moderator_id, rule_id, reason, metadata, created_at)

@@ -12,7 +12,7 @@ import uuid
 def server_with_owner(modules, user_pool):
     """Create a server with owner for soundboard tests."""
     owner = user_pool.get_user()
-    
+
     unique_id = uuid.uuid4().hex[:6]
     server = modules.servers.create_server(owner.id, f"Soundboard Server {unique_id}")
 

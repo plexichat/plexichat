@@ -13,14 +13,14 @@ from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
 
 class RegexRule(BaseRule):
     """Rule that checks content against regex patterns."""
-    
+
     rule_type = RuleType.REGEX
-    
+
     def __init__(self, rule: Rule):
         super().__init__(rule)
         self._patterns: List[Dict[str, Any]] = self.config.get("patterns", [])
         self._compiled_patterns: List[tuple] = []
-        
+
         for pattern_config in self._patterns:
             pattern_str = pattern_config.get("pattern", "")
             flags = 0
@@ -28,7 +28,7 @@ class RegexRule(BaseRule):
                 flags |= re.IGNORECASE
             if pattern_config.get("multiline", False):
                 flags |= re.MULTILINE
-            
+
             try:
                 compiled = re.compile(pattern_str, flags)
                 severity = self._parse_severity(pattern_config.get("severity", "medium"))
@@ -36,7 +36,7 @@ class RegexRule(BaseRule):
                 self._compiled_patterns.append((compiled, severity, name))
             except re.error:
                 pass
-    
+
     def check(
         self,
         content: str,
@@ -47,10 +47,10 @@ class RegexRule(BaseRule):
         """Check content against regex patterns."""
         if not self._compiled_patterns:
             return self._no_match()
-        
+
         matches = []
         highest_severity = ViolationSeverity.LOW
-        
+
         for compiled, severity, name in self._compiled_patterns:
             match = compiled.search(content)
             if match:
@@ -62,12 +62,12 @@ class RegexRule(BaseRule):
                 })
                 if self._severity_rank(severity) > self._severity_rank(highest_severity):
                     highest_severity = severity
-        
+
         if not matches:
             return self._no_match()
-        
+
         matched_texts = [m["matched"] for m in matches]
-        
+
         return self._create_match(
             matched=True,
             matched_content=", ".join(matched_texts[:5]),
@@ -77,7 +77,7 @@ class RegexRule(BaseRule):
             },
             severity=highest_severity
         )
-    
+
     def _parse_severity(self, sev_str: str) -> ViolationSeverity:
         """Parse severity string to enum."""
         mapping = {
@@ -87,7 +87,7 @@ class RegexRule(BaseRule):
             "critical": ViolationSeverity.CRITICAL
         }
         return mapping.get(sev_str.lower(), ViolationSeverity.MEDIUM)
-    
+
     def _severity_rank(self, sev: ViolationSeverity) -> int:
         """Get numeric rank for severity comparison."""
         ranks = {
@@ -97,12 +97,12 @@ class RegexRule(BaseRule):
             ViolationSeverity.CRITICAL: 4
         }
         return ranks.get(sev, 2)
-    
+
     @classmethod
     def validate_config(cls, config: Dict[str, Any]) -> tuple:
         """Validate regex rule configuration."""
         issues = []
-        
+
         patterns = config.get("patterns")
         if not patterns:
             issues.append("patterns list is required")
@@ -113,15 +113,15 @@ class RegexRule(BaseRule):
                 if not isinstance(p, dict):
                     issues.append(f"pattern {i} must be a dictionary")
                     continue
-                
+
                 pattern_str = p.get("pattern")
                 if not pattern_str:
                     issues.append(f"pattern {i} missing 'pattern' field")
                     continue
-                
+
                 try:
                     re.compile(pattern_str)
                 except re.error as e:
                     issues.append(f"pattern {i} invalid regex: {e}")
-        
+
         return len(issues) == 0, issues

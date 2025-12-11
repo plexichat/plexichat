@@ -2,10 +2,8 @@
 Tests for thread permission functionality.
 """
 
-import pytest
 from src.core.threads import (
     ThreadType,
-    PermissionDeniedError,
 )
 
 

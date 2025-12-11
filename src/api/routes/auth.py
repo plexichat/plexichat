@@ -4,7 +4,6 @@ Authentication routes - Register, login, logout endpoints.
 
 import os
 import sys
-from typing import Optional
 from fastapi import APIRouter, Request, HTTPException, Depends
 
 import src.api as api
@@ -56,9 +55,9 @@ async def register(request: Request, body: RegisterRequest):
     auth = api.get_auth()
     if not auth:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
-    
+
     ip_address = request.client.host if request.client else None
-    
+
     try:
         user = auth.register(
             username=body.username,
@@ -66,7 +65,7 @@ async def register(request: Request, body: RegisterRequest):
             password=body.password,
             ip_address=ip_address
         )
-        
+
         # Apply alpha tester features if enabled
         features = api.get_features()
         if features:
@@ -74,13 +73,13 @@ async def register(request: Request, body: RegisterRequest):
                 features.apply_new_user_features(user.id)
             except Exception:
                 pass  # Non-critical, don't fail registration
-        
+
         result = auth.login(
             username=body.username,
             password=body.password,
             ip_address=ip_address
         )
-        
+
         return LoginResponse(
             status="success",
             token=result.token,
@@ -108,10 +107,10 @@ async def login(request: Request, body: LoginRequest):
     auth = api.get_auth()
     if not auth:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
-    
+
     ip_address = request.client.host if request.client else None
     user_agent = request.headers.get("User-Agent")
-    
+
     try:
         result = auth.login(
             username=body.username,
@@ -119,7 +118,7 @@ async def login(request: Request, body: LoginRequest):
             ip_address=ip_address,
             user_agent=user_agent
         )
-        
+
         if result.status.value == "two_factor_required":
             return LoginResponse(
                 status="two_factor_required",
@@ -129,7 +128,7 @@ async def login(request: Request, body: LoginRequest):
                 methods=result.methods,
                 expires_in=result.expires_in,
             )
-        
+
         return LoginResponse(
             status="success",
             token=result.token,
@@ -159,10 +158,10 @@ async def complete_2fa(body: TwoFactorRequest):
     auth = api.get_auth()
     if not auth:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
-    
+
     try:
         result = auth.complete_2fa(body.challenge_token, body.code)
-        
+
         return LoginResponse(
             status="success",
             token=result.token,
@@ -188,13 +187,13 @@ async def logout(current_user: TokenInfo = Depends(get_current_user)):
     auth = api.get_auth()
     if not auth:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
-    
+
     if current_user.session_id:
         try:
             auth.revoke_session(current_user.user_id, current_user.session_id)
         except Exception:
             pass
-    
+
     return {"success": True}
 
 
@@ -206,12 +205,12 @@ async def get_2fa_status(current_user: TokenInfo = Depends(get_current_user)):
     auth = api.get_auth()
     if not auth:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
-    
+
     try:
         user = auth.get_user(current_user.user_id)
         if not user:
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
-        
+
         return {
             "enabled": getattr(user, "totp_enabled", False),
             "backup_codes_remaining": 0  # TODO: implement backup codes count
@@ -230,7 +229,7 @@ async def get_sessions_list(current_user: TokenInfo = Depends(get_current_user))
     auth = api.get_auth()
     if not auth:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
-    
+
     try:
         sessions = auth.get_sessions(current_user.user_id)
         return [
@@ -256,7 +255,7 @@ async def revoke_session(session_id: str, current_user: TokenInfo = Depends(get_
     auth = api.get_auth()
     if not auth:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
-    
+
     try:
         sid = int(session_id)
         auth.revoke_session(current_user.user_id, sid)
@@ -280,20 +279,20 @@ async def enable_2fa(body: dict, current_user: TokenInfo = Depends(get_current_u
     auth = api.get_auth()
     if not auth:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
-    
+
     password = body.get("password", "")
     if not password:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Password required"}})
-    
+
     try:
         user = auth.get_user(current_user.user_id)
         if not user:
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
-        
+
         # Check if already enabled
         if getattr(user, "totp_enabled", False):
             raise HTTPException(status_code=409, detail={"error": {"code": 409, "message": "2FA is already enabled"}})
-        
+
         # Verify password by attempting a login (this validates credentials)
         try:
             auth.login(user.username, password)
@@ -303,7 +302,7 @@ async def enable_2fa(body: dict, current_user: TokenInfo = Depends(get_current_u
             # If it's a 2FA required error, password was correct
             if "TwoFactor" not in type(login_err).__name__:
                 raise
-        
+
         # Setup 2FA - returns TwoFactorSetup object
         result = auth.setup_2fa(current_user.user_id)
         return {
@@ -332,11 +331,11 @@ async def confirm_2fa_setup(body: dict, current_user: TokenInfo = Depends(get_cu
     auth = api.get_auth()
     if not auth:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
-    
+
     code = body.get("code", "")
     if not code or len(code) != 6:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Valid 6-digit code required"}})
-    
+
     try:
         # confirm_2fa returns bool
         success = auth.confirm_2fa(current_user.user_id, code)
@@ -365,15 +364,15 @@ async def disable_2fa(body: dict, current_user: TokenInfo = Depends(get_current_
     auth = api.get_auth()
     if not auth:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
-    
+
     password = body.get("password", "")
     code = body.get("code", "")
-    
+
     if not password:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Password required"}})
     if not code:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "2FA code required"}})
-    
+
     try:
         auth.disable_2fa(current_user.user_id, password, code)
         return {"success": True}
@@ -394,9 +393,9 @@ async def revoke_all_sessions(body: dict, current_user: TokenInfo = Depends(get_
     auth = api.get_auth()
     if not auth:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
-    
+
     except_current = body.get("except_current", True)
-    
+
     try:
         sessions = auth.get_sessions(current_user.user_id)
         revoked = 0
@@ -430,15 +429,15 @@ async def get_password_requirements():
         "require_digit": True,
         "require_special": True,
     }
-    
+
     if config_util is None:
         return defaults
-    
+
     try:
         # Try to get the nested authentication.password config
         auth_config = config_util.get("authentication", {})
         password_config = auth_config.get("password", {}) if isinstance(auth_config, dict) else {}
-        
+
         return {
             "min_length": password_config.get("min_length", defaults["min_length"]),
             "max_length": password_config.get("max_length", defaults["max_length"]),

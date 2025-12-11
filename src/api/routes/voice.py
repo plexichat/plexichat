@@ -2,10 +2,8 @@
 Voice routes - Voice channel and WebRTC signaling endpoints.
 """
 
-from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends
 
-import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 
 router = APIRouter()
@@ -23,10 +21,10 @@ async def get_ice_servers(
     """
     try:
         from src.core.voice import signaling
-        
+
         # Get ICE servers for this user
         info = signaling.get_voice_server_info(current_user.user_id, 0)
-        
+
         # Convert to client format
         ice_servers = []
         for server in info.ice_servers:
@@ -36,7 +34,7 @@ async def get_ice_servers(
             if server.credential:
                 server_config["credential"] = server.credential
             ice_servers.append(server_config)
-        
+
         return {"ice_servers": ice_servers}
     except Exception as e:
         # Return default STUN servers if signaling not available
@@ -59,12 +57,12 @@ async def get_voice_channel_info(
         cid = int(channel_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
-    
+
     try:
         from src.core.voice import signaling
-        
+
         info = signaling.get_voice_server_info(current_user.user_id, cid)
-        
+
         # Convert ICE servers to client format
         ice_servers = []
         for server in info.ice_servers:
@@ -74,7 +72,7 @@ async def get_voice_channel_info(
             if server.credential:
                 server_config["credential"] = server.credential
             ice_servers.append(server_config)
-        
+
         return {
             "channel_id": channel_id,
             "session_id": info.session_id,

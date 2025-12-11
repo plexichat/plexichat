@@ -78,7 +78,7 @@ _setup_complete = False
 
 class EmailSender(Protocol):
     """Protocol for email sending. Implement this to enable email features."""
-    
+
     def send(self, to: str, subject: str, body: str, html: bool = False) -> bool:
         """Send an email. Returns True if successful."""
         ...
@@ -93,9 +93,9 @@ def setup(db, email_sender: Optional[EmailSender] = None) -> None:
         email_sender: Optional email sender for verification emails
     """
     global _manager, _setup_complete
-    
+
     from .manager import AuthManager
-    
+
     _manager = AuthManager(db, email_sender)
     _setup_complete = True
 
@@ -405,7 +405,7 @@ __all__ = [
     # Setup
     'setup',
     'EmailSender',
-    
+
     # Exceptions
     'AuthError',
     'InvalidCredentialsError',
@@ -423,7 +423,7 @@ __all__ = [
     'BotLimitExceededError',
     'InvalidUsernameError',
     'InvalidEmailError',
-    
+
     # Models
     'User',
     'Session',
@@ -439,23 +439,23 @@ __all__ = [
     'AccountType',
     'AuthStatus',
     'AuditEventType',
-    
+
     # Permissions
     'PERMISSIONS',
     'DEFAULT_USER_PERMISSIONS',
     'DEFAULT_BOT_PERMISSIONS',
     'has_permission',
     'validate_permissions',
-    
+
     # Registration
     'register',
     'verify_email',
     'resend_verification',
-    
+
     # Login
     'login',
     'complete_2fa',
-    
+
     # Sessions
     'verify_token',
     'refresh_session',
@@ -463,20 +463,20 @@ __all__ = [
     'logout_all',
     'get_sessions',
     'revoke_session',
-    
+
     # 2FA
     'setup_2fa',
     'confirm_2fa',
     'disable_2fa',
     'regenerate_backup_codes',
     'get_2fa_status',
-    
+
     # Password
     'change_password',
     'request_password_reset',
     'reset_password',
     'validate_password',
-    
+
     # Bots
     'create_bot',
     'get_bot',
@@ -486,16 +486,16 @@ __all__ = [
     'disable_bot',
     'enable_bot',
     'delete_bot',
-    
+
     # Devices
     'get_devices',
     'rename_device',
     'revoke_device',
-    
+
     # Audit
     'get_login_history',
     'get_security_events',
-    
+
     # Utility
     'get_user',
     'get_user_by_username',

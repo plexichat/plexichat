@@ -2,7 +2,6 @@
 Tests for presence visibility rules.
 """
 
-import pytest
 from src.core.presence import UserStatus
 
 

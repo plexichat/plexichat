@@ -2,7 +2,6 @@
 Tests for thread integration with other modules.
 """
 
-import pytest
 from src.core.threads import (
     ThreadType,
     ThreadState,

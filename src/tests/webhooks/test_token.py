@@ -3,7 +3,6 @@ Tests for webhook token validation and regeneration.
 """
 
 import pytest
-import uuid
 
 
 class TestTokenFormat:

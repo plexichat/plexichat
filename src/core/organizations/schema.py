@@ -101,14 +101,14 @@ def create_tables(db) -> None:
             except Exception as e:
                 logger.error(f"Failed to execute schema statement: {e}")
                 raise
-    
+
     logger.info("Organization tables created successfully")
 
 
 def add_org_columns_to_users(db) -> None:
     """Add org_id and managed_by_org columns to auth_users if they don't exist."""
     db_type = getattr(db, 'type', 'sqlite')
-    
+
     if db_type == 'postgres':
         # PostgreSQL: Use ADD COLUMN IF NOT EXISTS
         try:
@@ -123,11 +123,11 @@ def add_org_columns_to_users(db) -> None:
             row = db.fetch_one("SELECT sql FROM sqlite_master WHERE type='table' AND name='auth_users'")
             if row and row["sql"]:
                 sql = row["sql"].lower()
-                
+
                 if "org_id" not in sql:
                     db.execute("ALTER TABLE auth_users ADD COLUMN org_id INTEGER")
                     logger.info("Added org_id column to auth_users")
-                
+
                 if "managed_by_org" not in sql:
                     db.execute("ALTER TABLE auth_users ADD COLUMN managed_by_org INTEGER DEFAULT 0")
                     logger.info("Added managed_by_org column to auth_users")

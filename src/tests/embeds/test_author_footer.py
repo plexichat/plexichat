@@ -14,7 +14,7 @@ class TestEmbedAuthor:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"auth1_{unique_id}",
             email=f"auth1_{unique_id}@example.com",
@@ -37,7 +37,7 @@ class TestEmbedAuthor:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"auth2_{unique_id}",
             email=f"auth2_{unique_id}@example.com",
@@ -61,7 +61,7 @@ class TestEmbedAuthor:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"auth3_{unique_id}",
             email=f"auth3_{unique_id}@example.com",
@@ -84,7 +84,7 @@ class TestEmbedAuthor:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"auth4_{unique_id}",
             email=f"auth4_{unique_id}@example.com",
@@ -110,7 +110,7 @@ class TestEmbedAuthor:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"auth5_{unique_id}",
             email=f"auth5_{unique_id}@example.com",
@@ -132,7 +132,7 @@ class TestEmbedAuthor:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"auth6_{unique_id}",
             email=f"auth6_{unique_id}@example.com",
@@ -153,7 +153,7 @@ class TestEmbedAuthor:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"auth7_{unique_id}",
             email=f"auth7_{unique_id}@example.com",
@@ -172,7 +172,7 @@ class TestEmbedAuthor:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"auth8_{unique_id}",
             email=f"auth8_{unique_id}@example.com",
@@ -195,7 +195,7 @@ class TestEmbedFooter:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"foot1_{unique_id}",
             email=f"foot1_{unique_id}@example.com",
@@ -217,7 +217,7 @@ class TestEmbedFooter:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"foot2_{unique_id}",
             email=f"foot2_{unique_id}@example.com",
@@ -241,7 +241,7 @@ class TestEmbedFooter:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"foot3_{unique_id}",
             email=f"foot3_{unique_id}@example.com",
@@ -263,7 +263,7 @@ class TestEmbedFooter:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"foot4_{unique_id}",
             email=f"foot4_{unique_id}@example.com",
@@ -284,7 +284,7 @@ class TestEmbedFooter:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"foot5_{unique_id}",
             email=f"foot5_{unique_id}@example.com",
@@ -307,7 +307,7 @@ class TestAuthorAndFooterTogether:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"both1_{unique_id}",
             email=f"both1_{unique_id}@example.com",
@@ -331,7 +331,7 @@ class TestAuthorAndFooterTogether:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"both2_{unique_id}",
             email=f"both2_{unique_id}@example.com",
@@ -352,7 +352,7 @@ class TestAuthorAndFooterTogether:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"both3_{unique_id}",
             email=f"both3_{unique_id}@example.com",
@@ -377,7 +377,7 @@ class TestAuthorFooterCharacterCount:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"cnt1_{unique_id}",
             email=f"cnt1_{unique_id}@example.com",
@@ -403,7 +403,7 @@ class TestAuthorFooterCharacterCount:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"cnt2_{unique_id}",
             email=f"cnt2_{unique_id}@example.com",
@@ -429,7 +429,7 @@ class TestAuthorFooterCharacterCount:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"cnt3_{unique_id}",
             email=f"cnt3_{unique_id}@example.com",

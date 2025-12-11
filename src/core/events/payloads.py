@@ -7,7 +7,6 @@ import time
 
 from .types import EventType
 from .models import (
-    Event,
     ReadyEvent,
     MessageEvent,
     PresenceEvent,

@@ -17,7 +17,6 @@ from .models import (
 from .config import (
     DEFAULT_ROUTE_LIMITS,
     DEFAULT_WEBHOOK_CHANNEL_LIMIT,
-    get_route_config,
     get_default_config,
     is_bot_higher_limit_route,
     merge_route_configs,
@@ -89,7 +88,7 @@ class RateLimitManager:
             parts.append(f"u:{user_id}")
         elif ip_address is not None:
             parts.append(f"ip:{ip_address}")
-            
+
         if route:
             route_hash = hashlib.md5(route.encode()).hexdigest()[:8]
             parts.append(f"r:{route_hash}")
@@ -360,17 +359,17 @@ class RateLimitManager:
         if self._check_bypass(user_id, is_admin, is_internal):
             return self._create_bypass_result(route, unix_now)
         checks = []
-        
+
         # Check global limit (shared by all if no user_id, but we want to avoid that for IPs)
-        # If we have an IP but no user, we should probably skip the global shared bucket 
+        # If we have an IP but no user, we should probably skip the global shared bucket
         # or have a separate global IP bucket?
-        # For now, let's keep global limit for authenticated users, 
+        # For now, let's keep global limit for authenticated users,
         # and maybe a separate check for IPs if we wanted a "global IP limit".
         # But the requirement is to avoid shared limits for unauthenticated users.
-        
+
         if self._enable_global_limit and user_id is not None:
             checks.append(self._check_global_limit(user_id, cost, unix_now))
-            
+
         if user_id is not None and not is_webhook:
             checks.append(self._check_user_limit(user_id, cost, unix_now))
         elif ip_address is not None and not is_webhook:
@@ -544,8 +543,8 @@ class RateLimitManager:
     ) -> RateLimitResult:
         """Check per-route rate limit."""
         key = self._generate_bucket_key(
-            BucketType.ROUTE, 
-            user_id=user_id, 
+            BucketType.ROUTE,
+            user_id=user_id,
             ip_address=ip_address,
             route=route
         )

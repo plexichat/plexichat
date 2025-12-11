@@ -6,9 +6,8 @@ validation and database interactions.
 """
 
 import time
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict
 
-import utils.config as config
 import utils.logger as logger
 from src.utils.encryption import generate_snowflake_id
 
@@ -75,10 +74,10 @@ class RelationshipManager:
         """Validate both users exist and are different."""
         if user_id == target_id:
             raise SelfRelationshipError("Cannot create relationship with yourself")
-        
+
         if not self._user_exists(user_id):
             raise UserNotFoundError(f"User {user_id} not found")
-        
+
         if not self._user_exists(target_id):
             raise UserNotFoundError(f"User {target_id} not found")
 

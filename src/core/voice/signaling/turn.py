@@ -25,7 +25,7 @@ class TURNCredentialGenerator:
     This follows the TURN REST API specification used by coturn and other
     TURN servers.
     """
-    
+
     def __init__(
         self,
         secret: str,
@@ -42,11 +42,11 @@ class TURNCredentialGenerator:
         """
         if not secret:
             raise TURNCredentialError("TURN secret is required")
-        
+
         self._secret = secret.encode("utf-8")
         self._turn_urls = turn_urls
         self._ttl = ttl
-    
+
     def generate(self, user_id: int) -> TURNCredentials:
         """
         Generate TURN credentials for a user.
@@ -59,13 +59,13 @@ class TURNCredentialGenerator:
         """
         now = int(time.time())
         expires_at = now + self._ttl
-        
+
         # Username format: expiry_timestamp:user_id
         username = f"{expires_at}:{user_id}"
-        
+
         # Generate HMAC-SHA1 credential
         credential = self._generate_credential(username)
-        
+
         return TURNCredentials(
             username=username,
             credential=credential,
@@ -73,7 +73,7 @@ class TURNCredentialGenerator:
             ttl=self._ttl,
             expires_at=expires_at,
         )
-    
+
     def _generate_credential(self, username: str) -> str:
         """
         Generate HMAC-SHA1 credential.
@@ -89,9 +89,9 @@ class TURNCredentialGenerator:
             username.encode("utf-8"),
             hashlib.sha1
         ).digest()
-        
+
         return base64.b64encode(digest).decode("utf-8")
-    
+
     def verify(self, username: str, credential: str) -> bool:
         """
         Verify TURN credentials.
@@ -108,13 +108,13 @@ class TURNCredentialGenerator:
             parts = username.split(":")
             if len(parts) < 2:
                 return False
-            
+
             expires_at = int(parts[0])
             if time.time() > expires_at:
                 return False
         except (ValueError, IndexError):
             return False
-        
+
         # Verify HMAC
         expected = self._generate_credential(username)
         return hmac.compare_digest(credential, expected)
@@ -122,7 +122,7 @@ class TURNCredentialGenerator:
 
 class ICEServerBuilder:
     """Builds ICE server configurations for WebRTC."""
-    
+
     def __init__(
         self,
         stun_urls: Optional[List[str]] = None,
@@ -148,7 +148,7 @@ class ICEServerBuilder:
         self._turn_generator = None
         self._static_username = turn_username
         self._static_credential = turn_credential
-        
+
         # Use time-limited credentials if secret is provided, otherwise use static
         if turn_secret and turn_urls:
             self._turn_generator = TURNCredentialGenerator(
@@ -156,7 +156,7 @@ class ICEServerBuilder:
                 turn_urls=turn_urls,
                 ttl=turn_ttl,
             )
-    
+
     def build(self, user_id: int) -> List[ICEServer]:
         """
         Build ICE server list for a user.
@@ -168,11 +168,11 @@ class ICEServerBuilder:
             List of ICEServer configurations
         """
         servers = []
-        
+
         # Add STUN servers (no credentials needed)
         if self._stun_urls:
             servers.append(ICEServer(urls=self._stun_urls.copy()))
-        
+
         # Add TURN servers with credentials
         if self._turn_urls:
             if self._turn_generator:
@@ -190,9 +190,9 @@ class ICEServerBuilder:
                     username=self._static_username,
                     credential=self._static_credential,
                 ))
-        
+
         return servers
-    
+
     def get_turn_credentials(self, user_id: int) -> Optional[TURNCredentials]:
         """
         Get TURN credentials for a user.
@@ -205,7 +205,7 @@ class ICEServerBuilder:
         """
         if self._turn_generator:
             return self._turn_generator.generate(user_id)
-        
+
         # Return static credentials as TURNCredentials
         if self._turn_urls and self._static_username and self._static_credential:
             return TURNCredentials(
@@ -215,7 +215,7 @@ class ICEServerBuilder:
                 ttl=0,  # Static credentials don't expire
                 expires_at=0,
             )
-        
+
         return None
 
 

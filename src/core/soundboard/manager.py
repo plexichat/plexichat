@@ -16,13 +16,10 @@ from src.utils.encryption import generate_snowflake_id
 from .models import (
     Sound,
     SoundPermissions,
-    SoundCooldown,
-    SoundUsage,
     SoundPlayback,
     SoundFormat,
 )
 from .exceptions import (
-    SoundboardError,
     SoundNotFoundError,
     SoundLimitError,
     InvalidSoundFormatError,
@@ -31,9 +28,7 @@ from .exceptions import (
     InvalidSoundNameError,
     SoundCooldownError,
     PermissionDeniedError,
-    ServerNotFoundError,
     ChannelNotFoundError,
-    NotInVoiceChannelError,
 )
 from .schema import create_tables
 
@@ -241,7 +236,7 @@ class SoundboardManager:
             """INSERT INTO soundboard_sounds 
                (id, server_id, name, format, emoji, url, size, duration_seconds, volume, created_by, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (sound_id, server_id, name, format.value, emoji, url, size, 
+            (sound_id, server_id, name, format.value, emoji, url, size,
              duration_seconds, volume, user_id, now)
         )
 

@@ -2,7 +2,6 @@
 Tests for integration with other modules (auth, servers, messaging).
 """
 
-import pytest
 from src.core.relationships import (
     RelationshipStatus,
     FriendRequestStatus,

@@ -1,6 +1,5 @@
 """Tests for event payload creation."""
 
-import pytest
 from src.core import events
 from src.core.events.types import EventType
 

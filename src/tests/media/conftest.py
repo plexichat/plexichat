@@ -129,9 +129,9 @@ def large_file_bytes():
 def media_module(modules, temp_upload_dir):
     """Get configured media module for testing."""
     import utils.config as config
-    
+
     original_media_config = config.get("media", {})
-    
+
     test_config = {
         "storage_backend": "local",
         "local_path": temp_upload_dir,
@@ -156,17 +156,17 @@ def media_module(modules, temp_upload_dir):
             "max_total_size_per_day": 10 * 1024 * 1024 * 1024  # 10GB for tests
         }
     }
-    
+
     assert config._config_instance is not None
     config._config_instance.config["media"] = test_config
-    
+
     from src.core import media
     media._manager = None
     media._setup_complete = False
     media.setup(modules._db, modules.messaging)
-    
+
     yield media
-    
+
     assert config._config_instance is not None
     config._config_instance.config["media"] = original_media_config
     media._manager = None
@@ -189,9 +189,9 @@ def mock_s3_client(mocker):
         "ContentType": "application/octet-stream",
     }
     mock_client.delete_object.return_value = {}
-    
+
     mock_boto3 = mocker.patch("boto3.client", return_value=mock_client)
-    
+
     return mock_client
 
 
@@ -200,12 +200,12 @@ def pytest_configure(config):
     import sys
     import os
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
-    for p in [project_root, os.path.join(project_root, "src"), 
+    for p in [project_root, os.path.join(project_root, "src"),
               os.path.join(project_root, "src", "utils"),
               os.path.join(project_root, "src", "utils", "common-utils")]:
         if p not in sys.path:
             sys.path.insert(0, p)
-    
+
     config.addinivalue_line("markers", "media: Media module tests")
     config.addinivalue_line("markers", "pillow: Tests requiring Pillow")
     config.addinivalue_line("markers", "ffprobe: Tests requiring ffprobe")

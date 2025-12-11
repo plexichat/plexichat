@@ -22,7 +22,7 @@ class StickerNotFoundError(StickerError):
 
 class PackLimitError(StickerError):
     """Maximum sticker packs limit reached."""
-    
+
     def __init__(self, message: str, max_allowed: int, current: int):
         super().__init__(message)
         self.max_allowed = max_allowed
@@ -31,7 +31,7 @@ class PackLimitError(StickerError):
 
 class StickerLimitError(StickerError):
     """Maximum stickers per pack limit reached."""
-    
+
     def __init__(self, message: str, max_allowed: int, current: int):
         super().__init__(message)
         self.max_allowed = max_allowed
@@ -40,7 +40,7 @@ class StickerLimitError(StickerError):
 
 class InvalidStickerFormatError(StickerError):
     """Sticker format is not supported."""
-    
+
     def __init__(self, message: str, format: str, allowed: List[str]):
         super().__init__(message)
         self.format = format
@@ -49,7 +49,7 @@ class InvalidStickerFormatError(StickerError):
 
 class StickerTooLargeError(StickerError):
     """Sticker file size exceeds limit."""
-    
+
     def __init__(self, message: str, max_size: int, actual_size: int):
         super().__init__(message)
         self.max_size = max_size
@@ -68,7 +68,7 @@ class InvalidPackNameError(StickerError):
 
 class PermissionDeniedError(StickerError):
     """User does not have permission to perform this action."""
-    
+
     def __init__(self, message: str, permission: str | None = None):
         super().__init__(message)
         self.permission = permission

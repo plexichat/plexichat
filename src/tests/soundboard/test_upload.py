@@ -7,10 +7,8 @@ import uuid
 from src.core.soundboard import (
     SoundNotFoundError,
     InvalidSoundNameError,
-    InvalidSoundFormatError,
     SoundTooLargeError,
     SoundTooLongError,
-    SoundLimitError,
     SoundFormat,
 )
 

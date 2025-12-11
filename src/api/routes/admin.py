@@ -11,7 +11,7 @@ in place (VPN, firewall, reverse proxy auth, etc.)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional
 import time
@@ -86,20 +86,20 @@ class NoteResponse(BaseModel):
 def _check_host_restriction(request: Request) -> None:
     """Check if client IP is allowed to access admin UI."""
     admin_config = config.get("admin_ui", {})
-    
+
     if not admin_config.get("enabled", False):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-    
+
     host_restriction = admin_config.get("host_restriction", {})
     if host_restriction.get("enabled", True):
         allowed_hosts = host_restriction.get("allowed_hosts", ["127.0.0.1", "localhost", "::1"])
         client_ip = request.client.host if request.client else "unknown"
-        
+
         from src.core import admin
         if not admin.check_host_restriction(client_ip, allowed_hosts):
             logger.warning(f"Admin access denied from {client_ip}")
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    
+
     # Check origin if allowed_origins is configured
     allowed_origins = admin_config.get("allowed_origins", [])
     if allowed_origins:
@@ -114,14 +114,14 @@ def _get_admin_from_token(request: Request) -> int:
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-    
+
     token = auth_header[7:]
     from src.core import admin
     admin_id = admin.validate_session(token)
-    
+
     if not admin_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
-    
+
     return admin_id
 
 
@@ -135,19 +135,19 @@ async def admin_login(
 ):
     """Admin login endpoint."""
     _check_host_restriction(request)
-    
+
     from src.core import admin
-    
+
     client_ip = request.client.host if request.client else "unknown"
     result = admin.login(login_data.username, login_data.password, client_ip)
-    
+
     if not result.success:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=result.error)
-    
+
     # If token is returned directly (OTP not required), login is complete
     if result.token:
         return {"status": "success", "token": result.token}
-    
+
     if result.requires_otp_setup:
         return {
             "status": "otp_setup_required",
@@ -156,14 +156,14 @@ async def admin_login(
             "otp_qr_uri": result.otp_qr_uri,
             "message": "Scan the QR code with your authenticator app, then enter the code"
         }
-    
+
     if result.requires_otp_verify:
         return {
             "status": "otp_required",
             "admin_id": str(result.user_id),  # String to avoid JS precision loss
             "message": "Enter your 2FA code"
         }
-    
+
     return {"status": "success", "token": result.token}
 
 
@@ -175,23 +175,23 @@ async def verify_otp(
 ):
     """Verify OTP code for admin login."""
     _check_host_restriction(request)
-    
+
     from src.core import admin
-    
+
     # Convert string admin_id to int
     try:
         admin_id = int(otp_data.admin_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid admin_id")
-    
+
     if otp_data.is_setup:
         result = admin.verify_otp_setup(admin_id, otp_data.code)
     else:
         result = admin.verify_otp(admin_id, otp_data.code)
-    
+
     if not result.success:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=result.error)
-    
+
     return {"status": "success", "token": result.token}
 
 
@@ -199,13 +199,13 @@ async def verify_otp(
 async def admin_logout(request: Request, db = Depends(get_db)):
     """Admin logout endpoint."""
     _check_host_restriction(request)
-    
+
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]
         from src.core import admin
         admin.logout(token)
-    
+
     return {"success": True}
 
 
@@ -216,11 +216,11 @@ async def get_dashboard(request: Request, db = Depends(get_db)):
     """Get admin dashboard data."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
-    
+
     from src.core import admin
-    
+
     ticket_counts = admin.get_ticket_counts()
-    
+
     telemetry_stats = []
     try:
         from src.core import telemetry
@@ -239,7 +239,7 @@ async def get_dashboard(request: Request, db = Depends(get_db)):
             ]
     except Exception:
         pass
-    
+
     return {"tickets": ticket_counts, "telemetry": telemetry_stats}
 
 
@@ -254,10 +254,10 @@ async def get_tickets(
     """Get feedback tickets."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
-    
+
     from src.core import admin
     tickets = admin.get_feedback_tickets(status_filter, limit, offset)
-    
+
     return [
         TicketResponse(
             id=t.id, user_id=t.user_id, username=t.username,
@@ -274,13 +274,13 @@ async def get_ticket(ticket_id: int, request: Request, db = Depends(get_db)):
     """Get a single ticket."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
-    
+
     from src.core import admin
     ticket = admin.get_ticket(ticket_id)
-    
+
     if not ticket:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
-    
+
     return TicketResponse(
         id=ticket.id, user_id=ticket.user_id, username=ticket.username,
         content=ticket.content, category=ticket.category, rating=ticket.rating,
@@ -299,15 +299,15 @@ async def update_ticket_status(
     """Update ticket status."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
-    
+
     from src.core import admin
-    
+
     if not admin.get_ticket(ticket_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
-    
+
     admin.update_ticket_status(ticket_id, update.status, admin_id)
     logger.info(f"Admin {admin_id} updated ticket {ticket_id} status to {update.status}")
-    
+
     return {"success": True, "status": update.status}
 
 
@@ -316,14 +316,14 @@ async def get_ticket_notes(ticket_id: int, request: Request, db = Depends(get_db
     """Get internal notes for a ticket."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
-    
+
     from src.core import admin
-    
+
     if not admin.get_ticket(ticket_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
-    
+
     notes = admin.get_ticket_notes(ticket_id)
-    
+
     return [
         NoteResponse(
             id=n.id, ticket_id=n.ticket_id, admin_id=n.admin_id,
@@ -343,15 +343,15 @@ async def add_ticket_note(
     """Add internal note to a ticket."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
-    
+
     from src.core import admin
-    
+
     if not admin.get_ticket(ticket_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
-    
+
     new_note = admin.add_internal_note(ticket_id, admin_id, note.content)
     logger.info(f"Admin {admin_id} added note to ticket {ticket_id}")
-    
+
     return NoteResponse(
         id=new_note.id, ticket_id=new_note.ticket_id, admin_id=new_note.admin_id,
         admin_username=new_note.admin_username, content=new_note.content,
@@ -377,12 +377,12 @@ async def get_telemetry_stats(
     """
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
-    
+
     try:
         from src.core import telemetry
         if not telemetry.is_setup():
             return {"stats": [], "message": "Telemetry not initialized"}
-        
+
         # Map source to client_id filter
         client_id_filter = None
         if source == "server":
@@ -391,16 +391,16 @@ async def get_telemetry_stats(
             # For client, we want everything except server
             # This requires a different approach - for now, just return all
             pass
-        
+
         stats = telemetry.get_endpoint_stats(
-            hours=hours, 
+            hours=hours,
             endpoint_filter=endpoint,
             client_id_filter=client_id_filter
         )
-        
+
         # Normalize emoji endpoints for display
         import urllib.parse
-        
+
         return {
             "stats": [
                 {
@@ -435,19 +435,19 @@ async def get_telemetry_history(
     """Get telemetry history for an endpoint."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
-    
+
     try:
         from src.core import telemetry
         if not telemetry.is_setup():
             return {"history": [], "message": "Telemetry not initialized"}
-        
+
         history = telemetry.get_response_time_history(
             endpoint=endpoint,
             method=method.upper(),
             hours=hours,
             bucket_minutes=bucket_minutes
         )
-        
+
         return {"history": history}
     except ImportError:
         return {"history": [], "message": "Telemetry module not available"}
@@ -458,15 +458,15 @@ async def reset_telemetry_stats(request: Request, db = Depends(get_db)):
     """Reset all telemetry statistics."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
-    
+
     try:
         from src.core import telemetry
         if not telemetry.is_setup():
             return {"success": False, "message": "Telemetry not initialized"}
-        
+
         deleted_count = telemetry.reset_all_stats()
         logger.info(f"Admin {admin_id} reset telemetry stats, deleted {deleted_count} records")
-        
+
         return {"success": True, "deleted_count": deleted_count}
     except ImportError:
         return {"success": False, "message": "Telemetry module not available"}
@@ -488,15 +488,15 @@ async def export_telemetry_stats(
     """
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
-    
+
     try:
         from src.core import telemetry
         if not telemetry.is_setup():
             raise HTTPException(status_code=500, detail="Telemetry not initialized")
-        
+
         stats = telemetry.get_endpoint_stats(hours=hours)
         export_time = time.strftime('%Y-%m-%d %H:%M:%S')
-        
+
         if format == "json":
             return {
                 "export_time": export_time,
@@ -517,7 +517,7 @@ async def export_telemetry_stats(
                     for s in stats
                 ]
             }
-        
+
         elif format == "csv":
             import csv
             import io
@@ -540,7 +540,7 @@ async def export_telemetry_stats(
                 media_type="text/csv",
                 headers={"Content-Disposition": f"attachment; filename=telemetry_{export_time.replace(' ', '_').replace(':', '-')}.csv"}
             )
-        
+
         elif format == "txt":
             lines = [
                 f"PlexiChat Telemetry Report",
@@ -554,7 +554,7 @@ async def export_telemetry_stats(
                 lines.append(
                     f"{s.endpoint[:50]:<50} {s.method:<8} {s.count:>8} {s.avg_response_time_ms:>9.1f}ms {s.p95_response_time_ms:>9.1f}ms {s.error_rate*100:>7.1f}%"
                 )
-            
+
             # Summary
             if stats:
                 total_requests = sum(s.count for s in stats)
@@ -568,19 +568,19 @@ async def export_telemetry_stats(
                     f"  Average Error Rate: {avg_error:.1f}%",
                     f"  Endpoints Tracked: {len(stats)}",
                 ])
-            
+
             return Response(
                 content="\n".join(lines),
                 media_type="text/plain",
                 headers={"Content-Disposition": f"attachment; filename=telemetry_{export_time.replace(' ', '_').replace(':', '-')}.txt"}
             )
-        
+
         elif format == "html":
             # Generate HTML report
             total_requests = sum(s.count for s in stats) if stats else 0
             avg_latency = sum(s.avg_response_time_ms * s.count for s in stats) / total_requests if total_requests else 0
             avg_error = sum(s.error_rate * s.count for s in stats) / total_requests * 100 if total_requests else 0
-            
+
             rows_html = ""
             for s in stats:
                 latency_class = "good" if s.avg_response_time_ms < 100 else "warn" if s.avg_response_time_ms < 500 else "bad"
@@ -598,7 +598,7 @@ async def export_telemetry_stats(
                     <td>{s.p99_response_time_ms:.1f}</td>
                     <td class="{error_class}">{s.error_rate*100:.1f}%</td>
                 </tr>"""
-            
+
             html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -641,10 +641,10 @@ async def export_telemetry_stats(
                 media_type="text/html",
                 headers={"Content-Disposition": f"attachment; filename=telemetry_{export_time.replace(' ', '_').replace(':', '-')}.html"}
             )
-        
+
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported format: {format}. Use json, csv, txt, or html")
-            
+
     except ImportError:
         raise HTTPException(status_code=500, detail="Telemetry module not available")
 
@@ -662,10 +662,10 @@ async def get_hash_reports(
     """Get hash reports for admin review."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
-    
+
     from src.core import admin
     reports = admin.get_hash_reports(status_filter, limit, offset)
-    
+
     return [
         {
             "id": r.id,
@@ -689,7 +689,7 @@ async def get_hash_report_counts(request: Request, db = Depends(get_db)):
     """Get counts of hash reports by status."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
-    
+
     from src.core import admin
     return admin.get_hash_report_counts()
 
@@ -704,16 +704,16 @@ async def review_hash_report(
     """Review a hash report (block, clear, or dismiss)."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
-    
+
     from src.core import admin
-    
+
     success = admin.review_hash_report(report_id, admin_id, review.action, review.notes)
-    
+
     if not success:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
-    
+
     logger.info(f"Admin {admin_id} reviewed hash report {report_id}: {review.action}")
-    
+
     return {"success": True, "action": review.action}
 
 
@@ -727,10 +727,10 @@ async def get_blocked_hashes(
     """Get list of blocked hashes."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
-    
+
     from src.core import admin
     hashes = admin.get_blocked_hashes(limit, offset)
-    
+
     return [
         {
             "hash_value": h.hash_value,
@@ -752,16 +752,16 @@ async def block_hash_manually(
     """Manually block a hash."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
-    
+
     from src.core import admin
-    
+
     success = admin.block_hash(block_request.hash_value, block_request.reason, admin_id)
-    
+
     if not success:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to block hash")
-    
+
     logger.info(f"Admin {admin_id} manually blocked hash {block_request.hash_value[:16]}...")
-    
+
     return {"success": True, "hash_value": block_request.hash_value}
 
 
@@ -774,16 +774,16 @@ async def unblock_hash(
     """Unblock a hash."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
-    
+
     from src.core import admin
-    
+
     success = admin.unblock_hash(hash_value)
-    
+
     if not success:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to unblock hash")
-    
+
     logger.info(f"Admin {admin_id} unblocked hash {hash_value[:16]}...")
-    
+
     return {"success": True}
 
 

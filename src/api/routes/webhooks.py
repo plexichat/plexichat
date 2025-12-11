@@ -2,7 +2,7 @@
 Webhook routes - Webhook management and execution endpoints.
 """
 
-from typing import List, Optional, Dict, Any
+from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends
 
 import src.api as api
@@ -45,12 +45,12 @@ async def create_webhook(
     webhooks = api.get_webhooks()
     if not webhooks:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Webhooks module not available"}})
-    
+
     try:
         cid = int(body.channel_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
-    
+
     try:
         webhook = webhooks.create_webhook(
             user_id=current_user.user_id,
@@ -82,12 +82,12 @@ async def get_webhook(webhook_id: str, current_user: TokenInfo = Depends(get_cur
     webhooks = api.get_webhooks()
     if not webhooks:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Webhooks module not available"}})
-    
+
     try:
         wid = int(webhook_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid webhook ID"}})
-    
+
     try:
         webhook = webhooks.get_webhook(wid, current_user.user_id)
         if not webhook:
@@ -114,12 +114,12 @@ async def delete_webhook(webhook_id: str, current_user: TokenInfo = Depends(get_
     webhooks = api.get_webhooks()
     if not webhooks:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Webhooks module not available"}})
-    
+
     try:
         wid = int(webhook_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid webhook ID"}})
-    
+
     try:
         webhooks.delete_webhook(current_user.user_id, wid)
         return {"success": True}
@@ -148,20 +148,20 @@ async def execute_webhook(
     webhooks = api.get_webhooks()
     if not webhooks:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Webhooks module not available"}})
-    
+
     try:
         wid = int(webhook_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid webhook ID"}})
-    
+
     if not body.content and not body.embeds:
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": 400, "message": "Message must have content or embeds"}}
         )
-    
+
     thread_id = int(body.thread_id) if body.thread_id else None
-    
+
     try:
         result = webhooks.execute_webhook(
             webhook_id=wid,
@@ -173,7 +173,7 @@ async def execute_webhook(
             thread_id=thread_id,
             wait=wait
         )
-        
+
         if wait and result:
             return WebhookMessageResponse(
                 id=str(result.id),
@@ -184,7 +184,7 @@ async def execute_webhook(
                 avatar_url=result.avatar_url,
                 created_at=result.created_at,
             )
-        
+
         return None
     except Exception as e:
         exc_name = type(e).__name__

@@ -29,7 +29,7 @@ def get_user_info_from_request(request: Request) -> Dict[str, Any]:
         "is_webhook": False,
         "webhook_id": None,
     }
-    
+
     # Extract IP address
     forwarded = request.headers.get("X-Forwarded-For")
     if forwarded:

@@ -15,7 +15,7 @@ class SearchNotFoundError(SearchError):
 
 class SearchPermissionError(SearchError):
     """User does not have permission to search or access results."""
-    
+
     def __init__(self, message: str, permission: str | None = None):
         super().__init__(message)
         self.permission = permission
@@ -28,7 +28,7 @@ class SearchQueryError(SearchError):
 
 class InvalidQuerySyntaxError(SearchQueryError):
     """Invalid query syntax."""
-    
+
     def __init__(self, message: str, position: int | None = None, suggestion: str | None = None):
         super().__init__(message)
         self.position = position
@@ -37,7 +37,7 @@ class InvalidQuerySyntaxError(SearchQueryError):
 
 class SearchIndexError(SearchError):
     """Error during indexing operation."""
-    
+
     def __init__(self, message: str, item_id: int | None = None):
         super().__init__(message)
         self.item_id = item_id
@@ -45,7 +45,7 @@ class SearchIndexError(SearchError):
 
 class SearchBackendError(SearchError):
     """Error communicating with search backend."""
-    
+
     def __init__(self, message: str, backend: str | None = None, original_error: Exception | None = None):
         super().__init__(message)
         self.backend = backend
@@ -54,7 +54,7 @@ class SearchBackendError(SearchError):
 
 class SearchLimitError(SearchError):
     """Search limit exceeded."""
-    
+
     def __init__(self, message: str, max_allowed: int, requested: int):
         super().__init__(message)
         self.max_allowed = max_allowed
@@ -68,7 +68,7 @@ class DiscoveryError(SearchError):
 
 class ServerNotListedError(DiscoveryError):
     """Server is not listed in the discovery directory."""
-    
+
     def __init__(self, message: str, server_id: int | None = None):
         super().__init__(message)
         self.server_id = server_id
@@ -76,7 +76,7 @@ class ServerNotListedError(DiscoveryError):
 
 class VerificationError(DiscoveryError):
     """Error in server verification."""
-    
+
     def __init__(self, message: str, server_id: int | None = None, reason: str | None = None):
         super().__init__(message)
         self.server_id = server_id
@@ -85,7 +85,7 @@ class VerificationError(DiscoveryError):
 
 class BumpCooldownError(DiscoveryError):
     """Server bump is on cooldown."""
-    
+
     def __init__(self, message: str, server_id: int, cooldown_remaining: int):
         super().__init__(message)
         self.server_id = server_id
@@ -94,7 +94,7 @@ class BumpCooldownError(DiscoveryError):
 
 class CategoryNotFoundError(DiscoveryError):
     """Server category does not exist."""
-    
+
     def __init__(self, message: str, category: str | None = None):
         super().__init__(message)
         self.category = category
@@ -102,7 +102,7 @@ class CategoryNotFoundError(DiscoveryError):
 
 class MinimumMembersError(DiscoveryError):
     """Server does not meet minimum member requirement for listing."""
-    
+
     def __init__(self, message: str, required: int, current: int):
         super().__init__(message)
         self.required = required

@@ -12,7 +12,7 @@ class TestMediaModuleSetup:
     def test_module_setup(self, modules, temp_upload_dir):
         """Test that media module can be set up."""
         import utils.config as config
-        
+
         assert config._config_instance is not None
         config._config_instance.config["media"] = {
             "storage_backend": "local",
@@ -20,23 +20,23 @@ class TestMediaModuleSetup:
             "local_url": "/media",
             "signing_key": "test-key",
         }
-        
+
         from src.core import media
         media._manager = None
         media._setup_complete = False
-        
+
         media.setup(modules._db)
-        
+
         assert media._setup_complete is True
         assert media._manager is not None
 
     def test_module_raises_without_setup(self):
         """Test that module raises error if not set up."""
         from src.core import media
-        
+
         media._manager = None
         media._setup_complete = False
-        
+
         with pytest.raises(RuntimeError):
             media.get_file(1)
 
@@ -48,45 +48,45 @@ class TestFullUploadWorkflow:
     def test_upload_retrieve_delete_workflow(self, media_module, user_pool, sample_image_bytes):
         """Test complete upload, retrieve, delete workflow."""
         user = user_pool.get_user()
-        
+
         result = media_module.upload_file(
             user_id=user.id,
             file_data=sample_image_bytes,
             filename="workflow_test.jpg",
         )
-        
+
         assert result.file_id is not None
-        
+
         file = media_module.get_file(result.file_id)
         assert file is not None
         assert file.original_filename == "workflow_test.jpg"
-        
+
         data, content_type = media_module.get_file_data(result.file_id)
         assert data == sample_image_bytes
         assert content_type == "image/jpeg"
-        
+
         deleted = media_module.delete_file(user.id, result.file_id)
         assert deleted is True
-        
+
         file = media_module.get_file(result.file_id)
         assert file is None
 
     def test_upload_with_thumbnails_workflow(self, media_module, user_pool, sample_image_bytes):
         """Test upload with thumbnail generation workflow."""
         user = user_pool.get_user()
-        
+
         result = media_module.upload_file(
             user_id=user.id,
             file_data=sample_image_bytes,
             filename="thumb_workflow.jpg",
         )
-        
+
         thumbnails = media_module.get_thumbnails(result.file_id)
-        
+
         try:
             from PIL import Image
             assert len(thumbnails) > 0
-            
+
             custom_url = media_module.create_thumbnail(result.file_id, size=100)
             assert custom_url is not None
         except ImportError:
@@ -95,18 +95,18 @@ class TestFullUploadWorkflow:
     def test_upload_and_sign_workflow(self, media_module, user_pool, sample_image_bytes):
         """Test upload and URL signing workflow."""
         user = user_pool.get_user()
-        
+
         result = media_module.upload_file(
             user_id=user.id,
             file_data=sample_image_bytes,
             filename="sign_workflow.jpg",
         )
-        
+
         signed = media_module.sign_url(result.file_id, expires_in=3600)
-        
+
         assert signed.url is not None
         assert signed.file_id == result.file_id
-        
+
         is_valid, file_id = media_module.verify_signed_url(signed.url)
         assert is_valid is True
         assert file_id == result.file_id
@@ -119,19 +119,19 @@ class TestMessagingIntegration:
     def test_upload_attachment_format(self, media_module, user_pool, sample_image_bytes):
         """Test that upload_attachment returns correct format."""
         user = user_pool.get_user()
-        
+
         attachment = media_module.upload_attachment(
             user_id=user.id,
             file_data=sample_image_bytes,
             filename="msg_attachment.jpg",
         )
-        
+
         assert hasattr(attachment, "filename")
         assert hasattr(attachment, "content_type")
         assert hasattr(attachment, "size")
         assert hasattr(attachment, "url")
         assert hasattr(attachment, "metadata")
-        
+
         assert attachment.filename == "msg_attachment.jpg"
         assert attachment.content_type == "image/jpeg"
         assert attachment.size == len(sample_image_bytes)
@@ -141,15 +141,15 @@ class TestMessagingIntegration:
         """Test that attachment data can be used with messaging module."""
         user1 = user_pool.get_user()
         user2 = user_pool.get_user()
-        
+
         attachment = media_module.upload_attachment(
             user_id=user1.id,
             file_data=sample_image_bytes,
             filename="chat_image.jpg",
         )
-        
+
         dm = modules.messaging.create_dm(user1.id, user2.id)
-        
+
         msg = modules.messaging.send_message(
             user_id=user1.id,
             conversation_id=dm.id,
@@ -162,9 +162,9 @@ class TestMessagingIntegration:
                 "metadata": attachment.metadata,
             }],
         )
-        
+
         assert msg is not None
-        
+
         attachments = modules.messaging.get_attachments(user1.id, msg.id)
         assert len(attachments) == 1
         assert attachments[0].filename == "chat_image.jpg"
@@ -177,7 +177,7 @@ class TestMultipleFileTypes:
     def test_upload_different_image_formats(self, media_module, user_pool, sample_image_bytes, sample_png_bytes, sample_gif_bytes):
         """Test uploading different image formats."""
         user = user_pool.get_user()
-        
+
         jpeg_result = media_module.upload_file(
             user_id=user.id,
             file_data=sample_image_bytes,
@@ -185,7 +185,7 @@ class TestMultipleFileTypes:
             content_type="image/jpeg",
         )
         assert jpeg_result.content_type == "image/jpeg"
-        
+
         png_result = media_module.upload_file(
             user_id=user.id,
             file_data=sample_png_bytes,
@@ -193,7 +193,7 @@ class TestMultipleFileTypes:
             content_type="image/png",
         )
         assert png_result.content_type == "image/png"
-        
+
         gif_result = media_module.upload_file(
             user_id=user.id,
             file_data=sample_gif_bytes,
@@ -205,7 +205,7 @@ class TestMultipleFileTypes:
     def test_upload_document_types(self, media_module, user_pool, sample_text_bytes, sample_pdf_bytes):
         """Test uploading document types."""
         user = user_pool.get_user()
-        
+
         text_result = media_module.upload_file(
             user_id=user.id,
             file_data=sample_text_bytes,
@@ -213,7 +213,7 @@ class TestMultipleFileTypes:
             content_type="text/plain",
         )
         assert text_result.content_type == "text/plain"
-        
+
         pdf_result = media_module.upload_file(
             user_id=user.id,
             file_data=sample_pdf_bytes,
@@ -231,7 +231,7 @@ class TestConcurrentUploads:
         """Test multiple users uploading simultaneously."""
         users = [user_pool.get_user() for _ in range(5)]
         results = []
-        
+
         for i, user in enumerate(users):
             result = media_module.upload_file(
                 user_id=user.id,
@@ -239,7 +239,7 @@ class TestConcurrentUploads:
                 filename=f"user_{i}_file.jpg",
             )
             results.append(result)
-        
+
         file_ids = [r.file_id for r in results]
         assert len(set(file_ids)) == 5
 
@@ -247,7 +247,7 @@ class TestConcurrentUploads:
         """Test same user uploading multiple files."""
         user = user_pool.get_user()
         results = []
-        
+
         for i in range(5):
             result = media_module.upload_file(
                 user_id=user.id,
@@ -255,10 +255,10 @@ class TestConcurrentUploads:
                 filename=f"file_{i}.jpg",
             )
             results.append(result)
-        
+
         file_ids = [r.file_id for r in results]
         assert len(set(file_ids)) == 5
-        
+
         for result in results:
             file = media_module.get_file(result.file_id)
             assert file is not None

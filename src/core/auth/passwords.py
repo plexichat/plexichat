@@ -77,53 +77,53 @@ def validate_password(password: str) -> PasswordValidation:
     pwd_config = get_password_config()
     issues = []
     score = 0
-    
+
     # Length checks
     min_length = pwd_config.get("min_length", 12)
     max_length = pwd_config.get("max_length", 128)
-    
+
     if len(password) < min_length:
         issues.append(f"Password must be at least {min_length} characters")
     else:
         score += 1
-    
+
     if len(password) > max_length:
         issues.append(f"Password must be at most {max_length} characters")
-    
+
     # Complexity checks
     if pwd_config.get("require_uppercase", True):
         if not re.search(r"[A-Z]", password):
             issues.append("Password must contain at least one uppercase letter")
         else:
             score += 1
-    
+
     if pwd_config.get("require_lowercase", True):
         if not re.search(r"[a-z]", password):
             issues.append("Password must contain at least one lowercase letter")
         else:
             score += 1
-    
+
     if pwd_config.get("require_digit", True):
         if not re.search(r"\d", password):
             issues.append("Password must contain at least one digit")
         else:
             score += 1
-    
+
     if pwd_config.get("require_special", True):
         if not re.search(r"[!@#$%^&*(),.?\":{}|<>_\-+=\[\]\\;'/`~]", password):
             issues.append("Password must contain at least one special character")
         else:
             score += 1
-    
+
     # Bonus points for extra length
     if len(password) >= 16:
         score += 1
     if len(password) >= 20:
         score += 1
-    
+
     # Cap score at 5
     score = min(score, 5)
-    
+
     return PasswordValidation(
         valid=len(issues) == 0,
         score=score,
@@ -143,27 +143,27 @@ def validate_username(username: str) -> Tuple[bool, List[str]]:
     """
     auth_config = config.get("authentication", {})
     accounts_config = auth_config.get("accounts", {})
-    
+
     min_length = accounts_config.get("username_min_length", 3)
     max_length = accounts_config.get("username_max_length", 32)
     pattern = accounts_config.get("username_pattern", r"^[a-zA-Z0-9_]+$")
-    
+
     issues = []
-    
+
     if len(username) < min_length:
         issues.append(f"Username must be at least {min_length} characters")
-    
+
     if len(username) > max_length:
         issues.append(f"Username must be at most {max_length} characters")
-    
+
     if not re.match(pattern, username):
         issues.append("Username can only contain letters, numbers, and underscores")
-    
+
     # Reserved usernames
     reserved = {"admin", "administrator", "system", "bot", "api", "root", "null", "undefined"}
     if username.lower() in reserved:
         issues.append("This username is reserved")
-    
+
     return len(issues) == 0, issues
 
 
@@ -182,10 +182,10 @@ def validate_email(email: str) -> bool:
     match = re.match(pattern, email)
     if not match:
         return False
-    
+
     # Extract and validate TLD
     tld = match.group(1).lower()
-    
+
     # Comprehensive list of valid TLDs (common gTLDs, ccTLDs, and new gTLDs)
     valid_tlds = {
         # Generic TLDs
@@ -236,5 +236,5 @@ def validate_email(email: str) -> bool:
         "financial", "exchange", "market", "capital", "investments", "holdings",
         "limited", "gmbh", "ltda", "sarl", "srl",
     }
-    
+
     return tld in valid_tlds

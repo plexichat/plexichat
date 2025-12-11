@@ -13,9 +13,9 @@ def dm_conversation(modules, user_pool):
     """Create a DM conversation between two users."""
     user1 = user_pool.get_user()
     user2 = user_pool.get_user()
-    
+
     dm = modules.messaging.create_dm(user1.id, user2.id)
-    
+
     return dm, user1, user2, modules.messaging
 
 
@@ -23,7 +23,7 @@ def dm_conversation(modules, user_pool):
 def fresh_dm(modules):
     """Create a fresh DM with new users for tests needing isolation."""
     unique_id = uuid.uuid4().hex[:8]
-    
+
     new_user1 = modules.auth.register(
         username=f"fresh1_{unique_id}",
         email=f"fresh1_{unique_id}@example.com",
@@ -34,9 +34,9 @@ def fresh_dm(modules):
         email=f"fresh2_{unique_id}@example.com",
         password="TestPass123!"
     )
-    
+
     dm = modules.messaging.create_dm(new_user1.id, new_user2.id)
-    
+
     return dm, new_user1, new_user2, modules.messaging
 
 
@@ -46,14 +46,14 @@ def group_conversation(modules, user_pool):
     owner = user_pool.get_user()
     member1 = user_pool.get_user()
     member2 = user_pool.get_user()
-    
+
     unique_id = uuid.uuid4().hex[:6]
     group = modules.messaging.create_group(
         owner_id=owner.id,
         name=f"Test Group {unique_id}",
         participant_ids=[member1.id, member2.id]
     )
-    
+
     return group, owner, member1, member2, modules.messaging
 
 

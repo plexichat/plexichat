@@ -40,21 +40,21 @@ class TestPasswordHashing:
         """Test verifying correct password."""
         password = "TestPass123!"
         hash_str = hasher.hash_password(password)
-        
+
         result = hasher.verify_password(password, hash_str)
         assert result is True
 
     def test_verify_password_wrong(self, hasher):
         """Test verifying wrong password."""
         hash_str = hasher.hash_password("TestPass123!")
-        
+
         result = hasher.verify_password("WrongPassword!", hash_str)
         assert result is False
 
     def test_verify_password_empty(self, hasher):
         """Test verifying empty password fails."""
         hash_str = hasher.hash_password("TestPass123!")
-        
+
         result = hasher.verify_password("", hash_str)
         assert result is False
 
@@ -92,11 +92,11 @@ class TestArgon2Parameters:
     def test_argon2_uses_secure_parameters(self, hasher):
         """Test that Argon2 is configured with secure parameters."""
         hash_str = hasher.hash_password("test")
-        
+
         # Parse the hash to check parameters
         parts = hash_str.split("$")
         assert parts[1] == "argon2id"  # Using Argon2id variant
-        
+
         # Check parameters are in the hash
         params = parts[3]
         assert "m=" in params  # Memory cost
@@ -106,11 +106,11 @@ class TestArgon2Parameters:
     def test_hash_timing_is_reasonable(self, hasher):
         """Test that hashing takes a reasonable amount of time."""
         import time
-        
+
         start = time.time()
         hasher.hash_password("TestPass123!")
         elapsed = time.time() - start
-        
+
         # Should take at least 10ms (security) but less than 500ms (usability)
         assert elapsed >= 0.01, "Hashing too fast - may be insecure"
         assert elapsed < 0.5, "Hashing too slow - may impact UX"

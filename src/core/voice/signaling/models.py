@@ -40,7 +40,7 @@ class SDPMessage:
     sdp_type: SDPType
     sdp: str
     session_id: Optional[str] = None
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -57,7 +57,7 @@ class ICECandidate:
     sdp_mid: Optional[str] = None
     sdp_mline_index: Optional[int] = None
     username_fragment: Optional[str] = None
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -66,7 +66,7 @@ class ICECandidate:
             "sdpMLineIndex": self.sdp_mline_index,
             "usernameFragment": self.username_fragment,
         }
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ICECandidate":
         """Create from dictionary."""
@@ -86,7 +86,7 @@ class TURNCredentials:
     urls: List[str]
     ttl: int
     expires_at: int
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -104,7 +104,7 @@ class ICEServer:
     urls: List[str]
     username: Optional[str] = None
     credential: Optional[str] = None
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         result: Dict[str, Any] = {"urls": self.urls}
@@ -125,7 +125,7 @@ class VoiceServerInfo:
     channel_id: int
     user_id: int
     bitrate: int = 64000
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -150,7 +150,7 @@ class ConnectionQuality:
     jitter: float
     round_trip_time: int
     timestamp: int
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -173,7 +173,7 @@ class ScreenShareState:
     active: bool
     stream_id: Optional[str] = None
     started_at: Optional[int] = None
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {

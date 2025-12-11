@@ -38,7 +38,7 @@ for path in [project_root, src_path, utils_path, common_utils_path]:
     if path not in sys.path:
         sys.path.insert(0, path)
 
-from src.tests.fixtures.config import get_test_config, TEST_PASSWORD
+from src.tests.fixtures.config import TEST_PASSWORD
 from src.tests.fixtures.database import DatabaseManager
 from src.tests.fixtures.modules import ModuleRegistry
 from src.tests.fixtures.factories import UserFactory, ServerFactory, ConversationFactory
@@ -57,9 +57,9 @@ def db_manager():
     """
     manager = DatabaseManager(test_dir="temp/test_session")
     manager.setup()
-    
+
     yield manager
-    
+
     manager.teardown()
 
 
@@ -91,20 +91,20 @@ def session_users(modules):
     """
     users = []
     print("\n[Setup] Creating user pool with real Argon2 hashing...")
-    
+
     # Reduced from 100 to 20 for faster test startup
     for i in range(20):
         username = f"pooluser_{i}_{uuid.uuid4().hex[:4]}"
         email = f"{username}@test.example.com"
         password = TEST_PASSWORD
-        
+
         user = modules.auth.register(
             username=username,
             email=email,
             password=password
         )
         users.append((user, username, password))
-    
+
     print(f"[Setup] Created {len(users)} users in pool")
     return users
 
@@ -115,12 +115,12 @@ def session_users(modules):
 
 class UserPool:
     """Manages a pool of pre-created users for test reuse."""
-    
+
     def __init__(self, users, auth_module):
         self._users = users  # List of (user, username, password) tuples
         self._index = 0
         self._auth = auth_module
-    
+
     def get_user(self):
         """Get the next user from the pool."""
         if self._index >= len(self._users):
@@ -131,7 +131,7 @@ class UserPool:
         user, username, password = self._users[self._index]
         self._index += 1
         return user
-    
+
     def get_user_with_credentials(self):
         """Get user with username and password."""
         if self._index >= len(self._users):
@@ -139,17 +139,17 @@ class UserPool:
         user, username, password = self._users[self._index]
         self._index += 1
         return user, username, password
-    
+
     def get_user_with_token(self):
         """Get user and log them in."""
         user, username, password = self.get_user_with_credentials()
         result = self._auth.login(username, password)
         return user, result.token
-    
+
     def reset(self):
         """Reset pool index for next test."""
         self._index = 0
-    
+
     @property
     def remaining(self):
         """Number of users remaining in pool."""
@@ -287,15 +287,15 @@ def test_server_with_members(modules, user_pool):
     owner = user_pool.get_user()
     member1 = user_pool.get_user()
     member2 = user_pool.get_user()
-    
+
     server = modules.servers.create_server(
         owner_id=owner.id,
         name=f"Test Server {uuid.uuid4().hex[:6]}"
     )
-    
+
     modules.servers.add_member(server.id, member1.id)
     modules.servers.add_member(server.id, member2.id)
-    
+
     return server, owner, [member1, member2]
 
 
@@ -314,7 +314,7 @@ def test_group(modules, user_pool):
     owner = user_pool.get_user()
     member1 = user_pool.get_user()
     member2 = user_pool.get_user()
-    
+
     group = modules.messaging.create_group(
         owner_id=owner.id,
         name=f"Test Group {uuid.uuid4().hex[:6]}",
@@ -338,7 +338,7 @@ def test_client(api_module):
     """Create a FastAPI test client."""
     from fastapi.testclient import TestClient
     from src.api import create_app
-    
+
     app = create_app()
     return TestClient(app)
 

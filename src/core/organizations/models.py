@@ -30,7 +30,7 @@ class Organization:
     blocked_servers: List[int] = field(default_factory=list)
     allow_invites: bool = True
     invite_requires_approval: bool = True
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for API responses."""
         return {
@@ -54,7 +54,7 @@ class OrgMember:
     joined_at: int = 0
     invited_by: Optional[int] = None
     username: Optional[str] = None
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for API responses."""
         return {
@@ -86,7 +86,7 @@ class OrgInvite:
     user_accepted_at: Optional[int] = None
     root_approved: bool = False
     root_approved_at: Optional[int] = None
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for API responses."""
         return {
@@ -111,7 +111,7 @@ class OrgManagedSetting:
     setting_key: str
     setting_value: Optional[str] = None
     locked: bool = True
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for API responses."""
         return {

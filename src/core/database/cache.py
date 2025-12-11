@@ -18,7 +18,7 @@ import os
 import json
 import hashlib
 import time
-from typing import Any, Callable, Dict, List, Optional, TypeVar, Union
+from typing import Any, Callable, Dict, List, Optional, TypeVar
 from functools import wraps
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
@@ -28,7 +28,7 @@ if common_utils_path not in sys.path:
 
 import utils.logger as logger
 
-from .redis_client import RedisClient, get_client, is_available, RedisOperationError
+from .redis_client import get_client, is_available, RedisOperationError
 
 # Type variable for generic return types
 T = TypeVar("T")
@@ -60,19 +60,19 @@ def _generate_cache_key(prefix: str, *args, **kwargs) -> str:
     """
     # Build a string representation of arguments
     key_parts = [prefix]
-    
+
     for arg in args:
         if isinstance(arg, (dict, list)):
             key_parts.append(hashlib.md5(json.dumps(arg, sort_keys=True).encode()).hexdigest()[:8])
         else:
             key_parts.append(str(arg))
-    
+
     for k, v in sorted(kwargs.items()):
         if isinstance(v, (dict, list)):
             key_parts.append(f"{k}:{hashlib.md5(json.dumps(v, sort_keys=True).encode()).hexdigest()[:8]}")
         else:
             key_parts.append(f"{k}:{v}")
-    
+
     return ":".join(key_parts)
 
 
@@ -108,23 +108,23 @@ def cached(
         @wraps(func)
         def wrapper(*args, **kwargs) -> T:
             global _cache_stats
-            
+
             # Check if we should skip caching
             if skip_cache_if and skip_cache_if(*args, **kwargs):
                 return func(*args, **kwargs)
-            
+
             # Check if Redis is available
             client = get_client()
             if not client or not is_available():
                 return func(*args, **kwargs)
-            
+
             # Generate cache key
             key_prefix = prefix or f"cache:{func.__module__}.{func.__name__}"
             if key_builder:
                 cache_key = key_builder(*args, **kwargs)
             else:
                 cache_key = _generate_cache_key(key_prefix, *args, **kwargs)
-            
+
             # Try to get from cache
             try:
                 cached_value = client.get_json(cache_key)
@@ -135,13 +135,13 @@ def cached(
             except RedisOperationError:
                 _cache_stats["errors"] += 1
                 # Fall through to execute function
-            
+
             # Cache miss - execute function
             _cache_stats["misses"] += 1
             logger.info(f"CACHE MISS: {cache_key} (total misses: {_cache_stats['misses']})")
-            
+
             result = func(*args, **kwargs)
-            
+
             # Store in cache
             try:
                 cache_ttl = ttl if ttl is not None else client.ttl_cache
@@ -149,16 +149,16 @@ def cached(
             except RedisOperationError as e:
                 _cache_stats["errors"] += 1
                 logger.warning(f"Failed to cache result for {cache_key}: {e}")
-            
+
             return result
-        
+
         # Add cache control methods to the wrapper
         wrapper.cache_key_prefix = prefix or f"cache:{func.__module__}.{func.__name__}"
         wrapper.invalidate = lambda *args, **kwargs: invalidate_cached(
-            key_builder(*args, **kwargs) if key_builder 
+            key_builder(*args, **kwargs) if key_builder
             else _generate_cache_key(wrapper.cache_key_prefix, *args, **kwargs)
         )
-        
+
         return wrapper
     return decorator
 
@@ -174,11 +174,11 @@ def cache_get(key: str) -> Optional[Any]:
         Cached value or None if not found.
     """
     global _cache_stats
-    
+
     client = get_client()
     if not client or not is_available():
         return None
-    
+
     try:
         value = client.get_json(key)
         if value is not None:
@@ -209,7 +209,7 @@ def cache_set(key: str, value: Any, ttl: Optional[int] = None) -> bool:
     client = get_client()
     if not client or not is_available():
         return False
-    
+
     try:
         cache_ttl = ttl if ttl is not None else client.ttl_cache
         client.set_json(key, value, ttl=cache_ttl)
@@ -234,7 +234,7 @@ def cache_delete(key: str) -> bool:
     client = get_client()
     if not client or not is_available():
         return False
-    
+
     try:
         client.delete(key)
         logger.debug(f"Cache DELETE: {key}")
@@ -271,7 +271,7 @@ def invalidate_pattern(pattern: str) -> int:
     client = get_client()
     if not client or not is_available():
         return 0
-    
+
     try:
         keys = client.keys(pattern)
         if keys:
@@ -309,22 +309,22 @@ def cache_health() -> Dict[str, Any]:
         Dict with cache health status.
     """
     client = get_client()
-    
+
     result = {
         "available": is_available(),
         "stats": cache_stats(),
     }
-    
+
     if client:
         result["redis"] = client.health_check()
-    
+
     # Calculate hit rate
     total = _cache_stats["hits"] + _cache_stats["misses"]
     if total > 0:
         result["hit_rate"] = round(_cache_stats["hits"] / total * 100, 2)
     else:
         result["hit_rate"] = 0.0
-    
+
     return result
 
 
@@ -346,13 +346,13 @@ def cache_session(session_id: str, user_id: int, data: Dict[str, Any], ttl: Opti
     client = get_client()
     if not client or not is_available():
         return False
-    
+
     session_data = {
         "user_id": user_id,
         "created_at": time.time(),
         **data,
     }
-    
+
     try:
         session_ttl = ttl if ttl is not None else client.ttl_session
         client.set_json(f"session:{session_id}", session_data, ttl=session_ttl)
@@ -392,7 +392,7 @@ def invalidate_session(session_id: str, user_id: Optional[int] = None) -> bool:
     client = get_client()
     if not client or not is_available():
         return False
-    
+
     try:
         client.delete(f"session:{session_id}")
         if user_id:
@@ -417,7 +417,7 @@ def invalidate_user_sessions(user_id: int) -> int:
     client = get_client()
     if not client or not is_available():
         return 0
-    
+
     try:
         session_ids = client.smembers(f"user_sessions:{user_id}")
         if session_ids:
@@ -449,13 +449,13 @@ def cache_presence(user_id: int, status: str, custom_status: Optional[str] = Non
     client = get_client()
     if not client or not is_available():
         return False
-    
+
     presence_data = {
         "status": status,
         "custom_status": custom_status,
         "updated_at": time.time(),
     }
-    
+
     try:
         client.set_json(f"presence:{user_id}", presence_data, ttl=client.ttl_presence)
         return True
@@ -513,19 +513,19 @@ def check_rate_limit(key: str, limit: int, window_seconds: int) -> tuple[bool, i
     if not client or not is_available():
         # If Redis unavailable, allow the request
         return True, limit
-    
+
     full_key = f"ratelimit:{key}"
-    
+
     try:
         current = client.incr(full_key)
-        
+
         # Set expiry on first request
         if current == 1:
             client.expire(full_key, window_seconds)
-        
+
         remaining = max(0, limit - current)
         allowed = current <= limit
-        
+
         return allowed, remaining
     except RedisOperationError as e:
         logger.warning(f"Rate limit check failed for {key}: {e}")

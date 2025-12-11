@@ -30,7 +30,7 @@ class SFUTransport:
     ice_candidates: List[Dict[str, Any]]
     dtls_parameters: Dict[str, Any]
     sctp_parameters: Optional[Dict[str, Any]] = None
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         result = {
@@ -52,7 +52,7 @@ class SFUProducer:
     kind: MediaKind
     rtp_parameters: Dict[str, Any]
     paused: bool = False
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         return {
@@ -71,7 +71,7 @@ class SFUConsumer:
     kind: MediaKind
     rtp_parameters: Dict[str, Any]
     paused: bool = False
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         return {
@@ -93,7 +93,7 @@ class RoomInfo:
 
 class SFUAdapter(ABC):
     """Abstract base class for SFU adapters."""
-    
+
     @abstractmethod
     async def create_room(self, room_id: str) -> RoomInfo:
         """
@@ -106,7 +106,7 @@ class SFUAdapter(ABC):
             RoomInfo for the created room
         """
         pass
-    
+
     @abstractmethod
     async def close_room(self, room_id: str) -> bool:
         """
@@ -119,7 +119,7 @@ class SFUAdapter(ABC):
             True if closed successfully
         """
         pass
-    
+
     @abstractmethod
     async def join_room(self, room_id: str, peer_id: str) -> Dict[str, Any]:
         """
@@ -133,7 +133,7 @@ class SFUAdapter(ABC):
             Room capabilities and existing producers
         """
         pass
-    
+
     @abstractmethod
     async def leave_room(self, room_id: str, peer_id: str) -> bool:
         """
@@ -147,7 +147,7 @@ class SFUAdapter(ABC):
             True if left successfully
         """
         pass
-    
+
     @abstractmethod
     async def create_transport(
         self,
@@ -167,7 +167,7 @@ class SFUAdapter(ABC):
             SFUTransport with connection parameters
         """
         pass
-    
+
     @abstractmethod
     async def connect_transport(
         self,
@@ -189,7 +189,7 @@ class SFUAdapter(ABC):
             True if connected successfully
         """
         pass
-    
+
     @abstractmethod
     async def produce(
         self,
@@ -213,7 +213,7 @@ class SFUAdapter(ABC):
             SFUProducer
         """
         pass
-    
+
     @abstractmethod
     async def consume(
         self,
@@ -237,7 +237,7 @@ class SFUAdapter(ABC):
             SFUConsumer
         """
         pass
-    
+
     @abstractmethod
     async def pause_producer(
         self,
@@ -247,7 +247,7 @@ class SFUAdapter(ABC):
     ) -> bool:
         """Pause a producer."""
         pass
-    
+
     @abstractmethod
     async def resume_producer(
         self,
@@ -257,7 +257,7 @@ class SFUAdapter(ABC):
     ) -> bool:
         """Resume a producer."""
         pass
-    
+
     @abstractmethod
     async def close_producer(
         self,
@@ -267,17 +267,17 @@ class SFUAdapter(ABC):
     ) -> bool:
         """Close a producer."""
         pass
-    
+
     @abstractmethod
     async def get_room_info(self, room_id: str) -> Optional[RoomInfo]:
         """Get information about a room."""
         pass
-    
+
     @abstractmethod
     async def get_router_capabilities(self, room_id: str) -> Dict[str, Any]:
         """Get RTP capabilities for a room's router."""
         pass
-    
+
     @abstractmethod
     async def set_preferred_layers(
         self,
@@ -289,7 +289,7 @@ class SFUAdapter(ABC):
     ) -> bool:
         """Set preferred simulcast layers for a consumer."""
         pass
-    
+
     @abstractmethod
     async def health_check(self) -> bool:
         """Check if the SFU server is healthy."""

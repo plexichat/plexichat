@@ -12,9 +12,9 @@ from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
 
 class BaseRule(ABC):
     """Abstract base class for all automod rules."""
-    
+
     rule_type: Optional[RuleType] = None
-    
+
     def __init__(self, rule: Rule):
         """
         Initialize the rule.
@@ -24,7 +24,7 @@ class BaseRule(ABC):
         """
         self.rule = rule
         self.config = rule.config
-    
+
     @abstractmethod
     def check(
         self,
@@ -46,7 +46,7 @@ class BaseRule(ABC):
             RuleMatch with results
         """
         pass
-    
+
     @classmethod
     def validate_config(cls, config: Dict[str, Any]) -> tuple:
         """
@@ -59,7 +59,7 @@ class BaseRule(ABC):
             Tuple of (valid: bool, issues: list)
         """
         return True, []
-    
+
     def _create_match(
         self,
         matched: bool,
@@ -76,7 +76,7 @@ class BaseRule(ABC):
             match_details=details or {},
             severity=severity
         )
-    
+
     def _no_match(self) -> RuleMatch:
         """Helper to create a non-matching result."""
         return self._create_match(matched=False)

@@ -3,7 +3,7 @@ API configuration - Settings for the REST API.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Any
+from typing import List, Optional
 import os
 import sys
 
@@ -44,14 +44,14 @@ def get_api_config() -> APIConfig:
         api_conf = config.get("api", {})
     except RuntimeError:
         return APIConfig()
-    
+
     import utils.version as version
     try:
         current_ver = version.current_string()
     except RuntimeError:
         # Fallback if version not setup (e.g. tests)
         current_ver = "0.0.0"
-    
+
     return APIConfig(
         title=api_conf.get("title", "PlexiChat API"),
         description=api_conf.get("description", "REST API for PlexiChat messaging platform"),

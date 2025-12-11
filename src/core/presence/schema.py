@@ -63,7 +63,7 @@ CREATE INDEX IF NOT EXISTS idx_pres_typing_expires ON pres_typing(expires_at);
 def create_tables(db):
     """Create all presence tables."""
     statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
-    
+
     for statement in statements:
         if statement:
             try:
@@ -72,5 +72,5 @@ def create_tables(db):
             except Exception as e:
                 logger.error(f"Failed to execute schema statement: {e}")
                 raise
-    
+
     logger.info("Presence tables created successfully")

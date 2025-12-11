@@ -34,7 +34,7 @@ import utils.config as config
 def create_api_router() -> APIRouter:
     """Create and configure the main API router."""
     api_router = APIRouter()
-    
+
     api_router.include_router(health_router, tags=["Health"])
     api_router.include_router(version_router, tags=["Version"])
     api_router.include_router(auth_router, prefix="/auth", tags=["Authentication"])
@@ -52,28 +52,28 @@ def create_api_router() -> APIRouter:
     api_router.include_router(notifications_router, tags=["Notifications"])
     api_router.include_router(telemetry_router, tags=["Telemetry"])
     api_router.include_router(voice_router, tags=["Voice"])
-    
+
     # Include admin router with configurable path
     admin_config = config.get("admin_ui", {})
     if admin_config.get("enabled", False):
         admin_path = admin_config.get("path", "/admin")
         # Remove /api/v1 prefix since admin is mounted at root
         api_router.include_router(admin_router, prefix="/admin", tags=["Admin"])
-    
+
     # Include features router (admin endpoints + user features)
     api_router.include_router(features_router, tags=["Features"])
-    
+
     # Include organizations router
     orgs_config = config.get("organizations", {})
     if orgs_config.get("enabled", True):
         api_router.include_router(organizations_router, prefix="/orgs", tags=["Organizations"])
-    
+
     # Include avatars router
     api_router.include_router(avatars_router, prefix="/avatars", tags=["Avatars"])
-    
+
     # Include media router
     api_router.include_router(media_router, tags=["Media"])
-    
+
     return api_router
 
 

@@ -4,7 +4,7 @@ Interaction handler - Process and respond to interactions.
 
 import time
 import json
-from typing import Optional, Dict, Any, Callable, Awaitable
+from typing import Optional, Dict, Any
 
 import utils.logger as logger
 from src.utils.encryption import generate_snowflake_id
@@ -20,7 +20,6 @@ from ..exceptions import (
     InteractionValidationError,
 )
 from ..oauth.tokens import generate_interaction_token, verify_token_hash, parse_oauth_token
-from .responses import response_to_dict
 from .components import validate_components
 
 
@@ -29,7 +28,7 @@ INTERACTION_TOKEN_EXPIRY = 900
 
 class InteractionHandler:
     """Handles interaction processing and responses."""
-    
+
     def __init__(self, db, config: Dict[str, Any], events_module=None):
         """
         Initialize interaction handler.
@@ -42,11 +41,11 @@ class InteractionHandler:
         self._db = db
         self._config = config
         self._events = events_module
-    
+
     def _current_time(self) -> int:
         """Get current Unix timestamp."""
         return int(time.time())
-    
+
     def create_interaction(
         self,
         application_id: int,
@@ -78,11 +77,11 @@ class InteractionHandler:
         """
         interaction_id = generate_snowflake_id()
         now = self._current_time()
-        
+
         full_token, token_hash = generate_interaction_token(interaction_id)
-        
+
         data_json = json.dumps(data) if data else None
-        
+
         self._db.execute(
             """INSERT INTO app_interactions
                (id, application_id, interaction_type, data, server_id, channel_id,
@@ -92,13 +91,13 @@ class InteractionHandler:
              server_id, channel_id, user_id, token_hash, 1, message_id,
              locale, server_locale, now)
         )
-        
+
         interaction_data = None
         if data:
             interaction_data = self._parse_interaction_data(data)
-        
+
         logger.debug(f"Interaction created: {interaction_id} for app {application_id}")
-        
+
         return Interaction(
             id=interaction_id,
             application_id=application_id,
@@ -115,7 +114,7 @@ class InteractionHandler:
             created_at=now,
             token_hash=token_hash,
         )
-    
+
     def get_interaction(self, interaction_id: int) -> Optional[Interaction]:
         """
         Get an interaction by ID.
@@ -133,12 +132,12 @@ class InteractionHandler:
                FROM app_interactions WHERE id = ?""",
             (interaction_id,)
         )
-        
+
         if not row:
             return None
-        
+
         return self._row_to_interaction(row)
-    
+
     def verify_interaction_token(self, token: str) -> Interaction:
         """
         Verify an interaction token and return the interaction.
@@ -156,20 +155,20 @@ class InteractionHandler:
         parsed = parse_oauth_token(token)
         if not parsed or parsed["token_type"] != "int":
             raise InteractionNotFoundError("Invalid interaction token")
-        
+
         interaction = self.get_interaction(parsed["id"])
         if not interaction:
             raise InteractionNotFoundError("Interaction not found")
-        
+
         if not interaction.token_hash or not verify_token_hash(parsed["secret"], interaction.token_hash):
             raise InteractionNotFoundError("Invalid interaction token")
-        
+
         expiry = self._config.get("interaction_timeout", INTERACTION_TOKEN_EXPIRY)
         if self._current_time() > interaction.created_at + expiry:
             raise InteractionExpiredError("Interaction token has expired")
-        
+
         return interaction
-    
+
     def respond(
         self,
         interaction_token: str,
@@ -192,23 +191,23 @@ class InteractionHandler:
             InteractionValidationError: Invalid response
         """
         interaction = self.verify_interaction_token(interaction_token)
-        
+
         if interaction.responded:
             raise InteractionAlreadyRespondedError("Interaction has already been responded to")
-        
+
         issues = self._validate_response(interaction, response)
         if issues:
             raise InteractionValidationError("Invalid response", issues)
-        
+
         self._db.execute(
             "UPDATE app_interactions SET responded = 1 WHERE id = ?",
             (interaction.id,)
         )
-        
+
         logger.debug(f"Interaction {interaction.id} responded with type {response.response_type}")
-        
+
         return True
-    
+
     def create_followup(
         self,
         interaction_token: str,
@@ -231,9 +230,9 @@ class InteractionHandler:
             Followup message data
         """
         interaction = self.verify_interaction_token(interaction_token)
-        
+
         message_id = generate_snowflake_id()
-        
+
         return {
             "id": str(message_id),
             "interaction_id": str(interaction.id),
@@ -242,7 +241,7 @@ class InteractionHandler:
             "components": components or [],
             "flags": 64 if ephemeral else 0,
         }
-    
+
     def edit_original(
         self,
         interaction_token: str,
@@ -263,14 +262,14 @@ class InteractionHandler:
             Updated message data
         """
         interaction = self.verify_interaction_token(interaction_token)
-        
+
         return {
             "interaction_id": str(interaction.id),
             "content": content,
             "embeds": embeds or [],
             "components": components or [],
         }
-    
+
     def delete_original(self, interaction_token: str) -> bool:
         """
         Delete the original interaction response.
@@ -283,7 +282,7 @@ class InteractionHandler:
         """
         self.verify_interaction_token(interaction_token)
         return True
-    
+
     def dispatch_interaction(self, interaction: Interaction) -> None:
         """
         Dispatch an interaction event to the gateway.
@@ -293,7 +292,7 @@ class InteractionHandler:
         """
         if not self._events:
             return
-        
+
         event_data = {
             "id": str(interaction.id),
             "application_id": str(interaction.application_id),
@@ -301,29 +300,29 @@ class InteractionHandler:
             "token": interaction.token,
             "version": interaction.version,
         }
-        
+
         if interaction.data:
             event_data["data"] = self._interaction_data_to_dict(interaction.data)
-        
+
         if interaction.server_id:
             event_data["guild_id"] = str(interaction.server_id)
-        
+
         if interaction.channel_id:
             event_data["channel_id"] = str(interaction.channel_id)
-        
+
         event_data["user"] = {"id": str(interaction.user_id)}
-        
+
         if interaction.message_id:
             event_data["message"] = {"id": str(interaction.message_id)}
-        
+
         if interaction.locale:
             event_data["locale"] = interaction.locale
-        
+
         if interaction.server_locale:
             event_data["guild_locale"] = interaction.server_locale
-        
+
         logger.debug(f"Dispatching INTERACTION_CREATE for {interaction.id}")
-    
+
     def _validate_response(
         self,
         interaction: Interaction,
@@ -331,11 +330,11 @@ class InteractionHandler:
     ) -> list:
         """Validate a response for an interaction."""
         issues = []
-        
+
         if interaction.interaction_type == InteractionType.PING:
             if response.response_type != InteractionResponseType.PONG:
                 issues.append("Ping interactions must respond with PONG")
-        
+
         elif interaction.interaction_type == InteractionType.APPLICATION_COMMAND_AUTOCOMPLETE:
             if response.response_type != InteractionResponseType.APPLICATION_COMMAND_AUTOCOMPLETE_RESULT:
                 issues.append("Autocomplete interactions must respond with autocomplete results")
@@ -343,30 +342,30 @@ class InteractionHandler:
                 pass
             elif len(response.choices) > 25:
                 issues.append("Autocomplete response exceeds 25 choices")
-        
+
         elif interaction.interaction_type == InteractionType.MODAL_SUBMIT:
             if response.response_type == InteractionResponseType.MODAL:
                 issues.append("Cannot respond to modal submit with another modal")
-        
+
         if response.components:
             if response.response_type == InteractionResponseType.MODAL:
                 valid, comp_issues = validate_components(response.components, "modal")
             else:
                 valid, comp_issues = validate_components(response.components, "message")
             issues.extend(comp_issues)
-        
+
         return issues
-    
+
     def _parse_interaction_data(self, data: Dict[str, Any]) -> InteractionData:
         """Parse interaction data from dict."""
         command_type = data.get("type")
         if command_type is not None:
             command_type = CommandType(command_type) if isinstance(command_type, int) else command_type
-        
+
         component_type = data.get("component_type")
         if component_type is not None:
             component_type = ComponentType(component_type) if isinstance(component_type, int) else component_type
-        
+
         return InteractionData(
             id=data.get("id", 0),
             name=data.get("name", ""),
@@ -379,11 +378,11 @@ class InteractionHandler:
             target_id=data.get("target_id"),
             components=data.get("components"),
         )
-    
+
     def _interaction_data_to_dict(self, data: InteractionData) -> Dict[str, Any]:
         """Convert interaction data to dict."""
         result = {}
-        
+
         if data.id:
             result["id"] = str(data.id)
         if data.name:
@@ -404,15 +403,15 @@ class InteractionHandler:
             result["target_id"] = str(data.target_id)
         if data.components:
             result["components"] = data.components
-        
+
         return result
-    
+
     def _row_to_interaction(self, row) -> Interaction:
         """Convert database row to Interaction."""
         data = None
         if row["data"]:
             data = self._parse_interaction_data(json.loads(row["data"]))
-        
+
         return Interaction(
             id=row["id"],
             application_id=row["application_id"],

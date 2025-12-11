@@ -2,14 +2,12 @@
 
 import pytest
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from dataclasses import dataclass
-from typing import Optional
 
 import utils.logger as logger
-from src.api.websocket.opcodes import GatewayOpcode, GatewayCloseCode
-from src.api.websocket.connection import Connection, ConnectionState
-from src.api.websocket.session import SessionManager, Session
+from src.api.websocket.connection import Connection
+from src.api.websocket.session import SessionManager
 from src.api.websocket.dispatcher import GatewayDispatcher
 from src.api.websocket.handlers import OpcodeHandler
 from src.core.events.types import GatewayIntent

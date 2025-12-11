@@ -2,8 +2,6 @@
 Tests for webhook posting to threads.
 """
 
-import pytest
-import uuid
 
 
 class TestWebhookThreads:

@@ -17,7 +17,7 @@ class SoundNotFoundError(SoundboardError):
 
 class SoundLimitError(SoundboardError):
     """Maximum sounds limit reached."""
-    
+
     def __init__(self, message: str, max_allowed: int, current: int):
         super().__init__(message)
         self.max_allowed = max_allowed
@@ -26,7 +26,7 @@ class SoundLimitError(SoundboardError):
 
 class InvalidSoundFormatError(SoundboardError):
     """Sound format is not supported."""
-    
+
     def __init__(self, message: str, format: str, allowed: List[str]):
         super().__init__(message)
         self.format = format
@@ -35,7 +35,7 @@ class InvalidSoundFormatError(SoundboardError):
 
 class SoundTooLargeError(SoundboardError):
     """Sound file size exceeds limit."""
-    
+
     def __init__(self, message: str, max_size: int, actual_size: int):
         super().__init__(message)
         self.max_size = max_size
@@ -44,7 +44,7 @@ class SoundTooLargeError(SoundboardError):
 
 class SoundTooLongError(SoundboardError):
     """Sound duration exceeds limit."""
-    
+
     def __init__(self, message: str, max_duration: float, actual_duration: float):
         super().__init__(message)
         self.max_duration = max_duration
@@ -58,7 +58,7 @@ class InvalidSoundNameError(SoundboardError):
 
 class SoundCooldownError(SoundboardError):
     """Sound is on cooldown."""
-    
+
     def __init__(self, message: str, remaining_seconds: int):
         super().__init__(message)
         self.remaining_seconds = remaining_seconds
@@ -66,7 +66,7 @@ class SoundCooldownError(SoundboardError):
 
 class PermissionDeniedError(SoundboardError):
     """User does not have permission to perform this action."""
-    
+
     def __init__(self, message: str, permission: str | None = None):
         super().__init__(message)
         self.permission = permission

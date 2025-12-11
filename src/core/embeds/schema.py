@@ -67,7 +67,7 @@ CREATE INDEX IF NOT EXISTS idx_embed_embed ON embed_message_embeds(embed_id);
 def create_tables(db):
     """Create all embed tables."""
     statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
-    
+
     for statement in statements:
         if statement:
             try:
@@ -76,5 +76,5 @@ def create_tables(db):
             except Exception as e:
                 logger.error(f"Failed to execute schema statement: {e}")
                 raise
-    
+
     logger.info("Embed tables created successfully")

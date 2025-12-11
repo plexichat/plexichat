@@ -3,7 +3,6 @@ Tests for webhook execution (sending messages).
 """
 
 import pytest
-import uuid
 
 
 class TestExecuteWebhook:

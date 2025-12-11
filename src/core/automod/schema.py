@@ -8,7 +8,7 @@ All tables prefixed with 'automod_'.
 
 def create_tables(db):
     """Create all automod tables."""
-    
+
     db.execute("""
         CREATE TABLE IF NOT EXISTS automod_rules (
             id INTEGER PRIMARY KEY,
@@ -27,12 +27,12 @@ def create_tables(db):
             created_by INTEGER NOT NULL
         )
     """)
-    
+
     db.execute("""
         CREATE INDEX IF NOT EXISTS idx_automod_rules_server 
         ON automod_rules(server_id, enabled)
     """)
-    
+
     db.execute("""
         CREATE TABLE IF NOT EXISTS automod_violations (
             id INTEGER PRIMARY KEY,
@@ -49,17 +49,17 @@ def create_tables(db):
             created_at INTEGER NOT NULL
         )
     """)
-    
+
     db.execute("""
         CREATE INDEX IF NOT EXISTS idx_automod_violations_server 
         ON automod_violations(server_id, created_at DESC)
     """)
-    
+
     db.execute("""
         CREATE INDEX IF NOT EXISTS idx_automod_violations_user 
         ON automod_violations(user_id, server_id)
     """)
-    
+
     db.execute("""
         CREATE TABLE IF NOT EXISTS automod_audit (
             id INTEGER PRIMARY KEY,
@@ -73,12 +73,12 @@ def create_tables(db):
             created_at INTEGER NOT NULL
         )
     """)
-    
+
     db.execute("""
         CREATE INDEX IF NOT EXISTS idx_automod_audit_server 
         ON automod_audit(server_id, created_at DESC)
     """)
-    
+
     db.execute("""
         CREATE TABLE IF NOT EXISTS automod_reputation (
             user_id INTEGER NOT NULL,
@@ -92,7 +92,7 @@ def create_tables(db):
             PRIMARY KEY (user_id, server_id)
         )
     """)
-    
+
     db.execute("""
         CREATE TABLE IF NOT EXISTS automod_exemptions (
             id INTEGER PRIMARY KEY,
@@ -104,12 +104,12 @@ def create_tables(db):
             created_by INTEGER NOT NULL
         )
     """)
-    
+
     db.execute("""
         CREATE INDEX IF NOT EXISTS idx_automod_exemptions_server 
         ON automod_exemptions(server_id, rule_id)
     """)
-    
+
     db.execute("""
         CREATE TABLE IF NOT EXISTS automod_rate_tracking (
             id INTEGER PRIMARY KEY,
@@ -121,7 +121,7 @@ def create_tables(db):
             UNIQUE(server_id, user_id, rule_type, window_start)
         )
     """)
-    
+
     db.execute("""
         CREATE INDEX IF NOT EXISTS idx_automod_rate_tracking_lookup 
         ON automod_rate_tracking(server_id, user_id, rule_type, window_start)

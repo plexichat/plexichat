@@ -2,8 +2,6 @@
 Tests for presence routes.
 """
 
-import pytest
-import uuid
 
 
 class TestUpdatePresence:
@@ -16,7 +14,7 @@ class TestUpdatePresence:
             headers=auth_headers,
             json={"status": "online"}
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "online"
@@ -28,7 +26,7 @@ class TestUpdatePresence:
             headers=auth_headers,
             json={"status": "idle"}
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "idle"
@@ -40,7 +38,7 @@ class TestUpdatePresence:
             headers=auth_headers,
             json={"status": "dnd"}
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "dnd"
@@ -52,7 +50,7 @@ class TestUpdatePresence:
             headers=auth_headers,
             json={"status": "invisible"}
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "invisible"
@@ -67,7 +65,7 @@ class TestUpdatePresence:
                 "custom_status": "Working on something cool"
             }
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "online"
@@ -80,7 +78,7 @@ class TestUpdatePresence:
             headers=auth_headers,
             json={"status": "invalid_status"}
         )
-        
+
         assert response.status_code == 400
 
     def test_update_presence_without_auth(self, test_client):
@@ -89,7 +87,7 @@ class TestUpdatePresence:
             "/api/v1/users/@me/presence",
             json={"status": "online"}
         )
-        
+
         assert response.status_code == 401
 
 
@@ -99,12 +97,12 @@ class TestGetUserPresence:
     def test_get_user_presence(self, test_client, auth_headers, test_user):
         """Test getting user presence."""
         user_id = str(test_user["user"].id)
-        
+
         response = test_client.get(
             f"/api/v1/users/{user_id}/presence",
             headers=auth_headers
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["user_id"] == user_id
@@ -116,7 +114,7 @@ class TestGetUserPresence:
             "/api/v1/users/999999999999999999/presence",
             headers=auth_headers
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "offline"
@@ -124,7 +122,7 @@ class TestGetUserPresence:
     def test_get_presence_without_auth(self, test_client, test_user):
         """Test getting presence without authentication."""
         user_id = str(test_user["user"].id)
-        
+
         response = test_client.get(f"/api/v1/users/{user_id}/presence")
-        
+
         assert response.status_code == 401

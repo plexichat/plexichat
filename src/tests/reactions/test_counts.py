@@ -2,7 +2,6 @@
 Tests for reaction counts and user lists.
 """
 
-import pytest
 
 
 class TestReactionCounts:

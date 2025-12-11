@@ -6,13 +6,9 @@ import pytest
 from src.core.relationships import (
     RelationshipStatus,
     FriendRequestStatus,
-    RelationshipError,
     SelfRelationshipError,
     FriendRequestNotFoundError,
-    FriendRequestExistsError,
-    AlreadyFriendsError,
     NotFriendsError,
-    UserBlockedError,
     AlreadyBlockedError,
     NotBlockedError,
     CannotBlockSelfError,

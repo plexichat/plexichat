@@ -23,7 +23,7 @@ PERMISSIONS = {
     "messages.delete_others": "Delete others messages (moderator)",
     "messages.pin": "Pin messages",
     "messages.react": "Add reactions to messages",
-    
+
     # Conversations (DMs and Groups)
     "conversations.create": "Create new conversations",
     "conversations.join": "Join conversations",
@@ -32,7 +32,7 @@ PERMISSIONS = {
     "conversations.kick": "Remove others from conversations",
     "conversations.manage": "Manage conversation settings",
     "conversations.delete": "Delete conversations",
-    
+
     # Servers (community servers)
     "servers.create": "Create new servers",
     "servers.join": "Join servers",
@@ -40,18 +40,18 @@ PERMISSIONS = {
     "servers.manage": "Manage server settings",
     "servers.delete": "Delete servers",
     "servers.invite": "Create server invites",
-    
+
     # Channels within servers (future)
     "channels.create": "Create channels in servers",
     "channels.manage": "Manage channel settings",
     "channels.delete": "Delete channels",
-    
+
     # Roles within servers (future)
     "roles.create": "Create roles in servers",
     "roles.manage": "Manage role permissions",
     "roles.assign": "Assign roles to members",
     "roles.delete": "Delete roles",
-    
+
     # Voice/Video (future)
     "voice.join": "Join voice channels",
     "voice.speak": "Speak in voice channels",
@@ -62,23 +62,23 @@ PERMISSIONS = {
     "video.join": "Join video calls",
     "video.stream": "Stream video",
     "video.initiate": "Start video calls",
-    
+
     # Account
     "account.edit_profile": "Edit own profile",
     "account.delete": "Delete own account",
     "account.view_others": "View other user profiles",
-    
+
     # Bots
     "bots.create": "Create bot accounts",
     "bots.manage": "Manage own bots",
-    
+
     # Moderation (future)
     "moderation.ban": "Ban users from servers",
     "moderation.kick": "Kick users from servers",
     "moderation.mute": "Mute users in servers",
     "moderation.warn": "Warn users",
     "moderation.view_audit": "View moderation audit log",
-    
+
     # Admin
     "admin.users": "Manage all users",
     "admin.servers": "Manage all servers",
@@ -133,7 +133,7 @@ BOT_RESTRICTED_PERMISSIONS = {
     "bots.manage",
     "account.delete",
     "admin.users",
-    "admin.servers", 
+    "admin.servers",
     "admin.system",
 }
 
@@ -155,15 +155,15 @@ def has_permission(user_permissions: Optional[Dict[str, bool]], required: str) -
     """
     if not user_permissions:
         return False
-    
+
     # Check full wildcard first
     if user_permissions.get("*", False):
         return True
-    
+
     # Check exact match
     if user_permissions.get(required, False):
         return True
-    
+
     # Check wildcard matches
     # e.g., if required is "messages.send", check for "messages.*"
     parts = required.split(".")
@@ -171,7 +171,7 @@ def has_permission(user_permissions: Optional[Dict[str, bool]], required: str) -
         wildcard = ".".join(parts[:i + 1]) + ".*"
         if user_permissions.get(wildcard, False):
             return True
-    
+
     return False
 
 
@@ -190,24 +190,24 @@ def validate_permissions(
         Tuple of (valid: bool, issues: list[str])
     """
     issues = []
-    
+
     for perm, value in permissions.items():
         # Check if permission exists (allow wildcards)
         if perm != "*" and not perm.endswith(".*"):
             if perm not in PERMISSIONS:
                 issues.append(f"Unknown permission: {perm}")
-        
+
         # Check bot restrictions
         if is_bot and value:
             if perm in BOT_RESTRICTED_PERMISSIONS:
                 issues.append(f"Bots cannot have permission: {perm}")
-            
+
             # Check wildcard grants of restricted permissions
             if perm == "*" or perm.endswith(".*"):
                 for restricted in BOT_RESTRICTED_PERMISSIONS:
                     if restricted.startswith(perm.replace(".*", "")):
                         issues.append(f"Bots cannot have permission: {restricted} (via {perm})")
-    
+
     return len(issues) == 0, issues
 
 

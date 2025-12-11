@@ -4,7 +4,7 @@ Connection state management - Tracks individual WebSocket connections.
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 import time
 import asyncio
 import zlib

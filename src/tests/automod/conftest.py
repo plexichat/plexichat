@@ -8,7 +8,7 @@ import pytest
 import uuid
 
 from src.core import automod
-from src.core.automod import RuleType, ActionType
+from src.core.automod import RuleType
 
 
 @pytest.fixture(scope="session")
@@ -31,14 +31,14 @@ def test_server_for_automod(modules, user_pool):
         owner_id=owner.id,
         name=f"AutoMod Test Server {uuid.uuid4().hex[:6]}"
     )
-    
+
     channel = modules.servers.create_channel(
         user_id=owner.id,
         server_id=server.id,
         name="general",
         channel_type=modules.servers.ChannelType.TEXT
     )
-    
+
     return server, channel, owner
 
 
@@ -46,7 +46,7 @@ def test_server_for_automod(modules, user_pool):
 def keyword_rule(automod_module, test_server_for_automod):
     """Create a keyword filter rule."""
     server, channel, owner = test_server_for_automod
-    
+
     rule = automod_module.create_rule(
         user_id=owner.id,
         server_id=server.id,
@@ -62,7 +62,7 @@ def keyword_rule(automod_module, test_server_for_automod):
             {"action_type": "log_only"}
         ]
     )
-    
+
     return rule, server, channel, owner
 
 
@@ -70,7 +70,7 @@ def keyword_rule(automod_module, test_server_for_automod):
 def regex_rule(automod_module, test_server_for_automod):
     """Create a regex pattern rule."""
     server, channel, owner = test_server_for_automod
-    
+
     rule = automod_module.create_rule(
         user_id=owner.id,
         server_id=server.id,
@@ -87,7 +87,7 @@ def regex_rule(automod_module, test_server_for_automod):
             {"action_type": "alert_moderators"}
         ]
     )
-    
+
     return rule, server, channel, owner
 
 
@@ -95,7 +95,7 @@ def regex_rule(automod_module, test_server_for_automod):
 def spam_rule(automod_module, test_server_for_automod):
     """Create a spam detection rule."""
     server, channel, owner = test_server_for_automod
-    
+
     rule = automod_module.create_rule(
         user_id=owner.id,
         server_id=server.id,
@@ -111,7 +111,7 @@ def spam_rule(automod_module, test_server_for_automod):
             {"action_type": "timeout_user", "duration_seconds": 60}
         ]
     )
-    
+
     return rule, server, channel, owner
 
 
@@ -119,7 +119,7 @@ def spam_rule(automod_module, test_server_for_automod):
 def mention_rule(automod_module, test_server_for_automod):
     """Create a mention spam rule."""
     server, channel, owner = test_server_for_automod
-    
+
     rule = automod_module.create_rule(
         user_id=owner.id,
         server_id=server.id,
@@ -135,7 +135,7 @@ def mention_rule(automod_module, test_server_for_automod):
             {"action_type": "delete_message"}
         ]
     )
-    
+
     return rule, server, channel, owner
 
 

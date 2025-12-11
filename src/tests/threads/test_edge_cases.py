@@ -4,15 +4,12 @@ Tests for thread edge cases and error handling.
 
 import pytest
 from src.core.threads import (
-    ThreadType,
     ThreadState,
     ThreadNotFoundError,
-    ThreadAccessDeniedError,
     ThreadNameError,
     ThreadMemberNotFoundError,
     ThreadMemberExistsError,
     ChannelNotFoundError,
-    PermissionDeniedError,
 )
 
 

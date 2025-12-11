@@ -18,17 +18,17 @@ async def _dispatch_reaction_event(event_type: str, user_id: int, message_id: in
         from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
         from src.core.events.models import Event
         from src.core.events.types import EventType
-        
+
         if not ws_is_setup():
             return
-            
+
         dispatcher = get_dispatcher()
-        
+
         # Get conversation participants to dispatch to
         db = api.get_db()
         if not db:
             return
-            
+
         # Get the message to find conversation_id
         msg_row = db.fetch_one(
             "SELECT conversation_id FROM msg_messages WHERE id = ?",
@@ -36,16 +36,16 @@ async def _dispatch_reaction_event(event_type: str, user_id: int, message_id: in
         )
         if not msg_row:
             return
-            
+
         conversation_id = msg_row["conversation_id"]
-        
+
         # Get all participants in the conversation
         participant_rows = db.fetch_all(
             "SELECT user_id FROM msg_participants WHERE conversation_id = ?",
             (conversation_id,)
         )
         participant_ids = [row["user_id"] for row in participant_rows]
-        
+
         # Also check if this is a server channel and get server members
         import json
         conv_row = db.fetch_one(
@@ -66,10 +66,10 @@ async def _dispatch_reaction_event(event_type: str, user_id: int, message_id: in
                             participant_ids.append(row["user_id"])
             except (json.JSONDecodeError, TypeError):
                 pass
-        
+
         if not participant_ids:
             return
-        
+
         # Create and dispatch the event
         evt_type = EventType.MESSAGE_REACTION_ADD if event_type == "add" else EventType.MESSAGE_REACTION_REMOVE
         event = Event(
@@ -82,7 +82,7 @@ async def _dispatch_reaction_event(event_type: str, user_id: int, message_id: in
             }
         )
         await dispatcher.dispatch_event(event, participant_ids)
-        
+
     except Exception as e:
         import utils.logger as logger
         logger.debug(f"Failed to dispatch reaction event: {e}")
@@ -101,31 +101,31 @@ async def add_reaction(
     Adds the specified emoji reaction to the message.
     """
     import utils.logger as logger
-    
+
     reactions = api.get_reactions()
     if not reactions:
         raise HTTPException(status_code=503, detail={"error": {"code": 503, "message": "Reactions module not available"}})
-    
+
     try:
         mid = int(message_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid message ID"}})
-    
+
     try:
         cid = int(channel_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
-    
+
     try:
         # URL decode the emoji if needed (handles encoded emojis like %F0%9F%A5%BA)
         import urllib.parse
         decoded_emoji = urllib.parse.unquote(emoji)
         logger.debug(f"Adding reaction: user={current_user.user_id}, message={mid}, emoji={decoded_emoji}")
         reactions.add_reaction(current_user.user_id, mid, decoded_emoji)
-        
+
         # Dispatch WebSocket event
         await _dispatch_reaction_event("add", current_user.user_id, mid, cid, decoded_emoji)
-        
+
         return {"success": True}
     except Exception as e:
         exc_name = type(e).__name__
@@ -160,30 +160,30 @@ async def remove_reaction(
     Removes the specified emoji reaction from the message.
     """
     import utils.logger as logger
-    
+
     reactions = api.get_reactions()
     if not reactions:
         raise HTTPException(status_code=503, detail={"error": {"code": 503, "message": "Reactions module not available"}})
-    
+
     try:
         mid = int(message_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid message ID"}})
-    
+
     try:
         cid = int(channel_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
-    
+
     try:
         # URL decode the emoji if needed
         import urllib.parse
         decoded_emoji = urllib.parse.unquote(emoji)
         reactions.remove_reaction(current_user.user_id, mid, decoded_emoji)
-        
+
         # Dispatch WebSocket event
         await _dispatch_reaction_event("remove", current_user.user_id, mid, cid, decoded_emoji)
-        
+
         return {"success": True}
     except Exception as e:
         exc_name = type(e).__name__
@@ -211,14 +211,14 @@ async def get_reaction_users(
     reactions = api.get_reactions()
     if not reactions:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Reactions module not available"}})
-    
+
     try:
         mid = int(message_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid message ID"}})
-    
+
     after_id = int(after) if after else None
-    
+
     try:
         users = reactions.get_reaction_users(
             user_id=current_user.user_id,
@@ -227,7 +227,7 @@ async def get_reaction_users(
             limit=limit,
             after_user_id=after_id
         )
-        
+
         return [
             ReactionUserResponse(
                 user_id=str(u.user_id),
@@ -256,15 +256,15 @@ async def get_reactions(
     reactions = api.get_reactions()
     if not reactions:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Reactions module not available"}})
-    
+
     try:
         mid = int(message_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid message ID"}})
-    
+
     try:
         result = reactions.get_reactions(current_user.user_id, mid)
-        
+
         return [
             ReactionResponse(
                 emoji=r.emoji,

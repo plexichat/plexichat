@@ -2,9 +2,7 @@
 
 import pytest
 import time
-import asyncio
-from src.api.websocket.connection import Connection, ConnectionState
-from src.api.websocket.opcodes import GatewayOpcode
+from src.api.websocket.connection import ConnectionState
 
 
 class TestConnectionState:

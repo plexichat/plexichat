@@ -5,7 +5,6 @@ Tests for poll expiry and closing.
 import pytest
 import uuid
 from src.core.polls import (
-    PollNotFoundError,
     PollEndedError,
     PermissionDeniedError,
 )

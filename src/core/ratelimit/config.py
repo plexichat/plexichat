@@ -153,15 +153,15 @@ def _get_default_ip_limit():
 # These are accessed via functions to enable lazy loading
 class _LazyLimitProxy:
     """Proxy that lazily loads rate limit configs."""
-    
+
     @property
     def DEFAULT_GLOBAL_LIMIT(self):
         return _get_default_global_limit()
-    
+
     @property
     def DEFAULT_USER_LIMIT(self):
         return _get_default_user_limit()
-    
+
     @property
     def DEFAULT_IP_LIMIT(self):
         return _get_default_ip_limit()
@@ -169,7 +169,7 @@ class _LazyLimitProxy:
 
 # For direct attribute access, use the getter functions
 DEFAULT_GLOBAL_LIMIT = None  # Use get_global_limit() instead
-DEFAULT_USER_LIMIT = None  # Use get_user_limit() instead  
+DEFAULT_USER_LIMIT = None  # Use get_user_limit() instead
 DEFAULT_IP_LIMIT = None  # Use get_ip_limit() instead
 
 

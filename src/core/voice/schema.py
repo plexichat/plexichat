@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS voice_afk_settings (
 def create_tables(db):
     """Create all voice tables."""
     statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
-    
+
     for statement in statements:
         if statement:
             try:
@@ -80,5 +80,5 @@ def create_tables(db):
             except Exception as e:
                 logger.error(f"Failed to execute schema statement: {e}")
                 raise
-    
+
     logger.info("Voice tables created successfully")

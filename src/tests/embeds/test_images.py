@@ -14,7 +14,7 @@ class TestEmbedImage:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"img1_{unique_id}",
             email=f"img1_{unique_id}@example.com",
@@ -35,7 +35,7 @@ class TestEmbedImage:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"img2_{unique_id}",
             email=f"img2_{unique_id}@example.com",
@@ -60,7 +60,7 @@ class TestEmbedImage:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"img3_{unique_id}",
             email=f"img3_{unique_id}@example.com",
@@ -79,7 +79,7 @@ class TestEmbedImage:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"img4_{unique_id}",
             email=f"img4_{unique_id}@example.com",
@@ -98,7 +98,7 @@ class TestEmbedImage:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"img5_{unique_id}",
             email=f"img5_{unique_id}@example.com",
@@ -118,7 +118,7 @@ class TestEmbedImage:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"img6_{unique_id}",
             email=f"img6_{unique_id}@example.com",
@@ -142,7 +142,7 @@ class TestEmbedThumbnail:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"thm1_{unique_id}",
             email=f"thm1_{unique_id}@example.com",
@@ -163,7 +163,7 @@ class TestEmbedThumbnail:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"thm2_{unique_id}",
             email=f"thm2_{unique_id}@example.com",
@@ -188,7 +188,7 @@ class TestEmbedThumbnail:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"thm3_{unique_id}",
             email=f"thm3_{unique_id}@example.com",
@@ -207,7 +207,7 @@ class TestEmbedThumbnail:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"thm4_{unique_id}",
             email=f"thm4_{unique_id}@example.com",
@@ -230,7 +230,7 @@ class TestImageAndThumbnailTogether:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"both1_{unique_id}",
             email=f"both1_{unique_id}@example.com",
@@ -253,7 +253,7 @@ class TestImageAndThumbnailTogether:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"both2_{unique_id}",
             email=f"both2_{unique_id}@example.com",
@@ -274,7 +274,7 @@ class TestImageAndThumbnailTogether:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"both3_{unique_id}",
             email=f"both3_{unique_id}@example.com",
@@ -299,7 +299,7 @@ class TestImageFormats:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"fmt1_{unique_id}",
             email=f"fmt1_{unique_id}@example.com",
@@ -319,7 +319,7 @@ class TestImageFormats:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"fmt2_{unique_id}",
             email=f"fmt2_{unique_id}@example.com",
@@ -339,7 +339,7 @@ class TestImageFormats:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"fmt3_{unique_id}",
             email=f"fmt3_{unique_id}@example.com",

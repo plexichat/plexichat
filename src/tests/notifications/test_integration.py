@@ -2,7 +2,6 @@
 Tests for integration with other modules.
 """
 
-import pytest
 from src.core.notifications import MentionType
 
 

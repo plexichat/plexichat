@@ -2,7 +2,7 @@
 Message routes - Message CRUD endpoints.
 """
 
-from typing import List, Optional
+from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, Query
 
 import src.api as api
@@ -83,17 +83,17 @@ async def get_channel_messages(
     servers_mod = api.get_servers()
     messaging = api.get_messaging()
     auth = api.get_auth()
-    
+
     try:
         cid = int(channel_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
-    
+
     before_id = int(before) if before else None
     after_id = int(after) if after else None
-    
+
     messages = None
-    
+
     # Try server channel first
     if servers_mod:
         try:
@@ -111,7 +111,7 @@ async def get_channel_messages(
                     raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": "Access denied"}})
             # Channel not found in servers, try as DM conversation
             messages = None
-    
+
     # If not a server channel, try as DM conversation
     if messages is None and messaging:
         try:
@@ -127,10 +127,10 @@ async def get_channel_messages(
             if "NotFound" in exc_name or "Access" in exc_name:
                 raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
             raise
-    
+
     if messages is None:
         raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
-    
+
     # Bulk fetch all author usernames and avatars in single query (avoids N+1)
     author_ids = list(set(m.author_id for m in messages))
     author_cache = {}  # {user_id: {"username": str, "avatar_url": str}}
@@ -179,14 +179,14 @@ async def search_messages(
     messaging = api.get_messaging()
     servers_mod = api.get_servers()
     auth = api.get_auth()
-    
+
     try:
         cid = int(channel_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
-    
+
     messages = []
-    
+
     # Try server channel first
     if servers_mod:
         try:
@@ -200,7 +200,7 @@ async def search_messages(
                 messages = [m for m in all_messages if search_lower in (m.content or "").lower()][:limit]
         except Exception:
             pass
-    
+
     # If not found in server channels, try DM conversations
     if not messages and messaging:
         try:
@@ -214,7 +214,7 @@ async def search_messages(
                 messages = [m for m in all_messages if search_lower in (m.content or "").lower()][:limit]
         except Exception:
             pass
-    
+
     author_cache = {}  # {user_id: {"username": str, "avatar_url": str}}
     result = []
     for m in messages:
@@ -232,7 +232,7 @@ async def search_messages(
             author_cache[author_id] = author_info
         info = author_cache.get(author_id, {})
         result.append(_message_to_response(m, info.get("username"), info.get("avatar_url")))
-    
+
     return result
 
 
@@ -251,20 +251,20 @@ async def send_channel_message(
     servers_mod = api.get_servers()
     messaging = api.get_messaging()
     auth = api.get_auth()
-    
+
     try:
         cid = int(channel_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
-    
+
     if not body.content and not body.attachments and not body.embeds:
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": 400, "message": "Message must have content, attachments, or embeds"}}
         )
-    
+
     reply_to = int(body.reply_to_id) if body.reply_to_id else None
-    
+
     attachments = None
     if body.attachments:
         attachments = [
@@ -276,11 +276,11 @@ async def send_channel_message(
             }
             for a in body.attachments
         ]
-    
+
     msg = None
     server_id = None  # Track server_id for broadcast optimization
     conversation_id = None  # Track conversation_id to avoid redundant lookups
-    
+
     # Try server channel first - optimized to avoid duplicate get_channel calls
     if servers_mod:
         try:
@@ -289,7 +289,7 @@ async def send_channel_message(
             if channel:
                 server_id = getattr(channel, "server_id", None)
                 conversation_id = getattr(channel, "conversation_id", None)
-                
+
                 # Send directly to messaging module using cached conversation_id
                 # This avoids the duplicate get_channel() call in send_channel_message()
                 if conversation_id and messaging:
@@ -309,7 +309,7 @@ async def send_channel_message(
                     raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": str(e)}})
             # Channel not found in servers, try as DM conversation
             msg = None
-    
+
     # If not a server channel, try as DM conversation
     if msg is None and messaging:
         try:
@@ -327,14 +327,14 @@ async def send_channel_message(
             elif "Content" in exc_name or "Invalid" in exc_name:
                 raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": str(e)}})
             raise
-    
+
     if msg is None:
         raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
-    
+
     # Use username and avatar from token/auth - no need for extra DB lookup!
     author_username = current_user.username
     author_avatar_url = getattr(current_user, "avatar_url", None)
-    
+
     # If avatar not in token, try to get from auth
     if not author_avatar_url:
         auth = api.get_auth()
@@ -345,9 +345,9 @@ async def send_channel_message(
                     author_avatar_url = getattr(user, "avatar_url", None)
             except Exception:
                 pass
-    
+
     response = _message_to_response(msg, author_username, author_avatar_url, channel_id=cid)
-    
+
     # Broadcast MESSAGE_CREATE event via WebSocket (fully async - doesn't block response)
     try:
         from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
@@ -355,24 +355,24 @@ async def send_channel_message(
         from src.core.events.types import EventType
         import utils.logger as logger
         import asyncio
-        
+
         if ws_is_setup():
             dispatcher = get_dispatcher()
-            
+
             # Create async task that handles everything - response returns immediately
             async def broadcast_message():
                 try:
                     # Get users to broadcast to - this is now async and doesn't block response
                     user_ids = []
                     logger.info(f"broadcast_message: server_id={server_id}, cid={cid}")
-                    
+
                     if server_id and servers_mod:
                         try:
                             user_ids = servers_mod.get_member_user_ids(server_id)
                             logger.info(f"Got {len(user_ids)} server members for server {server_id}")
                         except Exception as e:
                             logger.warning(f"Failed to get server members: {e}")
-                    
+
                     if not user_ids and messaging:
                         try:
                             participants = messaging.get_participants(current_user.user_id, cid)
@@ -380,7 +380,7 @@ async def send_channel_message(
                             logger.info(f"Got {len(user_ids)} DM participants for channel {cid}")
                         except Exception as e:
                             logger.warning(f"Failed to get DM participants: {e}")
-                    
+
                     if user_ids:
                         logger.info(f"Broadcasting MESSAGE_CREATE to {len(user_ids)} users for channel {cid}: {user_ids[:5]}...")
                         event = Event(
@@ -395,14 +395,14 @@ async def send_channel_message(
                         logger.warning(f"No user_ids found for MESSAGE_CREATE broadcast in channel {cid}")
                 except Exception as e:
                     logger.warning(f"Failed to broadcast MESSAGE_CREATE: {e}", exc_info=True)
-            
+
             # Schedule the broadcast task
             task = asyncio.create_task(broadcast_message())
             logger.info(f"Created broadcast task for message in channel {cid}")
     except Exception as e:
         import utils.logger as logger
         logger.warning(f"Failed to setup MESSAGE_CREATE broadcast: {e}", exc_info=True)
-    
+
     return response
 
 
@@ -420,12 +420,12 @@ async def get_message(
     messaging = api.get_messaging()
     if not messaging:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
-    
+
     try:
         mid = int(message_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid message ID"}})
-    
+
     try:
         msg = messaging.get_message(current_user.user_id, mid)
         if not msg:
@@ -457,19 +457,19 @@ async def edit_message(
     messaging = api.get_messaging()
     servers_mod = api.get_servers()
     auth = api.get_auth()
-    
+
     if not messaging:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
-    
+
     try:
         mid = int(message_id)
         cid = int(channel_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid message or channel ID"}})
-    
+
     try:
         msg = messaging.edit_message(current_user.user_id, mid, body.content)
-        
+
         # Get author username and avatar
         author_username = None
         author_avatar_url = None
@@ -481,21 +481,21 @@ async def edit_message(
                     author_avatar_url = getattr(user, "avatar_url", None)
             except Exception:
                 pass
-        
+
         response = _message_to_response(msg, author_username, author_avatar_url, channel_id=cid)
-        
+
         # Broadcast MESSAGE_UPDATE event via WebSocket (fire and forget)
         import asyncio
-        
+
         async def dispatch_message_update():
             try:
                 from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
                 from src.core.events.models import Event
                 from src.core.events.types import EventType
-                
+
                 if ws_is_setup():
                     dispatcher = get_dispatcher()
-                    
+
                     # Get users to broadcast to
                     user_ids = []
                     if servers_mod:
@@ -507,14 +507,14 @@ async def edit_message(
                                     user_ids = servers_mod.get_member_user_ids(server_id)
                         except Exception:
                             pass
-                    
+
                     if not user_ids and messaging:
                         try:
                             participants = messaging.get_participants(current_user.user_id, cid)
                             user_ids = [p.user_id for p in (participants or [])]
                         except Exception:
                             pass
-                    
+
                     if user_ids:
                         # Determine server_id for intent filtering
                         event_server_id = None
@@ -525,7 +525,7 @@ async def edit_message(
                                     event_server_id = getattr(channel, "server_id", None)
                             except Exception:
                                 pass
-                        
+
                         event = Event(
                             event_type=EventType.MESSAGE_UPDATE,
                             data=response,
@@ -536,9 +536,9 @@ async def edit_message(
             except Exception as e:
                 import utils.logger as logger
                 logger.debug(f"Failed to broadcast MESSAGE_UPDATE: {e}")
-        
+
         asyncio.create_task(dispatch_message_update())
-        
+
         return response
     except Exception as e:
         exc_name = type(e).__name__
@@ -565,12 +565,12 @@ async def delete_message(
     messaging = api.get_messaging()
     if not messaging:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
-    
+
     try:
         mid = int(message_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid message ID"}})
-    
+
     try:
         messaging.delete_message(current_user.user_id, mid)
         return {"success": True}
@@ -592,14 +592,14 @@ async def get_pinned_messages(
     messaging = api.get_messaging()
     servers_mod = api.get_servers()
     auth = api.get_auth()
-    
+
     try:
         cid = int(channel_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
-    
+
     messages = []
-    
+
     # Try server channel first - get all messages and filter pinned
     if servers_mod:
         try:
@@ -612,14 +612,14 @@ async def get_pinned_messages(
                 messages = [m for m in all_messages if getattr(m, "pinned", False)]
         except Exception:
             pass
-    
+
     # If not a server channel, try DM conversation
     if not messages and messaging:
         try:
             messages = messaging.get_pinned_messages(current_user.user_id, cid) or []
         except Exception:
             pass
-    
+
     author_cache = {}  # {user_id: {"username": str, "avatar_url": str}}
     result = []
     for m in messages:
@@ -637,7 +637,7 @@ async def get_pinned_messages(
             author_cache[author_id] = author_info
         info = author_cache.get(author_id, {})
         result.append(_message_to_response(m, info.get("username"), info.get("avatar_url")))
-    
+
     return result
 
 
@@ -649,12 +649,12 @@ async def pin_message(
 ):
     """Pin a message in a channel."""
     messaging = api.get_messaging()
-    
+
     try:
         mid = int(message_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid message ID"}})
-    
+
     try:
         if messaging:
             messaging.pin_message(current_user.user_id, mid)
@@ -676,12 +676,12 @@ async def unpin_message(
 ):
     """Unpin a message from a channel."""
     messaging = api.get_messaging()
-    
+
     try:
         mid = int(message_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid message ID"}})
-    
+
     try:
         if messaging:
             messaging.unpin_message(current_user.user_id, mid)
@@ -708,35 +708,35 @@ async def acknowledge_messages(
     If not provided, marks all messages in the channel as read.
     """
     import utils.logger as logger
-    
+
     messaging = api.get_messaging()
     if not messaging:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
-    
+
     try:
         cid = int(channel_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
-    
+
     up_to_id = int(message_id) if message_id else None
-    
+
     try:
         count = messaging.mark_read(current_user.user_id, cid, up_to_id)
         logger.debug(f"User {current_user.user_id} marked {count} messages as read in channel {cid}")
-        
+
         # Broadcast read receipt event via WebSocket (fire and forget)
         import asyncio
-        
+
         async def dispatch_ack():
             try:
                 from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
                 from src.core.events.models import Event
                 from src.core.events.types import EventType
-                
+
                 if ws_is_setup():
                     dispatcher = get_dispatcher()
                     servers_mod = api.get_servers()
-                    
+
                     user_ids = []
                     if servers_mod:
                         try:
@@ -747,14 +747,14 @@ async def acknowledge_messages(
                                     user_ids = servers_mod.get_member_user_ids(server_id)
                         except Exception:
                             pass
-                    
+
                     if not user_ids and messaging:
                         try:
                             participants = messaging.get_participants(current_user.user_id, cid)
                             user_ids = [p.user_id for p in (participants or [])]
                         except Exception:
                             pass
-                    
+
                     if user_ids:
                         event = Event(
                             event_type=EventType.MESSAGE_ACK,
@@ -767,9 +767,9 @@ async def acknowledge_messages(
                         await dispatcher.dispatch_event(event, user_ids)
             except Exception as e:
                 logger.debug(f"Failed to broadcast MESSAGE_ACK: {e}")
-        
+
         asyncio.create_task(dispatch_ack())
-        
+
         return {"success": True, "messages_marked": count}
     except Exception as e:
         exc_name = type(e).__name__
@@ -789,12 +789,12 @@ async def get_unread_count(
     messaging = api.get_messaging()
     if not messaging:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
-    
+
     try:
         cid = int(channel_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
-    
+
     try:
         counts = messaging.get_unread_count(current_user.user_id, cid)
         return {"channel_id": channel_id, "unread_count": counts.get(cid, 0)}
@@ -815,7 +815,7 @@ async def get_all_unread_counts(
     messaging = api.get_messaging()
     if not messaging:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
-    
+
     try:
         counts = messaging.get_unread_count(current_user.user_id)
         # Convert int keys to string for JSON
@@ -838,15 +838,15 @@ async def trigger_typing(
     presence = api.get_presence()
     servers_mod = api.get_servers()
     messaging = api.get_messaging()
-    
+
     try:
         cid = int(channel_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
-    
+
     channel = None
     user_ids = []
-    
+
     # Try server channel first
     if servers_mod:
         try:
@@ -858,7 +858,7 @@ async def trigger_typing(
                     user_ids = servers_mod.get_member_user_ids(server_id, exclude_user_id=current_user.user_id)
         except Exception:
             channel = None
-    
+
     # If not a server channel, try as DM conversation
     if not channel and messaging:
         try:
@@ -867,35 +867,35 @@ async def trigger_typing(
                 user_ids = [p.user_id for p in participants if p.user_id != current_user.user_id]
         except Exception:
             pass
-    
+
     # Set typing indicator in presence module
     if presence:
         try:
             presence.start_typing(current_user.user_id, cid)
         except Exception:
             pass  # Non-critical, don't fail the request
-    
+
     # Broadcast typing event via WebSocket dispatcher (fire and forget)
     if user_ids:
         import asyncio
-        
+
         # Capture username from token - no extra DB lookup needed!
         username = current_user.username
-        
+
         async def dispatch_typing():
             try:
                 from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
                 from src.core.events.models import Event
                 from src.core.events.types import EventType
-                
+
                 if ws_is_setup():
                     dispatcher = get_dispatcher()
-                    
+
                     # Determine server_id for intent filtering
                     event_server_id = None
                     if channel:
                         event_server_id = getattr(channel, "server_id", None)
-                    
+
                     event = Event(
                         event_type=EventType.TYPING_START,
                         data={
@@ -910,8 +910,8 @@ async def trigger_typing(
             except Exception as e:
                 import utils.logger as logger
                 logger.debug(f"Failed to dispatch typing event: {e}")
-        
+
         # Fire and forget - don't wait for dispatch to complete
         asyncio.create_task(dispatch_typing())
-    
+
     return {"success": True}

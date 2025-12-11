@@ -2,7 +2,6 @@
 Relationship routes - Friend and block management endpoints.
 """
 
-from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Depends
 
 import src.api as api
@@ -21,7 +20,7 @@ def _relationship_to_response(rel) -> RelationshipResponse:
     status = getattr(rel, "status", None)
     if status is not None and hasattr(status, "value"):
         status = status.value
-    
+
     return RelationshipResponse(
         user_id=str(getattr(rel, "user_id", 0) or getattr(rel, "target_id", 0)),
         status=status or "none",
@@ -39,16 +38,16 @@ async def get_relationships(current_user: TokenInfo = Depends(get_current_user))
     relationships = api.get_relationships()
     auth = api.get_auth()
     presence = api.get_presence()
-    
+
     if not relationships:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Relationships module not available"}})
-    
+
     def get_user_info(user_id):
         """Get username and presence for a user."""
         username = None
         avatar_url = None
         presence_data = None
-        
+
         if auth:
             try:
                 user = auth.get_user(user_id)
@@ -57,7 +56,7 @@ async def get_relationships(current_user: TokenInfo = Depends(get_current_user))
                     avatar_url = getattr(user, "avatar_url", None)
             except Exception:
                 pass
-        
+
         # Default to offline if presence not found
         presence_data = {"status": "offline"}
         if presence:
@@ -70,17 +69,17 @@ async def get_relationships(current_user: TokenInfo = Depends(get_current_user))
                     presence_data = {"status": status or "offline"}
             except Exception:
                 pass
-        
+
         return username, avatar_url, presence_data
-    
+
     try:
         friends = relationships.get_friends(current_user.user_id)
         pending_in = relationships.get_pending_requests_incoming(current_user.user_id)
         pending_out = relationships.get_pending_requests_outgoing(current_user.user_id)
         blocked = relationships.get_blocked_users(current_user.user_id)
-        
+
         result = []
-        
+
         for f in friends:
             # friend_id is the OTHER user in the friendship, user_id is the current user
             friend_user_id = getattr(f, "friend_id", 0) or getattr(f, "user_id", 0)
@@ -93,7 +92,7 @@ async def get_relationships(current_user: TokenInfo = Depends(get_current_user))
                 "presence": presence_data,
                 "created_at": getattr(f, "created_at", None),
             })
-        
+
         for r in pending_in:
             user_id = getattr(r, "sender_id", 0)
             username, avatar_url, presence_data = get_user_info(user_id)
@@ -106,7 +105,7 @@ async def get_relationships(current_user: TokenInfo = Depends(get_current_user))
                 "message": getattr(r, "message", None),
                 "created_at": getattr(r, "created_at", None),
             })
-        
+
         for r in pending_out:
             user_id = getattr(r, "recipient_id", 0)
             username, avatar_url, presence_data = get_user_info(user_id)
@@ -118,7 +117,7 @@ async def get_relationships(current_user: TokenInfo = Depends(get_current_user))
                 "presence": presence_data,
                 "created_at": getattr(r, "created_at", None),
             })
-        
+
         for b in blocked:
             user_id = getattr(b, "blocked_id", 0)
             username, avatar_url, _ = get_user_info(user_id)
@@ -130,7 +129,7 @@ async def get_relationships(current_user: TokenInfo = Depends(get_current_user))
                 "presence": None,
                 "created_at": getattr(b, "created_at", None),
             })
-        
+
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
@@ -142,7 +141,7 @@ async def _dispatch_relationship_event(event_type: str, user_id: int, target_id:
         from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
         from src.core.events.models import Event
         from src.core.events.types import EventType
-        
+
         if ws_is_setup():
             dispatcher = get_dispatcher()
             event = Event(
@@ -170,19 +169,19 @@ async def create_relationship(
     auth = api.get_auth()
     if not relationships:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Relationships module not available"}})
-    
+
     try:
         target_id = int(body.user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid user ID"}})
-    
+
     try:
         request = relationships.send_friend_request(
             sender_id=current_user.user_id,
             recipient_id=target_id,
             message=body.message
         )
-        
+
         # Get usernames for the event
         sender_username = None
         target_username = None
@@ -196,7 +195,7 @@ async def create_relationship(
                     target_username = target.username
             except Exception:
                 pass
-        
+
         # Dispatch event to recipient (incoming request)
         await _dispatch_relationship_event("add", target_id, current_user.user_id, {
             "user_id": str(current_user.user_id),
@@ -205,7 +204,7 @@ async def create_relationship(
             "message": body.message,
             "created_at": getattr(request, "created_at", None),
         })
-        
+
         # Dispatch event to sender (outgoing request)
         await _dispatch_relationship_event("add", current_user.user_id, target_id, {
             "user_id": str(target_id),
@@ -213,7 +212,7 @@ async def create_relationship(
             "status": "pending_outgoing",
             "created_at": getattr(request, "created_at", None),
         })
-        
+
         return RelationshipResponse(
             user_id=str(target_id),
             status="pending_outgoing",
@@ -244,12 +243,12 @@ async def accept_friend_request(user_id: str, current_user: TokenInfo = Depends(
     presence = api.get_presence()
     if not relationships:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Relationships module not available"}})
-    
+
     try:
         sender_id = int(user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid user ID"}})
-    
+
     try:
         pending = relationships.get_pending_requests_incoming(current_user.user_id)
         request_id = None
@@ -257,12 +256,12 @@ async def accept_friend_request(user_id: str, current_user: TokenInfo = Depends(
             if getattr(r, "sender_id", 0) == sender_id:
                 request_id = r.id
                 break
-        
+
         if not request_id:
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Friend request not found"}})
-        
+
         result = relationships.accept_friend_request(current_user.user_id, request_id)
-        
+
         # Get user info for the events
         sender_username = None
         accepter_username = None
@@ -278,7 +277,7 @@ async def accept_friend_request(user_id: str, current_user: TokenInfo = Depends(
                     accepter_username = accepter.username
             except Exception:
                 pass
-        
+
         if presence:
             try:
                 sp = presence.get_visible_presence(current_user.user_id, sender_id)
@@ -295,9 +294,9 @@ async def accept_friend_request(user_id: str, current_user: TokenInfo = Depends(
                     accepter_presence = {"status": status or "offline"}
             except Exception:
                 pass
-        
+
         created_at = getattr(result, "updated_at", None) or getattr(result, "created_at", None)
-        
+
         # Dispatch event to the original sender (they now have a friend)
         await _dispatch_relationship_event("add", sender_id, current_user.user_id, {
             "user_id": str(current_user.user_id),
@@ -306,7 +305,7 @@ async def accept_friend_request(user_id: str, current_user: TokenInfo = Depends(
             "presence": accepter_presence,
             "created_at": created_at,
         })
-        
+
         # Dispatch event to the accepter (they now have a friend)
         await _dispatch_relationship_event("add", current_user.user_id, sender_id, {
             "user_id": str(sender_id),
@@ -315,7 +314,7 @@ async def accept_friend_request(user_id: str, current_user: TokenInfo = Depends(
             "presence": sender_presence,
             "created_at": created_at,
         })
-        
+
         return {"success": True}
     except HTTPException:
         raise
@@ -336,18 +335,18 @@ async def delete_relationship(user_id: str, current_user: TokenInfo = Depends(ge
     relationships = api.get_relationships()
     if not relationships:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Relationships module not available"}})
-    
+
     try:
         target_id = int(user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid user ID"}})
-    
+
     try:
         rel = relationships.get_relationship(current_user.user_id, target_id)
         status = getattr(rel, "status", None)
         if status is not None and hasattr(status, "value"):
             status = status.value
-        
+
         if status == "friend":
             relationships.remove_friend(current_user.user_id, target_id)
             # Notify both users that friendship is removed
@@ -389,7 +388,7 @@ async def delete_relationship(user_id: str, current_user: TokenInfo = Depends(ge
                         "user_id": str(current_user.user_id),
                     })
                     break
-        
+
         return {"success": True}
     except Exception as e:
         exc_name = type(e).__name__
@@ -408,12 +407,12 @@ async def block_user(body: BlockCreate, current_user: TokenInfo = Depends(get_cu
     relationships = api.get_relationships()
     if not relationships:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Relationships module not available"}})
-    
+
     try:
         target_id = int(body.user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid user ID"}})
-    
+
     try:
         # Check if they were friends before blocking
         rel = relationships.get_relationship(current_user.user_id, target_id)
@@ -421,22 +420,22 @@ async def block_user(body: BlockCreate, current_user: TokenInfo = Depends(get_cu
         if was_friend and hasattr(was_friend, "value"):
             was_friend = was_friend.value
         was_friend = was_friend == "friend"
-        
+
         block = relationships.block_user(current_user.user_id, target_id)
-        
+
         # Notify the blocker about the new blocked status
         await _dispatch_relationship_event("add", current_user.user_id, target_id, {
             "user_id": str(target_id),
             "status": "blocked",
             "created_at": getattr(block, "created_at", None),
         })
-        
+
         # If they were friends, notify the blocked user that friendship is removed
         if was_friend:
             await _dispatch_relationship_event("remove", target_id, current_user.user_id, {
                 "user_id": str(current_user.user_id),
             })
-        
+
         return RelationshipResponse(
             user_id=str(target_id),
             status="blocked",

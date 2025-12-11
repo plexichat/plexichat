@@ -15,7 +15,7 @@ router = APIRouter()
 class EmojiResponse(BaseModel):
     """Custom emoji response model."""
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: str = Field(..., description="Emoji ID")
     server_id: str = Field(..., description="Server ID")
     name: str = Field(..., description="Emoji name")
@@ -24,7 +24,7 @@ class EmojiResponse(BaseModel):
     available: bool = Field(True, description="Whether emoji is available for use")
     created_by: str = Field(..., description="User ID who created the emoji")
     created_at: int = Field(..., description="Creation timestamp")
-    
+
     @field_serializer("id", "server_id", "created_by")
     def serialize_ids(self, v: Any) -> Optional[str]:
         return str(v) if v else None
@@ -69,21 +69,21 @@ async def get_server_emojis(
     """
     reactions = api.get_reactions()
     servers = api.get_servers()
-    
+
     if not reactions:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Reactions module not available"}})
-    
+
     try:
         sid = int(server_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
-    
+
     # Check if user is member of server
     if servers:
         member = servers.get_member(sid, current_user.user_id)
         if not member:
             raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": "Not a member of this server"}})
-    
+
     try:
         emojis = reactions.get_server_custom_emojis(sid)
         return [_emoji_to_response(e) for e in emojis]
@@ -103,20 +103,20 @@ async def get_emoji_counts(
     """
     reactions = api.get_reactions()
     servers = api.get_servers()
-    
+
     if not reactions:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Reactions module not available"}})
-    
+
     try:
         sid = int(server_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
-    
+
     if servers:
         member = servers.get_member(sid, current_user.user_id)
         if not member:
             raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": "Not a member of this server"}})
-    
+
     try:
         counts = reactions.get_emoji_counts(sid)
         return EmojiCountsResponse(**counts)
@@ -136,24 +136,24 @@ async def get_emoji(
     Returns emoji details if found and user has access.
     """
     reactions = api.get_reactions()
-    
+
     if not reactions:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Reactions module not available"}})
-    
+
     try:
         eid = int(emoji_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid emoji ID"}})
-    
+
     try:
         emoji = reactions.get_custom_emoji(eid)
         if not emoji:
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Emoji not found"}})
-        
+
         # Verify emoji belongs to the server
         if str(emoji.server_id) != server_id:
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Emoji not found"}})
-        
+
         return _emoji_to_response(emoji)
     except HTTPException:
         raise
@@ -175,23 +175,23 @@ async def create_emoji(
     Requires server.manage permission.
     """
     reactions = api.get_reactions()
-    
+
     if not reactions:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Reactions module not available"}})
-    
+
     try:
         sid = int(server_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
-    
+
     # Read image data
     try:
         image_data = await image.read()
     except Exception as e:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": f"Failed to read image: {str(e)}"}})
-    
+
     content_type = image.content_type or "application/octet-stream"
-    
+
     try:
         emoji = reactions.create_custom_emoji(
             user_id=current_user.user_id,
@@ -230,15 +230,15 @@ async def update_emoji(
     Requires server.manage permission.
     """
     reactions = api.get_reactions()
-    
+
     if not reactions:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Reactions module not available"}})
-    
+
     try:
         eid = int(emoji_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid emoji ID"}})
-    
+
     try:
         emoji = reactions.update_custom_emoji(
             user_id=current_user.user_id,
@@ -272,15 +272,15 @@ async def delete_emoji(
     Requires server.manage permission.
     """
     reactions = api.get_reactions()
-    
+
     if not reactions:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Reactions module not available"}})
-    
+
     try:
         eid = int(emoji_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid emoji ID"}})
-    
+
     try:
         reactions.delete_custom_emoji(current_user.user_id, eid)
         return {"success": True}

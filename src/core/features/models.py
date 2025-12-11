@@ -28,7 +28,7 @@ class Badge:
     description: str
     icon: str  # Emoji or icon name
     color: str  # Hex color for display
-    
+
     @staticmethod
     def get_badge_info(badge_name: str) -> "Badge":
         """Get display info for a badge."""
@@ -111,26 +111,26 @@ class TierLimits:
     """Rate limit tier configuration."""
     name: str
     multiplier: float = 1.0
-    
+
     # Voice/Video limits (-1 = unlimited)
     max_voice_minutes_per_day: int = 120
     max_video_minutes_per_day: int = 60
-    
+
     # File limits
     max_file_uploads_per_day: int = 50
     max_file_size_mb: int = 10
-    
+
     # Server limits
     max_servers: int = 100
-    
+
     # Message limits
     max_message_length: int = 2000
     max_reactions_per_message: int = 20
     max_pins_per_channel: int = 50
-    
+
     # Emoji limits
     custom_emoji_slots: int = 50
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for API responses."""
         return {
@@ -185,32 +185,32 @@ class UserFeatures:
     """User feature flags and badges."""
     id: int
     user_id: int
-    
+
     # Feature flags (admin-controlled)
     can_create_org: bool = False
-    
+
     # Rate limiting
     rate_limit_tier: str = "standard"
-    
+
     # Badges (admin-controlled, displayed on profile)
     badges: List[str] = field(default_factory=list)
-    
+
     # Metadata
     granted_by: Optional[int] = None  # Admin who granted
     granted_at: Optional[int] = None
     expires_at: Optional[int] = None  # None = permanent
     notes: Optional[str] = None
-    
+
     def get_tier_limits(self) -> TierLimits:
         """Get the limits for this user's tier."""
         if self.rate_limit_tier in DEFAULT_TIER_LIMITS:
             return DEFAULT_TIER_LIMITS[self.rate_limit_tier]
         return DEFAULT_TIER_LIMITS["standard"]
-    
+
     def get_badge_info(self) -> List[Badge]:
         """Get full badge info for all user badges."""
         return [Badge.get_badge_info(b) for b in self.badges]
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for API responses."""
         return {
@@ -220,7 +220,7 @@ class UserFeatures:
             "badges": self.badges,
             "expires_at": self.expires_at,
         }
-    
+
     def to_public_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for public API responses (no admin info)."""
         return {

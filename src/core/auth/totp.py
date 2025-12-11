@@ -6,9 +6,6 @@ Compatible with Google Authenticator, Authy, and other TOTP apps.
 
 import os
 import sys
-import base64
-import hashlib
-import time
 from typing import List, Tuple, Optional
 
 # Add paths for imports
@@ -90,13 +87,13 @@ def generate_totp_uri(secret: str, username: str, issuer: Optional[str] = None) 
     totp_config = get_totp_config()
     if issuer is None:
         issuer = totp_config.get("issuer", "PlexiChat")
-    
+
     totp = pyotp.TOTP(
         secret,
         digits=totp_config.get("digits", 6),
         interval=totp_config.get("interval", 30)
     )
-    
+
     return totp.provisioning_uri(name=username, issuer_name=issuer)
 
 
@@ -113,13 +110,13 @@ def verify_totp_code(secret: str, code: str, window: int = 1) -> bool:
         True if code is valid
     """
     totp_config = get_totp_config()
-    
+
     totp = pyotp.TOTP(
         secret,
         digits=totp_config.get("digits", 6),
         interval=totp_config.get("interval", 30)
     )
-    
+
     # valid_window allows for clock drift
     return totp.verify(code, valid_window=window)
 
@@ -137,10 +134,10 @@ def generate_backup_codes(count: Optional[int] = None) -> List[str]:
     totp_config = get_totp_config()
     if count is None:
         count = int(totp_config.get("backup_code_count", 10))
-    
+
     code_length = int(totp_config.get("backup_code_length", 8))
     half_length = code_length // 2
-    
+
     codes = []
     for _ in range(count):
         # Generate random bytes and convert to hex
@@ -149,7 +146,7 @@ def generate_backup_codes(count: Optional[int] = None) -> List[str]:
         # Format as XXXX-XXXX
         formatted = f"{code[:half_length]}-{code[half_length:]}"
         codes.append(formatted)
-    
+
     return codes
 
 
@@ -179,11 +176,11 @@ def verify_backup_code(code: str, hashed_codes: List[str]) -> Tuple[bool, int]:
     """
     # Normalize code (remove dash, lowercase)
     normalized = code.replace("-", "").lower()
-    
+
     for i, hashed in enumerate(hashed_codes):
         if verify_password(normalized, hashed):
             return True, i
-    
+
     return False, -1
 
 
@@ -199,7 +196,7 @@ def generate_qr_code_data(uri: str) -> bytes:
     """
     import qrcode
     from io import BytesIO
-    
+
     qr = qrcode.QRCode(
         version=1,
         error_correction=qrcode.ERROR_CORRECT_L,
@@ -208,9 +205,9 @@ def generate_qr_code_data(uri: str) -> bytes:
     )
     qr.add_data(uri)
     qr.make(fit=True)
-    
+
     img = qr.make_image(fill_color="black", back_color="white")
-    
+
     buffer = BytesIO()
     img.save(buffer, "PNG")
     return buffer.getvalue()
@@ -228,11 +225,11 @@ def get_current_totp_code(secret: str) -> str:
         Current 6-digit code
     """
     totp_config = get_totp_config()
-    
+
     totp = pyotp.TOTP(
         secret,
         digits=totp_config.get("digits", 6),
         interval=totp_config.get("interval", 30)
     )
-    
+
     return totp.now()

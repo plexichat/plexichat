@@ -16,10 +16,8 @@ Features:
 import sys
 import os
 import json
-import hashlib
 import time
-from typing import Any, Callable, Dict, List, Optional, Union
-from functools import wraps
+from typing import Any, Dict, List, Optional, Union
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
 common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
@@ -71,7 +69,7 @@ class RedisClient:
         
         client.close()
     """
-    
+
     def __init__(self):
         """Initialize the Redis client with configuration."""
         self.config = config.get("redis") or {}
@@ -80,7 +78,7 @@ class RedisClient:
         self._pool = None
         self._pubsub = None
         self._connected = False
-        
+
         # Configuration
         self.host = self.config.get("host", "localhost")
         self.port = self.config.get("port", 6379)
@@ -89,21 +87,21 @@ class RedisClient:
         self.ssl = self.config.get("ssl", False)
         self.ssl_cert_reqs = self.config.get("ssl_cert_reqs", "required")
         self.ssl_ca_certs = self.config.get("ssl_ca_certs", "") or None
-        
+
         # Pool settings
         pool_config = self.config.get("connection_pool", {})
         self.max_connections = pool_config.get("max_connections", 50)
         self.timeout = pool_config.get("timeout", 5)
-        
+
         # Key prefix
         self.key_prefix = self.config.get("key_prefix", "plexichat:")
-        
+
         # TTL defaults
         ttl_config = self.config.get("ttl", {})
         self.ttl_session = ttl_config.get("session", 1800)
         self.ttl_presence = ttl_config.get("presence", 300)
         self.ttl_cache = ttl_config.get("cache", 60)
-        
+
         if self.enabled:
             logger.info(f"Redis client initialized (host={self.host}:{self.port}, ssl={self.ssl})")
         else:
@@ -122,7 +120,7 @@ class RedisClient:
         if not self.enabled:
             logger.debug("Redis is disabled, skipping connection")
             return False
-        
+
         try:
             import redis
         except ImportError:
@@ -131,7 +129,7 @@ class RedisClient:
                 "redis is required for Redis support. "
                 "Install with: pip install redis"
             )
-        
+
         try:
             # Build connection pool
             pool_kwargs = {
@@ -144,7 +142,7 @@ class RedisClient:
                 "socket_connect_timeout": self.timeout,
                 "decode_responses": True,
             }
-            
+
             # SSL configuration
             if self.ssl:
                 import ssl as ssl_module
@@ -157,16 +155,16 @@ class RedisClient:
                     pool_kwargs["ssl_cert_reqs"] = ssl_module.CERT_REQUIRED
                 if self.ssl_ca_certs:
                     pool_kwargs["ssl_ca_certs"] = self.ssl_ca_certs
-            
+
             self._pool = redis.ConnectionPool(**pool_kwargs)
             self._client = redis.Redis(connection_pool=self._pool)
-            
+
             # Test connection
             self._client.ping()
             self._connected = True
             logger.info(f"Connected to Redis at {self.host}:{self.port}")
             return True
-            
+
         except redis.ConnectionError as e:
             logger.error(f"Failed to connect to Redis: {e}")
             self._connected = False
@@ -211,7 +209,7 @@ class RedisClient:
         """
         self._ensure_connected()
         full_key = self._prefixed_key(self._sanitize_key(key))
-        
+
         try:
             if ttl:
                 self._client.setex(full_key, ttl, value)
@@ -235,7 +233,7 @@ class RedisClient:
         """
         self._ensure_connected()
         full_key = self._prefixed_key(self._sanitize_key(key))
-        
+
         try:
             value = self._client.get(full_key)
             logger.debug(f"Redis GET: {key} -> {'found' if value else 'miss'}")
@@ -256,7 +254,7 @@ class RedisClient:
         """
         self._ensure_connected()
         full_keys = [self._prefixed_key(self._sanitize_key(k)) for k in keys]
-        
+
         try:
             count = self._client.delete(*full_keys)
             logger.debug(f"Redis DELETE: {len(keys)} keys, {count} deleted")
@@ -269,7 +267,7 @@ class RedisClient:
         """Check if a key exists."""
         self._ensure_connected()
         full_key = self._prefixed_key(self._sanitize_key(key))
-        
+
         try:
             return bool(self._client.exists(full_key))
         except Exception as e:
@@ -280,7 +278,7 @@ class RedisClient:
         """Set expiration on a key."""
         self._ensure_connected()
         full_key = self._prefixed_key(self._sanitize_key(key))
-        
+
         try:
             return bool(self._client.expire(full_key, ttl))
         except Exception as e:
@@ -291,7 +289,7 @@ class RedisClient:
         """Get remaining TTL for a key. Returns -1 if no TTL, -2 if key doesn't exist."""
         self._ensure_connected()
         full_key = self._prefixed_key(self._sanitize_key(key))
-        
+
         try:
             return self._client.ttl(full_key)
         except Exception as e:
@@ -329,7 +327,7 @@ class RedisClient:
         value = self.get(key)
         if value is None:
             return None
-        
+
         try:
             return json.loads(value)
         except (TypeError, ValueError) as e:
@@ -342,7 +340,7 @@ class RedisClient:
         """Set a hash field."""
         self._ensure_connected()
         full_name = self._prefixed_key(self._sanitize_key(name))
-        
+
         try:
             result = self._client.hset(full_name, key, value)
             logger.debug(f"Redis HSET: {name}.{key}")
@@ -355,7 +353,7 @@ class RedisClient:
         """Get a hash field."""
         self._ensure_connected()
         full_name = self._prefixed_key(self._sanitize_key(name))
-        
+
         try:
             return self._client.hget(full_name, key)
         except Exception as e:
@@ -366,7 +364,7 @@ class RedisClient:
         """Get all fields in a hash."""
         self._ensure_connected()
         full_name = self._prefixed_key(self._sanitize_key(name))
-        
+
         try:
             return self._client.hgetall(full_name)
         except Exception as e:
@@ -377,7 +375,7 @@ class RedisClient:
         """Delete hash fields."""
         self._ensure_connected()
         full_name = self._prefixed_key(self._sanitize_key(name))
-        
+
         try:
             return self._client.hdel(full_name, *keys)
         except Exception as e:
@@ -388,7 +386,7 @@ class RedisClient:
         """Set multiple hash fields."""
         self._ensure_connected()
         full_name = self._prefixed_key(self._sanitize_key(name))
-        
+
         try:
             self._client.hset(full_name, mapping=mapping)
             logger.debug(f"Redis HMSET: {name} ({len(mapping)} fields)")
@@ -403,7 +401,7 @@ class RedisClient:
         """Push values to the left of a list."""
         self._ensure_connected()
         full_key = self._prefixed_key(self._sanitize_key(key))
-        
+
         try:
             return self._client.lpush(full_key, *values)
         except Exception as e:
@@ -414,7 +412,7 @@ class RedisClient:
         """Push values to the right of a list."""
         self._ensure_connected()
         full_key = self._prefixed_key(self._sanitize_key(key))
-        
+
         try:
             return self._client.rpush(full_key, *values)
         except Exception as e:
@@ -425,7 +423,7 @@ class RedisClient:
         """Pop from the left of a list."""
         self._ensure_connected()
         full_key = self._prefixed_key(self._sanitize_key(key))
-        
+
         try:
             return self._client.lpop(full_key)
         except Exception as e:
@@ -436,7 +434,7 @@ class RedisClient:
         """Pop from the right of a list."""
         self._ensure_connected()
         full_key = self._prefixed_key(self._sanitize_key(key))
-        
+
         try:
             return self._client.rpop(full_key)
         except Exception as e:
@@ -447,7 +445,7 @@ class RedisClient:
         """Get a range of elements from a list."""
         self._ensure_connected()
         full_key = self._prefixed_key(self._sanitize_key(key))
-        
+
         try:
             return self._client.lrange(full_key, start, end)
         except Exception as e:
@@ -458,7 +456,7 @@ class RedisClient:
         """Get the length of a list."""
         self._ensure_connected()
         full_key = self._prefixed_key(self._sanitize_key(key))
-        
+
         try:
             return self._client.llen(full_key)
         except Exception as e:
@@ -471,7 +469,7 @@ class RedisClient:
         """Add members to a set."""
         self._ensure_connected()
         full_key = self._prefixed_key(self._sanitize_key(key))
-        
+
         try:
             return self._client.sadd(full_key, *values)
         except Exception as e:
@@ -482,7 +480,7 @@ class RedisClient:
         """Remove members from a set."""
         self._ensure_connected()
         full_key = self._prefixed_key(self._sanitize_key(key))
-        
+
         try:
             return self._client.srem(full_key, *values)
         except Exception as e:
@@ -493,7 +491,7 @@ class RedisClient:
         """Get all members of a set."""
         self._ensure_connected()
         full_key = self._prefixed_key(self._sanitize_key(key))
-        
+
         try:
             return self._client.smembers(full_key)
         except Exception as e:
@@ -504,7 +502,7 @@ class RedisClient:
         """Check if value is a member of a set."""
         self._ensure_connected()
         full_key = self._prefixed_key(self._sanitize_key(key))
-        
+
         try:
             return bool(self._client.sismember(full_key, value))
         except Exception as e:
@@ -517,7 +515,7 @@ class RedisClient:
         """Increment a counter."""
         self._ensure_connected()
         full_key = self._prefixed_key(self._sanitize_key(key))
-        
+
         try:
             return self._client.incrby(full_key, amount)
         except Exception as e:
@@ -528,7 +526,7 @@ class RedisClient:
         """Decrement a counter."""
         self._ensure_connected()
         full_key = self._prefixed_key(self._sanitize_key(key))
-        
+
         try:
             return self._client.decrby(full_key, amount)
         except Exception as e:
@@ -550,7 +548,7 @@ class RedisClient:
         """
         self._ensure_connected()
         full_channel = self._prefixed_key(self._sanitize_key(channel))
-        
+
         try:
             count = self._client.publish(full_channel, message)
             logger.debug(f"Redis PUBLISH: {channel} -> {count} subscribers")
@@ -571,7 +569,7 @@ class RedisClient:
         """
         self._ensure_connected()
         full_channels = [self._prefixed_key(self._sanitize_key(c)) for c in channels]
-        
+
         try:
             if not self._pubsub:
                 self._pubsub = self._client.pubsub()
@@ -586,9 +584,9 @@ class RedisClient:
         """Unsubscribe from channels."""
         if not self._pubsub:
             return
-        
+
         full_channels = [self._prefixed_key(self._sanitize_key(c)) for c in channels]
-        
+
         try:
             self._pubsub.unsubscribe(*full_channels)
             logger.debug(f"Redis UNSUBSCRIBE: {channels}")
@@ -602,7 +600,7 @@ class RedisClient:
         """Check if Redis is responsive."""
         if not self._connected or not self._client:
             return False
-        
+
         try:
             return self._client.ping()
         except Exception:
@@ -623,10 +621,10 @@ class RedisClient:
             "port": self.port,
             "latency_ms": None,
         }
-        
+
         if not self.enabled or not self._connected:
             return result
-        
+
         try:
             start = time.time()
             self._client.ping()
@@ -635,7 +633,7 @@ class RedisClient:
             result["latency_ms"] = round(latency, 2)
         except Exception as e:
             result["error"] = str(e)
-        
+
         return result
 
     def flush_prefix(self) -> int:
@@ -647,7 +645,7 @@ class RedisClient:
             Number of keys deleted.
         """
         self._ensure_connected()
-        
+
         try:
             pattern = f"{self.key_prefix}*"
             keys = self._client.keys(pattern)
@@ -670,7 +668,7 @@ class RedisClient:
         """
         self._ensure_connected()
         full_pattern = self._prefixed_key(pattern)
-        
+
         try:
             keys = self._client.keys(full_pattern)
             # Remove prefix from returned keys
@@ -688,14 +686,14 @@ class RedisClient:
             except Exception:
                 pass
             self._pubsub = None
-        
+
         if self._pool:
             try:
                 self._pool.disconnect()
             except Exception:
                 pass
             self._pool = None
-        
+
         self._client = None
         self._connected = False
         logger.info("Redis connection closed")
@@ -725,7 +723,7 @@ def setup() -> Optional[RedisClient]:
     """
     global _default_client
     _default_client = RedisClient()
-    
+
     if _default_client.enabled:
         try:
             _default_client.connect()

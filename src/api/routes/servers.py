@@ -14,7 +14,7 @@ from src.api.schemas.servers import (
     ChannelResponse,
 )
 from src.core.servers.models import ChannelType
-from src.core.database import cached, invalidate_pattern
+from src.core.database import cached
 
 router = APIRouter()
 
@@ -39,7 +39,7 @@ def _channel_to_response(channel) -> ChannelResponse:
     channel_type = getattr(channel, "channel_type", None)
     if channel_type is not None and hasattr(channel_type, "value"):
         channel_type = channel_type.value
-    
+
     return ChannelResponse(
         id=str(channel.id),
         server_id=str(channel.server_id),
@@ -121,7 +121,7 @@ async def get_servers(current_user: TokenInfo = Depends(get_current_user)):
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         servers = _get_servers_cached(current_user.user_id)
         if servers is None:
@@ -156,7 +156,7 @@ async def create_server(
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         server = servers_mod.create_server(
             owner_id=current_user.user_id,
@@ -181,12 +181,12 @@ async def get_server(server_id: str, current_user: TokenInfo = Depends(get_curre
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         sid = int(server_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
-    
+
     try:
         server = servers_mod.get_server(sid, current_user.user_id)
         if not server:
@@ -217,12 +217,12 @@ async def update_server(
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         sid = int(server_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
-    
+
     try:
         update_data = body.model_dump(exclude_unset=True)
         server = servers_mod.update_server(current_user.user_id, sid, **update_data)
@@ -246,12 +246,12 @@ async def delete_server(server_id: str, current_user: TokenInfo = Depends(get_cu
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         sid = int(server_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
-    
+
     try:
         servers_mod.delete_server(current_user.user_id, sid)
         return {"success": True}
@@ -274,12 +274,12 @@ async def get_server_channels(server_id: str, current_user: TokenInfo = Depends(
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         sid = int(server_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
-    
+
     try:
         channels = _get_channels_cached(current_user.user_id, sid)
         if channels is None:
@@ -319,21 +319,21 @@ async def get_server_members(
     servers_mod = api.get_servers()
     auth = api.get_auth()
     presence = api.get_presence()
-    
+
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         sid = int(server_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
-    
+
     try:
         members = servers_mod.get_members(current_user.user_id, sid)
         result = []
         for m in (members or []):
             user_id = getattr(m, "user_id", 0)
-            
+
             # Get user info
             username = None
             avatar_url = None
@@ -345,7 +345,7 @@ async def get_server_members(
                         avatar_url = getattr(user, "avatar_url", None)
                 except Exception:
                     pass
-            
+
             # Get presence info - default to offline if not found
             presence_data = {"status": "offline"}
             if presence:
@@ -358,7 +358,7 @@ async def get_server_members(
                         presence_data = {"status": status or "offline"}
                 except Exception:
                     pass
-            
+
             result.append({
                 "user_id": str(user_id),
                 "username": username or f"User {user_id}",
@@ -394,13 +394,13 @@ async def kick_member(
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         sid = int(server_id)
         mid = int(member_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid ID"}})
-    
+
     try:
         servers_mod.kick_member(current_user.user_id, sid, mid)
         return {"success": True}
@@ -428,14 +428,14 @@ async def assign_role_to_member(
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         sid = int(server_id)
         mid = int(member_id)
         rid = int(role_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid ID"}})
-    
+
     try:
         servers_mod.assign_role(current_user.user_id, sid, mid, rid)
         return {"success": True}
@@ -465,14 +465,14 @@ async def remove_role_from_member(
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         sid = int(server_id)
         mid = int(member_id)
         rid = int(role_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid ID"}})
-    
+
     try:
         servers_mod.remove_role(current_user.user_id, sid, mid, rid)
         return {"success": True}
@@ -497,16 +497,16 @@ async def create_server_channel(
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         sid = int(server_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
-    
+
     name = body.get("name")
     if not name:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Channel name required"}})
-    
+
     try:
         # Build kwargs, only including supported parameters
         kwargs = {
@@ -527,7 +527,7 @@ async def create_server_channel(
             kwargs["category_id"] = int(body["category_id"])
         if body.get("nsfw"):
             kwargs["nsfw"] = body.get("nsfw", False)
-        
+
         channel = servers_mod.create_channel(**kwargs)
         return _channel_to_response(channel)
     except TypeError as e:
@@ -555,12 +555,12 @@ async def get_server_invites(server_id: str, current_user: TokenInfo = Depends(g
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         sid = int(server_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
-    
+
     try:
         invites = servers_mod.get_invites(current_user.user_id, sid)
         return [
@@ -595,12 +595,12 @@ async def get_server_roles(server_id: str, current_user: TokenInfo = Depends(get
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         sid = int(server_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
-    
+
     try:
         roles = servers_mod.get_roles(current_user.user_id, sid)
         return [
@@ -632,18 +632,18 @@ async def create_role(server_id: str, body: dict, current_user: TokenInfo = Depe
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         sid = int(server_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
-    
+
     name = body.get("name", "New Role")
     color = body.get("color")
     permissions = body.get("permissions", {})
     hoist = body.get("hoist", False)
     mentionable = body.get("mentionable", False)
-    
+
     try:
         role = servers_mod.create_role(
             user_id=current_user.user_id,
@@ -679,13 +679,13 @@ async def update_role(server_id: str, role_id: str, body: dict, current_user: To
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         sid = int(server_id)
         rid = int(role_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid ID"}})
-    
+
     try:
         role = servers_mod.update_role(current_user.user_id, sid, rid, **body)
         return {
@@ -713,13 +713,13 @@ async def delete_role(server_id: str, role_id: str, current_user: TokenInfo = De
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         sid = int(server_id)
         rid = int(role_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid ID"}})
-    
+
     try:
         servers_mod.delete_role(current_user.user_id, sid, rid)
         return {"success": True}
@@ -740,12 +740,12 @@ async def get_server_bans(server_id: str, current_user: TokenInfo = Depends(get_
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         sid = int(server_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
-    
+
     try:
         bans = servers_mod.get_bans(current_user.user_id, sid)
         return [
@@ -772,17 +772,17 @@ async def ban_member(server_id: str, user_id: str, body: dict = None, current_us
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         sid = int(server_id)
         uid = int(user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid ID"}})
-    
+
     body = body or {}
     reason = body.get("reason")
     delete_message_days = body.get("delete_message_days", 0)
-    
+
     try:
         servers_mod.ban_member(current_user.user_id, sid, uid, reason=reason, delete_message_days=delete_message_days)
         return {"success": True}
@@ -801,13 +801,13 @@ async def unban_member(server_id: str, user_id: str, current_user: TokenInfo = D
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         sid = int(server_id)
         uid = int(user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid ID"}})
-    
+
     try:
         servers_mod.unban_member(current_user.user_id, sid, uid)
         return {"success": True}
@@ -832,12 +832,12 @@ async def get_audit_log(
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         sid = int(server_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
-    
+
     try:
         entries = servers_mod.get_audit_log(current_user.user_id, sid, limit=limit)
         return [
@@ -871,12 +871,12 @@ async def get_server_webhooks(server_id: str, current_user: TokenInfo = Depends(
     webhooks_mod = api.get_webhooks()
     if not webhooks_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Webhooks module not available"}})
-    
+
     try:
         sid = int(server_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
-    
+
     try:
         webhooks = webhooks_mod.get_server_webhooks(current_user.user_id, sid)
         return [
@@ -933,37 +933,37 @@ async def upload_server_icon(
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
-    
+
     try:
         sid = int(server_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
-    
+
     # Check file type
     if file.content_type not in ["image/jpeg", "image/png", "image/gif", "image/webp"]:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid file type. Must be JPEG, PNG, GIF, or WebP"}})
-    
+
     # Check file size against config limit
     content = await file.read()
     max_size = _get_icon_size_limit()
     if len(content) > max_size:
         max_mb = max_size // (1024 * 1024)
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": f"File too large (max {max_mb}MB)"}})
-    
+
     # Generate unique filename
     ext = os.path.splitext(file.filename)[1] if file.filename else '.png'
     unique_name = f"server_{sid}_{uuid.uuid4().hex}{ext}"
-    
+
     # Save to media directory
     media_dir = Path.home() / ".plexichat" / "media" / "icons"
     media_dir.mkdir(parents=True, exist_ok=True)
-    
+
     file_path = media_dir / unique_name
     with open(file_path, "wb") as f:
         f.write(content)
-    
+
     icon_url = f"/api/v1/media/icons/{unique_name}"
-    
+
     # Update server with new icon URL
     try:
         server = servers_mod.update_server(current_user.user_id, sid, icon_url=icon_url)

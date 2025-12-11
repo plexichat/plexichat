@@ -3,10 +3,9 @@ Route decorators for custom rate limits.
 """
 
 import functools
-from typing import Optional, Callable, Any
+from typing import Optional, Callable
 
 from fastapi import Request, HTTPException
-from fastapi.responses import JSONResponse
 
 from .models import RateLimitConfig, BucketType, RateLimitAlgorithm
 

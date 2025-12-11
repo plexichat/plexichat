@@ -2,7 +2,6 @@
 Tests for typing indicators.
 """
 
-import pytest
 import time
 
 

@@ -2,11 +2,9 @@
 
 import pytest
 import time
-from unittest.mock import MagicMock
 
 from src.api.websocket.opcodes import GatewayOpcode, GatewayCloseCode
-from src.api.websocket.connection import Connection, ConnectionState
-from src.api.websocket.session import Session
+from src.api.websocket.connection import Connection
 
 
 class TestResumeHandler:

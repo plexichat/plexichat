@@ -76,9 +76,9 @@ def setup(db, auth_module=None) -> None:
         auth_module: Optional auth module reference for permission checks
     """
     global _manager, _setup_complete
-    
+
     from .manager import MessagingManager
-    
+
     _manager = MessagingManager(db, auth_module)
     _setup_complete = True
 
@@ -483,7 +483,7 @@ def send_system_message(
 __all__ = [
     # Setup
     'setup',
-    
+
     # Exceptions
     'MessagingError',
     'ConversationNotFoundError',
@@ -500,7 +500,7 @@ __all__ = [
     'AttachmentTooLargeError',
     'AttachmentLimitError',
     'RateLimitError',
-    
+
     # Models
     'Message',
     'Conversation',
@@ -514,7 +514,7 @@ __all__ = [
     'MessageStatusType',
     'ParticipantRole',
     'FilterAction',
-    
+
     # Conversations
     'create_dm',
     'create_group',
@@ -523,14 +523,14 @@ __all__ = [
     'update_conversation',
     'delete_conversation',
     'leave_conversation',
-    
+
     # Participants
     'add_participant',
     'remove_participant',
     'update_participant_role',
     'get_participants',
     'mute_conversation',
-    
+
     # Messages
     'send_message',
     'edit_message',
@@ -540,26 +540,26 @@ __all__ = [
     'pin_message',
     'unpin_message',
     'get_pinned_messages',
-    
+
     # Message Status
     'mark_delivered',
     'mark_read',
     'get_unread_count',
     'get_message_status',
-    
+
     # Content Filtering
     'get_user_filter_settings',
     'update_user_filter_settings',
-    
+
     # User Settings
     'get_user_message_settings',
     'update_user_message_settings',
-    
+
     # Attachments
     'add_attachment',
     'get_attachments',
     'delete_attachment',
-    
+
     # System
     'send_system_message',
 ]

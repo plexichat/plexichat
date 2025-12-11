@@ -2,9 +2,7 @@
 Tests for creating embeds with various fields.
 """
 
-import pytest
 from src.core.embeds import (
-    EmbedValidationError,
     EmbedType,
 )
 
@@ -17,7 +15,7 @@ class TestCreateBasicEmbed:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"emb1_{unique_id}",
             email=f"emb1_{unique_id}@example.com",
@@ -37,7 +35,7 @@ class TestCreateBasicEmbed:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"emb2_{unique_id}",
             email=f"emb2_{unique_id}@example.com",
@@ -56,7 +54,7 @@ class TestCreateBasicEmbed:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"emb3_{unique_id}",
             email=f"emb3_{unique_id}@example.com",
@@ -77,7 +75,7 @@ class TestCreateBasicEmbed:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"emb4_{unique_id}",
             email=f"emb4_{unique_id}@example.com",
@@ -97,7 +95,7 @@ class TestCreateBasicEmbed:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"emb5_{unique_id}",
             email=f"emb5_{unique_id}@example.com",
@@ -117,7 +115,7 @@ class TestCreateBasicEmbed:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"emb6_{unique_id}",
             email=f"emb6_{unique_id}@example.com",
@@ -137,7 +135,7 @@ class TestCreateBasicEmbed:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"emb7_{unique_id}",
             email=f"emb7_{unique_id}@example.com",
@@ -161,7 +159,7 @@ class TestCreateEmbedWithSections:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"emb8_{unique_id}",
             email=f"emb8_{unique_id}@example.com",
@@ -182,7 +180,7 @@ class TestCreateEmbedWithSections:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"emb9_{unique_id}",
             email=f"emb9_{unique_id}@example.com",
@@ -206,7 +204,7 @@ class TestCreateEmbedWithSections:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"emb10_{unique_id}",
             email=f"emb10_{unique_id}@example.com",
@@ -227,7 +225,7 @@ class TestCreateEmbedWithSections:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"emb11_{unique_id}",
             email=f"emb11_{unique_id}@example.com",
@@ -253,7 +251,7 @@ class TestCreateEmbedWithSections:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"emb12_{unique_id}",
             email=f"emb12_{unique_id}@example.com",
@@ -274,7 +272,7 @@ class TestCreateEmbedWithSections:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"emb13_{unique_id}",
             email=f"emb13_{unique_id}@example.com",
@@ -300,7 +298,7 @@ class TestCreateEmbedWithSections:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"emb14_{unique_id}",
             email=f"emb14_{unique_id}@example.com",
@@ -325,7 +323,7 @@ class TestCreateFullEmbed:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"emb15_{unique_id}",
             email=f"emb15_{unique_id}@example.com",
@@ -365,7 +363,7 @@ class TestCreateFullEmbed:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"emb16_{unique_id}",
             email=f"emb16_{unique_id}@example.com",
@@ -387,7 +385,7 @@ class TestCreateFullEmbed:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"emb17_{unique_id}",
             email=f"emb17_{unique_id}@example.com",
@@ -403,7 +401,7 @@ class TestCreateFullEmbed:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"emb18_{unique_id}",
             email=f"emb18_{unique_id}@example.com",
@@ -427,7 +425,7 @@ class TestGetEmbed:
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
         unique_id = uuid.uuid4().hex[:8]
-        
+
         user = auth.register(
             username=f"emb19_{unique_id}",
             email=f"emb19_{unique_id}@example.com",

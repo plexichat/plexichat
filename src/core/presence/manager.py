@@ -6,7 +6,7 @@ with proper validation and database interactions.
 """
 
 import time
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict
 
 import utils.config as config
 import utils.logger as logger
@@ -22,10 +22,7 @@ from .models import (
 )
 from .exceptions import (
     UserNotFoundError,
-    InvalidStatusError,
     InvalidActivityError,
-    TypingIndicatorError,
-    PresenceNotFoundError,
 )
 from .schema import create_tables
 
@@ -580,10 +577,10 @@ class PresenceManager:
             return []
 
         online_statuses = [UserStatus.ONLINE.value, UserStatus.IDLE.value, UserStatus.DND.value]
-        
+
         placeholders = ",".join("?" * len(friend_ids))
         status_placeholders = ",".join("?" * len(online_statuses))
-        
+
         rows = self._db.fetch_all(
             f"""SELECT user_id FROM pres_presence 
                 WHERE user_id IN ({placeholders}) 
@@ -613,10 +610,10 @@ class PresenceManager:
 
         member_ids = [m.user_id for m in members]
         online_statuses = [UserStatus.ONLINE.value, UserStatus.IDLE.value, UserStatus.DND.value]
-        
+
         placeholders = ",".join("?" * len(member_ids))
         status_placeholders = ",".join("?" * len(online_statuses))
-        
+
         rows = self._db.fetch_all(
             f"""SELECT user_id FROM pres_presence 
                 WHERE user_id IN ({placeholders}) 

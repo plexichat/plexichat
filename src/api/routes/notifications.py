@@ -5,7 +5,6 @@ Handles user notifications (placeholder for now).
 """
 
 from fastapi import APIRouter, Depends
-from typing import List
 
 from src.api.middleware.authentication import get_current_user, TokenInfo
 
@@ -25,7 +24,7 @@ async def get_notifications(
     """
     # Get user ID from token info
     user_id = getattr(current_user, 'user_id', None) or getattr(current_user, 'id', None)
-    
+
     # Return empty notifications list for now
     return {
         "notifications": [],

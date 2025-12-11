@@ -3,7 +3,7 @@ Soundboard models - Dataclasses for all soundboard-related entities.
 """
 
 from dataclasses import dataclass
-from typing import Optional, Dict
+from typing import Optional
 from enum import Enum
 
 

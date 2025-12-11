@@ -3,7 +3,6 @@ Tests for webhook messages with embeds.
 """
 
 import pytest
-import uuid
 
 
 class TestWebhookEmbeds:

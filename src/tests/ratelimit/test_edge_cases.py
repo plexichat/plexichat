@@ -2,15 +2,11 @@
 Tests for edge cases - concurrent requests, clock skew, etc.
 """
 
-import pytest
 import time
-import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from src.core.ratelimit.models import RateLimitConfig, RateLimitAlgorithm, BucketType
 from src.core.ratelimit.manager import RateLimitManager
-from src.core.ratelimit.storage import MemoryStorage
-from src.core import ratelimit
 
 
 class TestConcurrentRequests:

@@ -5,7 +5,6 @@ Most fixtures are inherited from the root conftest.py.
 This file only contains auth-specific fixtures if needed.
 """
 
-import pytest
 
 
 # Auth-specific fixtures can be added here if needed.

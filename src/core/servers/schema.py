@@ -339,7 +339,7 @@ CREATE INDEX IF NOT EXISTS idx_srv_progress_user ON srv_onboarding_progress(user
 def create_tables(db):
     """Create all server tables."""
     statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
-    
+
     for statement in statements:
         if statement:
             try:
@@ -349,5 +349,5 @@ def create_tables(db):
             except Exception as e:
                 logger.error(f"Failed to execute schema statement: {e}")
                 raise
-    
+
     logger.info("Server tables created successfully")

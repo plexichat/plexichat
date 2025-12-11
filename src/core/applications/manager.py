@@ -27,11 +27,10 @@ from .exceptions import (
     InstallationExistsError,
     WebhookSignatureError,
     RateLimitError,
-    PermissionDeniedError,
 )
 from .schema import create_tables
 from .oauth import OAuth2Flow
-from .oauth.tokens import generate_client_secret, verify_token_hash
+from .oauth.tokens import generate_client_secret
 from .commands import CommandRegistry
 from .interactions import InteractionHandler
 

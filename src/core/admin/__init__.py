@@ -104,7 +104,7 @@ class AdminLoginResult:
 def setup(db, auth_module=None) -> None:
     """Initialize the admin module."""
     global _db, _auth, _setup_complete
-    
+
     _db = db
     _auth = auth_module
     _create_tables()
@@ -115,7 +115,7 @@ def setup(db, auth_module=None) -> None:
 def _create_tables() -> None:
     """Create admin tables if they don't exist."""
     global _db
-    
+
     # Create admin_users table (separate from regular users)
     admin_schema = """
     CREATE TABLE IF NOT EXISTS admin_users (
@@ -132,7 +132,7 @@ def _create_tables() -> None:
     )
     """
     _db.execute(_db.convert_schema(admin_schema) if hasattr(_db, 'convert_schema') else admin_schema)
-    
+
     # Create admin_sessions table
     session_schema = """
     CREATE TABLE IF NOT EXISTS admin_sessions (
@@ -147,7 +147,7 @@ def _create_tables() -> None:
     )
     """
     _db.execute(_db.convert_schema(session_schema) if hasattr(_db, 'convert_schema') else session_schema)
-    
+
     # Ensure feedback table exists
     feedback_schema = """
     CREATE TABLE IF NOT EXISTS feedback (
@@ -165,7 +165,7 @@ def _create_tables() -> None:
     )
     """
     _db.execute(_db.convert_schema(feedback_schema) if hasattr(_db, 'convert_schema') else feedback_schema)
-    
+
     # Create admin_notes table
     notes_schema = """
     CREATE TABLE IF NOT EXISTS admin_notes (
@@ -179,7 +179,7 @@ def _create_tables() -> None:
     )
     """
     _db.execute(_db.convert_schema(notes_schema) if hasattr(_db, 'convert_schema') else notes_schema)
-    
+
     _db.execute("CREATE INDEX IF NOT EXISTS idx_admin_notes_ticket ON admin_notes(ticket_id)")
     _db.execute("CREATE INDEX IF NOT EXISTS idx_admin_sessions_token ON admin_sessions(token)")
 
@@ -193,15 +193,15 @@ def _generate_password(length: int = 24) -> str:
 def _ensure_admin_user() -> None:
     """Ensure admin user exists, create with random password if not."""
     global _db
-    
+
     # Check if admin user exists
     row = _db.fetch_one("SELECT id FROM admin_users WHERE username = ?", ("admin",))
     if row:
         return
-    
+
     # Generate random password
     password = _generate_password()
-    
+
     # Hash password using auth module if available, otherwise use basic hash
     try:
         from src.utils.encryption import hash_password
@@ -209,26 +209,26 @@ def _ensure_admin_user() -> None:
     except ImportError:
         import hashlib
         password_hash = hashlib.sha256(password.encode()).hexdigest()
-    
+
     # Generate snowflake ID
     try:
         from src.utils.encryption import generate_snowflake_id
         admin_id = generate_snowflake_id()
     except ImportError:
         admin_id = int(time.time() * 1000000)
-    
+
     now = int(time.time() * 1000)
-    
+
     # Create admin user
     _db.execute(
         """INSERT INTO admin_users (id, username, password_hash, email, created_at, must_setup_otp)
            VALUES (?, ?, ?, ?, ?, ?)""",
         (admin_id, "admin", password_hash, "admin@example.com", now, 1)
     )
-    
+
     # Save credentials to file
     _save_admin_credentials(password)
-    
+
     logger.info("Created admin user with random password")
 
 
@@ -236,10 +236,10 @@ def _save_admin_credentials(password: str) -> None:
     """Save admin credentials to a secure file."""
     home_dir = Path.home() / ".plexichat"
     creds_file = home_dir / "admin_credentials.txt"
-    
+
     # Ensure directory exists
     home_dir.mkdir(parents=True, exist_ok=True)
-    
+
     content = f"""PlexiChat Admin Credentials
 ============================
 Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}
@@ -256,14 +256,14 @@ IMPORTANT:
 
 Login URL: https://<your-server>:8000/admin
 """
-    
+
     # Write with restricted permissions
     creds_file.write_text(content)
     try:
         os.chmod(creds_file, 0o600)  # Owner read/write only
     except Exception:
         pass  # Windows doesn't support chmod the same way
-    
+
     logger.warning(f"Admin credentials saved to: {creds_file}")
     logger.warning("IMPORTANT: Delete this file after noting the credentials!")
 
@@ -283,24 +283,24 @@ def _get_db():
 def _check_rate_limit(ip: str, max_attempts: int = 5, window_seconds: int = 300, lockout_seconds: int = 900) -> Tuple[bool, Optional[int]]:
     """Check if IP is rate limited. Returns (allowed, seconds_until_unlock)."""
     now = time.time()
-    
+
     # Check lockout
     if ip in _lockouts:
         if now < _lockouts[ip]:
             return False, int(_lockouts[ip] - now)
         else:
             del _lockouts[ip]
-    
+
     # Clean old attempts
     if ip in _login_attempts:
         _login_attempts[ip] = [t for t in _login_attempts[ip] if now - t < window_seconds]
-    
+
     # Check attempt count
     attempts = _login_attempts.get(ip, [])
     if len(attempts) >= max_attempts:
         _lockouts[ip] = now + lockout_seconds
         return False, lockout_seconds
-    
+
     return True, None
 
 
@@ -328,14 +328,14 @@ def _is_otp_required() -> bool:
 def login(username: str, password: str, ip: str = "unknown") -> AdminLoginResult:
     """Authenticate admin user."""
     db = _get_db()
-    
+
     # Get rate limit config
     admin_config = config.get("admin_ui", {})
     rate_config = admin_config.get("rate_limit", {})
     max_attempts = rate_config.get("max_attempts", 5)
     window_seconds = rate_config.get("window_seconds", 300)
     lockout_seconds = rate_config.get("lockout_seconds", 900)
-    
+
     # Check rate limit
     allowed, wait_seconds = _check_rate_limit(ip, max_attempts, window_seconds, lockout_seconds)
     if not allowed:
@@ -343,17 +343,17 @@ def login(username: str, password: str, ip: str = "unknown") -> AdminLoginResult
             success=False,
             error=f"Too many login attempts. Try again in {wait_seconds} seconds."
         )
-    
+
     # Get admin user
     row = db.fetch_one(
         "SELECT id, password_hash, totp_secret, totp_enabled, must_setup_otp FROM admin_users WHERE username = ?",
         (username,)
     )
-    
+
     if not row:
         _record_login_attempt(ip)
         return AdminLoginResult(success=False, error="Invalid credentials")
-    
+
     if isinstance(row, dict):
         admin_id = row["id"]
         password_hash = row["password_hash"]
@@ -364,7 +364,7 @@ def login(username: str, password: str, ip: str = "unknown") -> AdminLoginResult
         admin_id, password_hash, totp_secret, totp_enabled, must_setup_otp = row
         totp_enabled = bool(totp_enabled)
         must_setup_otp = bool(must_setup_otp)
-    
+
     # Verify password
     try:
         from src.utils.encryption import verify_password
@@ -376,23 +376,23 @@ def login(username: str, password: str, ip: str = "unknown") -> AdminLoginResult
         if hashlib.sha256(password.encode()).hexdigest() != password_hash:
             _record_login_attempt(ip)
             return AdminLoginResult(success=False, error="Invalid credentials")
-    
+
     _clear_login_attempts(ip)
-    
+
     # Check if OTP is required by config
     otp_required = _is_otp_required()
-    
+
     # If OTP is not required, skip OTP setup/verification
     if not otp_required:
         # Clear the must_setup_otp flag if it was set
         if must_setup_otp:
             db.execute("UPDATE admin_users SET must_setup_otp = 0 WHERE id = ?", (admin_id,))
-        
+
         # Create session directly
         token = _create_session(admin_id)
         db.execute("UPDATE admin_users SET last_login = ? WHERE id = ?", (int(time.time() * 1000), admin_id))
         return AdminLoginResult(success=True, token=token, user_id=admin_id)
-    
+
     # OTP is required - check if setup is needed (first login)
     if must_setup_otp or (not totp_enabled and not totp_secret):
         # Generate OTP secret
@@ -400,16 +400,16 @@ def login(username: str, password: str, ip: str = "unknown") -> AdminLoginResult
         secret = pyotp.random_base32()
         totp = pyotp.TOTP(secret)
         qr_uri = totp.provisioning_uri(name=username, issuer_name="PlexiChat Admin")
-        
+
         # Store secret temporarily (not enabled yet)
         db.execute(
             "UPDATE admin_users SET totp_secret = ? WHERE id = ?",
             (secret, admin_id)
         )
-        
+
         # Generate challenge token for OTP setup
         challenge = secrets.token_urlsafe(32)
-        
+
         return AdminLoginResult(
             success=True,
             user_id=admin_id,
@@ -418,7 +418,7 @@ def login(username: str, password: str, ip: str = "unknown") -> AdminLoginResult
             otp_qr_uri=qr_uri,
             challenge_token=challenge
         )
-    
+
     # OTP is enabled, require verification
     if totp_enabled:
         challenge = secrets.token_urlsafe(32)
@@ -429,7 +429,7 @@ def login(username: str, password: str, ip: str = "unknown") -> AdminLoginResult
             requires_otp_verify=True,
             challenge_token=challenge
         )
-    
+
     # Should not reach here - OTP should always be required when enabled
     return AdminLoginResult(success=False, error="OTP setup required")
 
@@ -437,53 +437,53 @@ def login(username: str, password: str, ip: str = "unknown") -> AdminLoginResult
 def verify_otp_setup(admin_id: int, code: str) -> AdminLoginResult:
     """Verify OTP code during setup and enable OTP."""
     db = _get_db()
-    
+
     logger.debug(f"verify_otp_setup called with admin_id={admin_id}, code={code}")
-    
+
     row = db.fetch_one(
         "SELECT totp_secret FROM admin_users WHERE id = ?",
         (admin_id,)
     )
-    
+
     logger.debug(f"DB row result: {row}")
-    
+
     if not row:
         logger.warning(f"Admin user {admin_id} not found")
         return AdminLoginResult(success=False, error="Admin user not found")
-    
+
     secret = row["totp_secret"] if isinstance(row, dict) else row[0]
-    
+
     logger.debug(f"Secret found: {bool(secret)}, length: {len(secret) if secret else 0}")
-    
+
     if not secret:
         return AdminLoginResult(success=False, error="OTP not configured")
-    
+
     # Verify code
     import pyotp
     totp = pyotp.TOTP(secret)
     expected = totp.now()
     logger.debug(f"Expected OTP: {expected}, Provided: {code}")
-    
+
     if not totp.verify(code, valid_window=1):
         logger.warning(f"OTP verification failed for admin {admin_id}")
         return AdminLoginResult(success=False, error="Invalid OTP code")
-    
+
     # Enable OTP and clear must_setup flag
     db.execute(
         "UPDATE admin_users SET totp_enabled = 1, must_setup_otp = 0 WHERE id = ?",
         (admin_id,)
     )
-    
+
     # Generate backup codes
     backup_codes = [secrets.token_hex(4).upper() for _ in range(10)]
     db.execute(
         "UPDATE admin_users SET backup_codes = ? WHERE id = ?",
         (",".join(backup_codes), admin_id)
     )
-    
+
     # Create session
     token = _create_session(admin_id)
-    
+
     return AdminLoginResult(
         success=True,
         token=token,
@@ -494,24 +494,24 @@ def verify_otp_setup(admin_id: int, code: str) -> AdminLoginResult:
 def verify_otp(admin_id: int, code: str) -> AdminLoginResult:
     """Verify OTP code for login."""
     db = _get_db()
-    
+
     row = db.fetch_one(
         "SELECT totp_secret, backup_codes FROM admin_users WHERE id = ?",
         (admin_id,)
     )
-    
+
     if not row:
         return AdminLoginResult(success=False, error="Admin user not found")
-    
+
     if isinstance(row, dict):
         secret = row["totp_secret"]
         backup_codes = row["backup_codes"]
     else:
         secret, backup_codes = row
-    
+
     if not secret:
         return AdminLoginResult(success=False, error="OTP not configured")
-    
+
     # Try TOTP code first
     import pyotp
     totp = pyotp.TOTP(secret)
@@ -519,7 +519,7 @@ def verify_otp(admin_id: int, code: str) -> AdminLoginResult:
         token = _create_session(admin_id)
         db.execute("UPDATE admin_users SET last_login = ? WHERE id = ?", (int(time.time() * 1000), admin_id))
         return AdminLoginResult(success=True, token=token, user_id=admin_id)
-    
+
     # Try backup code
     if backup_codes:
         codes = backup_codes.split(",")
@@ -532,43 +532,43 @@ def verify_otp(admin_id: int, code: str) -> AdminLoginResult:
             )
             token = _create_session(admin_id)
             return AdminLoginResult(success=True, token=token, user_id=admin_id)
-    
+
     return AdminLoginResult(success=False, error="Invalid OTP code")
 
 
 def _create_session(admin_id: int, expires_hours: int = 8) -> str:
     """Create admin session and return token."""
     db = _get_db()
-    
+
     token = secrets.token_urlsafe(32)
     now = int(time.time() * 1000)
     expires = now + (expires_hours * 3600 * 1000)
-    
+
     try:
         from src.utils.encryption import generate_snowflake_id
         session_id = generate_snowflake_id()
     except ImportError:
         session_id = int(time.time() * 1000000)
-    
+
     db.execute(
         """INSERT INTO admin_sessions (id, admin_id, token, created_at, expires_at)
            VALUES (?, ?, ?, ?, ?)""",
         (session_id, admin_id, token, now, expires)
     )
-    
+
     return token
 
 
 def validate_session(token: str) -> Optional[int]:
     """Validate admin session token. Returns admin_id or None."""
     db = _get_db()
-    
+
     now = int(time.time() * 1000)
     row = db.fetch_one(
         "SELECT admin_id FROM admin_sessions WHERE token = ? AND expires_at > ?",
         (token, now)
     )
-    
+
     if row:
         return row["admin_id"] if isinstance(row, dict) else row[0]
     return None
@@ -588,7 +588,7 @@ def get_feedback_tickets(
 ) -> List[FeedbackTicket]:
     """Get feedback tickets with optional status filter."""
     db = _get_db()
-    
+
     if status_filter:
         rows = db.fetch_all(
             """SELECT f.id, f.user_id, u.username, f.content, f.category, f.rating,
@@ -612,7 +612,7 @@ def get_feedback_tickets(
                LIMIT ? OFFSET ?""",
             (limit, offset)
         )
-    
+
     tickets = []
     for row in rows:
         if isinstance(row, dict):
@@ -645,7 +645,7 @@ def get_ticket(ticket_id: int) -> Optional[FeedbackTicket]:
     )
     if not row:
         return None
-    
+
     if isinstance(row, dict):
         return FeedbackTicket(
             id=row["id"], user_id=row["user_id"], username=row["username"] or "Unknown",
@@ -663,14 +663,14 @@ def get_ticket(ticket_id: int) -> Optional[FeedbackTicket]:
 def update_ticket_status(ticket_id: int, status: str, admin_id: int) -> bool:
     """Update the status of a feedback ticket."""
     db = _get_db()
-    
+
     valid_statuses = ['open', 'in_progress', 'resolved', 'closed']
     if status not in valid_statuses:
         return False
-    
+
     resolved_at = int(time.time() * 1000) if status in ['resolved', 'closed'] else None
     resolved_by = admin_id if status in ['resolved', 'closed'] else None
-    
+
     db.execute(
         """UPDATE feedback SET status = ?, resolved_at = ?, resolved_by = ?
            WHERE id = ?""",
@@ -682,25 +682,25 @@ def update_ticket_status(ticket_id: int, status: str, admin_id: int) -> bool:
 def add_internal_note(ticket_id: int, admin_id: int, content: str) -> Optional[AdminNote]:
     """Add an internal note to a ticket."""
     db = _get_db()
-    
+
     try:
         from src.utils.encryption import generate_snowflake_id
         note_id = generate_snowflake_id()
     except ImportError:
         note_id = int(time.time() * 1000000)
-    
+
     now = int(time.time() * 1000)
-    
+
     db.execute(
         """INSERT INTO admin_notes (id, ticket_id, admin_id, content, created_at)
            VALUES (?, ?, ?, ?, ?)""",
         (note_id, ticket_id, admin_id, content, now)
     )
-    
+
     # Get admin username
     row = db.fetch_one("SELECT username FROM admin_users WHERE id = ?", (admin_id,))
     username = (row["username"] if isinstance(row, dict) else row[0]) if row else "Unknown"
-    
+
     return AdminNote(
         id=note_id, ticket_id=ticket_id, admin_id=admin_id,
         admin_username=username, content=content, created_at=now
@@ -710,7 +710,7 @@ def add_internal_note(ticket_id: int, admin_id: int, content: str) -> Optional[A
 def get_ticket_notes(ticket_id: int) -> List[AdminNote]:
     """Get all internal notes for a ticket."""
     db = _get_db()
-    
+
     rows = db.fetch_all(
         """SELECT n.id, n.ticket_id, n.admin_id, u.username, n.content, n.created_at
            FROM admin_notes n
@@ -719,7 +719,7 @@ def get_ticket_notes(ticket_id: int) -> List[AdminNote]:
            ORDER BY n.created_at ASC""",
         (ticket_id,)
     )
-    
+
     notes = []
     for row in rows:
         if isinstance(row, dict):
@@ -739,21 +739,21 @@ def get_ticket_notes(ticket_id: int) -> List[AdminNote]:
 def get_ticket_counts() -> Dict[str, int]:
     """Get counts of tickets by status."""
     db = _get_db()
-    
+
     counts = {'open': 0, 'in_progress': 0, 'resolved': 0, 'closed': 0, 'total': 0}
-    
+
     rows = db.fetch_all(
         """SELECT COALESCE(status, 'open') as status, COUNT(*) as count
            FROM feedback GROUP BY COALESCE(status, 'open')"""
     )
-    
+
     for row in rows:
         status = row["status"] if isinstance(row, dict) else row[0]
         count = row["count"] if isinstance(row, dict) else row[1]
         if status in counts:
             counts[status] = count
         counts['total'] += count
-    
+
     return counts
 
 
@@ -761,10 +761,10 @@ def check_host_restriction(client_ip: str, allowed_hosts: List[str]) -> bool:
     """Check if client IP is allowed to access admin UI."""
     if not allowed_hosts:
         return True
-    
+
     # Normalize localhost variations
     localhost_variants = ['127.0.0.1', 'localhost', '::1']
-    
+
     for allowed in allowed_hosts:
         if allowed in localhost_variants and client_ip in localhost_variants:
             return True
@@ -775,7 +775,7 @@ def check_host_restriction(client_ip: str, allowed_hosts: List[str]) -> bool:
             prefix = allowed.split('/')[0].rsplit('.', 1)[0]
             if client_ip.startswith(prefix):
                 return True
-    
+
     return False
 
 
@@ -814,7 +814,7 @@ def get_hash_reports(
 ) -> List[HashReport]:
     """Get hash reports for admin review."""
     db = _get_db()
-    
+
     if status_filter:
         rows = db.fetch_all(
             """SELECT r.id, r.hash_value, r.reporter_id, u.username, r.reason, 
@@ -838,7 +838,7 @@ def get_hash_reports(
                LIMIT ? OFFSET ?""",
             (limit, offset)
         )
-    
+
     reports = []
     for row in rows:
         if isinstance(row, dict):
@@ -856,21 +856,21 @@ def get_hash_reports(
                 status=row[6], reported_at=row[7], reviewed_at=row[8],
                 reviewed_by=row[9], admin_notes=row[10]
             ))
-    
+
     return reports
 
 
 def get_hash_report_counts() -> Dict[str, int]:
     """Get counts of hash reports by status."""
     db = _get_db()
-    
+
     counts = {'pending': 0, 'reviewed': 0, 'blocked': 0, 'cleared': 0, 'total': 0}
-    
+
     try:
         rows = db.fetch_all(
             "SELECT status, COUNT(*) as count FROM media_hash_reports GROUP BY status"
         )
-        
+
         for row in rows:
             status = row["status"] if isinstance(row, dict) else row[0]
             count = row["count"] if isinstance(row, dict) else row[1]
@@ -880,14 +880,14 @@ def get_hash_report_counts() -> Dict[str, int]:
     except Exception:
         # Table may not exist yet
         pass
-    
+
     return counts
 
 
 def get_blocked_hashes(limit: int = 100, offset: int = 0) -> List[BlockedHash]:
     """Get list of blocked hashes."""
     db = _get_db()
-    
+
     try:
         rows = db.fetch_all(
             """SELECT hash_value, reason, blocked_at, blocked_by, auto_blocked
@@ -896,7 +896,7 @@ def get_blocked_hashes(limit: int = 100, offset: int = 0) -> List[BlockedHash]:
                LIMIT ? OFFSET ?""",
             (limit, offset)
         )
-        
+
         result = []
         for row in rows:
             if isinstance(row, dict):
@@ -944,7 +944,7 @@ def review_hash_report(
     """
     db = _get_db()
     now = int(time.time() * 1000)
-    
+
     # Get report
     row = db.fetch_one(
         "SELECT hash_value FROM media_hash_reports WHERE id = ?",
@@ -952,9 +952,9 @@ def review_hash_report(
     )
     if not row:
         return False
-    
+
     hash_value = row["hash_value"] if isinstance(row, dict) else row[0]
-    
+
     if action == "block":
         # Block the hash
         try:
@@ -972,14 +972,14 @@ def review_hash_report(
         status = "cleared"
     else:
         status = "reviewed"
-    
+
     db.execute(
         """UPDATE media_hash_reports 
            SET status = ?, reviewed_at = ?, reviewed_by = ?, admin_notes = ?
            WHERE id = ?""",
         (status, now, admin_id, notes, report_id)
     )
-    
+
     return True
 
 
@@ -1001,7 +1001,7 @@ def block_hash(hash_value: str, reason: str, admin_id: int) -> bool:
     """Manually block a hash."""
     db = _get_db()
     now = int(time.time() * 1000)
-    
+
     try:
         db.execute(
             """INSERT OR REPLACE INTO media_blocked_hashes 

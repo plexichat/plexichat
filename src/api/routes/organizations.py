@@ -11,7 +11,7 @@ Provides endpoints for:
 
 from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 
 import utils.logger as logger
 
@@ -128,14 +128,14 @@ async def get_my_org(current_user: TokenInfo = Depends(get_current_user)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Organizations module not available"}}
         )
-    
+
     try:
         org = orgs.get_user_org(current_user.user_id)
         if not org:
             org = orgs.get_default_org()
-        
+
         members = orgs.get_org_members(org.id)
-        
+
         return OrgResponse(
             id=str(org.id),
             name=org.name,
@@ -166,10 +166,10 @@ async def create_organization(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Organizations module not available"}}
         )
-    
+
     try:
         org = orgs.create_org(body.name, body.display_name, current_user.user_id)
-        
+
         return OrgResponse(
             id=str(org.id),
             name=org.name,
@@ -216,7 +216,7 @@ async def get_organization(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Organizations module not available"}}
         )
-    
+
     try:
         oid = int(org_id)
     except ValueError:
@@ -224,7 +224,7 @@ async def get_organization(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": "Invalid organization ID"}}
         )
-    
+
     try:
         org = orgs.get_org(oid)
         if not org:
@@ -232,7 +232,7 @@ async def get_organization(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={"error": {"code": 404, "message": "Organization not found"}}
             )
-        
+
         # Check if user is member
         member = orgs.get_member(oid, current_user.user_id)
         if not member and not current_user.permissions.get("administrator", False):
@@ -240,9 +240,9 @@ async def get_organization(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={"error": {"code": 403, "message": "Not a member of this organization"}}
             )
-        
+
         members = orgs.get_org_members(oid)
-        
+
         return OrgResponse(
             id=str(org.id),
             name=org.name,
@@ -277,7 +277,7 @@ async def get_org_members(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Organizations module not available"}}
         )
-    
+
     try:
         oid = int(org_id)
     except ValueError:
@@ -285,12 +285,12 @@ async def get_org_members(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": "Invalid organization ID"}}
         )
-    
+
     try:
         _check_org_root(orgs, oid, current_user.user_id)
-        
+
         members = orgs.get_org_members(oid)
-        
+
         return [
             MemberResponse(
                 id=str(m.id),
@@ -325,7 +325,7 @@ async def reset_member_password(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Organizations module not available"}}
         )
-    
+
     try:
         oid = int(org_id)
         uid = int(user_id)
@@ -334,7 +334,7 @@ async def reset_member_password(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": "Invalid ID"}}
         )
-    
+
     try:
         orgs.reset_user_password(current_user.user_id, uid, body.new_password)
         return {"success": True}
@@ -370,7 +370,7 @@ async def lock_member(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Organizations module not available"}}
         )
-    
+
     try:
         uid = int(user_id)
     except ValueError:
@@ -378,7 +378,7 @@ async def lock_member(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": "Invalid user ID"}}
         )
-    
+
     try:
         orgs.lock_user(current_user.user_id, uid)
         return {"success": True}
@@ -409,7 +409,7 @@ async def unlock_member(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Organizations module not available"}}
         )
-    
+
     try:
         uid = int(user_id)
     except ValueError:
@@ -417,7 +417,7 @@ async def unlock_member(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": "Invalid user ID"}}
         )
-    
+
     try:
         orgs.unlock_user(current_user.user_id, uid)
         return {"success": True}
@@ -448,7 +448,7 @@ async def force_logout_member(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Organizations module not available"}}
         )
-    
+
     try:
         uid = int(user_id)
     except ValueError:
@@ -456,7 +456,7 @@ async def force_logout_member(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": "Invalid user ID"}}
         )
-    
+
     try:
         count = orgs.force_logout(current_user.user_id, uid)
         return {"success": True, "sessions_revoked": count}
@@ -487,7 +487,7 @@ async def disinherit_member(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Organizations module not available"}}
         )
-    
+
     try:
         uid = int(user_id)
     except ValueError:
@@ -495,7 +495,7 @@ async def disinherit_member(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": "Invalid user ID"}}
         )
-    
+
     try:
         orgs.disinherit_user(current_user.user_id, uid)
         return {"success": True}
@@ -528,7 +528,7 @@ async def create_invite(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Organizations module not available"}}
         )
-    
+
     try:
         oid = int(org_id)
     except ValueError:
@@ -536,7 +536,7 @@ async def create_invite(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": "Invalid organization ID"}}
         )
-    
+
     try:
         invite = orgs.create_invite(
             oid,
@@ -545,7 +545,7 @@ async def create_invite(
             body.target_username,
             body.expires_hours
         )
-        
+
         return InviteResponse(
             id=str(invite.id),
             org_id=str(invite.org_id),
@@ -590,7 +590,7 @@ async def get_org_invites(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Organizations module not available"}}
         )
-    
+
     try:
         oid = int(org_id)
     except ValueError:
@@ -598,12 +598,12 @@ async def get_org_invites(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": "Invalid organization ID"}}
         )
-    
+
     try:
         _check_org_root(orgs, oid, current_user.user_id)
-        
+
         invites = orgs.get_org_invites(oid, status_filter)
-        
+
         return [
             InviteResponse(
                 id=str(inv.id),
@@ -642,7 +642,7 @@ async def delete_invite(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Organizations module not available"}}
         )
-    
+
     try:
         iid = int(invite_id)
     except ValueError:
@@ -650,7 +650,7 @@ async def delete_invite(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": "Invalid invite ID"}}
         )
-    
+
     try:
         orgs.delete_invite(iid, current_user.user_id)
         return {"success": True}
@@ -686,7 +686,7 @@ async def approve_invite(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Organizations module not available"}}
         )
-    
+
     try:
         iid = int(invite_id)
     except ValueError:
@@ -694,10 +694,10 @@ async def approve_invite(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": "Invalid invite ID"}}
         )
-    
+
     try:
         invite = orgs.approve_invite(iid, current_user.user_id)
-        
+
         return InviteResponse(
             id=str(invite.id),
             org_id=str(invite.org_id),
@@ -740,10 +740,10 @@ async def get_my_pending_invites(current_user: TokenInfo = Depends(get_current_u
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Organizations module not available"}}
         )
-    
+
     try:
         invites = orgs.get_user_pending_invites(current_user.user_id)
-        
+
         return [
             InviteResponse(
                 id=str(inv.id),
@@ -779,7 +779,7 @@ async def accept_my_invite(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Organizations module not available"}}
         )
-    
+
     try:
         iid = int(invite_id)
     except ValueError:
@@ -787,10 +787,10 @@ async def accept_my_invite(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": "Invalid invite ID"}}
         )
-    
+
     try:
         invite = orgs.accept_invite(iid, current_user.user_id)
-        
+
         return InviteResponse(
             id=str(invite.id),
             org_id=str(invite.org_id),
@@ -839,7 +839,7 @@ async def reject_my_invite(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Organizations module not available"}}
         )
-    
+
     try:
         iid = int(invite_id)
     except ValueError:
@@ -847,7 +847,7 @@ async def reject_my_invite(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": "Invalid invite ID"}}
         )
-    
+
     try:
         orgs.reject_invite(iid, current_user.user_id)
         return {"success": True}
@@ -884,7 +884,7 @@ async def get_managed_settings(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Organizations module not available"}}
         )
-    
+
     try:
         oid = int(org_id)
     except ValueError:
@@ -892,12 +892,12 @@ async def get_managed_settings(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": "Invalid organization ID"}}
         )
-    
+
     try:
         _check_org_root(orgs, oid, current_user.user_id)
-        
+
         settings = orgs.get_managed_settings(oid)
-        
+
         return [
             ManagedSettingResponse(
                 key=s.setting_key,
@@ -930,7 +930,7 @@ async def set_managed_setting(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Organizations module not available"}}
         )
-    
+
     try:
         oid = int(org_id)
     except ValueError:
@@ -938,10 +938,10 @@ async def set_managed_setting(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": "Invalid organization ID"}}
         )
-    
+
     try:
         setting = orgs.set_managed_setting(oid, current_user.user_id, key, body.value, body.locked)
-        
+
         return ManagedSettingResponse(
             key=setting.setting_key,
             value=setting.setting_value,
@@ -980,7 +980,7 @@ async def get_server_restrictions(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Organizations module not available"}}
         )
-    
+
     try:
         oid = int(org_id)
     except ValueError:
@@ -988,12 +988,12 @@ async def get_server_restrictions(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": "Invalid organization ID"}}
         )
-    
+
     try:
         _check_org_root(orgs, oid, current_user.user_id)
-        
+
         org = orgs.get_org(oid)
-        
+
         return {
             "default_servers": [str(s) for s in org.default_servers] if org.default_servers else [],
             "allowed_servers": [str(s) for s in org.allowed_servers] if org.allowed_servers else None,
@@ -1022,7 +1022,7 @@ async def update_server_restrictions(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Organizations module not available"}}
         )
-    
+
     try:
         oid = int(org_id)
     except ValueError:
@@ -1030,13 +1030,13 @@ async def update_server_restrictions(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": "Invalid organization ID"}}
         )
-    
+
     try:
         # Convert string IDs to ints
         default_servers = [int(s) for s in body.default_servers] if body.default_servers else None
         allowed_servers = [int(s) for s in body.allowed_servers] if body.allowed_servers else None
         blocked_servers = [int(s) for s in body.blocked_servers] if body.blocked_servers else None
-        
+
         org = orgs.update_server_restrictions(
             oid,
             current_user.user_id,
@@ -1044,7 +1044,7 @@ async def update_server_restrictions(
             allowed_servers,
             blocked_servers
         )
-        
+
         return {
             "default_servers": [str(s) for s in org.default_servers] if org.default_servers else [],
             "allowed_servers": [str(s) for s in org.allowed_servers] if org.allowed_servers else None,
@@ -1075,7 +1075,7 @@ async def get_invite_info(code: str):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Organizations module not available"}}
         )
-    
+
     try:
         invite = orgs.get_invite_by_code(code)
         if not invite:
@@ -1083,7 +1083,7 @@ async def get_invite_info(code: str):
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={"error": {"code": 404, "message": "Invite not found"}}
             )
-        
+
         # Check if expired
         import time
         if invite.expires_at and invite.expires_at < int(time.time()):
@@ -1091,16 +1091,16 @@ async def get_invite_info(code: str):
                 status_code=status.HTTP_410_GONE,
                 detail={"error": {"code": 410, "message": "Invite has expired"}}
             )
-        
+
         # Check if already used
         if invite.status != "pending":
             raise HTTPException(
                 status_code=status.HTTP_410_GONE,
                 detail={"error": {"code": 410, "message": f"Invite is {invite.status}"}}
             )
-        
+
         org = orgs.get_org(invite.org_id)
-        
+
         return {
             "invite_type": invite.invite_type,
             "org_name": org.name if org else None,

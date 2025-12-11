@@ -67,7 +67,7 @@ CREATE INDEX IF NOT EXISTS idx_media_proxy_cache_expires ON media_proxy_cache(ex
 def create_tables(db):
     """Create all media tables."""
     statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
-    
+
     for statement in statements:
         if statement:
             try:
@@ -76,5 +76,5 @@ def create_tables(db):
             except Exception as e:
                 logger.error(f"Failed to execute schema statement: {e}")
                 raise
-    
+
     logger.info("Media tables created successfully")

@@ -68,7 +68,7 @@ CREATE INDEX IF NOT EXISTS idx_thread_msg_user ON thread_messages(user_id);
 def create_tables(db):
     """Create all thread tables."""
     statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
-    
+
     for statement in statements:
         if statement:
             try:
@@ -76,5 +76,5 @@ def create_tables(db):
             except Exception as e:
                 logger.error(f"Failed to execute schema statement: {e}")
                 raise
-    
+
     logger.info("Thread tables created successfully")

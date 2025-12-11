@@ -21,7 +21,6 @@ from .models import (
     ChannelCategory,
     Role,
     Member,
-    MemberRole,
     ChannelOverride,
     Invite,
     Ban,
@@ -35,11 +34,9 @@ from .exceptions import (
     ServerNotFoundError,
     ServerAccessDeniedError,
     ChannelNotFoundError,
-    ChannelAccessDeniedError,
     ChannelTypeError,
     CategoryNotFoundError,
     RoleNotFoundError,
-    RoleAccessDeniedError,
     RoleHierarchyError,
     DefaultRoleError,
     MemberNotFoundError,
@@ -64,7 +61,7 @@ from .permissions import (
     can_manage_role,
     can_manage_member,
 )
-from src.core.database import cache_get, cache_set, cache_delete, invalidate_pattern, redis_available
+from src.core.database import cache_get, cache_set, cache_delete, redis_available
 
 
 class ServerManager:
@@ -83,7 +80,7 @@ class ServerManager:
         self._auth = auth_module
         self._messaging = messaging_module
         self._config = self._load_config()
-        
+
         # In-memory caches with TTL (reduces DB queries significantly)
         self._member_cache: Dict[Tuple[int, int], Tuple[Any, float]] = {}
         self._permission_cache: Dict[Tuple[int, int, Optional[int]], Tuple[Dict[str, bool], float]] = {}
@@ -95,7 +92,7 @@ class ServerManager:
         create_tables(db)
 
         logger.info("Server module initialized")
-    
+
     def _cache_get(self, cache: dict, key, default=None):
         """Get value from cache if not expired."""
         if key in cache:
@@ -104,11 +101,11 @@ class ServerManager:
                 return value
             del cache[key]
         return default
-    
+
     def _cache_set(self, cache: dict, key, value):
         """Set value in cache with TTL."""
         cache[key] = (value, time.time() + self._cache_ttl)
-    
+
     def _cache_invalidate(self, cache: dict, key=None):
         """Invalidate cache entry or entire cache."""
         if key is None:
@@ -359,11 +356,11 @@ class ServerManager:
             return None
 
         server = self._row_to_server(row)
-        
+
         # Cache the server data (5 minute TTL)
         if redis_available():
             cache_set(cache_key, self._server_to_dict(server), ttl=300)
-        
+
         return server
 
     def get_servers(self, user_id: int, limit: int = 100) -> List[Server]:
@@ -452,7 +449,7 @@ class ServerManager:
                 server_id,
                 changes,
             )
-            
+
             # Invalidate server cache
             if redis_available():
                 cache_delete(f"server:{server_id}")
@@ -642,7 +639,7 @@ class ServerManager:
         # Check channel cache first (channel data rarely changes)
         cache_key = channel_id
         cached_row = self._cache_get(self._channel_cache, cache_key)
-        
+
         if cached_row is None:
             row = self._db.fetch_one(
                 "SELECT * FROM srv_channels WHERE id = ? AND deleted = 0",
@@ -653,9 +650,9 @@ class ServerManager:
             # Cache the raw row data
             self._cache_set(self._channel_cache, cache_key, dict(row))
             cached_row = dict(row)
-        
+
         server_id = cached_row["server_id"]
-        
+
         # Membership check is already cached in _is_member
         if not self._is_member(server_id, user_id):
             return None
@@ -1168,11 +1165,11 @@ class ServerManager:
         """
         query = "SELECT user_id FROM srv_members WHERE server_id = ?"
         params = [server_id]
-        
+
         if exclude_user_id:
             query += " AND user_id != ?"
             params.append(exclude_user_id)
-        
+
         rows = self._db.fetch_all(query, tuple(params))
         return [row["user_id"] for row in rows]
 
@@ -1314,7 +1311,7 @@ class ServerManager:
             "DELETE FROM srv_members WHERE server_id = ? AND user_id = ?",
             (server_id, member_user_id),
         )
-        
+
         # Invalidate caches for the kicked member
         self._cache_invalidate(self._member_cache, (server_id, member_user_id))
         self._cache_invalidate(self._permission_cache, (member_user_id, server_id, None))
@@ -1381,7 +1378,7 @@ class ServerManager:
                 "DELETE FROM srv_members WHERE server_id = ? AND user_id = ?",
                 (server_id, member_user_id),
             )
-            
+
             # Invalidate caches for the banned member
             self._cache_invalidate(self._member_cache, (server_id, member_user_id))
             for key in list(self._permission_cache.keys()):
@@ -1496,7 +1493,7 @@ class ServerManager:
                VALUES (?, ?, ?, ?, ?)""",
             (mr_id, member.id, role_id, now, user_id),
         )
-        
+
         # Invalidate permission cache for the affected member
         for key in list(self._permission_cache.keys()):
             if key[0] == member_user_id and key[1] == server_id:
@@ -1547,7 +1544,7 @@ class ServerManager:
             "DELETE FROM srv_member_roles WHERE member_id = ? AND role_id = ?",
             (member.id, role_id),
         )
-        
+
         # Invalidate permission cache for the affected member
         for key in list(self._permission_cache.keys()):
             if key[0] == member_user_id and key[1] == server_id:
@@ -1724,7 +1721,7 @@ class ServerManager:
         cached = self._cache_get(self._permission_cache, cache_key)
         if cached is not None:
             return cached
-        
+
         # Check server owner cache first
         owner_id = self._cache_get(self._server_owner_cache, server_id)
         if owner_id is None:
@@ -1760,7 +1757,7 @@ class ServerManager:
             member = self.get_member(server_id, user_id)
             if member:
                 self._cache_set(self._member_cache, member_cache_key, member)
-        
+
         if not member or member is False:
             return {}
 
@@ -2052,7 +2049,7 @@ class ServerManager:
         cached = self._cache_get(self._member_cache, cache_key)
         if cached is not None:
             return cached is not False  # False means not a member
-        
+
         row = self._db.fetch_one(
             "SELECT 1 FROM srv_members WHERE server_id = ? AND user_id = ?",
             (server_id, user_id),

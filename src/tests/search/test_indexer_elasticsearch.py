@@ -29,7 +29,7 @@ except Exception:
     pass
 
 from src.core.search.indexer.elasticsearch import ElasticsearchIndexer
-from src.core.search.models import IndexedMessage, IndexedUser, IndexedServer
+from src.core.search.models import IndexedMessage
 
 
 class ElasticsearchMock:

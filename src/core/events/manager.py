@@ -2,7 +2,7 @@
 Event manager - Core event dispatch coordination.
 """
 
-from typing import Optional, List, Callable, Set
+from typing import Optional, List, Callable
 import threading
 
 import utils.logger as logger

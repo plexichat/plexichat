@@ -1,6 +1,5 @@
 """Tests for event dispatch to connections."""
 
-import pytest
 from src.core import events
 from src.core.events.manager import EventManager
 from src.core.events.types import EventType

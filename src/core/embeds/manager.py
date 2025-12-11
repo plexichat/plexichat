@@ -5,9 +5,7 @@ Handles creating, updating, and managing embeds with proper
 validation, permission checks, and database interactions.
 """
 
-import re
 import time
-import json
 from typing import Optional, List, Dict, Any
 from urllib.parse import urlparse
 
@@ -24,26 +22,18 @@ from .models import (
     EmbedThumbnail,
     EmbedProvider,
     EmbedType,
-    MessageEmbed,
 )
 from .exceptions import (
     EmbedNotFoundError,
     EmbedValidationError,
     EmbedLimitError,
-    EmbedFieldLimitError,
-    EmbedCharacterLimitError,
-    InvalidUrlError,
-    InvalidColorError,
     MessageNotFoundError,
     PermissionDeniedError,
-    EmbedSanitizationError,
 )
 from .schema import create_tables
 from .validator import (
     validate_embed_data,
     validate_url,
-    validate_color,
-    validate_timestamp,
     sanitize_content,
     MAX_EMBEDS_PER_MESSAGE,
     MAX_FIELDS,
@@ -353,7 +343,7 @@ class EmbedManager:
 
         # Update fields - delete existing and re-insert
         self._db.execute("DELETE FROM embed_fields WHERE embed_id = ?", (embed_id,))
-        
+
         for i, field in enumerate(sanitized.get("fields", [])):
             field_id = self._generate_id()
             self._db.execute(
@@ -392,10 +382,10 @@ class EmbedManager:
 
         # Delete fields first
         self._db.execute("DELETE FROM embed_fields WHERE embed_id = ?", (embed_id,))
-        
+
         # Delete message associations
         self._db.execute("DELETE FROM embed_message_embeds WHERE embed_id = ?", (embed_id,))
-        
+
         # Delete embed
         self._db.execute("DELETE FROM embed_embeds WHERE id = ?", (embed_id,))
 
@@ -721,11 +711,11 @@ class EmbedManager:
         """
         validated_url = validate_url(url, "url")
         parsed = urlparse(validated_url)
-        
+
         # Simulate metadata extraction based on domain
         domain = parsed.netloc.lower()
         path = parsed.path
-        
+
         metadata: Dict[str, Any] = {
             "url": validated_url,
             "site_name": domain,
@@ -795,7 +785,7 @@ class EmbedManager:
             "SELECT * FROM embed_fields WHERE embed_id = ? ORDER BY position",
             (row["id"],)
         )
-        
+
         fields = [
             EmbedField(
                 name=f["name"],

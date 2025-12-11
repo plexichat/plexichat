@@ -3,7 +3,6 @@ Tests for server template functionality.
 """
 
 import pytest
-import uuid
 
 
 @pytest.mark.servers

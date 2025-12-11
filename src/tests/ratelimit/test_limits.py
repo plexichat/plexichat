@@ -2,8 +2,6 @@
 Tests for request counting and limit enforcement.
 """
 
-import pytest
-import time
 
 from src.core.ratelimit.models import BucketType, RateLimitConfig, RateLimitAlgorithm
 from src.core.ratelimit.manager import RateLimitManager

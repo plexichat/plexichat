@@ -2,10 +2,8 @@
 Tests for user status management.
 """
 
-import pytest
 from src.core.presence import (
     UserStatus,
-    UserNotFoundError,
 )
 
 

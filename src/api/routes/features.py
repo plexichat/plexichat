@@ -14,7 +14,6 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 
 import utils.logger as logger
-import utils.config as config
 
 from src.api.middleware.authentication import get_current_user, TokenInfo
 
@@ -118,14 +117,14 @@ async def get_user_features(
     Returns feature flags, badges, and tier information.
     """
     _check_admin(current_user)
-    
+
     features = _get_features_module()
     if not features:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Features module not available"}}
         )
-    
+
     try:
         uid = int(user_id)
     except ValueError:
@@ -133,18 +132,18 @@ async def get_user_features(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": "Invalid user ID"}}
         )
-    
+
     if not _user_exists(uid):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": {"code": 404, "message": "User not found"}}
         )
-    
+
     try:
         user_features = features.get_user_features(uid)
         tier = features.get_user_tier(uid)
         tier_limits = features.get_tier_limits(tier)
-        
+
         return UserFeaturesResponse(
             user_id=user_id,
             can_create_org=user_features.can_create_org if user_features else False,
@@ -173,14 +172,14 @@ async def update_user_features(
     Can update feature flags, tier, and expiration.
     """
     _check_admin(current_user)
-    
+
     features = _get_features_module()
     if not features:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Features module not available"}}
         )
-    
+
     try:
         uid = int(user_id)
     except ValueError:
@@ -188,13 +187,13 @@ async def update_user_features(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": "Invalid user ID"}}
         )
-    
+
     if not _user_exists(uid):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": {"code": 404, "message": "User not found"}}
         )
-    
+
     try:
         features.set_user_features(
             user_id=uid,
@@ -204,14 +203,14 @@ async def update_user_features(
             expires_at=body.expires_at,
             notes=body.notes
         )
-        
+
         logger.info(f"Admin {current_user.user_id} updated features for user {uid}")
-        
+
         # Return updated features
         user_features = features.get_user_features(uid)
         tier = features.get_user_tier(uid)
         tier_limits = features.get_tier_limits(tier)
-        
+
         return UserFeaturesResponse(
             user_id=user_id,
             can_create_org=user_features.can_create_org if user_features else False,
@@ -244,14 +243,14 @@ async def set_user_tier(
     Set rate limit tier for a user (admin only).
     """
     _check_admin(current_user)
-    
+
     features = _get_features_module()
     if not features:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Features module not available"}}
         )
-    
+
     try:
         uid = int(user_id)
     except ValueError:
@@ -259,23 +258,23 @@ async def set_user_tier(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": "Invalid user ID"}}
         )
-    
+
     if not _user_exists(uid):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": {"code": 404, "message": "User not found"}}
         )
-    
+
     try:
         features.set_user_tier(uid, current_user.user_id, body.tier, body.expires_at)
-        
+
         logger.info(f"Admin {current_user.user_id} set tier '{body.tier}' for user {uid}")
-        
+
         # Return updated features
         user_features = features.get_user_features(uid)
         tier = features.get_user_tier(uid)
         tier_limits = features.get_tier_limits(tier)
-        
+
         return UserFeaturesResponse(
             user_id=user_id,
             can_create_org=user_features.can_create_org if user_features else False,
@@ -308,14 +307,14 @@ async def add_user_badge(
     Add a badge to a user (admin only).
     """
     _check_admin(current_user)
-    
+
     features = _get_features_module()
     if not features:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Features module not available"}}
         )
-    
+
     try:
         uid = int(user_id)
     except ValueError:
@@ -323,18 +322,18 @@ async def add_user_badge(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": "Invalid user ID"}}
         )
-    
+
     if not _user_exists(uid):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": {"code": 404, "message": "User not found"}}
         )
-    
+
     try:
         badges = features.add_badge(uid, current_user.user_id, badge)
-        
+
         logger.info(f"Admin {current_user.user_id} added badge '{badge}' to user {uid}")
-        
+
         return {"success": True, "badges": badges}
     except Exception as e:
         exc_name = type(e).__name__
@@ -360,14 +359,14 @@ async def remove_user_badge(
     Remove a badge from a user (admin only).
     """
     _check_admin(current_user)
-    
+
     features = _get_features_module()
     if not features:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Features module not available"}}
         )
-    
+
     try:
         uid = int(user_id)
     except ValueError:
@@ -375,18 +374,18 @@ async def remove_user_badge(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": "Invalid user ID"}}
         )
-    
+
     if not _user_exists(uid):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": {"code": 404, "message": "User not found"}}
         )
-    
+
     try:
         badges = features.remove_badge(uid, current_user.user_id, badge)
-        
+
         logger.info(f"Admin {current_user.user_id} removed badge '{badge}' from user {uid}")
-        
+
         return {"success": True, "badges": badges}
     except Exception as e:
         logger.error(f"Failed to remove badge from user {user_id}: {e}")
@@ -402,21 +401,21 @@ async def get_available_tiers(current_user: TokenInfo = Depends(get_current_user
     Get all available rate limit tiers (admin only).
     """
     _check_admin(current_user)
-    
+
     features = _get_features_module()
     if not features:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Features module not available"}}
         )
-    
+
     try:
         tiers = features.get_available_tiers()
         tier_info = {}
         for tier in tiers:
             limits = features.get_tier_limits(tier)
             tier_info[tier] = limits.to_dict()
-        
+
         return {"tiers": tier_info, "default": features.get_default_tier()}
     except Exception as e:
         logger.error(f"Failed to get tiers: {e}")
@@ -432,17 +431,17 @@ async def get_available_badges(current_user: TokenInfo = Depends(get_current_use
     Get all available badges (admin only).
     """
     _check_admin(current_user)
-    
+
     features = _get_features_module()
     if not features:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Features module not available"}}
         )
-    
+
     try:
         from src.core.features.models import Badge, AVAILABLE_BADGES
-        
+
         badges = []
         for badge_name in AVAILABLE_BADGES:
             badge_info = Badge.get_badge_info(badge_name)
@@ -453,7 +452,7 @@ async def get_available_badges(current_user: TokenInfo = Depends(get_current_use
                 "icon": badge_info.icon,
                 "color": badge_info.color
             })
-        
+
         return {"badges": badges}
     except Exception as e:
         logger.error(f"Failed to get badges: {e}")
@@ -478,14 +477,14 @@ async def get_my_features(current_user: TokenInfo = Depends(get_current_user)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Features module not available"}}
         )
-    
+
     try:
         from src.core.features.models import Badge
-        
+
         user_features = features.get_user_features(current_user.user_id)
         tier = features.get_user_tier(current_user.user_id)
         tier_limits = features.get_tier_limits(tier)
-        
+
         badge_names = user_features.badges if user_features else []
         badges = []
         for badge_name in badge_names:
@@ -497,7 +496,7 @@ async def get_my_features(current_user: TokenInfo = Depends(get_current_user)):
                 icon=badge_info.icon,
                 color=badge_info.color
             ))
-        
+
         return PublicFeaturesResponse(
             badges=badges,
             tier=tier,

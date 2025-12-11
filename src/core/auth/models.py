@@ -66,7 +66,7 @@ class User:
     last_login_at: Optional[int] = None
     totp_enabled: bool = False
     public_key: Optional[bytes] = None
-    
+
     # Not stored, only set on specific operations
     password_hash: Optional[str] = field(default=None, repr=False)
     totp_secret_encrypted: Optional[str] = field(default=None, repr=False)
@@ -85,7 +85,7 @@ class Session:
     expires_at: int
     last_activity: int
     revoked: bool = False
-    
+
     # Not stored, only set on creation
     token: Optional[str] = field(default=None, repr=False)
     token_hash: Optional[str] = field(default=None, repr=False)
@@ -101,7 +101,7 @@ class Bot:
     permissions: Dict[str, bool]
     created_at: int
     disabled: bool = False
-    
+
     # Not stored, only set on creation/regeneration
     token: Optional[str] = field(default=None, repr=False)
     token_hash: Optional[str] = field(default=None, repr=False)
@@ -205,13 +205,13 @@ class EmailToken:
     created_at: int
     expires_at: int
     used: bool = False
-    
+
     # Not stored
     token: Optional[str] = field(default=None, repr=False)
     token_hash: Optional[str] = field(default=None, repr=False)
 
 
-@dataclass 
+@dataclass
 class TwoFactorChallenge:
     """Temporary 2FA challenge during login."""
     id: int
@@ -222,7 +222,7 @@ class TwoFactorChallenge:
     ip_address: Optional[str]
     user_agent: Optional[str]
     used: bool = False
-    
+
     # Not stored
     token: Optional[str] = field(default=None, repr=False)
     token_hash: Optional[str] = field(default=None, repr=False)

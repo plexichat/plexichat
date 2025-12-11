@@ -100,7 +100,7 @@ class Message:
     pinned_at: Optional[int] = None
     pinned_by: Optional[int] = None
     metadata: Optional[Dict[str, Any]] = None
-    
+
     # Populated on fetch, not stored directly
     attachments: List["Attachment"] = field(default_factory=list)
     status: Optional[MessageStatusType] = None
@@ -191,7 +191,7 @@ class TextFormat:
     CODE = "`"
     CODE_BLOCK = "```"
     QUOTE = "> "
-    
+
     # Patterns for parsing
     PATTERNS = {
         "bold": r"\*\*(.+?)\*\*",

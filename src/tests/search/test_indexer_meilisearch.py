@@ -29,7 +29,7 @@ except Exception:
     pass
 
 from src.core.search.indexer.meilisearch import MeilisearchIndexer
-from src.core.search.models import IndexedMessage, IndexedUser, IndexedServer
+from src.core.search.models import IndexedMessage
 
 
 class MeilisearchMock:

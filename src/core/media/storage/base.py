@@ -3,12 +3,12 @@ Base storage backend interface.
 """
 
 from abc import ABC, abstractmethod
-from typing import BinaryIO, Optional, Tuple
+from typing import BinaryIO, Tuple
 
 
 class StorageBackendBase(ABC):
     """Abstract base class for storage backends."""
-    
+
     @abstractmethod
     def store(self, file_data: bytes, path: str, content_type: str) -> str:
         """
@@ -23,7 +23,7 @@ class StorageBackendBase(ABC):
             Full storage path or URL
         """
         pass
-    
+
     @abstractmethod
     def store_stream(self, stream: BinaryIO, path: str, content_type: str, size: int) -> str:
         """
@@ -39,7 +39,7 @@ class StorageBackendBase(ABC):
             Full storage path or URL
         """
         pass
-    
+
     @abstractmethod
     def retrieve(self, path: str) -> bytes:
         """
@@ -52,7 +52,7 @@ class StorageBackendBase(ABC):
             Raw file bytes
         """
         pass
-    
+
     @abstractmethod
     def retrieve_stream(self, path: str) -> Tuple[BinaryIO, int]:
         """
@@ -65,7 +65,7 @@ class StorageBackendBase(ABC):
             Tuple of (file-like object, size)
         """
         pass
-    
+
     @abstractmethod
     def delete(self, path: str) -> bool:
         """
@@ -78,7 +78,7 @@ class StorageBackendBase(ABC):
             True if deleted successfully
         """
         pass
-    
+
     @abstractmethod
     def exists(self, path: str) -> bool:
         """
@@ -91,7 +91,7 @@ class StorageBackendBase(ABC):
             True if file exists
         """
         pass
-    
+
     @abstractmethod
     def get_url(self, path: str) -> str:
         """
@@ -104,7 +104,7 @@ class StorageBackendBase(ABC):
             Public URL
         """
         pass
-    
+
     @abstractmethod
     def get_size(self, path: str) -> int:
         """
@@ -117,7 +117,7 @@ class StorageBackendBase(ABC):
             File size in bytes
         """
         pass
-    
+
     def get_metadata(self, path: str) -> dict:
         """
         Get file metadata.

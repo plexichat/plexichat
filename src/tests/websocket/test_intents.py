@@ -1,6 +1,5 @@
 """Tests for gateway intents filtering."""
 
-import pytest
 from src.api.websocket.intents import (
     validate_intents,
     has_privileged_intents,

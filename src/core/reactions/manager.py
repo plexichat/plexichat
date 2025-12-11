@@ -28,7 +28,6 @@ from .exceptions import (
     CustomEmojiNotFoundError,
     ReactionLimitError,
     PermissionDeniedError,
-    UserBlockedError,
     EmojiLimitError,
     EmojiNameExistsError,
     InvalidEmojiNameError,
@@ -135,7 +134,7 @@ class ReactionManager:
         )
         if row:
             return True
-        
+
         # Check if this is a server channel conversation
         conv_row = self._db.fetch_one(
             "SELECT metadata FROM msg_conversations WHERE id = ?",
@@ -157,7 +156,7 @@ class ReactionManager:
                         return member_row is not None
                 except (json.JSONDecodeError, TypeError):
                     pass
-        
+
         return False
 
     def _get_channel_for_conversation(self, conversation_id: int) -> Optional[Dict]:
@@ -293,7 +292,7 @@ class ReactionManager:
             """INSERT INTO react_reactions 
                (id, message_id, user_id, emoji, is_custom, custom_emoji_id, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (reaction_id, message_id, user_id, normalized_emoji, 
+            (reaction_id, message_id, user_id, normalized_emoji,
              1 if is_custom else 0, custom_emoji_id, now)
         )
 
@@ -660,17 +659,17 @@ class ReactionManager:
         """Validate and normalize emoji name."""
         if not name or not name.strip():
             raise InvalidEmojiNameError("Emoji name cannot be empty")
-        
+
         name = name.strip().lower()
         min_len = self._config.get("emoji_min_name_length", 2)
         max_len = self._config.get("emoji_max_name_length", 32)
-        
+
         if len(name) < min_len or len(name) > max_len:
             raise InvalidEmojiNameError(f"Emoji name must be {min_len}-{max_len} characters")
-        
+
         if not re.match(r"^[a-z0-9_]+$", name):
             raise InvalidEmojiNameError("Emoji name can only contain lowercase letters, numbers, and underscores")
-        
+
         return name
 
     def _check_emoji_limits(self, server_id: int, animated: bool) -> None:
@@ -687,7 +686,7 @@ class ReactionManager:
                 "SELECT COUNT(*) as count FROM react_custom_emoji WHERE server_id = ? AND animated = 0",
                 (server_id,)
             )
-        
+
         current = row["count"] if row else 0
         if current >= max_count:
             emoji_type = "animated emojis" if animated else "static emojis"
@@ -734,7 +733,7 @@ class ReactionManager:
                 )
 
         name = self._validate_emoji_name(name)
-        
+
         # Check file size
         max_size = self._config.get("max_emoji_size", 262144)
         if len(image_data) > max_size:
@@ -743,21 +742,21 @@ class ReactionManager:
                 max_size,
                 len(image_data)
             )
-        
+
         # Check content type
         allowed_formats = self._config.get("emoji_allowed_formats", ["image/png", "image/gif", "image/webp"])
         if content_type.lower() not in allowed_formats:
             raise InvalidEmojiFileError(f"Invalid format. Allowed: {', '.join(allowed_formats)}")
-        
+
         # Detect if animated (GIF or animated WebP)
         animated = content_type.lower() == "image/gif"
         if content_type.lower() == "image/webp":
             # Check for animation in WebP
             animated = b"ANIM" in image_data[:100]
-        
+
         # Check limits
         self._check_emoji_limits(server_id, animated)
-        
+
         # Check name uniqueness
         existing = self._db.fetch_one(
             "SELECT 1 FROM react_custom_emoji WHERE server_id = ? AND name = ?",
@@ -770,7 +769,7 @@ class ReactionManager:
         url = ""
         width = None
         height = None
-        
+
         if self._media:
             ext = "gif" if animated else content_type.split("/")[-1]
             filename = f"emoji_{name}.{ext}"
@@ -783,7 +782,7 @@ class ReactionManager:
             except Exception as e:
                 logger.error(f"Failed to upload emoji image: {e}")
                 raise InvalidEmojiFileError(f"Failed to upload emoji: {str(e)}")
-        
+
         now = self._get_timestamp()
         emoji_id = self._generate_id()
 
@@ -836,7 +835,7 @@ class ReactionManager:
 
         if name is not None:
             name = self._validate_emoji_name(name)
-            
+
             # Check uniqueness (excluding current emoji)
             existing = self._db.fetch_one(
                 "SELECT 1 FROM react_custom_emoji WHERE server_id = ? AND name = ? AND id != ?",
@@ -844,14 +843,14 @@ class ReactionManager:
             )
             if existing:
                 raise EmojiNameExistsError(f"Emoji with name '{name}' already exists in this server")
-            
+
             self._db.execute(
                 "UPDATE react_custom_emoji SET name = ? WHERE id = ?",
                 (name, emoji_id)
             )
 
         logger.debug(f"Custom emoji {emoji_id} updated")
-        
+
         result = self.get_custom_emoji(emoji_id)
         assert result is not None
         return result
@@ -963,9 +962,9 @@ class ReactionManager:
         """
         if not message_ids:
             return {}
-        
+
         logger.debug(f"Batch fetching reactions for {len(message_ids)} messages")
-        
+
         # Get blocked users for filtering
         blocked_users = set()
         if self._relationships:
@@ -977,10 +976,10 @@ class ReactionManager:
             )
             for row in rows:
                 blocked_users.add(row["blocker_id"])
-        
+
         # Build query with placeholders
         placeholders = ",".join("?" * len(message_ids))
-        
+
         # Single query to get all reactions grouped by message and emoji
         rows = self._db.fetch_all(
             f"""SELECT message_id, emoji, is_custom, custom_emoji_id, 
@@ -992,13 +991,13 @@ class ReactionManager:
                 ORDER BY message_id, MIN(created_at)""",
             (user_id,) + tuple(message_ids)
         )
-        
+
         # Build result dict
         result: Dict[int, List[Dict[str, Any]]] = {mid: [] for mid in message_ids}
-        
+
         for row in rows:
             msg_id = row["message_id"]
-            
+
             # If we have blocked users, we need to get accurate count excluding them
             if blocked_users:
                 actual_count = self._db.fetch_one(
@@ -1009,14 +1008,14 @@ class ReactionManager:
                 count = actual_count["count"] if actual_count else 0
             else:
                 count = row["count"]
-            
+
             if count > 0:
                 result[msg_id].append({
                     "emoji": row["emoji"],
                     "count": count,
                     "me": bool(row["me"])
                 })
-        
+
         return result
 
     def _row_to_reaction(self, row) -> Reaction:

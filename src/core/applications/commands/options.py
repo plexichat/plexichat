@@ -5,7 +5,7 @@ Command options - Option building and validation.
 import re
 from typing import List, Dict, Any, Tuple, Optional
 
-from ..models import CommandOption, CommandOptionType, CommandChoice
+from ..models import CommandOption, CommandOptionType
 
 
 OPTION_NAME_PATTERN = re.compile(r"^[\w-]{1,32}$")
@@ -56,14 +56,14 @@ def build_option(
             {"name": c["name"], "value": c["value"]}
             for c in choices
         ]
-    
+
     parsed_options = None
     if options:
         parsed_options = [
             build_option(**opt) if isinstance(opt, dict) else opt
             for opt in options
         ]
-    
+
     return CommandOption(
         name=name.lower(),
         description=description,
@@ -92,7 +92,7 @@ def validate_option(option: Dict[str, Any], depth: int = 0) -> Tuple[bool, List[
         Tuple of (valid, issues)
     """
     issues = []
-    
+
     name = option.get("name", "")
     if not name:
         issues.append("Option name is required")
@@ -100,13 +100,13 @@ def validate_option(option: Dict[str, Any], depth: int = 0) -> Tuple[bool, List[
         issues.append(f"Option name exceeds {MAX_OPTION_NAME_LENGTH} characters")
     elif not OPTION_NAME_PATTERN.match(name):
         issues.append(f"Option name '{name}' contains invalid characters")
-    
+
     description = option.get("description", "")
     if not description:
         issues.append(f"Option '{name}' requires a description")
     elif len(description) > MAX_OPTION_DESCRIPTION_LENGTH:
         issues.append(f"Option '{name}' description exceeds {MAX_OPTION_DESCRIPTION_LENGTH} characters")
-    
+
     option_type = option.get("option_type") or option.get("type")
     if option_type is None:
         issues.append(f"Option '{name}' requires a type")
@@ -120,25 +120,25 @@ def validate_option(option: Dict[str, Any], depth: int = 0) -> Tuple[bool, List[
                 issues.append(f"Option '{name}' has invalid type")
         except ValueError:
             issues.append(f"Option '{name}' has invalid type value: {option_type}")
-    
+
     choices = option.get("choices")
     if choices:
         if len(choices) > MAX_CHOICES:
             issues.append(f"Option '{name}' exceeds {MAX_CHOICES} choices")
-        
+
         for i, choice in enumerate(choices):
             if not choice.get("name"):
                 issues.append(f"Option '{name}' choice {i} requires a name")
             elif len(choice["name"]) > MAX_CHOICE_NAME_LENGTH:
                 issues.append(f"Option '{name}' choice {i} name exceeds {MAX_CHOICE_NAME_LENGTH} characters")
-            
+
             if "value" not in choice:
                 issues.append(f"Option '{name}' choice {i} requires a value")
-    
+
     autocomplete = option.get("autocomplete", False)
     if autocomplete and choices:
         issues.append(f"Option '{name}' cannot have both autocomplete and choices")
-    
+
     sub_options = option.get("options")
     if sub_options:
         if depth >= 2:
@@ -146,11 +146,11 @@ def validate_option(option: Dict[str, Any], depth: int = 0) -> Tuple[bool, List[
         else:
             if len(sub_options) > MAX_OPTIONS:
                 issues.append(f"Option '{name}' exceeds {MAX_OPTIONS} sub-options")
-            
+
             for sub_opt in sub_options:
                 sub_valid, sub_issues = validate_option(sub_opt, depth + 1)
                 issues.extend(sub_issues)
-    
+
     return len(issues) == 0, issues
 
 
@@ -165,20 +165,20 @@ def validate_options(options: List[Dict[str, Any]]) -> Tuple[bool, List[str]]:
         Tuple of (valid, issues)
     """
     issues = []
-    
+
     if len(options) > MAX_OPTIONS:
         issues.append(f"Command exceeds {MAX_OPTIONS} options")
-    
+
     names = set()
     for opt in options:
         name = opt.get("name", "").lower()
         if name in names:
             issues.append(f"Duplicate option name: {name}")
         names.add(name)
-        
+
         valid, opt_issues = validate_option(opt)
         issues.extend(opt_issues)
-    
+
     required_ended = False
     for opt in options:
         if opt.get("required", False):
@@ -187,7 +187,7 @@ def validate_options(options: List[Dict[str, Any]]) -> Tuple[bool, List[str]]:
                 break
         else:
             required_ended = True
-    
+
     return len(issues) == 0, issues
 
 
@@ -209,33 +209,33 @@ def options_to_dict(options: List[CommandOption]) -> List[Dict[str, Any]]:
             "type": opt.option_type.value if isinstance(opt.option_type, CommandOptionType) else opt.option_type,
             "required": opt.required,
         }
-        
+
         if opt.choices:
             opt_dict["choices"] = opt.choices
-        
+
         if opt.options:
             opt_dict["options"] = options_to_dict(opt.options)
-        
+
         if opt.channel_types:
             opt_dict["channel_types"] = opt.channel_types
-        
+
         if opt.min_value is not None:
             opt_dict["min_value"] = opt.min_value
-        
+
         if opt.max_value is not None:
             opt_dict["max_value"] = opt.max_value
-        
+
         if opt.min_length is not None:
             opt_dict["min_length"] = opt.min_length
-        
+
         if opt.max_length is not None:
             opt_dict["max_length"] = opt.max_length
-        
+
         if opt.autocomplete:
             opt_dict["autocomplete"] = opt.autocomplete
-        
+
         result.append(opt_dict)
-    
+
     return result
 
 
@@ -256,11 +256,11 @@ def options_from_dict(options_data: List[Dict[str, Any]]) -> List[CommandOption]
             raise ValueError(f"Option {opt_dict.get('name')} missing type")
         if isinstance(option_type, int):
             option_type = CommandOptionType(option_type)
-        
+
         sub_options = None
         if opt_dict.get("options"):
             sub_options = options_from_dict(opt_dict["options"])
-        
+
         result.append(CommandOption(
             name=opt_dict["name"],
             description=opt_dict["description"],
@@ -275,5 +275,5 @@ def options_from_dict(options_data: List[Dict[str, Any]]) -> List[CommandOption]
             max_length=opt_dict.get("max_length"),
             autocomplete=opt_dict.get("autocomplete", False),
         ))
-    
+
     return result

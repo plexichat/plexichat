@@ -48,7 +48,7 @@ CREATE INDEX IF NOT EXISTS idx_webhook_msg_channel ON webhook_messages(channel_i
 def create_tables(db):
     """Create all webhook tables."""
     statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
-    
+
     for statement in statements:
         if statement:
             try:
@@ -57,5 +57,5 @@ def create_tables(db):
             except Exception as e:
                 logger.error(f"Failed to execute schema statement: {e}")
                 raise
-    
+
     logger.info("Webhook tables created successfully")

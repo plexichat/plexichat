@@ -130,21 +130,21 @@ def parse_oauth_token(token: str) -> Optional[dict]:
     """
     if not token:
         return None
-    
+
     parts = token.split(".", 2)
     if len(parts) != 3:
         return None
-    
+
     token_type, token_id, secret = parts
-    
+
     if token_type not in ("auth", "access", "refresh", "int"):
         return None
-    
+
     try:
         token_id = int(token_id)
     except ValueError:
         return None
-    
+
     return {
         "token_type": token_type,
         "id": token_id,

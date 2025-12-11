@@ -25,12 +25,6 @@ from .models import (
     PushPayload,
 )
 from .exceptions import (
-    UserNotFoundError,
-    MessageNotFoundError,
-    ChannelNotFoundError,
-    ServerNotFoundError,
-    InvalidMentionError,
-    PermissionDeniedError,
     NotificationNotFoundError,
 )
 from .schema import create_tables
@@ -781,7 +775,7 @@ class NotificationManager:
                     suppress_roles=cached["suppress_roles"],
                     mobile_push=cached["mobile_push"]
                 )
-        
+
         # Cache miss - fetch from DB
         if server_id:
             row = self._db.fetch_one(
@@ -806,7 +800,7 @@ class NotificationManager:
                 suppress_roles=False,
                 mobile_push=True
             )
-        
+
         # Cache the result (10 minute TTL)
         if redis_available():
             cache_set(cache_key, {
@@ -818,7 +812,7 @@ class NotificationManager:
                 "suppress_roles": settings.suppress_roles,
                 "mobile_push": settings.mobile_push
             }, ttl=600)
-        
+
         return settings
 
     def update_notification_settings(

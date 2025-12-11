@@ -3,7 +3,6 @@ Tests for thread archive functionality.
 """
 
 import pytest
-import time
 from src.core.threads import (
     ThreadState,
     AutoArchiveDuration,

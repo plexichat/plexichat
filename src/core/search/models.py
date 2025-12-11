@@ -3,7 +3,7 @@ Search models - Dataclasses for all search-related entities.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict
 from enum import Enum
 
 
@@ -50,12 +50,12 @@ class ParsedQuery:
     search_terms: List[str] = field(default_factory=list)
     filters: List[QueryFilter] = field(default_factory=list)
     exact_phrases: List[str] = field(default_factory=list)
-    
+
     @property
     def has_filters(self) -> bool:
         """Check if query has any filters."""
         return len(self.filters) > 0
-    
+
     @property
     def search_text(self) -> str:
         """Get combined search terms as text."""
