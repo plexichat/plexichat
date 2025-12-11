@@ -50,6 +50,7 @@ python main.py
 ```
 
 The server will:
+
 - Store data in `~/.plexichat/` (home folder)
 - Start on `http://localhost:8000`
 - API available at `http://localhost:8000/api/v1`
@@ -58,6 +59,7 @@ The server will:
 ## Configuration
 
 Configuration is loaded from (in order):
+
 1. `config/config.yaml`
 2. `~/.plexichat/config/config.yaml`
 
@@ -95,28 +97,33 @@ plexichat/
 ## API Overview
 
 ### Authentication
+
 - `POST /api/v1/auth/register` - Register new user
 - `POST /api/v1/auth/login` - Login
 - `POST /api/v1/auth/2fa` - Complete 2FA
 - `POST /api/v1/auth/logout` - Logout
 
 ### Users
+
 - `GET /api/v1/users/@me` - Get current user
 - `PATCH /api/v1/users/@me` - Update profile
 
 ### Servers & Channels
+
 - `GET /api/v1/servers` - List servers
 - `POST /api/v1/servers` - Create server
 - `GET /api/v1/channels/{id}/messages` - Get messages
 - `POST /api/v1/channels/{id}/messages` - Send message
 
 ### Avatars
+
 - `GET /api/v1/avatars/users/{id}` - Get user avatar (public)
 - `POST /api/v1/avatars/users/@me` - Upload user avatar
 - `GET /api/v1/avatars/servers/{id}` - Get server icon (public)
 - `POST /api/v1/avatars/servers/{id}` - Upload server icon
 
 ### WebSocket Gateway
+
 Connect to `ws://localhost:8000/gateway` for real-time events.
 
 See `docs/` for full API documentation.
@@ -141,4 +148,4 @@ pytest -v
 
 ## Version
 
-Current version: `a.1.0-1` (Alpha)
+Current version: `a.1.0-12` (Alpha)
