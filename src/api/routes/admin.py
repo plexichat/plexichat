@@ -787,6 +787,256 @@ async def unblock_hash(
     return {"success": True}
 
 
+# ==================== User Tier Management ====================
+
+class UserTierUpdate(BaseModel):
+    """Update user tier."""
+    tier: str = Field(..., pattern="^(free|alpha|beta|premium|staff)$")
+
+
+class UserSearchResponse(BaseModel):
+    """User search result."""
+    id: str
+    username: str
+    email: Optional[str]
+    tier: str
+    badges: List[str]
+    created_at: int
+
+
+@router.get("/users/search")
+async def search_users(
+    request: Request,
+    q: str = "",
+    limit: int = 20,
+    db = Depends(get_db)
+):
+    """Search users by username or ID."""
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
+
+    if not q or len(q) < 2:
+        return {"users": []}
+
+    # Search by username or ID
+    try:
+        # Try to parse as ID first
+        user_id = int(q)
+        rows = db.fetch_all(
+            """SELECT id, username, email, tier, badges, created_at 
+               FROM auth_users WHERE id = ? LIMIT ?""",
+            (user_id, limit)
+        )
+    except ValueError:
+        # Search by username
+        rows = db.fetch_all(
+            """SELECT id, username, email, tier, badges, created_at 
+               FROM auth_users WHERE username LIKE ? LIMIT ?""",
+            (f"%{q}%", limit)
+        )
+
+    users = []
+    for row in rows:
+        if isinstance(row, dict):
+            badges = row.get("badges", "") or ""
+            users.append({
+                "id": str(row["id"]),
+                "username": row["username"],
+                "email": row.get("email"),
+                "tier": row.get("tier", "free"),
+                "badges": badges.split(",") if badges else [],
+                "created_at": row["created_at"]
+            })
+        else:
+            badges = row[4] or ""
+            users.append({
+                "id": str(row[0]),
+                "username": row[1],
+                "email": row[2],
+                "tier": row[3] or "free",
+                "badges": badges.split(",") if badges else [],
+                "created_at": row[5]
+            })
+
+    return {"users": users}
+
+
+@router.get("/users/{user_id}")
+async def get_user_details(
+    user_id: str,
+    request: Request,
+    db = Depends(get_db)
+):
+    """Get user details by ID."""
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
+
+    try:
+        uid = int(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user ID")
+
+    row = db.fetch_one(
+        """SELECT id, username, email, tier, badges, created_at, last_login
+           FROM auth_users WHERE id = ?""",
+        (uid,)
+    )
+
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if isinstance(row, dict):
+        badges = row.get("badges", "") or ""
+        return {
+            "id": str(row["id"]),
+            "username": row["username"],
+            "email": row.get("email"),
+            "tier": row.get("tier", "free"),
+            "badges": badges.split(",") if badges else [],
+            "created_at": row["created_at"],
+            "last_login": row.get("last_login")
+        }
+    else:
+        badges = row[4] or ""
+        return {
+            "id": str(row[0]),
+            "username": row[1],
+            "email": row[2],
+            "tier": row[3] or "free",
+            "badges": badges.split(",") if badges else [],
+            "created_at": row[5],
+            "last_login": row[6]
+        }
+
+
+@router.put("/users/{user_id}/tier")
+async def update_user_tier(
+    user_id: str,
+    update: UserTierUpdate,
+    request: Request,
+    db = Depends(get_db)
+):
+    """Update a user's tier."""
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
+
+    try:
+        uid = int(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user ID")
+
+    # Check user exists
+    row = db.fetch_one("SELECT id, username FROM auth_users WHERE id = ?", (uid,))
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    username = row["username"] if isinstance(row, dict) else row[1]
+
+    # Update tier
+    db.execute("UPDATE auth_users SET tier = ? WHERE id = ?", (update.tier, uid))
+
+    logger.info(f"Admin {admin_id} updated user {username} ({uid}) tier to {update.tier}")
+
+    return {"success": True, "user_id": user_id, "tier": update.tier}
+
+
+@router.post("/users/{user_id}/badges/{badge}")
+async def add_user_badge(
+    user_id: str,
+    badge: str,
+    request: Request,
+    db = Depends(get_db)
+):
+    """Add a badge to a user."""
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
+
+    try:
+        uid = int(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user ID")
+
+    # Get current badges
+    row = db.fetch_one("SELECT badges FROM auth_users WHERE id = ?", (uid,))
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    current_badges = (row["badges"] if isinstance(row, dict) else row[0]) or ""
+    badges_list = [b for b in current_badges.split(",") if b]
+
+    if badge not in badges_list:
+        badges_list.append(badge)
+        db.execute("UPDATE auth_users SET badges = ? WHERE id = ?", (",".join(badges_list), uid))
+        logger.info(f"Admin {admin_id} added badge '{badge}' to user {uid}")
+
+    return {"success": True, "badges": badges_list}
+
+
+@router.delete("/users/{user_id}/badges/{badge}")
+async def remove_user_badge(
+    user_id: str,
+    badge: str,
+    request: Request,
+    db = Depends(get_db)
+):
+    """Remove a badge from a user."""
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
+
+    try:
+        uid = int(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user ID")
+
+    # Get current badges
+    row = db.fetch_one("SELECT badges FROM auth_users WHERE id = ?", (uid,))
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    current_badges = (row["badges"] if isinstance(row, dict) else row[0]) or ""
+    badges_list = [b for b in current_badges.split(",") if b]
+
+    if badge in badges_list:
+        badges_list.remove(badge)
+        db.execute("UPDATE auth_users SET badges = ? WHERE id = ?", (",".join(badges_list), uid))
+        logger.info(f"Admin {admin_id} removed badge '{badge}' from user {uid}")
+
+    return {"success": True, "badges": badges_list}
+
+
+@router.get("/tiers")
+async def get_available_tiers(request: Request, db = Depends(get_db)):
+    """Get list of available tiers."""
+    _check_host_restriction(request)
+    _get_admin_from_token(request)
+
+    return {
+        "tiers": [
+            {"id": "free", "name": "Free", "description": "Basic access"},
+            {"id": "alpha", "name": "Alpha", "description": "Alpha tester access"},
+            {"id": "beta", "name": "Beta", "description": "Beta tester access"},
+            {"id": "premium", "name": "Premium", "description": "Premium features"},
+            {"id": "staff", "name": "Staff", "description": "Staff member"}
+        ]
+    }
+
+
+@router.get("/badges")
+async def get_available_badges(request: Request, db = Depends(get_db)):
+    """Get list of available badges."""
+    _check_host_restriction(request)
+    _get_admin_from_token(request)
+
+    badges_config = config.get("user_features", {}).get("available_badges", [])
+
+    return {
+        "badges": badges_config or [
+            "alpha_tester", "early_supporter", "staff", "org_root",
+            "verified", "bug_hunter", "contributor", "moderator", "partner"
+        ]
+    }
+
+
 # ==================== Admin UI HTML ====================
 
 ADMIN_LOGIN_HTML = """
@@ -1004,6 +1254,7 @@ ADMIN_DASHBOARD_HTML = """
                 <button class="tab active" onclick="showTab('tickets', this)">Tickets</button>
                 <button class="tab" onclick="showTab('telemetry', this)">Telemetry</button>
                 <button class="tab" onclick="showTab('hash-reports', this)">Hash Reports</button>
+                <button class="tab" onclick="showTab('user-tiers', this)">User Tiers</button>
             </div>
             <div id="tickets-tab">
                 <table id="tickets-table">
@@ -1106,6 +1357,49 @@ ADMIN_DASHBOARD_HTML = """
                     <thead><tr><th>Endpoint</th><th>Method</th><th>Count</th><th>Avg (ms)</th><th>P50 (ms)</th><th>P95 (ms)</th><th>P99 (ms)</th><th>Error %</th></tr></thead>
                     <tbody></tbody>
                 </table>
+            </div>
+            <div id="user-tiers-tab" style="display:none">
+                <div class="filter-row">
+                    <input type="text" id="user-search" placeholder="Search by username or ID..." style="flex:1;max-width:400px" onkeyup="if(event.key==='Enter')searchUsers()">
+                    <button class="refresh-btn" onclick="searchUsers()">Search</button>
+                </div>
+                <div id="user-search-results" style="margin-bottom:24px"></div>
+                <div id="user-details" style="display:none">
+                    <div class="card" style="margin-bottom:16px">
+                        <h3>USER DETAILS</h3>
+                        <div id="user-info" style="margin-top:12px"></div>
+                    </div>
+                    <div class="card" style="margin-bottom:16px">
+                        <h3>CHANGE TIER</h3>
+                        <div style="display:flex;gap:12px;margin-top:12px;flex-wrap:wrap">
+                            <select id="tier-select" style="padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text)">
+                                <option value="free">Free</option>
+                                <option value="alpha">Alpha</option>
+                                <option value="beta">Beta</option>
+                                <option value="premium">Premium</option>
+                                <option value="staff">Staff</option>
+                            </select>
+                            <button class="refresh-btn" onclick="updateUserTier()">Update Tier</button>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h3>BADGES</h3>
+                        <div id="user-badges" style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"></div>
+                        <div style="display:flex;gap:12px;margin-top:16px;flex-wrap:wrap">
+                            <select id="badge-select" style="padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text)">
+                                <option value="alpha_tester">Alpha Tester</option>
+                                <option value="early_supporter">Early Supporter</option>
+                                <option value="staff">Staff</option>
+                                <option value="verified">Verified</option>
+                                <option value="bug_hunter">Bug Hunter</option>
+                                <option value="contributor">Contributor</option>
+                                <option value="moderator">Moderator</option>
+                                <option value="partner">Partner</option>
+                            </select>
+                            <button class="refresh-btn" onclick="addBadge()" style="background:#4ade80">Add Badge</button>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -1453,6 +1747,7 @@ ADMIN_DASHBOARD_HTML = """
             document.getElementById('tickets-tab').style.display = name === 'tickets' ? 'block' : 'none';
             document.getElementById('telemetry-tab').style.display = name === 'telemetry' ? 'block' : 'none';
             document.getElementById('hash-reports-tab').style.display = name === 'hash-reports' ? 'block' : 'none';
+            document.getElementById('user-tiers-tab').style.display = name === 'user-tiers' ? 'block' : 'none';
             if (name === 'telemetry' && !telemetryData.length) loadTelemetryStats();
             if (name === 'hash-reports') loadHashReports();
         }
@@ -1666,6 +1961,152 @@ ADMIN_DASHBOARD_HTML = """
             } catch (e) {
                 alert('Reset failed: ' + e.message);
             }
+        }
+        
+        // ==================== User Tier Functions ====================
+        let selectedUserId = null;
+        let selectedUserData = null;
+        
+        async function searchUsers() {
+            const query = document.getElementById('user-search').value.trim();
+            if (!query || query.length < 2) {
+                document.getElementById('user-search-results').innerHTML = '<p style="color:#888">Enter at least 2 characters to search</p>';
+                return;
+            }
+            
+            try {
+                const res = await fetch(`/api/v1/admin/users/search?q=${encodeURIComponent(query)}&limit=20`, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!res.ok) throw new Error('Search failed');
+                const data = await res.json();
+                
+                if (!data.users || data.users.length === 0) {
+                    document.getElementById('user-search-results').innerHTML = '<p style="color:#888">No users found</p>';
+                    return;
+                }
+                
+                let html = '<table><thead><tr><th>ID</th><th>Username</th><th>Tier</th><th>Badges</th><th>Actions</th></tr></thead><tbody>';
+                for (const user of data.users) {
+                    const badges = user.badges.length > 0 ? user.badges.join(', ') : '-';
+                    html += `<tr>
+                        <td style="font-family:monospace;font-size:12px">${user.id}</td>
+                        <td>${escapeHtml(user.username)}</td>
+                        <td><span class="status" style="background:var(--accent)">${user.tier}</span></td>
+                        <td style="font-size:12px">${escapeHtml(badges)}</td>
+                        <td><button class="refresh-btn" onclick="selectUser('${user.id}')" style="padding:4px 12px;font-size:12px">Edit</button></td>
+                    </tr>`;
+                }
+                html += '</tbody></table>';
+                document.getElementById('user-search-results').innerHTML = html;
+            } catch (e) {
+                document.getElementById('user-search-results').innerHTML = `<p style="color:var(--bad)">Error: ${e.message}</p>`;
+            }
+        }
+        
+        async function selectUser(userId) {
+            selectedUserId = userId;
+            try {
+                const res = await fetch(`/api/v1/admin/users/${userId}`, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!res.ok) throw new Error('Failed to load user');
+                selectedUserData = await res.json();
+                
+                document.getElementById('user-info').innerHTML = `
+                    <p><strong>ID:</strong> <span style="font-family:monospace">${selectedUserData.id}</span></p>
+                    <p><strong>Username:</strong> ${escapeHtml(selectedUserData.username)}</p>
+                    <p><strong>Email:</strong> ${selectedUserData.email || '-'}</p>
+                    <p><strong>Current Tier:</strong> <span class="status" style="background:var(--accent)">${selectedUserData.tier}</span></p>
+                    <p><strong>Created:</strong> ${new Date(selectedUserData.created_at).toLocaleString()}</p>
+                `;
+                
+                document.getElementById('tier-select').value = selectedUserData.tier;
+                renderUserBadges();
+                document.getElementById('user-details').style.display = 'block';
+            } catch (e) {
+                alert('Error loading user: ' + e.message);
+            }
+        }
+        
+        function renderUserBadges() {
+            const container = document.getElementById('user-badges');
+            if (!selectedUserData.badges || selectedUserData.badges.length === 0) {
+                container.innerHTML = '<span style="color:#888">No badges</span>';
+                return;
+            }
+            container.innerHTML = selectedUserData.badges.map(badge => 
+                `<span class="status" style="background:var(--good);color:#000;cursor:pointer" onclick="removeBadge('${badge}')" title="Click to remove">${badge} ×</span>`
+            ).join('');
+        }
+        
+        async function updateUserTier() {
+            if (!selectedUserId) return;
+            const tier = document.getElementById('tier-select').value;
+            
+            try {
+                const res = await fetch(`/api/v1/admin/users/${selectedUserId}/tier`, {
+                    method: 'PUT',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tier })
+                });
+                if (!res.ok) throw new Error('Failed to update tier');
+                
+                selectedUserData.tier = tier;
+                document.getElementById('user-info').querySelector('.status').textContent = tier;
+                alert('Tier updated successfully!');
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+        
+        async function addBadge() {
+            if (!selectedUserId) return;
+            const badge = document.getElementById('badge-select').value;
+            
+            if (selectedUserData.badges.includes(badge)) {
+                alert('User already has this badge');
+                return;
+            }
+            
+            try {
+                const res = await fetch(`/api/v1/admin/users/${selectedUserId}/badges/${badge}`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!res.ok) throw new Error('Failed to add badge');
+                const data = await res.json();
+                
+                selectedUserData.badges = data.badges;
+                renderUserBadges();
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+        
+        async function removeBadge(badge) {
+            if (!selectedUserId) return;
+            if (!confirm(`Remove badge "${badge}" from this user?`)) return;
+            
+            try {
+                const res = await fetch(`/api/v1/admin/users/${selectedUserId}/badges/${badge}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!res.ok) throw new Error('Failed to remove badge');
+                const data = await res.json();
+                
+                selectedUserData.badges = data.badges;
+                renderUserBadges();
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
         
         function logout() {
