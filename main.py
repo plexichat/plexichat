@@ -29,7 +29,7 @@ import utils.validator as validator
 import utils.version as version
 
 # Global Version Definition
-VERSION = "a.1.0-19"
+VERSION = "a.1.0-20"
 
 
 class PlexiChatServer:
@@ -803,11 +803,13 @@ class PlexiChatServer:
         voice_config = config.get("voice") or {}
         if voice_config.get("enabled", False):
             logger.info("Initializing voice signaling module...")
+            sfu_backend = voice_config.get("sfu_backend", "mediasoup")
             signaling.setup(
                 voice_module=voice,
                 events_module=None,  # TODO: Add events module when available
-                sfu_backend=voice_config.get("sfu_backend", "mediasoup"),
+                sfu_backend=sfu_backend,
                 mediasoup_url=voice_config.get("mediasoup_url", "https://localhost:4443"),
+                mediasoup_origin=voice_config.get("mediasoup_origin", "https://plexichat-app.tail79f345.ts.net:8443"),
                 janus_url=voice_config.get("janus_url", "http://localhost:8088/janus"),
                 stun_urls=voice_config.get("stun_urls", ["stun:stun.l.google.com:19302"]),
                 turn_urls=voice_config.get("turn_urls", []),
@@ -817,8 +819,8 @@ class PlexiChatServer:
                 turn_credential=voice_config.get("turn_credential", ""),
             )
             self._modules['signaling'] = signaling
-            sfu_url = voice_config.get("mediasoup_url") if voice_config.get("sfu_backend") == "mediasoup" else voice_config.get("janus_url")
-            logger.info(f"Voice signaling initialized with {voice_config.get('sfu_backend', 'mediasoup')} backend at {sfu_url}")
+            sfu_url = voice_config.get("mediasoup_url") if sfu_backend in ("mediasoup", "mediasoup-ws") else voice_config.get("janus_url")
+            logger.info(f"Voice signaling initialized with {sfu_backend} backend at {sfu_url}")
             if voice_config.get("turn_urls"):
                 logger.info(f"TURN servers configured: {len(voice_config.get('turn_urls', []))} servers")
             if voice_config.get("log_connections", False):

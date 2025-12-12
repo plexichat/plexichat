@@ -99,6 +99,7 @@ def setup(
     events_module=None,
     sfu_backend: str = "mediasoup",
     mediasoup_url: str = "http://localhost:3000",
+    mediasoup_origin: str = "https://localhost",
     janus_url: str = "http://localhost:8088/janus",
     stun_urls: Optional[List[str]] = None,
     turn_urls: Optional[List[str]] = None,
@@ -113,8 +114,9 @@ def setup(
     Args:
         voice_module: Voice module for state management
         events_module: Events module for dispatching events
-        sfu_backend: SFU backend to use ("mediasoup" or "janus")
-        mediasoup_url: Mediasoup API URL
+        sfu_backend: SFU backend to use ("mediasoup-ws", "mediasoup", or "janus")
+        mediasoup_url: Mediasoup server URL (WebSocket or REST)
+        mediasoup_origin: Origin header for mediasoup-ws CORS
         janus_url: Janus API URL
         stun_urls: List of STUN server URLs
         turn_urls: List of TURN server URLs
@@ -132,6 +134,7 @@ def setup(
         events_module=events_module,
         sfu_backend=sfu_backend,
         mediasoup_url=mediasoup_url,
+        mediasoup_origin=mediasoup_origin,
         janus_url=janus_url,
         stun_urls=stun_urls or ["stun:stun.l.google.com:19302"],
         turn_urls=turn_urls or [],

@@ -2,10 +2,16 @@
 Signaling manager - Core business logic for WebRTC signaling.
 
 Handles voice connections, SDP exchange, ICE relay, and SFU integration.
+
+Supports multiple SFU backends:
+- mediasoup-ws: WebSocket-based adapter for mediasoup-demo server (recommended)
+- mediasoup: REST API adapter for custom mediasoup servers
+- janus: REST API adapter for Janus Gateway
 """
 
 import time
 import secrets
+import asyncio
 from typing import Dict, List, Optional, Any
 
 import utils.logger as logger
@@ -41,8 +47,9 @@ class SignalingManager:
         self,
         voice_module=None,
         events_module=None,
-        sfu_backend: str = "mediasoup",
-        mediasoup_url: str = "http://localhost:3000",
+        sfu_backend: str = "mediasoup-ws",
+        mediasoup_url: str = "wss://localhost:4443",
+        mediasoup_origin: str = "https://localhost",
         janus_url: str = "http://localhost:8088/janus",
         stun_urls: Optional[List[str]] = None,
         turn_urls: Optional[List[str]] = None,
@@ -57,8 +64,9 @@ class SignalingManager:
         Args:
             voice_module: Voice module for state management
             events_module: Events module for dispatching events
-            sfu_backend: SFU backend to use
-            mediasoup_url: Mediasoup API URL
+            sfu_backend: SFU backend to use (mediasoup-ws, mediasoup, janus)
+            mediasoup_url: Mediasoup server URL (WebSocket or REST)
+            mediasoup_origin: Origin header for mediasoup-ws CORS
             janus_url: Janus API URL
             stun_urls: List of STUN server URLs
             turn_urls: List of TURN server URLs
@@ -70,14 +78,34 @@ class SignalingManager:
         self._voice = voice_module
         self._events = events_module
         self._sfu_backend = sfu_backend
+        self._mediasoup_origin = mediasoup_origin
 
-        # Create SFU adapter
-        sfu_url = mediasoup_url if sfu_backend == "mediasoup" else janus_url
+        # Build SFU config based on backend
+        if sfu_backend == "mediasoup-ws":
+            # Convert https:// to wss:// if needed
+            ws_url = mediasoup_url
+            if ws_url.startswith("https://"):
+                ws_url = "wss://" + ws_url[8:]
+            elif ws_url.startswith("http://"):
+                ws_url = "ws://" + ws_url[7:]
+            
+            self._sfu_config = {
+                "backend": "mediasoup-ws",
+                "ws_url": ws_url,
+                "origin": mediasoup_origin,
+            }
+        elif sfu_backend == "mediasoup":
+            self._sfu_config = {
+                "backend": "mediasoup",
+                "api_url": mediasoup_url,
+            }
+        else:
+            self._sfu_config = {
+                "backend": sfu_backend,
+                "api_url": janus_url,
+            }
+
         self._sfu: Optional[SFUAdapter] = None
-        self._sfu_config = {
-            "backend": sfu_backend,
-            "api_url": sfu_url,
-        }
 
         # ICE server builder
         self._ice_builder = ICEServerBuilder(
