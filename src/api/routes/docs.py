@@ -719,14 +719,16 @@ def _markdown_to_html(markdown_content: str, title: str, conf: DocsConfig, curre
     in_table = False
     code_lang = ""
 
+    code_block_id = 0
     for line in lines:
         if line.startswith("```"):
             if not in_code_block:
                 code_lang = line[3:].strip()
-                html_lines.append(f'<pre><code class="language-{code_lang}">')
+                code_block_id += 1
+                html_lines.append(f'<div class="code-block"><button class="copy-btn" data-target="code-{code_block_id}" title="Copy to clipboard">📋</button><pre><code id="code-{code_block_id}" class="language-{code_lang}">')
                 in_code_block = True
             else:
-                html_lines.append("</code></pre>")
+                html_lines.append("</code></pre></div>")
                 in_code_block = False
             continue
 
@@ -821,8 +823,35 @@ def _markdown_to_html(markdown_content: str, title: str, conf: DocsConfig, curre
             border-radius: 8px;
             overflow-x: auto;
             border: 1px solid var(--border-color);
+            margin: 0;
         }}
         pre code {{ padding: 0; background: none; }}
+        .code-block {{
+            position: relative;
+            margin: 1rem 0;
+        }}
+        .copy-btn {{
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            background: var(--border-color);
+            border: none;
+            border-radius: 4px;
+            padding: 0.3rem 0.5rem;
+            cursor: pointer;
+            font-size: 0.85em;
+            opacity: 0.7;
+            transition: opacity 0.2s, background-color 0.2s;
+            z-index: 1;
+        }}
+        .copy-btn:hover {{
+            opacity: 1;
+            background: var(--link-color);
+        }}
+        .copy-btn.copied {{
+            background: #2ecc71;
+            opacity: 1;
+        }}
         table {{
             width: 100%;
             border-collapse: collapse;
@@ -883,6 +912,39 @@ def _markdown_to_html(markdown_content: str, title: str, conf: DocsConfig, curre
         {body}
     </main>
     {footer_html}
+    <script>
+        document.querySelectorAll('.copy-btn').forEach(btn => {{
+            btn.addEventListener('click', async () => {{
+                const targetId = btn.getAttribute('data-target');
+                const codeEl = document.getElementById(targetId);
+                if (codeEl) {{
+                    try {{
+                        await navigator.clipboard.writeText(codeEl.textContent);
+                        btn.textContent = '✓';
+                        btn.classList.add('copied');
+                        setTimeout(() => {{
+                            btn.textContent = '📋';
+                            btn.classList.remove('copied');
+                        }}, 2000);
+                    }} catch (err) {{
+                        // Fallback for older browsers
+                        const range = document.createRange();
+                        range.selectNode(codeEl);
+                        window.getSelection().removeAllRanges();
+                        window.getSelection().addRange(range);
+                        document.execCommand('copy');
+                        window.getSelection().removeAllRanges();
+                        btn.textContent = '✓';
+                        btn.classList.add('copied');
+                        setTimeout(() => {{
+                            btn.textContent = '📋';
+                            btn.classList.remove('copied');
+                        }}, 2000);
+                    }}
+                }}
+            }});
+        }});
+    </script>
 </body>
 </html>"""
 

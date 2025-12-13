@@ -109,6 +109,10 @@ Authorization: Bearer <token>
 | 403 | Permission denied | Missing manage channels permission |
 | 404 | Channel not found | Channel doesn't exist |
 
+---
+
+## Webhooks
+
 ## GET /channels/{channel_id}/webhooks
 
 Get all webhooks for a channel. Requires manage webhooks permission.
@@ -141,6 +145,187 @@ Authorization: Bearer <token>
 |--------|------|-------------|
 | 403 | Permission denied | Missing manage webhooks permission |
 | 404 | Channel not found | Channel doesn't exist |
+
+---
+
+## Invites
+
+## POST /channels/{channel_id}/invites
+
+Create an invite for a channel. Requires create invite permission.
+
+### Headers
+
+```
+Authorization: Bearer <token>
+```
+
+### Request Body
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| max_age | int | No | 86400 | Invite expiration in seconds (0 = never) |
+| max_uses | int | No | 0 | Max uses (0 = unlimited) |
+| temporary | bool | No | false | Grant temporary membership |
+
+### Example Request
+
+```json
+{
+  "max_age": 3600,
+  "max_uses": 10
+}
+```
+
+### Response (200 OK)
+
+```json
+{
+  "code": "abc123",
+  "channel_id": "123456789012345678",
+  "server_id": "234567890123456789",
+  "max_age": 3600,
+  "max_uses": 10,
+  "temporary": false,
+  "uses": 0,
+  "created_at": 1704067200
+}
+```
+
+### Error Responses
+
+| Status | Code | Description |
+|--------|------|-------------|
+| 403 | Permission denied | Missing create invite permission |
+| 404 | Channel not found | Channel doesn't exist |
+
+## GET /channels/invites/{invite_code}
+
+Get invite information without joining.
+
+### Headers
+
+```
+Authorization: Bearer <token>
+```
+
+### Response (200 OK)
+
+```json
+{
+  "code": "abc123",
+  "server_id": "123456789012345678",
+  "server_name": "My Server",
+  "channel_id": "234567890123456789",
+  "inviter_id": "345678901234567890",
+  "uses": 5,
+  "max_uses": 100,
+  "expires_at": 1704153600
+}
+```
+
+### Error Responses
+
+| Status | Code | Description |
+|--------|------|-------------|
+| 404 | Invite not found | Invite doesn't exist or expired |
+
+## POST /channels/invites/{invite_code}
+
+Join a server via invite code.
+
+### Headers
+
+```
+Authorization: Bearer <token>
+```
+
+### Response (200 OK)
+
+```json
+{
+  "success": true,
+  "server_id": "123456789012345678"
+}
+```
+
+### Error Responses
+
+| Status | Code | Description |
+|--------|------|-------------|
+| 403 | Banned | You are banned from this server |
+| 404 | Invite not found | Invite doesn't exist or expired |
+| 409 | Already member | Already a member of this server |
+
+## DELETE /channels/invites/{invite_code}
+
+Delete an invite. Requires manage server permission.
+
+### Headers
+
+```
+Authorization: Bearer <token>
+```
+
+### Response (200 OK)
+
+```json
+{
+  "success": true
+}
+```
+
+---
+
+## Attachments
+
+## POST /channels/{channel_id}/attachments
+
+Upload a file attachment to a channel.
+
+### Headers
+
+```
+Authorization: Bearer <token>
+Content-Type: multipart/form-data
+```
+
+### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| file | file | Yes | File to upload |
+
+### Response (200 OK)
+
+```json
+{
+  "id": "abc123def456",
+  "filename": "image.png",
+  "size": 12345,
+  "content_type": "image/png",
+  "url": "/api/v1/media/attachments/abc123def456"
+}
+```
+
+### File Size Limits
+
+File size limits are based on user tier:
+
+| Tier | Max Size |
+|------|----------|
+| Standard | 10 MB |
+| Alpha | 25 MB |
+| Premium | 100 MB |
+
+### Error Responses
+
+| Status | Code | Description |
+|--------|------|-------------|
+| 400 | File too large | Exceeds tier limit |
+| 404 | Channel not found | Channel doesn't exist |
+
+---
 
 ## Channel Object
 
@@ -190,3 +375,11 @@ Slowmode limits how often users can send messages in a channel.
 | 1-21600 | Seconds between messages |
 
 Maximum slowmode: 6 hours (21600 seconds)
+
+---
+
+## Related Endpoints
+
+- [Messages](messages.md) - Send and manage messages
+- [Servers](servers.md) - Server management
+- [Webhooks](webhooks.md) - Webhook management
