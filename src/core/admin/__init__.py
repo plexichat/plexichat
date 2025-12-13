@@ -107,9 +107,9 @@ def setup(db, auth_module=None) -> None:
 
     _db = db
     _auth = auth_module
+    _setup_complete = True  # Set before _create_tables() since it calls _get_db()
     _create_tables()
     _ensure_admin_user()
-    _setup_complete = True
 
 
 def _create_tables() -> None:
