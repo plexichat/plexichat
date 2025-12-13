@@ -1,269 +1,122 @@
-# WebSocket Gateway Module
+# WebSocket Gateway
 
-WebSocket gateway for real-time event delivery.
+WebSocket gateway implementation for real-time event delivery.
 
-## Features
+## Structure
 
-- Standard opcodes and close codes
-- Connection lifecycle management
-- Session management with resume support
-- Heartbeat monitoring
-- Gateway intents for event filtering
-- zlib-stream compression support
-- Rate limiting per connection
-- Event replay on resume
+| File | Description |
+|------|-------------|
+| `__init__.py` | Module exports and setup functions |
+| `gateway.py` | Main WebSocket handler |
+| `connection.py` | Connection management |
+| `dispatcher.py` | Event dispatching to clients |
+| `handlers.py` | Opcode handlers |
+| `session.py` | Session state management |
+| `opcodes.py` | Opcode definitions |
+| `intents.py` | Gateway intent flags |
+| `compression.py` | Payload compression |
 
-## Setup
+## Key Components
+
+### Gateway (`gateway.py`)
+
+Main WebSocket endpoint handler:
+- Connection acceptance
+- Message routing
+- Heartbeat management
+- Error handling
+
+### Connection (`connection.py`)
+
+Individual connection management:
+- Authentication state
+- Heartbeat tracking
+- Send/receive operations
+- Connection cleanup
+
+### Dispatcher (`dispatcher.py`)
+
+Event broadcasting:
+- User-targeted dispatch
+- Server-wide broadcast
+- Intent filtering
+- Rate limiting
+
+### Session (`session.py`)
+
+Session state:
+- User sessions
+- Resume support
+- Event replay buffer
+
+### Handlers (`handlers.py`)
+
+Opcode-specific handlers:
+- IDENTIFY
+- HEARTBEAT
+- RESUME
+- PRESENCE_UPDATE
+- Voice opcodes
+
+## Usage
+
+### Setup
 
 ```python
-from src.api import websocket
+from src.api.websocket import setup, is_setup
 
 # Initialize gateway
-websocket.setup(
-    auth_module=auth,
-    events_module=events,
-    presence_module=presence,
-    servers_module=servers,
-    heartbeat_interval_ms=45000,
-    session_timeout_ms=60000,
+setup(auth_module, presence_module, ...)
+
+# Check if ready
+if is_setup():
+    # Gateway is ready
+    pass
+```
+
+### Dispatching Events
+
+```python
+from src.api.websocket import get_dispatcher
+from src.core.events.models import Event
+from src.core.events.types import EventType
+
+dispatcher = get_dispatcher()
+
+event = Event(
+    event_type=EventType.MESSAGE_CREATE,
+    data={"id": "123", "content": "Hello"},
+    server_id=server_id,
+    channel_id=channel_id
 )
 
-# Add to FastAPI app
-app.include_router(websocket.get_router())
+# Dispatch to specific users
+await dispatcher.dispatch_event(event, [user_id1, user_id2])
+
+# Dispatch to server members
+await dispatcher.dispatch_to_server(event, server_id)
 ```
 
-## Gateway Opcodes
-
-| Opcode | Name | Direction | Description |
-|--------|------|-----------|-------------|
-| 0 | DISPATCH | Server -> Client | Event dispatch |
-| 1 | HEARTBEAT | Client -> Server | Keep alive |
-| 2 | IDENTIFY | Client -> Server | Authentication |
-| 3 | PRESENCE_UPDATE | Bidirectional | Update/receive presence |
-| 4 | VOICE_STATE_UPDATE | Client -> Server | Voice state |
-| 6 | RESUME | Client -> Server | Resume session |
-| 7 | RECONNECT | Server -> Client | Request reconnect |
-| 9 | INVALID_SESSION | Server -> Client | Session invalid |
-| 10 | HELLO | Server -> Client | Initial handshake |
-| 11 | HEARTBEAT_ACK | Server -> Client | Heartbeat response |
-| 12 | SERVER_STATUS | Server -> Client | Server status update (shutdown/restart) |
-| 13 | VERSION_CHECK | Server -> Client | Version compatibility check |
-
-## Connection Lifecycle
+## Connection Flow
 
 1. Client connects to `/gateway`
-2. Server sends HELLO with heartbeat_interval
-3. Client sends IDENTIFY with token and intents
-4. Server validates token, sends READY event
-5. Client sends HEARTBEAT at interval
-6. Server sends HEARTBEAT_ACK
-7. Server dispatches events to client
+2. Server sends HELLO with heartbeat interval
+3. Client sends IDENTIFY with token
+4. Server validates and sends READY
+5. Client begins heartbeat loop
+6. Server dispatches events as they occur
 
-## Identify Payload
+## Intents
 
-```json
-{
-    "op": 2,
-    "d": {
-        "token": "user_session_token",
-        "intents": 32509,
-        "properties": {
-            "os": "windows",
-            "browser": "chrome",
-            "device": "desktop"
-        },
-        "compress": false
-    }
-}
+Clients specify which events they want via intents:
+
+```python
+from src.api.websocket.intents import GatewayIntents
+
+intents = GatewayIntents.GUILDS | GatewayIntents.GUILD_MESSAGES
 ```
-
-## Gateway Intents
-
-Intents control which events the client receives. Use a bitfield value:
-
-| Intent | Value | Description |
-|--------|-------|-------------|
-| GUILDS | 1 | Server/channel events |
-| GUILD_MEMBERS | 2 | Member events (privileged) |
-| GUILD_BANS | 4 | Ban events |
-| GUILD_EMOJIS | 8 | Emoji events |
-| GUILD_INTEGRATIONS | 16 | Integration events |
-| GUILD_WEBHOOKS | 32 | Webhook events |
-| GUILD_INVITES | 64 | Invite events |
-| GUILD_VOICE_STATES | 128 | Voice state events |
-| GUILD_PRESENCES | 256 | Presence events (privileged) |
-| GUILD_MESSAGES | 512 | Server message events |
-| GUILD_MESSAGE_REACTIONS | 1024 | Server reaction events |
-| GUILD_MESSAGE_TYPING | 2048 | Server typing events |
-| DIRECT_MESSAGES | 4096 | DM message events |
-| DIRECT_MESSAGE_REACTIONS | 8192 | DM reaction events |
-| DIRECT_MESSAGE_TYPING | 16384 | DM typing events |
-| MESSAGE_CONTENT | 32768 | Message content (privileged) |
-
-**Recommended value:** `32509` (all non-privileged intents)
-
-## Resume Payload
-
-```json
-{
-    "op": 6,
-    "d": {
-        "token": "user_session_token",
-        "session_id": "abc123",
-        "seq": 42
-    }
-}
-```
-
-## Close Codes
-
-| Code | Name | Resumable |
-|------|------|-----------|
-| 4000 | Unknown Error | Yes |
-| 4001 | Unknown Opcode | Yes |
-| 4002 | Decode Error | Yes |
-| 4003 | Not Authenticated | Yes |
-| 4004 | Authentication Failed | No |
-| 4005 | Already Authenticated | Yes |
-| 4007 | Invalid Sequence | Yes |
-| 4008 | Rate Limited | Yes |
-| 4009 | Session Timed Out | Yes |
-| 4013 | Invalid Intents | No |
-| 4014 | Disallowed Intents | No |
-| 4015 | Version Outdated | No |
-| 4016 | Server Maintenance | Yes |
-| 4017 | Server Shutdown | Yes |
-
-## Compression
-
-Enable zlib-stream compression by setting `compress: true` in IDENTIFY:
-
-```json
-{
-    "op": 2,
-    "d": {
-        "token": "...",
-        "compress": true
-    }
-}
-```
-
-Compressed messages end with `\x00\x00\xff\xff`.
 
 ## Rate Limiting
 
 - 120 events per 60 seconds per connection
-- Exceeding limit results in close code 4008
-
-## Configuration
-
-```yaml
-gateway:
-  heartbeat_interval_ms: 45000
-  session_timeout_ms: 60000
-  max_connections_per_user: 5
-  rate_limit_per_minute: 120
-```
-
-## Real-Time Presence Updates
-
-The gateway automatically broadcasts presence updates to relevant users when:
-
-1. **User connects** - Status set to "online" and broadcast to friends and server members
-2. **User updates presence** - Status changes broadcast via PRESENCE_UPDATE event
-3. **User disconnects** - Status set to "offline" and broadcast to friends and server members
-
-### PRESENCE_UPDATE Event
-
-Dispatched to friends and server members when a user's presence changes:
-
-```json
-{
-    "op": 0,
-    "t": "PRESENCE_UPDATE",
-    "s": 42,
-    "d": {
-        "user_id": "123456789",
-        "status": "online",
-        "custom_status": "Working on a project",
-        "custom_emoji": ":computer:"
-    }
-}
-```
-
-### Client-Side Handling
-
-Clients should listen for PRESENCE_UPDATE events and update their UI accordingly:
-
-```javascript
-case 'PRESENCE_UPDATE':
-    handlePresenceUpdate(data);
-    // Update friend list presence indicators
-    updateFriendPresence(data.user_id, data.status);
-    break;
-```
-
-### Presence Visibility
-
-- **Invisible users** appear as "offline" to others
-- **Blocked users** see the target as "offline"
-- Users always see their own real presence
-
-## Server Shutdown Handling
-
-The gateway supports graceful shutdown with client notification:
-
-### SERVER_STATUS Opcode (12)
-
-Sent by server before shutdown/restart:
-
-```json
-{
-    "op": 12,
-    "d": {
-        "state": "shutting_down",
-        "message": "Server shutting down",
-        "closing_in_seconds": 2.0
-    }
-}
-```
-
-Possible states:
-- `shutting_down` - Server is shutting down permanently
-- `restarting` - Server will restart shortly
-- `maintenance` - Server entering maintenance mode
-
-### Programmatic Shutdown
-
-```python
-from src.api import websocket
-
-# Broadcast status to all clients
-await websocket.broadcast_server_status({
-    "state": "restarting",
-    "message": "Server update in progress",
-    "estimated_downtime_seconds": 30
-})
-
-# Close all connections gracefully
-await websocket.close_all_connections(
-    close_code=4017,  # SERVER_SHUTDOWN
-    reason="Server shutting down",
-    notify_first=True,
-    grace_period_seconds=2.0
-)
-```
-
-### Client Handling
-
-Clients should:
-1. Listen for opcode 12 (SERVER_STATUS)
-2. Save any pending state
-3. Prepare for reconnection
-4. On close code 4016/4017, attempt reconnection with exponential backoff
-
-## Testing
-
-```bash
-pytest src/tests/websocket/ -v
-```
+- Exceeding limit closes with code 4008

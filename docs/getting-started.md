@@ -1,10 +1,11 @@
 # Getting Started
 
-This guide will help you get started with the PlexiChat API.
+This guide covers server setup, authentication, and making your first API calls.
 
 ## Prerequisites
 
-- A PlexiChat account or bot application
+- Python 3.10+
+- pip package manager
 - HTTP client (curl, Postman, or your preferred library)
 
 ## Server Setup
@@ -17,32 +18,32 @@ pip install -r requirements.txt
 python main.py
 ```
 
+The server starts on `http://localhost:8000` with:
+- REST API at `/api/v1`
+- WebSocket gateway at `/gateway`
+- Interactive docs at `/docs` (Swagger UI)
+- Alternative docs at `/redoc` (ReDoc)
+
 ### Optional: Video Processing
 
 For video metadata extraction (duration, resolution, codec), install ffmpeg:
 
-- **Linux**: `apt install ffmpeg` or `yum install ffmpeg`
-- **macOS**: `brew install ffmpeg`
-- **Windows**: Download from https://ffmpeg.org/download.html and add to PATH
+| Platform | Command |
+|----------|---------|
+| Linux (Debian/Ubuntu) | `apt install ffmpeg` |
+| Linux (RHEL/CentOS) | `yum install ffmpeg` |
+| macOS | `brew install ffmpeg` |
+| Windows | Download from [ffmpeg.org](https://ffmpeg.org/download.html) |
 
-Without ffmpeg/ffprobe, video uploads still work but metadata won't be extracted.
-
-The server will start on `http://localhost:8000` with:
-- REST API at `/api/v1`
-- WebSocket gateway at `/gateway`
-- Swagger docs at `/docs`
+Without ffmpeg, video uploads work but metadata won't be extracted.
 
 ### Configuration
 
 See [Configuration Guide](configuration.md) for detailed setup options.
 
-Data is stored in `~/.plexichat/` by default.
-
 ## Authentication
 
-### User Authentication
-
-1. Register a new account:
+### Register a New Account
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/auth/register \
@@ -54,7 +55,25 @@ curl -X POST http://localhost:8000/api/v1/auth/register \
   }'
 ```
 
-2. Login to get a session token:
+**Response:**
+
+```json
+{
+  "status": "success",
+  "token": "your_session_token_here",
+  "user": {
+    "id": "123456789012345678",
+    "username": "myusername",
+    "email": "user@example.com",
+    "avatar_url": null,
+    "created_at": 1704067200,
+    "email_verified": false,
+    "totp_enabled": false
+  }
+}
+```
+
+### Login
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/auth/login \
@@ -65,19 +84,9 @@ curl -X POST http://localhost:8000/api/v1/auth/login \
   }'
 ```
 
-Response:
-```json
-{
-  "status": "success",
-  "token": "your_session_token_here",
-  "user": {
-    "id": "123456789012345678",
-    "username": "myusername"
-  }
-}
-```
+### Using Your Token
 
-3. Use the token in subsequent requests:
+Include the token in all authenticated requests:
 
 ```bash
 curl http://localhost:8000/api/v1/users/@me \
@@ -86,7 +95,7 @@ curl http://localhost:8000/api/v1/users/@me \
 
 ### Bot Authentication
 
-Bot tokens use the `Bot` prefix instead of `Bearer`:
+Bot tokens use the `Bot` prefix:
 
 ```bash
 curl http://localhost:8000/api/v1/users/@me \
@@ -95,18 +104,22 @@ curl http://localhost:8000/api/v1/users/@me \
 
 ## Two-Factor Authentication
 
-If 2FA is enabled on the account, login returns a challenge:
+### When 2FA is Required
+
+If 2FA is enabled, login returns a challenge:
 
 ```json
 {
   "status": "two_factor_required",
+  "token": null,
+  "user": null,
   "challenge_token": "challenge_token_here",
   "methods": ["totp", "backup_code"],
   "expires_in": 300
 }
 ```
 
-Complete 2FA:
+### Complete 2FA
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/auth/2fa \
@@ -117,23 +130,25 @@ curl -X POST http://localhost:8000/api/v1/auth/2fa \
   }'
 ```
 
-### Enabling 2FA
+### Enable 2FA on Your Account
 
-To enable 2FA on your account:
+**Step 1:** Request 2FA setup
 
 ```bash
-# Step 1: Request 2FA setup (returns QR code)
 curl -X POST http://localhost:8000/api/v1/auth/2fa/enable \
   -H "Authorization: Bearer your_token" \
   -H "Content-Type: application/json" \
   -d '{"password": "your_password"}'
+```
 
-# Response includes:
-# - qr_code: Base64 encoded QR code image
-# - secret: TOTP secret (for manual entry)
-# - backup_codes: Array of backup codes
+Response includes:
+- `secret` - TOTP secret for manual entry
+- `qr_uri` - URI for QR code generation
+- `backup_codes` - One-time recovery codes
 
-# Step 2: Confirm with TOTP code from authenticator app
+**Step 2:** Confirm with authenticator code
+
+```bash
 curl -X POST http://localhost:8000/api/v1/auth/2fa/confirm \
   -H "Authorization: Bearer your_token" \
   -H "Content-Type: application/json" \
@@ -142,39 +157,22 @@ curl -X POST http://localhost:8000/api/v1/auth/2fa/confirm \
 
 ## Version Negotiation
 
-Before making API calls, check version compatibility:
+Check client/server compatibility before making API calls:
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/version/negotiate \
   -H "Content-Type: application/json" \
-  -d '{
-    "client_version": "a.1.0-1"
-  }'
+  -d '{"client_version": "a.1.0-1"}'
 ```
 
-## Making Your First API Call
+## First API Calls
 
-Get your user information:
+### Get Your Profile
 
 ```bash
 curl http://localhost:8000/api/v1/users/@me \
-  -H "Authorization: Bearer your_token_here"
+  -H "Authorization: Bearer your_token"
 ```
-
-Response:
-```json
-{
-  "id": "123456789012345678",
-  "username": "myusername",
-  "email": "user@example.com",
-  "avatar_url": null,
-  "created_at": 1704067200,
-  "email_verified": true,
-  "totp_enabled": false
-}
-```
-
-## Common Operations
 
 ### Create a Server
 
@@ -194,9 +192,7 @@ curl -X POST http://localhost:8000/api/v1/servers \
 curl -X POST http://localhost:8000/api/v1/channels/CHANNEL_ID/messages \
   -H "Authorization: Bearer your_token" \
   -H "Content-Type: application/json" \
-  -d '{
-    "content": "Hello, world!"
-  }'
+  -d '{"content": "Hello, world!"}'
 ```
 
 ### Add a Reaction
@@ -206,11 +202,41 @@ curl -X PUT "http://localhost:8000/api/v1/channels/CHANNEL_ID/messages/MESSAGE_I
   -H "Authorization: Bearer your_token"
 ```
 
-Note: Emoji must be URL-encoded (👍 = %F0%9F%91%8D)
+Note: Emoji must be URL-encoded (👍 = `%F0%9F%91%8D`)
+
+### Update Your Presence
+
+```bash
+curl -X PUT http://localhost:8000/api/v1/users/@me/presence \
+  -H "Authorization: Bearer your_token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status": "online",
+    "custom_status": "Working on PlexiChat"
+  }'
+```
+
+## Password Requirements
+
+Default password policy:
+
+| Requirement | Value |
+|-------------|-------|
+| Minimum length | 12 characters |
+| Uppercase letter | Required |
+| Lowercase letter | Required |
+| Digit | Required |
+| Special character | Required |
+
+Check current requirements:
+
+```bash
+curl http://localhost:8000/api/v1/auth/password-requirements
+```
 
 ## Next Steps
 
-- [Configuration](configuration.md) - Server configuration
-- [REST API Reference](api/index.md) - Explore all endpoints
-- [WebSocket Gateway](websocket/index.md) - Connect for real-time events
-- [Rate Limits](rate-limits.md) - Understand rate limiting
+- [Configuration](configuration.md) - Server configuration options
+- [REST API Reference](api/index.md) - All available endpoints
+- [WebSocket Gateway](websocket/index.md) - Real-time events
+- [Rate Limits](rate-limits.md) - Rate limiting policies

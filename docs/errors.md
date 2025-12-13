@@ -15,8 +15,8 @@ All API errors follow a consistent format.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| code | int/string | Error code |
-| message | string | Human-readable message |
+| code | int/string | Error code (HTTP status or custom) |
+| message | string | Human-readable error message |
 
 ## HTTP Status Codes
 
@@ -32,8 +32,9 @@ All API errors follow a consistent format.
 | 426 | Upgrade Required - Client update needed |
 | 429 | Too Many Requests - Rate limited |
 | 500 | Internal Server Error |
+| 503 | Service Unavailable - Module not available |
 
-## Common Error Codes
+## Common Error Messages
 
 ### Authentication Errors (401)
 
@@ -42,7 +43,9 @@ All API errors follow a consistent format.
 | Authentication required | No token provided |
 | Invalid token | Token is malformed or invalid |
 | Token expired | Token has expired |
-| Token revoked | Token was revoked |
+| Invalid credentials | Wrong username/password |
+| Invalid code | Wrong 2FA code |
+| Expired token | Challenge token expired |
 
 ### Permission Errors (403)
 
@@ -50,8 +53,9 @@ All API errors follow a consistent format.
 |---------|-------------|
 | Access denied | No access to resource |
 | Permission denied | Missing required permission |
-| Account locked | Too many failed attempts |
-| Email not verified | Email verification required |
+| Account locked | Too many failed login attempts |
+| Admin access required | Admin permission needed |
+| Cannot message this user | User has blocked you |
 
 ### Validation Errors (400)
 
@@ -60,8 +64,12 @@ All API errors follow a consistent format.
 | Invalid input | Request validation failed |
 | Invalid user ID | ID format invalid |
 | Invalid channel ID | ID format invalid |
+| Invalid server ID | ID format invalid |
+| Invalid message ID | ID format invalid |
 | Weak password | Password doesn't meet requirements |
-| Empty message | Message has no content |
+| Message must have content... | Empty message |
+| File too large | Upload exceeds size limit |
+| Invalid file type | Unsupported file format |
 
 ### Resource Errors (404)
 
@@ -71,6 +79,21 @@ All API errors follow a consistent format.
 | Server not found | Server doesn't exist |
 | Channel not found | Channel doesn't exist |
 | Message not found | Message doesn't exist |
+| Webhook not found | Webhook doesn't exist |
+| Session not found | Session doesn't exist |
+| Friend request not found | No pending request |
+| Relationship not found | No relationship exists |
+| Setting not found | Setting key doesn't exist |
+
+### Conflict Errors (409)
+
+| Message | Description |
+|---------|-------------|
+| Already exists | Resource already exists |
+| Username already taken | Username is in use |
+| Email already taken | Email is in use |
+| Already a member | Already in server |
+| 2FA is already enabled | 2FA already active |
 
 ## Version Errors
 
@@ -88,8 +111,6 @@ Version-related errors include additional fields:
   }
 }
 ```
-
-### Version Error Codes
 
 | Code | HTTP Status | Description |
 |------|-------------|-------------|
@@ -112,43 +133,64 @@ Version-related errors include additional fields:
 |-------|-------------|
 | retry_after | Seconds to wait before retrying |
 
-## Conflict Errors (409)
-
-| Message | Description |
-|---------|-------------|
-| Already exists | Resource already exists |
-| Username taken | Username is in use |
-| Email taken | Email is in use |
-| Already friends | Already in relationship |
-| Already blocked | User already blocked |
-
 ## Error Handling Best Practices
 
-1. **Check status code first** - Determine error category
-2. **Parse error body** - Get detailed error information
-3. **Handle specific codes** - Implement specific handlers
-4. **Log errors** - Record for debugging
-5. **User feedback** - Display appropriate messages
+1. Check HTTP status code first
+2. Parse error body for details
+3. Handle specific codes appropriately
+4. Use exponential backoff for retries
+5. Display user-friendly messages
 
 ## Example Error Handling
 
 ```python
-response = api.request(...)
+import time
 
-if response.status_code == 200:
-    return response.json()
-elif response.status_code == 401:
-    # Re-authenticate
-    refresh_token()
-elif response.status_code == 429:
-    # Rate limited
-    retry_after = response.json()["error"]["retry_after"]
-    time.sleep(retry_after)
-    return retry_request()
-elif response.status_code == 426:
-    # Update required
-    show_update_prompt()
-else:
-    error = response.json()["error"]
-    log_error(error["code"], error["message"])
+def api_request(url, **kwargs):
+    response = requests.request(url, **kwargs)
+    
+    if response.status_code == 200:
+        return response.json()
+    
+    elif response.status_code == 401:
+        # Re-authenticate
+        refresh_token()
+        return retry_request()
+    
+    elif response.status_code == 429:
+        # Rate limited - wait and retry
+        error = response.json().get("error", {})
+        retry_after = error.get("retry_after", 1)
+        time.sleep(retry_after)
+        return retry_request()
+    
+    elif response.status_code == 426:
+        # Update required
+        show_update_prompt()
+        return None
+    
+    else:
+        error = response.json().get("error", {})
+        log_error(error.get("code"), error.get("message"))
+        raise APIError(error.get("message"))
+```
+
+```javascript
+async function apiRequest(url, options) {
+    const response = await fetch(url, options);
+    
+    if (response.ok) {
+        return response.json();
+    }
+    
+    const error = await response.json();
+    
+    if (response.status === 429) {
+        const retryAfter = error.error?.retry_after || 1;
+        await sleep(retryAfter * 1000);
+        return apiRequest(url, options);
+    }
+    
+    throw new Error(error.error?.message || 'Unknown error');
+}
 ```

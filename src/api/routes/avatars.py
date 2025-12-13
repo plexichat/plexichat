@@ -38,7 +38,11 @@ async def get_user_avatar(user_id: str):
         media_type=content_type,
         headers={
             "Cache-Control": "public, max-age=86400",  # Cache for 24 hours
-            "Content-Length": str(len(avatar_data))
+            "Content-Length": str(len(avatar_data)),
+            # CORS headers to prevent OpaqueResponseBlocking
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Cross-Origin-Resource-Policy": "cross-origin",
         }
     )
 
@@ -137,7 +141,11 @@ async def get_server_icon(server_id: str):
         media_type=content_type,
         headers={
             "Cache-Control": "public, max-age=86400",  # Cache for 24 hours
-            "Content-Length": str(len(icon_data))
+            "Content-Length": str(len(icon_data)),
+            # CORS headers to prevent OpaqueResponseBlocking
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Cross-Origin-Resource-Policy": "cross-origin",
         }
     )
 

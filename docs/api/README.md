@@ -1,16 +1,27 @@
 # API Documentation
 
-REST API endpoint documentation.
+REST API endpoint documentation for PlexiChat.
 
-## Endpoints
+## Contents
 
-- `authentication.md` - Auth endpoints
-- `channels.md` - Channel management
-- `index.md` - API overview
-- `messages.md` - Message operations
-- `presence.md` - Presence/status
-- `reactions.md` - Message reactions
-- `relationships.md` - Friends/blocks
-- `servers.md` - Server management
-- `users.md` - User profiles
-- `webhooks.md` - Webhook management
+| File | Description |
+|------|-------------|
+| `index.md` | Complete endpoint reference |
+| `authentication.md` | Auth endpoints and flows |
+| `users.md` | User profile management |
+| `servers.md` | Server/guild management |
+| `channels.md` | Channel management |
+| `messages.md` | Messaging endpoints |
+| `reactions.md` | Message reactions |
+| `relationships.md` | Friends and blocks |
+| `presence.md` | User status and presence |
+| `webhooks.md` | Webhook integration |
+| `avatars.md` | Avatar and icon management |
+| `emojis.md` | Custom emoji management |
+
+## Quick Links
+
+- [Getting Started](../getting-started.md) - Setup and first API call
+- [Error Handling](../errors.md) - Error codes and responses
+- [Rate Limits](../rate-limits.md) - Rate limiting policies
+- [Data Types](../data-types.md) - Common data formats

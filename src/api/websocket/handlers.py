@@ -332,8 +332,9 @@ class OpcodeHandler:
 
         channel_id = data.get("channel_id")
         candidate = data.get("candidate")
-        sdp_mid = data.get("sdpMid")
-        sdp_mline_index = data.get("sdpMLineIndex")
+        # Support both camelCase (from JS) and snake_case field names
+        sdp_mid = data.get("sdp_mid") or data.get("sdpMid")
+        sdp_mline_index = data.get("sdp_mline_index") or data.get("sdpMLineIndex")
 
         if not channel_id or not candidate:
             return None, None, GatewayCloseCode.DECODE_ERROR

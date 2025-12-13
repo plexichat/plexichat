@@ -5,7 +5,8 @@ The PlexiChat WebSocket Gateway provides real-time event delivery for connected 
 ## Connection URL
 
 ```
-wss://gateway.example.com/gateway
+ws://localhost:8000/gateway
+wss://gateway.example.com/gateway  (production)
 ```
 
 ## Connection Flow
@@ -33,11 +34,13 @@ All messages use JSON format:
 | Field | Type | Description |
 |-------|------|-------------|
 | op | int | Opcode |
-| d | object | Event data |
+| d | object | Event data payload |
 | s | int? | Sequence number (DISPATCH only) |
 | t | string? | Event name (DISPATCH only) |
 
 ## Opcodes
+
+### Core Opcodes
 
 | Code | Name | Direction | Description |
 |------|------|-----------|-------------|
@@ -55,7 +58,7 @@ All messages use JSON format:
 | 12 | SERVER_STATUS | Server → Client | Server status update |
 | 13 | VERSION_CHECK | Bidirectional | Version check |
 
-## Voice Opcodes
+### Voice Opcodes
 
 | Code | Name | Direction | Description |
 |------|------|-----------|-------------|
@@ -67,7 +70,7 @@ All messages use JSON format:
 | 25 | VOICE_SPEAKING | Bidirectional | Speaking indicator |
 | 26 | VOICE_QUALITY | Server → Client | Voice quality metrics |
 
-## Interaction Opcodes
+### Interaction Opcodes
 
 | Code | Name | Direction | Description |
 |------|------|-----------|-------------|
@@ -98,8 +101,16 @@ All messages use JSON format:
 
 *Reconnectable after maintenance/restart completes.
 
+## Rate Limits
+
+| Scope | Events | Window |
+|-------|--------|--------|
+| Per Connection | 120 | 60s |
+
+Exceeding limits results in close code 4008 (RATE_LIMITED).
+
 ## Detailed Documentation
 
-- [Connection](connection.md) - Connection lifecycle
-- [Events](events.md) - Event types
-- [Close Codes](close-codes.md) - Close code handling
+- [Connection](connection.md) - Connection lifecycle and authentication
+- [Events](events.md) - Event types and payloads
+- [Close Codes](close-codes.md) - Close code handling and reconnection
