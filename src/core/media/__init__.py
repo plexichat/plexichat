@@ -434,7 +434,17 @@ def check_duplicate(file_data: bytes, content_type: str):
     return _get_dedup_manager().check_duplicate(file_data, content_type)
 
 
-def report_hash(hash_value: str, reporter_id: int, reason: str, details: Optional[str] = None) -> int:
+def report_hash(
+    hash_value: str,
+    reporter_id: int,
+    reason: str,
+    details: Optional[str] = None,
+    phash_value: Optional[str] = None,
+    uploader_id: Optional[int] = None,
+    message_id: Optional[int] = None,
+    attachment_url: Optional[str] = None,
+    block_uploader: bool = False
+) -> int:
     """
     Report a file hash for content moderation.
 
@@ -443,11 +453,26 @@ def report_hash(hash_value: str, reporter_id: int, reason: str, details: Optiona
         reporter_id: User ID of reporter
         reason: Reason for report
         details: Additional details
+        phash_value: Perceptual hash (for images)
+        uploader_id: User ID who uploaded the content
+        message_id: Message ID containing the attachment
+        attachment_url: URL of the attachment
+        block_uploader: Whether to request blocking the uploader
 
     Returns:
         Report ID
     """
-    return _get_dedup_manager().report_hash(hash_value, reporter_id, reason, details)
+    return _get_dedup_manager().report_hash(
+        hash_value=hash_value,
+        reporter_id=reporter_id,
+        reason=reason,
+        details=details,
+        phash_value=phash_value,
+        uploader_id=uploader_id,
+        message_id=message_id,
+        attachment_url=attachment_url,
+        block_uploader=block_uploader
+    )
 
 
 def is_hash_blocked(hash_value: str) -> Tuple[bool, Optional[str]]:

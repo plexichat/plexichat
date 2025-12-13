@@ -22,9 +22,14 @@ router = APIRouter(prefix="/media", tags=["Media"])
 
 class HashReportRequest(BaseModel):
     """Report a file hash for content moderation."""
-    hash_value: str = Field(..., min_length=64, max_length=128, description="SHA-256 hash of the file")
+    hash_value: str = Field(..., min_length=16, max_length=128, description="SHA-256 or perceptual hash of the file")
     reason: str = Field(..., min_length=1, max_length=500, description="Reason for report")
     details: Optional[str] = Field(None, max_length=2000, description="Additional details")
+    phash_value: Optional[str] = Field(None, max_length=64, description="Perceptual hash (for images)")
+    uploader_id: Optional[int] = Field(None, description="User ID of the uploader")
+    message_id: Optional[int] = Field(None, description="Message ID containing the attachment")
+    attachment_url: Optional[str] = Field(None, max_length=2000, description="URL of the attachment")
+    block_uploader: bool = Field(False, description="Request to block the uploader")
 
 
 class HashReportResponse(BaseModel):
@@ -81,6 +86,7 @@ async def report_content_hash(
     
     This allows users to report potentially harmful content by its hash.
     Multiple reports on the same hash may trigger automatic blocking.
+    Supports both SHA-256 and perceptual hashes for image similarity detection.
     """
     from src.core import media
 
@@ -89,10 +95,15 @@ async def report_content_hash(
             hash_value=report.hash_value,
             reporter_id=user["id"],
             reason=report.reason,
-            details=report.details
+            details=report.details,
+            phash_value=report.phash_value,
+            uploader_id=report.uploader_id,
+            message_id=report.message_id,
+            attachment_url=report.attachment_url,
+            block_uploader=report.block_uploader
         )
 
-        logger.info(f"User {user['id']} reported hash {report.hash_value[:16]}...")
+        logger.info(f"User {user['id']} reported hash {report.hash_value[:16]}... (block_uploader={report.block_uploader})")
 
         return HashReportResponse(
             success=True,

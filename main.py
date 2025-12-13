@@ -29,7 +29,7 @@ import utils.validator as validator
 import utils.version as version
 
 # Global Version Definition
-VERSION = "a.1.0-25"
+VERSION = "a.1.0-26"
 
 
 class PlexiChatServer:
@@ -384,6 +384,29 @@ class PlexiChatServer:
                     "uploads_per_minute": 10,
                     "uploads_per_hour": 100,
                     "max_total_size_per_day": 536870912  # 512MB per user per day
+                },
+                
+                # Perceptual hashing for image similarity detection
+                # Requires: pip install imagehash Pillow
+                "phash": {
+                    "enabled": True,
+                    # Hash algorithm: phash (DCT), dhash (difference), ahash (average), whash (wavelet)
+                    "algorithm": "phash",
+                    # Hash size (8 = 64-bit hash, higher = more precise but slower)
+                    "hash_size": 8,
+                    # Similarity threshold (Hamming distance, lower = stricter matching)
+                    # 0 = exact match only, 10 = allows minor modifications, 20 = very lenient
+                    "similarity_threshold": 10,
+                    # High frequency factor for pHash DCT (default 4)
+                    "highfreq_factor": 4
+                },
+                
+                # Deduplication settings
+                "deduplication": {
+                    "enabled": True,
+                    "hash_algorithm": "sha256",
+                    "min_size": 10240,  # 10KB minimum for deduplication
+                    "auto_block_threshold": 5  # Auto-block after N reports
                 }
             },
             # Avatars configuration (user avatars and server icons stored in database)

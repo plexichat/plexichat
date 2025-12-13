@@ -659,7 +659,7 @@ async def get_hash_reports(
     offset: int = 0,
     db = Depends(get_db)
 ):
-    """Get hash reports for admin review."""
+    """Get hash reports for admin review with image preview support."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
 
@@ -670,6 +670,7 @@ async def get_hash_reports(
         {
             "id": r.id,
             "hash_value": r.hash_value,
+            "phash_value": r.phash_value,
             "reporter_id": r.reporter_id,
             "reporter_username": r.reporter_username,
             "reason": r.reason,
@@ -678,7 +679,11 @@ async def get_hash_reports(
             "reported_at": r.reported_at,
             "reviewed_at": r.reviewed_at,
             "reviewed_by": r.reviewed_by,
-            "admin_notes": r.admin_notes
+            "admin_notes": r.admin_notes,
+            "uploader_id": r.uploader_id,
+            "message_id": r.message_id,
+            "attachment_url": r.attachment_url,
+            "block_uploader": r.block_uploader
         }
         for r in reports
     ]
@@ -737,7 +742,9 @@ async def get_blocked_hashes(
             "reason": h.reason,
             "blocked_at": h.blocked_at,
             "blocked_by": h.blocked_by,
-            "auto_blocked": h.auto_blocked
+            "auto_blocked": h.auto_blocked,
+            "hash_type": h.hash_type,
+            "phash_threshold": h.phash_threshold
         }
         for h in hashes
     ]
@@ -749,20 +756,30 @@ async def block_hash_manually(
     request: Request,
     db = Depends(get_db)
 ):
-    """Manually block a hash."""
+    """Manually block a hash (SHA-256 or pHash)."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
 
     from src.core import admin
 
-    success = admin.block_hash(block_request.hash_value, block_request.reason, admin_id)
+    # Determine hash type based on length (pHash is typically 16 chars, SHA-256 is 64)
+    hash_type = "phash" if len(block_request.hash_value) <= 32 else "sha256"
+    phash_threshold = 10 if hash_type == "phash" else 0
+
+    success = admin.block_hash(
+        block_request.hash_value,
+        block_request.reason,
+        admin_id,
+        hash_type=hash_type,
+        phash_threshold=phash_threshold
+    )
 
     if not success:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to block hash")
 
-    logger.info(f"Admin {admin_id} manually blocked hash {block_request.hash_value[:16]}...")
+    logger.info(f"Admin {admin_id} manually blocked {hash_type} hash {block_request.hash_value[:16]}...")
 
-    return {"success": True, "hash_value": block_request.hash_value}
+    return {"success": True, "hash_value": block_request.hash_value, "hash_type": hash_type}
 
 
 @router.delete("/blocked-hashes/{hash_value}")
@@ -783,6 +800,91 @@ async def unblock_hash(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to unblock hash")
 
     logger.info(f"Admin {admin_id} unblocked hash {hash_value[:16]}...")
+
+    return {"success": True}
+
+
+# ==================== Blocked Users (Media Uploads) ====================
+
+class BlockUserRequest(BaseModel):
+    """Block a user from uploading media."""
+    user_id: int = Field(..., description="User ID to block")
+    reason: str = Field(..., min_length=1, max_length=500, description="Reason for blocking")
+    duration_hours: Optional[int] = Field(None, description="Duration in hours (None = permanent)")
+
+
+@router.get("/blocked-users")
+async def get_blocked_users(
+    request: Request,
+    limit: int = 100,
+    offset: int = 0,
+    db = Depends(get_db)
+):
+    """Get list of users blocked from uploading media."""
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
+
+    from src.core import admin
+    users = admin.get_blocked_users(limit, offset)
+
+    return [
+        {
+            "user_id": u.user_id,
+            "username": u.username,
+            "reason": u.reason,
+            "blocked_at": u.blocked_at,
+            "blocked_by": u.blocked_by,
+            "expires_at": u.expires_at
+        }
+        for u in users
+    ]
+
+
+@router.post("/blocked-users")
+async def block_user(
+    block_request: BlockUserRequest,
+    request: Request,
+    db = Depends(get_db)
+):
+    """Block a user from uploading media."""
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
+
+    from src.core import admin
+
+    success = admin.block_user(
+        block_request.user_id,
+        block_request.reason,
+        admin_id,
+        block_request.duration_hours
+    )
+
+    if not success:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to block user")
+
+    logger.info(f"Admin {admin_id} blocked user {block_request.user_id} from uploads")
+
+    return {"success": True, "user_id": block_request.user_id}
+
+
+@router.delete("/blocked-users/{user_id}")
+async def unblock_user(
+    user_id: int,
+    request: Request,
+    db = Depends(get_db)
+):
+    """Unblock a user from uploading media."""
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
+
+    from src.core import admin
+
+    success = admin.unblock_user(user_id)
+
+    if not success:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to unblock user")
+
+    logger.info(f"Admin {admin_id} unblocked user {user_id} from uploads")
 
     return {"success": True}
 

@@ -45,6 +45,7 @@ python-dateutil>=2.8.0     # Date/time utilities for scheduled events
 
 # Image Processing (optional, for media)
 pillow>=10.2.0
+imagehash>=4.3.1           # Perceptual hashing for image similarity detection
 
 # Rate Limiting
 slowapi>=0.1.9
