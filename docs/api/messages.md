@@ -69,9 +69,11 @@ Authorization: Bearer <token>
 | content | string | Conditional | Max 4000 chars | Message text |
 | reply_to_id | string | No | Snowflake ID | Message to reply to |
 | attachments | array | No | - | File attachments |
-| embeds | array | No | - | Rich embeds |
+| embeds | array | No | - | Rich embeds (including URL preview embeds generated from OpenGraph/Twitter Card metadata) |
 
 At least one of `content`, `attachments`, or `embeds` is required.
+
+Note: URL previews are generated server-side by fetching and parsing the target URL's HTML metadata. The server applies validation/sanitization and SSRF protections (e.g., blocking localhost/private network targets) when generating previews.
 
 ### Attachment Object
 
