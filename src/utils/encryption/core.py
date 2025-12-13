@@ -3,6 +3,7 @@ import hashlib
 import os
 import time
 import threading
+from pathlib import Path
 from typing import Optional, Tuple
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, VerificationError, InvalidHash
@@ -282,9 +283,8 @@ class MessageEncryptor:
         self._key_file_path = key_file_path
         self._key_is_auto_generated = False
     
-    def _get_key_path(self) -> 'Path':
+    def _get_key_path(self) -> Path:
         """Get the path to the encryption key file."""
-        from pathlib import Path
         if self._key_file_path:
             return Path(self._key_file_path)
         return Path.home() / ".plexichat" / "data" / ".message_encryption_key"
