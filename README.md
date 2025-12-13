@@ -148,4 +148,4 @@ pytest -v
 
 ## Version
 
-Current version: `a.1.0-26` (Alpha)
+Current version: `a.1.0-27` (Alpha)

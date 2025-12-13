@@ -29,6 +29,7 @@ from typing import Optional, Tuple
 from .core import (
     EncryptionManager,
     SnowflakeGenerator,
+    MessageEncryptor,
     generate_key_pair as _generate_key_pair,
     sign_data as _sign_data,
     verify_signature as _verify_signature
@@ -36,6 +37,7 @@ from .core import (
 
 _encryption_manager: Optional[EncryptionManager] = None
 _snowflake_generator: Optional[SnowflakeGenerator] = None
+_message_encryptor: Optional[MessageEncryptor] = None
 _setup_called = False
 
 def setup(
@@ -92,6 +94,15 @@ def _get_snowflake() -> SnowflakeGenerator:
         _snowflake_generator = SnowflakeGenerator()
 
     return _snowflake_generator
+
+def _get_message_encryptor() -> MessageEncryptor:
+    """Internal: Get or create message encryptor instance."""
+    global _message_encryptor
+
+    if _message_encryptor is None:
+        _message_encryptor = MessageEncryptor()
+
+    return _message_encryptor
 
 def hash_password(password: str) -> str:
     """
@@ -201,9 +212,70 @@ def parse_snowflake_id(snowflake_id: int) -> dict:
     """
     return _get_snowflake().parse(snowflake_id)
 
+
+# === Message Encryption (at rest) ===
+
+def encrypt_message(content: str, message_id: Optional[int] = None) -> str:
+    """
+    Encrypt message content for storage at rest.
+    Uses AES-256-GCM with auto-generated key stored in ~/.plexichat/data/.message_encryption_key
+    
+    Args:
+        content (str): The plaintext message content.
+        message_id (int, optional): Message ID for additional integrity protection.
+        
+    Returns:
+        str: Encrypted content with prefix marker (ENC:1:...).
+    """
+    return _get_message_encryptor().encrypt_message(content, message_id)
+
+
+def decrypt_message(encrypted_content: str, message_id: Optional[int] = None) -> str:
+    """
+    Decrypt message content from storage.
+    Automatically detects legacy plaintext messages and returns them unchanged.
+    
+    Args:
+        encrypted_content (str): The encrypted content (or legacy plaintext).
+        message_id (int, optional): Message ID used during encryption.
+        
+    Returns:
+        str: Decrypted plaintext content.
+        
+    Raises:
+        ValueError: If decryption fails (corrupted data or wrong key).
+    """
+    return _get_message_encryptor().decrypt_message(encrypted_content, message_id)
+
+
+def is_message_encrypted(content: str) -> bool:
+    """
+    Check if message content is encrypted.
+    
+    Args:
+        content (str): The message content to check.
+        
+    Returns:
+        bool: True if content has encryption prefix, False otherwise.
+    """
+    return _get_message_encryptor().is_encrypted(content)
+
+
+def is_message_key_auto_generated() -> bool:
+    """
+    Check if the message encryption key was auto-generated.
+    Used for startup warnings to remind users to back up the key.
+    
+    Returns:
+        bool: True if key was auto-generated, False if loaded from existing file.
+    """
+    return _get_message_encryptor().is_key_auto_generated()
+
+
 __all__ = [
     'EncryptionManager',
     'SnowflakeGenerator',
+    'MessageEncryptor',
     'setup',
     'hash_password',
     'verify_password',
@@ -213,5 +285,9 @@ __all__ = [
     'sign_data',
     'verify_signature',
     'generate_snowflake_id',
-    'parse_snowflake_id'
+    'parse_snowflake_id',
+    'encrypt_message',
+    'decrypt_message',
+    'is_message_encrypted',
+    'is_message_key_auto_generated'
 ]

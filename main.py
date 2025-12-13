@@ -29,7 +29,7 @@ import utils.validator as validator
 import utils.version as version
 
 # Global Version Definition
-VERSION = "a.1.0-26"
+VERSION = "a.1.0-27"
 
 
 class PlexiChatServer:
@@ -132,6 +132,19 @@ class PlexiChatServer:
                     "worker_id": 1,
                     "datacenter_id": 1
                 }
+            },
+            # Message encryption at rest - encrypts message content in database
+            # Key is auto-generated and stored in ~/.plexichat/data/.message_encryption_key
+            # IMPORTANT: Back up this key file! Without it, encrypted messages cannot be recovered.
+            "messaging": {
+                "encrypt_messages": True,  # Enable message encryption at rest (default: True)
+                "encrypt_attachments": True,  # Encrypt attachment URLs
+                "max_message_length": 4000,
+                "max_group_participants": 100,
+                "max_attachment_size": 10485760,  # 10MB
+                "max_attachments_per_message": 10,
+                "dm_auto_create": True,
+                "message_preview_length": 100
             },
             "redis": {
                 "enabled": False,
@@ -1177,14 +1190,18 @@ def _check_security_keys():
         if not turn_secret:
             warnings.append("voice.turn_secret is empty (TURN is configured)")
     
-    # Check messaging encryption key
+    # Check message encryption key (auto-generated)
     messaging_config = config.get("messaging", {})
-    encryption_key = messaging_config.get("encryption_key", "")
-    default_keys = ["", "CHANGE_ME_DEFAULT_ENCRYPTION_KEY_32B", "changeme", "change-me"]
-    if encryption_key in default_keys:
-        # Note: If no key is configured, the system auto-generates one in ~/.plexichat/data/.encryption_key
-        # This is secure but the warning helps users know to back up this key
-        warnings.append("messaging.encryption_key is using auto-generated key (back up ~/.plexichat/data/.encryption_key)")
+    if messaging_config.get("encrypt_messages", True):
+        try:
+            from src.utils.encryption import is_message_key_auto_generated
+            if is_message_key_auto_generated():
+                warnings.append(
+                    "MESSAGE ENCRYPTION: Using auto-generated key. "
+                    "BACK UP ~/.plexichat/data/.message_encryption_key - without it, encrypted messages cannot be recovered!"
+                )
+        except Exception:
+            warnings.append("messaging.encrypt_messages is enabled (back up ~/.plexichat/data/.message_encryption_key)")
     
     # Log warnings
     if warnings:

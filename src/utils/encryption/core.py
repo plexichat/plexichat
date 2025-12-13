@@ -259,6 +259,160 @@ def verify_signature(data: bytes, signature: bytes, public_key: bytes) -> bool:
         return False
 
 
+class MessageEncryptor:
+    """
+    Dedicated encryptor for message content at rest.
+    Uses AES-256-GCM with a separate key from general encryption.
+    Optimized for high-throughput message encryption/decryption.
+    """
+    
+    # Prefix to identify encrypted messages (allows legacy plaintext detection)
+    ENCRYPTED_PREFIX = "ENC:1:"  # Version 1 of encryption format
+    
+    def __init__(self, key_file_path: Optional[str] = None):
+        """
+        Initialize the message encryptor.
+        
+        Args:
+            key_file_path: Optional custom path for the encryption key file.
+                          Defaults to ~/.plexichat/data/.message_encryption_key
+        """
+        self._key: Optional[bytes] = None
+        self._aesgcm: Optional[AESGCM] = None
+        self._key_file_path = key_file_path
+        self._key_is_auto_generated = False
+    
+    def _get_key_path(self) -> 'Path':
+        """Get the path to the encryption key file."""
+        from pathlib import Path
+        if self._key_file_path:
+            return Path(self._key_file_path)
+        return Path.home() / ".plexichat" / "data" / ".message_encryption_key"
+    
+    def _load_or_generate_key(self) -> bytes:
+        """Load existing key or generate a new one."""
+        key_path = self._get_key_path()
+        
+        if key_path.exists():
+            try:
+                with open(key_path, "rb") as f:
+                    key = f.read()
+                if len(key) == 32:
+                    return key
+                # Invalid key length, regenerate
+            except Exception:
+                pass
+        
+        # Generate new key
+        key = AESGCM.generate_key(bit_length=256)
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Write with restrictive permissions
+        with open(key_path, "wb") as f:
+            f.write(key)
+        
+        # Mark as auto-generated for warning
+        self._key_is_auto_generated = True
+        
+        return key
+    
+    def _get_cipher(self) -> AESGCM:
+        """Get or create the AES-GCM cipher instance."""
+        if self._aesgcm is None:
+            if self._key is None:
+                self._key = self._load_or_generate_key()
+            self._aesgcm = AESGCM(self._key)
+        return self._aesgcm
+    
+    def is_key_auto_generated(self) -> bool:
+        """Check if the encryption key was auto-generated (for warning purposes)."""
+        # Ensure key is loaded first
+        self._get_cipher()
+        return self._key_is_auto_generated
+    
+    def encrypt_message(self, content: str, message_id: Optional[int] = None) -> str:
+        """
+        Encrypt message content.
+        
+        Args:
+            content: The plaintext message content.
+            message_id: Optional message ID to include in AAD for integrity.
+            
+        Returns:
+            Encrypted content with prefix marker.
+        """
+        if not content:
+            return content
+        
+        cipher = self._get_cipher()
+        
+        # Generate random 12-byte nonce
+        nonce = os.urandom(12)
+        
+        # Use message_id as additional authenticated data if provided
+        aad = str(message_id).encode('utf-8') if message_id else None
+        
+        # Encrypt
+        ciphertext = cipher.encrypt(nonce, content.encode('utf-8'), aad)
+        
+        # Combine: nonce (12) + ciphertext (includes 16-byte tag)
+        combined = nonce + ciphertext
+        
+        # Return with prefix for identification
+        return self.ENCRYPTED_PREFIX + base64.b64encode(combined).decode('utf-8')
+    
+    def decrypt_message(self, encrypted_content: str, message_id: Optional[int] = None) -> str:
+        """
+        Decrypt message content.
+        
+        Args:
+            encrypted_content: The encrypted content (with or without prefix).
+            message_id: Optional message ID used as AAD during encryption.
+            
+        Returns:
+            Decrypted plaintext content.
+            
+        Raises:
+            ValueError: If decryption fails.
+        """
+        if not encrypted_content:
+            return encrypted_content
+        
+        # Check for encryption prefix
+        if not encrypted_content.startswith(self.ENCRYPTED_PREFIX):
+            # Not encrypted (legacy plaintext), return as-is
+            return encrypted_content
+        
+        # Remove prefix
+        data = encrypted_content[len(self.ENCRYPTED_PREFIX):]
+        
+        try:
+            combined = base64.b64decode(data.encode('utf-8'))
+        except Exception as e:
+            raise ValueError(f"Invalid base64 encoding: {e}")
+        
+        if len(combined) < 28:  # 12 (nonce) + 16 (min ciphertext with tag)
+            raise ValueError("Encrypted data too short")
+        
+        nonce = combined[:12]
+        ciphertext = combined[12:]
+        
+        # Use message_id as AAD if provided
+        aad = str(message_id).encode('utf-8') if message_id else None
+        
+        cipher = self._get_cipher()
+        
+        try:
+            plaintext = cipher.decrypt(nonce, ciphertext, aad)
+            return plaintext.decode('utf-8')
+        except Exception as e:
+            raise ValueError(f"Decryption failed: {e}")
+    
+    def is_encrypted(self, content: str) -> bool:
+        """Check if content is encrypted (has encryption prefix)."""
+        return content.startswith(self.ENCRYPTED_PREFIX) if content else False
+
+
 class SnowflakeGenerator:
     """
     Twitter-style Snowflake ID generator for distributed unique IDs.

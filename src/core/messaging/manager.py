@@ -11,7 +11,7 @@ from typing import Optional, List, Dict, Any
 
 import utils.config as config
 import utils.logger as logger
-from src.utils.encryption import encrypt_data, decrypt_data, generate_snowflake_id
+from src.utils.encryption import encrypt_data, decrypt_data, generate_snowflake_id, encrypt_message, decrypt_message, is_message_encrypted
 
 from .models import (
     Message,
@@ -840,19 +840,17 @@ class MessagingManager:
         now = self._get_timestamp()
         msg_id = self._generate_id()
 
-        # Encrypt content if enabled
+        # Encrypt content if enabled (using new message encryption)
         final_content = content_result.sanitized_content
         encrypted_content = None
 
-        # Only check encryption flag - avoid full get_conversation call
-        if self._config.get("encrypt_messages"):
-            conv_row = self._db.fetch_one(
-                "SELECT encrypted FROM msg_conversations WHERE id = ?",
-                (conversation_id,)
-            )
-            if conv_row and conv_row.get("encrypted"):
-                encrypted_content = encrypt_data(final_content)
-                final_content = "[encrypted]"
+        # Check if message encryption is enabled
+        if self._config.get("encrypt_messages", True):
+            # Encrypt the content - the encrypted string includes a prefix marker
+            encrypted_content = encrypt_message(final_content, msg_id)
+            # Store encrypted content in the main content field (transparent encryption)
+            final_content = encrypted_content
+            encrypted_content = None  # No longer need separate field
 
         # Build metadata
         metadata = {}
@@ -973,22 +971,16 @@ class MessagingManager:
 
         now = self._get_timestamp()
         final_content = content_result.sanitized_content
-        encrypted_content = None
 
-        # Check if conversation is encrypted
-        conv = self._db.fetch_one(
-            "SELECT encrypted FROM msg_conversations WHERE id = ?",
-            (msg["conversation_id"],)
-        )
-        if conv and conv["encrypted"] and self._config.get("encrypt_messages"):
-            encrypted_content = encrypt_data(final_content)
-            final_content = "[encrypted]"
+        # Encrypt content if enabled
+        if self._config.get("encrypt_messages", True):
+            final_content = encrypt_message(final_content, message_id)
 
         self._db.execute(
             """UPDATE msg_messages 
-               SET content = ?, content_encrypted = ?, updated_at = ?, edited = 1
+               SET content = ?, content_encrypted = NULL, updated_at = ?, edited = 1
                WHERE id = ?""",
-            (final_content, encrypted_content, now, message_id)
+            (final_content, now, message_id)
         )
 
         result = self.get_message(user_id, message_id)
@@ -1705,8 +1697,14 @@ class MessagingManager:
         """Convert database row to Message model."""
         content = row["content"]
 
-        # Decrypt if encrypted
-        if row["content_encrypted"] and content == "[encrypted]":
+        # Decrypt if encrypted (new format with ENC: prefix)
+        if is_message_encrypted(content):
+            try:
+                content = decrypt_message(content, row["id"])
+            except Exception:
+                content = "[decryption failed]"
+        # Legacy: decrypt from content_encrypted field
+        elif row.get("content_encrypted") and content == "[encrypted]":
             try:
                 content = decrypt_data(row["content_encrypted"])
             except Exception:
