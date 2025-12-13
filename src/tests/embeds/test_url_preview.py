@@ -9,6 +9,69 @@ from src.core.embeds import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _mock_url_preview_scraper(db_and_modules, monkeypatch):
+    db, auth, messaging, servers, embeds = db_and_modules
+
+    manager = embeds._get_manager()
+
+    def _fake_scrape(url: str):
+        if "youtube.com" in url or "youtu.be" in url:
+            return {
+                "type": "video",
+                "title": "YouTube Video",
+                "description": "A video description",
+                "site_name": "YouTube",
+                "site_url": "https://www.youtube.com",
+                "image": "https://i.ytimg.com/vi/abc/maxresdefault.jpg",
+                "image_width": 1280,
+                "image_height": 720,
+                "author": None,
+            }
+
+        if "github.com" in url:
+            return {
+                "type": "article",
+                "title": "GitHub Repo",
+                "description": "Repository description",
+                "site_name": "GitHub",
+                "site_url": "https://github.com",
+                "image": "https://opengraph.githubassets.com/abc/user/repo",
+                "image_width": None,
+                "image_height": None,
+                "author": None,
+            }
+
+        if "twitter.com" in url or "x.com" in url:
+            return {
+                "type": "article",
+                "title": "Post",
+                "description": "Post preview",
+                "site_name": "X",
+                "site_url": "https://x.com",
+                "image": None,
+                "image_width": None,
+                "image_height": None,
+                "author": None,
+            }
+
+        from urllib.parse import urlparse
+        host = urlparse(url).hostname or "example.com"
+        return {
+            "type": "link",
+            "title": "Example Title",
+            "description": "Example Description",
+            "site_name": host,
+            "site_url": f"https://{host}",
+            "image": "https://example.com/og.png",
+            "image_width": None,
+            "image_height": None,
+            "author": None,
+        }
+
+    monkeypatch.setattr(manager, "_scrape_url_metadata", _fake_scrape)
+
+
 class TestCreateUrlPreview:
     """Tests for creating URL preview embeds."""
 

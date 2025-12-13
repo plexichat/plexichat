@@ -28,6 +28,8 @@ import os
 import sys
 import uuid
 
+from src.utils import encryption
+
 # Ensure src is in path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 src_path = os.path.join(project_root, "src")
@@ -55,6 +57,7 @@ def db_manager():
     
     This is the key optimization - ONE database for all tests.
     """
+    encryption.setup(argon2_time_cost=1, argon2_memory_cost=8192, argon2_parallelism=1)
     manager = DatabaseManager(test_dir="temp/test_session")
     manager.setup()
 
