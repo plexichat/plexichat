@@ -305,7 +305,8 @@ async def send_channel_message(
                         conversation_id=conversation_id,
                         content=body.content or "",
                         reply_to_id=reply_to,
-                        attachments=attachments
+                        attachments=attachments,
+                        embeds=body.embeds
                     )
         except Exception as e:
             exc_name = type(e).__name__
@@ -325,7 +326,8 @@ async def send_channel_message(
                 conversation_id=cid,
                 content=body.content or "",
                 reply_to_id=reply_to,
-                attachments=attachments
+                attachments=attachments,
+                embeds=body.embeds
             )
         except Exception as e:
             exc_name = type(e).__name__

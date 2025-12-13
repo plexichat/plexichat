@@ -797,7 +797,8 @@ class MessagingManager:
         content: str,
         message_type: MessageType = MessageType.TEXT,
         reply_to_id: Optional[int] = None,
-        attachments: Optional[List[Dict[str, Any]]] = None
+        attachments: Optional[List[Dict[str, Any]]] = None,
+        embeds: Optional[List[Dict[str, Any]]] = None
     ) -> Message:
         """Send a message to a conversation."""
         # Check access
@@ -861,6 +862,8 @@ class MessagingManager:
             metadata["has_nsfw"] = True
         if content_result.filtered_words:
             metadata["filtered"] = True
+        if embeds:
+            metadata["embeds"] = embeds
 
         # Use transaction for all DB writes to reduce round-trips
         try:

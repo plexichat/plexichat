@@ -260,7 +260,8 @@ def send_message(
     content: str,
     message_type: MessageType = MessageType.TEXT,
     reply_to_id: Optional[int] = None,
-    attachments: Optional[List[Dict[str, Any]]] = None
+    attachments: Optional[List[Dict[str, Any]]] = None,
+    embeds: Optional[List[Dict[str, Any]]] = None
 ) -> Message:
     """
     Send a message to a conversation.
@@ -272,6 +273,7 @@ def send_message(
         message_type: Type of message
         reply_to_id: Optional message ID to reply to
         attachments: Optional list of attachment data
+        embeds: Optional list of rich embeds (stored in metadata)
         
     Returns:
         Created Message object
@@ -283,7 +285,7 @@ def send_message(
         AttachmentError: If attachment is invalid
     """
     return _get_manager().send_message(
-        user_id, conversation_id, content, message_type, reply_to_id, attachments
+        user_id, conversation_id, content, message_type, reply_to_id, attachments, embeds
     )
 
 

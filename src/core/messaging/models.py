@@ -106,6 +106,13 @@ class Message:
     status: Optional[MessageStatusType] = None
     delivery_count: int = 0
     read_count: int = 0
+    
+    @property
+    def embeds(self) -> List[Dict[str, Any]]:
+        """Get embeds from metadata."""
+        if self.metadata and "embeds" in self.metadata:
+            return self.metadata["embeds"]
+        return []
 
 
 @dataclass
