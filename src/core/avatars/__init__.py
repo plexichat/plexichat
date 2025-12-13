@@ -46,8 +46,8 @@ def setup(db) -> None:
     global _db, _setup_complete
 
     _db = db
+    _setup_complete = True  # Set before _create_tables so _get_db() works
     _create_tables()
-    _setup_complete = True
     logger.info("Avatars module initialized")
 
 
