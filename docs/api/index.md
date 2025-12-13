@@ -194,6 +194,8 @@ Authorization: Bot <bot_token>
 
 - [Authentication](authentication.md) - Auth endpoints and flows
 - [Users](users.md) - User management
+- [Settings](settings.md) - Cloud-synced user preferences
+- [Features](features.md) - Badges, tiers, and admin endpoints
 - [Servers](servers.md) - Server/guild management
 - [Channels](channels.md) - Channel management
 - [Messages](messages.md) - Messaging endpoints

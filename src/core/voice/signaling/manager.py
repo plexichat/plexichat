@@ -303,10 +303,14 @@ class SignalingManager:
         # Parse offer to extract key parameters
         parsed = parse_sdp(offer_sdp)
 
+        # Convert hex session_id to numeric for SDP (SDP requires numeric session ID)
+        # Use first 16 chars of hex and convert to int
+        numeric_session_id = str(int(session_id[:16], 16) % (10**18))
+
         # Build answer (simplified)
         lines = [
             "v=0",
-            f"o=- {session_id} 2 IN IP4 127.0.0.1",
+            f"o=- {numeric_session_id} 2 IN IP4 127.0.0.1",
             "s=-",
             "t=0 0",
         ]
