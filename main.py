@@ -912,7 +912,13 @@ class PlexiChatServer:
             avatars_module=self._modules.get('avatars'),
         )
         
-        self.app = create_app(enable_rate_limiting=False, enable_docs=True)
+        # Get rate limiting and docs settings from config
+        rate_limit_config = config.get("rate_limiting", {})
+        docs_config = config.get("docs", {})
+        enable_rate_limiting = rate_limit_config.get("enabled", True)
+        enable_docs = docs_config.get("enabled", True)
+        
+        self.app = create_app(enable_rate_limiting=enable_rate_limiting, enable_docs=enable_docs)
         return self.app
     
     async def notify_clients_shutdown(self, message: str = "Server shutting down"):
