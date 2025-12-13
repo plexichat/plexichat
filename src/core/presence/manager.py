@@ -641,7 +641,7 @@ class PresenceManager:
             Presence (may show offline if invisible or blocked)
         """
         presence = self.get_presence(target_id)
-        logger.debug(f"get_visible_presence: viewer={viewer_id}, target={target_id}, raw_status={presence.status}")
+        logger.info(f"get_visible_presence: viewer={viewer_id}, target={target_id}, raw_status={presence.status}")
 
         # User viewing themselves always sees real status
         if viewer_id == target_id:
