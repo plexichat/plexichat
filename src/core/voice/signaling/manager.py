@@ -307,29 +307,24 @@ class SignalingManager:
         # Use first 16 chars of hex and convert to int
         numeric_session_id = str(int(session_id[:16], 16) % (10**18))
 
+        # Generate ICE credentials (always required)
+        ice_ufrag = secrets.token_hex(4)
+        ice_pwd = secrets.token_hex(12)
+        # Generate DTLS fingerprint
+        fingerprint = ":".join([secrets.token_hex(1).upper() for _ in range(32)])
+
         # Build answer (simplified)
         lines = [
             "v=0",
             f"o=- {numeric_session_id} 2 IN IP4 127.0.0.1",
             "s=-",
             "t=0 0",
+            "a=group:BUNDLE 0",
+            "a=msid-semantic: WMS",
         ]
 
-        # Copy session-level attributes
-        attrs = parsed.get("attributes", {})
-        if "ice-ufrag" in attrs:
-            lines.append(f"a=ice-ufrag:{secrets.token_hex(4)}")
-        if "ice-pwd" in attrs:
-            lines.append(f"a=ice-pwd:{secrets.token_hex(12)}")
-        if "fingerprint" in attrs:
-            # Generate placeholder fingerprint
-            fp = ":".join([secrets.token_hex(1).upper() for _ in range(32)])
-            lines.append(f"a=fingerprint:sha-256 {fp}")
-
-        lines.append("a=setup:active")
-
         # Process media sections
-        for media in parsed.get("media", []):
+        for idx, media in enumerate(parsed.get("media", [])):
             media_type = media.get("type", "audio")
             port = media.get("port", 9)
             protocol = media.get("protocol", "UDP/TLS/RTP/SAVPF")
@@ -337,6 +332,15 @@ class SignalingManager:
 
             lines.append(f"m={media_type} {port} {protocol} {' '.join(formats)}")
             lines.append("c=IN IP4 0.0.0.0")
+            lines.append("a=rtcp:9 IN IP4 0.0.0.0")
+
+            # ICE attributes (required at media level)
+            lines.append(f"a=ice-ufrag:{ice_ufrag}")
+            lines.append(f"a=ice-pwd:{ice_pwd}")
+            lines.append("a=ice-options:trickle")
+            lines.append(f"a=fingerprint:sha-256 {fingerprint}")
+            lines.append("a=setup:active")
+            lines.append(f"a=mid:{idx}")
 
             # Add direction
             lines.append("a=sendrecv")
@@ -344,7 +348,7 @@ class SignalingManager:
             # Add rtcp-mux
             lines.append("a=rtcp-mux")
 
-            # Copy codec info
+            # Copy codec info from offer
             media_attrs = media.get("attributes", {})
             for fmt in formats:
                 rtpmap = media_attrs.get(f"rtpmap:{fmt}") or media_attrs.get("rtpmap")
@@ -355,6 +359,10 @@ class SignalingManager:
                                 lines.append(f"a=rtpmap:{r}")
                     else:
                         lines.append(f"a=rtpmap:{fmt} {rtpmap}")
+                # Add default opus codec if no rtpmap found
+                elif fmt == "111" and media_type == "audio":
+                    lines.append("a=rtpmap:111 opus/48000/2")
+                    lines.append("a=fmtp:111 minptime=10;useinbandfec=1")
 
         return "\r\n".join(lines) + "\r\n"
 
