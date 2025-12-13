@@ -80,6 +80,7 @@ __all__ = [
     "get_voice_server_info",
     "create_voice_connection",
     "handle_sdp_offer",
+    "handle_sdp_offer_async",
     "handle_ice_candidate",
     "disconnect_voice",
     "get_turn_credentials",
@@ -171,8 +172,18 @@ def handle_sdp_offer(
     sdp: str,
     sdp_type: str = "offer",
 ) -> SDPMessage:
-    """Handle an SDP offer from a client and return the answer."""
+    """Handle an SDP offer from a client and return the answer (sync version)."""
     return _get_manager().handle_sdp_offer(user_id, channel_id, sdp, sdp_type)
+
+
+async def handle_sdp_offer_async(
+    user_id: int,
+    channel_id: int,
+    sdp: str,
+    sdp_type: str = "offer",
+) -> SDPMessage:
+    """Handle an SDP offer from a client and return the answer (async version that uses SFU)."""
+    return await _get_manager().handle_sdp_offer_async(user_id, channel_id, sdp, sdp_type)
 
 
 def handle_ice_candidate(

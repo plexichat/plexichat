@@ -199,7 +199,11 @@ class VoiceConnection:
     remote_sdp: Optional[str] = None
     screen_share: Optional[ScreenShareState] = None
     quality: Optional[ConnectionQuality] = None
+    # SFU-related fields
+    transport_id: Optional[str] = None
     sfu_transport_id: Optional[str] = None
+    sfu_room_id: Optional[str] = None
+    sfu_peer_id: Optional[str] = None
     sfu_producer_ids: List[str] = field(default_factory=list)
     sfu_consumer_ids: List[str] = field(default_factory=list)
 

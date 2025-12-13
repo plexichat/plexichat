@@ -326,7 +326,8 @@ class OpcodeHandler:
 
         try:
             from src.core.voice import signaling
-            answer = signaling.handle_sdp_offer(connection.user_id, channel_id, sdp, sdp_type)
+            # Use async version to actually communicate with SFU
+            answer = await signaling.handle_sdp_offer_async(connection.user_id, channel_id, sdp, sdp_type)
             return GatewayOpcode.VOICE_SDP_ANSWER, answer.to_dict(), None
         except Exception as e:
             logger.warning(f"SDP offer handling failed: {e}")
