@@ -9,7 +9,7 @@ import asyncio
 import json
 import secrets
 import ssl
-from typing import Dict, Optional, Any, List, Callable
+from typing import Dict, Optional, Any, Callable, cast
 from dataclasses import dataclass, field
 
 import utils.logger as logger
@@ -123,8 +123,8 @@ class MediasoupWSAdapter(SFUAdapter):
                 websockets.connect(
                     ws_url,
                     ssl=self._ssl_context,
-                    origin=self._origin,
-                    subprotocols=["protoo"],
+                    origin=cast(Any, self._origin),
+                    subprotocols=cast(Any, ["protoo"]),
                     max_size=960000,
                 ),
                 timeout=self._timeout

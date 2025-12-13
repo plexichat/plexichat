@@ -13,16 +13,9 @@ Features:
     - Health checks and connection monitoring
 """
 
-import sys
-import os
 import json
 import time
-from typing import Any, Dict, List, Optional, Union
-
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
-common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
-if common_utils_path not in sys.path:
-    sys.path.append(common_utils_path)
+from typing import Any, Dict, List, Optional, Union, Set, cast
 
 import utils.config as config
 import utils.logger as logger
@@ -74,9 +67,9 @@ class RedisClient:
         """Initialize the Redis client with configuration."""
         self.config = config.get("redis") or {}
         self.enabled = self.config.get("enabled", False)
-        self._client = None
-        self._pool = None
-        self._pubsub = None
+        self._client: Any = None
+        self._pool: Any = None
+        self._pubsub: Any = None
         self._connected = False
 
         # Configuration
@@ -444,10 +437,12 @@ class RedisClient:
     def lrange(self, key: str, start: int, end: int) -> List[str]:
         """Get a range of elements from a list."""
         self._ensure_connected()
+        client = self._client
+        assert client is not None
         full_key = self._prefixed_key(self._sanitize_key(key))
 
         try:
-            return self._client.lrange(full_key, start, end)
+            return cast(List[str], client.lrange(full_key, start, end))
         except Exception as e:
             logger.error(f"Redis LRANGE failed for {key}: {e}")
             raise RedisOperationError(f"LRANGE failed: {e}")
@@ -455,10 +450,12 @@ class RedisClient:
     def llen(self, key: str) -> int:
         """Get the length of a list."""
         self._ensure_connected()
+        client = self._client
+        assert client is not None
         full_key = self._prefixed_key(self._sanitize_key(key))
 
         try:
-            return self._client.llen(full_key)
+            return int(client.llen(full_key))
         except Exception as e:
             logger.error(f"Redis LLEN failed for {key}: {e}")
             raise RedisOperationError(f"LLEN failed: {e}")
@@ -468,10 +465,12 @@ class RedisClient:
     def sadd(self, key: str, *values: RedisValue) -> int:
         """Add members to a set."""
         self._ensure_connected()
+        client = self._client
+        assert client is not None
         full_key = self._prefixed_key(self._sanitize_key(key))
 
         try:
-            return self._client.sadd(full_key, *values)
+            return int(client.sadd(full_key, *values))
         except Exception as e:
             logger.error(f"Redis SADD failed for {key}: {e}")
             raise RedisOperationError(f"SADD failed: {e}")
@@ -479,21 +478,25 @@ class RedisClient:
     def srem(self, key: str, *values: RedisValue) -> int:
         """Remove members from a set."""
         self._ensure_connected()
+        client = self._client
+        assert client is not None
         full_key = self._prefixed_key(self._sanitize_key(key))
 
         try:
-            return self._client.srem(full_key, *values)
+            return int(client.srem(full_key, *values))
         except Exception as e:
             logger.error(f"Redis SREM failed for {key}: {e}")
             raise RedisOperationError(f"SREM failed: {e}")
 
-    def smembers(self, key: str) -> set:
+    def smembers(self, key: str) -> Set[str]:
         """Get all members of a set."""
         self._ensure_connected()
+        client = self._client
+        assert client is not None
         full_key = self._prefixed_key(self._sanitize_key(key))
 
         try:
-            return self._client.smembers(full_key)
+            return cast(Set[str], client.smembers(full_key))
         except Exception as e:
             logger.error(f"Redis SMEMBERS failed for {key}: {e}")
             raise RedisOperationError(f"SMEMBERS failed: {e}")
@@ -501,10 +504,12 @@ class RedisClient:
     def sismember(self, key: str, value: RedisValue) -> bool:
         """Check if value is a member of a set."""
         self._ensure_connected()
+        client = self._client
+        assert client is not None
         full_key = self._prefixed_key(self._sanitize_key(key))
 
         try:
-            return bool(self._client.sismember(full_key, value))
+            return bool(client.sismember(full_key, cast(Any, value)))
         except Exception as e:
             logger.error(f"Redis SISMEMBER failed for {key}: {e}")
             raise RedisOperationError(f"SISMEMBER failed: {e}")
@@ -514,10 +519,12 @@ class RedisClient:
     def incr(self, key: str, amount: int = 1) -> int:
         """Increment a counter."""
         self._ensure_connected()
+        client = self._client
+        assert client is not None
         full_key = self._prefixed_key(self._sanitize_key(key))
 
         try:
-            return self._client.incrby(full_key, amount)
+            return int(client.incrby(full_key, amount))
         except Exception as e:
             logger.error(f"Redis INCR failed for {key}: {e}")
             raise RedisOperationError(f"INCR failed: {e}")
@@ -525,10 +532,12 @@ class RedisClient:
     def decr(self, key: str, amount: int = 1) -> int:
         """Decrement a counter."""
         self._ensure_connected()
+        client = self._client
+        assert client is not None
         full_key = self._prefixed_key(self._sanitize_key(key))
 
         try:
-            return self._client.decrby(full_key, amount)
+            return int(client.decrby(full_key, amount))
         except Exception as e:
             logger.error(f"Redis DECR failed for {key}: {e}")
             raise RedisOperationError(f"DECR failed: {e}")
@@ -547,10 +556,12 @@ class RedisClient:
             Number of subscribers that received the message.
         """
         self._ensure_connected()
+        client = self._client
+        assert client is not None
         full_channel = self._prefixed_key(self._sanitize_key(channel))
 
         try:
-            count = self._client.publish(full_channel, message)
+            count = int(client.publish(full_channel, message))
             logger.debug(f"Redis PUBLISH: {channel} -> {count} subscribers")
             return count
         except Exception as e:
@@ -568,11 +579,13 @@ class RedisClient:
             PubSub object for listening to messages.
         """
         self._ensure_connected()
+        client = self._client
+        assert client is not None
         full_channels = [self._prefixed_key(self._sanitize_key(c)) for c in channels]
 
         try:
             if not self._pubsub:
-                self._pubsub = self._client.pubsub()
+                self._pubsub = client.pubsub()
             self._pubsub.subscribe(*full_channels)
             logger.debug(f"Redis SUBSCRIBE: {channels}")
             return self._pubsub
@@ -627,7 +640,9 @@ class RedisClient:
 
         try:
             start = time.time()
-            self._client.ping()
+            client = self._client
+            assert client is not None
+            client.ping()
             latency = (time.time() - start) * 1000
             result["responsive"] = True
             result["latency_ms"] = round(latency, 2)
@@ -645,12 +660,14 @@ class RedisClient:
             Number of keys deleted.
         """
         self._ensure_connected()
+        client = self._client
+        assert client is not None
 
         try:
             pattern = f"{self.key_prefix}*"
-            keys = self._client.keys(pattern)
+            keys = cast(List[str], client.keys(pattern))
             if keys:
-                return self._client.delete(*keys)
+                return int(client.delete(*keys))
             return 0
         except Exception as e:
             logger.error(f"Redis flush_prefix failed: {e}")
@@ -667,10 +684,12 @@ class RedisClient:
             List of matching keys (without prefix).
         """
         self._ensure_connected()
+        client = self._client
+        assert client is not None
         full_pattern = self._prefixed_key(pattern)
 
         try:
-            keys = self._client.keys(full_pattern)
+            keys = cast(List[str], client.keys(full_pattern))
             # Remove prefix from returned keys
             prefix_len = len(self.key_prefix)
             return [k[prefix_len:] if k.startswith(self.key_prefix) else k for k in keys]

@@ -13,7 +13,7 @@ Usage:
     result = media.upload_file(user_id=1, file_data=data, filename="image.jpg")
 """
 
-from typing import Optional, List, Dict, Any, BinaryIO, Tuple
+from typing import Optional, Dict, Any, BinaryIO, Tuple
 
 from .models import (
     MediaFile,

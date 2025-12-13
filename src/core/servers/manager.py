@@ -9,7 +9,7 @@ import time
 import json
 import secrets
 import string
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 import utils.config as config
 import utils.logger as logger
@@ -1420,7 +1420,7 @@ class ServerManager:
 
         self.require_permission(user_id, server_id, "members.ban")
 
-        result = self._db.execute(
+        self._db.execute(
             "DELETE FROM srv_bans WHERE server_id = ? AND user_id = ?",
             (server_id, banned_user_id),
         )

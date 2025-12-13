@@ -22,7 +22,7 @@ Usage:
     all_settings = get_all_settings(user_id)
 """
 
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, List
 from .manager import SettingsManager
 from .models import UserSetting, SettingsConfig
 

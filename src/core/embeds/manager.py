@@ -6,8 +6,11 @@ validation, permission checks, and database interactions.
 """
 
 import time
-from typing import Optional, List, Dict, Any
-from urllib.parse import urlparse
+import socket
+import ipaddress
+from html.parser import HTMLParser
+from typing import Optional, List, Dict, Any, Tuple
+from urllib.parse import urlparse, urljoin
 
 import utils.config as config
 import utils.logger as logger
@@ -642,6 +645,30 @@ class EmbedManager:
         validated_url = validate_url(url, "url")
         metadata = self.parse_url_metadata(validated_url)
 
+        # Validate/sanitize scraped metadata using existing embed validation rules
+        embed_data = {
+            "title": metadata.get("title"),
+            "description": metadata.get("description"),
+            "url": validated_url,
+            "image": {"url": metadata.get("image"), "width": metadata.get("image_width"), "height": metadata.get("image_height")}
+            if metadata.get("image")
+            else None,
+            "provider": {"name": metadata.get("site_name"), "url": metadata.get("site_url")}
+            if metadata.get("site_name") or metadata.get("site_url")
+            else None,
+            "author": {"name": metadata.get("author")}
+            if metadata.get("author")
+            else None,
+            "fields": [],
+        }
+
+        validation = validate_embed_data(embed_data)
+        if not validation.valid:
+            raise EmbedValidationError("URL preview metadata validation failed", validation.issues)
+
+        sanitized = validation.sanitized_data
+        assert sanitized is not None
+
         now = self._get_timestamp()
         embed_id = self._generate_id()
 
@@ -662,24 +689,24 @@ class EmbedManager:
             (
                 embed_id,
                 embed_type.value,
-                metadata.get("title"),
-                metadata.get("description"),
+                sanitized.get("title"),
+                sanitized.get("description"),
                 validated_url,
                 None,
                 None,
                 None,
                 None,
-                metadata.get("image"),
-                metadata.get("image_width"),
-                metadata.get("image_height"),
+                sanitized.get("image", {}).get("url") if sanitized.get("image") else None,
+                sanitized.get("image", {}).get("width") if sanitized.get("image") else None,
+                sanitized.get("image", {}).get("height") if sanitized.get("image") else None,
                 None,
                 None,
                 None,
-                metadata.get("author"),
+                sanitized.get("author", {}).get("name") if sanitized.get("author") else None,
                 None,
                 None,
-                metadata.get("site_name"),
-                metadata.get("site_url"),
+                sanitized.get("provider", {}).get("name") if sanitized.get("provider") else None,
+                sanitized.get("provider", {}).get("url") if sanitized.get("provider") else None,
                 user_id,
                 now,
                 1,
@@ -701,8 +728,6 @@ class EmbedManager:
         """
         Parse URL metadata (OpenGraph/Twitter Card) without creating embed.
         
-        This is a simulation - in production would fetch and parse actual URL.
-        
         Args:
             url: URL to parse
             
@@ -712,10 +737,8 @@ class EmbedManager:
         validated_url = validate_url(url, "url")
         parsed = urlparse(validated_url)
 
-        # Simulate metadata extraction based on domain
+        # Baseline metadata (even if scraping fails)
         domain = parsed.netloc.lower()
-        path = parsed.path
-
         metadata: Dict[str, Any] = {
             "url": validated_url,
             "site_name": domain,
@@ -723,30 +746,198 @@ class EmbedManager:
             "type": "link",
         }
 
-        # Simulate different site types
-        if "youtube.com" in domain or "youtu.be" in domain:
-            metadata["type"] = "video"
-            metadata["site_name"] = "YouTube"
-            metadata["title"] = "Video Title"
-            metadata["description"] = "Video description from YouTube"
-            metadata["image"] = "https://i.ytimg.com/vi/placeholder/maxresdefault.jpg"
-            metadata["image_width"] = 1280
-            metadata["image_height"] = 720
-        elif "twitter.com" in domain or "x.com" in domain:
-            metadata["type"] = "article"
-            metadata["site_name"] = "X (formerly Twitter)"
-            metadata["title"] = "Tweet"
-            metadata["description"] = "Tweet content preview"
-        elif "github.com" in domain:
-            metadata["site_name"] = "GitHub"
-            metadata["title"] = "Repository"
-            metadata["description"] = "GitHub repository description"
-            metadata["image"] = "https://opengraph.githubassets.com/placeholder"
-        else:
-            metadata["title"] = f"Link to {domain}"
-            metadata["description"] = f"Content from {domain}"
+        try:
+            scraped = self._scrape_url_metadata(validated_url)
+            metadata.update({k: v for k, v in scraped.items() if v is not None})
+        except Exception as e:
+            # Fail closed: we still return minimal metadata, but do not raise here.
+            logger.warning(f"Failed to scrape URL metadata for {validated_url}: {e}")
 
         return metadata
+
+    def _validate_external_preview_url(self, url: str) -> Tuple[str, str, str]:
+        """Validate URL for preview scraping (SSRF protection).
+
+        Returns:
+            Tuple of (normalized_url, base_url, hostname)
+        """
+        validated_url = validate_url(url, "url")
+        parsed = urlparse(validated_url)
+
+        scheme = (parsed.scheme or "").lower()
+        if scheme not in {"http", "https"}:
+            raise ValueError("Only http/https URLs are allowed")
+
+        hostname = parsed.hostname or ""
+        if not hostname:
+            raise ValueError("Invalid URL: missing hostname")
+
+        hostname_lower = hostname.lower()
+        blocked_hosts = {
+            "localhost",
+            "127.0.0.1",
+            "::1",
+            "0.0.0.0",
+            "localhost.localdomain",
+            "local",
+        }
+        if hostname_lower in blocked_hosts:
+            raise ValueError("Access to localhost is not allowed")
+
+        if hostname_lower.endswith(".local") or hostname_lower.endswith(".internal"):
+            raise ValueError("Access to internal hosts is not allowed")
+
+        try:
+            addr_info = socket.getaddrinfo(hostname, None)
+            for _, _, _, _, sockaddr in addr_info:
+                ip = str(sockaddr[0])
+                if self._is_private_ip(ip):
+                    raise ValueError("Access to private IP addresses is not allowed")
+        except socket.gaierror:
+            # If DNS resolution fails, let the HTTP client error out.
+            pass
+
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+        return validated_url, base_url, hostname
+
+    def _is_private_ip(self, ip: str) -> bool:
+        try:
+            addr = ipaddress.ip_address(ip)
+            return (
+                addr.is_private
+                or addr.is_loopback
+                or addr.is_link_local
+                or addr.is_reserved
+                or addr.is_multicast
+            )
+        except ValueError:
+            return True
+
+    class _MetaParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.title: Optional[str] = None
+            self._in_title = False
+            self._title_parts: List[str] = []
+            self.meta: Dict[str, str] = {}
+
+        def handle_starttag(self, tag: str, attrs):
+            tag_lower = tag.lower()
+            if tag_lower == "title":
+                self._in_title = True
+                return
+
+            if tag_lower != "meta":
+                return
+
+            attr_map = {k.lower(): (v or "") for k, v in attrs if k}
+            key = (attr_map.get("property") or attr_map.get("name") or "").strip().lower()
+            content = (attr_map.get("content") or "").strip()
+            if key and content and key not in self.meta:
+                self.meta[key] = content
+
+        def handle_endtag(self, tag: str):
+            if tag.lower() == "title":
+                self._in_title = False
+                if self._title_parts and self.title is None:
+                    self.title = "".join(self._title_parts).strip() or None
+
+        def handle_data(self, data: str):
+            if self._in_title and data:
+                self._title_parts.append(data)
+
+    def _scrape_url_metadata(self, url: str) -> Dict[str, Any]:
+        """Fetch HTML and extract OpenGraph/Twitter metadata securely."""
+        validated_url, base_url, _ = self._validate_external_preview_url(url)
+
+        # Keep these defaults conservative; allow override via config if present.
+        preview_cfg = self._config.get("url_preview", {}) if isinstance(self._config, dict) else {}
+        timeout_seconds = int(preview_cfg.get("timeout_seconds", 8))
+        max_html_bytes = int(preview_cfg.get("max_html_bytes", 512 * 1024))
+        max_redirects = int(preview_cfg.get("max_redirects", 5))
+
+        try:
+            import httpx
+        except ImportError as e:
+            raise RuntimeError("httpx is required for URL preview scraping") from e
+
+        headers = {
+            "User-Agent": "PlexiChat/1.0 (+https://plexichat)",
+            "Accept": "text/html,application/xhtml+xml",
+        }
+
+        with httpx.Client(
+            follow_redirects=True,
+            timeout=httpx.Timeout(timeout_seconds, connect=min(5, timeout_seconds)),
+            headers=headers,
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+            max_redirects=max_redirects,
+        ) as client:
+            with client.stream("GET", validated_url) as resp:
+                resp.raise_for_status()
+
+                content_type = (resp.headers.get("content-type") or "").lower()
+                if "text/html" not in content_type and "application/xhtml+xml" not in content_type:
+                    raise ValueError(f"Unsupported content-type for preview: {content_type}")
+
+                chunks: List[bytes] = []
+                total = 0
+                for chunk in resp.iter_bytes():
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > max_html_bytes:
+                        break
+                    chunks.append(chunk)
+
+        html_bytes = b"".join(chunks)
+        # Best-effort decode; HTMLParser accepts str.
+        html_text = html_bytes.decode("utf-8", errors="replace")
+
+        parser = self._MetaParser()
+        parser.feed(html_text)
+
+        def pick(*keys: str) -> Optional[str]:
+            for k in keys:
+                v = parser.meta.get(k)
+                if v:
+                    return v
+            return None
+
+        og_type = pick("og:type")
+        title = pick("og:title", "twitter:title") or parser.title
+        description = pick("og:description", "twitter:description", "description")
+        site_name = pick("og:site_name")
+        image = pick(
+            "og:image:secure_url",
+            "og:image:url",
+            "og:image",
+            "twitter:image",
+            "twitter:image:src",
+        )
+
+        if image:
+            image = urljoin(base_url + "/", image)
+
+        embed_type = "link"
+        if og_type:
+            og_type_lower = og_type.lower()
+            if og_type_lower.startswith("video"):
+                embed_type = "video"
+            elif og_type_lower in {"article", "profile", "website"}:
+                embed_type = "article" if og_type_lower == "article" else "link"
+
+        return {
+            "type": embed_type,
+            "title": title,
+            "description": description,
+            "site_name": site_name,
+            "site_url": base_url,
+            "image": image,
+            "image_width": None,
+            "image_height": None,
+            "author": pick("author", "article:author"),
+        }
 
     def validate_embed_data(self, embed_data: Dict[str, Any]) -> Dict[str, Any]:
         """

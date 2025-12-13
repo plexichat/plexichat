@@ -51,8 +51,8 @@ import os
 import utils.logger as logger
 import utils.config as config
 
-_db = None
-_auth = None
+_db: Any = None
+_auth: Any = None
 _setup_complete = False
 
 # Rate limiting for admin login
@@ -114,7 +114,7 @@ def setup(db, auth_module=None) -> None:
 
 def _create_tables() -> None:
     """Create admin tables if they don't exist."""
-    global _db
+    db = _get_db()
 
     # Create admin_users table (separate from regular users)
     admin_schema = """
@@ -131,7 +131,7 @@ def _create_tables() -> None:
         must_setup_otp INTEGER DEFAULT 1
     )
     """
-    _db.execute(_db.convert_schema(admin_schema) if hasattr(_db, 'convert_schema') else admin_schema)
+    db.execute(db.convert_schema(admin_schema) if hasattr(db, 'convert_schema') else admin_schema)
 
     # Create admin_sessions table
     session_schema = """
@@ -146,7 +146,7 @@ def _create_tables() -> None:
         FOREIGN KEY (admin_id) REFERENCES admin_users(id)
     )
     """
-    _db.execute(_db.convert_schema(session_schema) if hasattr(_db, 'convert_schema') else session_schema)
+    db.execute(db.convert_schema(session_schema) if hasattr(db, 'convert_schema') else session_schema)
 
     # Ensure feedback table exists
     feedback_schema = """
@@ -164,7 +164,7 @@ def _create_tables() -> None:
         FOREIGN KEY (user_id) REFERENCES auth_users(id)
     )
     """
-    _db.execute(_db.convert_schema(feedback_schema) if hasattr(_db, 'convert_schema') else feedback_schema)
+    db.execute(db.convert_schema(feedback_schema) if hasattr(db, 'convert_schema') else feedback_schema)
 
     # Create admin_notes table
     notes_schema = """
@@ -178,10 +178,10 @@ def _create_tables() -> None:
         FOREIGN KEY (admin_id) REFERENCES admin_users(id)
     )
     """
-    _db.execute(_db.convert_schema(notes_schema) if hasattr(_db, 'convert_schema') else notes_schema)
+    db.execute(db.convert_schema(notes_schema) if hasattr(db, 'convert_schema') else notes_schema)
 
-    _db.execute("CREATE INDEX IF NOT EXISTS idx_admin_notes_ticket ON admin_notes(ticket_id)")
-    _db.execute("CREATE INDEX IF NOT EXISTS idx_admin_sessions_token ON admin_sessions(token)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_admin_notes_ticket ON admin_notes(ticket_id)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_admin_sessions_token ON admin_sessions(token)")
 
 
 def _generate_password(length: int = 24) -> str:
@@ -192,10 +192,10 @@ def _generate_password(length: int = 24) -> str:
 
 def _ensure_admin_user() -> None:
     """Ensure admin user exists, create with random password if not."""
-    global _db
+    db = _get_db()
 
     # Check if admin user exists
-    row = _db.fetch_one("SELECT id FROM admin_users WHERE username = ?", ("admin",))
+    row = db.fetch_one("SELECT id FROM admin_users WHERE username = ?", ("admin",))
     if row:
         return
 
@@ -220,7 +220,7 @@ def _ensure_admin_user() -> None:
     now = int(time.time() * 1000)
 
     # Create admin user
-    _db.execute(
+    db.execute(
         """INSERT INTO admin_users (id, username, password_hash, email, created_at, must_setup_otp)
            VALUES (?, ?, ?, ?, ?, ?)""",
         (admin_id, "admin", password_hash, "admin@example.com", now, 1)
@@ -277,6 +277,8 @@ def _get_db():
     """Get database instance."""
     if not _setup_complete:
         raise RuntimeError("Admin not initialized. Call admin.setup(db) first.")
+    if _db is None:
+        raise RuntimeError("Admin database not set")
     return _db
 
 

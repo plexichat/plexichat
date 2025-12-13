@@ -65,7 +65,7 @@ class MentionSpamRule(BaseRule):
             highest_severity = ViolationSeverity.HIGH
 
         if self._block_everyone and everyone_count > 0:
-            violations.append(f"@everyone/@here usage blocked")
+            violations.append("@everyone/@here usage blocked")
             highest_severity = ViolationSeverity.HIGH
 
         if not violations:

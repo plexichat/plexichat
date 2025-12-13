@@ -192,7 +192,6 @@ class ReactionManager:
 
         custom_match = CUSTOM_EMOJI_PATTERN.match(emoji)
         if custom_match:
-            emoji_name = custom_match.group(1)
             emoji_id = int(custom_match.group(2))
             return (True, emoji_id, emoji)
 

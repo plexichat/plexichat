@@ -27,7 +27,7 @@ Usage:
     token_info = auth.verify_token(result.token)
 """
 
-from typing import Optional, List, Dict, Any, Protocol
+from typing import Optional, List, Dict, Protocol
 
 from .exceptions import (
     AuthError,

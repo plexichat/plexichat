@@ -11,9 +11,10 @@ Provides:
 import os
 import subprocess
 import tempfile
-from typing import Optional, Dict, Any
+import importlib.util
 from dataclasses import dataclass
 from enum import Enum
+from typing import Optional, Dict, Any
 
 import utils.logger as logger
 import utils.config as config
@@ -105,10 +106,9 @@ class ImageCompressor:
 
     def _check_availability(self) -> bool:
         """Check if Pillow is available."""
-        try:
-            from PIL import Image
+        if importlib.util.find_spec("PIL") is not None:
             return True
-        except ImportError:
+        else:
             logger.warning("Pillow not installed - image compression unavailable")
             return False
 
@@ -319,6 +319,9 @@ class VideoCompressor:
             presets = VIDEO_CRF_PRESETS.get(quality, VIDEO_CRF_PRESETS[CompressionQuality.MEDIUM])
             crf = presets.get(codec_name, 23)
 
+        input_path: Optional[str] = None
+        output_path: Optional[str] = None
+
         try:
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as input_file:
                 input_file.write(video_data)
@@ -401,9 +404,9 @@ class VideoCompressor:
             # Cleanup temp files
             for path in [input_path, output_path]:
                 try:
-                    if os.path.exists(path):
+                    if path and os.path.exists(path):
                         os.unlink(path)
-                except:
+                except Exception:
                     pass
 
 

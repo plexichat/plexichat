@@ -67,8 +67,7 @@ Usage:
 
 import json
 import time
-from typing import Optional, List, Dict, Any
-from dataclasses import dataclass, field
+from typing import Optional, List, Any
 
 import utils.logger as logger
 import utils.config as config
@@ -80,10 +79,9 @@ from .models import (
 )
 from .exceptions import (
     FeatureError, InvalidTierError, InvalidBadgeError,
-    FeatureNotFoundError, PermissionDeniedError
 )
 
-_db = None
+_db: Any = None
 _setup_complete = False
 
 
@@ -106,6 +104,8 @@ def _get_db():
     """Get database instance."""
     if not _setup_complete:
         raise RuntimeError("Features module not initialized. Call features.setup(db) first.")
+    if _db is None:
+        raise RuntimeError("Features database not set")
     return _db
 
 
@@ -219,7 +219,10 @@ def apply_new_user_features(user_id: int) -> Optional[UserFeatures]:
 
     logger.info(f"Applied alpha tester features to new user {user_id}")
 
-    return get_user_features(user_id)
+    updated = get_user_features(user_id)
+    if updated is None:
+        raise RuntimeError("Failed to load user features after update")
+    return updated
 
 
 # === User Features ===
@@ -428,7 +431,10 @@ def set_user_features(
 
         logger.info(f"Created features for user {user_id} by admin {admin_id}")
 
-    return get_user_features(user_id)
+    updated = get_user_features(user_id)
+    if updated is None:
+        raise RuntimeError("Failed to load user features after update")
+    return updated
 
 
 def add_badge(user_id: int, admin_id: int, badge: str) -> List[str]:
@@ -456,6 +462,9 @@ def add_badge(user_id: int, admin_id: int, badge: str) -> List[str]:
         # Create features entry first
         set_user_features(user_id, admin_id)
         features = get_user_features(user_id)
+
+    if features is None:
+        raise RuntimeError("Failed to load user features before adding badge")
 
     badges = features.badges.copy()
     if badge not in badges:

@@ -17,7 +17,7 @@ Usage:
     )
 """
 
-from typing import Optional, Dict, Any, List, Callable
+from typing import Optional, Dict, Any, Callable
 
 from .models import (
     RateLimitBucket,

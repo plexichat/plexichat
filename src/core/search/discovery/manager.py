@@ -232,7 +232,7 @@ class DiscoveryManager:
             "created_at": "listed_at DESC",
         }.get(sort_by, "member_count DESC")
 
-        sql = f"""
+        sql = """
             SELECT l.*, s.name as server_name, s.icon_url as server_icon
             FROM search_server_listings l
             LEFT JOIN srv_servers s ON l.server_id = s.id

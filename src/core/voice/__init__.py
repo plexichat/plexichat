@@ -13,7 +13,9 @@ Usage:
     state = voice.join_channel(user_id=1, channel_id=123)
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
+
+from . import signaling
 
 from .models import (
     VoiceState,
@@ -371,8 +373,6 @@ def is_user_in_voice(user_id: int) -> bool:
 
 # === Signaling Operations ===
 # These are convenience wrappers around the signaling submodule
-
-from . import signaling
 
 
 def get_voice_server_info(user_id: int, channel_id: int):

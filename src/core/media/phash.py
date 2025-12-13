@@ -13,6 +13,8 @@ import hashlib
 from typing import Optional, Tuple, List, Dict, Any
 from dataclasses import dataclass
 from enum import Enum
+import importlib.util
+import importlib
 
 import utils.logger as logger
 import utils.config as config
@@ -38,20 +40,8 @@ class ImageHash:
 
 
 # Check if dependencies are available
-_IMAGEHASH_AVAILABLE = False
-_PIL_AVAILABLE = False
-
-try:
-    from PIL import Image
-    _PIL_AVAILABLE = True
-except ImportError:
-    pass
-
-try:
-    import imagehash
-    _IMAGEHASH_AVAILABLE = True
-except ImportError:
-    pass
+_PIL_AVAILABLE = importlib.util.find_spec("PIL") is not None
+_IMAGEHASH_AVAILABLE = importlib.util.find_spec("imagehash") is not None
 
 
 def is_available() -> bool:
@@ -73,7 +63,7 @@ def get_config() -> Dict[str, Any]:
     }
 
 
-def compute_phash(image_data: bytes, hash_size: int = None) -> Optional[str]:
+def compute_phash(image_data: bytes, hash_size: Optional[int] = None) -> Optional[str]:
     """
     Compute perceptual hash (pHash) of an image using DCT.
     
@@ -94,6 +84,9 @@ def compute_phash(image_data: bytes, hash_size: int = None) -> Optional[str]:
     
     try:
         import io
+        Image = importlib.import_module("PIL.Image")
+        imagehash = importlib.import_module("imagehash")
+
         img = Image.open(io.BytesIO(image_data))
         
         # Compute pHash using imagehash library
@@ -105,7 +98,7 @@ def compute_phash(image_data: bytes, hash_size: int = None) -> Optional[str]:
         return None
 
 
-def compute_dhash(image_data: bytes, hash_size: int = None) -> Optional[str]:
+def compute_dhash(image_data: bytes, hash_size: Optional[int] = None) -> Optional[str]:
     """
     Compute difference hash (dHash) of an image.
     
@@ -126,6 +119,9 @@ def compute_dhash(image_data: bytes, hash_size: int = None) -> Optional[str]:
     
     try:
         import io
+        Image = importlib.import_module("PIL.Image")
+        imagehash = importlib.import_module("imagehash")
+
         img = Image.open(io.BytesIO(image_data))
         
         dhash = imagehash.dhash(img, hash_size=hash_size)
@@ -136,7 +132,7 @@ def compute_dhash(image_data: bytes, hash_size: int = None) -> Optional[str]:
         return None
 
 
-def compute_ahash(image_data: bytes, hash_size: int = None) -> Optional[str]:
+def compute_ahash(image_data: bytes, hash_size: Optional[int] = None) -> Optional[str]:
     """
     Compute average hash (aHash) of an image.
     
@@ -157,6 +153,9 @@ def compute_ahash(image_data: bytes, hash_size: int = None) -> Optional[str]:
     
     try:
         import io
+        Image = importlib.import_module("PIL.Image")
+        imagehash = importlib.import_module("imagehash")
+
         img = Image.open(io.BytesIO(image_data))
         
         ahash = imagehash.average_hash(img, hash_size=hash_size)
@@ -167,7 +166,7 @@ def compute_ahash(image_data: bytes, hash_size: int = None) -> Optional[str]:
         return None
 
 
-def compute_whash(image_data: bytes, hash_size: int = None) -> Optional[str]:
+def compute_whash(image_data: bytes, hash_size: Optional[int] = None) -> Optional[str]:
     """
     Compute wavelet hash (wHash) of an image.
     
@@ -188,6 +187,9 @@ def compute_whash(image_data: bytes, hash_size: int = None) -> Optional[str]:
     
     try:
         import io
+        Image = importlib.import_module("PIL.Image")
+        imagehash = importlib.import_module("imagehash")
+
         img = Image.open(io.BytesIO(image_data))
         
         whash = imagehash.whash(img, hash_size=hash_size)
@@ -198,7 +200,7 @@ def compute_whash(image_data: bytes, hash_size: int = None) -> Optional[str]:
         return None
 
 
-def compute_image_hash(image_data: bytes, hash_type: HashType = None) -> Optional[ImageHash]:
+def compute_image_hash(image_data: bytes, hash_type: Optional[HashType] = None) -> Optional[ImageHash]:
     """
     Compute hash of an image using specified algorithm.
     
@@ -266,6 +268,7 @@ def hamming_distance(hash1: str, hash2: str) -> int:
     try:
         # Use imagehash for proper comparison if available
         if _IMAGEHASH_AVAILABLE:
+            imagehash = importlib.import_module("imagehash")
             h1 = imagehash.hex_to_hash(hash1)
             h2 = imagehash.hex_to_hash(hash2)
             return h1 - h2  # imagehash overloads subtraction for Hamming distance
@@ -278,7 +281,7 @@ def hamming_distance(hash1: str, hash2: str) -> int:
         return -1
 
 
-def are_similar(hash1: str, hash2: str, threshold: int = None) -> bool:
+def are_similar(hash1: str, hash2: str, threshold: Optional[int] = None) -> bool:
     """
     Check if two perceptual hashes are similar.
     
@@ -292,7 +295,9 @@ def are_similar(hash1: str, hash2: str, threshold: int = None) -> bool:
     """
     if threshold is None:
         cfg = get_config()
-        threshold = cfg["similarity_threshold"]
+        threshold = int(cfg["similarity_threshold"])
+    else:
+        threshold = int(threshold)
     
     distance = hamming_distance(hash1, hash2)
     return 0 <= distance <= threshold
@@ -301,7 +306,7 @@ def are_similar(hash1: str, hash2: str, threshold: int = None) -> bool:
 def find_similar_hashes(
     target_hash: str,
     hash_list: List[Tuple[str, str]],  # List of (hash_value, identifier)
-    threshold: int = None
+    threshold: Optional[int] = None
 ) -> List[Tuple[str, int]]:
     """
     Find all hashes similar to target from a list.
@@ -316,7 +321,9 @@ def find_similar_hashes(
     """
     if threshold is None:
         cfg = get_config()
-        threshold = cfg["similarity_threshold"]
+        threshold = int(cfg["similarity_threshold"])
+    else:
+        threshold = int(threshold)
     
     similar = []
     for hash_value, identifier in hash_list:
@@ -339,9 +346,7 @@ def compute_all_hashes(image_data: bytes) -> Dict[str, Optional[str]]:
     Returns:
         Dict with hash types as keys and hash values
     """
-    result = {
-        'sha256': hashlib.sha256(image_data).hexdigest()
-    }
+    result: Dict[str, Optional[str]] = {"sha256": hashlib.sha256(image_data).hexdigest()}
     
     if is_available():
         result['phash'] = compute_phash(image_data)

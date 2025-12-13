@@ -14,7 +14,7 @@ Usage:
     events.dispatch(event, user_ids=[1, 2, 3])
 """
 
-from typing import Optional, List, Callable, Any, Dict
+from typing import Optional, List, Callable
 
 from .types import EventType, GatewayIntent
 from .models import (

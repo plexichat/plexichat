@@ -212,6 +212,7 @@ class MediaManager:
     def _get_storage_for_file(self, content_type: str, size: int) -> Tuple[StorageBackendBase, str]:
         """Get appropriate storage backend for file based on auto-routing rules."""
         if self._should_route_to_database(content_type, size):
+            assert self._db_storage is not None
             return self._db_storage, "database"
         return self._storage, self._config.get("storage_backend", "local")
 
@@ -483,7 +484,6 @@ class MediaManager:
         """Generate storage path for file."""
         ext = os.path.splitext(filename)[1].lower() or ".bin"
         unique_id = uuid.uuid4().hex[:16]
-        timestamp = int(time.time())
 
         type_dir = media_type.value
         date_dir = time.strftime("%Y/%m/%d")
@@ -536,6 +536,7 @@ class MediaManager:
         self._check_rate_limit(user_id, file_size)
 
         # SECURITY: Check for blocked/duplicate content using deduplication module
+        dedup_manager = None
         try:
             from .deduplication import DeduplicationManager
             dedup_manager = DeduplicationManager(self._db)
@@ -656,7 +657,7 @@ class MediaManager:
         )
 
         # Register file hash for deduplication tracking
-        if dedup_result:
+        if dedup_result and dedup_manager is not None:
             try:
                 dedup_manager.register_file(
                     hash_value=checksum,

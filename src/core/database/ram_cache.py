@@ -56,9 +56,9 @@ class RAMCache:
         self._loaded_at: float = 0
         self._lock = threading.RLock()
         self._query: Optional[str] = None
-        self._db = None
+        self._db: Any = None
 
-    def load(self, db, query: str, params: tuple = None) -> int:
+    def load(self, db, query: str, params: Optional[tuple[Any, ...]] = None) -> int:
         """
         Load data from database into cache.
         
@@ -75,7 +75,7 @@ class RAMCache:
             self._query = query
 
             try:
-                rows = db.fetch_all(query, params) if params else db.fetch_all(query)
+                rows = db.fetch_all(query, params) if params is not None else db.fetch_all(query)
 
                 if len(rows) > self.max_items:
                     logger.warning(
@@ -114,11 +114,11 @@ class RAMCache:
 
     def _maybe_reload(self) -> None:
         """Reload cache if expired and we have db/query."""
-        if not self.is_valid() and self._db and self._query:
+        if not self.is_valid() and self._db is not None and self._query is not None:
             try:
                 self.load(self._db, self._query)
             except Exception as e:
-                logger.warning(f"RAMCache '{self.name}': Auto-reload failed - {e}")
+                logger.error(f"RAMCache '{self.name}': Reload failed - {e}")
 
     def get_all(self) -> List[Dict[str, Any]]:
         """Get all cached items."""

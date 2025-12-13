@@ -3,14 +3,7 @@ Settings manager - handles CRUD operations for user settings.
 """
 
 import time
-import sys
-import os
 from typing import Optional, Dict, List
-
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
-common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
-if common_utils_path not in sys.path:
-    sys.path.append(common_utils_path)
 
 import utils.logger as logger
 

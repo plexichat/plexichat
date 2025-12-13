@@ -71,7 +71,7 @@ class SDPParser:
             match = SDP_LINE_PATTERN.match(line)
             if not match:
                 raise SDPParseError(
-                    f"Invalid SDP line format",
+                    "Invalid SDP line format",
                     line=line_num,
                     detail=line[:50]
                 )

@@ -98,7 +98,7 @@ class MediasoupAdapter(SFUAdapter):
 
         except asyncio.TimeoutError:
             raise SFUTimeoutError(
-                f"Mediasoup request timed out",
+                "Mediasoup request timed out",
                 operation=endpoint,
                 timeout_ms=self._timeout * 1000
             )

@@ -56,6 +56,9 @@ def ensure_certificates(
     key_path = key_path or tls_config.get("key_path") or str(cert_dir / "server.key")
     validity_days = tls_config.get("cert_days", validity_days)
 
+    assert cert_path is not None
+    assert key_path is not None
+
     # Check if certificates already exist and are valid
     if not force_regenerate and os.path.exists(cert_path) and os.path.exists(key_path):
         if _check_certificate_validity(cert_path):
@@ -210,8 +213,6 @@ def get_ssl_context(cert_path: str, key_path: str):
     Returns:
         SSL context dictionary for uvicorn
     """
-    import ssl
-
     if not os.path.exists(cert_path):
         raise FileNotFoundError(f"Certificate not found: {cert_path}")
     if not os.path.exists(key_path):

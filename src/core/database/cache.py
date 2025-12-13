@@ -13,25 +13,18 @@ Features:
     - Cache statistics and monitoring
 """
 
-import sys
-import os
 import json
 import hashlib
 import time
-from typing import Any, Callable, Dict, List, Optional, TypeVar
+from typing import Any, Callable, Dict, List, Optional, TypeVar, cast
 from functools import wraps
-
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
-common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
-if common_utils_path not in sys.path:
-    sys.path.append(common_utils_path)
 
 import utils.logger as logger
 
-from .redis_client import get_client, is_available, RedisOperationError
+from .redis_client import get_client, is_available, RedisOperationError, JsonSerializable
 
 # Type variable for generic return types
-T = TypeVar("T")
+T = TypeVar("T", bound=JsonSerializable)
 
 # Cache statistics
 _cache_stats = {
@@ -131,7 +124,7 @@ def cached(
                 if cached_value is not None:
                     _cache_stats["hits"] += 1
                     logger.info(f"CACHE HIT: {cache_key} (total hits: {_cache_stats['hits']})")
-                    return cached_value
+                    return cast(T, cached_value)
             except RedisOperationError:
                 _cache_stats["errors"] += 1
                 # Fall through to execute function
@@ -145,7 +138,7 @@ def cached(
             # Store in cache
             try:
                 cache_ttl = ttl if ttl is not None else client.ttl_cache
-                client.set_json(cache_key, result, ttl=cache_ttl)
+                client.set_json(cache_key, cast(JsonSerializable, result), ttl=cache_ttl)
             except RedisOperationError as e:
                 _cache_stats["errors"] += 1
                 logger.warning(f"Failed to cache result for {cache_key}: {e}")
@@ -153,10 +146,11 @@ def cached(
             return result
 
         # Add cache control methods to the wrapper
-        wrapper.cache_key_prefix = prefix or f"cache:{func.__module__}.{func.__name__}"
-        wrapper.invalidate = lambda *args, **kwargs: invalidate_cached(
+        wrapper_any = cast(Any, wrapper)
+        wrapper_any.cache_key_prefix = prefix or f"cache:{func.__module__}.{func.__name__}"
+        wrapper_any.invalidate = lambda *args, **kwargs: invalidate_cached(
             key_builder(*args, **kwargs) if key_builder
-            else _generate_cache_key(wrapper.cache_key_prefix, *args, **kwargs)
+            else _generate_cache_key(wrapper_any.cache_key_prefix, *args, **kwargs)
         )
 
         return wrapper
@@ -423,7 +417,7 @@ def invalidate_user_sessions(user_id: int) -> int:
         if session_ids:
             keys_to_delete = [f"session:{sid}" for sid in session_ids]
             keys_to_delete.append(f"user_sessions:{user_id}")
-            count = client.delete(*keys_to_delete)
+            client.delete(*keys_to_delete)
             logger.debug(f"Invalidated {len(session_ids)} sessions for user {user_id}")
             return len(session_ids)
         return 0

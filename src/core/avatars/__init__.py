@@ -32,7 +32,7 @@ import utils.config as config
 
 from src.utils.encryption import generate_snowflake_id
 
-_db = None
+_db: Any = None
 _setup_complete = False
 
 # Default configuration
@@ -60,6 +60,8 @@ def _get_db():
     """Get database instance."""
     if not _setup_complete:
         raise RuntimeError("Avatars module not initialized. Call avatars.setup(db) first.")
+    if _db is None:
+        raise RuntimeError("Avatars database not set")
     return _db
 
 
@@ -78,7 +80,7 @@ def _get_config(key: str, default: Any = None) -> Any:
 
 def _create_tables() -> None:
     """Create avatar tables."""
-    db = _db
+    db = _get_db()
 
     # User avatars table
     db.execute("""
@@ -157,7 +159,8 @@ def _process_image(image_data: bytes, content_type: str) -> Tuple[bytes, int, in
     # Open image
     img = Image.open(io.BytesIO(image_data))
     original_format = img.format
-    is_animated = getattr(img, 'is_animated', False) or (hasattr(img, 'n_frames') and img.n_frames > 1)
+    n_frames = getattr(img, "n_frames", 1)
+    is_animated = bool(getattr(img, "is_animated", False)) or (n_frames > 1)
 
     # Get original dimensions
     width, height = img.size
@@ -178,7 +181,7 @@ def _process_image(image_data: bytes, content_type: str) -> Tuple[bytes, int, in
             durations = []
 
             try:
-                for frame_num in range(img.n_frames):
+                for frame_num in range(n_frames):
                     img.seek(frame_num)
                     frame = img.copy()
                     frame = frame.resize((new_width, new_height), Image.Resampling.LANCZOS)

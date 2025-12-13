@@ -13,7 +13,7 @@ Usage:
     reaction = reactions.add_reaction(user_id=1, message_id=123, emoji="thumbsup")
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict
 
 from .models import (
     Reaction,

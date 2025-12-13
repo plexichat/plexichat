@@ -219,14 +219,14 @@ class ExternalProxy:
             raise ProxyFetchError("Access to internal hosts is not allowed", url)
 
         # Try to resolve and check for private IPs
+        import socket
         try:
-            import socket
             # Get all IP addresses for the hostname
             addr_info = socket.getaddrinfo(hostname, None)
             for family, _, _, _, sockaddr in addr_info:
-                ip = sockaddr[0]
+                ip = str(sockaddr[0])
                 if self._is_private_ip(ip):
-                    raise ProxyFetchError(f"Access to private IP addresses is not allowed", url)
+                    raise ProxyFetchError("Access to private IP addresses is not allowed", url)
         except socket.gaierror:
             # DNS resolution failed - allow through (will fail on fetch anyway)
             pass

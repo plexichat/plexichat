@@ -335,6 +335,8 @@ class ChunkedUploadManager:
         # Write chunk to temp file
         try:
             offset = chunk_index * session.chunk_size
+            if session.temp_path is None:
+                raise RuntimeError("Upload session temp file missing")
             with open(session.temp_path, "r+b") as f:
                 f.seek(offset)
                 f.write(chunk_data)
@@ -399,6 +401,8 @@ class ChunkedUploadManager:
             return None
 
         try:
+            if session.temp_path is None:
+                raise RuntimeError("Upload session temp file missing")
             with open(session.temp_path, "rb") as f:
                 file_data = f.read(session.total_size)
 
@@ -463,7 +467,7 @@ class ChunkedUploadManager:
             if temp_path and os.path.exists(temp_path):
                 try:
                     os.unlink(temp_path)
-                except:
+                except Exception:
                     pass
 
             self._db.execute(

@@ -4,17 +4,9 @@ Authentication Manager - Core authentication logic.
 Handles user registration, login, sessions, 2FA, bots, and audit logging.
 """
 
-import os
-import sys
 import time
 import json
 from typing import Optional, List, Dict, Any, Tuple
-
-# Add paths for imports
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
-common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
-if common_utils_path not in sys.path:
-    sys.path.append(common_utils_path)
 
 import utils.config as config
 import utils.logger as logger
@@ -156,7 +148,7 @@ class AuthManager:
 
         # Validate email
         if not validate_email(email):
-            logger.warning(f"Registration failed - invalid email format")
+            logger.warning("Registration failed - invalid email format")
             raise InvalidEmailError("Invalid email format")
 
         # Validate password
@@ -216,9 +208,8 @@ class AuthManager:
             self._track_ip(user_id, ip_address)
 
         # Track device if provided
-        device_id = None
         if device_info:
-            device_id = self._track_device(user_id, device_info)
+            self._track_device(user_id, device_info)
 
         # Send verification email if configured
         if require_verification and self.email_sender:

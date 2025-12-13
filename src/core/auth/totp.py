@@ -5,14 +5,7 @@ Compatible with Google Authenticator, Authy, and other TOTP apps.
 """
 
 import os
-import sys
 from typing import List, Tuple, Optional
-
-# Add paths for imports
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
-common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
-if common_utils_path not in sys.path:
-    sys.path.append(common_utils_path)
 
 import utils.config as config
 

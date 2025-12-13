@@ -18,11 +18,11 @@ Usage:
     stats = telemetry.get_endpoint_stats()
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Callable
 from dataclasses import dataclass
 import time
 
-_db = None
+_db: Any = None
 _setup_complete = False
 
 
@@ -72,6 +72,11 @@ def _create_tables() -> None:
     """Create telemetry tables if they don't exist."""
     global _db
 
+    if _db is None:
+        raise RuntimeError("Telemetry database not set")
+
+    db: Any = _db
+
     schema = """
     CREATE TABLE IF NOT EXISTS telemetry_response_times (
         id INTEGER PRIMARY KEY,
@@ -83,12 +88,13 @@ def _create_tables() -> None:
         client_id TEXT
     )
     """
-    _db.execute(_db.convert_schema(schema) if hasattr(_db, 'convert_schema') else schema)
+    convert_schema: Optional[Callable[[str], str]] = getattr(db, "convert_schema", None)
+    db.execute(convert_schema(schema) if convert_schema else schema)
 
     # Create indexes for efficient querying
-    _db.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_endpoint ON telemetry_response_times(endpoint)")
-    _db.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_timestamp ON telemetry_response_times(timestamp)")
-    _db.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_method_endpoint ON telemetry_response_times(method, endpoint)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_endpoint ON telemetry_response_times(endpoint)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_timestamp ON telemetry_response_times(timestamp)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_method_endpoint ON telemetry_response_times(method, endpoint)")
 
 
 def is_setup() -> bool:
@@ -100,6 +106,8 @@ def _get_db():
     """Get database instance, ensuring setup was called."""
     if not _setup_complete:
         raise RuntimeError("Telemetry not initialized. Call telemetry.setup(db) first.")
+    if _db is None:
+        raise RuntimeError("Telemetry database not set")
     return _db
 
 
@@ -180,9 +188,9 @@ def submit_response_times(
     # Pre-import snowflake generator
     try:
         from src.utils.encryption import generate_snowflake_id
-        use_snowflake = True
+        generate_id = generate_snowflake_id
     except ImportError:
-        use_snowflake = False
+        generate_id = None
 
     for idx, entry in enumerate(entries):
         try:
@@ -203,8 +211,8 @@ def submit_response_times(
                 timestamp = now
 
             # Generate ID
-            if use_snowflake:
-                entry_id = generate_snowflake_id()
+            if generate_id is not None:
+                entry_id = generate_id()
             else:
                 entry_id = int(time.time() * 1000000) + idx
 

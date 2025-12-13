@@ -7,7 +7,7 @@ and database interactions.
 
 import time
 import json
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 import utils.config as config
 import utils.logger as logger
@@ -754,12 +754,13 @@ class MessagingManager:
             return False
 
         # Check direct participant first (most common case)
-        if row.get("is_direct_participant") == 1:
+        is_direct = row["is_direct_participant"] if hasattr(row, "__getitem__") else None
+        if is_direct == 1:
             self._cache_set(self._participant_cache, cache_key, True)
             return True
 
         # Check server membership if this is a server channel
-        metadata = row.get("metadata")
+        metadata = row["metadata"] if hasattr(row, "__getitem__") else None
         if metadata:
             try:
                 if isinstance(metadata, str):
@@ -904,7 +905,7 @@ class MessagingManager:
             )
 
             self._db.commit()
-        except Exception as e:
+        except Exception:
             self._db.rollback()
             raise
 
@@ -922,7 +923,7 @@ class MessagingManager:
                     content_type=att_data.get("content_type", "application/octet-stream"),
                     size=att_data.get("size", 0),
                     url=att_data.get("url", ""),
-                    uploaded_at=now
+                    created_at=now
                 ))
 
         # Return the original sanitized content (not "[encrypted]") so the sender sees their message

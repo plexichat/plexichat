@@ -13,7 +13,7 @@ Usage:
     presence.set_status(user_id=1, status=presence.UserStatus.ONLINE)
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict
 
 from .models import (
     Presence,

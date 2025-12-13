@@ -111,7 +111,7 @@ class JanusAdapter(SFUAdapter):
 
         except asyncio.TimeoutError:
             raise SFUTimeoutError(
-                f"Janus request timed out",
+                "Janus request timed out",
                 operation=endpoint,
                 timeout_ms=self._timeout * 1000
             )
@@ -170,7 +170,7 @@ class JanusAdapter(SFUAdapter):
         # Create VideoRoom
         room_num = abs(hash(room_id)) % (10**9)  # Convert to numeric ID
 
-        result = await self._send_message(
+        await self._send_message(
             session_id,
             handle_id,
             {
@@ -333,7 +333,7 @@ class JanusAdapter(SFUAdapter):
             )
 
         # Configure publishing
-        result = await self._send_message(
+        await self._send_message(
             session_id,
             handle_id,
             {
@@ -381,7 +381,7 @@ class JanusAdapter(SFUAdapter):
         feed_num = abs(hash(feed_peer)) % (10**9)
 
         # Join as subscriber
-        result = await self._send_message(
+        await self._send_message(
             session_id,
             handle_id,
             {

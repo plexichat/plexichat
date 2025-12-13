@@ -6,15 +6,7 @@ Provides configurable password strength validation.
 """
 
 import re
-import sys
-import os
 from typing import List, Tuple
-
-# Add paths for imports
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
-common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
-if common_utils_path not in sys.path:
-    sys.path.append(common_utils_path)
 
 import utils.config as config
 

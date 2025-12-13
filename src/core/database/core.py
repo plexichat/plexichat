@@ -11,15 +11,9 @@ PostgreSQL Support:
 """
 
 import sqlite3
-import sys
 import os
 import re
 from typing import Any, List, Optional, Tuple, Union
-
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
-common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
-if common_utils_path not in sys.path:
-    sys.path.append(common_utils_path)
 
 import utils.config as config
 import utils.logger as logger
@@ -156,9 +150,10 @@ class Database:
                 options="-c client_encoding=UTF8 -c synchronous_commit=off"
             )
             # Get initial connection from pool
-            self.connection = self._pool.getconn()
+            conn = self._pool.getconn()
+            self.connection = conn
             # Set autocommit off by default (matches SQLite behavior)
-            self.connection.autocommit = False
+            conn.autocommit = False
             logger.info(f"Connected to PostgreSQL at {host}:{port}/{dbname} (sslmode={sslmode}, pool={min_conn}-{max_conn})")
         except psycopg2.Error as e:
             logger.error(f"Failed to connect to PostgreSQL: {e}")

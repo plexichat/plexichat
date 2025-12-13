@@ -26,7 +26,7 @@ Usage:
 import json
 import time
 import secrets
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Any
 
 import utils.logger as logger
 import utils.config as config
@@ -39,8 +39,8 @@ from .exceptions import (
     PermissionDeniedError, FeatureRequiredError
 )
 
-_db = None
-_auth = None
+_db: Any = None
+_auth: Any = None
 _setup_complete = False
 
 
@@ -66,6 +66,8 @@ def _get_db():
     """Get database instance."""
     if not _setup_complete:
         raise RuntimeError("Organizations module not initialized. Call organizations.setup(db) first.")
+    if _db is None:
+        raise RuntimeError("Organizations database not set")
     return _db
 
 
@@ -193,7 +195,10 @@ def create_org(name: str, display_name: str, root_user_id: int) -> Organization:
 
     logger.info(f"Created organization '{name}' (ID: {org_id}) with root user {root_user_id}")
 
-    return get_org(org_id)
+    org = get_org(org_id)
+    if org is None:
+        raise RuntimeError("Failed to load organization after creation")
+    return org
 
 
 def get_org(org_id: int) -> Optional[Organization]:
@@ -337,7 +342,7 @@ def get_member(org_id: int, user_id: int) -> Optional[OrgMember]:
     )
 
 
-def add_member(org_id: int, user_id: int, role: str = "member", invited_by: int = None) -> OrgMember:
+def add_member(org_id: int, user_id: int, role: str = "member", invited_by: Optional[int] = None) -> OrgMember:
     """Add a user to an organization."""
     db = _get_db()
 
@@ -365,7 +370,10 @@ def add_member(org_id: int, user_id: int, role: str = "member", invited_by: int 
 
     logger.info(f"Added user {user_id} to organization {org_id} with role '{role}'")
 
-    return get_member(org_id, user_id)
+    member = get_member(org_id, user_id)
+    if member is None:
+        raise RuntimeError("Failed to load member after insert")
+    return member
 
 
 def remove_member(org_id: int, user_id: int, disinherit: bool = True) -> bool:
@@ -404,7 +412,7 @@ def remove_member(org_id: int, user_id: int, disinherit: bool = True) -> bool:
 def is_org_root(org_id: int, user_id: int) -> bool:
     """Check if user is the root of an organization."""
     org = get_org(org_id)
-    return org and org.root_user_id == user_id
+    return bool(org and org.root_user_id == user_id)
 
 
 # === Invite Management ===
@@ -413,8 +421,8 @@ def create_invite(
     org_id: int,
     created_by: int,
     invite_type: str = "existing",
-    target_username: str = None,
-    expires_hours: int = None
+    target_username: Optional[str] = None,
+    expires_hours: Optional[int] = None
 ) -> OrgInvite:
     """
     Create an organization invite.
@@ -449,6 +457,7 @@ def create_invite(
 
     if expires_hours is None:
         expires_hours = _get_config("invites.default_expiry_hours", 168)
+    expires_hours = int(expires_hours or 0)
     expires_at = now + (expires_hours * 3600) if expires_hours > 0 else None
 
     db.execute(
@@ -461,7 +470,10 @@ def create_invite(
 
     logger.info(f"Created {invite_type} invite for org {org_id} by user {created_by}")
 
-    return get_invite(invite_id)
+    updated = get_invite(invite_id)
+    if updated is None:
+        raise RuntimeError("Invite disappeared after approval")
+    return updated
 
 
 def get_invite(invite_id: int) -> Optional[OrgInvite]:
@@ -522,7 +534,7 @@ def _row_to_invite(row) -> OrgInvite:
     )
 
 
-def get_org_invites(org_id: int, status_filter: str = None) -> List[OrgInvite]:
+def get_org_invites(org_id: int, status_filter: Optional[str] = None) -> List[OrgInvite]:
     """Get all invites for an organization."""
     db = _get_db()
 
@@ -597,6 +609,8 @@ def accept_invite(invite_id: int, user_id: int) -> OrgInvite:
     )
 
     org = get_org(invite.org_id)
+    if org is None:
+        raise OrgNotFoundError(f"Organization {invite.org_id} not found")
 
     # If org doesn't require approval, auto-approve
     if not org.invite_requires_approval:
@@ -604,7 +618,10 @@ def accept_invite(invite_id: int, user_id: int) -> OrgInvite:
 
     logger.info(f"User {user_id} accepted invite {invite_id}")
 
-    return get_invite(invite_id)
+    updated = get_invite(invite_id)
+    if updated is None:
+        raise RuntimeError("Invite disappeared after accept")
+    return updated
 
 
 def approve_invite(invite_id: int, root_user_id: int) -> OrgInvite:
@@ -634,6 +651,8 @@ def approve_invite(invite_id: int, root_user_id: int) -> OrgInvite:
     now = int(time.time())
 
     # Add user to org
+    if invite.target_user_id is None:
+        raise OrganizationError("Invite has no target user")
     add_member(invite.org_id, invite.target_user_id, "member", root_user_id)
 
     # Update invite
@@ -646,7 +665,10 @@ def approve_invite(invite_id: int, root_user_id: int) -> OrgInvite:
 
     logger.info(f"Root {root_user_id} approved invite {invite_id}")
 
-    return get_invite(invite_id)
+    updated = get_invite(invite_id)
+    if updated is None:
+        raise RuntimeError("Invite disappeared after approval")
+    return updated
 
 
 def reject_invite(invite_id: int, user_id: int) -> bool:
@@ -875,7 +897,10 @@ def set_managed_setting(org_id: int, root_user_id: int, key: str, value: str, lo
     logger.info(f"Root {root_user_id} set managed setting '{key}' for org {org_id}")
 
     settings = get_managed_settings(org_id)
-    return next((s for s in settings if s.setting_key == key), None)
+    setting = next((s for s in settings if s.setting_key == key), None)
+    if setting is None:
+        raise RuntimeError("Managed setting not found after upsert")
+    return setting
 
 
 def is_setting_locked(user_id: int, setting_key: str) -> bool:
@@ -930,9 +955,9 @@ def can_join_server(user_id: int, server_id: int) -> bool:
 def update_server_restrictions(
     org_id: int,
     root_user_id: int,
-    default_servers: List[int] = None,
-    allowed_servers: List[int] = None,
-    blocked_servers: List[int] = None
+    default_servers: Optional[List[int]] = None,
+    allowed_servers: Optional[List[int]] = None,
+    blocked_servers: Optional[List[int]] = None
 ) -> Organization:
     """Update server restrictions for an organization."""
     db = _get_db()
@@ -967,7 +992,10 @@ def update_server_restrictions(
 
     logger.info(f"Root {root_user_id} updated server restrictions for org {org_id}")
 
-    return get_org(org_id)
+    updated_org = get_org(org_id)
+    if updated_org is None:
+        raise RuntimeError("Organization disappeared after update")
+    return updated_org
 
 
 __all__ = [

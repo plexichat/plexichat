@@ -354,7 +354,6 @@ class RateLimitManager:
         Returns:
             RateLimitResult with allowed status and headers.
         """
-        now = time.monotonic()
         unix_now = time.time()
         if self._check_bypass(user_id, is_admin, is_internal):
             return self._create_bypass_result(route, unix_now)
