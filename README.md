@@ -63,6 +63,28 @@ Configuration is loaded from (in order):
 1. `config/config.yaml`
 2. `~/.plexichat/config/config.yaml`
 
+### Key Configuration Options
+
+```yaml
+rate_limiting:
+  enabled: true  # Enable/disable rate limiting middleware
+  global:
+    requests: 50
+    window_seconds: 1.0
+    burst: 10
+  user:
+    requests: 120
+    window_seconds: 60.0
+  ip:
+    requests: 60
+    window_seconds: 60.0
+
+docs:
+  enabled: true  # Enable/disable API documentation serving
+  path: /docs/api
+  title: PlexiChat API Documentation
+```
+
 See the root README.md for full configuration options.
 
 ## Project Structure
