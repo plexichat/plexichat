@@ -362,8 +362,9 @@ async def get_server_members(
                         if status and hasattr(status, "value"):
                             status = status.value
                         presence_data = {"status": status or "offline"}
-                except Exception:
-                    pass
+                        logger.debug(f"Member {user_id} presence: {status}")
+                except Exception as e:
+                    logger.warning(f"Failed to get presence for user {user_id}: {e}")
 
             result.append({
                 "user_id": str(user_id),
