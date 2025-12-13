@@ -2,8 +2,11 @@
 Server routes - Server/guild management endpoints.
 """
 
-from typing import List
-from fastapi import APIRouter, HTTPException, Depends
+import os
+import uuid
+from pathlib import Path
+from typing import List, Optional
+from fastapi import APIRouter, HTTPException, Depends, File, UploadFile
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
@@ -13,8 +16,11 @@ from src.api.schemas.servers import (
     ServerResponse,
     ChannelResponse,
 )
+from src.api.schemas.common import SnowflakeID
 from src.core.servers.models import ChannelType
 from src.core.database import cached
+
+import utils.config as config
 
 router = APIRouter()
 
@@ -23,13 +29,13 @@ def _server_to_response(server) -> ServerResponse:
     """Convert server object to response model."""
     default_channel_id = getattr(server, "default_channel_id", None)
     return ServerResponse(
-        id=str(server.id),
+        id=SnowflakeID(server.id),
         name=server.name,
         description=getattr(server, "description", None),
         icon_url=getattr(server, "icon_url", None),
-        owner_id=str(server.owner_id),
+        owner_id=SnowflakeID(server.owner_id),
         member_count=getattr(server, "member_count", 0),
-        default_channel_id=str(default_channel_id) if default_channel_id else None,
+        default_channel_id=SnowflakeID(default_channel_id) if default_channel_id else None,
         created_at=server.created_at,
     )
 
@@ -41,13 +47,13 @@ def _channel_to_response(channel) -> ChannelResponse:
         channel_type = channel_type.value
 
     return ChannelResponse(
-        id=str(channel.id),
-        server_id=str(channel.server_id),
+        id=SnowflakeID(channel.id),
+        server_id=SnowflakeID(channel.server_id),
         name=channel.name,
         channel_type=channel_type or "text",
         topic=getattr(channel, "topic", None),
         position=getattr(channel, "position", 0),
-        category_id=str(channel.category_id) if getattr(channel, "category_id", None) else None,
+        category_id=SnowflakeID(channel.category_id) if getattr(channel, "category_id", None) else None,
         nsfw=getattr(channel, "nsfw", False),
         slowmode_seconds=getattr(channel, "slowmode_seconds", 0),
         created_at=channel.created_at,
@@ -128,13 +134,13 @@ async def get_servers(current_user: TokenInfo = Depends(get_current_user)):
             raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Failed to fetch servers"}})
         # Cached data is already dict format, convert to response
         return [ServerResponse(
-            id=str(s["id"]),
+            id=SnowflakeID(s["id"]),
             name=s["name"],
             description=s.get("description"),
             icon_url=s.get("icon_url"),
-            owner_id=str(s["owner_id"]),
+            owner_id=SnowflakeID(s["owner_id"]),
             member_count=s.get("member_count", 0),
-            default_channel_id=str(s["default_channel_id"]) if s.get("default_channel_id") else None,
+            default_channel_id=SnowflakeID(s["default_channel_id"]) if s.get("default_channel_id") else None,
             created_at=s["created_at"],
         ) for s in servers]
     except HTTPException:
@@ -286,13 +292,13 @@ async def get_server_channels(server_id: str, current_user: TokenInfo = Depends(
             raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Failed to fetch channels"}})
         # Cached data is already dict format, convert to response
         return [ChannelResponse(
-            id=str(c["id"]),
-            server_id=str(c["server_id"]),
+            id=SnowflakeID(c["id"]),
+            server_id=SnowflakeID(c["server_id"]),
             name=c["name"],
             channel_type=c.get("channel_type", "text"),
             topic=c.get("topic"),
             position=c.get("position", 0),
-            category_id=str(c["category_id"]) if c.get("category_id") else None,
+            category_id=SnowflakeID(c["category_id"]) if c.get("category_id") else None,
             nsfw=c.get("nsfw", False),
             slowmode_seconds=c.get("slowmode_seconds", 0),
             created_at=c["created_at"],
@@ -312,7 +318,7 @@ async def get_server_channels(server_id: str, current_user: TokenInfo = Depends(
 async def get_server_members(
     server_id: str,
     limit: int = 100,
-    after: str = None,
+    after: Optional[str] = None,
     current_user: TokenInfo = Depends(get_current_user)
 ):
     """Get server members."""
@@ -767,7 +773,7 @@ async def get_server_bans(server_id: str, current_user: TokenInfo = Depends(get_
 
 
 @router.put("/{server_id}/bans/{user_id}")
-async def ban_member(server_id: str, user_id: str, body: dict = None, current_user: TokenInfo = Depends(get_current_user)):
+async def ban_member(server_id: str, user_id: str, body: Optional[dict] = None, current_user: TokenInfo = Depends(get_current_user)):
     """Ban a user from a server."""
     servers_mod = api.get_servers()
     if not servers_mod:
@@ -901,13 +907,6 @@ async def get_server_webhooks(server_id: str, current_user: TokenInfo = Depends(
 
 
 # ==================== Server Icon Upload ====================
-
-from fastapi import File, UploadFile
-import os
-import uuid
-from pathlib import Path
-
-import utils.config as config
 
 # Default icon size limit (2MB)
 DEFAULT_ICON_SIZE_LIMIT = 2 * 1024 * 1024

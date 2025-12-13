@@ -215,7 +215,7 @@ async def admin_logout(request: Request, db = Depends(get_db)):
 async def get_dashboard(request: Request, db = Depends(get_db)):
     """Get admin dashboard data."""
     _check_host_restriction(request)
-    admin_id = _get_admin_from_token(request)
+    _get_admin_from_token(request)
 
     from src.core import admin
 
@@ -253,7 +253,7 @@ async def get_tickets(
 ):
     """Get feedback tickets."""
     _check_host_restriction(request)
-    admin_id = _get_admin_from_token(request)
+    _get_admin_from_token(request)
 
     from src.core import admin
     tickets = admin.get_feedback_tickets(status_filter, limit, offset)
@@ -273,7 +273,7 @@ async def get_tickets(
 async def get_ticket(ticket_id: int, request: Request, db = Depends(get_db)):
     """Get a single ticket."""
     _check_host_restriction(request)
-    admin_id = _get_admin_from_token(request)
+    _get_admin_from_token(request)
 
     from src.core import admin
     ticket = admin.get_ticket(ticket_id)
@@ -315,7 +315,7 @@ async def update_ticket_status(
 async def get_ticket_notes(ticket_id: int, request: Request, db = Depends(get_db)):
     """Get internal notes for a ticket."""
     _check_host_restriction(request)
-    admin_id = _get_admin_from_token(request)
+    _get_admin_from_token(request)
 
     from src.core import admin
 
@@ -352,6 +352,9 @@ async def add_ticket_note(
     new_note = admin.add_internal_note(ticket_id, admin_id, note.content)
     logger.info(f"Admin {admin_id} added note to ticket {ticket_id}")
 
+    if new_note is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create note")
+
     return NoteResponse(
         id=new_note.id, ticket_id=new_note.ticket_id, admin_id=new_note.admin_id,
         admin_username=new_note.admin_username, content=new_note.content,
@@ -376,7 +379,7 @@ async def get_telemetry_stats(
         source: Optional source filter - "server" for server-side only, "client" for client-side only
     """
     _check_host_restriction(request)
-    admin_id = _get_admin_from_token(request)
+    _get_admin_from_token(request)
 
     try:
         from src.core import telemetry
@@ -434,7 +437,7 @@ async def get_telemetry_history(
 ):
     """Get telemetry history for an endpoint."""
     _check_host_restriction(request)
-    admin_id = _get_admin_from_token(request)
+    _get_admin_from_token(request)
 
     try:
         from src.core import telemetry
@@ -487,7 +490,7 @@ async def export_telemetry_stats(
         hours: Number of hours to include
     """
     _check_host_restriction(request)
-    admin_id = _get_admin_from_token(request)
+    _get_admin_from_token(request)
 
     try:
         from src.core import telemetry
@@ -543,10 +546,10 @@ async def export_telemetry_stats(
 
         elif format == "txt":
             lines = [
-                f"PlexiChat Telemetry Report",
+                "PlexiChat Telemetry Report",
                 f"Generated: {export_time}",
                 f"Time Range: Last {hours} hours",
-                f"",
+                "",
                 f"{'Endpoint':<50} {'Method':<8} {'Count':>8} {'Avg':>10} {'P95':>10} {'Error%':>8}",
                 f"{'-'*50} {'-'*8} {'-'*8} {'-'*10} {'-'*10} {'-'*8}",
             ]
@@ -561,8 +564,8 @@ async def export_telemetry_stats(
                 avg_latency = sum(s.avg_response_time_ms * s.count for s in stats) / total_requests if total_requests else 0
                 avg_error = sum(s.error_rate * s.count for s in stats) / total_requests * 100 if total_requests else 0
                 lines.extend([
-                    f"",
-                    f"Summary:",
+                    "",
+                    "Summary:",
                     f"  Total Requests: {total_requests:,}",
                     f"  Average Latency: {avg_latency:.1f}ms",
                     f"  Average Error Rate: {avg_error:.1f}%",
@@ -661,7 +664,7 @@ async def get_hash_reports(
 ):
     """Get hash reports for admin review with image preview support."""
     _check_host_restriction(request)
-    admin_id = _get_admin_from_token(request)
+    _get_admin_from_token(request)
 
     from src.core import admin
     reports = admin.get_hash_reports(status_filter, limit, offset)
@@ -693,7 +696,7 @@ async def get_hash_reports(
 async def get_hash_report_counts(request: Request, db = Depends(get_db)):
     """Get counts of hash reports by status."""
     _check_host_restriction(request)
-    admin_id = _get_admin_from_token(request)
+    _get_admin_from_token(request)
 
     from src.core import admin
     return admin.get_hash_report_counts()
@@ -731,7 +734,7 @@ async def get_blocked_hashes(
 ):
     """Get list of blocked hashes."""
     _check_host_restriction(request)
-    admin_id = _get_admin_from_token(request)
+    _get_admin_from_token(request)
 
     from src.core import admin
     hashes = admin.get_blocked_hashes(limit, offset)
@@ -822,7 +825,7 @@ async def get_blocked_users(
 ):
     """Get list of users blocked from uploading media."""
     _check_host_restriction(request)
-    admin_id = _get_admin_from_token(request)
+    _get_admin_from_token(request)
 
     from src.core import admin
     users = admin.get_blocked_users(limit, offset)
@@ -907,15 +910,16 @@ class UserSearchResponse(BaseModel):
 
 
 @router.get("/users/search")
-async def search_users(
+async def admin_user_search(
+    q: str,
     request: Request,
-    q: str = "",
     limit: int = 20,
+    offset: int = 0,
     db = Depends(get_db)
 ):
     """Search users by username or ID."""
     _check_host_restriction(request)
-    admin_id = _get_admin_from_token(request)
+    _get_admin_from_token(request)
 
     if not q or len(q) < 2:
         return {"users": []}
@@ -965,13 +969,13 @@ async def search_users(
 
 @router.get("/users/{user_id}")
 async def get_user_details(
-    user_id: str,
+    user_id: int,
     request: Request,
     db = Depends(get_db)
 ):
     """Get user details by ID."""
     _check_host_restriction(request)
-    admin_id = _get_admin_from_token(request)
+    _get_admin_from_token(request)
 
     try:
         uid = int(user_id)

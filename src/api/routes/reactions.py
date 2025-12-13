@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.reactions import ReactionResponse, ReactionUserResponse
+from src.api.schemas.common import SnowflakeID
 
 router = APIRouter()
 
@@ -230,7 +231,7 @@ async def get_reaction_users(
 
         return [
             ReactionUserResponse(
-                user_id=str(u.user_id),
+                user_id=SnowflakeID(u.user_id),
                 reacted_at=u.reacted_at
             )
             for u in users

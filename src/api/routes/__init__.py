@@ -56,7 +56,7 @@ def create_api_router() -> APIRouter:
     # Include admin router with configurable path
     admin_config = config.get("admin_ui", {})
     if admin_config.get("enabled", False):
-        admin_path = admin_config.get("path", "/admin")
+        admin_config.get("path", "/admin")
         # Remove /api/v1 prefix since admin is mounted at root
         api_router.include_router(admin_router, prefix="/admin", tags=["Admin"])
 

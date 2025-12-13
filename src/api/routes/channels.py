@@ -2,11 +2,18 @@
 Channel routes - Channel management endpoints.
 """
 
-from fastapi import APIRouter, HTTPException, Depends
+import os
+import uuid
+from pathlib import Path
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.servers import ChannelResponse, ChannelUpdateRequest
+from src.api.schemas.common import SnowflakeID
+
+import utils.config as config
 
 router = APIRouter()
 
@@ -18,13 +25,13 @@ def _channel_to_response(channel) -> ChannelResponse:
         channel_type = channel_type.value
 
     return ChannelResponse(
-        id=str(channel.id),
-        server_id=str(channel.server_id),
+        id=SnowflakeID(channel.id),
+        server_id=SnowflakeID(channel.server_id),
         name=channel.name,
         channel_type=channel_type or "text",
         topic=getattr(channel, "topic", None),
         position=getattr(channel, "position", 0),
-        category_id=str(channel.category_id) if getattr(channel, "category_id", None) else None,
+        category_id=SnowflakeID(channel.category_id) if getattr(channel, "category_id", None) else None,
         nsfw=getattr(channel, "nsfw", False),
         slowmode_seconds=getattr(channel, "slowmode_seconds", 0),
         created_at=channel.created_at,
@@ -162,7 +169,7 @@ async def get_channel_webhooks(channel_id: str, current_user: TokenInfo = Depend
 @router.post("/{channel_id}/invites")
 async def create_channel_invite(
     channel_id: str,
-    body: dict = None,
+    body: Optional[dict] = None,
     current_user: TokenInfo = Depends(get_current_user)
 ):
     """
@@ -298,18 +305,11 @@ async def delete_invite(invite_code: str, current_user: TokenInfo = Depends(get_
 
 # ==================== Attachment Upload ====================
 
-from fastapi import UploadFile, File
-import os
-import uuid
-from pathlib import Path
-
-import utils.config as config
-
 # Default upload size limit (10MB)
 DEFAULT_UPLOAD_LIMIT = 10 * 1024 * 1024
 
 
-def _get_upload_limit(user_id: int = None) -> int:
+def _get_upload_limit(user_id: Optional[int] = None) -> int:
     """Get the upload size limit based on user tier or config default."""
     try:
         # If user_id provided, check their tier limits

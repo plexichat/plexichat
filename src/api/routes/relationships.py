@@ -11,6 +11,7 @@ from src.api.schemas.relationships import (
     BlockCreate,
     RelationshipResponse,
 )
+from src.api.schemas.common import SnowflakeID
 
 router = APIRouter()
 
@@ -22,7 +23,7 @@ def _relationship_to_response(rel) -> RelationshipResponse:
         status = status.value
 
     return RelationshipResponse(
-        user_id=str(getattr(rel, "user_id", 0) or getattr(rel, "target_id", 0)),
+        user_id=SnowflakeID(getattr(rel, "user_id", 0) or getattr(rel, "target_id", 0)),
         status=status or "none",
         created_at=getattr(rel, "created_at", None),
     )
@@ -214,7 +215,7 @@ async def create_relationship(
         })
 
         return RelationshipResponse(
-            user_id=str(target_id),
+            user_id=SnowflakeID(target_id),
             status="pending_outgoing",
             created_at=getattr(request, "created_at", None),
         )
@@ -437,7 +438,7 @@ async def block_user(body: BlockCreate, current_user: TokenInfo = Depends(get_cu
             })
 
         return RelationshipResponse(
-            user_id=str(target_id),
+            user_id=SnowflakeID(target_id),
             status="blocked",
             created_at=getattr(block, "created_at", None),
         )

@@ -2,6 +2,7 @@
 Voice routes - Voice channel and WebRTC signaling endpoints.
 """
 
+from typing import Any, Dict
 from fastapi import APIRouter, HTTPException, Depends
 
 from src.api.middleware.authentication import get_current_user, TokenInfo
@@ -28,7 +29,9 @@ async def get_ice_servers(
         # Convert to client format
         ice_servers = []
         for server in info.ice_servers:
-            server_config = {"urls": server.urls}
+            urls = server.urls
+            urls_list = [urls] if isinstance(urls, str) else list(urls)
+            server_config: Dict[str, Any] = {"urls": urls_list}
             if server.username:
                 server_config["username"] = server.username
             if server.credential:
@@ -36,7 +39,7 @@ async def get_ice_servers(
             ice_servers.append(server_config)
 
         return {"ice_servers": ice_servers}
-    except Exception as e:
+    except Exception:
         # Return default STUN servers if signaling not available
         return {
             "ice_servers": [
@@ -66,7 +69,9 @@ async def get_voice_channel_info(
         # Convert ICE servers to client format
         ice_servers = []
         for server in info.ice_servers:
-            server_config = {"urls": server.urls}
+            urls = server.urls
+            urls_list = [urls] if isinstance(urls, str) else list(urls)
+            server_config: Dict[str, Any] = {"urls": urls_list}
             if server.username:
                 server_config["username"] = server.username
             if server.credential:

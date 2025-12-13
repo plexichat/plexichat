@@ -327,7 +327,6 @@ async def reset_member_password(
         )
 
     try:
-        oid = int(org_id)
         uid = int(user_id)
     except ValueError:
         raise HTTPException(
@@ -993,6 +992,11 @@ async def get_server_restrictions(
         _check_org_root(orgs, oid, current_user.user_id)
 
         org = orgs.get_org(oid)
+        if org is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error": {"code": 404, "message": "Organization not found"}},
+            )
 
         return {
             "default_servers": [str(s) for s in org.default_servers] if org.default_servers else [],

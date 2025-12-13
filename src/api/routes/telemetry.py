@@ -28,7 +28,7 @@ class ResponseTimeEntry(BaseModel):
 
 class TelemetrySubmission(BaseModel):
     """Batch submission of response time data."""
-    entries: List[ResponseTimeEntry] = Field(..., max_items=100)
+    entries: List[ResponseTimeEntry] = Field(..., max_length=100)
 
 
 class TelemetryResponse(BaseModel):

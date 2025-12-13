@@ -215,6 +215,7 @@ class OpcodeHandler:
                 )
 
             # Dispatch presence update to friends
+            assert connection.user_id is not None
             await self._dispatch_presence_to_friends(
                 connection.user_id,
                 status if status != "invisible" else "offline",

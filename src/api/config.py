@@ -27,10 +27,11 @@ class APIConfig:
     version: Optional[str] = None
     api_prefix: str = "/api/v1"
     debug: bool = False
-    cors_origins: List[str] = field(default_factory=lambda: ["*"])
+    # SECURITY: Empty list = fail closed (no CORS allowed). Must be explicitly configured.
+    cors_origins: List[str] = field(default_factory=list)
     cors_allow_credentials: bool = True
-    cors_allow_methods: List[str] = field(default_factory=lambda: ["*"])
-    cors_allow_headers: List[str] = field(default_factory=lambda: ["*"])
+    cors_allow_methods: List[str] = field(default_factory=lambda: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+    cors_allow_headers: List[str] = field(default_factory=lambda: ["Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin"])
     docs_url: Optional[str] = "/docs"
     redoc_url: Optional[str] = "/redoc"
     openapi_url: Optional[str] = "/openapi.json"
@@ -52,16 +53,32 @@ def get_api_config() -> APIConfig:
         # Fallback if version not setup (e.g. tests)
         current_ver = "0.0.0"
 
+    # SECURITY: Validate CORS origins - reject wildcards, require explicit configuration
+    cors_origins = api_conf.get("cors_origins", [])
+    if cors_origins == ["*"] or "*" in cors_origins:
+        import utils.logger as logger
+        logger.error("SECURITY ERROR: CORS wildcard '*' is not allowed. Configure explicit origins.")
+        cors_origins = []  # Fail closed - no CORS allowed
+    
+    # SECURITY: Reject wildcard methods/headers
+    cors_methods = api_conf.get("cors_allow_methods", ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+    if cors_methods == ["*"] or "*" in cors_methods:
+        cors_methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    
+    cors_headers = api_conf.get("cors_allow_headers", ["Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin"])
+    if cors_headers == ["*"] or "*" in cors_headers:
+        cors_headers = ["Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin"]
+
     return APIConfig(
         title=api_conf.get("title", "PlexiChat API"),
         description=api_conf.get("description", "REST API for PlexiChat messaging platform"),
         version=current_ver,
         api_prefix=api_conf.get("api_prefix", "/api/v1"),
         debug=api_conf.get("debug", False),
-        cors_origins=api_conf.get("cors_origins", ["*"]),
+        cors_origins=cors_origins,
         cors_allow_credentials=api_conf.get("cors_allow_credentials", True),
-        cors_allow_methods=api_conf.get("cors_allow_methods", ["*"]),
-        cors_allow_headers=api_conf.get("cors_allow_headers", ["*"]),
+        cors_allow_methods=cors_methods,
+        cors_allow_headers=cors_headers,
         docs_url=api_conf.get("docs_url", "/docs"),
         redoc_url=api_conf.get("redoc_url", "/redoc"),
         openapi_url=api_conf.get("openapi_url", "/openapi.json"),

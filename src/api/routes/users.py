@@ -2,12 +2,14 @@
 User routes - User profile endpoints.
 """
 
-from fastapi import APIRouter, HTTPException, Depends
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Depends, File, UploadFile
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.auth import UserResponse
 from src.api.schemas.users import UserUpdateRequest, UserPublicResponse
+from src.api.schemas.common import SnowflakeID
 from src.core.database import cached, invalidate_pattern
 
 router = APIRouter()
@@ -23,11 +25,11 @@ def _get_attr(obj, key, default=None):
 def _user_to_response(user, include_private: bool = False) -> UserResponse:
     """Convert user object or dict to response model."""
     return UserResponse(
-        id=str(_get_attr(user, "id")),
-        username=_get_attr(user, "username"),
+        id=SnowflakeID(_get_attr(user, "id")),
+        username=str(_get_attr(user, "username") or ""),
         email=_get_attr(user, "email") if include_private else None,
         avatar_url=_get_attr(user, "avatar_url"),
-        created_at=_get_attr(user, "created_at"),
+        created_at=int(_get_attr(user, "created_at") or 0),
         email_verified=_get_attr(user, "email_verified", False) if include_private else False,
         totp_enabled=_get_attr(user, "totp_enabled", False) if include_private else False,
     )
@@ -36,10 +38,10 @@ def _user_to_response(user, include_private: bool = False) -> UserResponse:
 def _user_to_public_response(user) -> UserPublicResponse:
     """Convert user object or dict to public response model."""
     return UserPublicResponse(
-        id=str(_get_attr(user, "id")),
-        username=_get_attr(user, "username"),
+        id=SnowflakeID(_get_attr(user, "id")),
+        username=str(_get_attr(user, "username") or ""),
         avatar_url=_get_attr(user, "avatar_url"),
-        created_at=_get_attr(user, "created_at"),
+        created_at=int(_get_attr(user, "created_at") or 0),
     )
 
 
@@ -47,7 +49,7 @@ def _user_to_dict(user) -> dict:
     """Convert user object to JSON-serializable dict for caching."""
     account_type = getattr(user, "account_type", None)
     # Convert AccountType enum to string if needed
-    if hasattr(account_type, 'value'):
+    if account_type is not None and hasattr(account_type, 'value'):
         account_type = account_type.value
     return {
         "id": user.id,
@@ -190,9 +192,6 @@ async def update_current_user(
         elif "Invalid" in exc_name or "Weak" in exc_name:
             raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": str(e)}})
         raise
-
-
-from fastapi import File, UploadFile
 
 
 @router.post("/@me/avatar")
@@ -388,7 +387,7 @@ async def create_dm_channel(body: dict, current_user: TokenInfo = Depends(get_cu
 
 @router.get("/search")
 async def search_user_by_username(
-    username: str = None,
+    username: Optional[str] = None,
     current_user: TokenInfo = Depends(get_current_user)
 ):
     """

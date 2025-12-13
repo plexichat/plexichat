@@ -15,6 +15,7 @@ from src.api.schemas.auth import (
     TwoFactorRequest,
     UserResponse,
 )
+from src.api.schemas.common import SnowflakeID
 
 # Import config utility
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
@@ -34,7 +35,7 @@ router = APIRouter()
 def _user_to_response(user) -> UserResponse:
     """Convert user object to response model."""
     return UserResponse(
-        id=str(user.id),
+        id=SnowflakeID(user.id),
         username=user.username,
         email=getattr(user, "email", None),
         avatar_url=getattr(user, "avatar_url", None),

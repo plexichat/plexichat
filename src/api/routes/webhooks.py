@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Depends
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, get_optional_user, TokenInfo
+from src.api.schemas.common import SnowflakeID
 from src.api.schemas.webhooks import (
     WebhookCreateRequest,
     WebhookResponse,
@@ -20,10 +21,10 @@ router = APIRouter()
 def _webhook_to_response(webhook, include_token: bool = False) -> WebhookResponse:
     """Convert webhook object to response model."""
     return WebhookResponse(
-        id=str(webhook.id),
-        channel_id=str(webhook.channel_id),
-        server_id=str(webhook.server_id),
-        creator_id=str(getattr(webhook, "creator_id", 0)),
+        id=SnowflakeID(webhook.id),
+        channel_id=SnowflakeID(webhook.channel_id),
+        server_id=SnowflakeID(webhook.server_id),
+        creator_id=SnowflakeID(getattr(webhook, "creator_id", 0)),
         name=webhook.name,
         avatar_url=webhook.avatar_url,
         token=webhook.token if include_token and webhook.token else None,
@@ -176,9 +177,9 @@ async def execute_webhook(
 
         if wait and result:
             return WebhookMessageResponse(
-                id=str(result.id),
-                webhook_id=str(wid),
-                channel_id=str(result.channel_id),
+                id=SnowflakeID(result.id),
+                webhook_id=SnowflakeID(wid),
+                channel_id=SnowflakeID(result.channel_id),
                 content=result.content,
                 username=result.username,
                 avatar_url=result.avatar_url,

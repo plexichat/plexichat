@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Depends
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.presence import PresenceUpdate, PresenceResponse
+from src.api.schemas.common import SnowflakeID
 
 router = APIRouter()
 
@@ -25,7 +26,7 @@ def _presence_to_response(pres, user_id: int) -> PresenceResponse:
         custom_emoji = getattr(custom, "emoji", None)
 
     return PresenceResponse(
-        user_id=str(user_id),
+        user_id=SnowflakeID(user_id),
         status=status or "offline",
         custom_status=custom_text,
         custom_emoji=custom_emoji,
@@ -96,7 +97,6 @@ async def update_presence(
     Sets the user's online status and custom status message.
     """
     presence = api.get_presence()
-    relationships = api.get_relationships()
     if not presence:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Presence module not available"}})
 
@@ -167,7 +167,7 @@ async def get_user_presence(user_id: str, current_user: TokenInfo = Depends(get_
         pres = presence.get_visible_presence(current_user.user_id, uid)
         if not pres:
             return PresenceResponse(
-                user_id=str(uid),
+                user_id=SnowflakeID(uid),
                 status="offline",
                 custom_status=None,
                 custom_emoji=None,
@@ -178,7 +178,7 @@ async def get_user_presence(user_id: str, current_user: TokenInfo = Depends(get_
         exc_name = type(e).__name__
         if "NotFound" in exc_name:
             return PresenceResponse(
-                user_id=str(uid),
+                user_id=SnowflakeID(uid),
                 status="offline",
                 custom_status=None,
                 custom_emoji=None,

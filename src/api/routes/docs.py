@@ -261,18 +261,30 @@ def get_api_rate_limits() -> Dict[str, Any]:
 
         limits = {
             "global": {
-                "requests": DEFAULT_GLOBAL_LIMIT.requests,
-                "window_seconds": DEFAULT_GLOBAL_LIMIT.window_seconds,
-                "burst": DEFAULT_GLOBAL_LIMIT.burst,
-                "algorithm": DEFAULT_GLOBAL_LIMIT.algorithm.value if hasattr(DEFAULT_GLOBAL_LIMIT.algorithm, 'value') else str(DEFAULT_GLOBAL_LIMIT.algorithm),
+                "requests": DEFAULT_GLOBAL_LIMIT.requests if DEFAULT_GLOBAL_LIMIT else None,
+                "window_seconds": DEFAULT_GLOBAL_LIMIT.window_seconds if DEFAULT_GLOBAL_LIMIT else None,
+                "burst": DEFAULT_GLOBAL_LIMIT.burst if DEFAULT_GLOBAL_LIMIT else None,
+                "algorithm": (
+                    DEFAULT_GLOBAL_LIMIT.algorithm.value
+                    if DEFAULT_GLOBAL_LIMIT and hasattr(DEFAULT_GLOBAL_LIMIT.algorithm, 'value')
+                    else str(DEFAULT_GLOBAL_LIMIT.algorithm)
+                    if DEFAULT_GLOBAL_LIMIT
+                    else None
+                ),
             },
             "user": {
-                "requests": DEFAULT_USER_LIMIT.requests,
-                "window_seconds": DEFAULT_USER_LIMIT.window_seconds,
-                "burst": DEFAULT_USER_LIMIT.burst,
-                "hourly_limit": DEFAULT_USER_LIMIT.hourly_limit,
-                "daily_limit": DEFAULT_USER_LIMIT.daily_limit,
-                "algorithm": DEFAULT_USER_LIMIT.algorithm.value if hasattr(DEFAULT_USER_LIMIT.algorithm, 'value') else str(DEFAULT_USER_LIMIT.algorithm),
+                "requests": DEFAULT_USER_LIMIT.requests if DEFAULT_USER_LIMIT else None,
+                "window_seconds": DEFAULT_USER_LIMIT.window_seconds if DEFAULT_USER_LIMIT else None,
+                "burst": DEFAULT_USER_LIMIT.burst if DEFAULT_USER_LIMIT else None,
+                "hourly_limit": DEFAULT_USER_LIMIT.hourly_limit if DEFAULT_USER_LIMIT else None,
+                "daily_limit": DEFAULT_USER_LIMIT.daily_limit if DEFAULT_USER_LIMIT else None,
+                "algorithm": (
+                    DEFAULT_USER_LIMIT.algorithm.value
+                    if DEFAULT_USER_LIMIT and hasattr(DEFAULT_USER_LIMIT.algorithm, 'value')
+                    else str(DEFAULT_USER_LIMIT.algorithm)
+                    if DEFAULT_USER_LIMIT
+                    else None
+                ),
             },
             "routes": {}
         }
@@ -423,8 +435,6 @@ def _read_markdown_file(file_path: Path, conf: DocsConfig) -> Optional[str]:
 def _generate_dynamic_rate_limits_content() -> str:
     """Generate dynamic rate limits documentation from actual config."""
     limits = get_api_rate_limits()
-    app_config = get_app_config()
-    docs_conf = get_docs_config()
 
     if not limits:
         return ""

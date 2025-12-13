@@ -13,8 +13,6 @@ Usage:
     uvicorn.run(app, host="0.0.0.0", port=8000)
 """
 
-from typing import Optional
-
 from .app import create_app
 from .config import APIConfig, get_api_config
 

@@ -22,9 +22,6 @@ async def get_notifications(
     
     Returns an empty list for now (placeholder).
     """
-    # Get user ID from token info
-    user_id = getattr(current_user, 'user_id', None) or getattr(current_user, 'id', None)
-
     # Return empty notifications list for now
     return {
         "notifications": [],

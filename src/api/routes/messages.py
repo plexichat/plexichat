@@ -2,7 +2,7 @@
 Message routes - Message CRUD endpoints.
 """
 
-from typing import Optional
+from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, Depends, Query
 
 import src.api as api
@@ -13,17 +13,24 @@ from src.api.schemas.messages import (
     MessageResponse,
     AttachmentResponse,
 )
+from src.api.schemas.common import SnowflakeID
 
 router = APIRouter()
 
 
-def _message_to_response(msg, author_username: str = None, author_avatar_url: str = None, channel_id: int = None, reactions_data=None) -> MessageResponse:
+def _message_to_response(
+    msg,
+    author_username: Optional[str] = None,
+    author_avatar_url: Optional[str] = None,
+    channel_id: Optional[int] = None,
+    reactions_data=None,
+) -> Dict[str, Any]:
     """Convert message object to response model."""
     attachments = []
     if hasattr(msg, "attachments") and msg.attachments:
         for att in msg.attachments:
             attachments.append(AttachmentResponse(
-                id=str(att.id),
+                id=SnowflakeID(att.id),
                 filename=att.filename,
                 content_type=getattr(att, "content_type", "application/octet-stream"),
                 size=getattr(att, "size", 0),
@@ -40,13 +47,13 @@ def _message_to_response(msg, author_username: str = None, author_avatar_url: st
     effective_channel_id = channel_id or getattr(msg, "channel_id", 0) or getattr(msg, "conversation_id", 0)
 
     response = MessageResponse(
-        id=str(msg.id),
-        channel_id=str(effective_channel_id),
-        author_id=str(msg.author_id),
+        id=SnowflakeID(msg.id),
+        channel_id=SnowflakeID(effective_channel_id),
+        author_id=SnowflakeID(msg.author_id),
         content=msg.content,
         created_at=msg.created_at,
         edited_at=edited_at,
-        reply_to_id=str(msg.reply_to_id) if getattr(msg, "reply_to_id", None) else None,
+        reply_to_id=SnowflakeID(msg.reply_to_id) if getattr(msg, "reply_to_id", None) else None,
         attachments=attachments,
         embeds=getattr(msg, "embeds", []) or [],
         pinned=getattr(msg, "pinned", False),
@@ -397,7 +404,7 @@ async def send_channel_message(
                     logger.warning(f"Failed to broadcast MESSAGE_CREATE: {e}", exc_info=True)
 
             # Schedule the broadcast task
-            task = asyncio.create_task(broadcast_message())
+            asyncio.create_task(broadcast_message())
             logger.info(f"Created broadcast task for message in channel {cid}")
     except Exception as e:
         import utils.logger as logger

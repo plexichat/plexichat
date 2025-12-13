@@ -35,7 +35,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     app = FastAPI(
         title=config.title,
         description=config.description,
-        version=config.version,
+        version=config.version or "",
         docs_url=config.docs_url,
         redoc_url=config.redoc_url,
         openapi_url=config.openapi_url,
@@ -119,21 +119,20 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
     @app.get("/api/v1/media/attachments/{filename}")
     async def serve_attachment(filename: str, request: Request):
-        """Serve uploaded attachment files. Requires authentication."""
-        # Check for authentication token
+        """Serve uploaded attachment files. Requires authentication via Authorization header only."""
+        # SECURITY: Only accept Authorization header - query param tokens are logged and leaked
         auth_header = request.headers.get("Authorization")
         token = None
 
         if auth_header and auth_header.startswith("Bearer "):
             token = auth_header[7:]
-        elif "token" in request.query_params:
-            # Allow token in query param for direct image/video embeds
-            token = request.query_params.get("token")
+        # SECURITY: Removed ?token= query parameter authentication
+        # Query params are logged in server logs, browser history, and referrer headers
 
         if not token:
             raise HTTPException(
                 status_code=401,
-                detail={"error": {"code": 401, "message": "Authentication required"}}
+                detail={"error": {"code": 401, "message": "Authentication required. Use Authorization header."}}
             )
 
         # Verify token
@@ -154,7 +153,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 )
         except HTTPException:
             raise
-        except Exception as e:
+        except Exception:
             raise HTTPException(
                 status_code=401,
                 detail={"error": {"code": 401, "message": "Invalid or expired token"}}

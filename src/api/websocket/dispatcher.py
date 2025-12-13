@@ -97,11 +97,11 @@ class GatewayDispatcher:
 
         for connection in connections:
             if not filter_event_by_intents(event, connection.intents):
-                logger.debug(f"Event filtered by intents for connection {connection.id}")
+                logger.debug(f"Event filtered by intents for connection {getattr(connection, 'id', None)}")
                 continue
 
             if not connection.check_rate_limit(self._rate_limit_per_minute):
-                logger.debug(f"Rate limited connection {connection.id}")
+                logger.debug(f"Rate limited connection {getattr(connection, 'id', None)}")
                 continue
 
             payload = self._build_dispatch_payload(connection, event)
