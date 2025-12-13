@@ -254,6 +254,13 @@ class OpcodeHandler:
         if not channel_id:
             return None, None, GatewayCloseCode.DECODE_ERROR
 
+        # Convert channel_id to int if it's a string
+        try:
+            channel_id = int(channel_id)
+        except (ValueError, TypeError):
+            logger.warning(f"Invalid channel_id type: {type(channel_id)}")
+            return None, None, GatewayCloseCode.DECODE_ERROR
+
         try:
             if not connection.user_id:
                 return None, None, GatewayCloseCode.NOT_AUTHENTICATED
@@ -307,6 +314,13 @@ class OpcodeHandler:
         if not channel_id or not sdp:
             return None, None, GatewayCloseCode.DECODE_ERROR
 
+        # Convert channel_id to int if it's a string
+        try:
+            channel_id = int(channel_id)
+        except (ValueError, TypeError):
+            logger.warning(f"Invalid channel_id type in SDP offer: {type(channel_id)}")
+            return None, None, GatewayCloseCode.DECODE_ERROR
+
         if not connection.user_id:
             return None, None, GatewayCloseCode.NOT_AUTHENTICATED
 
@@ -337,6 +351,13 @@ class OpcodeHandler:
         sdp_mline_index = data.get("sdp_mline_index") or data.get("sdpMLineIndex")
 
         if not channel_id or not candidate:
+            return None, None, GatewayCloseCode.DECODE_ERROR
+
+        # Convert channel_id to int if it's a string
+        try:
+            channel_id = int(channel_id)
+        except (ValueError, TypeError):
+            logger.warning(f"Invalid channel_id type in ICE candidate: {type(channel_id)}")
             return None, None, GatewayCloseCode.DECODE_ERROR
 
         if not connection.user_id:

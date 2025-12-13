@@ -1,6 +1,6 @@
 # Authentication API
 
-Endpoints for user registration, login, and session management.
+Endpoints for user registration, login, session management, and two-factor authentication.
 
 ## POST /auth/register
 
@@ -12,15 +12,18 @@ Register a new user account.
 |-------|------|----------|-------------|-------------|
 | username | string | Yes | 3-32 characters | Unique username |
 | email | string | Yes | Valid email format | Email address |
-| password | string | Yes | Min 8 characters | Password |
+| password | string | Yes | See requirements | Password |
 
 ### Password Requirements
 
-- Minimum 8 characters
+Default requirements (configurable):
+- Minimum 12 characters
 - At least one uppercase letter
 - At least one lowercase letter
 - At least one digit
 - At least one special character
+
+Check current requirements via `GET /auth/password-requirements`.
 
 ### Example Request
 
@@ -52,8 +55,8 @@ Register a new user account.
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
+| Status | Message | Description |
+|--------|---------|-------------|
 | 400 | Invalid input | Validation failed |
 | 400 | Weak password | Password doesn't meet requirements |
 | 409 | Already exists | Username or email taken |
@@ -111,22 +114,22 @@ Authenticate a user and obtain a session token.
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
+| Status | Message | Description |
+|--------|---------|-------------|
 | 401 | Invalid credentials | Wrong username/password |
 | 403 | Account locked | Too many failed attempts |
 | 403 | Email not verified | Email verification required |
 
 ## POST /auth/2fa
 
-Complete two-factor authentication.
+Complete two-factor authentication challenge.
 
 ### Request Body
 
-| Field | Type | Required | Constraints | Description |
-|-------|------|----------|-------------|-------------|
-| challenge_token | string | Yes | - | Token from login response |
-| code | string | Yes | 6-8 characters | TOTP or backup code |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| challenge_token | string | Yes | Token from login response |
+| code | string | Yes | 6-digit TOTP or backup code |
 
 ### Example Request
 
@@ -152,8 +155,8 @@ Complete two-factor authentication.
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
+| Status | Message | Description |
+|--------|---------|-------------|
 | 401 | Invalid code | Wrong 2FA code |
 | 401 | Expired token | Challenge token expired |
 
@@ -163,7 +166,7 @@ Logout and revoke the current session.
 
 ### Headers
 
-```
+```http
 Authorization: Bearer <session_token>
 ```
 
@@ -181,7 +184,7 @@ Get all active sessions for the current user.
 
 ### Headers
 
-```
+```http
 Authorization: Bearer <token>
 ```
 
@@ -191,27 +194,14 @@ Authorization: Bearer <token>
 [
   {
     "id": "123456789012345678",
-    "user_id": "123456789012345678",
     "ip_address": "192.168.1.1",
     "user_agent": "Mozilla/5.0...",
     "created_at": 1704067200,
-    "last_used_at": 1704153600,
+    "last_activity": 1704153600,
     "current": true
   }
 ]
 ```
-
-### Response Fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| id | string | Session's snowflake ID |
-| user_id | string | User's ID |
-| ip_address | string | IP address of session |
-| user_agent | string | Browser/client user agent |
-| created_at | int | Unix timestamp of creation |
-| last_used_at | int | Unix timestamp of last use |
-| current | bool | True if this is the current session |
 
 ## DELETE /auth/sessions/{session_id}
 
@@ -219,7 +209,7 @@ Revoke a specific session.
 
 ### Headers
 
-```
+```http
 Authorization: Bearer <token>
 ```
 
@@ -239,27 +229,190 @@ Authorization: Bearer <token>
 
 ### Error Responses
 
-| Status | Code | Description |
-|--------|------|-------------|
+| Status | Message | Description |
+|--------|---------|-------------|
 | 400 | Invalid session ID | ID format invalid |
 | 404 | Session not found | Session doesn't exist |
 
-## Session Management
+## POST /auth/sessions/revoke-all
 
-### Token Types
+Revoke all sessions except optionally the current one.
+
+### Headers
+
+```http
+Authorization: Bearer <token>
+```
+
+### Request Body
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| except_current | bool | true | Keep current session active |
+
+### Response (200 OK)
+
+```json
+{
+  "success": true,
+  "revoked_count": 3
+}
+```
+
+## GET /auth/2fa/status
+
+Get current 2FA status for the authenticated user.
+
+### Headers
+
+```http
+Authorization: Bearer <token>
+```
+
+### Response (200 OK)
+
+```json
+{
+  "enabled": false,
+  "backup_codes_remaining": 0
+}
+```
+
+## POST /auth/2fa/enable
+
+Start 2FA setup process. Returns QR code and secret.
+
+### Headers
+
+```http
+Authorization: Bearer <token>
+```
+
+### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| password | string | Yes | Current password for verification |
+
+### Response (200 OK)
+
+```json
+{
+  "secret": "JBSWY3DPEHPK3PXP",
+  "qr_uri": "otpauth://totp/PlexiChat:johndoe?secret=...",
+  "backup_codes": ["12345678", "23456789", "..."]
+}
+```
+
+### Error Responses
+
+| Status | Message | Description |
+|--------|---------|-------------|
+| 400 | Password required | Missing password |
+| 401 | Invalid password | Wrong password |
+| 409 | 2FA is already enabled | Already active |
+
+## POST /auth/2fa/confirm
+
+Confirm 2FA setup with TOTP code from authenticator app.
+
+### Headers
+
+```http
+Authorization: Bearer <token>
+```
+
+### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| code | string | Yes | 6-digit code from authenticator |
+
+### Response (200 OK)
+
+```json
+{
+  "success": true
+}
+```
+
+### Error Responses
+
+| Status | Message | Description |
+|--------|---------|-------------|
+| 400 | Valid 6-digit code required | Invalid code format |
+| 400 | 2FA setup not started | No pending setup |
+| 401 | Invalid code | Wrong code |
+
+## POST /auth/2fa/disable
+
+Disable 2FA on the account.
+
+### Headers
+
+```http
+Authorization: Bearer <token>
+```
+
+### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| password | string | Yes | Current password |
+| code | string | Yes | Current 2FA code |
+
+### Response (200 OK)
+
+```json
+{
+  "success": true
+}
+```
+
+### Error Responses
+
+| Status | Message | Description |
+|--------|---------|-------------|
+| 400 | Password required | Missing password |
+| 400 | 2FA code required | Missing code |
+| 400 | 2FA is not enabled | Not active |
+| 401 | Invalid password or code | Wrong credentials |
+
+## GET /auth/password-requirements
+
+Get server password policy (no authentication required).
+
+### Response (200 OK)
+
+```json
+{
+  "min_length": 12,
+  "max_length": 128,
+  "require_uppercase": true,
+  "require_lowercase": true,
+  "require_digit": true,
+  "require_special": true
+}
+```
+
+## Token Types
 
 | Type | Header Format | Description |
 |------|---------------|-------------|
 | User Session | `Bearer <token>` | User session token |
 | Bot Token | `Bot <token>` | Bot application token |
 
-### Session Limits
+## Session Limits
 
-- Maximum concurrent sessions per user: 3
-- Session expiration: 30 minutes (access token)
-- Refresh token expiration: 7 days
+| Setting | Default |
+|---------|---------|
+| Max concurrent sessions | 3 |
+| Access token expiration | 30 minutes |
+| Refresh token expiration | 7 days |
 
-### Account Lockout
+## Account Lockout
 
-- Maximum failed login attempts: 5
-- Lockout duration: 15 minutes
+| Setting | Default |
+|---------|---------|
+| Max failed attempts | 5 |
+| Lockout duration | 15 minutes |

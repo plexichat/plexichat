@@ -54,7 +54,6 @@ Authorization: Bearer <token>
 |-------|------|----------|-------------|-------------|
 | username | string | No | 3-32 characters | New username |
 | email | string | No | Valid email | New email |
-| avatar_url | string | No | Valid URL | New avatar URL |
 | password | string | No | Min 8 characters | New password |
 | current_password | string | Conditional | - | Required if changing password |
 
@@ -62,8 +61,7 @@ Authorization: Bearer <token>
 
 ```json
 {
-  "username": "newusername",
-  "avatar_url": "https://cdn.example.com/avatars/new.png"
+  "username": "newusername"
 }
 ```
 
@@ -80,81 +78,33 @@ Returns the updated user object.
 | 400 | Missing current_password | Required for password change |
 | 409 | Already exists | Username or email taken |
 
-## GET /users/{user_id}
+## POST /users/@me/avatar
 
-Get public profile information for a user.
-
-### Headers
-
-```
-Authorization: Bearer <token>
-```
-
-### Path Parameters
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| user_id | string | User's snowflake ID |
-
-### Response (200 OK)
-
-```json
-{
-  "id": "123456789012345678",
-  "username": "johndoe",
-  "avatar_url": "https://cdn.example.com/avatars/123.png",
-  "created_at": 1704067200
-}
-```
-
-### Response Fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| id | string | User's snowflake ID |
-| username | string | Username |
-| avatar_url | string? | Avatar URL |
-| created_at | int | Unix timestamp of account creation |
-
-Note: Private fields (email, email_verified, totp_enabled) are not included in public profiles.
-
-### Error Responses
-
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Invalid user ID | ID format invalid |
-| 404 | User not found | User doesn't exist |
-
-## GET /users/search
-
-Search for a user by username.
+Upload a new avatar for the current user.
 
 ### Headers
 
 ```
 Authorization: Bearer <token>
+Content-Type: multipart/form-data
 ```
 
-### Query Parameters
+### Request Body
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| username | string | Yes | Username to search for (exact match, case-insensitive) |
-
-### Example Request
-
-```
-GET /users/search?username=johndoe
-```
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| file | file | Yes | Image file (JPEG, PNG, GIF, WebP) |
 
 ### Response (200 OK)
 
 ```json
 {
-  "id": "123456789012345678",
-  "username": "johndoe",
-  "avatar_url": "https://cdn.example.com/avatars/123.png",
-  "created_at": 1704067200
+  "success": true,
+  "avatar_url": "/api/v1/avatars/user/123456789012345678",
+  "width": 256,
+  "height": 256,
+  "size": 12345,
+  "animated": false
 }
 ```
 
@@ -162,8 +112,32 @@ GET /users/search?username=johndoe
 
 | Status | Code | Description |
 |--------|------|-------------|
-| 400 | Username required | Missing username parameter |
-| 404 | User not found | No user with that username |
+| 400 | Invalid file type | File must be an image |
+| 400 | File too large | Exceeds size limit |
+
+## GET /users/@me/notes
+
+Get or create the personal notes channel for the current user.
+
+Personal notes are a single-user conversation for storing private notes that sync across devices.
+
+### Headers
+
+```
+Authorization: Bearer <token>
+```
+
+### Response (200 OK)
+
+```json
+{
+  "id": "123456789012345678",
+  "type": "notes",
+  "name": "Personal Notes",
+  "last_message_id": "234567890123456789",
+  "last_message_at": 1704067200
+}
+```
 
 ## GET /users/@me/channels
 
@@ -249,7 +223,85 @@ Authorization: Bearer <token>
 | 403 | Cannot message | User has blocked you |
 | 404 | User not found | Recipient doesn't exist |
 
-## User Object
+## GET /users/search
+
+Search for a user by username.
+
+### Headers
+
+```
+Authorization: Bearer <token>
+```
+
+### Query Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| username | string | Yes | Username to search for (exact match, case-insensitive) |
+
+### Example Request
+
+```
+GET /users/search?username=johndoe
+```
+
+### Response (200 OK)
+
+```json
+{
+  "id": "123456789012345678",
+  "username": "johndoe",
+  "avatar_url": "https://cdn.example.com/avatars/123.png",
+  "created_at": 1704067200
+}
+```
+
+### Error Responses
+
+| Status | Code | Description |
+|--------|------|-------------|
+| 400 | Username required | Missing username parameter |
+| 404 | User not found | No user with that username |
+
+## GET /users/{user_id}
+
+Get public profile information for a user.
+
+### Headers
+
+```
+Authorization: Bearer <token>
+```
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| user_id | string | User's snowflake ID |
+
+### Response (200 OK)
+
+```json
+{
+  "id": "123456789012345678",
+  "username": "johndoe",
+  "avatar_url": "https://cdn.example.com/avatars/123.png",
+  "created_at": 1704067200
+}
+```
+
+Note: Private fields (email, email_verified, totp_enabled) are not included in public profiles.
+
+### Error Responses
+
+| Status | Code | Description |
+|--------|------|-------------|
+| 400 | Invalid user ID | ID format invalid |
+| 404 | User not found | User doesn't exist |
+
+---
+
+## User Objects
 
 ### Full User Object (Private)
 
@@ -279,3 +331,11 @@ Returned for other users (`/users/{user_id}`).
   "created_at": 1704067200
 }
 ```
+
+---
+
+## Related Endpoints
+
+- [User Settings](settings.md) - Cloud-synced user preferences
+- [User Features](features.md) - Badges, tiers, and feature flags
+- [Authentication](authentication.md) - Login, registration, and 2FA
