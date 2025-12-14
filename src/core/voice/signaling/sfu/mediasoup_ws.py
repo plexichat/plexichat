@@ -427,8 +427,11 @@ class MediasoupWSAdapter(SFUAdapter):
             "appData": {"direction": dir_str},
         })
 
+        # mediasoup-demo returns transportId, not id
+        transport_id = result.get("transportId") or result.get("id")
+        
         transport = SFUTransport(
-            id=result["id"],
+            id=transport_id,
             direction=direction,
             ice_parameters=result.get("iceParameters", {}),
             ice_candidates=result.get("iceCandidates", []),
