@@ -412,7 +412,7 @@ class MediasoupWSAdapter(SFUAdapter):
                 url=self._ws_url
             )
 
-        # mediasoup-demo expects direction to be "producer" or "consumer"
+        # mediasoup-demo expects direction to be "producer" or "consumer" inside appData
         producing = direction in (TransportDirection.SEND, TransportDirection.SENDRECV)
         consuming = direction in (TransportDirection.RECV,)
 
@@ -424,7 +424,7 @@ class MediasoupWSAdapter(SFUAdapter):
             "producing": producing,
             "consuming": consuming,
             "sctpCapabilities": None,
-            "direction": dir_str,
+            "appData": {"direction": dir_str},
         })
 
         transport = SFUTransport(
