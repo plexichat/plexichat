@@ -18,6 +18,16 @@ from .compression import is_compressed, decompress_payload, validate_message_siz
 router = APIRouter()
 
 
+async def _cleanup_voice_connection(user_id: int) -> None:
+    """Clean up voice connection when WebSocket disconnects."""
+    try:
+        from src.core.voice import signaling
+        await signaling.disconnect_voice_async(user_id)
+        logger.debug(f"Cleaned up voice connection for user {user_id}")
+    except Exception as e:
+        logger.debug(f"Voice cleanup for user {user_id}: {e}")
+
+
 async def _dispatch_offline_presence(user_id: int, presence_module, dispatcher) -> None:
     """Dispatch offline presence to friends and server members when user disconnects."""
     try:
@@ -156,8 +166,9 @@ async def gateway_endpoint(websocket: WebSocket):
     except Exception as e:
         logger.error(f"Gateway error for {connection_id}: {e}")
     finally:
-        # Dispatch offline presence to friends when user disconnects
+        # Clean up voice connection when WebSocket disconnects
         if connection.is_authenticated and connection.user_id:
+            await _cleanup_voice_connection(connection.user_id)
             await _dispatch_offline_presence(connection.user_id, presence_module, dispatcher)
 
         connection.set_disconnected()

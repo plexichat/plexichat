@@ -205,15 +205,12 @@ class SignalingManager:
         Returns:
             VoiceServerInfo with connection details
         """
-        # Check if already connected
+        # Clean up any existing connection first (handles reconnects gracefully)
         if user_id in self._connections:
             existing = self._connections[user_id]
-            if existing.state in (SignalingState.CONNECTING, SignalingState.CONNECTED):
-                raise AlreadyConnectedError(
-                    "User already has an active voice connection",
-                    user_id=user_id,
-                    channel_id=existing.channel_id
-                )
+            logger.debug(f"Cleaning up existing voice connection for user {user_id} (state: {existing.state})")
+            # Clean up local state - SFU cleanup will happen async
+            self._cleanup_local_connection(user_id)
 
         # Get server info
         info = self.get_voice_server_info(user_id, channel_id)
@@ -681,7 +678,36 @@ class SignalingManager:
 
     def disconnect_voice(self, user_id: int, channel_id: Optional[int] = None) -> bool:
         """
-        Disconnect a user from voice.
+        Disconnect a user from voice (sync wrapper).
+        
+        Args:
+            user_id: User ID
+            channel_id: Optional channel ID to verify
+            
+        Returns:
+            True if disconnected
+        """
+        # Try to run async version
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Schedule the async cleanup but don't wait
+                asyncio.create_task(self.disconnect_voice_async(user_id, channel_id))
+                return True
+            else:
+                return loop.run_until_complete(
+                    self.disconnect_voice_async(user_id, channel_id)
+                )
+        except RuntimeError:
+            # No event loop - do sync cleanup only
+            pass
+
+        # Sync fallback - just clean up local state
+        return self._cleanup_local_connection(user_id, channel_id)
+
+    async def disconnect_voice_async(self, user_id: int, channel_id: Optional[int] = None) -> bool:
+        """
+        Disconnect a user from voice (async version that cleans up SFU).
         
         Args:
             user_id: User ID
@@ -700,13 +726,49 @@ class SignalingManager:
         # Update state
         connection.state = SignalingState.DISCONNECTING
 
+        # Clean up SFU connection if we have one
+        if connection.sfu_room_id and connection.sfu_peer_id:
+            try:
+                sfu = self._get_sfu()
+                await sfu.leave_room(connection.sfu_room_id, connection.sfu_peer_id)
+                logger.debug(f"Left SFU room {connection.sfu_room_id} for user {user_id}")
+            except Exception as e:
+                logger.warning(f"Failed to leave SFU room for user {user_id}: {e}")
+
+        # Clean up local state
+        self._cleanup_local_connection(user_id, channel_id)
+
+        logger.debug(f"User {user_id} disconnected from voice (async)")
+        return True
+
+    def _cleanup_local_connection(self, user_id: int, channel_id: Optional[int] = None) -> bool:
+        """
+        Clean up local connection state without SFU cleanup.
+        
+        Args:
+            user_id: User ID
+            channel_id: Optional channel ID to verify
+            
+        Returns:
+            True if cleaned up
+        """
+        connection = self._connections.get(user_id)
+        if not connection:
+            return False
+
+        if channel_id and connection.channel_id != channel_id:
+            return False
+
+        # Update state
+        connection.state = SignalingState.DISCONNECTING
+
         # Clear ICE candidates
         self._ice_manager.clear_candidates(connection.session_id)
 
         # Remove connection
         del self._connections[user_id]
 
-        logger.debug(f"User {user_id} disconnected from voice")
+        logger.debug(f"User {user_id} local voice connection cleaned up")
 
         return True
 

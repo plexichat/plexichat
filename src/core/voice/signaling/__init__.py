@@ -83,6 +83,7 @@ __all__ = [
     "handle_sdp_offer_async",
     "handle_ice_candidate",
     "disconnect_voice",
+    "disconnect_voice_async",
     "get_turn_credentials",
     "start_screen_share",
     "stop_screen_share",
@@ -200,8 +201,13 @@ def handle_ice_candidate(
 
 
 def disconnect_voice(user_id: int, channel_id: Optional[int] = None) -> bool:
-    """Disconnect a user from voice."""
+    """Disconnect a user from voice (sync version)."""
     return _get_manager().disconnect_voice(user_id, channel_id)
+
+
+async def disconnect_voice_async(user_id: int, channel_id: Optional[int] = None) -> bool:
+    """Disconnect a user from voice (async version that cleans up SFU)."""
+    return await _get_manager().disconnect_voice_async(user_id, channel_id)
 
 
 def get_turn_credentials(user_id: int) -> TURNCredentials:
