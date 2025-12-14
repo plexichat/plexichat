@@ -416,6 +416,16 @@ class SignalingManager:
             connection.sfu_room_id = room_id
             connection.sfu_peer_id = peer_id
 
+        # Complete the join process with RTP capabilities
+        # This is required by mediasoup-demo or it will close the peer after 10 seconds
+        logger.debug(f"Completing join for peer {peer_id}")
+        await sfu.complete_join(
+            room_id,
+            peer_id,
+            rtp_capabilities=router_caps,  # Use router caps as client caps for now
+            display_name=f"User {user_id}",
+        )
+
         # Build SDP answer from transport parameters
         answer_sdp = self._build_sdp_from_transport(offer_sdp, transport, session_id)
 
