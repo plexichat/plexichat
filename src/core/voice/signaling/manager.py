@@ -176,8 +176,10 @@ class SignalingManager:
             if channel:
                 bitrate = channel.bitrate
 
-        # Build endpoint URL (placeholder - configure with actual voice server)
-        endpoint = f"wss://voice.example.com/ws/{channel_id}"
+        # Build endpoint URL using the mediasoup server URL
+        # The actual WebRTC connection uses ICE candidates from the SFU transport
+        mediasoup_url = self._sfu_config.get("ws_url", "wss://localhost:4443")
+        endpoint = f"{mediasoup_url}/?roomId=voice_{channel_id}&peerId=user_{user_id}"
 
         # Generate connection token
         token = secrets.token_urlsafe(32)
@@ -448,8 +450,10 @@ class SignalingManager:
         dtls_role = dtls_params.get("role", "auto")
         
         # Map DTLS role to SDP setup attribute
-        setup_map = {"auto": "actpass", "server": "passive", "client": "active"}
-        setup = setup_map.get(dtls_role, "actpass")
+        # For an SDP answer, we should use "active" (we initiate DTLS) or "passive"
+        # "actpass" is only valid in offers, not answers
+        setup_map = {"auto": "active", "server": "passive", "client": "active"}
+        setup = setup_map.get(dtls_role, "active")
 
         # Build answer
         lines = [
