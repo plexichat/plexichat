@@ -312,6 +312,7 @@ class OpcodeHandler:
         sdp_type = data.get("type", "offer")
 
         if not channel_id or not sdp:
+            logger.warning(f"SDP offer missing required fields: channel_id={channel_id}, sdp_present={bool(sdp)}, data keys={data.keys() if data else None}")
             return None, None, GatewayCloseCode.DECODE_ERROR
 
         # Convert channel_id to int if it's a string
@@ -352,6 +353,7 @@ class OpcodeHandler:
         sdp_mline_index = data.get("sdp_mline_index") or data.get("sdpMLineIndex")
 
         if not channel_id or not candidate:
+            logger.warning(f"ICE candidate missing required fields: channel_id={channel_id}, candidate={candidate}, data={data}")
             return None, None, GatewayCloseCode.DECODE_ERROR
 
         # Convert channel_id to int if it's a string
