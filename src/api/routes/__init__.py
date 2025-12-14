@@ -27,6 +27,7 @@ from .organizations import router as organizations_router
 from .voice import router as voice_router
 from .avatars import router as avatars_router
 from .media import router as media_router
+from .reports import router as reports_router
 
 import utils.config as config
 
@@ -73,6 +74,9 @@ def create_api_router() -> APIRouter:
 
     # Include media router
     api_router.include_router(media_router, tags=["Media"])
+
+    # Include reports router
+    api_router.include_router(reports_router, tags=["Reports"])
 
     return api_router
 

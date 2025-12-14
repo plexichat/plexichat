@@ -39,6 +39,7 @@ _settings = None
 _organizations = None
 _features = None
 _avatars = None
+_reports = None
 _setup_complete = False
 
 
@@ -58,7 +59,8 @@ def setup(
     settings_module=None,
     organizations_module=None,
     features_module=None,
-    avatars_module=None
+    avatars_module=None,
+    reports_module=None
 ):
     """
     Initialize the API module with all dependencies.
@@ -80,9 +82,10 @@ def setup(
         organizations_module: Organizations module for org management
         features_module: Features module for user tiers and badges
         avatars_module: Avatars module for user/server avatars
+        reports_module: Reports module for message/user reporting
     """
     global _db, _auth, _messaging, _servers, _relationships, _presence
-    global _reactions, _embeds, _notifications, _webhooks, _threads, _media, _settings, _organizations, _features, _avatars, _setup_complete
+    global _reactions, _embeds, _notifications, _webhooks, _threads, _media, _settings, _organizations, _features, _avatars, _reports, _setup_complete
 
     _db = db
     _auth = auth_module
@@ -100,6 +103,7 @@ def setup(
     _organizations = organizations_module
     _features = features_module
     _avatars = avatars_module
+    _reports = reports_module
     _setup_complete = True
 
 
@@ -183,6 +187,11 @@ def get_features():
 def get_avatars():
     """Get avatars module."""
     return _avatars
+
+
+def get_reports():
+    """Get reports module."""
+    return _reports
 
 
 def is_setup() -> bool:
