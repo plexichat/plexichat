@@ -412,16 +412,13 @@ class MediasoupWSAdapter(SFUAdapter):
                 url=self._ws_url
             )
 
+        # mediasoup-demo only accepts "send" or "recv", not "sendrecv"
+        # For SENDRECV, we create a send transport (producing=True)
         producing = direction in (TransportDirection.SEND, TransportDirection.SENDRECV)
-        consuming = direction in (TransportDirection.RECV, TransportDirection.SENDRECV)
+        consuming = direction in (TransportDirection.RECV,)
 
-        # Determine direction string for appData
-        if producing and consuming:
-            dir_str = "sendrecv"
-        elif producing:
-            dir_str = "send"
-        else:
-            dir_str = "recv"
+        # Direction string for appData - must be "send" or "recv"
+        dir_str = "send" if producing else "recv"
 
         result = await self._request(connection, "createWebRtcTransport", {
             "forceTcp": False,

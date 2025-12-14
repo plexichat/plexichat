@@ -402,9 +402,10 @@ class SignalingManager:
         room_info = await sfu.join_room(room_id, peer_id)
         router_caps = room_info.get("routerRtpCapabilities", {})
 
-        # Create a send/recv transport for this peer
-        logger.debug(f"Creating transport for peer {peer_id}")
-        transport = await sfu.create_transport(room_id, peer_id, TransportDirection.SENDRECV)
+        # Create a send transport for this peer (to send audio to SFU)
+        # mediasoup-demo only accepts "send" or "recv", not "sendrecv"
+        logger.debug(f"Creating send transport for peer {peer_id}")
+        transport = await sfu.create_transport(room_id, peer_id, TransportDirection.SEND)
 
         # Store transport info in connection
         connection = self._connections.get(user_id)
