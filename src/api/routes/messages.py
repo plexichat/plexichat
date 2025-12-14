@@ -26,13 +26,6 @@ def _message_to_response(
     reactions_data=None,
 ) -> Dict[str, Any]:
     """Convert message object to response model."""
-    import utils.logger as logger
-    
-    # Debug: Log embeds from message
-    msg_embeds = getattr(msg, "embeds", []) or []
-    if msg_embeds:
-        logger.info(f"_message_to_response: Message {msg.id} has {len(msg_embeds)} embeds: {msg_embeds}")
-    
     attachments = []
     if hasattr(msg, "attachments") and msg.attachments:
         for att in msg.attachments:
