@@ -415,11 +415,20 @@ class MediasoupWSAdapter(SFUAdapter):
         producing = direction in (TransportDirection.SEND, TransportDirection.SENDRECV)
         consuming = direction in (TransportDirection.RECV, TransportDirection.SENDRECV)
 
+        # Determine direction string for appData
+        if producing and consuming:
+            dir_str = "sendrecv"
+        elif producing:
+            dir_str = "send"
+        else:
+            dir_str = "recv"
+
         result = await self._request(connection, "createWebRtcTransport", {
             "forceTcp": False,
             "producing": producing,
             "consuming": consuming,
             "sctpCapabilities": None,
+            "appData": {"direction": dir_str},
         })
 
         transport = SFUTransport(
