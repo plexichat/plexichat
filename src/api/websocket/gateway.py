@@ -199,7 +199,8 @@ async def _message_loop(
                 return
             try:
                 data = json.loads(text_data)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                logger.warning(f"Connection {connection.connection_id}: JSON decode error: {e}, data: {text_data[:200]}")
                 await _close_connection(connection, GatewayCloseCode.DECODE_ERROR)
                 return
         elif "bytes" in message:
@@ -234,6 +235,7 @@ async def _message_loop(
         payload = data.get("d")
 
         if opcode is None:
+            logger.warning(f"Connection {connection.connection_id}: missing opcode in message: {data}")
             await _close_connection(connection, GatewayCloseCode.DECODE_ERROR)
             return
 
