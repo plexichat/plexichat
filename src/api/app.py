@@ -119,20 +119,23 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
     @app.get("/api/v1/media/attachments/{filename}")
     async def serve_attachment(filename: str, request: Request):
-        """Serve uploaded attachment files. Requires authentication via Authorization header only."""
-        # SECURITY: Only accept Authorization header - query param tokens are logged and leaked
+        """Serve uploaded attachment files. Requires authentication via Authorization header or cookie."""
+        # Try Authorization header first (preferred for API calls)
         auth_header = request.headers.get("Authorization")
         token = None
 
         if auth_header and auth_header.startswith("Bearer "):
             token = auth_header[7:]
-        # SECURITY: Removed ?token= query parameter authentication
-        # Query params are logged in server logs, browser history, and referrer headers
+        
+        # Fallback to cookie-based auth for <img> tags and direct browser access
+        # This is safe because cookies are HttpOnly and not exposed to JS
+        if not token:
+            token = request.cookies.get("plexichat_token")
 
         if not token:
             raise HTTPException(
                 status_code=401,
-                detail={"error": {"code": 401, "message": "Authentication required. Use Authorization header."}}
+                detail={"error": {"code": 401, "message": "Authentication required. Use Authorization header or cookie."}}
             )
 
         # Verify token
