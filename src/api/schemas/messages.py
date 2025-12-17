@@ -61,3 +61,23 @@ class MessageResponse(BaseModel):
     attachments: List[AttachmentResponse] = Field(default_factory=list, description="Attachments")
     embeds: List[Dict[str, Any]] = Field(default_factory=list, description="Rich embeds")
     pinned: bool = Field(False, description="Pinned status")
+    status: Optional[str] = Field(None, description="Status for the current user (sent, delivered, read)")
+    delivery_count: int = Field(0, description="Number of users who received the message")
+    read_count: int = Field(0, description="Number of users who read the message")
+
+class MessagingSettingsResponse(BaseModel):
+    """User messaging settings response."""
+    model_config = ConfigDict(from_attributes=True)
+
+    read_receipts_enabled: bool = Field(True, description="Whether to send read receipts")
+    typing_indicators_enabled: bool = Field(True, description="Whether to show typing indicators")
+    allow_dms_from: str = Field("everyone", description="Who can send DMs (everyone, friends, none)")
+
+
+class MessagingSettingsUpdateRequest(BaseModel):
+    """User messaging settings update request."""
+    model_config = ConfigDict(from_attributes=True)
+
+    read_receipts_enabled: Optional[bool] = Field(None, description="Whether to send read receipts")
+    typing_indicators_enabled: Optional[bool] = Field(None, description="Whether to show typing indicators")
+    allow_dms_from: Optional[str] = Field(None, description="Who can send DMs (everyone, friends, none)")

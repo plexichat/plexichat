@@ -9,6 +9,7 @@ import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.auth import UserResponse
 from src.api.schemas.users import UserUpdateRequest, UserPublicResponse
+from src.api.schemas.messages import MessagingSettingsResponse, MessagingSettingsUpdateRequest
 from src.api.schemas.common import SnowflakeID
 from src.core.database import cached, invalidate_pattern
 
@@ -463,3 +464,31 @@ async def get_user(user_id: str, current_user: TokenInfo = Depends(get_current_u
         if "NotFound" in type(e).__name__:
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
         raise
+
+
+@router.get("/@me/messaging-settings", response_model=MessagingSettingsResponse)
+async def get_messaging_settings(current_user: TokenInfo = Depends(get_current_user)):
+    """Get current user's messaging settings."""
+    messaging = api.get_messaging()
+    if not messaging:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
+
+    settings = messaging.get_user_message_settings(current_user.user_id)
+    return settings
+
+
+@router.patch("/@me/messaging-settings", response_model=MessagingSettingsResponse)
+async def update_messaging_settings(
+    body: MessagingSettingsUpdateRequest,
+    current_user: TokenInfo = Depends(get_current_user)
+):
+    """Update current user's messaging settings."""
+    messaging = api.get_messaging()
+    if not messaging:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
+
+    settings = messaging.update_user_message_settings(
+        user_id=current_user.user_id,
+        **body.model_dump(exclude_unset=True)
+    )
+    return settings

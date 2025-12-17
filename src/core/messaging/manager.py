@@ -1073,12 +1073,17 @@ class MessagingManager:
 
         messages = [self._row_to_message(row) for row in rows]
 
-        # Batch load attachments for all messages in a single query (fixes N+1)
         if messages:
             message_ids = [msg.id for msg in messages]
             attachments_map = self._get_attachments_batch(message_ids)
+            status_map = self._get_message_statuses_batch(user_id, message_ids)
+            
             for msg in messages:
                 msg.attachments = attachments_map.get(msg.id, [])
+                stats = status_map.get(msg.id, {})
+                msg.status = stats.get("status")
+                msg.delivery_count = stats.get("delivery_count", 0)
+                msg.read_count = stats.get("read_count", 0)
 
         return messages
 
@@ -1098,6 +1103,48 @@ class MessagingManager:
             att = self._row_to_attachment(row)
             result[att.message_id].append(att)
 
+        return result
+
+    def _get_message_statuses_batch(self, user_id: int, message_ids: List[int]) -> Dict[int, Dict[str, Any]]:
+        """Batch load message statuses and counts (avoids N+1 queries)."""
+        if not message_ids:
+            return {}
+
+        placeholders = ",".join("?" * len(message_ids))
+        
+        # Get status for the current user
+        status_rows = self._db.fetch_all(
+            f"SELECT message_id, status FROM msg_message_status WHERE user_id = ? AND message_id IN ({placeholders})",
+            (user_id,) + tuple(message_ids)
+        )
+        status_map = {row["message_id"]: MessageStatusType(row["status"]) for row in status_rows}
+
+        # Get aggregate counts for all users
+        count_rows = self._db.fetch_all(
+            f"""SELECT message_id, 
+                       COUNT(CASE WHEN status IN ('delivered', 'read') THEN 1 END) as delivery_count,
+                       COUNT(CASE WHEN status = 'read' THEN 1 END) as read_count
+                FROM msg_message_status 
+                WHERE message_id IN ({placeholders})
+                GROUP BY message_id""",
+            tuple(message_ids)
+        )
+        counts_map = {
+            row["message_id"]: {
+                "delivery_count": row["delivery_count"], 
+                "read_count": row["read_count"]
+            } for row in count_rows
+        }
+
+        result = {}
+        for mid in message_ids:
+            stats = counts_map.get(mid, {"delivery_count": 0, "read_count": 0})
+            result[mid] = {
+                "status": status_map.get(mid),
+                "delivery_count": stats["delivery_count"],
+                "read_count": stats["read_count"]
+            }
+        
         return result
 
     def pin_message(self, user_id: int, message_id: int) -> bool:
@@ -1221,42 +1268,45 @@ class MessagingManager:
             msg_filter += " AND id <= ?"
             params.append(up_to_message_id)
 
-        # Batch update existing statuses that aren't already READ
-        self._db.execute(
-            f"""UPDATE msg_message_status 
-                SET status = ?, timestamp = ?
-                WHERE user_id = ? AND status != ?
-                AND message_id IN (SELECT id FROM msg_messages WHERE {msg_filter})""",
-            (MessageStatusType.READ.value, now, user_id, MessageStatusType.READ.value) + tuple(params)
-        )
+        # Only update public read statuses if user has read receipts enabled
+        user_settings = self.get_user_message_settings(user_id)
+        if user_settings.read_receipts_enabled:
+            # Batch update existing statuses that aren't already READ
+            self._db.execute(
+                f"""UPDATE msg_message_status 
+                    SET status = ?, timestamp = ?
+                    WHERE user_id = ? AND status != ?
+                    AND message_id IN (SELECT id FROM msg_messages WHERE {msg_filter})""",
+                (MessageStatusType.READ.value, now, user_id, MessageStatusType.READ.value) + tuple(params)
+            )
 
-        # Batch insert new statuses for messages without any status
-        # Use INSERT OR IGNORE to handle race conditions
-        self._db.execute(
-            f"""INSERT OR IGNORE INTO msg_message_status (id, message_id, user_id, status, timestamp)
-                SELECT 
-                    abs(random()) % 9223372036854775807,
-                    m.id,
-                    ?,
-                    ?,
-                    ?
-                FROM msg_messages m
-                WHERE m.{msg_filter}
-                AND NOT EXISTS (
-                    SELECT 1 FROM msg_message_status s 
-                    WHERE s.message_id = m.id AND s.user_id = ?
-                )""",
-            (user_id, MessageStatusType.READ.value, now) + tuple(params) + (user_id,)
-        )
+            # Batch insert new statuses for messages without any status
+            # Use INSERT OR IGNORE to handle race conditions
+            self._db.execute(
+                f"""INSERT OR IGNORE INTO msg_message_status (id, message_id, user_id, status, timestamp)
+                    SELECT 
+                        abs(random()) % 9223372036854775807,
+                        m.id,
+                        ?,
+                        ?,
+                        ?
+                    FROM msg_messages m
+                    WHERE m.{msg_filter}
+                    AND NOT EXISTS (
+                        SELECT 1 FROM msg_message_status s 
+                        WHERE s.message_id = m.id AND s.user_id = ?
+                    )""",
+                (user_id, MessageStatusType.READ.value, now) + tuple(params) + (user_id,)
+            )
 
-        # Get count of affected messages
+        # Get count of all unread messages being marked (for return info)
         count_row = self._db.fetch_one(
             f"SELECT COUNT(*) as cnt FROM msg_messages WHERE {msg_filter}",
             tuple(params)
         )
         count = count_row["cnt"] if count_row else 0
 
-        # Update participant's last read
+        # Update participant's last read (essential for unread counts regardless of privacy)
         last_msg_id = up_to_message_id
         if not last_msg_id:
             last_row = self._db.fetch_one(
@@ -1449,7 +1499,9 @@ class MessagingManager:
         auto_create_dms: Optional[bool] = None,
         max_message_length: Optional[int] = None,
         max_attachment_size: Optional[int] = None,
-        max_attachments_per_message: Optional[int] = None
+        max_attachments_per_message: Optional[int] = None,
+        read_receipts_enabled: Optional[bool] = None,
+        typing_indicators_enabled: Optional[bool] = None
     ) -> UserMessageSettings:
         """Update user's message settings."""
         current = self.get_user_message_settings(user_id)
@@ -1464,22 +1516,28 @@ class MessagingManager:
         new_length = max_message_length if max_message_length is not None else current.max_message_length
         new_att_size = max_attachment_size if max_attachment_size is not None else current.max_attachment_size
         new_att_count = max_attachments_per_message if max_attachments_per_message is not None else current.max_attachments_per_message
+        new_read_receipts = read_receipts_enabled if read_receipts_enabled is not None else current.read_receipts_enabled
+        new_typing = typing_indicators_enabled if typing_indicators_enabled is not None else current.typing_indicators_enabled
 
         if existing:
             self._db.execute(
                 """UPDATE msg_user_settings 
                    SET allow_dms_from = ?, auto_create_dms = ?, max_message_length = ?,
-                       max_attachment_size = ?, max_attachments_per_message = ?
+                       max_attachment_size = ?, max_attachments_per_message = ?,
+                       read_receipts_enabled = ?, typing_indicators_enabled = ?
                    WHERE user_id = ?""",
-                (new_dms, 1 if new_auto else 0, new_length, new_att_size, new_att_count, user_id)
+                (new_dms, 1 if new_auto else 0, new_length, new_att_size, new_att_count,
+                 1 if new_read_receipts else 0, 1 if new_typing else 0, user_id)
             )
         else:
             self._db.execute(
                 """INSERT INTO msg_user_settings 
                    (user_id, allow_dms_from, auto_create_dms, max_message_length, 
-                    max_attachment_size, max_attachments_per_message)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (user_id, new_dms, 1 if new_auto else 0, new_length, new_att_size, new_att_count)
+                    max_attachment_size, max_attachments_per_message, 
+                    read_receipts_enabled, typing_indicators_enabled)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (user_id, new_dms, 1 if new_auto else 0, new_length, new_att_size, new_att_count,
+                 1 if new_read_receipts else 0, 1 if new_typing else 0)
             )
 
         return self.get_user_message_settings(user_id)

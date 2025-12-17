@@ -57,6 +57,9 @@ def _message_to_response(
         attachments=attachments,
         embeds=getattr(msg, "embeds", []) or [],
         pinned=getattr(msg, "pinned", False),
+        status=getattr(msg, "status", None).value if getattr(msg, "status", None) else None,
+        delivery_count=getattr(msg, "delivery_count", 0),
+        read_count=getattr(msg, "read_count", 0),
     )
 
     # Add author_username and author_avatar_url as extra fields (not in schema but useful for client)
