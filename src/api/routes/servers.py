@@ -930,47 +930,44 @@ async def upload_server_icon(
 ):
     """Upload a server icon."""
     servers_mod = api.get_servers()
+    media = api.get_media()
+
     if not servers_mod:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
+    if not media:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Media module not available"}})
 
     try:
         sid = int(server_id)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
 
-    # Check file type
-    if file.content_type not in ["image/jpeg", "image/png", "image/gif", "image/webp"]:
-        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid file type. Must be JPEG, PNG, GIF, or WebP"}})
+    # Check permission
+    server = servers_mod.get_server(sid, current_user.user_id)
+    if not server:
+        raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Server not found"}})
 
-    # Check file size against config limit
-    content = await file.read()
-    max_size = _get_icon_size_limit()
-    if len(content) > max_size:
-        max_mb = max_size // (1024 * 1024)
-        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": f"File too large (max {max_mb}MB)"}})
+    servers_mod.require_permission(current_user.user_id, sid, "server.manage")
 
-    # Generate unique filename
-    ext = os.path.splitext(file.filename)[1] if file.filename else '.png'
-    unique_name = f"server_{sid}_{uuid.uuid4().hex}{ext}"
-
-    # Save to media directory
-    media_dir = Path.home() / ".plexichat" / "media" / "icons"
-    media_dir.mkdir(parents=True, exist_ok=True)
-
-    file_path = media_dir / unique_name
-    with open(file_path, "wb") as f:
-        f.write(content)
-
-    icon_url = f"/api/v1/media/icons/{unique_name}"
-
-    # Update server with new icon URL
+    # Use media module for upload (handles validation and security)
     try:
-        server = servers_mod.update_server(current_user.user_id, sid, icon_url=icon_url)
+        content = await file.read()
+        result = media.upload_file(
+            user_id=current_user.user_id,
+            file_data=content,
+            filename=file.filename or f"server_icon_{sid}",
+            content_type=file.content_type
+        )
+
+        # Update server with new icon URL
+        server = servers_mod.update_server(current_user.user_id, sid, icon_url=result.url)
         return _server_to_response(server)
     except Exception as e:
         exc_name = type(e).__name__
-        if "NotFound" in exc_name:
-            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Server not found"}})
-        elif "Permission" in exc_name:
-            raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+        if "Size" in exc_name or "Type" in exc_name:
+            raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": str(e)}})
+        elif "Blocked" in exc_name or "Malware" in exc_name:
+            raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": str(e)}})
+        
+        logger.error(f"Server icon upload failed: {e}")
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Upload failed"}})

@@ -345,6 +345,10 @@ async def upload_attachment(
     """
     servers_mod = api.get_servers()
     messaging = api.get_messaging()
+    media = api.get_media()
+
+    if not media:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Media module not available"}})
 
     try:
         cid = int(channel_id)
@@ -374,30 +378,32 @@ async def upload_attachment(
     if not has_access:
         raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
 
-    # Check file size against user's tier limit
-    content = await file.read()
-    max_size = _get_upload_limit(current_user.user_id)
-    if len(content) > max_size:
-        max_mb = max_size // (1024 * 1024)
-        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": f"File too large (max {max_mb}MB)"}})
+    # Use the media module for upload (handles size limits, security, and storage)
+    try:
+        content = await file.read()
+        result = media.upload_file(
+            user_id=current_user.user_id,
+            file_data=content,
+            filename=file.filename or "attachment",
+            content_type=file.content_type
+        )
 
-    # Generate unique filename
-    ext = os.path.splitext(file.filename)[1] if file.filename else ''
-    unique_name = f"{uuid.uuid4().hex}{ext}"
-
-    # Save to media directory
-    media_dir = Path.home() / ".plexichat" / "media" / "attachments"
-    media_dir.mkdir(parents=True, exist_ok=True)
-
-    file_path = media_dir / unique_name
-    with open(file_path, "wb") as f:
-        f.write(content)
-
-    # Return URL (relative to API)
-    return {
-        "id": unique_name,
-        "filename": file.filename,
-        "size": len(content),
-        "content_type": file.content_type,
-        "url": f"/api/v1/media/attachments/{unique_name}"
-    }
+        return {
+            "id": str(result.file_id),
+            "filename": result.filename,
+            "size": result.size,
+            "content_type": result.content_type,
+            "url": result.url,
+            "thumbnails": result.thumbnails
+        }
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "Size" in exc_name:
+            raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": str(e)}})
+        elif "Type" in exc_name:
+            raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": str(e)}})
+        elif "Blocked" in exc_name or "Malware" in exc_name:
+            raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": str(e)}})
+        
+        logger.error(f"Attachment upload failed: {e}")
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Upload failed"}})

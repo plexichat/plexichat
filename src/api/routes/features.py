@@ -137,6 +137,11 @@ async def get_user_features(
             detail={"error": {"code": 404, "message": "User not found"}}
         )
 
+    try:
+        user_features = features.get_user_features(uid)
+        tier = features.get_user_tier(uid)
+        tier_limits = features.get_tier_limits(tier)
+
         return UserFeaturesResponse(
             user_id=user_id,
             rate_limit_tier=tier,

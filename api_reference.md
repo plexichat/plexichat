@@ -212,7 +212,7 @@ Register a new user account.
 |-------|------|-------------|-------------|
 | username | string | 3-32 chars | Username |
 | email | string | Valid email | Email address |
-| password | string | Min 8 chars | Password |
+| password | string | Min 12 chars | Password |
 
 **Response (201):**
 ```json

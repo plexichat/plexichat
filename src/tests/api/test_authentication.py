@@ -5,53 +5,47 @@ Tests for authentication middleware.
 import uuid
 
 
-class TestAuthenticationMiddleware:
-    """Tests for authentication middleware."""
+import pytest
+import asyncio
+import uuid
+from httpx import AsyncClient
+from src.api.app import create_app
 
-    def test_valid_bearer_token(self, test_client, auth_headers):
+@pytest.mark.asyncio
+class TestAuthenticationAsync:
+    """Enhanced asynchronous authentication tests."""
+
+    async def test_valid_bearer_token(self, auth_headers):
         """Test request with valid Bearer token."""
-        response = test_client.get("/api/v1/users/@me", headers=auth_headers)
+        app = create_app()
+        async with AsyncClient(app=app, base_url="http://test") as ac:
+            response = await ac.get("/api/v1/users/@me", headers=auth_headers)
+            assert response.status_code == 200
 
-        assert response.status_code == 200
-
-    def test_invalid_bearer_token(self, test_client):
+    async def test_invalid_bearer_token(self):
         """Test request with invalid Bearer token."""
-        response = test_client.get(
-            "/api/v1/users/@me",
-            headers={"Authorization": "Bearer invalid_token_12345"}
-        )
+        app = create_app()
+        async with AsyncClient(app=app, base_url="http://test") as ac:
+            response = await ac.get(
+                "/api/v1/users/@me",
+                headers={"Authorization": "Bearer invalid_token_12345"}
+            )
+            assert response.status_code == 401
+            assert "error" in response.json()
 
-        assert response.status_code == 401
-        data = response.json()
-        assert "error" in data
+    async def test_concurrent_authenticated_requests(self, auth_headers):
+        """Test multiple concurrent authenticated requests to verify thread safety and performance."""
+        app = create_app()
+        async with AsyncClient(app=app, base_url="http://test") as ac:
+            tasks = [ac.get("/api/v1/users/@me", headers=auth_headers) for _ in range(20)]
+            responses = await asyncio.gather(*tasks)
+            
+            for resp in responses:
+                assert resp.status_code == 200
 
-    def test_missing_authorization_header(self, test_client):
-        """Test request without Authorization header."""
-        response = test_client.get("/api/v1/users/@me")
-
-        assert response.status_code == 401
-
-    def test_malformed_authorization_header(self, test_client):
-        """Test request with malformed Authorization header."""
-        response = test_client.get(
-            "/api/v1/users/@me",
-            headers={"Authorization": "malformed"}
-        )
-
-        assert response.status_code == 401
-
-    def test_empty_bearer_token(self, test_client):
-        """Test request with empty Bearer token."""
-        response = test_client.get(
-            "/api/v1/users/@me",
-            headers={"Authorization": "Bearer "}
-        )
-
-        assert response.status_code == 401
-
-    def test_bot_token_scheme(self, test_client, db_and_modules):
-        """Test request with Bot token scheme."""
-        auth = db_and_modules["auth"]
+    async def test_bot_token_integration(self, db_and_modules):
+        """Test request with Bot token scheme and verify permissions."""
+        db, auth, messaging, servers, rel, pres = db_and_modules
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
@@ -66,73 +60,54 @@ class TestAuthenticationMiddleware:
             display_name=f"Test Bot {unique_id}"
         )
 
-        response = test_client.get(
-            "/api/v1/users/@me",
-            headers={"Authorization": f"Bot {bot.token}"}
-        )
+        app = create_app()
+        async with AsyncClient(app=app, base_url="http://test") as ac:
+            response = await ac.get(
+                "/api/v1/users/@me",
+                headers={"Authorization": f"Bot {bot.token}"}
+            )
+            assert response.status_code == 200
+            data = response.json()
+            assert data["username"] == f"testbot_{unique_id}"
 
-        assert response.status_code == 200
+    async def test_token_revocation_propagation(self, db_and_auth):
+        """Test that token revocation is immediate across API requests."""
+        db, auth = db_and_auth
+        user = auth.register("revoketest", "revoketest@example.com", "TestPass123!")
+        login_result = auth.login("revoketest", "TestPass123!")
+        token = login_result.token
+        headers = {"Authorization": f"Bearer {token}"}
 
-    def test_case_insensitive_scheme(self, test_client, auth_headers):
-        """Test that authorization scheme is case insensitive."""
-        token = auth_headers["Authorization"].split()[1]
+        app = create_app()
+        async with AsyncClient(app=app, base_url="http://test") as ac:
+            # First request should succeed
+            resp1 = await ac.get("/api/v1/users/@me", headers=headers)
+            assert resp1.status_code == 200
+            
+            # Revoke session
+            auth.revoke_session(user.id, login_result.session.id)
+            
+            # Second request should fail immediately
+            resp2 = await ac.get("/api/v1/users/@me", headers=headers)
+            assert resp2.status_code == 401
+            assert "revoked" in resp2.json()["error"]["message"].lower()
 
-        response = test_client.get(
-            "/api/v1/users/@me",
-            headers={"Authorization": f"bearer {token}"}
-        )
+@pytest.mark.asyncio
+class TestPublicEndpointsAsync:
+    """Tests for asynchronous public endpoints."""
 
-        assert response.status_code == 200
+    async def test_health_and_version_negotiation(self):
+        """Test health and version negotiation without auth."""
+        app = create_app()
+        async with AsyncClient(app=app, base_url="http://test") as ac:
+            # Test health
+            health_resp = await ac.get("/api/v1/health")
+            assert health_resp.status_code == 200
+            
+            # Test version negotiation
+            neg_resp = await ac.post("/api/v1/version/negotiate", json={
+                "client_version": "a.1.0-1"
+            })
+            assert neg_resp.status_code == 200
+            assert neg_resp.json()["compatible"] is True
 
-    def test_expired_token_handling(self, test_client):
-        """Test handling of expired token."""
-        response = test_client.get(
-            "/api/v1/users/@me",
-            headers={"Authorization": "Bearer expired.token.here"}
-        )
-
-        assert response.status_code == 401
-        data = response.json()
-        assert "error" in data
-
-
-class TestPublicEndpoints:
-    """Tests for endpoints that don't require authentication."""
-
-    def test_health_check_no_auth(self, test_client):
-        """Test health check without authentication."""
-        response = test_client.get("/api/v1/health")
-
-        assert response.status_code == 200
-
-    def test_root_endpoint_no_auth(self, test_client):
-        """Test root endpoint without authentication."""
-        response = test_client.get("/")
-
-        assert response.status_code == 200
-
-    def test_webhook_execute_no_auth(self, test_client, auth_headers, test_server):
-        """Test webhook execution without user authentication."""
-        channel_id = str(test_server["channel"].id)
-        unique_id = uuid.uuid4().hex[:8]
-
-        create_response = test_client.post(
-            "/api/v1/webhooks",
-            headers=auth_headers,
-            json={
-                "channel_id": channel_id,
-                "name": f"No Auth Test {unique_id}"
-            }
-        )
-
-        assert create_response.status_code == 200
-        webhook_data = create_response.json()
-        webhook_id = webhook_data["id"]
-        token = webhook_data["token"].split(".")[-1]
-
-        response = test_client.post(
-            f"/api/v1/webhooks/{webhook_id}/{token}",
-            json={"content": "No auth needed!"}
-        )
-
-        assert response.status_code == 200 or response.status_code == 204

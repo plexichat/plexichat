@@ -208,17 +208,14 @@ async def get_2fa_status(current_user: TokenInfo = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
 
     try:
-        user = auth.get_user(current_user.user_id)
-        if not user:
-            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
-
+        status = auth.get_2fa_status(current_user.user_id)
         return {
-            "enabled": getattr(user, "totp_enabled", False),
-            "backup_codes_remaining": 0  # TODO: implement backup codes count
+            "enabled": status.enabled,
+            "backup_codes_remaining": status.backup_codes_remaining
         }
-    except HTTPException:
-        raise
     except Exception as e:
+        if "NotFound" in type(e).__name__:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
 
 

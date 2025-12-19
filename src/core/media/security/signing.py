@@ -224,7 +224,7 @@ class UrlSigner:
         Returns:
             True if expired
         """
-        expiry = self.get_expiry_time(url)
-        if expiry is None:
+        expiry_ms = self.get_expiry_time(url)
+        if expiry_ms is None:
             return True
-        return time.time() > expiry
+        return int(time.time() * 1000) > expiry_ms

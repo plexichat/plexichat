@@ -104,6 +104,10 @@ class Database:
             self.connection.execute("PRAGMA foreign_keys=ON")
 
             logger.info(f"Connected to SQLite at {path} (WAL mode enabled)")
+            
+            # Run migrations
+            from .migrations import run_all_migrations
+            run_all_migrations(self)
         except sqlite3.Error as e:
             logger.error(f"Failed to connect to SQLite: {e}")
             raise
@@ -155,6 +159,10 @@ class Database:
             # Set autocommit off by default (matches SQLite behavior)
             conn.autocommit = False
             logger.info(f"Connected to PostgreSQL at {host}:{port}/{dbname} (sslmode={sslmode}, pool={min_conn}-{max_conn})")
+            
+            # Run migrations
+            from .migrations import run_all_migrations
+            run_all_migrations(self)
         except psycopg2.Error as e:
             logger.error(f"Failed to connect to PostgreSQL: {e}")
             raise

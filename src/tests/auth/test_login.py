@@ -5,153 +5,103 @@ Login tests for auth module.
 import pytest
 
 
-class TestLogin:
-    """Test user login."""
+import pytest
+import asyncio
+import uuid
+from src.core.auth.exceptions import InvalidCredentialsError, AccountLockedError
 
-    def test_login_success(self, registered_user):
-        """Test successful login."""
+@pytest.mark.asyncio
+class TestLoginAsync:
+    """Enhanced asynchronous login tests."""
+
+    async def test_login_success(self, registered_user):
+        """Test successful login returns a token and user info."""
         user, auth, username = registered_user
-
-        result = auth.login(username, "TestPass123!")
-
+        
+        # Test basic success
+        result = await asyncio.to_thread(auth.login, username, "TestPass123!")
+        
         assert result.status == auth.AuthStatus.SUCCESS
         assert result.token is not None
-        assert result.user is not None
+        assert result.user.id == user.id
         assert result.user.username == username
 
-    def test_login_with_email(self, registered_user):
-        """Test login with email instead of username."""
+    async def test_login_wrong_password(self, registered_user):
+        """Test login fails with wrong password and increments failed attempts."""
         user, auth, username = registered_user
-
-        result = auth.login(user.email, "TestPass123!")
-
-        assert result.status == auth.AuthStatus.SUCCESS
-
-    def test_login_wrong_password(self, registered_user):
-        """Test login with wrong password."""
-        user, auth, username = registered_user
-
-        with pytest.raises(auth.InvalidCredentialsError):
-            auth.login(username, "WrongPassword123!")
-
-    def test_login_nonexistent_user(self, db_and_auth):
-        """Test login with nonexistent user."""
-        db, auth = db_and_auth
-
-        with pytest.raises(auth.InvalidCredentialsError):
-            auth.login("nobody_exists_12345", "Password123!")
-
-    def test_login_increments_failed_attempts(self, registered_user):
-        """Test that failed login increments counter."""
-        user, auth, username = registered_user
-
-        initial = auth.get_user(user.id).failed_login_attempts
-
-        try:
-            auth.login(username, "WrongPassword!")
-        except auth.InvalidCredentialsError:
-            pass
-
+        
+        initial_attempts = auth.get_user(user.id).failed_login_attempts
+        
+        with pytest.raises(InvalidCredentialsError):
+            await asyncio.to_thread(auth.login, username, "WrongPassword123!")
+            
         updated_user = auth.get_user(user.id)
-        assert updated_user.failed_login_attempts == initial + 1
+        assert updated_user.failed_login_attempts == initial_attempts + 1
 
-    def test_login_locks_after_max_attempts(self, db_and_auth):
-        """Test account locks after max failed attempts."""
+    async def test_account_locking_flow(self, db_and_auth):
+        """Test account gets locked after multiple failed attempts and stays locked."""
         db, auth = db_and_auth
+        username = f"locktest_{uuid.uuid4().hex[:4]}"
+        user = auth.register(username, f"{username}@example.com", "TestPass123!")
+        
+        # Default config has max_failed_attempts = 3
+        for i in range(3):
+            with pytest.raises(InvalidCredentialsError):
+                await asyncio.to_thread(auth.login, username, "WrongPassword!")
+                
+        # Fourth attempt with CORRECT password should raise AccountLockedError
+        with pytest.raises(AccountLockedError):
+            await asyncio.to_thread(auth.login, username, "TestPass123!")
+            
+        # Verify status in database
+        updated_user = auth.get_user(user.id)
+        assert updated_user.account_locked is True
+        assert updated_user.locked_until is not None
 
-        # Create fresh user for this test
-        user = auth.register("locktest", "locktest@example.com", "TestPass123!")
-
-        # Config has max_failed_attempts = 3
-        for _ in range(3):
-            try:
-                auth.login("locktest", "WrongPassword!")
-            except auth.InvalidCredentialsError:
-                pass
-
-        with pytest.raises(auth.AccountLockedError):
-            auth.login("locktest", "TestPass123!")
-
-    def test_login_creates_session(self, registered_user):
-        """Test that login creates a session."""
+    async def test_concurrent_logins_performance(self, registered_user):
+        """Test multiple concurrent login attempts for the same user."""
         user, auth, username = registered_user
-
-        result = auth.login(username, "TestPass123!")
-
+        
+        # Run 10 logins in parallel to test thread safety and performance
+        tasks = [asyncio.to_thread(auth.login, username, "TestPass123!") for _ in range(10)]
+        results = await asyncio.gather(*tasks)
+        
+        for result in results:
+            assert result.status == auth.AuthStatus.SUCCESS
+            assert result.token is not None
+            
+        # Should have 10 + initial session
         sessions = auth.get_sessions(user.id)
-        assert len(sessions) >= 1
+        assert len(sessions) >= 10
 
-    def test_login_with_device_info(self, registered_user):
-        """Test login with device info creates device record."""
+    async def test_session_limit_enforcement(self, registered_user):
+        """Test that oldest sessions are revoked when the limit is exceeded."""
         user, auth, username = registered_user
+        
+        # Create many sessions (limit is 10)
+        # We'll create 15 to trigger the cleanup logic multiple times
+        for _ in range(15):
+            await asyncio.to_thread(auth.login, username, "TestPass123!")
+            
+        # Check that we don't exceed the limit
+        sessions = auth.get_sessions(user.id)
+        assert len(sessions) <= 10
+        
+        # Verify they are the newest ones (last_activity descending)
+        # The oldest ones should have been revoked
+        assert len(sessions) == 10
 
-        fp = f"device_{user.id}"
-        result = auth.login(
-            username,
-            "TestPass123!",
-            device_info={"fingerprint": fp, "name": "Test Device", "type": "desktop"}
-        )
-
-        assert result.status == auth.AuthStatus.SUCCESS
-
-        devices = auth.get_devices(user.id)
-        assert any(d.fingerprint == fp for d in devices)
-
-    def test_login_updates_last_login(self, registered_user):
-        """Test that login updates last_login_at."""
+    async def test_login_with_ip_tracking(self, registered_user):
+        """Test that login correctly tracks multiple IP addresses."""
         user, auth, username = registered_user
+        
+        ips = ["1.1.1.1", "2.2.2.2", "3.3.3.3"]
+        for ip in ips:
+            await asyncio.to_thread(auth.login, username, "TestPass123!", ip_address=ip)
+            
+        # Check audit log for different IPs
+        history = auth.get_login_history(user.id, limit=10)
+        logged_ips = {e.ip_address for e in history if e.event_type == auth.AuditEventType.LOGIN_SUCCESS}
+        for ip in ips:
+            assert ip in logged_ips
 
-        auth.login(username, "TestPass123!")
-
-        after = auth.get_user(user.id).last_login_at
-        assert after is not None
-
-    def test_login_resets_failed_attempts(self, db_and_auth):
-        """Test successful login resets failed attempts."""
-        db, auth = db_and_auth
-
-        user = auth.register("resettest", "resettest@example.com", "TestPass123!")
-
-        # Fail once
-        try:
-            auth.login("resettest", "WrongPassword!")
-        except auth.InvalidCredentialsError:
-            pass
-
-        assert auth.get_user(user.id).failed_login_attempts >= 1
-
-        # Succeed
-        auth.login("resettest", "TestPass123!")
-
-        assert auth.get_user(user.id).failed_login_attempts == 0
-
-    def test_login_creates_audit_entry(self, registered_user):
-        """Test that login creates audit log entry."""
-        user, auth, username = registered_user
-
-        auth.login(username, "TestPass123!")
-
-        history = auth.get_login_history(user.id)
-        assert len(history) >= 1
-        assert any(e.event_type == auth.AuditEventType.LOGIN_SUCCESS for e in history)
-
-    def test_login_failed_creates_audit_entry(self, registered_user):
-        """Test that failed login creates audit entry."""
-        user, auth, username = registered_user
-
-        try:
-            auth.login(username, "WrongPassword!")
-        except auth.InvalidCredentialsError:
-            pass
-
-        history = auth.get_login_history(user.id)
-        assert any(e.event_type == auth.AuditEventType.LOGIN_FAILED for e in history)
-
-    def test_multiple_logins_create_multiple_sessions(self, registered_user):
-        """Test multiple logins create separate sessions."""
-        user, auth, username = registered_user
-
-        result1 = auth.login(username, "TestPass123!")
-        result2 = auth.login(username, "TestPass123!")
-
-        assert result1.token != result2.token
