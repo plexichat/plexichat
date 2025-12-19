@@ -118,7 +118,6 @@ Authorization: Bearer <token>
 | 400 | Key too long | Key exceeds max length |
 | 400 | Value too long | Value exceeds 10000 characters |
 | 400 | Key reserved | Key is reserved for system use |
-| 403 | Setting locked | Setting is locked by organization |
 
 ## DELETE /settings/{key}
 
@@ -149,12 +148,6 @@ Authorization: Bearer <token>
 | Status | Code | Description |
 |--------|------|-------------|
 | 404 | Setting not found | Setting with key doesn't exist |
-
----
-
-## Organization-Locked Settings
-
-If your account is part of an organization, some settings may be locked by your organization administrator. Attempting to modify a locked setting will return a 403 error.
 
 ---
 

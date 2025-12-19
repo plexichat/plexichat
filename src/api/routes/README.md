@@ -29,7 +29,6 @@ Each file contains routes for a specific resource domain:
 | `feedback.py` | `/feedback` | User feedback |
 | `telemetry.py` | `/telemetry` | Client telemetry |
 | `notifications.py` | `/notifications` | Push notifications |
-| `organizations.py` | `/organizations` | Organization management |
 | `voice.py` | `/voice` | Voice channel signaling |
 
 ## Route Pattern

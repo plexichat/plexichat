@@ -137,7 +137,6 @@ def _generate_self_signed_cert(
         x509.NameAttribute(NameOID.COUNTRY_NAME, "US"),
         x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "Development"),
         x509.NameAttribute(NameOID.LOCALITY_NAME, "Local"),
-        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "PlexiChat"),
         x509.NameAttribute(NameOID.COMMON_NAME, hostname),
     ])
 

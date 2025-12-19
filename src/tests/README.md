@@ -21,24 +21,6 @@ pytest -n auto
 pytest --cov=src --cov-report=html
 ```
 
-## Test Organization
-
-```
-src/tests/
-├── conftest.py          # Root fixtures (session-scoped DB, factories)
-├── fixtures/            # Reusable fixture modules
-│   ├── config.py        # Shared test configuration
-│   ├── database.py      # Database management
-│   ├── modules.py       # Lazy module loading
-│   └── factories.py     # User/Server/Conversation factories
-├── unit/                # Fast unit tests (no database)
-├── auth/                # Authentication tests
-├── messaging/           # Messaging tests
-├── servers/             # Server tests
-├── ...                  # Other module tests
-└── test_infrastructure.py  # Infrastructure verification
-```
-
 ## Key Concepts
 
 ### Session-Scoped Database

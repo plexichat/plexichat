@@ -66,7 +66,6 @@ Authorization: Bearer <token>
 ```json
 {
   "user_id": "123456789012345678",
-  "can_create_org": true,
   "rate_limit_tier": "alpha",
   "badges": ["alpha_tester", "early_supporter"],
   "tier_limits": {
@@ -93,7 +92,6 @@ Authorization: Bearer <token>
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| can_create_org | bool | No | Allow organization creation |
 | rate_limit_tier | string | No | Rate limit tier |
 | expires_at | int | No | Unix timestamp when features expire |
 | notes | string | No | Admin notes |
@@ -102,8 +100,7 @@ Authorization: Bearer <token>
 
 ```json
 {
-  "rate_limit_tier": "premium",
-  "can_create_org": true
+  "rate_limit_tier": "premium"
 }
 ```
 

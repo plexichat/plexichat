@@ -71,7 +71,7 @@ Self-signed certificates are **NOT** suitable for production use:
 For production, use certificates from:
 - Let's Encrypt (free, automated)
 - Commercial Certificate Authorities
-- Your organization's internal CA
+- Your internal CA certificates (for intranet use)
 
 ## Dependencies
 

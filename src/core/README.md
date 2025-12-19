@@ -99,7 +99,6 @@ User feature flags and badges.
 User settings sync.
 - Key-value storage
 - Cloud sync
-- Organization overrides
 
 ### Additional Modules
 
@@ -111,7 +110,6 @@ User settings sync.
 | `avatars/` | Avatar storage |
 | `embeds/` | Rich embed handling |
 | `notifications/` | Push notifications |
-| `organizations/` | Organization management |
 | `polls/` | Message polls |
 | `ratelimit/` | Rate limiting |
 | `search/` | Message search |

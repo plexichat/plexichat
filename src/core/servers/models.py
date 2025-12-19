@@ -109,7 +109,7 @@ class Server:
 
 @dataclass
 class ChannelCategory:
-    """Represents a channel category for organization."""
+    """Represents a channel category."""
     id: int
     server_id: int
     name: str

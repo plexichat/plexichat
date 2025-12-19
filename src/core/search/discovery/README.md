@@ -11,5 +11,7 @@ Server discovery and categorization for public server listings.
 ## Features
 
 - Public server listings
-- Category-based organization
+- Search by server name and description
+- Category-based browsing
+- Tag-based search
 - Server verification system
