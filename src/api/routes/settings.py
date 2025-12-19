@@ -118,7 +118,6 @@ async def set_setting(
     Set a setting value.
     
     Creates or updates the setting with the given key.
-    Returns error if setting is locked by organization.
     """
     settings_module = api.get_settings()
     if not settings_module:
@@ -126,21 +125,6 @@ async def set_setting(
             status_code=500,
             detail={"error": {"code": 500, "message": "Settings module not available"}}
         )
-
-    # Check if setting is org-locked
-    try:
-        from src.core import organizations
-        if organizations.is_setup() and organizations.is_setting_locked(current_user.user_id, key):
-            raise HTTPException(
-                status_code=403,
-                detail={"error": {"code": 403, "message": f"Setting '{key}' is locked by your organization"}}
-            )
-    except ImportError:
-        pass
-    except HTTPException:
-        raise
-    except Exception:
-        pass  # If orgs module fails, allow the setting change
 
     try:
         setting = settings_module.set_setting(current_user.user_id, key, body.value)

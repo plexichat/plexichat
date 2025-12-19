@@ -36,7 +36,6 @@ _webhooks = None
 _threads = None
 _media = None
 _settings = None
-_organizations = None
 _features = None
 _avatars = None
 _reports = None
@@ -57,7 +56,6 @@ def setup(
     threads_module=None,
     media_module=None,
     settings_module=None,
-    organizations_module=None,
     features_module=None,
     avatars_module=None,
     reports_module=None
@@ -79,13 +77,12 @@ def setup(
         threads_module: Threads module for thread management
         media_module: Media module for file uploads
         settings_module: Settings module for user preferences
-        organizations_module: Organizations module for org management
         features_module: Features module for user tiers and badges
         avatars_module: Avatars module for user/server avatars
         reports_module: Reports module for message/user reporting
     """
     global _db, _auth, _messaging, _servers, _relationships, _presence
-    global _reactions, _embeds, _notifications, _webhooks, _threads, _media, _settings, _organizations, _features, _avatars, _reports, _setup_complete
+    global _reactions, _embeds, _notifications, _webhooks, _threads, _media, _settings, _features, _avatars, _reports, _setup_complete
 
     _db = db
     _auth = auth_module
@@ -100,7 +97,6 @@ def setup(
     _threads = threads_module
     _media = media_module
     _settings = settings_module
-    _organizations = organizations_module
     _features = features_module
     _avatars = avatars_module
     _reports = reports_module
@@ -172,11 +168,6 @@ def get_media():
 def get_settings():
     """Get settings module."""
     return _settings
-
-
-def get_organizations():
-    """Get organizations module."""
-    return _organizations
 
 
 def get_features():

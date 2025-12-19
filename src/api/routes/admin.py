@@ -1137,7 +1137,7 @@ async def get_available_badges(request: Request, db = Depends(get_db)):
 
     return {
         "badges": badges_config or [
-            "alpha_tester", "early_supporter", "staff", "org_root",
+            "alpha_tester", "early_supporter", "staff",
             "verified", "bug_hunter", "contributor", "moderator", "partner"
         ]
     }
