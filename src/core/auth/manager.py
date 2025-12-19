@@ -682,7 +682,7 @@ class AuthManager:
             token_hash=token_hash
         )
 
-    def verify_token(self, token: str, ip_address: Optional[str] = None) -> TokenInfo:
+    def verify_token(self, token: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> TokenInfo:
         """
         Verify a session or bot token.
         
@@ -717,6 +717,11 @@ class AuthManager:
                         logger.warning(f"Token IP mismatch: expected {cached['bound_ip']}, got {ip_address}")
                         cache_delete(cache_key)
                         raise TokenInvalidError("Token bound to different IP")
+                    
+                    if user_agent and cached.get("bound_ua") and cached["bound_ua"] != user_agent:
+                        logger.warning(f"Token UA mismatch")
+                        cache_delete(cache_key)
+                        raise TokenInvalidError("Token bound to different browser")
 
                 logger.debug(f"Token cache hit for {parsed['token_type']}")
                 return TokenInfo(
@@ -735,7 +740,7 @@ class AuthManager:
 
         # Cache miss or Redis unavailable - verify from DB
         if parsed["token_type"] == "session":
-            token_info = self._verify_session_token(parsed, ip_address)
+            token_info = self._verify_session_token(parsed, ip_address, user_agent)
         elif parsed["token_type"] == "bot":
             token_info = self._verify_bot_token(parsed, ip_address)
         else:
@@ -757,9 +762,12 @@ class AuthManager:
                 "account_type": token_info.account_type.value,
                 "avatar_url": token_info.avatar_url,
             }
-            # Add IP binding if enabled
-            if self._get_config("security.token_binding", False) and ip_address:
-                cache_data["bound_ip"] = ip_address
+            # Add binding if enabled
+            if self._get_config("security.token_binding", False):
+                if ip_address:
+                    cache_data["bound_ip"] = ip_address
+                if user_agent:
+                    cache_data["bound_ua"] = user_agent
 
             cache_set(cache_key, cache_data, ttl=cache_ttl)
 
@@ -768,12 +776,14 @@ class AuthManager:
     def _verify_session_token(
         self,
         parsed: dict,
-        ip_address: Optional[str]
+        ip_address: Optional[str],
+        user_agent: Optional[str] = None
     ) -> TokenInfo:
         """Verify a user session token."""
         session = self.db.fetch_one(
             """SELECT s.id, s.user_id, s.token_hash, s.expires_at, s.revoked,
-                      s.last_activity, u.username, u.permissions, u.account_type, u.avatar_url
+                      s.last_activity, s.ip_address, s.user_agent,
+                      u.username, u.permissions, u.account_type, u.avatar_url
                FROM auth_sessions s
                JOIN auth_users u ON s.user_id = u.id
                WHERE s.id = ?""",
@@ -792,6 +802,19 @@ class AuthManager:
 
         if not verify_token_hash(parsed["secret"], session["token_hash"]):
             raise TokenInvalidError("Invalid session token")
+
+        # Validate token binding if enabled
+        if self._get_config("security.token_binding", False):
+            # IP Binding
+            if ip_address and session["ip_address"] and session["ip_address"] != ip_address:
+                logger.warning(f"Session IP mismatch for {session['id']}: expected {session['ip_address']}, got {ip_address}")
+                raise TokenInvalidError("Session bound to different IP")
+            
+            # User-Agent Binding (more sensitive, might cause issues with some browsers/updates)
+            if user_agent and session["user_agent"] and session["user_agent"] != user_agent:
+                # We check if it's a major mismatch
+                logger.warning(f"Session User-Agent mismatch for {session['id']}")
+                raise TokenInvalidError("Session bound to different browser")
 
         # Update last activity
         extend_on_activity = self._get_config("sessions.extend_on_activity", True)

@@ -2,9 +2,12 @@ import base64
 import hashlib
 import os
 import time
+import json
 import threading
+import utils.logger as logger
+import utils.config as config
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, Any
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, VerificationError, InvalidHash
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -13,6 +16,104 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey
 )
 from cryptography.hazmat.primitives import serialization
+
+class Keyring:
+    """
+    Manages multiple versions of encryption keys for rotation support.
+    Stored as a JSON file containing base64-encoded keys and rotation metadata.
+    """
+    def __init__(self, keyring_path: Path):
+        self.path = keyring_path
+        self.current_version: int = 0
+        self.keys: Dict[int, bytes] = {}
+        self.rotated_at: int = 0
+        self._lock = threading.Lock()
+        self.load()
+
+    def load(self):
+        """Load keyring from disk."""
+        with self._lock:
+            if not self.path.exists():
+                return
+
+            try:
+                with open(self.path, "r") as f:
+                    data = json.load(f)
+                
+                self.current_version = data.get("current_version", 0)
+                self.rotated_at = data.get("rotated_at", 0)
+                self.keys = {
+                    int(v): base64.b64decode(k) 
+                    for v, k in data.get("keys", {}).items()
+                }
+            except Exception as e:
+                logger.error(f"Failed to load keyring from {self.path}: {e}")
+
+    def save(self):
+        """Save keyring to disk."""
+        with self._lock:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            data = {
+                "current_version": self.current_version,
+                "rotated_at": self.rotated_at,
+                "keys": {
+                    str(v): base64.b64encode(k).decode('utf-8') 
+                    for v, k in self.keys.items()
+                }
+            }
+            # Use temporary file for atomic write
+            temp_path = self.path.with_suffix(".tmp")
+            with open(temp_path, "w") as f:
+                json.dump(data, f, indent=2)
+            
+            if os.path.exists(self.path):
+                os.remove(self.path)
+            os.rename(temp_path, self.path)
+
+    def get_key(self, version: Optional[int] = None) -> Tuple[int, bytes]:
+        """Get a specific key version or the current one."""
+        with self._lock:
+            if not self.keys:
+                # Generate initial key
+                new_key = AESGCM.generate_key(bit_length=256)
+                self.current_version = 1
+                self.keys[1] = new_key
+                self.rotated_at = int(time.time())
+                # Save immediately since this is a new keyring
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                data = {
+                    "current_version": self.current_version,
+                    "rotated_at": self.rotated_at,
+                    "keys": {
+                        "1": base64.b64encode(new_key).decode('utf-8')
+                    }
+                }
+                with open(self.path, "w") as f:
+                    json.dump(data, f, indent=2)
+            
+            if version is None or version == 0:
+                version = self.current_version
+            
+            key = self.keys.get(version)
+            if not key:
+                if version == self.current_version:
+                    raise RuntimeError("No keys available in keyring")
+                raise ValueError(f"Key version {version} not found in keyring")
+            
+            return version, key
+
+    def rotate(self) -> int:
+        """Generate a new key version and make it current."""
+        with self._lock:
+            new_version = self.current_version + 1
+            new_key = AESGCM.generate_key(bit_length=256)
+            self.keys[new_version] = new_key
+            self.current_version = new_version
+            self.rotated_at = int(time.time())
+            logger.info(f"Rotated encryption key to version {new_version}")
+        
+        self.save()
+        return self.current_version
 
 class EncryptionManager:
     """
@@ -43,7 +144,53 @@ class EncryptionManager:
             hash_len=argon2_hash_length,
             salt_len=argon2_salt_length
         )
-        self.default_key = None
+        self.keyring = Keyring(Path.home() / ".plexichat" / "data" / "keyring.json")
+        self._ensure_initial_key()
+
+    def _ensure_initial_key(self):
+        """Ensure at least one key exists in the keyring."""
+        if not self.keyring.keys:
+            # Check for legacy key file first
+            legacy_path = Path.home() / ".plexichat" / "data" / ".encryption_key"
+            if legacy_path.exists():
+                try:
+                    with open(legacy_path, "rb") as f:
+                        key = f.read()
+                    if len(key) == 32:
+                        self.keyring.keys[1] = key
+                        self.keyring.current_version = 1
+                        self.keyring.rotated_at = int(legacy_path.stat().st_mtime)
+                        self.keyring.save()
+                        logger.info("Migrated legacy encryption key to keyring version 1")
+                except Exception as e:
+                    logger.error(f"Failed to migrate legacy key: {e}")
+
+            # Still no keys? Generate new one
+            if not self.keyring.keys:
+                self.keyring.get_key() # Triggers generation
+                self.keyring.save()
+
+    def rotate_keys(self, force: bool = False) -> bool:
+        """
+        Check if keys need rotation based on config and rotate if needed.
+        
+        Args:
+            force (bool): Rotate regardless of time elapsed.
+            
+        Returns:
+            bool: True if rotation occurred.
+        """
+        rotation_days = config.get("encryption", {}).get("key_rotation_days", 90)
+        if rotation_days <= 0 and not force:
+            return False
+
+        now = int(time.time())
+        age_seconds = now - self.keyring.rotated_at
+        if force or age_seconds >= (rotation_days * 86400):
+            self.keyring.rotate()
+            return True
+        
+        return False
 
     def hash_password(self, password: str) -> str:
         """
@@ -84,86 +231,72 @@ class EncryptionManager:
         except (VerifyMismatchError, VerificationError, InvalidHash):
             return False
 
-    def _get_or_create_key(self, key: Optional[bytes] = None) -> bytes:
-        """
-        Get provided key or create/retrieve default key.
-        The default key is persisted to disk to survive server restarts.
-        
-        Args:
-            key (bytes, optional): Encryption key.
-            
-        Returns:
-            bytes: The encryption key.
-        """
-        if key is not None:
-            if len(key) != 32:
-                raise ValueError("Key must be 32 bytes for AES-256")
-            return key
-
-        if self.default_key is None:
-            # Try to load key from disk
-            from pathlib import Path
-            key_file = Path.home() / ".plexichat" / "data" / ".encryption_key"
-
-            if key_file.exists():
-                try:
-                    with open(key_file, "rb") as f:
-                        self.default_key = f.read()
-                    if len(self.default_key) != 32:
-                        raise ValueError("Invalid key length")
-                except Exception:
-                    self.default_key = None
-
-            if self.default_key is None:
-                # Generate new key and save it
-                self.default_key = AESGCM.generate_key(bit_length=256)
-                key_file.parent.mkdir(parents=True, exist_ok=True)
-                with open(key_file, "wb") as f:
-                    f.write(self.default_key)
-
-        return self.default_key
-
     def encrypt_data(self, data: str, key: Optional[bytes] = None) -> str:
         """
         Encrypt data using AES-256-GCM.
         
         Args:
             data (str): The data to encrypt.
-            key (bytes, optional): 32-byte encryption key.
+            key (bytes, optional): 32-byte encryption key. If None, uses current keyring key.
             
         Returns:
-            str: Base64-encoded encrypted data (nonce + ciphertext + tag).
+            str: Base64-encoded encrypted data with version prefix (ENC:V:<base64>).
         """
-        encryption_key = self._get_or_create_key(key)
+        if key is not None:
+            if len(key) != 32:
+                raise ValueError("Key must be 32 bytes for AES-256")
+            encryption_key = key
+            version_prefix = "" # No prefix for custom keys to maintain compatibility
+        else:
+            version, encryption_key = self.keyring.get_key()
+            version_prefix = f"ENC:{version}:"
+
         aesgcm = AESGCM(encryption_key)
-
         nonce = os.urandom(12)
-
         ciphertext = aesgcm.encrypt(nonce, data.encode('utf-8'), None)
-
         combined = nonce + ciphertext
-
-        return base64.b64encode(combined).decode('utf-8')
+        encoded = base64.b64encode(combined).decode('utf-8')
+        
+        return version_prefix + encoded
 
     def decrypt_data(self, encrypted_data: str, key: Optional[bytes] = None) -> str:
         """
         Decrypt data using AES-256-GCM.
         
         Args:
-            encrypted_data (str): Base64-encoded encrypted data.
+            encrypted_data (str): Encrypted data (with or without prefix).
             key (bytes, optional): 32-byte decryption key.
             
         Returns:
             str: Decrypted data.
-            
-        Raises:
-            ValueError: If data is malformed or authentication fails.
         """
-        encryption_key = self._get_or_create_key(key)
-        aesgcm = AESGCM(encryption_key)
+        if not encrypted_data:
+            return ""
+
+        # Parse version prefix
+        version = None
+        data_to_decode = encrypted_data
+        
+        if encrypted_data.startswith("ENC:"):
+            parts = encrypted_data.split(":", 2)
+            if len(parts) == 3:
+                try:
+                    version = int(parts[1])
+                    data_to_decode = parts[2]
+                except ValueError:
+                    pass
+
+        if key is not None:
+            if len(key) != 32:
+                raise ValueError("Key must be 32 bytes")
+            decryption_key = key
+        else:
+            _, decryption_key = self.keyring.get_key(version)
+
+        aesgcm = AESGCM(decryption_key)
 
         try:
-            combined = base64.b64decode(encrypted_data.encode('utf-8'))
+            combined = base64.b64decode(data_to_decode.encode('utf-8'))
         except Exception as e:
             raise ValueError(f"Invalid base64 encoding: {e}")
 
@@ -263,71 +396,51 @@ def verify_signature(data: bytes, signature: bytes, public_key: bytes) -> bool:
 class MessageEncryptor:
     """
     Dedicated encryptor for message content at rest.
-    Uses AES-256-GCM with a separate key from general encryption.
+    Uses AES-256-GCM with a versioned keyring.
     Optimized for high-throughput message encryption/decryption.
     """
     
     # Prefix to identify encrypted messages (allows legacy plaintext detection)
-    ENCRYPTED_PREFIX = "ENC:1:"  # Version 1 of encryption format
+    ENCRYPTED_PREFIX = "ENC:"  # New prefix format: ENC:<version>:<base64>
+    LEGACY_PREFIX = "ENC:1:"   # Old prefix format
     
-    def __init__(self, key_file_path: Optional[str] = None):
+    def __init__(self, keyring: Optional[Keyring] = None):
         """
         Initialize the message encryptor.
         
         Args:
-            key_file_path: Optional custom path for the encryption key file.
-                          Defaults to ~/.plexichat/data/.message_encryption_key
+            keyring: Optional Keyring instance. Defaults to shared keyring.
         """
-        self._key: Optional[bytes] = None
-        self._aesgcm: Optional[AESGCM] = None
-        self._key_file_path = key_file_path
+        self.keyring = keyring or Keyring(Path.home() / ".plexichat" / "data" / "keyring.json")
         self._key_is_auto_generated = False
-    
-    def _get_key_path(self) -> Path:
-        """Get the path to the encryption key file."""
-        if self._key_file_path:
-            return Path(self._key_file_path)
-        return Path.home() / ".plexichat" / "data" / ".message_encryption_key"
-    
-    def _load_or_generate_key(self) -> bytes:
-        """Load existing key or generate a new one."""
-        key_path = self._get_key_path()
-        
-        if key_path.exists():
-            try:
-                with open(key_path, "rb") as f:
-                    key = f.read()
-                if len(key) == 32:
-                    return key
-                # Invalid key length, regenerate
-            except Exception:
-                pass
-        
-        # Generate new key
-        key = AESGCM.generate_key(bit_length=256)
-        key_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Write with restrictive permissions
-        with open(key_path, "wb") as f:
-            f.write(key)
-        
-        # Mark as auto-generated for warning
-        self._key_is_auto_generated = True
-        
-        return key
-    
-    def _get_cipher(self) -> AESGCM:
-        """Get or create the AES-GCM cipher instance."""
-        if self._aesgcm is None:
-            if self._key is None:
-                self._key = self._load_or_generate_key()
-            self._aesgcm = AESGCM(self._key)
-        return self._aesgcm
-    
+        self._ensure_initial_key()
+
+    def _ensure_initial_key(self):
+        """Ensure at least one key exists in the keyring, migrating legacy message key if needed."""
+        if not self.keyring.keys:
+            # Check for legacy message key file
+            legacy_path = Path.home() / ".plexichat" / "data" / ".message_encryption_key"
+            if legacy_path.exists():
+                try:
+                    with open(legacy_path, "rb") as f:
+                        key = f.read()
+                    if len(key) == 32:
+                        self.keyring.keys[1] = key
+                        self.keyring.current_version = 1
+                        self.keyring.rotated_at = int(legacy_path.stat().st_mtime)
+                        self.keyring.save()
+                        logger.info("Migrated legacy message encryption key to keyring version 1")
+                except Exception as e:
+                    logger.error(f"Failed to migrate legacy message key: {e}")
+
+            # Still no keys? Generate new one
+            if not self.keyring.keys:
+                self.keyring.get_key() # Triggers generation
+                self.keyring.save()
+                self._key_is_auto_generated = True
+
     def is_key_auto_generated(self) -> bool:
-        """Check if the encryption key was auto-generated (for warning purposes)."""
-        # Ensure key is loaded first
-        self._get_cipher()
+        """Check if the encryption key was auto-generated."""
         return self._key_is_auto_generated
     
     def encrypt_message(self, content: str, message_id: Optional[int] = None) -> str:
@@ -339,27 +452,21 @@ class MessageEncryptor:
             message_id: Optional message ID to include in AAD for integrity.
             
         Returns:
-            Encrypted content with prefix marker.
+            Encrypted content with versioned prefix (ENC:<version>:<base64>).
         """
         if not content:
             return content
         
-        cipher = self._get_cipher()
+        version, key = self.keyring.get_key()
+        cipher = AESGCM(key)
         
-        # Generate random 12-byte nonce
         nonce = os.urandom(12)
-        
-        # Use message_id as additional authenticated data if provided
         aad = str(message_id).encode('utf-8') if message_id else None
         
-        # Encrypt
         ciphertext = cipher.encrypt(nonce, content.encode('utf-8'), aad)
-        
-        # Combine: nonce (12) + ciphertext (includes 16-byte tag)
         combined = nonce + ciphertext
         
-        # Return with prefix for identification
-        return self.ENCRYPTED_PREFIX + base64.b64encode(combined).decode('utf-8')
+        return f"ENC:{version}:" + base64.b64encode(combined).decode('utf-8')
     
     def decrypt_message(self, encrypted_content: str, message_id: Optional[int] = None) -> str:
         """
@@ -371,36 +478,48 @@ class MessageEncryptor:
             
         Returns:
             Decrypted plaintext content.
-            
-        Raises:
-            ValueError: If decryption fails.
         """
         if not encrypted_content:
             return encrypted_content
         
         # Check for encryption prefix
         if not encrypted_content.startswith(self.ENCRYPTED_PREFIX):
-            # Not encrypted (legacy plaintext), return as-is
             return encrypted_content
         
-        # Remove prefix
-        data = encrypted_content[len(self.ENCRYPTED_PREFIX):]
+        parts = encrypted_content.split(":", 2)
+        if len(parts) != 3:
+            # Try to handle potential legacy "ENC:1:<base64>" where it was treated as "ENC:1" prefix
+            if encrypted_content.startswith(self.LEGACY_PREFIX):
+                version = 1
+                data = encrypted_content[len(self.LEGACY_PREFIX):]
+            else:
+                return encrypted_content
+        else:
+            try:
+                version = int(parts[1])
+                data = parts[2]
+            except ValueError:
+                return encrypted_content
+        
+        try:
+            _, key = self.keyring.get_key(version)
+        except (ValueError, RuntimeError) as e:
+            logger.error(f"Decryption failed: {e}")
+            raise ValueError(f"Unknown key version: {version}")
+
+        cipher = AESGCM(key)
         
         try:
             combined = base64.b64decode(data.encode('utf-8'))
         except Exception as e:
             raise ValueError(f"Invalid base64 encoding: {e}")
         
-        if len(combined) < 28:  # 12 (nonce) + 16 (min ciphertext with tag)
+        if len(combined) < 28:
             raise ValueError("Encrypted data too short")
         
         nonce = combined[:12]
         ciphertext = combined[12:]
-        
-        # Use message_id as AAD if provided
         aad = str(message_id).encode('utf-8') if message_id else None
-        
-        cipher = self._get_cipher()
         
         try:
             plaintext = cipher.decrypt(nonce, ciphertext, aad)
@@ -409,7 +528,7 @@ class MessageEncryptor:
             raise ValueError(f"Decryption failed: {e}")
     
     def is_encrypted(self, content: str) -> bool:
-        """Check if content is encrypted (has encryption prefix)."""
+        """Check if content is encrypted."""
         return content.startswith(self.ENCRYPTED_PREFIX) if content else False
 
 

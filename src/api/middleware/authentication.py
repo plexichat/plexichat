@@ -44,7 +44,8 @@ class AuthenticationMiddleware:
 
         try:
             ip_address = request.client.host if request.client else None
-            token_info = auth.verify_token(token, ip_address)
+            user_agent = request.headers.get("User-Agent")
+            token_info = auth.verify_token(token, ip_address, user_agent)
 
             request.state.user = token_info
         except Exception:
@@ -86,7 +87,8 @@ async def get_current_user(
 
     try:
         ip_address = request.client.host if request.client else None
-        token_info = auth.verify_token(credentials.credentials, ip_address)
+        user_agent = request.headers.get("User-Agent")
+        token_info = auth.verify_token(credentials.credentials, ip_address, user_agent)
 
         request.state.user = token_info
         return token_info
@@ -126,7 +128,8 @@ async def get_optional_user(
 
     try:
         ip_address = request.client.host if request.client else None
-        token_info = auth.verify_token(credentials.credentials, ip_address)
+        user_agent = request.headers.get("User-Agent")
+        token_info = auth.verify_token(credentials.credentials, ip_address, user_agent)
 
         request.state.user = token_info
         return token_info

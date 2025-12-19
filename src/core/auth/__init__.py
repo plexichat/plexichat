@@ -187,13 +187,14 @@ def complete_2fa(challenge_token: str, code: str) -> AuthResult:
 
 # === Session Management ===
 
-def verify_token(token: str, ip_address: Optional[str] = None) -> TokenInfo:
+def verify_token(token: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> TokenInfo:
     """
     Verify a session or bot token.
     
     Args:
         token: The token to verify
         ip_address: Optional IP for tracking
+        user_agent: Optional user agent for binding
         
     Returns:
         TokenInfo with user/bot details and permissions
@@ -202,7 +203,7 @@ def verify_token(token: str, ip_address: Optional[str] = None) -> TokenInfo:
         TokenInvalidError: Token is malformed or invalid
         TokenExpiredError: Token has expired
     """
-    return _get_manager().verify_token(token, ip_address)
+    return _get_manager().verify_token(token, ip_address, user_agent)
 
 
 def refresh_session(token: str) -> Optional[str]:
