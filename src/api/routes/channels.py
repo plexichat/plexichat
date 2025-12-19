@@ -147,10 +147,10 @@ async def get_channel_webhooks(channel_id: str, current_user: TokenInfo = Depend
         webhooks = webhooks_mod.get_channel_webhooks(current_user.user_id, cid)
         return [
             {
-                "id": str(w.id),
-                "channel_id": str(w.channel_id),
-                "server_id": str(w.server_id),
-                "creator_id": str(getattr(w, "creator_id", 0)),
+                "id": SnowflakeID(w.id),
+                "channel_id": SnowflakeID(w.channel_id),
+                "server_id": SnowflakeID(w.server_id),
+                "creator_id": SnowflakeID(getattr(w, "creator_id", 0)),
                 "name": w.name,
                 "avatar_url": w.avatar_url,
                 "created_at": w.created_at,
@@ -199,8 +199,8 @@ async def create_channel_invite(
         )
         return {
             "code": invite.code,
-            "channel_id": str(cid),
-            "server_id": str(invite.server_id) if hasattr(invite, "server_id") else None,
+            "channel_id": SnowflakeID(cid),
+            "server_id": SnowflakeID(invite.server_id) if hasattr(invite, "server_id") else None,
             "max_age": max_age,
             "max_uses": max_uses,
             "temporary": temporary,
@@ -237,10 +237,10 @@ async def get_invite_info(invite_code: str, current_user: TokenInfo = Depends(ge
 
         return {
             "code": invite.code,
-            "server_id": str(invite.server_id) if hasattr(invite, "server_id") else None,
+            "server_id": SnowflakeID(invite.server_id) if hasattr(invite, "server_id") else None,
             "server_name": getattr(invite, "server_name", None),
-            "channel_id": str(invite.channel_id) if hasattr(invite, "channel_id") else None,
-            "inviter_id": str(invite.inviter_id) if hasattr(invite, "inviter_id") else None,
+            "channel_id": SnowflakeID(invite.channel_id) if hasattr(invite, "channel_id") else None,
+            "inviter_id": SnowflakeID(invite.inviter_id) if hasattr(invite, "inviter_id") else None,
             "uses": getattr(invite, "uses", 0),
             "max_uses": getattr(invite, "max_uses", 0),
             "expires_at": getattr(invite, "expires_at", None),
@@ -267,7 +267,7 @@ async def join_server_via_invite(invite_code: str, current_user: TokenInfo = Dep
         result = servers_mod.use_invite(current_user.user_id, invite_code)
         return {
             "success": True,
-            "server_id": str(result.server_id) if hasattr(result, "server_id") else str(result) if result else None,
+            "server_id": SnowflakeID(result.server_id) if hasattr(result, "server_id") else SnowflakeID(result) if result else None,
         }
     except Exception as e:
         exc_name = type(e).__name__

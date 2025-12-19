@@ -64,8 +64,8 @@ class PaginationParams(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     limit: int = Field(default=50, ge=1, le=100, description="Number of items to return")
-    before: Optional[str] = Field(default=None, description="Get items before this ID")
-    after: Optional[str] = Field(default=None, description="Get items after this ID")
+    before: Optional[SnowflakeID] = Field(default=None, description="Get items before this ID")
+    after: Optional[SnowflakeID] = Field(default=None, description="Get items after this ID")
 
 
 class PaginatedResponse(BaseModel, Generic[T]):

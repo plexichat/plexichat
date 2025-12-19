@@ -24,7 +24,7 @@ class ServerUpdateRequest(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=100, description="Server name")
     description: Optional[str] = Field(None, max_length=1000, description="Server description")
     icon_url: Optional[str] = Field(None, description="Server icon URL")
-    default_channel_id: Optional[str] = Field(None, description="Default channel ID to select when joining")
+    default_channel_id: Optional[SnowflakeID] = Field(None, description="Default channel ID to select when joining")
 
 
 class ServerResponse(BaseModel):

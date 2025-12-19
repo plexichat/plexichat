@@ -23,7 +23,7 @@ class MessageCreateRequest(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     content: Optional[str] = Field(None, max_length=4000, description="Message content")
-    reply_to_id: Optional[str] = Field(None, description="ID of message to reply to")
+    reply_to_id: Optional[SnowflakeID] = Field(None, description="ID of message to reply to")
     attachments: Optional[List[AttachmentRequest]] = Field(None, description="Message attachments")
     embeds: Optional[List[Dict[str, Any]]] = Field(None, description="Rich embeds")
 

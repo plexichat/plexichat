@@ -12,7 +12,7 @@ class FriendRequestCreate(BaseModel):
     """Friend request creation model."""
     model_config = ConfigDict(from_attributes=True)
 
-    user_id: str = Field(..., description="Target user ID")
+    user_id: SnowflakeID = Field(..., description="Target user ID")
     message: Optional[str] = Field(None, max_length=256, description="Optional message")
 
 
@@ -20,7 +20,7 @@ class BlockCreate(BaseModel):
     """Block creation model."""
     model_config = ConfigDict(from_attributes=True)
 
-    user_id: str = Field(..., description="User ID to block")
+    user_id: SnowflakeID = Field(..., description="User ID to block")
 
 
 class RelationshipResponse(BaseModel):

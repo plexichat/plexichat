@@ -81,8 +81,8 @@ def _message_to_response(
 async def get_channel_messages(
     channel_id: str,
     limit: int = Query(default=50, ge=1, le=100),
-    before: Optional[str] = Query(default=None),
-    after: Optional[str] = Query(default=None),
+    before: Optional[SnowflakeID] = Query(default=None),
+    after: Optional[SnowflakeID] = Query(default=None),
     current_user: TokenInfo = Depends(get_current_user)
 ):
     """

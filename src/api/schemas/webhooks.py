@@ -12,7 +12,7 @@ class WebhookCreateRequest(BaseModel):
     """Webhook creation request."""
     model_config = ConfigDict(from_attributes=True)
 
-    channel_id: str = Field(..., description="Channel ID for the webhook")
+    channel_id: SnowflakeID = Field(..., description="Channel ID for the webhook")
     name: str = Field(..., min_length=1, max_length=80, description="Webhook name")
     avatar_url: Optional[str] = Field(None, description="Webhook avatar URL")
 
@@ -23,7 +23,7 @@ class WebhookUpdateRequest(BaseModel):
 
     name: Optional[str] = Field(None, min_length=1, max_length=80, description="Webhook name")
     avatar_url: Optional[str] = Field(None, description="Webhook avatar URL")
-    channel_id: Optional[str] = Field(None, description="New channel ID")
+    channel_id: Optional[SnowflakeID] = Field(None, description="New channel ID")
 
 
 class WebhookResponse(BaseModel):
@@ -49,7 +49,7 @@ class WebhookExecuteRequest(BaseModel):
     username: Optional[str] = Field(None, max_length=80, description="Override username")
     avatar_url: Optional[str] = Field(None, description="Override avatar URL")
     embeds: Optional[List[Dict[str, Any]]] = Field(None, description="Rich embeds")
-    thread_id: Optional[str] = Field(None, description="Thread ID to post to")
+    thread_id: Optional[SnowflakeID] = Field(None, description="Thread ID to post to")
 
 
 class WebhookMessageResponse(BaseModel):
