@@ -10,9 +10,6 @@ CREATE TABLE IF NOT EXISTS user_features (
     id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL UNIQUE,
     
-    -- Feature flags (admin-controlled, user cannot modify)
-    can_create_org INTEGER DEFAULT 0,
-    
     -- Rate limiting tier
     rate_limit_tier TEXT DEFAULT 'standard',
     

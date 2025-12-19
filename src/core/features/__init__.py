@@ -2,7 +2,7 @@
 User Features Module - Manages user feature flags, badges, and rate limit tiers.
 
 This module provides:
-- Feature flags (can_create_org, etc.) - admin-controlled
+- Feature flags - admin-controlled
 - Profile badges (alpha_tester, staff, etc.) - admin-controlled, displayed on profile
 - Rate limit tiers (standard, alpha, premium) - determines API rate limits
 - Configurable tier definitions with specific limits
@@ -43,7 +43,6 @@ Configuration (in config.yaml):
         - alpha_tester
         - early_supporter
         - staff
-        - org_root
         - verified
         - bug_hunter
         - contributor
@@ -59,7 +58,7 @@ Usage:
     limits = features.get_tier_limits(tier)
     
     # Check feature flag
-    can_create = features.has_feature(user_id, "can_create_org")
+    can_voice = features.has_feature(user_id, "can_voice")
     
     # Get badges
     badges = features.get_user_badges(user_id)
@@ -210,10 +209,10 @@ def apply_new_user_features(user_id: int) -> Optional[UserFeatures]:
 
     db.execute(
         """INSERT INTO user_features 
-           (id, user_id, can_create_org, rate_limit_tier, badges, 
+           (id, user_id, rate_limit_tier, badges, 
             granted_by, granted_at, expires_at, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (feature_id, user_id, 0, "alpha", badges,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (feature_id, user_id, "alpha", badges,
          None, now, None, "Auto-granted: Alpha registration")
     )
 
@@ -240,7 +239,7 @@ def get_user_features(user_id: int) -> Optional[UserFeatures]:
     db = _get_db()
 
     row = db.fetch_one(
-        """SELECT id, user_id, can_create_org, rate_limit_tier, badges,
+        """SELECT id, user_id, rate_limit_tier, badges,
                   granted_by, granted_at, expires_at, notes
            FROM user_features WHERE user_id = ?""",
         (user_id,)
@@ -259,7 +258,6 @@ def get_user_features(user_id: int) -> Optional[UserFeatures]:
     return UserFeatures(
         id=row["id"],
         user_id=row["user_id"],
-        can_create_org=bool(row["can_create_org"]),
         rate_limit_tier=row["rate_limit_tier"] or get_default_tier(),
         badges=badges,
         granted_by=row["granted_by"],
@@ -308,7 +306,7 @@ def has_feature(user_id: int, feature: str) -> bool:
     
     Args:
         user_id: User ID
-        feature: Feature name (e.g., 'can_create_org')
+        feature: Feature name (e.g., 'can_voice')
         
     Returns:
         True if user has the feature
@@ -348,7 +346,6 @@ def get_user_badges(user_id: int) -> List[str]:
 def set_user_features(
     user_id: int,
     admin_id: int,
-    can_create_org: Optional[bool] = None,
     rate_limit_tier: Optional[str] = None,
     expires_at: Optional[int] = None,
     notes: Optional[str] = None,
@@ -359,7 +356,6 @@ def set_user_features(
     Args:
         user_id: Target user ID
         admin_id: Admin performing the action
-        can_create_org: Whether user can create organizations
         rate_limit_tier: Rate limit tier name
         expires_at: Unix timestamp when features expire (None = permanent)
         notes: Admin notes
@@ -382,10 +378,6 @@ def set_user_features(
         # Update existing
         updates = []
         params = []
-
-        if can_create_org is not None:
-            updates.append("can_create_org = ?")
-            params.append(1 if can_create_org else 0)
 
         if rate_limit_tier is not None:
             updates.append("rate_limit_tier = ?")
@@ -419,11 +411,10 @@ def set_user_features(
 
         db.execute(
             """INSERT INTO user_features 
-               (id, user_id, can_create_org, rate_limit_tier, badges, 
+               (id, user_id, rate_limit_tier, badges, 
                 granted_by, granted_at, expires_at, notes)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (feature_id, user_id,
-             1 if can_create_org else 0,
              rate_limit_tier or get_default_tier(),
              "[]",  # Empty badges
              admin_id, now, expires_at, notes)

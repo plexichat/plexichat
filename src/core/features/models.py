@@ -11,7 +11,6 @@ AVAILABLE_BADGES = [
     "alpha_tester",      # Alpha testing participant
     "early_supporter",   # Early adopter
     "staff",             # PlexiChat staff member
-    "org_root",          # Organization root user (auto-assigned)
     "verified",          # Verified account
     "bug_hunter",        # Found and reported bugs
     "contributor",       # Code/docs contributor
@@ -53,13 +52,6 @@ class Badge:
                 description="PlexiChat team member",
                 icon="⚡",
                 color="#ef4444"
-            ),
-            "org_root": Badge(
-                name="org_root",
-                display_name="Organization Admin",
-                description="Administrator of an organization",
-                icon="🏢",
-                color="#f59e0b"
             ),
             "verified": Badge(
                 name="verified",
@@ -186,9 +178,6 @@ class UserFeatures:
     id: int
     user_id: int
 
-    # Feature flags (admin-controlled)
-    can_create_org: bool = False
-
     # Rate limiting
     rate_limit_tier: str = "standard"
 
@@ -215,7 +204,6 @@ class UserFeatures:
         """Convert to dictionary for API responses."""
         return {
             "user_id": str(self.user_id),
-            "can_create_org": self.can_create_org,
             "rate_limit_tier": self.rate_limit_tier,
             "badges": self.badges,
             "expires_at": self.expires_at,
