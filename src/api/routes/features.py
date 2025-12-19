@@ -25,7 +25,6 @@ router = APIRouter()
 class UserFeaturesResponse(BaseModel):
     """Response for user features."""
     user_id: str
-    can_create_org: bool
     rate_limit_tier: str
     badges: List[str]
     tier_limits: Dict[str, Any]
@@ -34,7 +33,6 @@ class UserFeaturesResponse(BaseModel):
 
 class UpdateFeaturesRequest(BaseModel):
     """Request to update user features."""
-    can_create_org: Optional[bool] = None
     rate_limit_tier: Optional[str] = None
     expires_at: Optional[int] = None
     notes: Optional[str] = None
@@ -139,14 +137,8 @@ async def get_user_features(
             detail={"error": {"code": 404, "message": "User not found"}}
         )
 
-    try:
-        user_features = features.get_user_features(uid)
-        tier = features.get_user_tier(uid)
-        tier_limits = features.get_tier_limits(tier)
-
         return UserFeaturesResponse(
             user_id=user_id,
-            can_create_org=user_features.can_create_org if user_features else False,
             rate_limit_tier=tier,
             badges=user_features.badges if user_features else [],
             tier_limits=tier_limits.to_dict(),
@@ -198,7 +190,6 @@ async def update_user_features(
         features.set_user_features(
             user_id=uid,
             admin_id=current_user.user_id,
-            can_create_org=body.can_create_org,
             rate_limit_tier=body.rate_limit_tier,
             expires_at=body.expires_at,
             notes=body.notes
@@ -213,7 +204,6 @@ async def update_user_features(
 
         return UserFeaturesResponse(
             user_id=user_id,
-            can_create_org=user_features.can_create_org if user_features else False,
             rate_limit_tier=tier,
             badges=user_features.badges if user_features else [],
             tier_limits=tier_limits.to_dict(),
@@ -277,7 +267,6 @@ async def set_user_tier(
 
         return UserFeaturesResponse(
             user_id=user_id,
-            can_create_org=user_features.can_create_org if user_features else False,
             rate_limit_tier=tier,
             badges=user_features.badges if user_features else [],
             tier_limits=tier_limits.to_dict(),

@@ -19,7 +19,7 @@ PlexiChat uses a stage-based versioning scheme:
 
 Examples: `a.1.0-1`, `b.2.3-15`, `r.1.0-1`
 
-Current version: `a.1.0-1`
+Current version: `a.1.0-28`
 
 ## Base URL
 

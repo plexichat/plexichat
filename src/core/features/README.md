@@ -5,7 +5,7 @@ Manages user feature flags, profile badges, and rate limit tiers.
 ## Overview
 
 This module provides a secure, admin-controlled system for:
-- **Feature Flags**: Boolean flags like `can_create_org` that enable specific capabilities
+- **Feature Flags**: Boolean flags that enable specific capabilities
 - **Profile Badges**: Visual badges displayed on user profiles (alpha_tester, staff, etc.)
 - **Rate Limit Tiers**: Configurable tiers (standard, alpha, premium) with specific limits
 
@@ -26,7 +26,6 @@ user_features:
     - alpha_tester
     - early_supporter
     - staff
-    - org_root
     - verified
     - bug_hunter
     - contributor
@@ -90,8 +89,8 @@ print(limits.max_file_size_mb)  # 10 for standard
 user_limits = features.get_user_tier_limits(user_id)
 
 # Check feature flag
-if features.has_feature(user_id, "can_create_org"):
-    # Allow org creation
+if features.has_feature(user_id, "can_voice"):
+    # Allow voice access
     pass
 
 # Get user badges
@@ -117,7 +116,6 @@ features.remove_badge(user_id, admin_id, "alpha_tester")
 features.set_user_features(
     user_id=123,
     admin_id=1,
-    can_create_org=True,
     rate_limit_tier="premium",
     expires_at=1735689600,  # Unix timestamp
     notes="Premium trial for 30 days"
@@ -131,7 +129,6 @@ features.set_user_features(
 CREATE TABLE user_features (
     id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL UNIQUE,
-    can_create_org INTEGER DEFAULT 0,
     rate_limit_tier TEXT DEFAULT 'standard',
     badges TEXT DEFAULT '[]',  -- JSON array
     granted_by INTEGER,
@@ -170,7 +167,6 @@ CREATE TABLE user_features_audit (
 | `alpha_tester` | Alpha testing participant |
 | `early_supporter` | Early adopter |
 | `staff` | PlexiChat team member |
-| `org_root` | Organization administrator |
 | `verified` | Verified account |
 | `bug_hunter` | Found and reported bugs |
 | `contributor` | Code/docs contributor |
