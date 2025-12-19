@@ -121,7 +121,7 @@ def _ensure_default_org() -> None:
 
     from src.utils.encryption import generate_snowflake_id
     org_id = generate_snowflake_id()
-    now = int(time.time())
+    now = int(time.time() * 1000)
 
     db.execute(
         """INSERT INTO organizations 
@@ -165,7 +165,7 @@ def create_org(name: str, display_name: str, root_user_id: int) -> Organization:
 
     from src.utils.encryption import generate_snowflake_id
     org_id = generate_snowflake_id()
-    now = int(time.time())
+    now = int(time.time() * 1000)
 
     db.execute(
         """INSERT INTO organizations 
@@ -357,7 +357,7 @@ def add_member(org_id: int, user_id: int, role: str = "member", invited_by: Opti
 
     from src.utils.encryption import generate_snowflake_id
     member_id = generate_snowflake_id()
-    now = int(time.time())
+    now = int(time.time() * 1000)
 
     db.execute(
         """INSERT INTO org_members (id, org_id, user_id, role, joined_at, invited_by)
@@ -453,7 +453,7 @@ def create_invite(
     from src.utils.encryption import generate_snowflake_id
     invite_id = generate_snowflake_id()
     code = _generate_invite_code(org.name, invite_type == "registration")
-    now = int(time.time())
+    now = int(time.time() * 1000)
 
     if expires_hours is None:
         expires_hours = _get_config("invites.default_expiry_hours", 168)
@@ -595,14 +595,14 @@ def accept_invite(invite_id: int, user_id: int) -> OrgInvite:
         raise PermissionDeniedError("This invite is not for you")
 
     # Check expiration
-    if invite.expires_at and invite.expires_at < int(time.time()):
+    if invite.expires_at and invite.expires_at < int(time.time() * 1000):
         raise InviteExpiredError("Invite has expired")
 
     # Check status
     if invite.status != "pending":
         raise OrganizationError(f"Invite is {invite.status}")
 
-    now = int(time.time())
+    now = int(time.time() * 1000)
     db.execute(
         "UPDATE org_invites SET user_accepted = 1, user_accepted_at = ? WHERE id = ?",
         (now, invite_id)
@@ -648,7 +648,7 @@ def approve_invite(invite_id: int, root_user_id: int) -> OrgInvite:
     if invite.status != "pending":
         raise OrganizationError(f"Invite is {invite.status}")
 
-    now = int(time.time())
+    now = int(time.time() * 1000)
 
     # Add user to org
     if invite.target_user_id is None:
@@ -734,7 +734,7 @@ def reset_user_password(root_user_id: int, target_user_id: int, new_password: st
         password_hash = hash_password(new_password)
         db.execute(
             "UPDATE auth_users SET password_hash = ?, updated_at = ? WHERE id = ?",
-            (password_hash, int(time.time()), target_user_id)
+            (password_hash, int(time.time() * 1000), target_user_id)
         )
 
         # Force logout all sessions
@@ -765,7 +765,7 @@ def lock_user(root_user_id: int, target_user_id: int) -> bool:
 
     db.execute(
         "UPDATE auth_users SET account_locked = 1, updated_at = ? WHERE id = ?",
-        (int(time.time()), target_user_id)
+        (int(time.time() * 1000), target_user_id)
     )
 
     force_logout(root_user_id, target_user_id)
@@ -788,7 +788,7 @@ def unlock_user(root_user_id: int, target_user_id: int) -> bool:
 
     db.execute(
         "UPDATE auth_users SET account_locked = 0, locked_until = NULL, updated_at = ? WHERE id = ?",
-        (int(time.time()), target_user_id)
+        (int(time.time() * 1000), target_user_id)
     )
 
     logger.info(f"Root {root_user_id} unlocked user {target_user_id}")
@@ -982,7 +982,7 @@ def update_server_restrictions(
 
     if updates:
         updates.append("updated_at = ?")
-        params.append(int(time.time()))
+        params.append(int(time.time() * 1000))
         params.append(org_id)
 
         db.execute(

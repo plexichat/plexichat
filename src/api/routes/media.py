@@ -93,7 +93,7 @@ async def report_content_hash(
     try:
         report_id = media.report_hash(
             hash_value=report.hash_value,
-            reporter_id=user["id"],
+            reporter_id=user.user_id,
             reason=report.reason,
             details=report.details,
             phash_value=report.phash_value,
@@ -103,7 +103,7 @@ async def report_content_hash(
             block_uploader=report.block_uploader
         )
 
-        logger.info(f"User {user['id']} reported hash {report.hash_value[:16]}... (block_uploader={report.block_uploader})")
+        logger.info(f"User {user.user_id} reported hash {report.hash_value[:16]}... (block_uploader={report.block_uploader})")
 
         return HashReportResponse(
             success=True,
@@ -153,7 +153,7 @@ async def create_upload_session(
     from src.core import media
 
     session = media.create_upload_session(
-        user_id=user["id"],
+        user_id=user.user_id,
         filename=session_request.filename,
         content_type=session_request.content_type,
         total_size=session_request.total_size
@@ -197,7 +197,7 @@ async def upload_chunk(
 
     result = media.upload_chunk(
         session_id=session_id,
-        user_id=user["id"],
+        user_id=user.user_id,
         chunk_index=chunk_index,
         chunk_data=chunk_data,
         chunk_checksum=chunk_checksum
@@ -228,7 +228,7 @@ async def complete_upload_session(
     from src.core import media
 
     # Get the assembled file data
-    file_data = media.complete_upload_session(session_id, user["id"])
+    file_data = media.complete_upload_session(session_id, user.user_id)
 
     if file_data is None:
         raise HTTPException(
@@ -256,7 +256,7 @@ async def cancel_upload_session(
     """Cancel an upload session and clean up resources."""
     from src.core import media
 
-    success = media.cancel_upload_session(session_id, user["id"])
+    success = media.cancel_upload_session(session_id, user.user_id)
 
     if not success:
         raise HTTPException(
@@ -278,7 +278,7 @@ async def get_user_upload_sessions(
     from src.core import media as media_module
     manager = media_module._get_chunked_manager()
 
-    sessions = manager.get_user_sessions(user["id"])
+    sessions = manager.get_user_sessions(user.user_id)
 
     return {
         "sessions": [

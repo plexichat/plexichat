@@ -200,7 +200,7 @@ def apply_new_user_features(user_id: int) -> Optional[UserFeatures]:
         return None
 
     db = _get_db()
-    now = int(time.time())
+    now = int(time.time() * 1000)
 
     from src.utils.encryption import generate_snowflake_id
     feature_id = generate_snowflake_id()
@@ -282,7 +282,7 @@ def get_user_tier(user_id: int) -> str:
     features = get_user_features(user_id)
     if features:
         # Check if expired
-        if features.expires_at and features.expires_at < int(time.time()):
+        if features.expires_at and features.expires_at < int(time.time() * 1000):
             return get_default_tier()
         return features.rate_limit_tier
     return get_default_tier()
@@ -318,7 +318,7 @@ def has_feature(user_id: int, feature: str) -> bool:
         return False
 
     # Check expiration
-    if features.expires_at and features.expires_at < int(time.time()):
+    if features.expires_at and features.expires_at < int(time.time() * 1000):
         return False
 
     return getattr(features, feature, False)
@@ -376,7 +376,7 @@ def set_user_features(
             raise InvalidTierError(f"Invalid tier '{rate_limit_tier}'. Available: {available}")
 
     existing = get_user_features(user_id)
-    now = int(time.time())
+    now = int(time.time() * 1000)
 
     if existing:
         # Update existing
@@ -472,7 +472,7 @@ def add_badge(user_id: int, admin_id: int, badge: str) -> List[str]:
 
         db.execute(
             "UPDATE user_features SET badges = ?, granted_by = ?, granted_at = ? WHERE user_id = ?",
-            (json.dumps(badges), admin_id, int(time.time()), user_id)
+            (json.dumps(badges), admin_id, int(time.time() * 1000), user_id)
         )
 
         logger.info(f"Added badge '{badge}' to user {user_id} by admin {admin_id}")
@@ -504,7 +504,7 @@ def remove_badge(user_id: int, admin_id: int, badge: str) -> List[str]:
 
         db.execute(
             "UPDATE user_features SET badges = ?, granted_by = ?, granted_at = ? WHERE user_id = ?",
-            (json.dumps(badges), admin_id, int(time.time()), user_id)
+            (json.dumps(badges), admin_id, int(time.time() * 1000), user_id)
         )
 
         logger.info(f"Removed badge '{badge}' from user {user_id} by admin {admin_id}")

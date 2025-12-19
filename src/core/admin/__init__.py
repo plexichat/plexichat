@@ -284,23 +284,25 @@ def _get_db():
 
 def _check_rate_limit(ip: str, max_attempts: int = 5, window_seconds: int = 300, lockout_seconds: int = 900) -> Tuple[bool, Optional[int]]:
     """Check if IP is rate limited. Returns (allowed, seconds_until_unlock)."""
-    now = time.time()
+    now = time.time() * 1000
+    window_ms = window_seconds * 1000
+    lockout_ms = lockout_seconds * 1000
 
     # Check lockout
     if ip in _lockouts:
         if now < _lockouts[ip]:
-            return False, int(_lockouts[ip] - now)
+            return False, int((_lockouts[ip] - now) / 1000)
         else:
             del _lockouts[ip]
 
     # Clean old attempts
     if ip in _login_attempts:
-        _login_attempts[ip] = [t for t in _login_attempts[ip] if now - t < window_seconds]
+        _login_attempts[ip] = [t for t in _login_attempts[ip] if now - t < window_ms]
 
     # Check attempt count
     attempts = _login_attempts.get(ip, [])
     if len(attempts) >= max_attempts:
-        _lockouts[ip] = now + lockout_seconds
+        _lockouts[ip] = now + lockout_ms
         return False, lockout_seconds
 
     return True, None
@@ -310,7 +312,7 @@ def _record_login_attempt(ip: str) -> None:
     """Record a failed login attempt."""
     if ip not in _login_attempts:
         _login_attempts[ip] = []
-    _login_attempts[ip].append(time.time())
+    _login_attempts[ip].append(time.time() * 1000)
 
 
 def _clear_login_attempts(ip: str) -> None:

@@ -999,8 +999,9 @@ class MediaManager:
         if max_per_minute <= 0:
             return  # Rate limiting disabled
 
-        now_seconds = int(time.time())
-        minute_window = now_seconds - (now_seconds % 60)
+        now_ms = int(time.time() * 1000)
+        # 60000ms = 1 minute
+        minute_window = now_ms - (now_ms % 60000)
 
         # Use a separate rate limit key for thumbnails
         row = self._db.fetch_one(
@@ -1016,8 +1017,8 @@ class MediaManager:
 
     def _update_thumbnail_rate_limit(self, user_id: int) -> None:
         """Update thumbnail rate limit counter."""
-        now_seconds = int(time.time())
-        minute_window = now_seconds - (now_seconds % 60)
+        now_ms = int(time.time() * 1000)
+        minute_window = now_ms - (now_ms % 60000)
 
         self._db.upsert(
             table="media_rate_limits",

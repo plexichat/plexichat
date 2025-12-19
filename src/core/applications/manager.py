@@ -106,7 +106,7 @@ class ApplicationManager:
 
     def _current_time(self) -> int:
         """Get current Unix timestamp."""
-        return int(time.time())
+        return int(time.time() * 1000)
 
     def _generate_id(self) -> int:
         """Generate a new Snowflake ID."""

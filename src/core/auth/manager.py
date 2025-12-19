@@ -104,7 +104,7 @@ class AuthManager:
 
     def _current_time(self) -> int:
         """Get current Unix timestamp."""
-        return int(time.time())
+        return int(time.time() * 1000)
 
     def _log_audit(
         self,
@@ -729,7 +729,8 @@ class AuthManager:
                     rate_limit_tier=cached["rate_limit_tier"],
                     expires_at=cached.get("expires_at"),
                     username=cached["username"],
-                    account_type=AccountType(cached["account_type"])
+                    account_type=AccountType(cached["account_type"]),
+                    avatar_url=cached.get("avatar_url")
                 )
 
         # Cache miss or Redis unavailable - verify from DB
@@ -754,6 +755,7 @@ class AuthManager:
                 "expires_at": token_info.expires_at,
                 "username": token_info.username,
                 "account_type": token_info.account_type.value,
+                "avatar_url": token_info.avatar_url,
             }
             # Add IP binding if enabled
             if self._get_config("security.token_binding", False) and ip_address:
@@ -771,7 +773,7 @@ class AuthManager:
         """Verify a user session token."""
         session = self.db.fetch_one(
             """SELECT s.id, s.user_id, s.token_hash, s.expires_at, s.revoked,
-                      s.last_activity, u.username, u.permissions, u.account_type
+                      s.last_activity, u.username, u.permissions, u.account_type, u.avatar_url
                FROM auth_sessions s
                JOIN auth_users u ON s.user_id = u.id
                WHERE s.id = ?""",
@@ -824,14 +826,15 @@ class AuthManager:
             rate_limit_tier="user",
             expires_at=session["expires_at"],
             username=session["username"],
-            account_type=AccountType(session["account_type"])
+            account_type=AccountType(session["account_type"]),
+            avatar_url=session["avatar_url"]
         )
 
     def _verify_bot_token(self, parsed: dict, ip_address: Optional[str]) -> TokenInfo:
         """Verify a bot token."""
         bot = self.db.fetch_one(
             """SELECT b.id, b.owner_id, b.username, b.token_hash, b.permissions,
-                      b.disabled, u.username as owner_username
+                      b.disabled, u.username as owner_username, u.avatar_url as owner_avatar_url
                FROM auth_bots b
                JOIN auth_users u ON b.owner_id = u.id
                WHERE b.id = ?""",
@@ -857,7 +860,8 @@ class AuthManager:
             rate_limit_tier="bot",
             expires_at=None,
             username=bot["username"],
-            account_type=AccountType.BOT
+            account_type=AccountType.BOT,
+            avatar_url=bot["owner_avatar_url"]
         )
 
     def refresh_session(self, token: str) -> Optional[str]:

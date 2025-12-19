@@ -46,7 +46,7 @@ class OAuth2Flow:
 
     def _current_time(self) -> int:
         """Get current Unix timestamp."""
-        return int(time.time())
+        return int(time.time() * 1000)
 
     def generate_authorization_url(
         self,

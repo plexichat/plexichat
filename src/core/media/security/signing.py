@@ -50,8 +50,9 @@ class UrlSigner:
         Returns:
             SignedUrl object
         """
-        expiry = expires_in or self._default_expiry
-        expires_at = int(time.time()) + expiry
+        expiry_seconds = expires_in or self._default_expiry
+        now_ms = int(time.time() * 1000)
+        expires_at = now_ms + (expiry_seconds * 1000)
 
         signature_data = self._build_signature_data(url, file_id, expires_at, extra_data)
         signature = self._generate_signature(signature_data)
@@ -60,7 +61,7 @@ class UrlSigner:
 
         return SignedUrl(
             url=signed_url,
-            expires_at=expires_at * 1000,
+            expires_at=expires_at,
             signature=signature,
             file_id=file_id,
         )
@@ -97,7 +98,7 @@ class UrlSigner:
         except ValueError:
             raise SignatureInvalidError("Invalid signature parameters")
 
-        if time.time() > expires_at:
+        if int(time.time() * 1000) > expires_at:
             raise SignatureExpiredError("Signed URL has expired")
 
         base_url = self._remove_signature_params(url)

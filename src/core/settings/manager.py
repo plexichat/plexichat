@@ -97,7 +97,7 @@ class SettingsManager:
         self._validate_key(key)
         self._validate_value(value)
 
-        now = int(time.time())
+        now = int(time.time() * 1000)
 
         # Check if setting exists
         existing = self.db.fetch_one(

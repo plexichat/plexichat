@@ -7,31 +7,10 @@ from fastapi import Request, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 import src.api as api
+from src.core.auth.models import TokenInfo
 
 
 security = HTTPBearer(auto_error=False)
-
-
-class TokenInfo:
-    """Token information attached to request state."""
-
-    def __init__(
-        self,
-        user_id: int,
-        token_type: str,
-        permissions: dict,
-        username: str,
-        account_type: Any = None,
-        session_id: Optional[int] = None,
-        expires_at: Optional[int] = None
-    ):
-        self.user_id = user_id
-        self.token_type = token_type
-        self.permissions = permissions
-        self.username = username
-        self.account_type = account_type
-        self.session_id = session_id
-        self.expires_at = expires_at
 
 
 class AuthenticationMiddleware:
@@ -67,15 +46,7 @@ class AuthenticationMiddleware:
             ip_address = request.client.host if request.client else None
             token_info = auth.verify_token(token, ip_address)
 
-            request.state.user = TokenInfo(
-                user_id=token_info.user_id,
-                token_type=token_info.token_type,
-                permissions=token_info.permissions,
-                username=token_info.username,
-                account_type=token_info.account_type,
-                session_id=token_info.session_id,
-                expires_at=token_info.expires_at
-            )
+            request.state.user = token_info
         except Exception:
             request.state.user = None
 
@@ -117,17 +88,8 @@ async def get_current_user(
         ip_address = request.client.host if request.client else None
         token_info = auth.verify_token(credentials.credentials, ip_address)
 
-        user = TokenInfo(
-            user_id=token_info.user_id,
-            token_type=token_info.token_type,
-            permissions=token_info.permissions,
-            username=token_info.username,
-            account_type=token_info.account_type,
-            session_id=token_info.session_id,
-            expires_at=token_info.expires_at
-        )
-        request.state.user = user
-        return user
+        request.state.user = token_info
+        return token_info
     except Exception as e:
         error_msg = str(e)
         if "expired" in error_msg.lower():
@@ -166,16 +128,7 @@ async def get_optional_user(
         ip_address = request.client.host if request.client else None
         token_info = auth.verify_token(credentials.credentials, ip_address)
 
-        user = TokenInfo(
-            user_id=token_info.user_id,
-            token_type=token_info.token_type,
-            permissions=token_info.permissions,
-            username=token_info.username,
-            account_type=token_info.account_type,
-            session_id=token_info.session_id,
-            expires_at=token_info.expires_at
-        )
-        request.state.user = user
-        return user
+        request.state.user = token_info
+        return token_info
     except Exception:
         return None

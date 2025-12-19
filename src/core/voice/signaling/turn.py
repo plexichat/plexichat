@@ -57,11 +57,12 @@ class TURNCredentialGenerator:
         Returns:
             TURNCredentials with username, credential, and expiry
         """
-        now = int(time.time())
-        expires_at = now + self._ttl
+        now_ms = int(time.time() * 1000)
+        expires_at_seconds = (now_ms // 1000) + self._ttl
+        expires_at_ms = expires_at_seconds * 1000
 
-        # Username format: expiry_timestamp:user_id
-        username = f"{expires_at}:{user_id}"
+        # Username format: expiry_timestamp:user_id (coturn expects seconds)
+        username = f"{expires_at_seconds}:{user_id}"
 
         # Generate HMAC-SHA1 credential
         credential = self._generate_credential(username)
@@ -71,7 +72,7 @@ class TURNCredentialGenerator:
             credential=credential,
             urls=self._turn_urls.copy(),
             ttl=self._ttl,
-            expires_at=expires_at,
+            expires_at=expires_at_ms,
         )
 
     def _generate_credential(self, username: str) -> str:
@@ -109,8 +110,8 @@ class TURNCredentialGenerator:
             if len(parts) < 2:
                 return False
 
-            expires_at = int(parts[0])
-            if time.time() > expires_at:
+            expires_at_seconds = int(parts[0])
+            if int(time.time()) > expires_at_seconds:
                 return False
         except (ValueError, IndexError):
             return False

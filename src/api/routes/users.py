@@ -267,7 +267,7 @@ async def get_notes_channel(current_user: TokenInfo = Depends(get_current_user))
 
         return {
             "id": str(channel.id),
-            "type": "notes",
+            "channel_type": "notes",
             "name": "Personal Notes",
             "last_message_id": str(channel.last_message_id) if channel.last_message_id else None,
             "last_message_at": channel.last_message_at,
@@ -315,7 +315,7 @@ async def get_dm_channels(current_user: TokenInfo = Depends(get_current_user)):
 
             result.append({
                 "id": str(ch.id),
-                "type": "dm",
+                "channel_type": "dm",
                 "recipient_id": str(recipient_id) if recipient_id else None,
                 "recipient": {
                     "id": str(recipient_id),

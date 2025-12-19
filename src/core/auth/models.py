@@ -155,6 +155,7 @@ class TokenInfo:
     expires_at: Optional[int]
     username: str
     account_type: AccountType
+    avatar_url: Optional[str] = None
 
 
 @dataclass
