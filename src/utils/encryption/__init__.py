@@ -272,6 +272,19 @@ def is_message_key_auto_generated() -> bool:
     return _get_message_encryptor().is_key_auto_generated()
 
 
+def rotate_keys(force: bool = False) -> bool:
+    """
+    Rotate encryption keys if rotation period has passed.
+    
+    Args:
+        force (bool): Force rotation regardless of time.
+        
+    Returns:
+        bool: True if keys were rotated.
+    """
+    return _get_manager().rotate_keys(force)
+
+
 __all__ = [
     'EncryptionManager',
     'SnowflakeGenerator',
@@ -289,5 +302,6 @@ __all__ = [
     'encrypt_message',
     'decrypt_message',
     'is_message_encrypted',
-    'is_message_key_auto_generated'
+    'is_message_key_auto_generated',
+    'rotate_keys'
 ]

@@ -524,7 +524,6 @@ class PlexiChatServer:
                     "alpha_tester",
                     "early_supporter", 
                     "staff",
-                    "org_root",
                     "verified",
                     "bug_hunter",
                     "contributor",
@@ -590,48 +589,6 @@ class PlexiChatServer:
                     "max_per_hour": 200
                 }
             },
-            # Organizations configuration (for org ID feature)
-            "organizations": {
-                "enabled": True,
-                "default_org_name": "default",
-                "default_org_display_name": "PlexiChat",
-                # Root user settings
-                "root_user": {
-                    "require_otp": True,
-                    "can_reset_passwords": True,
-                    "can_lock_accounts": True,
-                    "can_manage_servers": True,
-                    "can_view_audit_log": True,
-                    "can_force_logout": True
-                },
-                # Settings that org root can lock for members
-                "manageable_settings": [
-                    "allow_dms",
-                    "allow_friend_requests",
-                    "show_activity",
-                    "theme"
-                ],
-                # Default org behavior
-                "default_org": {
-                    "allow_users_to_leave": False,
-                    "allow_users_to_join_orgs": True
-                },
-                # Invite settings
-                "invites": {
-                    "code_length": 32,
-                    "default_expiry_hours": 168,
-                    "require_two_step": True
-                },
-                # Server restrictions
-                "server_restrictions": {
-                    "enabled": True,
-                    "default_mode": "none"
-                },
-                # Rate limits for org management endpoints
-                "rate_limit": {
-                    "max_invites_per_hour": 20,
-                    "max_member_actions_per_minute": 10
-                }
             }
         }
     
@@ -757,6 +714,14 @@ class PlexiChatServer:
         else:
             logger.info("Redis is disabled in configuration")
         
+        # Check encryption key rotation
+        try:
+            from src.utils import encryption
+            if encryption.rotate_keys():
+                logger.info("Encryption keys rotated successfully")
+        except Exception as e:
+            logger.error(f"Failed to check encryption key rotation: {e}")
+        
         # Initialize core modules in dependency order
         logger.info("Initializing auth module...")
         auth.setup(self.db)
@@ -803,18 +768,6 @@ class PlexiChatServer:
             logger.info("User features module initialized")
         except Exception as e:
             logger.warning(f"Failed to initialize user features module: {e}")
-        
-        # Initialize organizations module
-        orgs_config = config.get("organizations") or {}
-        if orgs_config.get("enabled", True):
-            logger.info("Initializing organizations module...")
-            try:
-                from src.core import organizations
-                organizations.setup(self.db, auth)
-                self._modules['organizations'] = organizations
-                logger.info("Organizations module initialized")
-            except Exception as e:
-                logger.warning(f"Failed to initialize organizations module: {e}")
         
         logger.info("Initializing media module...")
         media.setup(self.db, messaging)
@@ -907,7 +860,6 @@ class PlexiChatServer:
             webhooks_module=webhooks,
             settings_module=settings,
             media_module=media,
-            organizations_module=self._modules.get('organizations'),
             features_module=self._modules.get('features'),
             avatars_module=self._modules.get('avatars'),
         )
