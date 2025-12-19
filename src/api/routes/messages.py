@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, Depends, Query
 
 import src.api as api
+import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.messages import (
     MessageCreateRequest,
@@ -136,6 +137,7 @@ async def get_channel_messages(
             exc_name = type(e).__name__
             if "NotFound" in exc_name or "Access" in exc_name:
                 raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
+            logger.error(f"Error getting messages for channel {cid}: {e}", exc_info=True)
             raise
 
     if messages is None:
@@ -338,6 +340,7 @@ async def send_channel_message(
                 raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
             elif "Content" in exc_name or "Invalid" in exc_name:
                 raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": str(e)}})
+            logger.error(f"Error sending message in channel {cid}: {e}", exc_info=True)
             raise
 
     if msg is None:
@@ -451,6 +454,7 @@ async def get_message(
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Message not found"}})
         elif "Access" in exc_name:
             raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": "Access denied"}})
+        logger.error(f"Error getting message {mid}: {e}", exc_info=True)
         raise
 
 
@@ -560,6 +564,7 @@ async def edit_message(
             raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
         elif "Content" in exc_name:
             raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": str(e)}})
+        logger.error(f"Error editing message {mid}: {e}", exc_info=True)
         raise
 
 
@@ -592,6 +597,7 @@ async def delete_message(
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Message not found"}})
         elif "Access" in exc_name or "Permission" in exc_name:
             raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
+        logger.error(f"Error deleting message {mid}: {e}", exc_info=True)
         raise
 
 
@@ -787,6 +793,7 @@ async def acknowledge_messages(
         exc_name = type(e).__name__
         if "NotFound" in exc_name or "Access" in exc_name:
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
+        logger.error(f"Error acknowledging messages in channel {cid}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
 
 
@@ -814,6 +821,7 @@ async def get_unread_count(
         exc_name = type(e).__name__
         if "NotFound" in exc_name or "Access" in exc_name:
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
+        logger.error(f"Error getting unread count for channel {cid}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
 
 
@@ -833,6 +841,7 @@ async def get_all_unread_counts(
         # Convert int keys to string for JSON
         return {"unread_counts": {str(k): v for k, v in counts.items()}}
     except Exception as e:
+        logger.error(f"Error getting all unread counts: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
 
 

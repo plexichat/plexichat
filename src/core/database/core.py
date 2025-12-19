@@ -13,7 +13,7 @@ PostgreSQL Support:
 import sqlite3
 import os
 import re
-from typing import Any, List, Optional, Tuple, Union
+from typing import Any, List, Optional, Tuple, Union, Dict
 
 import utils.config as config
 import utils.logger as logger
@@ -275,7 +275,7 @@ class Database:
             cursor.close()
             raise
 
-    def fetch_one(self, query: str, params: Optional[Tuple] = None) -> Optional[Any]:
+    def fetch_one(self, query: str, params: Optional[Tuple] = None) -> Optional[Union[sqlite3.Row, Dict[str, Any]]]:
         """
         Execute a query and fetch one result.
         
@@ -291,7 +291,7 @@ class Database:
         cursor.close()
         return result
 
-    def fetch_all(self, query: str, params: Optional[Tuple] = None) -> List[Any]:
+    def fetch_all(self, query: str, params: Optional[Tuple] = None) -> List[Union[sqlite3.Row, Dict[str, Any]]]:
         """
         Execute a query and fetch all results.
         
