@@ -110,6 +110,7 @@ authentication:
 
 ```yaml
 encryption:
+  key_rotation_days: 90  # Rotate encryption keys every 90 days (0 to disable)
   argon2:
     time_cost: 2
     memory_cost: 65536
@@ -236,11 +237,28 @@ messaging:
 
 #### Message Encryption
 
-When `encrypt_messages` is enabled, message content is encrypted using AES-256-GCM before being stored in the database. The encryption key is automatically generated and stored in `~/.plexichat/data/.encryption_key`.
+When `encrypt_messages` is enabled, message content is encrypted using AES-256-GCM before being stored in the database. This provides **Zero-friction At-Rest Encryption** (server-side encryption), protecting data from database compromises.
 
-**Important:** Back up this key file! If lost, encrypted messages cannot be recovered.
+**Security Keys:**
+- General Data Key: `~/.plexichat/data/.encryption_key`
+- Message Key: `~/.plexichat/data/.message_encryption_key`
 
-The server will show a security warning on startup reminding you to back up the encryption key.
+**Environment Overrides:**
+For production deployments, you can provide these keys via environment variables (Base64 encoded 32-byte strings):
+- `PLEXICHAT_ENCRYPTION_KEY`
+- `PLEXICHAT_MESSAGE_KEY`
+
+**Important:** Back up your encryption key files! If lost, encrypted data cannot be recovered.
+
+#### Key Rotation
+
+PlexiChat supports automatic encryption key rotation. When `key_rotation_days` is set, the server will automatically generate a new encryption key if the current one is older than the specified period.
+
+- Old keys are kept in the keyring to allow decryption of existing data.
+- All new data is encrypted using the latest key version.
+- Key rotation period is checked on server startup.
+
+The server will show a security warning on startup reminding you to back up the keyring.
 
 ### User Features
 
@@ -365,10 +383,10 @@ Before deploying to production:
      level: WARNING
    ```
 
-7. **Back up encryption key**
+7. **Back up encryption keyring**
    
-   The message encryption key is stored at `~/.plexichat/data/.encryption_key`. 
-   Back this up securely - if lost, encrypted messages cannot be recovered.
+   The encryption keyring is stored at `~/.plexichat/data/keyring.json`. 
+   Back this up securely - if lost, encrypted data cannot be recovered.
 
 8. **Set media signing key**
    ```yaml
@@ -388,7 +406,7 @@ On startup, the server checks for default/placeholder security keys and logs war
 
 - `media.signing_key` - Used for signing media URLs
 - `voice.turn_secret` - Used for TURN server authentication  
-- `messaging.encryption_key` - Auto-generated, but should be backed up
+- `encryption.keyring` - Auto-generated, but should be backed up
 - `redis.password` - Should be set if Redis is enabled
 - `database.postgres.password` - Should be strong for PostgreSQL
 

@@ -183,6 +183,10 @@ parsed = encryption.parse_snowflake_id(unique_id)
 3. **Digital Signatures**: Ed25519 provides ~128-bit security with small signatures (64 bytes) and fast verification.
 
 4. **Key Storage**: Store encryption keys securely. Never commit keys to version control.
+   - You can provide keys via environment variables for production deployments:
+     - `PLEXICHAT_ENCRYPTION_KEY`: Base64 encoded 32-byte key for general data encryption.
+     - `PLEXICHAT_MESSAGE_KEY`: Base64 encoded 32-byte key for message-at-rest encryption.
+   - If no environment variable is found, the module will look for keys in `~/.plexichat/data/` or generate new ones if they don't exist.
 
 5. **Custom Keys**: If using custom keys for encryption, ensure they are 32 bytes (256 bits) from a cryptographically secure random source.
 

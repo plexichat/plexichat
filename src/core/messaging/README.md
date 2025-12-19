@@ -13,7 +13,7 @@ Secure messaging system for PlexiChat API supporting direct messages, group conv
 - Delivery and read receipts
 - Message pinning
 - Soft delete with audit trail
-- End-to-end encryption support
+- Zero-friction at-rest encryption
 - Per-user configurable limits
 
 ## Installation
@@ -310,7 +310,7 @@ The messaging module integrates with the auth module's permission system:
 ## Security Features
 
 1. **Content Validation**: All content validated against SQL injection and XSS
-2. **Encryption**: Optional end-to-end encryption for messages and attachments
+2. **Encryption**: Zero-friction at-rest encryption for messages and attachments
 3. **Snowflake IDs**: Prevents enumeration attacks
 4. **Soft Deletes**: Maintains audit trail
 5. **Permission Checks**: Every operation validates user permissions
