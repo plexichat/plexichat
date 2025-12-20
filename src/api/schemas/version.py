@@ -2,13 +2,14 @@
 Version and status schemas for API responses.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List
 from enum import Enum
 
 
 class ServerState(str, Enum):
     """Server operational states."""
+
     RUNNING = "running"
     MAINTENANCE = "maintenance"
     SHUTTING_DOWN = "shutting_down"
@@ -17,7 +18,13 @@ class ServerState(str, Enum):
 
 class VersionInfo(BaseModel):
     """Version information."""
-    stage: str = Field(..., description="Version stage: a (alpha), b (beta), c (candidate), r (release)")
+
+    model_config = ConfigDict(from_attributes=True)
+
+    stage: str = Field(
+        ...,
+        description="Version stage: a (alpha), b (beta), c (candidate), r (release)",
+    )
     major: int = Field(..., description="Major version number")
     minor: int = Field(..., description="Minor version number")
     build: int = Field(..., description="Build number")
@@ -26,20 +33,35 @@ class VersionInfo(BaseModel):
 
 class ServerVersionResponse(BaseModel):
     """Server version information response."""
+
+    model_config = ConfigDict(from_attributes=True)
+
     version: VersionInfo
-    min_supported_version: Optional[VersionInfo] = Field(None, description="Minimum client version supported")
+    min_supported_version: Optional[VersionInfo] = Field(
+        None, description="Minimum client version supported"
+    )
     api_version: str = Field(..., description="API version prefix (e.g., 'v1')")
 
 
 class VersionNegotiateRequest(BaseModel):
     """Client version negotiation request."""
+
+    model_config = ConfigDict(from_attributes=True)
+
     client_version: str = Field(..., description="Client's current version string")
-    supported_versions: Optional[List[str]] = Field(None, description="List of server versions client supports")
+    supported_versions: Optional[List[str]] = Field(
+        None, description="List of server versions client supports"
+    )
 
 
 class VersionNegotiateResponse(BaseModel):
     """Version negotiation response."""
-    compatible: bool = Field(..., description="Whether client is compatible with server")
+
+    model_config = ConfigDict(from_attributes=True)
+
+    compatible: bool = Field(
+        ..., description="Whether client is compatible with server"
+    )
     server_version: VersionInfo
     client_version: VersionInfo
     min_supported_version: Optional[VersionInfo] = None
@@ -51,16 +73,28 @@ class VersionNegotiateResponse(BaseModel):
 
 class ServerStatusResponse(BaseModel):
     """Server status response."""
+
+    model_config = ConfigDict(from_attributes=True)
+
     state: ServerState = Field(..., description="Current server state")
     version: VersionInfo
     uptime_seconds: Optional[int] = Field(None, description="Server uptime in seconds")
-    maintenance_message: Optional[str] = Field(None, description="Maintenance announcement")
-    estimated_downtime_seconds: Optional[int] = Field(None, description="Estimated downtime if shutting down")
-    restart_at: Optional[str] = Field(None, description="ISO timestamp of scheduled restart")
+    maintenance_message: Optional[str] = Field(
+        None, description="Maintenance announcement"
+    )
+    estimated_downtime_seconds: Optional[int] = Field(
+        None, description="Estimated downtime if shutting down"
+    )
+    restart_at: Optional[str] = Field(
+        None, description="ISO timestamp of scheduled restart"
+    )
 
 
 class VersionErrorDetail(BaseModel):
     """Version-related error details."""
+
+    model_config = ConfigDict(from_attributes=True)
+
     code: str = Field(..., description="Error code")
     message: str = Field(..., description="Human-readable error message")
     client_version: Optional[str] = Field(None, description="Client's version")
@@ -71,4 +105,7 @@ class VersionErrorDetail(BaseModel):
 
 class VersionErrorResponse(BaseModel):
     """Version error response wrapper."""
+
+    model_config = ConfigDict(from_attributes=True)
+
     error: VersionErrorDetail
