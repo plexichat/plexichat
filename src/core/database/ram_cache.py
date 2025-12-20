@@ -10,26 +10,26 @@ Examples: search_categories, voice_afk_settings, notification_settings
 
 Usage:
     from src.core.database.ram_cache import RAMCache
-    
+
     # Create cache for a table
     categories_cache = RAMCache("search_categories", ttl=3600)
-    
+
     # Load data
     categories_cache.load(db, "SELECT * FROM search_categories")
-    
+
     # Get all items
     all_cats = categories_cache.get_all()
-    
+
     # Get by key
     gaming = categories_cache.get("id", "gaming")
-    
+
     # Invalidate on write
     categories_cache.invalidate()
 """
 
 import time
 import threading
-from typing import Any, Dict, List, Optional, Callable
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import utils.logger as logger
 
@@ -42,7 +42,7 @@ class RAMCache:
     def __init__(self, name: str, ttl: int = 300, max_items: int = 1000):
         """
         Initialize RAM cache.
-        
+
         Args:
             name: Cache name (for logging)
             ttl: Time-to-live in seconds (default 5 minutes)
@@ -58,15 +58,17 @@ class RAMCache:
         self._query: Optional[str] = None
         self._db: Any = None
 
-    def load(self, db, query: str, params: Optional[tuple[Any, ...]] = None) -> int:
+    def load(
+        self, db: Any, query: str, params: Optional[Tuple[Any, ...]] = None
+    ) -> int:
         """
         Load data from database into cache.
-        
+
         Args:
             db: Database instance
             query: SQL query to fetch data
             params: Optional query parameters
-            
+
         Returns:
             Number of items loaded
         """
@@ -75,14 +77,18 @@ class RAMCache:
             self._query = query
 
             try:
-                rows = db.fetch_all(query, params) if params is not None else db.fetch_all(query)
+                rows = (
+                    db.fetch_all(query, params)
+                    if params is not None
+                    else db.fetch_all(query)
+                )
 
                 if len(rows) > self.max_items:
                     logger.warning(
                         f"RAMCache '{self.name}': Query returned {len(rows)} rows, "
                         f"exceeds max_items={self.max_items}. Truncating."
                     )
-                    rows = rows[:self.max_items]
+                    rows = rows[: self.max_items]
 
                 # Convert rows to dicts
                 self._data = [dict(row) for row in rows]
@@ -129,11 +135,11 @@ class RAMCache:
     def get(self, field: str, value: Any) -> Optional[Dict[str, Any]]:
         """
         Get item by field value.
-        
+
         Args:
             field: Field name to search
             value: Value to match
-            
+
         Returns:
             Matching row or None
         """
@@ -145,11 +151,11 @@ class RAMCache:
     def get_many(self, field: str, values: List[Any]) -> List[Dict[str, Any]]:
         """
         Get multiple items by field values.
-        
+
         Args:
             field: Field name to search
             values: List of values to match
-            
+
         Returns:
             List of matching rows
         """
@@ -159,13 +165,15 @@ class RAMCache:
             index = self._index.get(field, {})
             return [index[v] for v in values if v in index]
 
-    def filter(self, predicate: Callable[[Dict[str, Any]], bool]) -> List[Dict[str, Any]]:
+    def filter(
+        self, predicate: Callable[[Dict[str, Any]], bool]
+    ) -> List[Dict[str, Any]]:
         """
         Filter items by predicate function.
-        
+
         Args:
             predicate: Function that returns True for items to include
-            
+
         Returns:
             List of matching rows
         """
@@ -195,7 +203,9 @@ class RAMCache:
                 "items": len(self._data),
                 "ttl": self.ttl,
                 "valid": self.is_valid(),
-                "age_seconds": time.time() - self._loaded_at if self._loaded_at else None,
+                "age_seconds": time.time() - self._loaded_at
+                if self._loaded_at
+                else None,
                 "indexed_fields": list(self._index.keys()),
             }
 

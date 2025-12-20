@@ -16,12 +16,17 @@ Features:
 import json
 import hashlib
 import time
-from typing import Any, Callable, Dict, List, Optional, TypeVar, cast
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, cast
 from functools import wraps
 
 import utils.logger as logger
 
-from .redis_client import get_client, is_available, RedisOperationError, JsonSerializable
+from .redis_client import (
+    get_client,
+    is_available,
+    RedisOperationError,
+    JsonSerializable,
+)
 
 # Type variable for generic return types
 T = TypeVar("T", bound=JsonSerializable)
@@ -36,18 +41,19 @@ _cache_stats = {
 
 class CacheError(Exception):
     """Base exception for cache operations."""
+
     pass
 
 
 def _generate_cache_key(prefix: str, *args, **kwargs) -> str:
     """
     Generate a cache key from function arguments.
-    
+
     Args:
         prefix: Key prefix (usually function name).
         args: Positional arguments.
         kwargs: Keyword arguments.
-        
+
     Returns:
         A unique cache key string.
     """
@@ -56,13 +62,17 @@ def _generate_cache_key(prefix: str, *args, **kwargs) -> str:
 
     for arg in args:
         if isinstance(arg, (dict, list)):
-            key_parts.append(hashlib.md5(json.dumps(arg, sort_keys=True).encode()).hexdigest()[:8])
+            key_parts.append(
+                hashlib.md5(json.dumps(arg, sort_keys=True).encode()).hexdigest()[:8]
+            )
         else:
             key_parts.append(str(arg))
 
     for k, v in sorted(kwargs.items()):
         if isinstance(v, (dict, list)):
-            key_parts.append(f"{k}:{hashlib.md5(json.dumps(v, sort_keys=True).encode()).hexdigest()[:8]}")
+            key_parts.append(
+                f"{k}:{hashlib.md5(json.dumps(v, sort_keys=True).encode()).hexdigest()[:8]}"
+            )
         else:
             key_parts.append(f"{k}:{v}")
 
@@ -74,29 +84,30 @@ def cached(
     prefix: Optional[str] = None,
     key_builder: Optional[Callable[..., str]] = None,
     skip_cache_if: Optional[Callable[..., bool]] = None,
-) -> Callable:
+) -> Callable[[Callable[..., T]], Callable[..., T]]:
     """
     Decorator to cache function results in Redis.
-    
+
     Args:
         ttl: Time-to-live in seconds. Defaults to cache TTL from config.
         prefix: Custom key prefix. Defaults to function name.
         key_builder: Custom function to build cache key from arguments.
         skip_cache_if: Function that returns True to skip caching for this call.
-        
+
     Usage:
         @cached(ttl=300)
         def get_user(user_id: int) -> dict:
             return db.fetch_one("SELECT * FROM users WHERE id = ?", (user_id,))
-        
+
         @cached(ttl=60, prefix="server")
         def get_server_info(server_id: int) -> dict:
             return expensive_operation(server_id)
-        
+
         @cached(key_builder=lambda user_id, **kw: f"user:{user_id}")
         def get_user_profile(user_id: int, include_stats: bool = False) -> dict:
             ...
     """
+
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         @wraps(func)
         def wrapper(*args, **kwargs) -> T:
@@ -123,7 +134,9 @@ def cached(
                 cached_value = client.get_json(cache_key)
                 if cached_value is not None:
                     _cache_stats["hits"] += 1
-                    logger.info(f"CACHE HIT: {cache_key} (total hits: {_cache_stats['hits']})")
+                    logger.info(
+                        f"CACHE HIT: {cache_key} (total hits: {_cache_stats['hits']})"
+                    )
                     return cast(T, cached_value)
             except RedisOperationError:
                 _cache_stats["errors"] += 1
@@ -131,14 +144,18 @@ def cached(
 
             # Cache miss - execute function
             _cache_stats["misses"] += 1
-            logger.info(f"CACHE MISS: {cache_key} (total misses: {_cache_stats['misses']})")
+            logger.info(
+                f"CACHE MISS: {cache_key} (total misses: {_cache_stats['misses']})"
+            )
 
             result = func(*args, **kwargs)
 
             # Store in cache
             try:
                 cache_ttl = ttl if ttl is not None else client.ttl_cache
-                client.set_json(cache_key, cast(JsonSerializable, result), ttl=cache_ttl)
+                client.set_json(
+                    cache_key, cast(JsonSerializable, result), ttl=cache_ttl
+                )
             except RedisOperationError as e:
                 _cache_stats["errors"] += 1
                 logger.warning(f"Failed to cache result for {cache_key}: {e}")
@@ -147,23 +164,27 @@ def cached(
 
         # Add cache control methods to the wrapper
         wrapper_any = cast(Any, wrapper)
-        wrapper_any.cache_key_prefix = prefix or f"cache:{func.__module__}.{func.__name__}"
+        wrapper_any.cache_key_prefix = (
+            prefix or f"cache:{func.__module__}.{func.__name__}"
+        )
         wrapper_any.invalidate = lambda *args, **kwargs: invalidate_cached(
-            key_builder(*args, **kwargs) if key_builder
+            key_builder(*args, **kwargs)
+            if key_builder
             else _generate_cache_key(wrapper_any.cache_key_prefix, *args, **kwargs)
         )
 
         return wrapper
+
     return decorator
 
 
 def cache_get(key: str) -> Optional[Any]:
     """
     Get a value from cache.
-    
+
     Args:
         key: Cache key.
-        
+
     Returns:
         Cached value or None if not found.
     """
@@ -191,12 +212,12 @@ def cache_get(key: str) -> Optional[Any]:
 def cache_set(key: str, value: Any, ttl: Optional[int] = None) -> bool:
     """
     Set a value in cache.
-    
+
     Args:
         key: Cache key.
         value: Value to cache (must be JSON-serializable).
         ttl: Time-to-live in seconds.
-        
+
     Returns:
         True if successful, False otherwise.
     """
@@ -218,10 +239,10 @@ def cache_set(key: str, value: Any, ttl: Optional[int] = None) -> bool:
 def cache_delete(key: str) -> bool:
     """
     Delete a value from cache.
-    
+
     Args:
         key: Cache key.
-        
+
     Returns:
         True if deleted, False otherwise.
     """
@@ -242,10 +263,10 @@ def cache_delete(key: str) -> bool:
 def invalidate_cached(key: str) -> bool:
     """
     Invalidate a cached value (alias for cache_delete).
-    
+
     Args:
         key: Cache key to invalidate.
-        
+
     Returns:
         True if invalidated, False otherwise.
     """
@@ -255,10 +276,10 @@ def invalidate_cached(key: str) -> bool:
 def invalidate_pattern(pattern: str) -> int:
     """
     Invalidate all cache keys matching a pattern.
-    
+
     Args:
         pattern: Glob-style pattern (e.g., "user:*", "server:123:*").
-        
+
     Returns:
         Number of keys invalidated.
     """
@@ -282,14 +303,14 @@ def invalidate_pattern(pattern: str) -> int:
 def cache_stats() -> Dict[str, int]:
     """
     Get cache statistics.
-    
+
     Returns:
         Dict with hits, misses, errors counts.
     """
     return _cache_stats.copy()
 
 
-def reset_cache_stats():
+def reset_cache_stats() -> None:
     """Reset cache statistics."""
     global _cache_stats
     _cache_stats = {"hits": 0, "misses": 0, "errors": 0}
@@ -298,7 +319,7 @@ def reset_cache_stats():
 def cache_health() -> Dict[str, Any]:
     """
     Get cache health information.
-    
+
     Returns:
         Dict with cache health status.
     """
@@ -324,16 +345,19 @@ def cache_health() -> Dict[str, Any]:
 
 # ==================== Session Cache Helpers ====================
 
-def cache_session(session_id: str, user_id: int, data: Dict[str, Any], ttl: Optional[int] = None) -> bool:
+
+def cache_session(
+    session_id: str, user_id: int, data: Dict[str, Any], ttl: Optional[int] = None
+) -> bool:
     """
     Cache a user session.
-    
+
     Args:
         session_id: Unique session identifier.
         user_id: User ID.
         data: Session data.
         ttl: Session TTL in seconds.
-        
+
     Returns:
         True if cached successfully.
     """
@@ -362,10 +386,10 @@ def cache_session(session_id: str, user_id: int, data: Dict[str, Any], ttl: Opti
 def get_cached_session(session_id: str) -> Optional[Dict[str, Any]]:
     """
     Get a cached session.
-    
+
     Args:
         session_id: Session identifier.
-        
+
     Returns:
         Session data or None if not found.
     """
@@ -375,11 +399,11 @@ def get_cached_session(session_id: str) -> Optional[Dict[str, Any]]:
 def invalidate_session(session_id: str, user_id: Optional[int] = None) -> bool:
     """
     Invalidate a session.
-    
+
     Args:
         session_id: Session identifier.
         user_id: User ID (optional, for cleanup).
-        
+
     Returns:
         True if invalidated.
     """
@@ -401,10 +425,10 @@ def invalidate_session(session_id: str, user_id: Optional[int] = None) -> bool:
 def invalidate_user_sessions(user_id: int) -> int:
     """
     Invalidate all sessions for a user.
-    
+
     Args:
         user_id: User ID.
-        
+
     Returns:
         Number of sessions invalidated.
     """
@@ -428,15 +452,18 @@ def invalidate_user_sessions(user_id: int) -> int:
 
 # ==================== Presence Cache Helpers ====================
 
-def cache_presence(user_id: int, status: str, custom_status: Optional[str] = None) -> bool:
+
+def cache_presence(
+    user_id: int, status: str, custom_status: Optional[str] = None
+) -> bool:
     """
     Cache user presence/status.
-    
+
     Args:
         user_id: User ID.
         status: Status string (online, idle, dnd, offline).
         custom_status: Optional custom status text.
-        
+
     Returns:
         True if cached successfully.
     """
@@ -461,10 +488,10 @@ def cache_presence(user_id: int, status: str, custom_status: Optional[str] = Non
 def get_cached_presence(user_id: int) -> Optional[Dict[str, Any]]:
     """
     Get cached user presence.
-    
+
     Args:
         user_id: User ID.
-        
+
     Returns:
         Presence data or None if not found.
     """
@@ -474,10 +501,10 @@ def get_cached_presence(user_id: int) -> Optional[Dict[str, Any]]:
 def get_bulk_presence(user_ids: List[int]) -> Dict[int, Dict[str, Any]]:
     """
     Get presence for multiple users.
-    
+
     Args:
         user_ids: List of user IDs.
-        
+
     Returns:
         Dict mapping user_id to presence data.
     """
@@ -491,15 +518,16 @@ def get_bulk_presence(user_ids: List[int]) -> Dict[int, Dict[str, Any]]:
 
 # ==================== Rate Limiting Helpers ====================
 
-def check_rate_limit(key: str, limit: int, window_seconds: int) -> tuple[bool, int]:
+
+def check_rate_limit(key: str, limit: int, window_seconds: int) -> Tuple[bool, int]:
     """
     Check if a rate limit has been exceeded.
-    
+
     Args:
         key: Rate limit key (e.g., "ratelimit:user:123:messages").
         limit: Maximum number of requests allowed.
         window_seconds: Time window in seconds.
-        
+
     Returns:
         Tuple of (allowed: bool, remaining: int).
     """
@@ -529,10 +557,10 @@ def check_rate_limit(key: str, limit: int, window_seconds: int) -> tuple[bool, i
 def reset_rate_limit(key: str) -> bool:
     """
     Reset a rate limit counter.
-    
+
     Args:
         key: Rate limit key.
-        
+
     Returns:
         True if reset successfully.
     """

@@ -60,9 +60,12 @@ class Database:
         self._in_transaction = False
         logger.info(f"Database initialized with type: {self.type}")
 
-    def connect(self) -> None:
+    def connect(self) -> Optional[DbConnection]:
         """
         Establish a connection to the database.
+
+        Returns:
+            Database connection object or None if connection failed.
 
         Raises:
             ValueError: If database type is not supported.
@@ -80,7 +83,9 @@ class Database:
             logger.error(error_msg)
             raise ValueError(error_msg)
 
-    def _connect_sqlite(self) -> None:
+        return self.connection
+
+    def _connect_sqlite(self) -> DbConnection:
         """Connect to SQLite database, creating directories if needed."""
         path = self.config.get("path", "data/database.db")
 
@@ -112,11 +117,13 @@ class Database:
             from .migrations import run_all_migrations
 
             run_all_migrations(self)
+            assert self.connection is not None  # Type narrowing
+            return self.connection
         except sqlite3.Error as e:
             logger.error(f"Failed to connect to SQLite: {e}")
             raise
 
-    def _connect_postgres(self) -> None:
+    def _connect_postgres(self) -> DbConnection:
         """Connect to PostgreSQL database using psycopg2 with connection pooling."""
         try:
             import psycopg2
@@ -170,6 +177,8 @@ class Database:
             from .migrations import run_all_migrations
 
             run_all_migrations(self)
+            assert self.connection is not None  # Type narrowing
+            return self.connection
         except psycopg2.Error as e:
             logger.error(f"Failed to connect to PostgreSQL: {e}")
             raise
@@ -296,7 +305,7 @@ class Database:
 
     def fetch_one(
         self, query: str, params: Optional[Tuple] = None
-    ) -> Optional[Union[sqlite3.Row, Dict[str, Any]]]:
+    ) -> Optional[Dict[str, Any]]:
         """
         Execute a query and fetch one result.
 
@@ -305,16 +314,19 @@ class Database:
             params: Optional tuple of parameters.
 
         Returns:
-            Single row result or None if no results.
+            Single row result as dict or None if no results.
         """
         cursor = self.execute(query, params)
         result = cursor.fetchone()
         cursor.close()
-        return result
+        if result is None:
+            return None
+        # Convert sqlite3.Row or psycopg2 RealDictRow to dict
+        return dict(result)
 
     def fetch_all(
         self, query: str, params: Optional[Tuple] = None
-    ) -> List[Union[sqlite3.Row, Dict[str, Any]]]:
+    ) -> List[Dict[str, Any]]:
         """
         Execute a query and fetch all results.
 
@@ -323,12 +335,13 @@ class Database:
             params: Optional tuple of parameters.
 
         Returns:
-            List of all row results.
+            List of all row results as dicts.
         """
         cursor = self.execute(query, params)
         results = cursor.fetchall()
         cursor.close()
-        return results
+        # Convert sqlite3.Row or psycopg2 RealDictRow to dicts
+        return [dict(row) for row in results]
 
     def table_exists(self, table_name: str) -> bool:
         """

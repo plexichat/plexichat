@@ -27,39 +27,42 @@ JsonSerializable = Union[dict, list, str, int, float, bool, None]
 
 class RedisError(Exception):
     """Base exception for Redis operations."""
+
     pass
 
 
 class RedisConnectionError(RedisError):
     """Raised when Redis connection fails."""
+
     pass
 
 
 class RedisOperationError(RedisError):
     """Raised when a Redis operation fails."""
+
     pass
 
 
 class RedisClient:
     """
     Redis connection manager with connection pooling and graceful degradation.
-    
+
     Usage:
         client = RedisClient()
         client.connect()
-        
+
         # Basic operations
         client.set("key", "value", ttl=300)
         value = client.get("key")
-        
+
         # JSON operations
         client.set_json("user:1", {"name": "Alice", "age": 30})
         user = client.get_json("user:1")
-        
+
         # Hash operations
         client.hset("user:1", "name", "Alice")
         name = client.hget("user:1", "name")
-        
+
         client.close()
     """
 
@@ -96,17 +99,19 @@ class RedisClient:
         self.ttl_cache = ttl_config.get("cache", 60)
 
         if self.enabled:
-            logger.info(f"Redis client initialized (host={self.host}:{self.port}, ssl={self.ssl})")
+            logger.info(
+                f"Redis client initialized (host={self.host}:{self.port}, ssl={self.ssl})"
+            )
         else:
             logger.info("Redis client disabled in configuration")
 
     def connect(self) -> bool:
         """
         Establish connection to Redis with connection pooling.
-        
+
         Returns:
             True if connected successfully, False if Redis is disabled or unavailable.
-            
+
         Raises:
             RedisConnectionError: If connection fails and Redis is required.
         """
@@ -119,8 +124,7 @@ class RedisClient:
         except ImportError:
             logger.error("redis package not installed. Install with: pip install redis")
             raise ImportError(
-                "redis is required for Redis support. "
-                "Install with: pip install redis"
+                "redis is required for Redis support. Install with: pip install redis"
             )
 
         try:
@@ -139,6 +143,7 @@ class RedisClient:
             # SSL configuration
             if self.ssl:
                 import ssl as ssl_module
+
                 pool_kwargs["ssl"] = True
                 if self.ssl_cert_reqs == "none":
                     pool_kwargs["ssl_cert_reqs"] = ssl_module.CERT_NONE
@@ -184,19 +189,21 @@ class RedisClient:
         """Sanitize key to prevent injection attacks."""
         # Remove any control characters and limit length
         sanitized = "".join(c for c in key if c.isprintable() and c not in "\n\r\t")
-        return sanitized[:512]  # Redis key limit is much higher, but we limit for safety
+        return sanitized[
+            :512
+        ]  # Redis key limit is much higher, but we limit for safety
 
     # ==================== Basic Operations ====================
 
     def set(self, key: str, value: RedisValue, ttl: Optional[int] = None) -> bool:
         """
         Set a key-value pair.
-        
+
         Args:
             key: The key name.
             value: The value to store.
             ttl: Time-to-live in seconds (optional).
-            
+
         Returns:
             True if successful.
         """
@@ -217,10 +224,10 @@ class RedisClient:
     def get(self, key: str) -> Optional[str]:
         """
         Get a value by key.
-        
+
         Args:
             key: The key name.
-            
+
         Returns:
             The value or None if not found.
         """
@@ -238,10 +245,10 @@ class RedisClient:
     def delete(self, *keys: str) -> int:
         """
         Delete one or more keys.
-        
+
         Args:
             keys: Key names to delete.
-            
+
         Returns:
             Number of keys deleted.
         """
@@ -291,10 +298,12 @@ class RedisClient:
 
     # ==================== JSON Operations ====================
 
-    def set_json(self, key: str, value: JsonSerializable, ttl: Optional[int] = None) -> bool:
+    def set_json(
+        self, key: str, value: JsonSerializable, ttl: Optional[int] = None
+    ) -> bool:
         """
         Store a JSON-serializable value.
-        
+
         Args:
             key: The key name.
             value: Dict, list, or other JSON-serializable value.
@@ -310,10 +319,10 @@ class RedisClient:
     def get_json(self, key: str) -> Optional[JsonSerializable]:
         """
         Get and deserialize a JSON value.
-        
+
         Args:
             key: The key name.
-            
+
         Returns:
             Deserialized value or None if not found.
         """
@@ -547,11 +556,11 @@ class RedisClient:
     def publish(self, channel: str, message: str) -> int:
         """
         Publish a message to a channel.
-        
+
         Args:
             channel: Channel name.
             message: Message to publish.
-            
+
         Returns:
             Number of subscribers that received the message.
         """
@@ -571,10 +580,10 @@ class RedisClient:
     def subscribe(self, *channels: str) -> Any:
         """
         Subscribe to channels.
-        
+
         Args:
             channels: Channel names to subscribe to.
-            
+
         Returns:
             PubSub object for listening to messages.
         """
@@ -593,7 +602,7 @@ class RedisClient:
             logger.error(f"Redis SUBSCRIBE failed: {e}")
             raise RedisOperationError(f"SUBSCRIBE failed: {e}")
 
-    def unsubscribe(self, *channels: str):
+    def unsubscribe(self, *channels: str) -> None:
         """Unsubscribe from channels."""
         if not self._pubsub:
             return
@@ -622,7 +631,7 @@ class RedisClient:
     def health_check(self) -> Dict[str, Any]:
         """
         Perform a health check on Redis connection.
-        
+
         Returns:
             Dict with health status information.
         """
@@ -655,7 +664,7 @@ class RedisClient:
         """
         Delete all keys with the configured prefix.
         Use with caution!
-        
+
         Returns:
             Number of keys deleted.
         """
@@ -676,10 +685,10 @@ class RedisClient:
     def keys(self, pattern: str = "*") -> List[str]:
         """
         Get keys matching a pattern.
-        
+
         Args:
             pattern: Glob-style pattern (e.g., "user:*").
-            
+
         Returns:
             List of matching keys (without prefix).
         """
@@ -692,12 +701,14 @@ class RedisClient:
             keys = cast(List[str], client.keys(full_pattern))
             # Remove prefix from returned keys
             prefix_len = len(self.key_prefix)
-            return [k[prefix_len:] if k.startswith(self.key_prefix) else k for k in keys]
+            return [
+                k[prefix_len:] if k.startswith(self.key_prefix) else k for k in keys
+            ]
         except Exception as e:
             logger.error(f"Redis KEYS failed for {pattern}: {e}")
             raise RedisOperationError(f"KEYS failed: {e}")
 
-    def close(self):
+    def close(self) -> None:
         """Close the Redis connection."""
         if self._pubsub:
             try:
@@ -717,12 +728,12 @@ class RedisClient:
         self._connected = False
         logger.info("Redis connection closed")
 
-    def __enter__(self):
+    def __enter__(self) -> "RedisClient":
         """Context manager entry - connects to Redis."""
         self.connect()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
         """Context manager exit - closes connection."""
         self.close()
         return False
@@ -736,7 +747,7 @@ _default_client: Optional[RedisClient] = None
 def setup() -> Optional[RedisClient]:
     """
     Setup the default Redis client.
-    
+
     Returns:
         RedisClient instance or None if disabled/failed.
     """
