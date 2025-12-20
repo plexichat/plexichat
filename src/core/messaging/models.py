@@ -12,6 +12,7 @@ from enum import Enum
 
 class ConversationType(Enum):
     """Type of conversation."""
+
     DM = "dm"
     GROUP = "group"
     NOTES = "notes"  # Personal notes - single user conversation
@@ -19,6 +20,7 @@ class ConversationType(Enum):
 
 class MessageType(Enum):
     """Type of message."""
+
     TEXT = "text"
     SYSTEM = "system"
     ATTACHMENT = "attachment"
@@ -26,6 +28,7 @@ class MessageType(Enum):
 
 class MessageStatusType(Enum):
     """Status of message delivery/read."""
+
     SENT = "sent"
     DELIVERED = "delivered"
     READ = "read"
@@ -33,6 +36,7 @@ class MessageStatusType(Enum):
 
 class ParticipantRole(Enum):
     """Role of participant in a conversation."""
+
     OWNER = "owner"
     ADMIN = "admin"
     MEMBER = "member"
@@ -40,6 +44,7 @@ class ParticipantRole(Enum):
 
 class FilterAction(Enum):
     """Action to take when content matches filter."""
+
     BLOCK = "block"
     WARN = "warn"
     CENSOR = "censor"
@@ -49,6 +54,7 @@ class FilterAction(Enum):
 @dataclass
 class Conversation:
     """Conversation model (DM or group)."""
+
     id: int
     conversation_type: ConversationType
     created_at: int
@@ -68,6 +74,7 @@ class Conversation:
 @dataclass
 class Participant:
     """Participant in a conversation."""
+
     id: int
     conversation_id: int
     user_id: int
@@ -84,14 +91,15 @@ class Participant:
 @dataclass
 class Message:
     """Message model."""
+
     id: int
     conversation_id: int
     author_id: int
     content: str
+    created_at: int
+    updated_at: int
     content_encrypted: Optional[str] = None
     message_type: MessageType = MessageType.TEXT
-    created_at: int = 0
-    updated_at: int = 0
     edited: bool = False
     deleted: bool = False
     deleted_at: Optional[int] = None
@@ -106,7 +114,7 @@ class Message:
     status: Optional[MessageStatusType] = None
     delivery_count: int = 0
     read_count: int = 0
-    
+
     @property
     def embeds(self) -> List[Dict[str, Any]]:
         """Get embeds from metadata."""
@@ -118,6 +126,7 @@ class Message:
 @dataclass
 class MessageStatus:
     """Delivery/read status for a message per user."""
+
     id: int
     message_id: int
     user_id: int
@@ -128,14 +137,15 @@ class MessageStatus:
 @dataclass
 class Attachment:
     """Message attachment model."""
+
     id: int
     message_id: int
     filename: str
     content_type: str
     size: int
     url: str
+    created_at: int
     url_encrypted: Optional[str] = None
-    created_at: int = 0
     metadata: Optional[Dict[str, Any]] = None
     deleted: bool = False
 
@@ -143,6 +153,7 @@ class Attachment:
 @dataclass
 class ContentFilter:
     """User content filter settings."""
+
     user_id: int
     profanity_filter: bool = False
     nsfw_filter: bool = False
@@ -154,6 +165,7 @@ class ContentFilter:
 @dataclass
 class UserMessageSettings:
     """User-specific message settings."""
+
     user_id: int
     allow_dms_from: str = "everyone"  # "everyone", "friends", "none"
     auto_create_dms: bool = True
@@ -167,6 +179,7 @@ class UserMessageSettings:
 @dataclass
 class PinnedMessage:
     """Pinned message record."""
+
     id: int
     conversation_id: int
     message_id: int
@@ -177,6 +190,7 @@ class PinnedMessage:
 @dataclass
 class ConversationSummary:
     """Summary of conversation for listing."""
+
     id: int
     conversation_type: ConversationType
     name: Optional[str]
@@ -190,6 +204,7 @@ class ConversationSummary:
 # Rich text formatting markers
 class TextFormat:
     """Text formatting markers for rich text."""
+
     BOLD = "**"
     ITALIC = "*"
     UNDERLINE = "__"

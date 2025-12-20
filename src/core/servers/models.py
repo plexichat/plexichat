@@ -9,6 +9,7 @@ from typing import Optional, List, Dict, Any
 
 class ChannelType(Enum):
     """Types of channels."""
+
     TEXT = "text"
     VOICE = "voice"
     ANNOUNCEMENT = "announcement"
@@ -17,6 +18,7 @@ class ChannelType(Enum):
 
 class ScheduledEventType(Enum):
     """Types of scheduled events."""
+
     VOICE = "voice"
     STAGE = "stage"
     EXTERNAL = "external"
@@ -24,6 +26,7 @@ class ScheduledEventType(Enum):
 
 class ScheduledEventStatus(Enum):
     """Status of scheduled events."""
+
     SCHEDULED = "scheduled"
     ACTIVE = "active"
     COMPLETED = "completed"
@@ -32,12 +35,14 @@ class ScheduledEventStatus(Enum):
 
 class RSVPStatus(Enum):
     """RSVP status for events."""
+
     INTERESTED = "interested"
     GOING = "going"
 
 
 class OnboardingStepType(Enum):
     """Types of onboarding steps."""
+
     SELECT_ROLES = "select_roles"
     READ_RULES = "read_rules"
     CUSTOMIZE_PROFILE = "customize_profile"
@@ -47,6 +52,7 @@ class OnboardingStepType(Enum):
 
 class AuditLogAction(Enum):
     """Types of audit log actions."""
+
     SERVER_CREATE = "server_create"
     SERVER_UPDATE = "server_update"
     SERVER_DELETE = "server_delete"
@@ -80,6 +86,7 @@ class AuditLogAction(Enum):
 
 class PermissionValue(Enum):
     """Permission override values."""
+
     INHERIT = "inherit"
     ALLOW = "allow"
     DENY = "deny"
@@ -88,16 +95,17 @@ class PermissionValue(Enum):
 @dataclass
 class Server:
     """Represents a server (guild)."""
+
     id: int
     name: str
     owner_id: int
+    created_at: int
+    updated_at: int
+    member_count: int
+    channel_count: int
+    role_count: int
     description: Optional[str] = None
     icon_url: Optional[str] = None
-    created_at: int = 0
-    updated_at: int = 0
-    member_count: int = 0
-    channel_count: int = 0
-    role_count: int = 0
     default_role_id: Optional[int] = None
     default_channel_id: Optional[int] = None
     system_channel_id: Optional[int] = None
@@ -110,29 +118,31 @@ class Server:
 @dataclass
 class ChannelCategory:
     """Represents a channel category."""
+
     id: int
     server_id: int
     name: str
+    created_at: int
+    updated_at: int
     position: int = 0
-    created_at: int = 0
-    updated_at: int = 0
 
 
 @dataclass
 class Channel:
     """Represents a channel within a server."""
+
     id: int
     server_id: int
     name: str
     channel_type: ChannelType
+    created_at: int
+    updated_at: int
     category_id: Optional[int] = None
     position: int = 0
     topic: Optional[str] = None
     nsfw: bool = False
     slowmode_seconds: int = 0
     conversation_id: Optional[int] = None
-    created_at: int = 0
-    updated_at: int = 0
     deleted: bool = False
     deleted_at: Optional[int] = None
     metadata: Optional[Dict[str, Any]] = None
@@ -141,28 +151,30 @@ class Channel:
 @dataclass
 class Role:
     """Represents a role within a server."""
+
     id: int
     server_id: int
     name: str
+    created_at: int
+    updated_at: int
     permissions: Dict[str, bool] = field(default_factory=dict)
     color: Optional[str] = None
     hoist: bool = False
     mentionable: bool = False
     position: int = 0
     is_default: bool = False
-    created_at: int = 0
-    updated_at: int = 0
     deleted: bool = False
 
 
 @dataclass
 class Member:
     """Represents a member of a server."""
+
     id: int
     server_id: int
     user_id: int
+    joined_at: int
     nickname: Optional[str] = None
-    joined_at: int = 0
     muted: bool = False
     deafened: bool = False
     inviter_id: Optional[int] = None
@@ -172,39 +184,42 @@ class Member:
 @dataclass
 class MemberRole:
     """Represents a role assignment to a member."""
+
     id: int
     member_id: int
     role_id: int
-    assigned_at: int = 0
+    assigned_at: int
     assigned_by: Optional[int] = None
 
 
 @dataclass
 class ChannelOverride:
     """Represents a permission override for a channel."""
+
     id: int
     channel_id: int
     target_type: str
     target_id: int
+    created_at: int
+    updated_at: int
     allow: Dict[str, bool] = field(default_factory=dict)
     deny: Dict[str, bool] = field(default_factory=dict)
-    created_at: int = 0
-    updated_at: int = 0
 
 
 @dataclass
 class Invite:
     """Represents an invite to a server."""
+
     id: int
     code: str
     server_id: int
     channel_id: int
     inviter_id: int
+    created_at: int
     max_age: int = 86400
     max_uses: int = 0
     uses: int = 0
     temporary: bool = False
-    created_at: int = 0
     expires_at: Optional[int] = None
     revoked: bool = False
 
@@ -212,40 +227,45 @@ class Invite:
 @dataclass
 class Ban:
     """Represents a ban on a server."""
+
     id: int
     server_id: int
     user_id: int
     banned_by: int
+    created_at: int
     reason: Optional[str] = None
-    created_at: int = 0
 
 
 @dataclass
 class AuditLogEntry:
     """Represents an audit log entry."""
+
     id: int
     server_id: int
     user_id: int
     action: AuditLogAction
+    created_at: int
     target_type: Optional[str] = None
     target_id: Optional[int] = None
     changes: Optional[Dict[str, Any]] = None
     reason: Optional[str] = None
-    created_at: int = 0
 
 
 @dataclass
 class ScheduledEvent:
     """Represents a scheduled server event."""
+
     id: int
     server_id: int
     creator_id: int
     name: str
+    start_time: int
+    created_at: int
+    updated_at: int
     description: Optional[str] = None
     event_type: ScheduledEventType = ScheduledEventType.VOICE
     channel_id: Optional[int] = None
     location: Optional[str] = None
-    start_time: int = 0
     end_time: Optional[int] = None
     timezone: str = "UTC"
     status: ScheduledEventStatus = ScheduledEventStatus.SCHEDULED
@@ -254,83 +274,87 @@ class ScheduledEvent:
     going_count: int = 0
     rrule: Optional[str] = None
     parent_event_id: Optional[int] = None
-    created_at: int = 0
-    updated_at: int = 0
 
 
 @dataclass
 class EventRSVP:
     """Represents an RSVP to a scheduled event."""
+
     id: int
     event_id: int
     user_id: int
     status: RSVPStatus
-    created_at: int = 0
-    updated_at: int = 0
+    created_at: int
+    updated_at: int
 
 
 @dataclass
 class ServerTemplate:
     """Represents a server template."""
+
     id: int
     name: str
+    creator_id: int
+    code: str
+    created_at: int
+    updated_at: int
     description: Optional[str] = None
-    creator_id: int = 0
     source_server_id: Optional[int] = None
-    code: str = ""
     usage_count: int = 0
     is_public: bool = False
-    created_at: int = 0
-    updated_at: int = 0
 
 
 @dataclass
 class TemplateData:
     """Represents the data snapshot of a template."""
+
     id: int
     template_id: int
+    created_at: int
     channels: List[Dict[str, Any]] = field(default_factory=list)
     categories: List[Dict[str, Any]] = field(default_factory=list)
     roles: List[Dict[str, Any]] = field(default_factory=list)
-    created_at: int = 0
 
 
 @dataclass
 class WelcomeScreen:
     """Represents a server welcome screen."""
+
     id: int
     server_id: int
+    created_at: int
+    updated_at: int
     description: Optional[str] = None
     enabled: bool = True
     welcome_channels: List[Dict[str, Any]] = field(default_factory=list)
-    created_at: int = 0
-    updated_at: int = 0
 
 
 @dataclass
 class OnboardingStep:
     """Represents an onboarding step."""
+
     id: int
     server_id: int
     step_type: OnboardingStepType
     title: str
+    created_at: int
+    updated_at: int
     description: Optional[str] = None
     position: int = 0
     required: bool = False
     options: Optional[Dict[str, Any]] = None
-    created_at: int = 0
-    updated_at: int = 0
 
 
 @dataclass
 class OnboardingProgress:
     """Represents a user's onboarding progress."""
+
     id: int
     server_id: int
     user_id: int
+    started_at: int
     completed_steps: List[int] = field(default_factory=list)
     completed: bool = False
-    started_at: int = 0
     completed_at: Optional[int] = None
 
 

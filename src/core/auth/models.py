@@ -11,6 +11,7 @@ from enum import Enum
 
 class AccountType(Enum):
     """Type of account."""
+
     USER = "user"
     BOT = "bot"
     SYSTEM = "system"
@@ -18,6 +19,7 @@ class AccountType(Enum):
 
 class AuthStatus(Enum):
     """Authentication result status."""
+
     SUCCESS = "success"
     TWO_FACTOR_REQUIRED = "2fa_required"
     VERIFICATION_REQUIRED = "verification_required"
@@ -26,6 +28,7 @@ class AuthStatus(Enum):
 
 class AuditEventType(Enum):
     """Types of audit events."""
+
     LOGIN_SUCCESS = "login_success"
     LOGIN_FAILED = "login_failed"
     LOGOUT = "logout"
@@ -52,6 +55,7 @@ class AuditEventType(Enum):
 @dataclass
 class User:
     """User account model."""
+
     id: int
     account_type: AccountType
     username: str
@@ -76,6 +80,7 @@ class User:
 @dataclass
 class Session:
     """User session model."""
+
     id: int
     user_id: int
     device_id: Optional[int]
@@ -94,6 +99,7 @@ class Session:
 @dataclass
 class Bot:
     """Bot account model."""
+
     id: int
     owner_id: int
     username: str
@@ -110,6 +116,7 @@ class Bot:
 @dataclass
 class Device:
     """Known device model."""
+
     id: int
     user_id: int
     fingerprint: str
@@ -122,6 +129,7 @@ class Device:
 @dataclass
 class KnownIP:
     """Known IP address model."""
+
     id: int
     user_id: int
     ip_address: str
@@ -132,6 +140,7 @@ class KnownIP:
 @dataclass
 class AuditEntry:
     """Audit log entry model."""
+
     id: int
     user_id: Optional[int]
     event_type: AuditEventType
@@ -145,10 +154,11 @@ class AuditEntry:
 @dataclass
 class TokenInfo:
     """Information about a verified token."""
+
     valid: bool
     token_type: str  # "user" or "bot"
     account_id: int  # User ID or Bot ID
-    user_id: int     # Always the human user (for bots, the owner)
+    user_id: int  # Always the human user (for bots, the owner)
     session_id: Optional[int]  # Only for user tokens
     permissions: Dict[str, bool]
     rate_limit_tier: str
@@ -161,6 +171,7 @@ class TokenInfo:
 @dataclass
 class AuthResult:
     """Result of an authentication attempt."""
+
     status: AuthStatus
     token: Optional[str] = None
     user: Optional[User] = None
@@ -174,6 +185,7 @@ class AuthResult:
 @dataclass
 class TwoFactorSetup:
     """2FA setup information."""
+
     secret: str
     qr_uri: str
     backup_codes: List[str]
@@ -184,6 +196,7 @@ class TwoFactorSetup:
 @dataclass
 class TwoFactorStatus:
     """2FA status for a user."""
+
     enabled: bool
     backup_codes_remaining: int
     last_used: Optional[int] = None
@@ -192,6 +205,7 @@ class TwoFactorStatus:
 @dataclass
 class PasswordValidation:
     """Password validation result."""
+
     valid: bool
     score: int  # 0-5
     issues: List[str]
@@ -200,6 +214,7 @@ class PasswordValidation:
 @dataclass
 class EmailToken:
     """Email verification/reset token model."""
+
     id: int
     user_id: int
     token_type: str  # 'verify_email' or 'reset_password'
@@ -215,6 +230,7 @@ class EmailToken:
 @dataclass
 class TwoFactorChallenge:
     """Temporary 2FA challenge during login."""
+
     id: int
     user_id: int
     created_at: int
