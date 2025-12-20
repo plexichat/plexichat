@@ -7,7 +7,7 @@ and database interactions.
 
 import time
 import json
-from typing import Optional, List, Dict, Any, Tuple, Union
+from typing import Optional, List, Dict, Any, Tuple
 
 import utils.config as config
 import utils.logger as logger
@@ -57,7 +57,7 @@ from .content import validate_content
 class MessagingManager:
     """Core messaging manager handling all operations."""
 
-    def __init__(self, db, auth_module=None):
+    def __init__(self, db: Any, auth_module: Optional[Any] = None) -> None:
         """
         Initialize the messaging manager.
 
@@ -81,8 +81,11 @@ class MessagingManager:
         logger.info("Messaging module initialized")
 
     def _cache_get(
-        self, cache: Dict[Any, Tuple[Any, float]], key: Any, default: Any = None
-    ) -> Any:
+        self,
+        cache: Dict[Any, Tuple[Any, float]],
+        key: Any,
+        default: Optional[Any] = None,
+    ) -> Optional[Any]:
         """Get value from cache if not expired."""
         if key in cache:
             value, expires = cache[key]
@@ -1414,7 +1417,7 @@ class MessagingManager:
 
         # Build the message filter
         msg_filter = "conversation_id = ? AND author_id != ? AND deleted = 0"
-        params = [conversation_id, user_id]
+        params: List[int] = [conversation_id, user_id]
 
         if up_to_message_id:
             msg_filter += " AND id <= ?"
@@ -1966,7 +1969,7 @@ class MessagingManager:
 
     # === Row Converters ===
 
-    def _row_to_conversation(self, row: Union[Any, Dict[str, Any]]) -> Conversation:
+    def _row_to_conversation(self, row: Dict[str, Any]) -> Conversation:
         """Convert database row to Conversation model."""
         # Handle both dict and sqlite3.Row
         participant_count = 0
@@ -1992,7 +1995,7 @@ class MessagingManager:
             metadata=json.loads(row["metadata"]) if row["metadata"] else None,
         )
 
-    def _row_to_participant(self, row: Union[Any, Dict[str, Any]]) -> Participant:
+    def _row_to_participant(self, row: Dict[str, Any]) -> Participant:
         """Convert database row to Participant model."""
         return Participant(
             id=row["id"],
@@ -2008,7 +2011,7 @@ class MessagingManager:
             nickname=row["nickname"],
         )
 
-    def _row_to_message(self, row: Union[Any, Dict[str, Any]]) -> Message:
+    def _row_to_message(self, row: Dict[str, Any]) -> Message:
         """Convert database row to Message model."""
         content = row["content"]
 
@@ -2050,7 +2053,7 @@ class MessagingManager:
             metadata=json.loads(row["metadata"]) if row["metadata"] else None,
         )
 
-    def _row_to_message_status(self, row: Union[Any, Dict[str, Any]]) -> MessageStatus:
+    def _row_to_message_status(self, row: Dict[str, Any]) -> MessageStatus:
         """Convert database row to MessageStatus model."""
         return MessageStatus(
             id=row["id"],
@@ -2060,7 +2063,7 @@ class MessagingManager:
             timestamp=row["timestamp"],
         )
 
-    def _row_to_attachment(self, row: Union[Any, Dict[str, Any]]) -> Attachment:
+    def _row_to_attachment(self, row: Dict[str, Any]) -> Attachment:
         """Convert database row to Attachment model."""
         url = row["url"]
 

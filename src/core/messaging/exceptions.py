@@ -7,11 +7,13 @@ All messaging-related errors inherit from MessagingError for easy catching.
 
 class MessagingError(Exception):
     """Base exception for all messaging errors."""
+
     pass
 
 
 class ConversationNotFoundError(MessagingError):
     """Raised when a conversation cannot be found."""
+
     pass
 
 
@@ -25,6 +27,7 @@ class ConversationAccessDeniedError(MessagingError):
 
 class MessageNotFoundError(MessagingError):
     """Raised when a message cannot be found."""
+
     pass
 
 
@@ -38,11 +41,13 @@ class MessageAccessDeniedError(MessagingError):
 
 class ParticipantNotFoundError(MessagingError):
     """Raised when a participant cannot be found in a conversation."""
+
     pass
 
 
 class ParticipantExistsError(MessagingError):
     """Raised when trying to add a participant that already exists."""
+
     pass
 
 
@@ -74,6 +79,7 @@ class ContentTooLongError(MessagingError):
 
 class AttachmentError(MessagingError):
     """Raised when there is an issue with an attachment."""
+
     pass
 
 
@@ -105,9 +111,11 @@ class RateLimitError(MessagingError):
 
 class InvalidRecipientError(MessagingError):
     """Raised when recipient is invalid for messaging."""
+
     pass
 
 
 class ConversationTypeError(MessagingError):
     """Raised when operation is invalid for conversation type."""
+
     pass

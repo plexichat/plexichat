@@ -172,13 +172,17 @@ SCHEMA_STATEMENTS = [stmt.strip() for stmt in SCHEMA_SQLITE.split(";") if stmt.s
 def create_tables(db) -> None:
     """
     Create all messaging tables if they don't exist.
-    
+
     Args:
         db: Database instance (must be connected)
     """
     for statement in SCHEMA_STATEMENTS:
         if statement:
-            converted = db.convert_schema(statement) if hasattr(db, 'convert_schema') else statement
+            converted = (
+                db.convert_schema(statement)
+                if hasattr(db, "convert_schema")
+                else statement
+            )
             db.execute(converted)
 
     # Run migrations for columns added after initial schema
@@ -193,31 +197,36 @@ def _run_migrations(db) -> None:
     # Migration: Add webhook_id column to msg_messages (added for webhook support)
     try:
         # Check if column exists first
-        db_type = getattr(db, 'db_type', 'sqlite')
-        if db_type == 'postgres':
+        db_type = getattr(db, "db_type", "sqlite")
+        if db_type == "postgres":
             result = db.fetch_one(
                 """SELECT column_name FROM information_schema.columns 
                    WHERE table_name = 'msg_messages' AND column_name = 'webhook_id'"""
             )
             if not result:
                 db.execute("ALTER TABLE msg_messages ADD COLUMN webhook_id INTEGER")
-                db.execute("CREATE INDEX IF NOT EXISTS idx_msg_messages_webhook ON msg_messages(webhook_id)")
+                db.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_msg_messages_webhook ON msg_messages(webhook_id)"
+                )
         else:
             # SQLite - try to add, ignore if exists
             try:
                 db.execute("ALTER TABLE msg_messages ADD COLUMN webhook_id INTEGER")
             except Exception:
                 pass  # Column already exists
-            db.execute("CREATE INDEX IF NOT EXISTS idx_msg_messages_webhook ON msg_messages(webhook_id)")
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_msg_messages_webhook ON msg_messages(webhook_id)"
+            )
     except Exception as e:
         import utils.logger as logger
+
         logger.debug(f"Migration webhook_id: {e}")
 
 
 def drop_tables(db) -> None:
     """
     Drop all messaging tables. USE WITH CAUTION.
-    
+
     Args:
         db: Database instance (must be connected)
     """
