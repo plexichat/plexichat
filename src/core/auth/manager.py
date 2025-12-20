@@ -6,7 +6,7 @@ Handles user registration, login, sessions, 2FA, bots, and audit logging.
 
 import time
 import json
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, Union
 
 import utils.config as config
 import utils.logger as logger
@@ -14,41 +14,78 @@ import utils.logger as logger
 from src.utils.encryption import generate_snowflake_id
 
 from .models import (
-    User, Session, Bot, Device, AuditEntry, TokenInfo,
-    AuthResult, TwoFactorSetup, TwoFactorStatus, PasswordValidation,
+    User,
+    Session,
+    Bot,
+    Device,
+    AuditEntry,
+    TokenInfo,
+    AuthResult,
+    TwoFactorSetup,
+    TwoFactorStatus,
+    PasswordValidation,
     TwoFactorChallenge,
-    AccountType, AuthStatus, AuditEventType
+    AccountType,
+    AuthStatus,
+    AuditEventType,
 )
 from .exceptions import (
-    AuthError, InvalidCredentialsError, AccountLockedError, EmailNotVerifiedError, TokenExpiredError, TokenInvalidError,
-    TwoFactorInvalidError, PermissionDeniedError,
-    UserExistsError, UserNotFoundError, WeakPasswordError, BotLimitExceededError,
-    InvalidUsernameError, InvalidEmailError
+    AuthError,
+    InvalidCredentialsError,
+    AccountLockedError,
+    EmailNotVerifiedError,
+    TokenExpiredError,
+    TokenInvalidError,
+    TwoFactorInvalidError,
+    PermissionDeniedError,
+    UserExistsError,
+    UserNotFoundError,
+    WeakPasswordError,
+    BotLimitExceededError,
+    InvalidUsernameError,
+    InvalidEmailError,
 )
 from .permissions import (
-    DEFAULT_USER_PERMISSIONS, DEFAULT_BOT_PERMISSIONS, has_permission, validate_permissions, permissions_to_json, permissions_from_json
+    DEFAULT_USER_PERMISSIONS,
+    DEFAULT_BOT_PERMISSIONS,
+    has_permission,
+    validate_permissions,
+    permissions_to_json,
+    permissions_from_json,
 )
 from .schema import create_tables
 from .tokens import (
-    create_session_token, create_bot_token, create_email_token,
-    create_2fa_challenge_token, parse_token, verify_token_hash, hash_token
+    create_session_token,
+    create_bot_token,
+    create_email_token,
+    create_2fa_challenge_token,
+    parse_token,
+    verify_token_hash,
+    hash_token,
 )
 from .passwords import (
-    hash_password, verify_password, validate_password as validate_pwd,
-    validate_username, validate_email
+    hash_password,
+    verify_password,
+    validate_password as validate_pwd,
+    validate_username,
+    validate_email,
 )
 from . import totp as totp_module
 
 # Import cache functions for token caching (graceful degradation if Redis unavailable)
 from src.core.database import (
-    cache_get, cache_set, cache_delete, check_rate_limit, redis_available
+    cache_get,
+    cache_set,
+    cache_delete,
+    check_rate_limit,
+    redis_available,
 )
 
 
 class AuthManager:
     """
     Main authentication manager.
-    
+
     Handles all authentication operations including registration, login,
     session management, 2FA, bot accounts, and audit logging.
     """
@@ -56,7 +93,7 @@ class AuthManager:
     def __init__(self, db, email_sender=None):
         """
         Initialize the auth manager.
-        
+
         Args:
             db: Connected database instance
             email_sender: Optional email sender for verification emails
@@ -113,7 +150,7 @@ class AuthManager:
         success: bool,
         ip_address: Optional[str] = None,
         device_id: Optional[int] = None,
-        details: Optional[Dict] = None
+        details: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Log an audit event."""
         audit_id = generate_snowflake_id()
@@ -123,8 +160,16 @@ class AuthManager:
             """INSERT INTO auth_audit_log 
                (id, user_id, event_type, ip_address, device_id, timestamp, details, success)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (audit_id, user_id, event_type.value, ip_address, device_id,
-             self._current_time(), details_json, 1 if success else 0)
+            (
+                audit_id,
+                user_id,
+                event_type.value,
+                ip_address,
+                device_id,
+                self._current_time(),
+                details_json,
+                1 if success else 0,
+            ),
         )
 
     # === User Registration ===
@@ -135,7 +180,7 @@ class AuthManager:
         email: str,
         password: str,
         device_info: Optional[Dict[str, str]] = None,
-        ip_address: Optional[str] = None
+        ip_address: Optional[str] = None,
     ) -> User:
         """Register a new user account."""
         logger.info(f"Registration attempt for username: {username}")
@@ -154,16 +199,17 @@ class AuthManager:
         # Validate password
         pwd_validation = validate_pwd(password)
         if not pwd_validation.valid:
-            logger.warning(f"Registration failed - weak password: {pwd_validation.issues}")
+            logger.warning(
+                f"Registration failed - weak password: {pwd_validation.issues}"
+            )
             raise WeakPasswordError(
                 f"Password does not meet requirements: {', '.join(pwd_validation.issues)}",
-                pwd_validation.issues
+                pwd_validation.issues,
             )
 
         # Check if username exists
         existing = self.db.fetch_one(
-            "SELECT id FROM auth_users WHERE username = ?",
-            (username,)
+            "SELECT id FROM auth_users WHERE username = ?", (username,)
         )
         if existing:
             logger.warning(f"Registration failed - username exists: {username}")
@@ -171,8 +217,7 @@ class AuthManager:
 
         # Check if email exists
         existing = self.db.fetch_one(
-            "SELECT id FROM auth_users WHERE email = ?",
-            (email,)
+            "SELECT id FROM auth_users WHERE email = ?", (email,)
         )
         if existing:
             logger.warning(f"Registration failed - email exists: {email}")
@@ -184,23 +229,37 @@ class AuthManager:
         password_hash = hash_password(password)
         permissions = permissions_to_json(DEFAULT_USER_PERMISSIONS)
 
-        require_verification = self._get_config("accounts.require_email_verification", False)
+        require_verification = self._get_config(
+            "accounts.require_email_verification", False
+        )
 
         self.db.execute(
             """INSERT INTO auth_users 
                (id, account_type, username, email, password_hash, permissions,
                 created_at, updated_at, email_verified)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (user_id, AccountType.USER.value, username, email, password_hash,
-             permissions, now, now, 0 if require_verification else 1)
+            (
+                user_id,
+                AccountType.USER.value,
+                username,
+                email,
+                password_hash,
+                permissions,
+                now,
+                now,
+                0 if require_verification else 1,
+            ),
         )
 
         logger.info(f"User registered successfully: {username} (ID: {user_id})")
 
         # Log audit
         self._log_audit(
-            AuditEventType.REGISTER, user_id, True, ip_address,
-            details={"username": username, "email": email}
+            AuditEventType.REGISTER,
+            user_id,
+            True,
+            ip_address,
+            details={"username": username, "email": email},
         )
 
         # Track IP if provided
@@ -223,7 +282,7 @@ class AuthManager:
             permissions=DEFAULT_USER_PERMISSIONS.copy(),
             created_at=now,
             updated_at=now,
-            email_verified=not require_verification
+            email_verified=not require_verification,
         )
 
         return user
@@ -238,7 +297,7 @@ class AuthManager:
         token_record = self.db.fetch_one(
             """SELECT id, user_id, token_hash, expires_at, used, token_type
                FROM auth_email_tokens WHERE id = ?""",
-            (parsed["id"],)
+            (parsed["id"],),
         )
 
         if not token_record:
@@ -262,21 +321,18 @@ class AuthManager:
 
         # Mark token as used
         self.db.execute(
-            "UPDATE auth_email_tokens SET used = 1 WHERE id = ?",
-            (parsed["id"],)
+            "UPDATE auth_email_tokens SET used = 1 WHERE id = ?", (parsed["id"],)
         )
 
         # Mark email as verified
         self.db.execute(
             "UPDATE auth_users SET email_verified = 1, updated_at = ? WHERE id = ?",
-            (self._current_time(), token_record["user_id"])
+            (self._current_time(), token_record["user_id"]),
         )
 
         logger.info(f"Email verified for user ID: {token_record['user_id']}")
 
-        self._log_audit(
-            AuditEventType.EMAIL_VERIFIED, token_record["user_id"], True
-        )
+        self._log_audit(AuditEventType.EMAIL_VERIFIED, token_record["user_id"], True)
 
         return True
 
@@ -287,8 +343,7 @@ class AuthManager:
             return False
 
         user = self.db.fetch_one(
-            "SELECT id, email_verified FROM auth_users WHERE email = ?",
-            (email,)
+            "SELECT id, email_verified FROM auth_users WHERE email = ?", (email,)
         )
 
         if not user:
@@ -316,7 +371,7 @@ class AuthManager:
             """INSERT INTO auth_email_tokens
                (id, user_id, token_hash, token_type, created_at, expires_at)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (token_id, user_id, token_hash, "verify_email", now, expires_at)
+            (token_id, user_id, token_hash, "verify_email", now, expires_at),
         )
 
         # Send email
@@ -339,7 +394,7 @@ class AuthManager:
         password: str,
         device_info: Optional[Dict[str, str]] = None,
         ip_address: Optional[str] = None,
-        user_agent: Optional[str] = None
+        user_agent: Optional[str] = None,
     ) -> AuthResult:
         """Authenticate a user."""
         logger.info(f"Login attempt for: {username}")
@@ -351,14 +406,17 @@ class AuthManager:
                       locked_until, failed_login_attempts, last_login_at, totp_enabled,
                       totp_secret_encrypted, backup_codes_hash
                FROM auth_users WHERE username = ? OR email = ?""",
-            (username, username)
+            (username, username),
         )
 
         if not user_row:
             logger.warning(f"Login failed - user not found: {username}")
             self._log_audit(
-                AuditEventType.LOGIN_FAILED, None, False, ip_address,
-                details={"username": username, "reason": "user_not_found"}
+                AuditEventType.LOGIN_FAILED,
+                None,
+                False,
+                ip_address,
+                details={"username": username, "reason": "user_not_found"},
             )
             raise InvalidCredentialsError("Invalid username or password")
 
@@ -371,16 +429,18 @@ class AuthManager:
                 logger.warning(f"Login failed - account locked: {username}")
                 raise AccountLockedError(
                     "Account is temporarily locked due to too many failed attempts",
-                    locked_until
+                    locked_until,
                 )
             else:
                 # Unlock account
                 self.db.execute(
                     """UPDATE auth_users SET account_locked = 0, locked_until = NULL,
                        failed_login_attempts = 0 WHERE id = ?""",
-                    (user_id,)
+                    (user_id,),
                 )
-                self._log_audit(AuditEventType.ACCOUNT_UNLOCKED, user_id, True, ip_address)
+                self._log_audit(
+                    AuditEventType.ACCOUNT_UNLOCKED, user_id, True, ip_address
+                )
 
         # Verify password
         if not verify_password(password, user_row["password_hash"]):
@@ -389,7 +449,9 @@ class AuthManager:
             raise InvalidCredentialsError("Invalid username or password")
 
         # Check email verification
-        require_verification = self._get_config("accounts.require_email_verification", False)
+        require_verification = self._get_config(
+            "accounts.require_email_verification", False
+        )
         if require_verification and not user_row["email_verified"]:
             logger.warning(f"Login failed - email not verified: {username}")
             raise EmailNotVerifiedError("Please verify your email address")
@@ -411,7 +473,7 @@ class AuthManager:
                 status=AuthStatus.TWO_FACTOR_REQUIRED,
                 challenge_token=challenge.token,
                 methods=["totp", "backup_code"],
-                expires_in=300
+                expires_in=300,
             )
 
         # Create session
@@ -421,7 +483,7 @@ class AuthManager:
         self.db.execute(
             """UPDATE auth_users SET failed_login_attempts = 0, last_login_at = ?,
                updated_at = ? WHERE id = ?""",
-            (self._current_time(), self._current_time(), user_id)
+            (self._current_time(), self._current_time(), user_id),
         )
 
         logger.info(f"Login successful: {username}")
@@ -432,10 +494,7 @@ class AuthManager:
         user = self._row_to_user(user_row)
 
         return AuthResult(
-            status=AuthStatus.SUCCESS,
-            token=session.token,
-            user=user,
-            session=session
+            status=AuthStatus.SUCCESS, token=session.token, user=user, session=session
         )
 
     def _handle_failed_login(self, user_id: int, ip_address: Optional[str]) -> None:
@@ -446,30 +505,35 @@ class AuthManager:
         # Increment failed attempts
         self.db.execute(
             "UPDATE auth_users SET failed_login_attempts = failed_login_attempts + 1 WHERE id = ?",
-            (user_id,)
+            (user_id,),
         )
 
         # Check if should lock
         user = self.db.fetch_one(
-            "SELECT failed_login_attempts FROM auth_users WHERE id = ?",
-            (user_id,)
+            "SELECT failed_login_attempts FROM auth_users WHERE id = ?", (user_id,)
         )
 
         if user and user["failed_login_attempts"] >= max_attempts:
             locked_until = self._current_time() + (lockout_minutes * 60)
             self.db.execute(
                 "UPDATE auth_users SET account_locked = 1, locked_until = ? WHERE id = ?",
-                (locked_until, user_id)
+                (locked_until, user_id),
             )
             logger.warning(f"Account locked due to failed attempts: {user_id}")
             self._log_audit(
-                AuditEventType.ACCOUNT_LOCKED, user_id, True, ip_address,
-                details={"reason": "max_failed_attempts"}
+                AuditEventType.ACCOUNT_LOCKED,
+                user_id,
+                True,
+                ip_address,
+                details={"reason": "max_failed_attempts"},
             )
 
         self._log_audit(
-            AuditEventType.LOGIN_FAILED, user_id, False, ip_address,
-            details={"reason": "wrong_password"}
+            AuditEventType.LOGIN_FAILED,
+            user_id,
+            False,
+            ip_address,
+            details={"reason": "wrong_password"},
         )
 
     def complete_2fa(self, challenge_token: str, code: str) -> AuthResult:
@@ -483,7 +547,7 @@ class AuthManager:
             """SELECT id, user_id, token_hash, device_id, ip_address, user_agent,
                       expires_at, used
                FROM auth_2fa_challenges WHERE id = ?""",
-            (parsed["id"],)
+            (parsed["id"],),
         )
 
         if not challenge:
@@ -503,7 +567,7 @@ class AuthManager:
         # Get user's TOTP secret
         user = self.db.fetch_one(
             "SELECT totp_secret_encrypted, backup_codes_hash FROM auth_users WHERE id = ?",
-            (user_id,)
+            (user_id,),
         )
 
         if not user:
@@ -526,12 +590,16 @@ class AuthManager:
                         backup_hashes.pop(index)
                         self.db.execute(
                             "UPDATE auth_users SET backup_codes_hash = ? WHERE id = ?",
-                            (json.dumps(backup_hashes), user_id)
+                            (json.dumps(backup_hashes), user_id),
                         )
-                        logger.info(f"2FA verified with backup code for user: {user_id}")
+                        logger.info(
+                            f"2FA verified with backup code for user: {user_id}"
+                        )
                         self._log_audit(
-                            AuditEventType.TWO_FACTOR_BACKUP_USED, user_id, True,
-                            challenge["ip_address"]
+                            AuditEventType.TWO_FACTOR_BACKUP_USED,
+                            user_id,
+                            True,
+                            challenge["ip_address"],
                         )
                     else:
                         logger.warning(f"2FA failed - invalid code for user: {user_id}")
@@ -543,27 +611,31 @@ class AuthManager:
 
         # Mark challenge as used
         self.db.execute(
-            "UPDATE auth_2fa_challenges SET used = 1 WHERE id = ?",
-            (parsed["id"],)
+            "UPDATE auth_2fa_challenges SET used = 1 WHERE id = ?", (parsed["id"],)
         )
 
         # Create session
         session = self._create_session(
-            user_id, challenge["device_id"],
-            challenge["ip_address"], challenge["user_agent"]
+            user_id,
+            challenge["device_id"],
+            challenge["ip_address"],
+            challenge["user_agent"],
         )
 
         # Update last login
         self.db.execute(
             """UPDATE auth_users SET failed_login_attempts = 0, last_login_at = ?,
                updated_at = ? WHERE id = ?""",
-            (self._current_time(), self._current_time(), user_id)
+            (self._current_time(), self._current_time(), user_id),
         )
 
         self._log_audit(
-            AuditEventType.LOGIN_SUCCESS, user_id, True,
-            challenge["ip_address"], challenge["device_id"],
-            details={"2fa_method": "backup_code" if is_backup else "totp"}
+            AuditEventType.LOGIN_SUCCESS,
+            user_id,
+            True,
+            challenge["ip_address"],
+            challenge["device_id"],
+            details={"2fa_method": "backup_code" if is_backup else "totp"},
         )
 
         user_row = self.db.fetch_one(
@@ -571,15 +643,12 @@ class AuthManager:
                       updated_at, email_verified, account_locked, locked_until,
                       failed_login_attempts, last_login_at, totp_enabled
                FROM auth_users WHERE id = ?""",
-            (user_id,)
+            (user_id,),
         )
         user = self._row_to_user(user_row)
 
         return AuthResult(
-            status=AuthStatus.SUCCESS,
-            token=session.token,
-            user=user,
-            session=session
+            status=AuthStatus.SUCCESS, token=session.token, user=user, session=session
         )
 
     def _create_2fa_challenge(
@@ -587,7 +656,7 @@ class AuthManager:
         user_id: int,
         device_id: Optional[int],
         ip_address: Optional[str],
-        user_agent: Optional[str]
+        user_agent: Optional[str],
     ) -> TwoFactorChallenge:
         """Create a 2FA challenge for login."""
         challenge_id = generate_snowflake_id()
@@ -601,8 +670,16 @@ class AuthManager:
                (id, user_id, token_hash, device_id, ip_address, user_agent,
                 created_at, expires_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (challenge_id, user_id, token_hash, device_id, ip_address,
-             user_agent, now, expires_at)
+            (
+                challenge_id,
+                user_id,
+                token_hash,
+                device_id,
+                ip_address,
+                user_agent,
+                now,
+                expires_at,
+            ),
         )
 
         return TwoFactorChallenge(
@@ -614,7 +691,7 @@ class AuthManager:
             ip_address=ip_address,
             user_agent=user_agent,
             token=full_token,
-            token_hash=token_hash
+            token_hash=token_hash,
         )
 
     # === Session Management ===
@@ -624,7 +701,7 @@ class AuthManager:
         user_id: int,
         device_id: Optional[int],
         ip_address: Optional[str],
-        user_agent: Optional[str]
+        user_agent: Optional[str],
     ) -> Session:
         """Create a new session."""
         # Check session limit
@@ -632,7 +709,7 @@ class AuthManager:
         active_count = self.db.fetch_one(
             """SELECT COUNT(*) as count FROM auth_sessions 
                WHERE user_id = ? AND revoked = 0 AND expires_at > ?""",
-            (user_id, self._current_time())
+            (user_id, self._current_time()),
         )
 
         if active_count and active_count["count"] >= max_sessions:
@@ -641,12 +718,11 @@ class AuthManager:
                 """SELECT id FROM auth_sessions 
                    WHERE user_id = ? AND revoked = 0
                    ORDER BY created_at ASC LIMIT 1""",
-                (user_id,)
+                (user_id,),
             )
             if oldest:
                 self.db.execute(
-                    "UPDATE auth_sessions SET revoked = 1 WHERE id = ?",
-                    (oldest["id"],)
+                    "UPDATE auth_sessions SET revoked = 1 WHERE id = ?", (oldest["id"],)
                 )
                 logger.info(f"Revoked oldest session due to limit: {oldest['id']}")
 
@@ -663,8 +739,17 @@ class AuthManager:
                (id, user_id, token_hash, device_id, ip_address, user_agent,
                 created_at, expires_at, last_activity)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (session_id, user_id, token_hash, device_id, ip_address,
-             user_agent, now, expires_at, now)
+            (
+                session_id,
+                user_id,
+                token_hash,
+                device_id,
+                ip_address,
+                user_agent,
+                now,
+                expires_at,
+                now,
+            ),
         )
 
         logger.debug(f"Session created: {session_id} for user: {user_id}")
@@ -679,13 +764,18 @@ class AuthManager:
             expires_at=expires_at,
             last_activity=now,
             token=full_token,
-            token_hash=token_hash
+            token_hash=token_hash,
         )
 
-    def verify_token(self, token: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> TokenInfo:
+    def verify_token(
+        self,
+        token: str,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> TokenInfo:
         """
         Verify a session or bot token.
-        
+
         Features:
         - Redis caching for validated tokens (30s TTL) - skips DB on cache hit
         - Rate limiting on verification attempts per IP
@@ -701,7 +791,9 @@ class AuthManager:
             max_attempts = self._get_config("security.token_verify_rate_limit", 100)
             allowed, remaining = check_rate_limit(rate_limit_key, max_attempts, 60)
             if not allowed:
-                logger.warning(f"Token verification rate limit exceeded for IP: {ip_address}")
+                logger.warning(
+                    f"Token verification rate limit exceeded for IP: {ip_address}"
+                )
                 raise TokenInvalidError("Too many verification attempts")
 
         # Generate cache key from token hash (not the token itself for security)
@@ -713,13 +805,23 @@ class AuthManager:
             if cached:
                 # Validate IP binding if enabled
                 if self._get_config("security.token_binding", False):
-                    if ip_address and cached.get("bound_ip") and cached["bound_ip"] != ip_address:
-                        logger.warning(f"Token IP mismatch: expected {cached['bound_ip']}, got {ip_address}")
+                    if (
+                        ip_address
+                        and cached.get("bound_ip")
+                        and cached["bound_ip"] != ip_address
+                    ):
+                        logger.warning(
+                            f"Token IP mismatch: expected {cached['bound_ip']}, got {ip_address}"
+                        )
                         cache_delete(cache_key)
                         raise TokenInvalidError("Token bound to different IP")
-                    
-                    if user_agent and cached.get("bound_ua") and cached["bound_ua"] != user_agent:
-                        logger.warning(f"Token UA mismatch")
+
+                    if (
+                        user_agent
+                        and cached.get("bound_ua")
+                        and cached["bound_ua"] != user_agent
+                    ):
+                        logger.warning("Token UA mismatch")
                         cache_delete(cache_key)
                         raise TokenInvalidError("Token bound to different browser")
 
@@ -735,7 +837,7 @@ class AuthManager:
                     expires_at=cached.get("expires_at"),
                     username=cached["username"],
                     account_type=AccountType(cached["account_type"]),
-                    avatar_url=cached.get("avatar_url")
+                    avatar_url=cached.get("avatar_url"),
                 )
 
         # Cache miss or Redis unavailable - verify from DB
@@ -775,9 +877,9 @@ class AuthManager:
 
     def _verify_session_token(
         self,
-        parsed: dict,
+        parsed: Dict[str, Any],
         ip_address: Optional[str],
-        user_agent: Optional[str] = None
+        user_agent: Optional[str] = None,
     ) -> TokenInfo:
         """Verify a user session token."""
         session = self.db.fetch_one(
@@ -787,7 +889,7 @@ class AuthManager:
                FROM auth_sessions s
                JOIN auth_users u ON s.user_id = u.id
                WHERE s.id = ?""",
-            (parsed["id"],)
+            (parsed["id"],),
         )
 
         if not session:
@@ -806,12 +908,22 @@ class AuthManager:
         # Validate token binding if enabled
         if self._get_config("security.token_binding", False):
             # IP Binding
-            if ip_address and session["ip_address"] and session["ip_address"] != ip_address:
-                logger.warning(f"Session IP mismatch for {session['id']}: expected {session['ip_address']}, got {ip_address}")
+            if (
+                ip_address
+                and session["ip_address"]
+                and session["ip_address"] != ip_address
+            ):
+                logger.warning(
+                    f"Session IP mismatch for {session['id']}: expected {session['ip_address']}, got {ip_address}"
+                )
                 raise TokenInvalidError("Session bound to different IP")
-            
+
             # User-Agent Binding (more sensitive, might cause issues with some browsers/updates)
-            if user_agent and session["user_agent"] and session["user_agent"] != user_agent:
+            if (
+                user_agent
+                and session["user_agent"]
+                and session["user_agent"] != user_agent
+            ):
                 # We check if it's a major mismatch
                 logger.warning(f"Session User-Agent mismatch for {session['id']}")
                 raise TokenInvalidError("Session bound to different browser")
@@ -827,12 +939,12 @@ class AuthManager:
                 new_expires = now + (expire_hours * 3600)
                 self.db.execute(
                     "UPDATE auth_sessions SET last_activity = ?, expires_at = ? WHERE id = ?",
-                    (now, new_expires, parsed["id"])
+                    (now, new_expires, parsed["id"]),
                 )
             else:
                 self.db.execute(
                     "UPDATE auth_sessions SET last_activity = ? WHERE id = ?",
-                    (now, parsed["id"])
+                    (now, parsed["id"]),
                 )
 
         # Track IP if provided
@@ -850,10 +962,12 @@ class AuthManager:
             expires_at=session["expires_at"],
             username=session["username"],
             account_type=AccountType(session["account_type"]),
-            avatar_url=session["avatar_url"]
+            avatar_url=session["avatar_url"],
         )
 
-    def _verify_bot_token(self, parsed: dict, ip_address: Optional[str]) -> TokenInfo:
+    def _verify_bot_token(
+        self, parsed: Dict[str, Any], ip_address: Optional[str]
+    ) -> TokenInfo:
         """Verify a bot token."""
         bot = self.db.fetch_one(
             """SELECT b.id, b.owner_id, b.username, b.token_hash, b.permissions,
@@ -861,7 +975,7 @@ class AuthManager:
                FROM auth_bots b
                JOIN auth_users u ON b.owner_id = u.id
                WHERE b.id = ?""",
-            (parsed["id"],)
+            (parsed["id"],),
         )
 
         if not bot:
@@ -884,7 +998,7 @@ class AuthManager:
             expires_at=None,
             username=bot["username"],
             account_type=AccountType.BOT,
-            avatar_url=bot["owner_avatar_url"]
+            avatar_url=bot["owner_avatar_url"],
         )
 
     def refresh_session(self, token: str) -> Optional[str]:
@@ -897,7 +1011,7 @@ class AuthManager:
             # Get session
             session = self.db.fetch_one(
                 "SELECT device_id, ip_address, user_agent FROM auth_sessions WHERE id = ?",
-                (token_info.session_id,)
+                (token_info.session_id,),
             )
 
             if not session:
@@ -906,7 +1020,7 @@ class AuthManager:
             # Revoke old session
             self.db.execute(
                 "UPDATE auth_sessions SET revoked = 1 WHERE id = ?",
-                (token_info.session_id,)
+                (token_info.session_id,),
             )
 
             # Create new session
@@ -914,7 +1028,7 @@ class AuthManager:
                 token_info.user_id,
                 session["device_id"],
                 session["ip_address"],
-                session["user_agent"]
+                session["user_agent"],
             )
 
             logger.info(f"Session refreshed for user: {token_info.user_id}")
@@ -931,7 +1045,7 @@ class AuthManager:
 
         session = self.db.fetch_one(
             "SELECT user_id, token_hash FROM auth_sessions WHERE id = ?",
-            (parsed["id"],)
+            (parsed["id"],),
         )
 
         if not session:
@@ -941,8 +1055,7 @@ class AuthManager:
             return False
 
         self.db.execute(
-            "UPDATE auth_sessions SET revoked = 1 WHERE id = ?",
-            (parsed["id"],)
+            "UPDATE auth_sessions SET revoked = 1 WHERE id = ?", (parsed["id"],)
         )
 
         # Invalidate token cache
@@ -966,19 +1079,21 @@ class AuthManager:
             result = self.db.execute(
                 """UPDATE auth_sessions SET revoked = 1 
                    WHERE user_id = ? AND revoked = 0 AND id != ?""",
-                (user_id, except_session_id)
+                (user_id, except_session_id),
             )
         else:
             result = self.db.execute(
                 "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ? AND revoked = 0",
-                (user_id,)
+                (user_id,),
             )
 
-        count = result.rowcount if hasattr(result, 'rowcount') else 0
+        count = result.rowcount if hasattr(result, "rowcount") else 0
         logger.info(f"Logged out {count} sessions for user: {user_id}")
         self._log_audit(
-            AuditEventType.LOGOUT_ALL, user_id, True,
-            details={"count": count, "except_current": except_session_id is not None}
+            AuditEventType.LOGOUT_ALL,
+            user_id,
+            True,
+            details={"count": count, "except_current": except_session_id is not None},
         )
 
         return count
@@ -991,7 +1106,7 @@ class AuthManager:
                FROM auth_sessions
                WHERE user_id = ? AND revoked = 0 AND expires_at > ?
                ORDER BY last_activity DESC""",
-            (user_id, self._current_time())
+            (user_id, self._current_time()),
         )
 
         return [
@@ -1003,7 +1118,7 @@ class AuthManager:
                 user_agent=row["user_agent"],
                 created_at=row["created_at"],
                 expires_at=row["expires_at"],
-                last_activity=row["last_activity"]
+                last_activity=row["last_activity"],
             )
             for row in rows
         ]
@@ -1011,22 +1126,22 @@ class AuthManager:
     def revoke_session(self, user_id: int, session_id: int) -> bool:
         """Revoke a specific session."""
         session = self.db.fetch_one(
-            "SELECT user_id FROM auth_sessions WHERE id = ?",
-            (session_id,)
+            "SELECT user_id FROM auth_sessions WHERE id = ?", (session_id,)
         )
 
         if not session or session["user_id"] != user_id:
             return False
 
         self.db.execute(
-            "UPDATE auth_sessions SET revoked = 1 WHERE id = ?",
-            (session_id,)
+            "UPDATE auth_sessions SET revoked = 1 WHERE id = ?", (session_id,)
         )
 
         logger.info(f"Session revoked: {session_id}")
         self._log_audit(
-            AuditEventType.SESSION_REVOKED, user_id, True,
-            details={"session_id": session_id}
+            AuditEventType.SESSION_REVOKED,
+            user_id,
+            True,
+            details={"session_id": session_id},
         )
 
         return True
@@ -1036,8 +1151,7 @@ class AuthManager:
     def setup_2fa(self, user_id: int) -> TwoFactorSetup:
         """Begin 2FA setup."""
         user = self.db.fetch_one(
-            "SELECT username, totp_enabled FROM auth_users WHERE id = ?",
-            (user_id,)
+            "SELECT username, totp_enabled FROM auth_users WHERE id = ?", (user_id,)
         )
 
         if not user:
@@ -1057,7 +1171,12 @@ class AuthManager:
         self.db.execute(
             """UPDATE auth_users SET totp_secret_encrypted = ?, backup_codes_hash = ?,
                updated_at = ? WHERE id = ?""",
-            (encrypted_secret, json.dumps(backup_hashes), self._current_time(), user_id)
+            (
+                encrypted_secret,
+                json.dumps(backup_hashes),
+                self._current_time(),
+                user_id,
+            ),
         )
 
         # Generate QR URI
@@ -1071,14 +1190,14 @@ class AuthManager:
             qr_uri=qr_uri,
             backup_codes=backup_codes,
             issuer=issuer,
-            username=user["username"]
+            username=user["username"],
         )
 
     def confirm_2fa(self, user_id: int, code: str) -> bool:
         """Confirm 2FA setup with a valid code."""
         user = self.db.fetch_one(
             "SELECT totp_secret_encrypted, totp_enabled FROM auth_users WHERE id = ?",
-            (user_id,)
+            (user_id,),
         )
 
         if not user:
@@ -1098,7 +1217,7 @@ class AuthManager:
         # Enable 2FA
         self.db.execute(
             "UPDATE auth_users SET totp_enabled = 1, updated_at = ? WHERE id = ?",
-            (self._current_time(), user_id)
+            (self._current_time(), user_id),
         )
 
         logger.info(f"2FA enabled for user: {user_id}")
@@ -1111,7 +1230,7 @@ class AuthManager:
         user = self.db.fetch_one(
             """SELECT password_hash, totp_secret_encrypted, totp_enabled
                FROM auth_users WHERE id = ?""",
-            (user_id,)
+            (user_id,),
         )
 
         if not user:
@@ -1133,7 +1252,7 @@ class AuthManager:
         self.db.execute(
             """UPDATE auth_users SET totp_enabled = 0, totp_secret_encrypted = NULL,
                backup_codes_hash = NULL, updated_at = ? WHERE id = ?""",
-            (self._current_time(), user_id)
+            (self._current_time(), user_id),
         )
 
         logger.info(f"2FA disabled for user: {user_id}")
@@ -1145,7 +1264,7 @@ class AuthManager:
         """Regenerate backup codes."""
         user = self.db.fetch_one(
             "SELECT password_hash, totp_enabled FROM auth_users WHERE id = ?",
-            (user_id,)
+            (user_id,),
         )
 
         if not user:
@@ -1164,7 +1283,7 @@ class AuthManager:
 
         self.db.execute(
             "UPDATE auth_users SET backup_codes_hash = ?, updated_at = ? WHERE id = ?",
-            (json.dumps(backup_hashes), self._current_time(), user_id)
+            (json.dumps(backup_hashes), self._current_time(), user_id),
         )
 
         logger.info(f"Backup codes regenerated for user: {user_id}")
@@ -1176,7 +1295,7 @@ class AuthManager:
         """Get 2FA status for a user."""
         user = self.db.fetch_one(
             "SELECT totp_enabled, backup_codes_hash FROM auth_users WHERE id = ?",
-            (user_id,)
+            (user_id,),
         )
 
         if not user:
@@ -1188,17 +1307,17 @@ class AuthManager:
             backup_count = len(backup_hashes)
 
         return TwoFactorStatus(
-            enabled=bool(user["totp_enabled"]),
-            backup_codes_remaining=backup_count
+            enabled=bool(user["totp_enabled"]), backup_codes_remaining=backup_count
         )
 
     # === Password Management ===
 
-    def change_password(self, user_id: int, old_password: str, new_password: str) -> bool:
+    def change_password(
+        self, user_id: int, old_password: str, new_password: str
+    ) -> bool:
         """Change user password."""
         user = self.db.fetch_one(
-            "SELECT password_hash FROM auth_users WHERE id = ?",
-            (user_id,)
+            "SELECT password_hash FROM auth_users WHERE id = ?", (user_id,)
         )
 
         if not user:
@@ -1213,14 +1332,14 @@ class AuthManager:
         if not validation.valid:
             raise WeakPasswordError(
                 f"New password does not meet requirements: {', '.join(validation.issues)}",
-                validation.issues
+                validation.issues,
             )
 
         # Update password
         new_hash = hash_password(new_password)
         self.db.execute(
             "UPDATE auth_users SET password_hash = ?, updated_at = ? WHERE id = ?",
-            (new_hash, self._current_time(), user_id)
+            (new_hash, self._current_time(), user_id),
         )
 
         logger.info(f"Password changed for user: {user_id}")
@@ -1234,10 +1353,7 @@ class AuthManager:
             logger.warning("Password reset requested but email not configured")
             return False
 
-        user = self.db.fetch_one(
-            "SELECT id FROM auth_users WHERE email = ?",
-            (email,)
-        )
+        user = self.db.fetch_one("SELECT id FROM auth_users WHERE email = ?", (email,))
 
         if not user:
             # Don't reveal if email exists
@@ -1254,7 +1370,7 @@ class AuthManager:
             """INSERT INTO auth_email_tokens
                (id, user_id, token_hash, token_type, created_at, expires_at)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (token_id, user["id"], token_hash, "reset_password", now, expires_at)
+            (token_id, user["id"], token_hash, "reset_password", now, expires_at),
         )
 
         # Send email
@@ -1265,8 +1381,10 @@ class AuthManager:
             self.email_sender.send(email, subject, body)
             logger.info(f"Password reset email sent to: {email}")
             self._log_audit(
-                AuditEventType.PASSWORD_RESET_REQUEST, user["id"], True,
-                details={"email": email}
+                AuditEventType.PASSWORD_RESET_REQUEST,
+                user["id"],
+                True,
+                details={"email": email},
             )
             return True
         except Exception as e:
@@ -1282,7 +1400,7 @@ class AuthManager:
         token_record = self.db.fetch_one(
             """SELECT id, user_id, token_hash, expires_at, used, token_type
                FROM auth_email_tokens WHERE id = ?""",
-            (parsed["id"],)
+            (parsed["id"],),
         )
 
         if not token_record:
@@ -1305,20 +1423,19 @@ class AuthManager:
         if not validation.valid:
             raise WeakPasswordError(
                 f"Password does not meet requirements: {', '.join(validation.issues)}",
-                validation.issues
+                validation.issues,
             )
 
         # Mark token as used
         self.db.execute(
-            "UPDATE auth_email_tokens SET used = 1 WHERE id = ?",
-            (parsed["id"],)
+            "UPDATE auth_email_tokens SET used = 1 WHERE id = ?", (parsed["id"],)
         )
 
         # Update password
         new_hash = hash_password(new_password)
         self.db.execute(
             "UPDATE auth_users SET password_hash = ?, updated_at = ? WHERE id = ?",
-            (new_hash, self._current_time(), token_record["user_id"])
+            (new_hash, self._current_time(), token_record["user_id"]),
         )
 
         logger.info(f"Password reset for user: {token_record['user_id']}")
@@ -1337,7 +1454,7 @@ class AuthManager:
         owner_id: int,
         username: str,
         display_name: str,
-        permissions: Optional[Dict[str, bool]] = None
+        permissions: Optional[Dict[str, bool]] = None,
     ) -> Bot:
         """Create a bot account."""
         logger.info(f"Bot creation attempt by user: {owner_id}")
@@ -1345,7 +1462,7 @@ class AuthManager:
         # Check owner exists and has permission
         owner = self.db.fetch_one(
             "SELECT id, totp_enabled, permissions FROM auth_users WHERE id = ?",
-            (owner_id,)
+            (owner_id,),
         )
 
         if not owner:
@@ -1363,8 +1480,7 @@ class AuthManager:
         # Check bot limit
         max_bots = self._get_config("accounts.max_bots_per_user", 5)
         bot_count = self.db.fetch_one(
-            "SELECT COUNT(*) as count FROM auth_bots WHERE owner_id = ?",
-            (owner_id,)
+            "SELECT COUNT(*) as count FROM auth_bots WHERE owner_id = ?", (owner_id,)
         )
 
         if bot_count and bot_count["count"] >= max_bots:
@@ -1373,19 +1489,19 @@ class AuthManager:
         # Validate username
         valid, issues = validate_username(username)
         if not valid:
-            raise InvalidUsernameError(f"Invalid bot username: {', '.join(issues)}", issues)
+            raise InvalidUsernameError(
+                f"Invalid bot username: {', '.join(issues)}", issues
+            )
 
         # Check username not taken
         existing = self.db.fetch_one(
-            "SELECT id FROM auth_users WHERE username = ?",
-            (username,)
+            "SELECT id FROM auth_users WHERE username = ?", (username,)
         )
         if existing:
             raise UserExistsError("Username already taken", "username")
 
         existing = self.db.fetch_one(
-            "SELECT id FROM auth_bots WHERE username = ?",
-            (username,)
+            "SELECT id FROM auth_bots WHERE username = ?", (username,)
         )
         if existing:
             raise UserExistsError("Username already taken by another bot", "username")
@@ -1397,7 +1513,9 @@ class AuthManager:
             # Validate permissions
             valid, issues = validate_permissions(permissions, is_bot=True)
             if not valid:
-                raise PermissionDeniedError(f"Invalid bot permissions: {', '.join(issues)}")
+                raise PermissionDeniedError(
+                    f"Invalid bot permissions: {', '.join(issues)}"
+                )
             bot_perms = permissions
 
         # Create bot
@@ -1411,14 +1529,23 @@ class AuthManager:
             """INSERT INTO auth_bots
                (id, owner_id, username, display_name, token_hash, permissions, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (bot_id, owner_id, username, display_name, token_hash,
-             permissions_to_json(bot_perms), now)
+            (
+                bot_id,
+                owner_id,
+                username,
+                display_name,
+                token_hash,
+                permissions_to_json(bot_perms),
+                now,
+            ),
         )
 
         logger.info(f"Bot created: {username} (ID: {bot_id}) by user: {owner_id}")
         self._log_audit(
-            AuditEventType.BOT_CREATED, owner_id, True,
-            details={"bot_id": bot_id, "bot_username": username}
+            AuditEventType.BOT_CREATED,
+            owner_id,
+            True,
+            details={"bot_id": bot_id, "bot_username": username},
         )
 
         return Bot(
@@ -1428,7 +1555,7 @@ class AuthManager:
             display_name=display_name,
             permissions=bot_perms,
             created_at=now,
-            token=full_token
+            token=full_token,
         )
 
     def get_bot(self, bot_id: int) -> Optional[Bot]:
@@ -1437,7 +1564,7 @@ class AuthManager:
             """SELECT id, owner_id, username, display_name, permissions,
                       created_at, disabled
                FROM auth_bots WHERE id = ?""",
-            (bot_id,)
+            (bot_id,),
         )
 
         if not row:
@@ -1450,7 +1577,7 @@ class AuthManager:
             display_name=row["display_name"],
             permissions=permissions_from_json(row["permissions"]),
             created_at=row["created_at"],
-            disabled=bool(row["disabled"])
+            disabled=bool(row["disabled"]),
         )
 
     def get_user_bots(self, owner_id: int) -> List[Bot]:
@@ -1460,7 +1587,7 @@ class AuthManager:
                       created_at, disabled
                FROM auth_bots WHERE owner_id = ?
                ORDER BY created_at DESC""",
-            (owner_id,)
+            (owner_id,),
         )
 
         return [
@@ -1471,7 +1598,7 @@ class AuthManager:
                 display_name=row["display_name"],
                 permissions=permissions_from_json(row["permissions"]),
                 created_at=row["created_at"],
-                disabled=bool(row["disabled"])
+                disabled=bool(row["disabled"]),
             )
             for row in rows
         ]
@@ -1479,8 +1606,7 @@ class AuthManager:
     def regenerate_bot_token(self, owner_id: int, bot_id: int) -> str:
         """Regenerate bot token."""
         bot = self.db.fetch_one(
-            "SELECT owner_id FROM auth_bots WHERE id = ?",
-            (bot_id,)
+            "SELECT owner_id FROM auth_bots WHERE id = ?", (bot_id,)
         )
 
         if not bot:
@@ -1493,28 +1619,26 @@ class AuthManager:
         full_token, token_hash = create_bot_token(bot_id, token_bytes)
 
         self.db.execute(
-            "UPDATE auth_bots SET token_hash = ? WHERE id = ?",
-            (token_hash, bot_id)
+            "UPDATE auth_bots SET token_hash = ? WHERE id = ?", (token_hash, bot_id)
         )
 
         logger.info(f"Bot token regenerated: {bot_id}")
         self._log_audit(
-            AuditEventType.BOT_TOKEN_REGENERATED, owner_id, True,
-            details={"bot_id": bot_id}
+            AuditEventType.BOT_TOKEN_REGENERATED,
+            owner_id,
+            True,
+            details={"bot_id": bot_id},
         )
 
         return full_token
 
     def update_bot_permissions(
-        self,
-        owner_id: int,
-        bot_id: int,
-        permissions: Dict[str, bool]
+        self, owner_id: int, bot_id: int, permissions: Dict[str, bool]
     ) -> Bot:
         """Update bot permissions."""
         bot = self.db.fetch_one(
             "SELECT owner_id, username, display_name, created_at, disabled FROM auth_bots WHERE id = ?",
-            (bot_id,)
+            (bot_id,),
         )
 
         if not bot:
@@ -1530,7 +1654,7 @@ class AuthManager:
 
         self.db.execute(
             "UPDATE auth_bots SET permissions = ? WHERE id = ?",
-            (permissions_to_json(permissions), bot_id)
+            (permissions_to_json(permissions), bot_id),
         )
 
         logger.info(f"Bot permissions updated: {bot_id}")
@@ -1542,14 +1666,13 @@ class AuthManager:
             display_name=bot["display_name"],
             permissions=permissions,
             created_at=bot["created_at"],
-            disabled=bool(bot["disabled"])
+            disabled=bool(bot["disabled"]),
         )
 
     def disable_bot(self, owner_id: int, bot_id: int) -> bool:
         """Disable a bot."""
         bot = self.db.fetch_one(
-            "SELECT owner_id FROM auth_bots WHERE id = ?",
-            (bot_id,)
+            "SELECT owner_id FROM auth_bots WHERE id = ?", (bot_id,)
         )
 
         if not bot:
@@ -1558,10 +1681,7 @@ class AuthManager:
         if bot["owner_id"] != owner_id:
             raise PermissionDeniedError("You do not own this bot")
 
-        self.db.execute(
-            "UPDATE auth_bots SET disabled = 1 WHERE id = ?",
-            (bot_id,)
-        )
+        self.db.execute("UPDATE auth_bots SET disabled = 1 WHERE id = ?", (bot_id,))
 
         logger.info(f"Bot disabled: {bot_id}")
         return True
@@ -1569,8 +1689,7 @@ class AuthManager:
     def enable_bot(self, owner_id: int, bot_id: int) -> bool:
         """Enable a bot."""
         bot = self.db.fetch_one(
-            "SELECT owner_id FROM auth_bots WHERE id = ?",
-            (bot_id,)
+            "SELECT owner_id FROM auth_bots WHERE id = ?", (bot_id,)
         )
 
         if not bot:
@@ -1579,10 +1698,7 @@ class AuthManager:
         if bot["owner_id"] != owner_id:
             raise PermissionDeniedError("You do not own this bot")
 
-        self.db.execute(
-            "UPDATE auth_bots SET disabled = 0 WHERE id = ?",
-            (bot_id,)
-        )
+        self.db.execute("UPDATE auth_bots SET disabled = 0 WHERE id = ?", (bot_id,))
 
         logger.info(f"Bot enabled: {bot_id}")
         return True
@@ -1590,8 +1706,7 @@ class AuthManager:
     def delete_bot(self, owner_id: int, bot_id: int) -> bool:
         """Delete a bot."""
         bot = self.db.fetch_one(
-            "SELECT owner_id, username FROM auth_bots WHERE id = ?",
-            (bot_id,)
+            "SELECT owner_id, username FROM auth_bots WHERE id = ?", (bot_id,)
         )
 
         if not bot:
@@ -1600,15 +1715,14 @@ class AuthManager:
         if bot["owner_id"] != owner_id:
             raise PermissionDeniedError("You do not own this bot")
 
-        self.db.execute(
-            "DELETE FROM auth_bots WHERE id = ?",
-            (bot_id,)
-        )
+        self.db.execute("DELETE FROM auth_bots WHERE id = ?", (bot_id,))
 
         logger.info(f"Bot deleted: {bot_id}")
         self._log_audit(
-            AuditEventType.BOT_DELETED, owner_id, True,
-            details={"bot_id": bot_id, "bot_username": bot["username"]}
+            AuditEventType.BOT_DELETED,
+            owner_id,
+            True,
+            details={"bot_id": bot_id, "bot_username": bot["username"]},
         )
 
         return True
@@ -1623,7 +1737,7 @@ class AuthManager:
 
         existing = self.db.fetch_one(
             "SELECT id FROM auth_devices WHERE user_id = ? AND fingerprint = ?",
-            (user_id, fingerprint)
+            (user_id, fingerprint),
         )
 
         now = self._current_time()
@@ -1631,7 +1745,7 @@ class AuthManager:
         if existing:
             self.db.execute(
                 "UPDATE auth_devices SET last_seen_at = ? WHERE id = ?",
-                (now, existing["id"])
+                (now, existing["id"]),
             )
             return existing["id"]
         else:
@@ -1640,9 +1754,15 @@ class AuthManager:
                 """INSERT INTO auth_devices
                    (id, user_id, fingerprint, name, device_type, first_seen_at, last_seen_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (device_id, user_id, fingerprint,
-                 device_info.get("name"), device_info.get("type"),
-                 now, now)
+                (
+                    device_id,
+                    user_id,
+                    fingerprint,
+                    device_info.get("name"),
+                    device_info.get("type"),
+                    now,
+                    now,
+                ),
             )
             logger.debug(f"New device tracked for user {user_id}: {device_id}")
             return device_id
@@ -1654,7 +1774,7 @@ class AuthManager:
 
         existing = self.db.fetch_one(
             "SELECT id FROM auth_known_ips WHERE user_id = ? AND ip_address = ?",
-            (user_id, ip_address)
+            (user_id, ip_address),
         )
 
         now = self._current_time()
@@ -1662,7 +1782,7 @@ class AuthManager:
         if existing:
             self.db.execute(
                 "UPDATE auth_known_ips SET last_seen_at = ? WHERE id = ?",
-                (now, existing["id"])
+                (now, existing["id"]),
             )
         else:
             ip_id = generate_snowflake_id()
@@ -1670,7 +1790,7 @@ class AuthManager:
                 """INSERT INTO auth_known_ips
                    (id, user_id, ip_address, first_seen_at, last_seen_at)
                    VALUES (?, ?, ?, ?, ?)""",
-                (ip_id, user_id, ip_address, now, now)
+                (ip_id, user_id, ip_address, now, now),
             )
             logger.debug(f"New IP tracked for user {user_id}: {ip_address}")
 
@@ -1681,7 +1801,7 @@ class AuthManager:
                       first_seen_at, last_seen_at
                FROM auth_devices WHERE user_id = ?
                ORDER BY last_seen_at DESC""",
-            (user_id,)
+            (user_id,),
         )
 
         return [
@@ -1692,7 +1812,7 @@ class AuthManager:
                 name=row["name"],
                 device_type=row["device_type"],
                 first_seen_at=row["first_seen_at"],
-                last_seen_at=row["last_seen_at"]
+                last_seen_at=row["last_seen_at"],
             )
             for row in rows
         ]
@@ -1700,16 +1820,14 @@ class AuthManager:
     def rename_device(self, user_id: int, device_id: int, name: str) -> bool:
         """Rename a device."""
         device = self.db.fetch_one(
-            "SELECT user_id FROM auth_devices WHERE id = ?",
-            (device_id,)
+            "SELECT user_id FROM auth_devices WHERE id = ?", (device_id,)
         )
 
         if not device or device["user_id"] != user_id:
             return False
 
         self.db.execute(
-            "UPDATE auth_devices SET name = ? WHERE id = ?",
-            (name, device_id)
+            "UPDATE auth_devices SET name = ? WHERE id = ?", (name, device_id)
         )
 
         return True
@@ -1717,8 +1835,7 @@ class AuthManager:
     def revoke_device(self, user_id: int, device_id: int) -> bool:
         """Revoke a device and all its sessions."""
         device = self.db.fetch_one(
-            "SELECT user_id FROM auth_devices WHERE id = ?",
-            (device_id,)
+            "SELECT user_id FROM auth_devices WHERE id = ?", (device_id,)
         )
 
         if not device or device["user_id"] != user_id:
@@ -1726,20 +1843,18 @@ class AuthManager:
 
         # Revoke all sessions for this device
         self.db.execute(
-            "UPDATE auth_sessions SET revoked = 1 WHERE device_id = ?",
-            (device_id,)
+            "UPDATE auth_sessions SET revoked = 1 WHERE device_id = ?", (device_id,)
         )
 
         # Delete device
-        self.db.execute(
-            "DELETE FROM auth_devices WHERE id = ?",
-            (device_id,)
-        )
+        self.db.execute("DELETE FROM auth_devices WHERE id = ?", (device_id,))
 
         logger.info(f"Device revoked: {device_id}")
         self._log_audit(
-            AuditEventType.DEVICE_REVOKED, user_id, True,
-            details={"device_id": device_id}
+            AuditEventType.DEVICE_REVOKED,
+            user_id,
+            True,
+            details={"device_id": device_id},
         )
 
         return True
@@ -1754,8 +1869,13 @@ class AuthManager:
                FROM auth_audit_log
                WHERE user_id = ? AND event_type IN (?, ?, ?)
                ORDER BY timestamp DESC LIMIT ?""",
-            (user_id, AuditEventType.LOGIN_SUCCESS.value,
-             AuditEventType.LOGIN_FAILED.value, AuditEventType.LOGOUT.value, limit)
+            (
+                user_id,
+                AuditEventType.LOGIN_SUCCESS.value,
+                AuditEventType.LOGIN_FAILED.value,
+                AuditEventType.LOGOUT.value,
+                limit,
+            ),
         )
 
         return [self._row_to_audit_entry(row) for row in rows]
@@ -1768,12 +1888,12 @@ class AuthManager:
                FROM auth_audit_log
                WHERE user_id = ?
                ORDER BY timestamp DESC LIMIT ?""",
-            (user_id, limit)
+            (user_id, limit),
         )
 
         return [self._row_to_audit_entry(row) for row in rows]
 
-    def _row_to_audit_entry(self, row) -> AuditEntry:
+    def _row_to_audit_entry(self, row: Union[Any, Dict[str, Any]]) -> AuditEntry:
         """Convert database row to AuditEntry."""
         details = None
         if row["details"]:
@@ -1790,7 +1910,7 @@ class AuthManager:
             device_id=row["device_id"],
             timestamp=row["timestamp"],
             details=details,
-            success=bool(row["success"])
+            success=bool(row["success"]),
         )
 
     # === Utility ===
@@ -1807,7 +1927,7 @@ class AuthManager:
                       updated_at, email_verified, account_locked, locked_until,
                       failed_login_attempts, last_login_at, totp_enabled
                FROM auth_users WHERE id = ?""",
-            (user_id,)
+            (user_id,),
         )
 
         if not row:
@@ -1824,7 +1944,7 @@ class AuthManager:
                       updated_at, email_verified, account_locked, locked_until,
                       failed_login_attempts, last_login_at, totp_enabled
                FROM auth_users WHERE username = ?""",
-            (username,)
+            (username,),
         )
 
         if not row:
@@ -1835,10 +1955,10 @@ class AuthManager:
     def get_users_bulk(self, user_ids: List[int]) -> Dict[int, User]:
         """
         Get multiple users by ID in a single query (optimized for bulk lookups).
-        
+
         Args:
             user_ids: List of user IDs to fetch
-            
+
         Returns:
             Dict mapping user_id to User object
         """
@@ -1864,7 +1984,7 @@ class AuthManager:
                           updated_at, email_verified, account_locked, locked_until,
                           failed_login_attempts, last_login_at, totp_enabled
                    FROM auth_users WHERE id IN ({placeholders})""",
-                tuple(uncached_ids)
+                tuple(uncached_ids),
             )
 
             for row in rows:
@@ -1874,7 +1994,7 @@ class AuthManager:
 
         return result
 
-    def _row_to_user(self, row) -> User:
+    def _row_to_user(self, row: Union[Any, Dict[str, Any]]) -> User:
         """Convert database row to User model."""
         return User(
             id=row["id"],
@@ -1889,5 +2009,5 @@ class AuthManager:
             locked_until=row["locked_until"],
             failed_login_attempts=row["failed_login_attempts"],
             last_login_at=row["last_login_at"],
-            totp_enabled=bool(row["totp_enabled"])
+            totp_enabled=bool(row["totp_enabled"]),
         )
