@@ -1,335 +1,418 @@
 """
-Participant management tests for messaging module.
+Participant manipulation and role management tests.
+
+Tests adding/removing participants, role changes, permissions,
+and participant limits.
 """
 
 import pytest
+from src.core.messaging.exceptions import (
+    ParticipantExistsError,
+    ParticipantNotFoundError,
+    ParticipantLimitError,
+    ConversationAccessDeniedError,
+    ConversationTypeError,
+)
+from src.core.messaging.models import ParticipantRole
 
 
-class TestAddParticipant:
-    """Test adding participants to conversations."""
+class TestParticipantAddition:
+    """Tests for adding participants."""
 
-    def test_add_participant_as_owner(self, group_conversation, users):
-        """Test owner can add participant."""
-        group, user1, user2, user3, messaging = group_conversation
-        _, _, _, _ = users
+    def test_add_participant_to_group(self, group_conversation, user_pool):
+        """Test adding a new participant to group."""
+        group, owner, member1, member2, messaging = group_conversation
+        new_user = user_pool.get_user()
 
-        # Create a new user to add
-        from src.core import auth
-        import uuid
-        unique_id = uuid.uuid4().hex[:8]
-        new_user = auth.register(f"new_{unique_id}", f"new_{unique_id}@example.com", "TestPass123!")
+        participant = messaging.add_participant(owner.id, group.id, new_user.id)
 
-        participant = messaging.add_participant(user1.id, group.id, new_user.id)
-
-        assert participant is not None
         assert participant.user_id == new_user.id
-        assert participant.role == messaging.ParticipantRole.MEMBER
+        assert participant.role == ParticipantRole.MEMBER
 
-    def test_add_participant_as_admin(self, group_conversation, users):
-        """Test admin can add participant."""
-        group, user1, user2, user3, messaging = group_conversation
+    def test_add_participant_as_admin(self, group_conversation, user_pool):
+        """Test adding participant with admin role."""
+        group, owner, member1, member2, messaging = group_conversation
+        new_user = user_pool.get_user()
 
-        # Make user2 admin
-        messaging.update_participant_role(user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN)
+        # First make member1 an admin
+        messaging.update_participant_role(
+            owner.id, group.id, member1.id, ParticipantRole.ADMIN
+        )
 
-        # Create new user
-        from src.core import auth
-        import uuid
-        unique_id = uuid.uuid4().hex[:8]
-        new_user = auth.register(f"new_{unique_id}", f"new_{unique_id}@example.com", "TestPass123!")
+        # Admin can add participants
+        participant = messaging.add_participant(member1.id, group.id, new_user.id)
 
-        participant = messaging.add_participant(user2.id, group.id, new_user.id)
+        assert participant.user_id == new_user.id
 
-        assert participant is not None
+    def test_add_participant_as_member_fails(self, group_conversation, user_pool):
+        """Test that regular members cannot add participants."""
+        group, owner, member1, member2, messaging = group_conversation
+        new_user = user_pool.get_user()
 
-    def test_add_participant_as_member_fails(self, group_conversation, users):
-        """Test member cannot add participant."""
-        group, user1, user2, user3, messaging = group_conversation
-
-        from src.core import auth
-        import uuid
-        unique_id = uuid.uuid4().hex[:8]
-        new_user = auth.register(f"new_{unique_id}", f"new_{unique_id}@example.com", "TestPass123!")
-
-        with pytest.raises(messaging.ConversationAccessDeniedError):
-            messaging.add_participant(user2.id, group.id, new_user.id)
+        with pytest.raises(ConversationAccessDeniedError):
+            messaging.add_participant(member1.id, group.id, new_user.id)
 
     def test_add_existing_participant_fails(self, group_conversation):
-        """Test adding existing participant fails."""
-        group, user1, user2, user3, messaging = group_conversation
+        """Test that adding existing participant fails."""
+        group, owner, member1, member2, messaging = group_conversation
 
-        with pytest.raises(messaging.ParticipantExistsError):
-            messaging.add_participant(user1.id, group.id, user2.id)
+        with pytest.raises(ParticipantExistsError):
+            messaging.add_participant(owner.id, group.id, member1.id)
 
-    def test_add_participant_to_dm_fails(self, dm_conversation, users):
-        """Test adding participant to DM fails."""
+    def test_add_participant_to_dm_fails(self, dm_conversation, user_pool):
+        """Test that participants cannot be added to DM."""
         dm, user1, user2, messaging = dm_conversation
-        _, _, user3, _ = users
+        user3 = user_pool.get_user()
 
-        with pytest.raises(messaging.ConversationTypeError):
+        with pytest.raises(ConversationTypeError):
             messaging.add_participant(user1.id, dm.id, user3.id)
 
-    def test_add_participant_at_limit_fails(self, users):
-        """Test adding participant when at limit fails."""
-        user1, user2, user3, messaging = users
+    def test_add_participant_exceeds_limit(self, user_pool, modules):
+        """Test that adding participant respects limit."""
+        owner = user_pool.get_user()
 
-        # Create group with max 2 participants
-        group = messaging.create_group(
-            owner_id=user1.id,
-            name="Tiny Group",
-            participant_ids=[user2.id],
-            max_participants=2
+        # Create group with limit of 3
+        group = modules.messaging.create_group(
+            owner_id=owner.id, name="Limited Group", max_participants=3
         )
 
-        with pytest.raises(messaging.ParticipantLimitError):
-            messaging.add_participant(user1.id, group.id, user3.id)
+        # Add 2 members (total 3 with owner)
+        user1 = user_pool.get_user()
+        user2 = user_pool.get_user()
+        modules.messaging.add_participant(owner.id, group.id, user1.id)
+        modules.messaging.add_participant(owner.id, group.id, user2.id)
 
-    def test_add_participant_as_owner_fails(self, group_conversation, users):
-        """Test cannot add participant as owner."""
-        group, user1, user2, user3, messaging = group_conversation
+        # Try to add 4th
+        user3 = user_pool.get_user()
+        with pytest.raises(ParticipantLimitError):
+            modules.messaging.add_participant(owner.id, group.id, user3.id)
 
-        from src.core import auth
-        import uuid
-        unique_id = uuid.uuid4().hex[:8]
-        new_user = auth.register(f"new_{unique_id}", f"new_{unique_id}@example.com", "TestPass123!")
+    def test_add_participant_as_owner_fails(self, group_conversation, user_pool):
+        """Test that participants cannot be added as owner."""
+        group, owner, member1, member2, messaging = group_conversation
+        new_user = user_pool.get_user()
 
-        with pytest.raises(messaging.ConversationAccessDeniedError):
-            messaging.add_participant(user1.id, group.id, new_user.id, messaging.ParticipantRole.OWNER)
-
-    def test_add_participant_sends_system_message(self, group_conversation, users):
-        """Test adding participant sends system message."""
-        group, user1, user2, user3, messaging = group_conversation
-
-        from src.core import auth
-        import uuid
-        unique_id = uuid.uuid4().hex[:8]
-        new_user = auth.register(f"new_{unique_id}", f"new_{unique_id}@example.com", "TestPass123!")
-
-        messaging.add_participant(user1.id, group.id, new_user.id)
-
-        messages = messaging.get_messages(user1.id, group.id)
-        system_msgs = [m for m in messages if m.message_type == messaging.MessageType.SYSTEM]
-
-        assert any("added" in m.content.lower() for m in system_msgs)
+        with pytest.raises(ConversationAccessDeniedError):
+            messaging.add_participant(
+                owner.id, group.id, new_user.id, role=ParticipantRole.OWNER
+            )
 
 
-class TestRemoveParticipant:
-    """Test removing participants from conversations."""
+class TestParticipantRemoval:
+    """Tests for removing participants."""
 
     def test_remove_participant_as_owner(self, group_conversation):
-        """Test owner can remove participant."""
-        group, user1, user2, user3, messaging = group_conversation
+        """Test removing participant as owner."""
+        group, owner, member1, member2, messaging = group_conversation
 
-        result = messaging.remove_participant(user1.id, group.id, user2.id)
-
+        result = messaging.remove_participant(owner.id, group.id, member1.id)
         assert result is True
 
-        participants = messaging.get_participants(user1.id, group.id)
-        user_ids = [p.user_id for p in participants]
-        assert user2.id not in user_ids
+        # Verify removed
+        conv = messaging.get_conversation(group.id, member1.id)
+        assert conv is None
 
     def test_remove_participant_as_admin(self, group_conversation):
-        """Test admin can remove member."""
-        group, user1, user2, user3, messaging = group_conversation
+        """Test that admin can remove members."""
+        group, owner, member1, member2, messaging = group_conversation
 
-        # Make user2 admin
-        messaging.update_participant_role(user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN)
+        # Make member1 admin
+        messaging.update_participant_role(
+            owner.id, group.id, member1.id, ParticipantRole.ADMIN
+        )
 
-        result = messaging.remove_participant(user2.id, group.id, user3.id)
-
+        # Admin can remove member
+        result = messaging.remove_participant(member1.id, group.id, member2.id)
         assert result is True
+
+    def test_remove_participant_as_member_fails(self, group_conversation):
+        """Test that members cannot remove participants."""
+        group, owner, member1, member2, messaging = group_conversation
+
+        with pytest.raises(ConversationAccessDeniedError):
+            messaging.remove_participant(member1.id, group.id, member2.id)
 
     def test_admin_cannot_remove_owner(self, group_conversation):
-        """Test admin cannot remove owner."""
-        group, user1, user2, user3, messaging = group_conversation
+        """Test that admin cannot remove owner."""
+        group, owner, member1, member2, messaging = group_conversation
 
-        messaging.update_participant_role(user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN)
+        # Make member1 admin
+        messaging.update_participant_role(
+            owner.id, group.id, member1.id, ParticipantRole.ADMIN
+        )
 
-        with pytest.raises(messaging.ConversationAccessDeniedError):
-            messaging.remove_participant(user2.id, group.id, user1.id)
+        with pytest.raises(ConversationAccessDeniedError):
+            messaging.remove_participant(member1.id, group.id, owner.id)
 
-    def test_admin_cannot_remove_admin(self, group_conversation):
-        """Test admin cannot remove other admin."""
-        group, user1, user2, user3, messaging = group_conversation
+    def test_admin_cannot_remove_other_admin(self, group_conversation):
+        """Test that admin cannot remove another admin."""
+        group, owner, member1, member2, messaging = group_conversation
 
-        messaging.update_participant_role(user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN)
-        messaging.update_participant_role(user1.id, group.id, user3.id, messaging.ParticipantRole.ADMIN)
+        # Make both member1 and member2 admins
+        messaging.update_participant_role(
+            owner.id, group.id, member1.id, ParticipantRole.ADMIN
+        )
+        messaging.update_participant_role(
+            owner.id, group.id, member2.id, ParticipantRole.ADMIN
+        )
 
-        with pytest.raises(messaging.ConversationAccessDeniedError):
-            messaging.remove_participant(user2.id, group.id, user3.id)
-
-    def test_member_cannot_remove(self, group_conversation):
-        """Test member cannot remove anyone."""
-        group, user1, user2, user3, messaging = group_conversation
-
-        with pytest.raises(messaging.ConversationAccessDeniedError):
-            messaging.remove_participant(user2.id, group.id, user3.id)
+        with pytest.raises(ConversationAccessDeniedError):
+            messaging.remove_participant(member1.id, group.id, member2.id)
 
     def test_owner_cannot_remove_self(self, group_conversation):
-        """Test owner cannot remove themselves."""
-        group, user1, user2, user3, messaging = group_conversation
+        """Test that owner cannot remove themselves."""
+        group, owner, member1, member2, messaging = group_conversation
 
-        with pytest.raises(messaging.ConversationAccessDeniedError):
-            messaging.remove_participant(user1.id, group.id, user1.id)
+        with pytest.raises(ConversationAccessDeniedError):
+            messaging.remove_participant(owner.id, group.id, owner.id)
 
-    def test_remove_nonexistent_participant(self, group_conversation, users):
-        """Test removing nonexistent participant fails."""
-        group, user1, user2, user3, messaging = group_conversation
-
-        from src.core import auth
-        import uuid
-        unique_id = uuid.uuid4().hex[:8]
-        new_user = auth.register(f"new_{unique_id}", f"new_{unique_id}@example.com", "TestPass123!")
-
-        with pytest.raises(messaging.ParticipantNotFoundError):
-            messaging.remove_participant(user1.id, group.id, new_user.id)
-
-    def test_remove_from_dm_fails(self, dm_conversation):
-        """Test removing from DM fails."""
+    def test_remove_participant_from_dm_fails(self, dm_conversation):
+        """Test that participants cannot be removed from DM."""
         dm, user1, user2, messaging = dm_conversation
 
-        with pytest.raises(messaging.ConversationTypeError):
+        with pytest.raises(ConversationTypeError):
             messaging.remove_participant(user1.id, dm.id, user2.id)
 
-    def test_remove_sends_system_message(self, group_conversation):
-        """Test removing participant sends system message."""
-        group, user1, user2, user3, messaging = group_conversation
+    def test_remove_nonexistent_participant_fails(self, group_conversation, user_pool):
+        """Test that removing non-participant fails."""
+        group, owner, member1, member2, messaging = group_conversation
+        non_member = user_pool.get_user()
 
-        messaging.remove_participant(user1.id, group.id, user2.id)
-
-        messages = messaging.get_messages(user1.id, group.id)
-        system_msgs = [m for m in messages if m.message_type == messaging.MessageType.SYSTEM]
-
-        assert any("removed" in m.content.lower() for m in system_msgs)
+        with pytest.raises(ParticipantNotFoundError):
+            messaging.remove_participant(owner.id, group.id, non_member.id)
 
 
-class TestUpdateParticipantRole:
-    """Test updating participant roles."""
+class TestParticipantRoles:
+    """Tests for participant role management."""
 
-    def test_owner_can_promote_to_admin(self, group_conversation):
-        """Test owner can promote member to admin."""
-        group, user1, user2, user3, messaging = group_conversation
+    def test_update_participant_role_to_admin(self, group_conversation):
+        """Test promoting participant to admin."""
+        group, owner, member1, member2, messaging = group_conversation
 
         participant = messaging.update_participant_role(
-            user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN
+            owner.id, group.id, member1.id, ParticipantRole.ADMIN
         )
 
-        assert participant.role == messaging.ParticipantRole.ADMIN
+        assert participant.role == ParticipantRole.ADMIN
 
-    def test_owner_can_demote_admin(self, group_conversation):
-        """Test owner can demote admin to member."""
-        group, user1, user2, user3, messaging = group_conversation
+    def test_update_participant_role_to_member(self, group_conversation):
+        """Test demoting admin to member."""
+        group, owner, member1, member2, messaging = group_conversation
 
-        messaging.update_participant_role(user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN)
+        # First promote to admin
+        messaging.update_participant_role(
+            owner.id, group.id, member1.id, ParticipantRole.ADMIN
+        )
 
+        # Then demote back to member
         participant = messaging.update_participant_role(
-            user1.id, group.id, user2.id, messaging.ParticipantRole.MEMBER
+            owner.id, group.id, member1.id, ParticipantRole.MEMBER
         )
 
-        assert participant.role == messaging.ParticipantRole.MEMBER
+        assert participant.role == ParticipantRole.MEMBER
 
-    def test_admin_cannot_change_roles(self, group_conversation):
-        """Test admin cannot change roles."""
-        group, user1, user2, user3, messaging = group_conversation
+    def test_only_owner_can_change_roles(self, group_conversation):
+        """Test that only owner can change roles."""
+        group, owner, member1, member2, messaging = group_conversation
 
-        messaging.update_participant_role(user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN)
+        with pytest.raises(ConversationAccessDeniedError):
+            messaging.update_participant_role(
+                member1.id, group.id, member2.id, ParticipantRole.ADMIN
+            )
 
-        with pytest.raises(messaging.ConversationAccessDeniedError):
-            messaging.update_participant_role(user2.id, group.id, user3.id, messaging.ParticipantRole.ADMIN)
+    def test_owner_cannot_change_own_role(self, group_conversation):
+        """Test that owner cannot change their own role."""
+        group, owner, member1, member2, messaging = group_conversation
+
+        with pytest.raises(ConversationAccessDeniedError):
+            messaging.update_participant_role(
+                owner.id, group.id, owner.id, ParticipantRole.MEMBER
+            )
 
     def test_cannot_assign_owner_role(self, group_conversation):
-        """Test cannot assign owner role."""
-        group, user1, user2, user3, messaging = group_conversation
+        """Test that owner role cannot be assigned directly."""
+        group, owner, member1, member2, messaging = group_conversation
 
-        with pytest.raises(messaging.ConversationAccessDeniedError):
-            messaging.update_participant_role(user1.id, group.id, user2.id, messaging.ParticipantRole.OWNER)
-
-    def test_cannot_change_own_role(self, group_conversation):
-        """Test owner cannot change own role."""
-        group, user1, user2, user3, messaging = group_conversation
-
-        with pytest.raises(messaging.ConversationAccessDeniedError):
-            messaging.update_participant_role(user1.id, group.id, user1.id, messaging.ParticipantRole.ADMIN)
+        with pytest.raises(ConversationAccessDeniedError):
+            messaging.update_participant_role(
+                owner.id, group.id, member1.id, ParticipantRole.OWNER
+            )
 
     def test_change_role_in_dm_fails(self, dm_conversation):
-        """Test changing role in DM fails."""
+        """Test that roles cannot be changed in DM."""
         dm, user1, user2, messaging = dm_conversation
 
-        with pytest.raises(messaging.ConversationTypeError):
-            messaging.update_participant_role(user1.id, dm.id, user2.id, messaging.ParticipantRole.ADMIN)
+        with pytest.raises(ConversationTypeError):
+            messaging.update_participant_role(
+                user1.id, dm.id, user2.id, ParticipantRole.ADMIN
+            )
+
+    def test_change_role_of_nonexistent_participant_fails(
+        self, group_conversation, user_pool
+    ):
+        """Test that changing role of non-participant fails."""
+        group, owner, member1, member2, messaging = group_conversation
+        non_member = user_pool.get_user()
+
+        with pytest.raises(ParticipantNotFoundError):
+            messaging.update_participant_role(
+                owner.id, group.id, non_member.id, ParticipantRole.ADMIN
+            )
 
 
-class TestGetParticipants:
-    """Test getting participants."""
+class TestParticipantListing:
+    """Tests for listing participants."""
 
-    def test_get_participants_as_member(self, group_conversation):
-        """Test member can get participants."""
-        group, user1, user2, user3, messaging = group_conversation
+    def test_get_participants_in_dm(self, dm_conversation):
+        """Test getting participants in DM."""
+        dm, user1, user2, messaging = dm_conversation
 
-        participants = messaging.get_participants(user2.id, group.id)
+        participants = messaging.get_participants(user1.id, dm.id)
+
+        assert len(participants) == 2
+        user_ids = [p.user_id for p in participants]
+        assert user1.id in user_ids
+        assert user2.id in user_ids
+
+    def test_get_participants_in_group(self, group_conversation):
+        """Test getting participants in group."""
+        group, owner, member1, member2, messaging = group_conversation
+
+        participants = messaging.get_participants(owner.id, group.id)
 
         assert len(participants) == 3
+        user_ids = [p.user_id for p in participants]
+        assert owner.id in user_ids
+        assert member1.id in user_ids
+        assert member2.id in user_ids
 
-    def test_get_participants_as_non_member_fails(self, group_conversation, users):
-        """Test non-member cannot get participants."""
-        group, user1, user2, user3, messaging = group_conversation
+    def test_get_participants_non_member_fails(self, group_conversation, user_pool):
+        """Test that non-members cannot get participant list."""
+        group, owner, member1, member2, messaging = group_conversation
+        non_member = user_pool.get_user()
 
-        from src.core import auth
-        import uuid
-        unique_id = uuid.uuid4().hex[:8]
-        outsider = auth.register(f"out_{unique_id}", f"out_{unique_id}@example.com", "TestPass123!")
+        with pytest.raises(ConversationAccessDeniedError):
+            messaging.get_participants(non_member.id, group.id)
 
-        with pytest.raises(messaging.ConversationAccessDeniedError):
-            messaging.get_participants(outsider.id, group.id)
+    def test_participants_ordered_by_join_time(self, group_conversation):
+        """Test that participants are ordered by join time."""
+        group, owner, member1, member2, messaging = group_conversation
 
-    def test_get_participants_includes_roles(self, group_conversation):
-        """Test participants include role information."""
-        group, user1, user2, user3, messaging = group_conversation
+        participants = messaging.get_participants(owner.id, group.id)
 
-        participants = messaging.get_participants(user1.id, group.id)
-
-        owner = next(p for p in participants if p.user_id == user1.id)
-        member = next(p for p in participants if p.user_id == user2.id)
-
-        assert owner.role == messaging.ParticipantRole.OWNER
-        assert member.role == messaging.ParticipantRole.MEMBER
+        # Should be ordered by joined_at
+        for i in range(len(participants) - 1):
+            assert participants[i].joined_at <= participants[i + 1].joined_at
 
 
-class TestMuteConversation:
-    """Test muting conversations."""
+class TestParticipantPermissions:
+    """Tests for participant-level permissions."""
 
-    def test_mute_conversation(self, dm_conversation):
-        """Test muting a conversation."""
+    def test_participant_has_role(self, group_conversation):
+        """Test that participant has correct role."""
+        group, owner, member1, member2, messaging = group_conversation
+
+        participant = messaging._get_participant(group.id, owner.id)
+        assert participant.role == ParticipantRole.OWNER
+
+        participant = messaging._get_participant(group.id, member1.id)
+        assert participant.role == ParticipantRole.MEMBER
+
+    def test_participant_joined_timestamp(self, group_conversation):
+        """Test that participant has join timestamp."""
+        group, owner, member1, member2, messaging = group_conversation
+
+        participant = messaging._get_participant(group.id, member1.id)
+        assert participant.joined_at > 0
+
+
+class TestParticipantCaching:
+    """Tests for participant caching."""
+
+    def test_is_participant_cached(self, dm_conversation):
+        """Test that participant checks are cached."""
         dm, user1, user2, messaging = dm_conversation
 
-        result = messaging.mute_conversation(user1.id, dm.id, muted=True)
+        # First check populates cache
+        result1 = messaging._is_participant(dm.id, user1.id)
 
-        assert result is True
+        # Second check uses cache
+        result2 = messaging._is_participant(dm.id, user1.id)
 
-    def test_unmute_conversation(self, dm_conversation):
-        """Test unmuting a conversation."""
-        dm, user1, user2, messaging = dm_conversation
+        assert result1 is True
+        assert result2 is True
 
-        messaging.mute_conversation(user1.id, dm.id, muted=True)
-        result = messaging.mute_conversation(user1.id, dm.id, muted=False)
+    def test_participant_cache_invalidation_on_add(self, group_conversation, user_pool):
+        """Test that cache is invalidated when participant added."""
+        group, owner, member1, member2, messaging = group_conversation
+        new_user = user_pool.get_user()
 
-        assert result is True
+        # Check before adding
+        result_before = messaging._is_participant(group.id, new_user.id)
+        assert result_before is False
 
-    def test_mute_with_duration(self, dm_conversation):
-        """Test muting with duration."""
-        dm, user1, user2, messaging = dm_conversation
+        # Add participant
+        messaging.add_participant(owner.id, group.id, new_user.id)
 
-        import time
-        until = int(time.time() * 1000) + 3600000  # 1 hour from now
+        # Check after adding
+        result_after = messaging._is_participant(group.id, new_user.id)
+        assert result_after is True
 
-        result = messaging.mute_conversation(user1.id, dm.id, muted=True, until=until)
+    def test_participant_cache_invalidation_on_remove(self, group_conversation):
+        """Test that cache is invalidated when participant removed."""
+        group, owner, member1, member2, messaging = group_conversation
 
-        assert result is True
+        # Check before removing
+        result_before = messaging._is_participant(group.id, member1.id)
+        assert result_before is True
 
-    def test_mute_non_participant_fails(self, dm_conversation, users):
-        """Test muting as non-participant fails."""
-        dm, user1, user2, messaging = dm_conversation
-        _, _, user3, _ = users
+        # Remove participant
+        messaging.remove_participant(owner.id, group.id, member1.id)
 
-        with pytest.raises(messaging.ConversationAccessDeniedError):
-            messaging.mute_conversation(user3.id, dm.id, muted=True)
+        # Check after removing
+        result_after = messaging._is_participant(group.id, member1.id)
+        assert result_after is False
+
+
+class TestParticipantEdgeCases:
+    """Tests for participant edge cases."""
+
+    def test_single_participant_group(self, user_pool, modules):
+        """Test group with single participant (owner only)."""
+        owner = user_pool.get_user()
+
+        group = modules.messaging.create_group(owner_id=owner.id, name="Solo Group")
+
+        participants = modules.messaging.get_participants(owner.id, group.id)
+        assert len(participants) == 1
+        assert participants[0].user_id == owner.id
+
+    def test_group_with_max_participants(self, user_pool, modules):
+        """Test group at maximum capacity."""
+        owner = user_pool.get_user()
+
+        # Create group with small limit
+        group = modules.messaging.create_group(
+            owner_id=owner.id, name="Full Group", max_participants=3
+        )
+
+        # Fill to capacity
+        user1 = user_pool.get_user()
+        user2 = user_pool.get_user()
+        modules.messaging.add_participant(owner.id, group.id, user1.id)
+        modules.messaging.add_participant(owner.id, group.id, user2.id)
+
+        # Verify at capacity
+        conv = modules.messaging.get_conversation(group.id, owner.id)
+        assert conv.participant_count == conv.max_participants
+
+    def test_reduce_max_participants_below_current(self, group_conversation):
+        """Test that max participants cannot be reduced below current count."""
+        group, owner, member1, member2, messaging = group_conversation
+
+        with pytest.raises(ParticipantLimitError):
+            messaging.update_conversation(
+                owner.id,
+                group.id,
+                max_participants=2,  # Current is 3
+            )

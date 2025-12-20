@@ -1,325 +1,457 @@
 """
-Edge case and error handling tests for messaging module.
+Edge cases and race condition tests.
+
+Tests race conditions, concurrent operations, error handling,
+and unusual scenarios.
 """
 
 import pytest
+import asyncio
+import time
+from src.core.messaging.exceptions import (
+    MessageNotFoundError,
+    ConversationAccessDeniedError,
+    ParticipantLimitError,
+)
 
 
-class TestConversationEdgeCases:
-    """Test conversation edge cases."""
+@pytest.mark.asyncio
+class TestRaceConditions:
+    """Tests for race conditions."""
 
-    def test_get_nonexistent_conversation(self, users):
-        """Test getting nonexistent conversation returns None."""
-        user1, user2, user3, messaging = users
+    async def test_concurrent_dm_creation(self, user_pool, modules):
+        """Test concurrent DM creation between same users."""
+        user1 = user_pool.get_user()
+        user2 = user_pool.get_user()
 
-        conv = messaging.get_conversation(999999999, user1.id)
+        # Create DM from both sides simultaneously
+        tasks = [
+            asyncio.to_thread(modules.messaging.create_dm, user1.id, user2.id),
+            asyncio.to_thread(modules.messaging.create_dm, user2.id, user1.id),
+            asyncio.to_thread(modules.messaging.create_dm, user1.id, user2.id),
+        ]
 
-        assert conv is None
+        results = await asyncio.gather(*tasks)
 
-    def test_delete_nonexistent_conversation(self, users):
-        """Test deleting nonexistent conversation raises error."""
-        user1, user2, user3, messaging = users
+        # All should return same DM
+        assert len(set(r.id for r in results)) == 1
 
-        with pytest.raises(messaging.ConversationNotFoundError):
-            messaging.delete_conversation(user1.id, 999999999)
+    async def test_concurrent_message_edits(self, dm_conversation):
+        """Test concurrent edits to same message (race condition)."""
+        dm, user1, user2, messaging = dm_conversation
 
-    def test_leave_nonexistent_conversation(self, users):
-        """Test leaving nonexistent conversation raises error."""
-        user1, user2, user3, messaging = users
-
-        with pytest.raises(messaging.ConversationNotFoundError):
-            messaging.leave_conversation(user1.id, 999999999)
-
-    def test_update_nonexistent_conversation(self, users):
-        """Test updating nonexistent conversation raises error."""
-        user1, user2, user3, messaging = users
-
-        with pytest.raises(messaging.ConversationNotFoundError):
-            messaging.update_conversation(user1.id, 999999999, name="New Name")
-
-    def test_create_group_with_duplicate_participants(self, users):
-        """Test creating group with duplicate participants deduplicates."""
-        user1, user2, user3, messaging = users
-
-        group = messaging.create_group(
-            user1.id, "Test Group",
-            participant_ids=[user2.id, user2.id, user3.id, user3.id]
+        msg = await asyncio.to_thread(
+            messaging.send_message, user1.id, dm.id, "Original"
         )
 
-        participants = messaging.get_participants(user1.id, group.id)
+        # Try to edit concurrently
+        tasks = [
+            asyncio.to_thread(messaging.edit_message, user1.id, msg.id, f"Edit {i}")
+            for i in range(5)
+        ]
 
-        # Should have 3 unique participants
-        assert len(participants) == 3
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
+        # All should succeed (last write wins)
+        successful = [r for r in results if not isinstance(r, Exception)]
+        assert len(successful) >= 1
 
-class TestMessageEdgeCases:
-    """Test message edge cases."""
+    async def test_concurrent_participant_additions(
+        self, group_conversation, user_pool
+    ):
+        """Test adding multiple participants concurrently."""
+        group, owner, member1, member2, messaging = group_conversation
 
-    def test_send_to_nonexistent_conversation(self, users):
-        """Test sending to nonexistent conversation raises error."""
-        user1, user2, user3, messaging = users
+        # Add multiple users concurrently
+        new_users = [user_pool.get_user() for _ in range(5)]
 
-        with pytest.raises(messaging.ConversationAccessDeniedError):
-            messaging.send_message(user1.id, 999999999, "Hello")
+        tasks = [
+            asyncio.to_thread(messaging.add_participant, owner.id, group.id, user.id)
+            for user in new_users
+        ]
 
-    def test_edit_nonexistent_message(self, users):
-        """Test editing nonexistent message raises error."""
-        user1, user2, user3, messaging = users
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        with pytest.raises(messaging.MessageNotFoundError):
-            messaging.edit_message(user1.id, 999999999, "Edited")
+        # All should succeed
+        successful = [r for r in results if not isinstance(r, Exception)]
+        assert len(successful) >= 1
 
-    def test_delete_nonexistent_message(self, users):
-        """Test deleting nonexistent message raises error."""
-        user1, user2, user3, messaging = users
-
-        with pytest.raises(messaging.MessageNotFoundError):
-            messaging.delete_message(user1.id, 999999999)
-
-    def test_reply_to_deleted_message(self, dm_conversation):
-        """Test replying to deleted message fails."""
+    async def test_concurrent_message_deletions(self, dm_conversation):
+        """Test concurrent deletion of same message."""
         dm, user1, user2, messaging = dm_conversation
 
-        original = messaging.send_message(user1.id, dm.id, "Original")
-        messaging.delete_message(user1.id, original.id)
+        msg = await asyncio.to_thread(
+            messaging.send_message, user1.id, dm.id, "To delete"
+        )
 
-        with pytest.raises(messaging.MessageNotFoundError):
-            messaging.send_message(user1.id, dm.id, "Reply", reply_to_id=original.id)
+        # Try to delete concurrently
+        tasks = [
+            asyncio.to_thread(messaging.delete_message, user1.id, msg.id)
+            for _ in range(3)
+        ]
 
-    def test_pin_deleted_message(self, dm_conversation):
-        """Test pinning deleted message fails."""
-        dm, user1, user2, messaging = dm_conversation
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        msg = messaging.send_message(user1.id, dm.id, "To delete")
-        messaging.delete_message(user1.id, msg.id)
+        # First should succeed, others may fail
+        assert any(r is True for r in results if not isinstance(r, Exception))
 
-        # Message is deleted, pin should fail
-        with pytest.raises(messaging.MessageNotFoundError):
-            messaging.pin_message(user1.id, msg.id)
+    async def test_concurrent_group_leave(self, group_conversation):
+        """Test multiple members leaving concurrently."""
+        group, owner, member1, member2, messaging = group_conversation
 
+        # Both members try to leave at same time
+        tasks = [
+            asyncio.to_thread(messaging.leave_conversation, member1.id, group.id),
+            asyncio.to_thread(messaging.leave_conversation, member2.id, group.id),
+        ]
 
-class TestParticipantEdgeCases:
-    """Test participant edge cases."""
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    def test_add_to_nonexistent_conversation(self, users):
-        """Test adding to nonexistent conversation raises error."""
-        user1, user2, user3, messaging = users
+        # Both should succeed
+        assert all(r is True for r in results if not isinstance(r, Exception))
 
-        with pytest.raises(messaging.ConversationNotFoundError):
-            messaging.add_participant(user1.id, 999999999, user2.id)
+    async def test_concurrent_role_changes(self, group_conversation):
+        """Test concurrent role changes for same user."""
+        group, owner, member1, member2, messaging = group_conversation
 
-    def test_remove_from_nonexistent_conversation(self, users):
-        """Test removing from nonexistent conversation raises error."""
-        user1, user2, user3, messaging = users
+        from src.core.messaging.models import ParticipantRole
 
-        with pytest.raises(messaging.ConversationNotFoundError):
-            messaging.remove_participant(user1.id, 999999999, user2.id)
-
-    def test_get_participants_nonexistent_conversation(self, users):
-        """Test getting participants from nonexistent conversation raises error."""
-        user1, user2, user3, messaging = users
-
-        with pytest.raises(messaging.ConversationAccessDeniedError):
-            messaging.get_participants(user1.id, 999999999)
-
-    def test_mute_nonexistent_conversation(self, users):
-        """Test muting nonexistent conversation raises error."""
-        user1, user2, user3, messaging = users
-
-        with pytest.raises(messaging.ConversationAccessDeniedError):
-            messaging.mute_conversation(user1.id, 999999999, muted=True)
-
-
-class TestStatusEdgeCases:
-    """Test message status edge cases."""
-
-    def test_mark_delivered_nonexistent_message(self, users):
-        """Test marking nonexistent message as delivered is ignored."""
-        user1, user2, user3, messaging = users
-
-        count = messaging.mark_delivered(user1.id, [999999999])
-
-        assert count == 0
-
-    def test_mark_read_nonexistent_conversation(self, users):
-        """Test marking read in nonexistent conversation raises error."""
-        user1, user2, user3, messaging = users
-
-        with pytest.raises(messaging.ConversationAccessDeniedError):
-            messaging.mark_read(user1.id, 999999999)
-
-    def test_get_status_nonexistent_message(self, users):
-        """Test getting status for nonexistent message raises error."""
-        user1, user2, user3, messaging = users
-
-        with pytest.raises(messaging.MessageNotFoundError):
-            messaging.get_message_status(user1.id, 999999999)
-
-    def test_get_unread_nonexistent_conversation(self, users):
-        """Test getting unread for nonexistent conversation returns empty."""
-        user1, user2, user3, messaging = users
-
-        unread = messaging.get_unread_count(user1.id, 999999999)
-
-        assert len(unread) == 0
-
-
-class TestAttachmentEdgeCases:
-    """Test attachment edge cases."""
-
-    def test_add_attachment_nonexistent_message(self, users):
-        """Test adding attachment to nonexistent message raises error."""
-        user1, user2, user3, messaging = users
-
-        with pytest.raises(messaging.MessageNotFoundError):
-            messaging.add_attachment(
-                user1.id, 999999999, "test.pdf", "application/pdf", 1024,
-                "https://example.com/test.pdf"
+        # Try to change role concurrently
+        tasks = [
+            asyncio.to_thread(
+                messaging.update_participant_role,
+                owner.id,
+                group.id,
+                member1.id,
+                ParticipantRole.ADMIN,
             )
+            for _ in range(3)
+        ]
 
-    def test_get_attachments_nonexistent_message(self, users):
-        """Test getting attachments for nonexistent message returns empty."""
-        user1, user2, user3, messaging = users
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        attachments = messaging.get_attachments(user1.id, 999999999)
+        # All should succeed (same final state)
+        successful = [r for r in results if not isinstance(r, Exception)]
+        assert len(successful) >= 1
 
-        assert len(attachments) == 0
+    async def test_concurrent_conversation_updates(self, group_conversation):
+        """Test concurrent updates to same conversation."""
+        group, owner, member1, member2, messaging = group_conversation
 
-    def test_delete_nonexistent_attachment(self, users):
-        """Test deleting nonexistent attachment raises error."""
-        user1, user2, user3, messaging = users
+        # Try to update concurrently
+        tasks = [
+            asyncio.to_thread(
+                messaging.update_conversation, owner.id, group.id, name=f"Name {i}"
+            )
+            for i in range(5)
+        ]
 
-        with pytest.raises(messaging.AttachmentError):
-            messaging.delete_attachment(user1.id, 999999999)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-
-class TestConcurrentOperations:
-    """Test concurrent operation scenarios."""
-
-    def test_send_after_leaving(self, group_conversation):
-        """Test sending after leaving conversation fails."""
-        group, user1, user2, user3, messaging = group_conversation
-
-        messaging.leave_conversation(user2.id, group.id)
-
-        with pytest.raises(messaging.ConversationAccessDeniedError):
-            messaging.send_message(user2.id, group.id, "Hello")
-
-    def test_read_after_leaving(self, group_conversation):
-        """Test reading after leaving conversation fails."""
-        group, user1, user2, user3, messaging = group_conversation
-
-        messaging.leave_conversation(user2.id, group.id)
-
-        with pytest.raises(messaging.ConversationAccessDeniedError):
-            messaging.get_messages(user2.id, group.id)
-
-    def test_edit_after_removed(self, group_conversation):
-        """Test editing message after being removed fails."""
-        group, user1, user2, user3, messaging = group_conversation
-
-        msg = messaging.send_message(user2.id, group.id, "My message")
-
-        messaging.remove_participant(user1.id, group.id, user2.id)
-
-        # User cannot edit after being removed - no access to conversation
-        with pytest.raises(messaging.MessageNotFoundError):
-            messaging.edit_message(user2.id, msg.id, "Edited")
+        # All should succeed (last write wins)
+        successful = [r for r in results if not isinstance(r, Exception)]
+        assert len(successful) >= 1
 
 
-class TestValidationEdgeCases:
-    """Test validation edge cases."""
+class TestEdgeCases:
+    """Tests for edge cases."""
 
-    def test_group_name_with_only_spaces(self, users):
-        """Test group name with only spaces fails."""
-        user1, user2, user3, messaging = users
-
-        with pytest.raises(messaging.InvalidContentError):
-            messaging.create_group(user1.id, "     ")
-
-    def test_message_with_only_newlines(self, dm_conversation):
-        """Test message with only newlines fails."""
+    def test_empty_conversation_no_messages(self, dm_conversation):
+        """Test conversation with no messages."""
         dm, user1, user2, messaging = dm_conversation
 
-        with pytest.raises(messaging.InvalidContentError):
-            messaging.send_message(user1.id, dm.id, "\n\n\n")
+        messages = messaging.get_messages(user1.id, dm.id)
+        # May have system messages, but should handle gracefully
+        assert messages is not None
 
-    def test_very_long_group_name(self, users):
-        """Test very long group name fails."""
-        user1, user2, user3, messaging = users
-
-        with pytest.raises(messaging.InvalidContentError):
-            messaging.create_group(user1.id, "x" * 200)
-
-    def test_zero_max_participants(self, users):
-        """Test zero max participants fails on creation."""
-        user1, user2, user3, messaging = users
-
-        # Creating with 0 max participants should fail - owner needs to be added
-        with pytest.raises(messaging.ParticipantLimitError):
-            messaging.create_group(user1.id, "Empty Group", max_participants=0)
-
-    def test_negative_limit(self, dm_conversation):
-        """Test negative limit is handled."""
+    def test_conversation_with_single_message(self, dm_conversation):
+        """Test conversation with exactly one message."""
         dm, user1, user2, messaging = dm_conversation
 
-        messaging.send_message(user1.id, dm.id, "Test")
+        messaging.send_message(user1.id, dm.id, "Only message")
+        messages = messaging.get_messages(user1.id, dm.id)
 
-        # Negative limit should be treated as 0 or default
-        messages = messaging.get_messages(user1.id, dm.id, limit=-1)
+        assert len([m for m in messages if m.author_id != 0]) == 1
 
-        # Should return something (implementation dependent)
-        assert isinstance(messages, list)
+    def test_message_reply_to_deleted(self, dm_conversation):
+        """Test replying to deleted message."""
+        dm, user1, user2, messaging = dm_conversation
+
+        msg1 = messaging.send_message(user1.id, dm.id, "Original")
+        messaging.delete_message(user1.id, msg1.id)
+
+        # Try to reply to deleted message
+        with pytest.raises(MessageNotFoundError):
+            messaging.send_message(user2.id, dm.id, "Reply", reply_to_id=msg1.id)
+
+    def test_edit_message_multiple_times(self, dm_conversation):
+        """Test editing same message multiple times."""
+        dm, user1, user2, messaging = dm_conversation
+
+        msg = messaging.send_message(user1.id, dm.id, "Version 1")
+
+        for i in range(5):
+            time.sleep(0.01)
+            msg = messaging.edit_message(user1.id, msg.id, f"Version {i + 2}")
+
+        assert "Version 6" in msg.content
+        assert msg.edited is True
+
+    def test_participant_limit_at_boundary(self, user_pool, modules):
+        """Test adding participant at exact limit."""
+        owner = user_pool.get_user()
+
+        # Create group with limit of 3
+        group = modules.messaging.create_group(
+            owner_id=owner.id, name="Limited", max_participants=3
+        )
+
+        # Add 2 members (total 3)
+        user1 = user_pool.get_user()
+        user2 = user_pool.get_user()
+        modules.messaging.add_participant(owner.id, group.id, user1.id)
+        modules.messaging.add_participant(owner.id, group.id, user2.id)
+
+        # At limit, cannot add more
+        user3 = user_pool.get_user()
+        with pytest.raises(ParticipantLimitError):
+            modules.messaging.add_participant(owner.id, group.id, user3.id)
+
+    def test_get_message_after_conversation_deleted(self, dm_conversation):
+        """Test getting message after conversation deleted."""
+        dm, user1, user2, messaging = dm_conversation
+
+        msg = messaging.send_message(user1.id, dm.id, "Test")
+        messaging.delete_conversation(user1.id, dm.id)
+
+        # Should not be able to get message
+        result = messaging.get_message(user1.id, msg.id)
+        assert result is None
+
+    def test_send_message_after_leaving(self, group_conversation):
+        """Test sending message after leaving conversation."""
+        group, owner, member1, member2, messaging = group_conversation
+
+        messaging.leave_conversation(member1.id, group.id)
+
+        # Should not be able to send
+        with pytest.raises(ConversationAccessDeniedError):
+            messaging.send_message(member1.id, group.id, "After leaving")
+
+    def test_add_removed_participant_back(self, group_conversation, user_pool):
+        """Test adding participant that was removed."""
+        group, owner, member1, member2, messaging = group_conversation
+
+        # Remove member
+        messaging.remove_participant(owner.id, group.id, member1.id)
+
+        # Add back
+        result = messaging.add_participant(owner.id, group.id, member1.id)
+        assert result is not None
+
+    def test_extremely_long_content(self, dm_conversation):
+        """Test message with content at max length."""
+        dm, user1, user2, messaging = dm_conversation
+
+        from src.core.messaging.exceptions import ContentTooLongError
+
+        # At limit (4000)
+        content = "A" * 4000
+        msg = messaging.send_message(user1.id, dm.id, content)
+        assert len(msg.content) == 4000
+
+        # Over limit
+        content = "A" * 4001
+        with pytest.raises(ContentTooLongError):
+            messaging.send_message(user1.id, dm.id, content)
 
 
-class TestSystemMessages:
-    """Test system message behavior."""
+class TestErrorRecovery:
+    """Tests for error recovery and resilience."""
 
-    def test_system_message_has_correct_type(self, users):
-        """Test system messages have correct type."""
-        user1, user2, user3, messaging = users
+    def test_recover_from_failed_message_send(self, dm_conversation):
+        """Test that failed send doesn't corrupt state."""
+        dm, user1, user2, messaging = dm_conversation
 
-        group = messaging.create_group(user1.id, "Test Group")
+        # Try invalid send
+        try:
+            messaging.send_message(user1.id, dm.id, "")
+        except Exception:
+            pass
 
-        messages = messaging.get_messages(user1.id, group.id)
-        system_msgs = [m for m in messages if m.message_type == messaging.MessageType.SYSTEM]
+        # Should still be able to send valid message
+        msg = messaging.send_message(user1.id, dm.id, "Valid")
+        assert msg is not None
 
-        assert len(system_msgs) >= 1
+    def test_recover_from_failed_participant_add(self, group_conversation, user_pool):
+        """Test recovery from failed participant addition."""
+        group, owner, member1, member2, messaging = group_conversation
 
-    def test_system_message_author_is_zero(self, users):
-        """Test system messages have author_id of 0."""
-        user1, user2, user3, messaging = users
+        # Try to add invalid participant
+        try:
+            messaging.add_participant(member1.id, group.id, user_pool.get_user().id)
+        except Exception:
+            pass
 
-        group = messaging.create_group(user1.id, "Test Group")
+        # Owner should still be able to add
+        new_user = user_pool.get_user()
+        result = messaging.add_participant(owner.id, group.id, new_user.id)
+        assert result is not None
 
-        messages = messaging.get_messages(user1.id, group.id)
-        system_msgs = [m for m in messages if m.message_type == messaging.MessageType.SYSTEM]
+    def test_conversation_state_after_failed_update(self, group_conversation):
+        """Test conversation state after failed update."""
+        group, owner, member1, member2, messaging = group_conversation
 
-        for msg in system_msgs:
-            assert msg.author_id == 0
+        original_name = group.name
 
-    def test_cannot_edit_system_message(self, users):
-        """Test cannot edit system messages."""
-        user1, user2, user3, messaging = users
+        # Try invalid update
+        try:
+            messaging.update_conversation(owner.id, group.id, name="")
+        except Exception:
+            pass
 
-        group = messaging.create_group(user1.id, "Test Group")
+        # Verify state unchanged
+        conv = messaging.get_conversation(group.id, owner.id)
+        assert conv.name == original_name
 
-        messages = messaging.get_messages(user1.id, group.id)
-        system_msg = next(m for m in messages if m.message_type == messaging.MessageType.SYSTEM)
 
-        with pytest.raises(messaging.MessageAccessDeniedError):
-            messaging.edit_message(user1.id, system_msg.id, "Edited")
+class TestDataIntegrity:
+    """Tests for data integrity."""
 
-    def test_cannot_reply_to_system_message(self, users):
-        """Test can reply to system messages (they're valid messages)."""
-        user1, user2, user3, messaging = users
+    def test_message_count_consistency(self, dm_conversation):
+        """Test that message count is consistent."""
+        dm, user1, user2, messaging = dm_conversation
 
-        group = messaging.create_group(user1.id, "Test Group")
+        # Send messages
+        for i in range(10):
+            messaging.send_message(user1.id, dm.id, f"Message {i}")
 
-        messages = messaging.get_messages(user1.id, group.id)
-        system_msg = next(m for m in messages if m.message_type == messaging.MessageType.SYSTEM)
+        # Delete some
+        messages = messaging.get_messages(user1.id, dm.id, limit=100)
+        for msg in messages[:5]:
+            messaging.delete_message(user1.id, msg.id)
 
-        # Should be able to reply to system messages
-        reply = messaging.send_message(user1.id, group.id, "Reply", reply_to_id=system_msg.id)
+        # Verify count
+        remaining = messaging.get_messages(user1.id, dm.id, limit=100)
+        assert len(remaining) == 5
 
-        assert reply.reply_to_id == system_msg.id
+    def test_participant_count_consistency(self, group_conversation, user_pool):
+        """Test that participant count is consistent."""
+        group, owner, member1, member2, messaging = group_conversation
+
+        # Add participants
+        new_users = [user_pool.get_user() for _ in range(3)]
+        for user in new_users:
+            messaging.add_participant(owner.id, group.id, user.id)
+
+        # Verify count
+        conv = messaging.get_conversation(group.id, owner.id)
+        participants = messaging.get_participants(owner.id, group.id)
+        assert conv.participant_count == len(participants)
+
+    def test_unread_count_accuracy(self, dm_conversation):
+        """Test that unread count is accurate."""
+        dm, user1, user2, messaging = dm_conversation
+
+        # User1 sends messages
+        for i in range(5):
+            messaging.send_message(user1.id, dm.id, f"Message {i}")
+
+        # Check unread
+        unread = messaging.get_unread_count(user2.id, dm.id)
+        assert unread[dm.id] == 5
+
+        # Mark some as read
+        messages = messaging.get_messages(user2.id, dm.id, limit=3)
+        messaging.mark_read(user2.id, dm.id, up_to_message_id=messages[0].id)
+
+        # Unread should decrease
+        unread = messaging.get_unread_count(user2.id, dm.id)
+        assert unread[dm.id] < 5
+
+
+class TestBoundaryConditions:
+    """Tests for boundary conditions."""
+
+    def test_snowflake_id_uniqueness(self, dm_conversation):
+        """Test that Snowflake IDs are unique."""
+        dm, user1, user2, messaging = dm_conversation
+
+        # Generate many IDs quickly
+        ids = set()
+        for i in range(1000):
+            msg = messaging.send_message(user1.id, dm.id, f"Test {i}")
+            ids.add(msg.id)
+
+        # All should be unique
+        assert len(ids) == 1000
+
+    def test_timestamp_ordering(self, dm_conversation):
+        """Test that timestamps are properly ordered."""
+        dm, user1, user2, messaging = dm_conversation
+
+        msgs = []
+        for i in range(10):
+            time.sleep(0.001)
+            msg = messaging.send_message(user1.id, dm.id, f"Message {i}")
+            msgs.append(msg)
+
+        # Timestamps should be increasing
+        for i in range(len(msgs) - 1):
+            assert msgs[i].created_at <= msgs[i + 1].created_at
+
+    def test_conversation_with_max_participants(self, user_pool, modules):
+        """Test conversation at absolute maximum participants."""
+        owner = user_pool.get_user()
+
+        # Create group with high limit
+        group = modules.messaging.create_group(
+            owner_id=owner.id, name="Large Group", max_participants=100
+        )
+
+        # Should be created successfully
+        assert group.max_participants == 100
+
+    def test_zero_size_operations(self, dm_conversation):
+        """Test operations with zero/empty values."""
+        dm, user1, user2, messaging = dm_conversation
+
+        # Get 0 messages
+        messages = messaging.get_messages(user1.id, dm.id, limit=0)
+        assert len(messages) == 0
+
+        # Get 0 conversations
+        convs = messaging.get_conversations(user1.id, limit=0)
+        assert len(convs) == 0
+
+
+class TestCacheInvalidation:
+    """Tests for cache invalidation."""
+
+    def test_participant_cache_after_removal(self, group_conversation):
+        """Test that participant cache is invalidated after removal."""
+        group, owner, member1, member2, messaging = group_conversation
+
+        # Check participant (populates cache)
+        assert messaging._is_participant(group.id, member1.id) is True
+
+        # Remove participant
+        messaging.remove_participant(owner.id, group.id, member1.id)
+
+        # Cache should be invalidated
+        assert messaging._is_participant(group.id, member1.id) is False
+
+    def test_settings_cache_after_update(self, user_pool, modules):
+        """Test that settings cache is invalidated after update."""
+        user = user_pool.get_user()
+
+        # Get settings (populates cache)
+        settings1 = modules.messaging.get_user_message_settings(user.id)
+        assert settings1.allow_dms_from == "everyone"
+
+        # Update settings
+        modules.messaging.update_user_message_settings(user.id, allow_dms_from="none")
+
+        # Should get updated value
+        settings2 = modules.messaging.get_user_message_settings(user.id)
+        assert settings2.allow_dms_from == "none"

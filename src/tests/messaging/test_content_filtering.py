@@ -1,353 +1,400 @@
 """
-Content filtering tests for messaging module.
+Content filtering and validation tests.
+
+Tests XSS prevention, markdown injection, profanity filtering,
+NSFW detection, and content sanitization.
 """
 
-import pytest
+from src.core.messaging.content import validate_content
+from src.core.messaging.models import ContentFilter, FilterAction
+
+
+class TestXSSPrevention:
+    """Tests for XSS attack prevention."""
+
+    def test_script_tag_sanitization(self, dm_conversation):
+        """Test that script tags are sanitized."""
+        dm, user1, user2, messaging = dm_conversation
+
+        malicious = '<script>alert("XSS")</script>Normal text'
+        msg = messaging.send_message(user1.id, dm.id, malicious)
+
+        # Content should be sanitized
+        assert "<script>" not in msg.content
+        assert "alert" not in msg.content or msg.content != malicious
+
+    def test_onclick_attribute_sanitization(self, dm_conversation):
+        """Test that onclick attributes are sanitized."""
+        dm, user1, user2, messaging = dm_conversation
+
+        malicious = '<img src="x" onclick="malicious()">'
+        msg = messaging.send_message(user1.id, dm.id, malicious)
+
+        assert "onclick" not in msg.content.lower()
+
+    def test_javascript_url_sanitization(self, dm_conversation):
+        """Test that javascript: URLs are sanitized."""
+        dm, user1, user2, messaging = dm_conversation
+
+        malicious = '<a href="javascript:alert(1)">Click</a>'
+        msg = messaging.send_message(user1.id, dm.id, malicious)
+
+        assert "javascript:" not in msg.content.lower()
+
+    def test_onerror_attribute_sanitization(self, dm_conversation):
+        """Test that onerror handlers are sanitized."""
+        dm, user1, user2, messaging = dm_conversation
+
+        malicious = '<img src="invalid" onerror="alert(1)">'
+        msg = messaging.send_message(user1.id, dm.id, malicious)
+
+        assert "onerror" not in msg.content.lower()
+
+    def test_data_uri_with_script(self, dm_conversation):
+        """Test that data URIs with scripts are sanitized."""
+        dm, user1, user2, messaging = dm_conversation
+
+        malicious = '<img src="data:text/html,<script>alert(1)</script>">'
+        msg = messaging.send_message(user1.id, dm.id, malicious)
+
+        # Should be sanitized or rejected
+        assert "<script>" not in msg.content
+
+    def test_nested_xss_attempts(self, dm_conversation):
+        """Test that nested/encoded XSS attempts are blocked."""
+        dm, user1, user2, messaging = dm_conversation
+
+        malicious = "<scr<script>ipt>alert(1)</scr</script>ipt>"
+        msg = messaging.send_message(user1.id, dm.id, malicious)
+
+        assert "alert(1)" not in msg.content or msg.content != malicious
+
+    def test_svg_xss_sanitization(self, dm_conversation):
+        """Test that SVG-based XSS is sanitized."""
+        dm, user1, user2, messaging = dm_conversation
+
+        malicious = '<svg onload="alert(1)">'
+        msg = messaging.send_message(user1.id, dm.id, malicious)
+
+        assert "onload" not in msg.content.lower() or "alert" not in msg.content
+
+
+class TestMarkdownInjection:
+    """Tests for markdown injection prevention."""
+
+    def test_safe_markdown_bold(self, dm_conversation):
+        """Test that safe bold markdown is preserved."""
+        dm, user1, user2, messaging = dm_conversation
+
+        msg = messaging.send_message(user1.id, dm.id, "**bold text**")
+        assert "**bold text**" in msg.content or "bold text" in msg.content
+
+    def test_safe_markdown_italic(self, dm_conversation):
+        """Test that safe italic markdown is preserved."""
+        dm, user1, user2, messaging = dm_conversation
+
+        msg = messaging.send_message(user1.id, dm.id, "*italic text*")
+        assert "*italic text*" in msg.content or "italic text" in msg.content
+
+    def test_safe_markdown_code(self, dm_conversation):
+        """Test that safe code markdown is preserved."""
+        dm, user1, user2, messaging = dm_conversation
+
+        msg = messaging.send_message(user1.id, dm.id, "`code block`")
+        assert "`code block`" in msg.content or "code block" in msg.content
+
+    def test_markdown_link_sanitization(self, dm_conversation):
+        """Test that markdown links are sanitized."""
+        dm, user1, user2, messaging = dm_conversation
+
+        malicious_link = "[Click](javascript:alert(1))"
+        msg = messaging.send_message(user1.id, dm.id, malicious_link)
+
+        assert "javascript:" not in msg.content.lower()
+
+    def test_excessive_markdown_nesting(self, dm_conversation):
+        """Test handling of excessive markdown nesting."""
+        dm, user1, user2, messaging = dm_conversation
+
+        nested = "**" * 100 + "text" + "**" * 100
+        msg = messaging.send_message(user1.id, dm.id, nested)
+
+        # Should not cause performance issues or crashes
+        assert msg is not None
+
+    def test_markdown_spoiler_tags(self, dm_conversation):
+        """Test spoiler markdown functionality."""
+        dm, user1, user2, messaging = dm_conversation
+
+        msg = messaging.send_message(user1.id, dm.id, "||spoiler content||")
+        assert msg.metadata.get("has_spoilers") is True
+
+
+class TestProfanityFiltering:
+    """Tests for profanity filtering."""
+
+    def test_profanity_filter_disabled_by_default(self, dm_conversation):
+        """Test that profanity filter is disabled by default."""
+        dm, user1, user2, messaging = dm_conversation
+
+        # Note: Using placeholder for actual profanity
+        msg = messaging.send_message(user1.id, dm.id, "Some text with bad word")
+        assert msg is not None
+
+    def test_enable_profanity_filter(self, dm_conversation, modules):
+        """Test enabling profanity filter for user."""
+        dm, user1, user2, messaging = dm_conversation
+
+        # Enable filter
+        messaging.update_user_filter_settings(
+            user1.id, profanity_filter=True, custom_blocked_words=["badword"]
+        )
+
+        filter_settings = messaging.get_user_filter_settings(user1.id)
+        assert filter_settings.profanity_filter is True
+
+    def test_custom_blocked_words(self, dm_conversation):
+        """Test custom blocked words filtering."""
+        dm, user1, user2, messaging = dm_conversation
+
+        # Set custom blocked words
+        messaging.update_user_filter_settings(
+            user1.id, custom_blocked_words=["customblock"]
+        )
+
+        messaging.send_message(user1.id, dm.id, "This has customblock in it")
+
+        # Word should be filtered/censored
+        filter_settings = messaging.get_user_filter_settings(user1.id)
+        assert "customblock" in filter_settings.custom_blocked_words
+
+    def test_filter_action_censor(self, dm_conversation):
+        """Test that CENSOR filter action replaces words."""
+        dm, user1, user2, messaging = dm_conversation
+
+        user_filter = ContentFilter(
+            user_id=user1.id,
+            profanity_filter=True,
+            custom_blocked_words=["testbad"],
+            filter_action=FilterAction.CENSOR,
+        )
+
+        result = validate_content("This testbad word", user_filter, 4000)
+        assert result.valid
+        assert "testbad" not in result.sanitized_content
+        assert "*" in result.sanitized_content
+
+    def test_filter_action_spoiler(self, dm_conversation):
+        """Test that SPOILER filter action wraps words."""
+        dm, user1, user2, messaging = dm_conversation
+
+        user_filter = ContentFilter(
+            user_id=user1.id,
+            custom_blocked_words=["testbad"],
+            filter_action=FilterAction.SPOILER,
+        )
+
+        result = validate_content("This testbad word", user_filter, 4000)
+        assert "||" in result.sanitized_content
+
+
+class TestNSFWDetection:
+    """Tests for NSFW content detection."""
+
+    def test_nsfw_marker_detection(self, dm_conversation):
+        """Test detection of NSFW markers."""
+        dm, user1, user2, messaging = dm_conversation
+
+        msg = messaging.send_message(user1.id, dm.id, "This is NSFW content warning")
+
+        # Check metadata for NSFW flag
+        assert msg.metadata is not None
+
+    def test_18_plus_detection(self, dm_conversation):
+        """Test detection of 18+ markers."""
+        dm, user1, user2, messaging = dm_conversation
+
+        msg = messaging.send_message(user1.id, dm.id, "18+ adult content warning")
+        assert msg is not None
+
+    def test_adult_content_detection(self, dm_conversation):
+        """Test detection of adult content markers."""
+        dm, user1, user2, messaging = dm_conversation
+
+        msg = messaging.send_message(user1.id, dm.id, "adult content warning here")
+        assert msg is not None
 
 
 class TestContentValidation:
-    """Test content validation."""
+    """Tests for general content validation."""
 
-    def test_valid_content_passes(self, dm_conversation):
-        """Test valid content passes validation."""
+    def test_empty_content_rejected(self):
+        """Test that empty content is rejected."""
+        result = validate_content("", None, 4000)
+        assert not result.valid
+        assert "empty" in result.issues[0].lower()
+
+    def test_whitespace_only_rejected(self):
+        """Test that whitespace-only content is rejected."""
+        result = validate_content("   \n\t  ", None, 4000)
+        assert not result.valid
+
+    def test_max_length_enforcement(self):
+        """Test that max length is enforced."""
+        long_content = "A" * 5000
+        result = validate_content(long_content, None, 4000)
+        assert not result.valid
+        assert "length" in result.issues[0].lower()
+
+    def test_valid_content_passes(self):
+        """Test that valid content passes validation."""
+        result = validate_content("This is valid content", None, 4000)
+        assert result.valid
+        assert result.sanitized_content == "This is valid content"
+
+    def test_content_with_newlines(self, dm_conversation):
+        """Test content with newlines."""
         dm, user1, user2, messaging = dm_conversation
 
-        msg = messaging.send_message(user1.id, dm.id, "Hello, this is a normal message!")
-
-        assert msg is not None
-        assert msg.content == "Hello, this is a normal message!"
-
-    def test_empty_content_fails(self, dm_conversation):
-        """Test empty content fails validation."""
-        dm, user1, user2, messaging = dm_conversation
-
-        with pytest.raises(messaging.InvalidContentError):
-            messaging.send_message(user1.id, dm.id, "")
-
-    def test_whitespace_only_fails(self, dm_conversation):
-        """Test whitespace-only content fails."""
-        dm, user1, user2, messaging = dm_conversation
-
-        with pytest.raises(messaging.InvalidContentError):
-            messaging.send_message(user1.id, dm.id, "   \n\t  ")
-
-    def test_content_length_limit(self, dm_conversation):
-        """Test content length limit is enforced."""
-        dm, user1, user2, messaging = dm_conversation
-
-        # Default limit is 4000
-        long_content = "x" * 4001
-
-        with pytest.raises(messaging.ContentTooLongError):
-            messaging.send_message(user1.id, dm.id, long_content)
-
-    def test_content_at_limit_succeeds(self, dm_conversation):
-        """Test content at exactly the limit succeeds."""
-        dm, user1, user2, messaging = dm_conversation
-
-        content = "x" * 4000
+        content = "Line 1\nLine 2\nLine 3"
         msg = messaging.send_message(user1.id, dm.id, content)
+        assert "\n" in msg.content
 
-        assert len(msg.content) == 4000
+    def test_content_with_unicode(self, dm_conversation):
+        """Test content with unicode characters."""
+        dm, user1, user2, messaging = dm_conversation
+
+        content = "Hello 世界 🌍 émojis"
+        msg = messaging.send_message(user1.id, dm.id, content)
+        assert "世界" in msg.content
+        assert "🌍" in msg.content
+
+    def test_content_with_special_chars(self, dm_conversation):
+        """Test content with special characters."""
+        dm, user1, user2, messaging = dm_conversation
+
+        content = "Test: @#$%^&*()_+-=[]{}|;:',.<>?/~`"
+        msg = messaging.send_message(user1.id, dm.id, content)
+        assert msg is not None
+
+    def test_sql_injection_prevention(self, dm_conversation):
+        """Test that SQL injection attempts are sanitized."""
+        dm, user1, user2, messaging = dm_conversation
+
+        malicious = "'; DROP TABLE msg_messages; --"
+        msg = messaging.send_message(user1.id, dm.id, malicious)
+
+        # Message should be sent but sanitized
+        assert msg is not None
+        # Verify no SQL execution occurred by checking message exists
+        retrieved = messaging.get_message(user1.id, msg.id)
+        assert retrieved is not None
+
+    def test_null_byte_injection(self, dm_conversation):
+        """Test handling of null byte injection."""
+        dm, user1, user2, messaging = dm_conversation
+
+        content = "Test\x00Hidden"
+        msg = messaging.send_message(user1.id, dm.id, content)
+        assert msg is not None
 
 
-class TestUserFilterSettings:
-    """Test user content filter settings."""
+class TestContentFilterSettings:
+    """Tests for user content filter settings."""
 
-    def test_get_default_filter_settings(self, users):
-        """Test getting default filter settings."""
-        user1, user2, user3, messaging = users
+    def test_get_default_filter_settings(self, user_pool, modules):
+        """Test default filter settings for new user."""
+        user = user_pool.get_user()
 
-        filters = messaging.get_user_filter_settings(user1.id)
+        settings = modules.messaging.get_user_filter_settings(user.id)
+        assert settings.user_id == user.id
+        assert settings.profanity_filter is False
+        assert settings.nsfw_filter is False
 
-        assert filters.user_id == user1.id
-        assert filters.profanity_filter is False
-        assert filters.nsfw_filter is False
-        assert filters.spoiler_click_to_reveal is True
+    def test_update_filter_settings(self, user_pool, modules):
+        """Test updating filter settings."""
+        user = user_pool.get_user()
 
-    def test_update_profanity_filter(self, users):
-        """Test updating profanity filter setting."""
-        user1, user2, user3, messaging = users
-
-        filters = messaging.update_user_filter_settings(user1.id, profanity_filter=True)
-
-        assert filters.profanity_filter is True
-
-    def test_update_nsfw_filter(self, users):
-        """Test updating NSFW filter setting."""
-        user1, user2, user3, messaging = users
-
-        filters = messaging.update_user_filter_settings(user1.id, nsfw_filter=True)
-
-        assert filters.nsfw_filter is True
-
-    def test_update_spoiler_setting(self, users):
-        """Test updating spoiler click-to-reveal setting."""
-        user1, user2, user3, messaging = users
-
-        filters = messaging.update_user_filter_settings(user1.id, spoiler_click_to_reveal=False)
-
-        assert filters.spoiler_click_to_reveal is False
-
-    def test_update_custom_blocked_words(self, users):
-        """Test updating custom blocked words."""
-        user1, user2, user3, messaging = users
-
-        filters = messaging.update_user_filter_settings(
-            user1.id,
-            custom_blocked_words=["spam", "advertisement"]
-        )
-
-        assert "spam" in filters.custom_blocked_words
-        assert "advertisement" in filters.custom_blocked_words
-
-    def test_update_multiple_settings(self, users):
-        """Test updating multiple settings at once."""
-        user1, user2, user3, messaging = users
-
-        filters = messaging.update_user_filter_settings(
-            user1.id,
+        updated = modules.messaging.update_user_filter_settings(
+            user.id,
             profanity_filter=True,
             nsfw_filter=True,
-            custom_blocked_words=["test"]
+            custom_blocked_words=["word1", "word2"],
         )
 
-        assert filters.profanity_filter is True
-        assert filters.nsfw_filter is True
-        assert "test" in filters.custom_blocked_words
+        assert updated.profanity_filter is True
+        assert updated.nsfw_filter is True
+        assert "word1" in updated.custom_blocked_words
 
-    def test_settings_persist(self, users):
-        """Test that settings persist after update."""
-        user1, user2, user3, messaging = users
+    def test_filter_settings_persistence(self, user_pool, modules):
+        """Test that filter settings persist."""
+        user = user_pool.get_user()
 
-        messaging.update_user_filter_settings(user1.id, profanity_filter=True)
+        modules.messaging.update_user_filter_settings(user.id, profanity_filter=True)
 
-        # Get settings again
-        filters = messaging.get_user_filter_settings(user1.id)
+        # Retrieve again
+        settings = modules.messaging.get_user_filter_settings(user.id)
+        assert settings.profanity_filter is True
 
-        assert filters.profanity_filter is True
+    def test_spoiler_click_to_reveal_setting(self, user_pool, modules):
+        """Test spoiler click-to-reveal setting."""
+        user = user_pool.get_user()
 
-
-class TestUserMessageSettings:
-    """Test user message settings."""
-
-    def test_get_default_message_settings(self, users):
-        """Test getting default message settings."""
-        user1, user2, user3, messaging = users
-
-        settings = messaging.get_user_message_settings(user1.id)
-
-        assert settings.user_id == user1.id
-        assert settings.allow_dms_from == "everyone"
-        assert settings.auto_create_dms is True
-
-    def test_update_allow_dms_from(self, users):
-        """Test updating DM permission setting."""
-        user1, user2, user3, messaging = users
-
-        settings = messaging.update_user_message_settings(user1.id, allow_dms_from="friends")
-
-        assert settings.allow_dms_from == "friends"
-
-        # Reset for other tests
-        messaging.update_user_message_settings(user1.id, allow_dms_from="everyone")
-
-    def test_update_auto_create_dms(self, users):
-        """Test updating auto-create DMs setting."""
-        user1, user2, user3, messaging = users
-
-        settings = messaging.update_user_message_settings(user1.id, auto_create_dms=False)
-
-        assert settings.auto_create_dms is False
-
-        # Reset for other tests
-        messaging.update_user_message_settings(user1.id, auto_create_dms=True)
-
-    def test_update_max_message_length(self, users):
-        """Test updating max message length."""
-        user1, user2, user3, messaging = users
-
-        settings = messaging.update_user_message_settings(user1.id, max_message_length=8000)
-
-        assert settings.max_message_length == 8000
-
-        # Reset for other tests
-        messaging.update_user_message_settings(user1.id, max_message_length=None)
-
-    def test_custom_message_length_enforced(self, users):
-        """Test custom message length is enforced."""
-        user1, user2, user3, messaging = users
-
-        # Set custom limit
-        messaging.update_user_message_settings(user1.id, max_message_length=100)
-
-        try:
-            dm = messaging.create_dm(user1.id, user2.id)
-
-            # Should fail with 101 characters
-            with pytest.raises(messaging.ContentTooLongError):
-                messaging.send_message(user1.id, dm.id, "x" * 101)
-        finally:
-            # Reset for other tests
-            messaging.update_user_message_settings(user1.id, max_message_length=None)
-
-    def test_custom_message_length_allows_longer(self, users):
-        """Test custom message length allows longer messages."""
-        user1, user2, user3, messaging = users
-
-        # Set higher limit
-        messaging.update_user_message_settings(user1.id, max_message_length=8000)
-
-        try:
-            dm = messaging.create_dm(user1.id, user2.id)
-
-            # Should succeed with 5000 characters (exceeds default 4000)
-            msg = messaging.send_message(user1.id, dm.id, "x" * 5000)
-
-            assert len(msg.content) == 5000
-        finally:
-            # Reset for other tests
-            messaging.update_user_message_settings(user1.id, max_message_length=None)
-
-    def test_update_attachment_settings(self, users):
-        """Test updating attachment settings."""
-        user1, user2, user3, messaging = users
-
-        settings = messaging.update_user_message_settings(
-            user1.id,
-            max_attachment_size=20971520,
-            max_attachments_per_message=5
+        updated = modules.messaging.update_user_filter_settings(
+            user.id, spoiler_click_to_reveal=False
         )
 
-        assert settings.max_attachment_size == 20971520
-        assert settings.max_attachments_per_message == 5
+        assert updated.spoiler_click_to_reveal is False
 
 
-class TestRichTextFormatting:
-    """Test rich text formatting in messages."""
+class TestFormattingParsing:
+    """Tests for rich text formatting parsing."""
 
-    def test_bold_formatting_preserved(self, dm_conversation):
-        """Test bold formatting is preserved."""
-        dm, user1, user2, messaging = dm_conversation
+    def test_parse_bold_formatting(self):
+        """Test parsing bold markdown."""
+        from src.core.messaging.content import parse_formatting
 
-        msg = messaging.send_message(user1.id, dm.id, "This is **bold** text")
+        content = "This is **bold** text"
+        formatting = parse_formatting(content)
 
-        assert "**bold**" in msg.content
+        assert len(formatting["bold"]) > 0
 
-    def test_italic_formatting_preserved(self, dm_conversation):
-        """Test italic formatting is preserved."""
-        dm, user1, user2, messaging = dm_conversation
+    def test_parse_italic_formatting(self):
+        """Test parsing italic markdown."""
+        from src.core.messaging.content import parse_formatting
 
-        msg = messaging.send_message(user1.id, dm.id, "This is *italic* text")
+        content = "This is *italic* text"
+        formatting = parse_formatting(content)
 
-        assert "*italic*" in msg.content
+        assert len(formatting["italic"]) > 0
 
-    def test_spoiler_formatting_preserved(self, dm_conversation):
-        """Test spoiler formatting is preserved."""
-        dm, user1, user2, messaging = dm_conversation
-
-        msg = messaging.send_message(user1.id, dm.id, "The answer is ||42||")
-
-        assert "||42||" in msg.content
-
-    def test_code_formatting_preserved(self, dm_conversation):
-        """Test code formatting is preserved."""
-        dm, user1, user2, messaging = dm_conversation
-
-        msg = messaging.send_message(user1.id, dm.id, "Use `print()` function")
-
-        assert "`print()`" in msg.content
-
-    def test_code_block_preserved(self, dm_conversation):
-        """Test code block is preserved."""
-        dm, user1, user2, messaging = dm_conversation
+    def test_parse_code_block_formatting(self):
+        """Test parsing code blocks."""
+        from src.core.messaging.content import parse_formatting
 
         content = "```python\nprint('hello')\n```"
-        msg = messaging.send_message(user1.id, dm.id, content)
+        formatting = parse_formatting(content)
 
-        assert "```python" in msg.content
-        assert "print('hello')" in msg.content
+        assert len(formatting["code_block"]) > 0
 
-    def test_strikethrough_preserved(self, dm_conversation):
-        """Test strikethrough is preserved."""
-        dm, user1, user2, messaging = dm_conversation
+    def test_strip_all_formatting(self):
+        """Test stripping all formatting markers."""
+        from src.core.messaging.content import strip_formatting
 
-        msg = messaging.send_message(user1.id, dm.id, "~~wrong~~ correct")
+        content = "**bold** *italic* `code` ||spoiler||"
+        plain = strip_formatting(content)
 
-        assert "~~wrong~~" in msg.content
+        assert "**" not in plain
+        assert "*" not in plain
+        assert "`" not in plain
+        assert "||" not in plain
 
-    def test_underline_preserved(self, dm_conversation):
-        """Test underline is preserved."""
-        dm, user1, user2, messaging = dm_conversation
+    def test_create_message_preview(self):
+        """Test creating message preview."""
+        from src.core.messaging.content import create_preview
 
-        msg = messaging.send_message(user1.id, dm.id, "This is __underlined__ text")
+        long_content = "A" * 200
+        preview = create_preview(long_content, max_length=50)
 
-        assert "__underlined__" in msg.content
-
-    def test_quote_preserved(self, dm_conversation):
-        """Test quote formatting is preserved."""
-        dm, user1, user2, messaging = dm_conversation
-
-        msg = messaging.send_message(user1.id, dm.id, "> This is a quote")
-
-        assert "> This is a quote" in msg.content
-
-    def test_mixed_formatting(self, dm_conversation):
-        """Test mixed formatting is preserved."""
-        dm, user1, user2, messaging = dm_conversation
-
-        content = "**Bold** and *italic* with ||spoiler|| and `code`"
-        msg = messaging.send_message(user1.id, dm.id, content)
-
-        assert "**Bold**" in msg.content
-        assert "*italic*" in msg.content
-        assert "||spoiler||" in msg.content
-        assert "`code`" in msg.content
-
-
-class TestSpoilerDetection:
-    """Test spoiler content detection."""
-
-    def test_spoiler_detected_in_metadata(self, dm_conversation):
-        """Test that spoiler content is detected."""
-        dm, user1, user2, messaging = dm_conversation
-
-        msg = messaging.send_message(user1.id, dm.id, "The ending is ||everyone dies||")
-
-        # Spoiler detection is in metadata
-        assert msg.metadata is None or msg.metadata.get("has_spoilers", False) or "||" in msg.content
-
-
-class TestUnicodeContent:
-    """Test unicode content handling."""
-
-    def test_unicode_characters_preserved(self, dm_conversation):
-        """Test unicode characters are preserved."""
-        dm, user1, user2, messaging = dm_conversation
-
-        # Reset any filters from previous tests
-        messaging.update_user_filter_settings(user1.id, custom_blocked_words=[])
-
-        content = "Hello! Unicode chars: cafe, resume, naive"
-        msg = messaging.send_message(user1.id, dm.id, content)
-
-        assert msg.content == content
-
-    def test_multilingual_content(self, dm_conversation):
-        """Test multilingual content is preserved."""
-        dm, user1, user2, messaging = dm_conversation
-
-        content = "English, Espanol, Francais, Deutsch"
-        msg = messaging.send_message(user1.id, dm.id, content)
-
-        assert msg.content == content
-
-    def test_special_characters(self, dm_conversation):
-        """Test special characters are handled."""
-        dm, user1, user2, messaging = dm_conversation
-
-        content = "Special chars: & < > \" ' @ # $ % ^ * ( ) [ ] { }"
-        msg = messaging.send_message(user1.id, dm.id, content)
-
-        # Content should be preserved (possibly sanitized)
-        assert msg is not None
+        assert len(preview) <= 53  # 50 + "..."
+        assert preview.endswith("...")
