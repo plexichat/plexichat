@@ -562,7 +562,8 @@ class AutoModManager:
 
     def get_server_rules(self, server_id: int) -> List[Rule]:
         """Get all rules for a server."""
-        return self._get_server_rules(server_id, enabled_only=False)
+        result = self._get_server_rules(server_id, enabled_only=False)
+        return result
 
     def _get_server_rules(self, server_id: int, enabled_only: bool = False) -> List[Rule]:
         """Internal method to get server rules."""
@@ -848,7 +849,9 @@ class AutoModManager:
 
         self._db.execute(query, tuple(params))
 
-        return self._db.fetch_one("SELECT changes() as count")["count"]
+        result = self._db.fetch_one("SELECT changes() as count")
+        count = result["count"] if result else 0
+        return count
 
     def get_audit_log(
         self,

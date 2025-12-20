@@ -775,9 +775,10 @@ class WebhookManager:
         webhook_id = int(match.group(1))
         token = match.group(2)
 
-        return self.execute_webhook(
+        result = self.execute_webhook(
             webhook_id, token, content, username, avatar_url, embeds, thread_id, wait
         )
+        return result
 
     def _row_to_webhook(self, row, include_token: bool = False) -> Webhook:
         """Convert database row to Webhook."""

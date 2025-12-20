@@ -134,7 +134,8 @@ class PresenceManager:
 
         logger.debug(f"User {user_id} status set to {status.value}")
 
-        return self.get_presence(user_id)
+        result = self.get_presence(user_id)
+        return result
 
     def get_status(self, user_id: int) -> UserStatus:
         """Get user's current status."""
@@ -194,7 +195,8 @@ class PresenceManager:
 
         logger.debug(f"User {user_id} custom status set")
 
-        return self.get_presence(user_id)
+        result = self.get_presence(user_id)
+        return result
 
     def get_custom_status(self, user_id: int) -> Optional[CustomStatus]:
         """Get user's custom status."""
@@ -230,7 +232,8 @@ class PresenceManager:
             (now, user_id)
         )
 
-        return self.get_presence(user_id)
+        result = self.get_presence(user_id)
+        return result
 
     # === Activity Operations ===
 
@@ -296,7 +299,8 @@ class PresenceManager:
 
         logger.debug(f"User {user_id} activity set to {activity_type.value}: {name}")
 
-        return self.get_presence(user_id)
+        result = self.get_presence(user_id)
+        return result
 
     def get_activity(self, user_id: int) -> Optional[Activity]:
         """Get user's current activity."""
@@ -338,7 +342,8 @@ class PresenceManager:
             (now, user_id)
         )
 
-        return self.get_presence(user_id)
+        result = self.get_presence(user_id)
+        return result
 
     # === Presence Operations ===
 
@@ -478,7 +483,8 @@ class PresenceManager:
             (now, now, user_id)
         )
 
-        return self.get_presence(user_id)
+        result = self.get_presence(user_id)
+        return result
 
     # === Typing Indicators ===
 
