@@ -85,7 +85,7 @@ _manager = None
 _setup_complete = False
 
 
-def setup(db, messaging_module=None, servers_module=None):
+def setup(db: Any, messaging_module: Optional[Any] = None, servers_module: Optional[Any] = None) -> None:
     """
     Initialize the embeds module.
 

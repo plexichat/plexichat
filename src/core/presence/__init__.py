@@ -13,7 +13,7 @@ Usage:
     presence.set_status(user_id=1, status=presence.UserStatus.ONLINE)
 """
 
-from typing import Optional, List, Dict
+from typing import Any, Optional, List, Dict
 
 from .models import (
     Presence,
@@ -81,7 +81,7 @@ _manager = None
 _setup_complete = False
 
 
-def setup(db, auth_module=None, relationships_module=None, servers_module=None):
+def setup(db: Any, auth_module: Optional[Any] = None, relationships_module: Optional[Any] = None, servers_module: Optional[Any] = None) -> None:
     """
     Initialize the presence module.
 

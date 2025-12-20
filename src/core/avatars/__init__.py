@@ -41,7 +41,7 @@ DEFAULT_MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
 DEFAULT_ALLOWED_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"]
 
 
-def setup(db) -> None:
+def setup(db: Any) -> None:
     """Initialize the avatars module."""
     global _db, _setup_complete
 

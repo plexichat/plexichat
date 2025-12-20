@@ -57,7 +57,7 @@ class Database:
         self._in_transaction = False
         logger.info(f"Database initialized with type: {self.type}")
 
-    def connect(self):
+    def connect(self) -> None:
         """
         Establish a connection to the database.
         
@@ -77,7 +77,7 @@ class Database:
             logger.error(error_msg)
             raise ValueError(error_msg)
 
-    def _connect_sqlite(self):
+    def _connect_sqlite(self) -> None:
         """Connect to SQLite database, creating directories if needed."""
         path = self.config.get("path", "data/database.db")
 
@@ -112,7 +112,7 @@ class Database:
             logger.error(f"Failed to connect to SQLite: {e}")
             raise
 
-    def _connect_postgres(self):
+    def _connect_postgres(self) -> None:
         """Connect to PostgreSQL database using psycopg2 with connection pooling."""
         try:
             import psycopg2
@@ -210,7 +210,7 @@ class Database:
 
         return converted
 
-    def _ensure_connected(self):
+    def _ensure_connected(self) -> None:
         """Ensure database is connected before operations."""
         if not self.connection:
             raise ConnectionError("Database not connected. Call connect() first.")
@@ -342,7 +342,7 @@ class Database:
 
         return result is not None
 
-    def begin_transaction(self):
+    def begin_transaction(self) -> None:
         """Begin a transaction (disables autocommit)."""
         self._ensure_connected()
         assert self.connection is not None  # Type narrowing for pyright
@@ -351,7 +351,7 @@ class Database:
             self.connection.execute("BEGIN")
         logger.debug("Transaction started")
 
-    def commit(self):
+    def commit(self) -> None:
         """Commit the current transaction."""
         self._ensure_connected()
         assert self.connection is not None  # Type narrowing for pyright
@@ -359,7 +359,7 @@ class Database:
         self._in_transaction = False
         logger.debug("Transaction committed")
 
-    def rollback(self):
+    def rollback(self) -> None:
         """Rollback the current transaction."""
         self._ensure_connected()
         assert self.connection is not None  # Type narrowing for pyright
@@ -436,7 +436,7 @@ class Database:
 
         self.execute(query, values)
 
-    def close(self):
+    def close(self) -> None:
         """Close the database connection and pool."""
         if self.connection:
             if self._pool:

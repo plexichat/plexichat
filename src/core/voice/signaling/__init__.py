@@ -97,8 +97,8 @@ _setup_complete = False
 
 
 def setup(
-    voice_module=None,
-    events_module=None,
+    voice_module: Optional[Any] = None,
+    events_module: Optional[Any] = None,
     sfu_backend: str = "mediasoup",
     mediasoup_url: str = "http://localhost:3000",
     mediasoup_origin: str = "https://localhost",
@@ -109,7 +109,7 @@ def setup(
     turn_ttl: int = 86400,
     turn_username: str = "",
     turn_credential: str = "",
-):
+) -> None:
     """
     Initialize the signaling module.
     

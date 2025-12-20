@@ -101,7 +101,7 @@ class AdminLoginResult:
     error: Optional[str] = None
 
 
-def setup(db, auth_module=None) -> None:
+def setup(db: Any, auth_module: Optional[Any] = None) -> None:
     """Initialize the admin module."""
     global _db, _auth, _setup_complete
 

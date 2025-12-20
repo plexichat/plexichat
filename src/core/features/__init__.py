@@ -84,7 +84,7 @@ _db: Any = None
 _setup_complete = False
 
 
-def setup(db) -> None:
+def setup(db: Any) -> None:
     """Initialize the features module."""
     global _db, _setup_complete
 

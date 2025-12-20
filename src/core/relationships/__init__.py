@@ -13,7 +13,7 @@ Usage:
     request = relationships.send_friend_request(user_id=1, recipient_id=2)
 """
 
-from typing import Optional, List
+from typing import Any, Optional, List
 
 from .models import (
     Relationship,
@@ -94,7 +94,7 @@ _manager = None
 _setup_complete = False
 
 
-def setup(db, auth_module=None, servers_module=None):
+def setup(db: Any, auth_module: Optional[Any] = None, servers_module: Optional[Any] = None) -> None:
     """
     Initialize the relationships module.
 

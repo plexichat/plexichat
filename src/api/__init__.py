@@ -13,6 +13,8 @@ Usage:
     uvicorn.run(app, host="0.0.0.0", port=8000)
 """
 
+from typing import Any, Optional
+
 from .app import create_app
 from .config import APIConfig, get_api_config
 
@@ -43,23 +45,23 @@ _setup_complete = False
 
 
 def setup(
-    db,
-    auth_module=None,
-    messaging_module=None,
-    servers_module=None,
-    relationships_module=None,
-    presence_module=None,
-    reactions_module=None,
-    embeds_module=None,
-    notifications_module=None,
-    webhooks_module=None,
-    threads_module=None,
-    media_module=None,
-    settings_module=None,
-    features_module=None,
-    avatars_module=None,
-    reports_module=None
-):
+    db: Any,
+    auth_module: Optional[Any] = None,
+    messaging_module: Optional[Any] = None,
+    servers_module: Optional[Any] = None,
+    relationships_module: Optional[Any] = None,
+    presence_module: Optional[Any] = None,
+    reactions_module: Optional[Any] = None,
+    embeds_module: Optional[Any] = None,
+    notifications_module: Optional[Any] = None,
+    webhooks_module: Optional[Any] = None,
+    threads_module: Optional[Any] = None,
+    media_module: Optional[Any] = None,
+    settings_module: Optional[Any] = None,
+    features_module: Optional[Any] = None,
+    avatars_module: Optional[Any] = None,
+    reports_module: Optional[Any] = None
+) -> None:
     """
     Initialize the API module with all dependencies.
 

@@ -13,7 +13,7 @@ Usage:
     reaction = reactions.add_reaction(user_id=1, message_id=123, emoji="thumbsup")
 """
 
-from typing import Optional, List, Dict
+from typing import Any, Optional, List, Dict
 
 from .models import (
     Reaction,
@@ -85,7 +85,7 @@ _manager = None
 _setup_complete = False
 
 
-def setup(db, messaging_module=None, servers_module=None, relationships_module=None, media_module=None):
+def setup(db: Any, messaging_module: Optional[Any] = None, servers_module: Optional[Any] = None, relationships_module: Optional[Any] = None, media_module: Optional[Any] = None) -> None:
     """
     Initialize the reactions module.
 

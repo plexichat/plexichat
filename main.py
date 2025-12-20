@@ -11,7 +11,7 @@ import signal
 import asyncio
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any, Tuple
 
 # Setup paths
 project_root = os.path.abspath(os.path.dirname(__file__))
@@ -43,7 +43,7 @@ class PlexiChatServer:
         self.restart_requested = False
         self._modules = {}
     
-    def get_default_config(self) -> dict:
+    def get_default_config(self) -> Dict[str, Any]:
         """Get default configuration with home folder data storage."""
         home_dir = Path.home() / ".plexichat"
         
@@ -588,11 +588,10 @@ class PlexiChatServer:
                     "max_per_minute": 30,
                     "max_per_hour": 200
                 }
-            },
             }
         }
     
-    def setup_directories(self):
+    def setup_directories(self) -> None:
         """Create necessary directories in home folder."""
         home_dir = Path.home() / ".plexichat"
         dirs = ["data", "logs", "media", "temp", "config"]
@@ -603,7 +602,7 @@ class PlexiChatServer:
         
         logger.debug(f"Created directories in {home_dir}")
     
-    def setup_config(self):
+    def setup_config(self) -> str:
         """Setup configuration from file or defaults, with environment variable overrides."""
         # Try project config first, then home folder config
         config_paths = [
@@ -627,7 +626,7 @@ class PlexiChatServer:
         
         return config_path
     
-    def _apply_env_overrides(self):
+    def _apply_env_overrides(self) -> None:
         """Apply environment variable overrides to configuration."""
         # DATABASE_URL override (format: postgres://user:pass@host:port/dbname or sqlite:///path)
         database_url = os.getenv("DATABASE_URL")
@@ -663,7 +662,7 @@ class PlexiChatServer:
             log_config["level"] = log_level.upper()
             config.set("logging", log_config)
 
-    def setup_logging(self):
+    def setup_logging(self) -> None:
         """Setup logging with configured settings."""
         log_config = config.get("logging", {})
         storage_config = config.get("storage", {})
@@ -680,7 +679,7 @@ class PlexiChatServer:
             rotate=log_config.get("rotate", True)
         )
     
-    def setup_utilities(self):
+    def setup_utilities(self) -> None:
         """Setup validator and version utilities."""
         validator.setup()
         
@@ -690,7 +689,7 @@ class PlexiChatServer:
             min_supported_version=versioning_config.get("min_supported_version", VERSION),
         )
     
-    def initialize_modules(self):
+    def initialize_modules(self) -> Tuple[Any, Any, Any, Any, Any, Any, Any, Any, Any, Any]:
         """Initialize all core modules in dependency order."""
         from src.core.database import Database, setup_redis, get_redis_client
         from src.core import auth, messaging, servers, relationships, presence, reactions, embeds, webhooks, settings, media
@@ -843,7 +842,7 @@ class PlexiChatServer:
         
         return auth, messaging, servers, relationships, presence, reactions, embeds, webhooks, settings, media
     
-    def create_application(self, auth, messaging, servers, relationships, presence, reactions, embeds, webhooks, settings, media):
+    def create_application(self, auth: Any, messaging: Any, servers: Any, relationships: Any, presence: Any, reactions: Any, embeds: Any, webhooks: Any, settings: Any, media: Any) -> Any:
         """Create and configure the FastAPI application."""
         from src.api import setup as api_setup, create_app
         
@@ -901,7 +900,7 @@ class PlexiChatServer:
         except Exception as e:
             logger.debug(f"Could not notify clients: {e}")
     
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Clean up resources on shutdown."""
         logger.info("Cleaning up resources...")
         
@@ -935,7 +934,7 @@ class PlexiChatServer:
         
         logger.info("Cleanup complete")
 
-    def run(self, host: str = None, port: int = None):
+    def run(self, host: Optional[str] = None, port: Optional[int] = None) -> bool:
         """Run the server with graceful shutdown support."""
         import uvicorn
         
@@ -1035,7 +1034,7 @@ class PlexiChatServer:
         
         return self.restart_requested
     
-    def request_restart(self):
+    def request_restart(self) -> None:
         """Request a server restart."""
         self.restart_requested = True
         self.shutdown_event.set()
@@ -1051,7 +1050,7 @@ class PlexiChatServer:
             self.server.should_exit = True
 
 
-def main():
+def main() -> None:
     """Main entry point for the PlexiChat server."""
     server = PlexiChatServer()
     
@@ -1116,7 +1115,7 @@ def main():
     logger.info("Server shutdown complete")
 
 
-def _check_security_keys():
+def _check_security_keys() -> None:
     """Check for default/placeholder security keys and warn if found."""
     warnings = []
     

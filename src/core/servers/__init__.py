@@ -13,7 +13,7 @@ Usage:
     server = servers.create_server(owner_id=1, name="My Server")
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Any, Optional, List, Dict
 
 from .models import (
     Server,
@@ -236,7 +236,7 @@ _onboarding_manager = None
 _setup_complete = False
 
 
-def setup(db, auth_module=None, messaging_module=None, notifications_module=None, events_module=None):
+def setup(db: Any, auth_module: Optional[Any] = None, messaging_module: Optional[Any] = None, notifications_module: Optional[Any] = None, events_module: Optional[Any] = None) -> None:
     """
     Initialize the servers module.
 

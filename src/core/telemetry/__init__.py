@@ -54,7 +54,7 @@ class EndpointStats:
     last_updated: int
 
 
-def setup(db) -> None:
+def setup(db: Any) -> None:
     """
     Initialize the telemetry module.
     

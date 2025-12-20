@@ -73,7 +73,7 @@ _manager = None
 _setup_complete = False
 
 
-def setup(db, auth_module=None, messaging_module=None, servers_module=None, embeds_module=None):
+def setup(db: Any, auth_module: Optional[Any] = None, messaging_module: Optional[Any] = None, servers_module: Optional[Any] = None, embeds_module: Optional[Any] = None) -> None:
     """
     Initialize the webhooks module.
 

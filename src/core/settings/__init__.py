@@ -22,7 +22,7 @@ Usage:
     all_settings = get_all_settings(user_id)
 """
 
-from typing import Optional, Dict, List
+from typing import Any, Optional, Dict, List
 from .manager import SettingsManager
 from .models import UserSetting, SettingsConfig
 
@@ -40,7 +40,7 @@ _manager: Optional[SettingsManager] = None
 _setup_complete = False
 
 
-def setup(db, config: Optional[SettingsConfig] = None) -> None:
+def setup(db: Any, config: Optional[SettingsConfig] = None) -> None:
     """
     Initialize the settings module.
     
