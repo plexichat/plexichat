@@ -40,6 +40,7 @@ for path in [project_root, src_path, utils_path, common_utils_path]:
     if path not in sys.path:
         sys.path.insert(0, path)
 
+from unittest.mock import Mock
 from src.tests.fixtures.config import TEST_PASSWORD
 from src.tests.fixtures.database import DatabaseManager
 from src.tests.fixtures.modules import ModuleRegistry
@@ -300,6 +301,133 @@ def test_server_with_members(modules, user_pool):
     modules.servers.add_member(server.id, member2.id)
 
     return server, owner, [member1, member2]
+
+
+# =============================================================================
+# Comprehensive Test Fixtures (for manager tests)
+# =============================================================================
+
+@pytest.fixture
+def test_db():
+    """Create a fresh in-memory database for each test."""
+    from src.core.database import Database
+    db = Database(":memory:")
+    db.connect()
+    yield db
+    db.close()
+
+
+@pytest.fixture
+def auth_manager(test_db):
+    """AuthManager fixture."""
+    from src.core.auth.manager import AuthManager
+    return AuthManager(test_db)
+
+
+@pytest.fixture
+def email_sender():
+    """Mock email sender."""
+    mock = Mock()
+    mock.send = Mock(return_value=True)
+    return mock
+
+
+@pytest.fixture
+def messaging_manager(test_db):
+    """MessagingManager fixture."""
+    from src.core.messaging.manager import MessagingManager
+    return MessagingManager(test_db)
+
+
+@pytest.fixture
+def server_manager(test_db):
+    """ServerManager fixture."""
+    from src.core.servers.manager import ServerManager
+    return ServerManager(test_db)
+
+
+@pytest.fixture
+def presence_manager(test_db):
+    """PresenceManager fixture."""
+    from src.core.presence.manager import PresenceManager
+    return PresenceManager(test_db)
+
+
+@pytest.fixture
+def rel_manager(test_db):
+    """RelationshipManager fixture."""
+    from src.core.relationships.manager import RelationshipManager
+    return RelationshipManager(test_db)
+
+
+@pytest.fixture
+def reaction_manager(test_db):
+    """ReactionManager fixture."""
+    from src.core.reactions.manager import ReactionManager
+    return ReactionManager(test_db)
+
+
+@pytest.fixture
+def webhook_manager(test_db):
+    """WebhookManager fixture."""
+    from src.core.webhooks.manager import WebhookManager
+    return WebhookManager(test_db)
+
+
+@pytest.fixture
+def thread_manager(test_db):
+    """ThreadManager fixture."""
+    from src.core.threads.manager import ThreadManager
+    return ThreadManager(test_db)
+
+
+@pytest.fixture
+def notification_manager(test_db):
+    """NotificationManager fixture."""
+    from src.core.notifications.manager import NotificationManager
+    return NotificationManager(test_db)
+
+
+@pytest.fixture
+def media_manager(test_db):
+    """MediaManager fixture."""
+    from src.core.media.manager import MediaManager
+    return MediaManager(test_db)
+
+
+@pytest.fixture
+def search_manager(test_db):
+    """SearchManager fixture."""
+    from src.core.search.manager import SearchManager
+    return SearchManager(test_db)
+
+
+@pytest.fixture
+def app_manager(test_db):
+    """ApplicationManager fixture."""
+    from src.core.applications.manager import ApplicationManager
+    return ApplicationManager(test_db)
+
+
+@pytest.fixture
+def sticker_manager(test_db):
+    """StickerManager fixture."""
+    from src.core.stickers.manager import StickerManager
+    return StickerManager(test_db)
+
+
+@pytest.fixture
+def poll_manager(test_db):
+    """PollManager fixture."""
+    from src.core.polls.manager import PollManager
+    return PollManager(test_db)
+
+
+@pytest.fixture
+def soundboard_manager(test_db):
+    """SoundboardManager fixture."""
+    from src.core.soundboard.manager import SoundboardManager
+    return SoundboardManager(test_db)
 
 
 @pytest.fixture
