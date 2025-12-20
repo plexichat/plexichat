@@ -517,6 +517,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "encryption: Encryption module tests")
     config.addinivalue_line("markers", "embeds: Embeds module tests")
     config.addinivalue_line("markers", "automod: Auto-moderation module tests")
+    config.addinivalue_line("markers", "performance: Performance and load tests")
 
 
 def pytest_collection_modifyitems(config, items):
@@ -595,5 +596,8 @@ def pytest_collection_modifyitems(config, items):
         elif "/automod/" in item_path:
             item.add_marker(pytest.mark.automod)
             item.add_marker(pytest.mark.integration)
+        elif "/performance/" in item_path:
+            item.add_marker(pytest.mark.performance)
+            item.add_marker(pytest.mark.slow)
         elif "/unit/" in item_path:
             item.add_marker(pytest.mark.unit)
