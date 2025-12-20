@@ -121,7 +121,7 @@ class TemplateManager:
         assert result is not None  # Should exist since we just created it
         return result
 
-    def _snapshot_server(self, template_id: int, server_id: int, user_id: int):
+    def _snapshot_server(self, template_id: int, server_id: int, user_id: int) -> None:
         """Snapshot server structure into template data."""
         channels_data = []
         categories_data = []
@@ -181,7 +181,7 @@ class TemplateManager:
              json.dumps(roles_data), now),
         )
 
-    def _get_category_position(self, category_id: Optional[int], cat_rows: List[Dict]) -> Optional[int]:
+    def _get_category_position(self, category_id: Optional[int], cat_rows: List[Dict[str, Any]]) -> Optional[int]:
         """Get category position by ID."""
         if not category_id:
             return None
@@ -255,7 +255,7 @@ class TemplateManager:
         code: str,
         server_name: str,
         server_description: Optional[str] = None,
-    ) -> Server:
+    ) -> Optional[Server]:
         """Apply a template to create a new server."""
         template = self.get_template(code, user_id)
         if not template:
@@ -278,7 +278,7 @@ class TemplateManager:
         channels = json.loads(data_row["channels"]) if data_row["channels"] else []
         roles = json.loads(data_row["roles"]) if data_row["roles"] else []
 
-        category_map = {}
+        category_map: Dict[int, int] = {}
         for cat_data in sorted(categories, key=lambda x: x.get("position", 0)):
             cat = self._server_manager.create_category(
                 user_id=user_id,
@@ -396,7 +396,7 @@ class TemplateManager:
         action: AuditLogAction,
         target_type: Optional[str] = None,
         target_id: Optional[int] = None,
-    ):
+    ) -> None:
         """Log an audit entry."""
         entry_id = self._generate_id()
         now = self._get_timestamp()
@@ -408,7 +408,7 @@ class TemplateManager:
             (entry_id, server_id, user_id, action.value, target_type, target_id, now),
         )
 
-    def _row_to_template(self, row: Dict) -> ServerTemplate:
+    def _row_to_template(self, row: Dict[str, Any]) -> ServerTemplate:
         """Convert database row to ServerTemplate model."""
         return ServerTemplate(
             id=row["id"],
@@ -423,7 +423,7 @@ class TemplateManager:
             updated_at=row["updated_at"],
         )
 
-    def _row_to_template_data(self, row: Dict) -> TemplateData:
+    def _row_to_template_data(self, row: Dict[str, Any]) -> TemplateData:
         """Convert database row to TemplateData model."""
         channels = row["channels"]
         categories = row["categories"]

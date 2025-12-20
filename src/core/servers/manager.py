@@ -93,7 +93,7 @@ class ServerManager:
 
         logger.info("Server module initialized")
 
-    def _cache_get(self, cache: dict, key, default=None):
+    def _cache_get(self, cache: dict, key, default=None) -> Any:
         """Get value from cache if not expired."""
         if key in cache:
             value, expires = cache[key]
@@ -102,11 +102,11 @@ class ServerManager:
             del cache[key]
         return default
 
-    def _cache_set(self, cache: dict, key, value):
+    def _cache_set(self, cache: dict, key, value) -> None:
         """Set value in cache with TTL."""
         cache[key] = (value, time.time() + self._cache_ttl)
 
-    def _cache_invalidate(self, cache: dict, key=None):
+    def _cache_invalidate(self, cache: dict, key=None) -> None:
         """Invalidate cache entry or entire cache."""
         if key is None:
             cache.clear()
@@ -211,7 +211,7 @@ class ServerManager:
         target_id: Optional[int] = None,
         changes: Optional[Dict[str, Any]] = None,
         reason: Optional[str] = None,
-    ):
+    ) -> None:
         """Log an audit entry."""
         entry_id = self._generate_id()
         now = self._get_timestamp()
@@ -2058,7 +2058,7 @@ class ServerManager:
         self._cache_set(self._member_cache, cache_key, result if result else False)
         return result
 
-    def _get_member_role_rows(self, server_id: int, user_id: int) -> List[Dict]:
+    def _get_member_role_rows(self, server_id: int, user_id: int) -> List[Dict[str, Any]]:
         """Get raw role rows for a member."""
         member = self.get_member(server_id, user_id)
         if not member:
@@ -2075,7 +2075,7 @@ class ServerManager:
 
     # === Row Converters ===
 
-    def _row_to_server(self, row: Dict) -> Server:
+    def _row_to_server(self, row: Dict[str, Any]) -> Server:
         """Convert database row to Server model."""
         # Handle both dict and sqlite3.Row
         member_count = 0
@@ -2121,7 +2121,7 @@ class ServerManager:
             metadata=json.loads(row["metadata"]) if row["metadata"] else None,
         )
 
-    def _server_to_dict(self, server: Server) -> Dict:
+    def _server_to_dict(self, server: Server) -> Dict[str, Any]:
         """Convert Server model to dict for caching."""
         return {
             "id": server.id,
@@ -2143,7 +2143,7 @@ class ServerManager:
             "metadata": server.metadata,
         }
 
-    def _dict_to_server(self, data: Dict) -> Server:
+    def _dict_to_server(self, data: Dict[str, Any]) -> Server:
         """Convert cached dict to Server model."""
         return Server(
             id=data["id"],
@@ -2165,7 +2165,7 @@ class ServerManager:
             metadata=data.get("metadata"),
         )
 
-    def _row_to_channel(self, row: Dict) -> Channel:
+    def _row_to_channel(self, row: Dict[str, Any]) -> Channel:
         """Convert database row to Channel model."""
         return Channel(
             id=row["id"],
@@ -2185,7 +2185,7 @@ class ServerManager:
             metadata=json.loads(row["metadata"]) if row["metadata"] else None,
         )
 
-    def _row_to_category(self, row: Dict) -> ChannelCategory:
+    def _row_to_category(self, row: Dict[str, Any]) -> ChannelCategory:
         """Convert database row to ChannelCategory model."""
         return ChannelCategory(
             id=row["id"],
@@ -2196,7 +2196,7 @@ class ServerManager:
             updated_at=row["updated_at"],
         )
 
-    def _row_to_role(self, row: Dict) -> Role:
+    def _row_to_role(self, row: Dict[str, Any]) -> Role:
         """Convert database row to Role model."""
         perms = row["permissions"]
         if isinstance(perms, str):
@@ -2217,7 +2217,7 @@ class ServerManager:
             deleted=bool(row["deleted"]),
         )
 
-    def _row_to_member(self, row: Dict) -> Member:
+    def _row_to_member(self, row: Dict[str, Any]) -> Member:
         """Convert database row to Member model."""
         # Get role IDs
         role_rows = self._db.fetch_all(
@@ -2238,7 +2238,7 @@ class ServerManager:
             roles=role_ids,
         )
 
-    def _row_to_override(self, row: Dict) -> ChannelOverride:
+    def _row_to_override(self, row: Dict[str, Any]) -> ChannelOverride:
         """Convert database row to ChannelOverride model."""
         allow = row["allow"]
         deny = row["deny"]
@@ -2259,7 +2259,7 @@ class ServerManager:
             updated_at=row["updated_at"],
         )
 
-    def _row_to_invite(self, row: Dict) -> Invite:
+    def _row_to_invite(self, row: Dict[str, Any]) -> Invite:
         """Convert database row to Invite model."""
         return Invite(
             id=row["id"],
@@ -2276,7 +2276,7 @@ class ServerManager:
             revoked=bool(row["revoked"]),
         )
 
-    def _row_to_ban(self, row: Dict) -> Ban:
+    def _row_to_ban(self, row: Dict[str, Any]) -> Ban:
         """Convert database row to Ban model."""
         return Ban(
             id=row["id"],
@@ -2287,7 +2287,7 @@ class ServerManager:
             created_at=row["created_at"],
         )
 
-    def _row_to_audit_entry(self, row: Dict) -> AuditLogEntry:
+    def _row_to_audit_entry(self, row: Dict[str, Any]) -> AuditLogEntry:
         """Convert database row to AuditLogEntry model."""
         changes = row["changes"]
         if isinstance(changes, str):

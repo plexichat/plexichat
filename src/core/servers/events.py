@@ -389,7 +389,7 @@ class ScheduledEventManager:
         rows = self._db.fetch_all(query, tuple(params))
         return [self._row_to_rsvp(row) for row in rows]
 
-    def _update_rsvp_counts(self, event_id: int, old_status: Optional[str], new_status: Optional[str]):
+    def _update_rsvp_counts(self, event_id: int, old_status: Optional[str], new_status: Optional[str]) -> None:
         """Update RSVP counts on the event."""
         updates = []
         if old_status == RSVPStatus.INTERESTED.value:
@@ -427,7 +427,7 @@ class ScheduledEventManager:
         except Exception:
             raise ScheduledEventError("Invalid RRULE format")
 
-        instances = []
+        instances: List[ScheduledEvent] = []
         duration = (event.end_time - event.start_time) if event.end_time else 3600000
 
         for i, dt in enumerate(rule):
@@ -456,7 +456,9 @@ class ScheduledEventManager:
                     event_id, now, now,
                 ),
             )
-            instances.append(self.get_event(instance_id, user_id))
+            instance = self.get_event(instance_id, user_id)
+            if instance:
+                instances.append(instance)
 
         return instances
 
@@ -468,7 +470,7 @@ class ScheduledEventManager:
         target_type: Optional[str] = None,
         target_id: Optional[int] = None,
         changes: Optional[Dict[str, Any]] = None,
-    ):
+    ) -> None:
         """Log an audit entry."""
         entry_id = self._generate_id()
         now = self._get_timestamp()
@@ -481,7 +483,7 @@ class ScheduledEventManager:
              json.dumps(changes) if changes else None, now),
         )
 
-    def _row_to_event(self, row: Dict) -> ScheduledEvent:
+    def _row_to_event(self, row: Dict[str, Any]) -> ScheduledEvent:
         """Convert database row to ScheduledEvent model."""
         return ScheduledEvent(
             id=row["id"],
@@ -505,7 +507,7 @@ class ScheduledEventManager:
             updated_at=row["updated_at"],
         )
 
-    def _row_to_rsvp(self, row: Dict) -> EventRSVP:
+    def _row_to_rsvp(self, row: Dict[str, Any]) -> EventRSVP:
         """Convert database row to EventRSVP model."""
         return EventRSVP(
             id=row["id"],
