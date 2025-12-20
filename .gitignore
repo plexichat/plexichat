@@ -67,3 +67,6 @@ admin_credentials.txt
 
 # Node (if any)
 node_modules/
+
+# Type check reports
+type_check_reports/

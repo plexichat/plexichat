@@ -14,7 +14,7 @@ git submodule update --init --recursive # Initialize submodules (common-utils)
 - **Run dev server**: `python main.py` (starts on http://localhost:8000)
 - **Run tests**: `pytest -v` or `pytest src/tests/unit/` (unit only)
 - **Run lint**: `ruff check src/` and `ruff format --check src/`
-- **Type check**: `pyright src/`
+- **Type check**: `pyright src/` (single repo) or `python scripts/type_check_all.py` (all repos with reports)
 - **Build**: N/A (Python, no build step required)
 
 ## Tech Stack
@@ -32,6 +32,7 @@ git submodule update --init --recursive # Initialize submodules (common-utils)
 - `src/core/` - Business logic modules (auth, messaging, servers, presence, etc.)
 - `src/tests/` - Test suite organized by module
 - `src/utils/` - Shared utilities (logger, config, validation, encryption)
+- `scripts/` - Development tools (type checking across all repos)
 - Data stored in `~/.plexichat/` by default
 
 ## Conventions
