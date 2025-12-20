@@ -30,6 +30,9 @@ import uuid
 
 from src.utils import encryption
 
+# Load custom pytest plugins
+pytest_plugins = ['src.tests.pytest_plugins']
+
 # Ensure src is in path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 src_path = os.path.join(project_root, "src")
@@ -490,6 +493,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "unit: Fast unit tests, no database required")
     config.addinivalue_line("markers", "integration: Tests requiring full module setup")
     config.addinivalue_line("markers", "slow: Intentionally slow tests (rate limiting, timeouts)")
+    config.addinivalue_line("markers", "security: Security-critical test that must not fail")
     config.addinivalue_line("markers", "auth: Authentication module tests")
     config.addinivalue_line("markers", "messaging: Messaging module tests")
     config.addinivalue_line("markers", "servers: Server module tests")
@@ -508,62 +512,88 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "polls: Polls module tests")
     config.addinivalue_line("markers", "soundboard: Soundboard module tests")
     config.addinivalue_line("markers", "settings: User settings module tests")
+    config.addinivalue_line("markers", "voice: Voice module tests")
+    config.addinivalue_line("markers", "websocket: WebSocket module tests")
+    config.addinivalue_line("markers", "encryption: Encryption module tests")
+    config.addinivalue_line("markers", "embeds: Embeds module tests")
+    config.addinivalue_line("markers", "automod: Auto-moderation module tests")
 
 
 def pytest_collection_modifyitems(config, items):
     """Auto-mark tests based on their location."""
     for item in items:
         # Add markers based on test file path
-        if "/auth/" in str(item.fspath):
+        item_path = str(item.fspath)
+        
+        # Security tests (mark as critical)
+        if "/security/" in item_path or "test_security" in item.name.lower():
+            item.add_marker(pytest.mark.security)
+        
+        if "/auth/" in item_path:
             item.add_marker(pytest.mark.auth)
             item.add_marker(pytest.mark.integration)
-        elif "/messaging/" in str(item.fspath):
+        elif "/messaging/" in item_path:
             item.add_marker(pytest.mark.messaging)
             item.add_marker(pytest.mark.integration)
-        elif "/servers/" in str(item.fspath):
+        elif "/servers/" in item_path:
             item.add_marker(pytest.mark.servers)
             item.add_marker(pytest.mark.integration)
-        elif "/presence/" in str(item.fspath):
+        elif "/presence/" in item_path:
             item.add_marker(pytest.mark.presence)
             item.add_marker(pytest.mark.integration)
-        elif "/relationships/" in str(item.fspath):
+        elif "/relationships/" in item_path:
             item.add_marker(pytest.mark.relationships)
             item.add_marker(pytest.mark.integration)
-        elif "/reactions/" in str(item.fspath):
+        elif "/reactions/" in item_path:
             item.add_marker(pytest.mark.reactions)
             item.add_marker(pytest.mark.integration)
-        elif "/webhooks/" in str(item.fspath):
+        elif "/webhooks/" in item_path:
             item.add_marker(pytest.mark.webhooks)
             item.add_marker(pytest.mark.integration)
-        elif "/threads/" in str(item.fspath):
+        elif "/threads/" in item_path:
             item.add_marker(pytest.mark.threads)
             item.add_marker(pytest.mark.integration)
-        elif "/notifications/" in str(item.fspath):
+        elif "/notifications/" in item_path:
             item.add_marker(pytest.mark.notifications)
             item.add_marker(pytest.mark.integration)
-        elif "/ratelimit/" in str(item.fspath):
+        elif "/ratelimit/" in item_path:
             item.add_marker(pytest.mark.ratelimit)
             item.add_marker(pytest.mark.integration)
-        elif "/api/" in str(item.fspath):
+        elif "/api/" in item_path:
             item.add_marker(pytest.mark.api)
             item.add_marker(pytest.mark.integration)
-        elif "/media/" in str(item.fspath):
+        elif "/media/" in item_path:
             item.add_marker(pytest.mark.media)
             item.add_marker(pytest.mark.integration)
-        elif "/applications/" in str(item.fspath):
+        elif "/applications/" in item_path:
             item.add_marker(pytest.mark.applications)
             item.add_marker(pytest.mark.integration)
-        elif "/stickers/" in str(item.fspath):
+        elif "/stickers/" in item_path:
             item.add_marker(pytest.mark.stickers)
             item.add_marker(pytest.mark.integration)
-        elif "/polls/" in str(item.fspath):
+        elif "/polls/" in item_path:
             item.add_marker(pytest.mark.polls)
             item.add_marker(pytest.mark.integration)
-        elif "/soundboard/" in str(item.fspath):
+        elif "/soundboard/" in item_path:
             item.add_marker(pytest.mark.soundboard)
             item.add_marker(pytest.mark.integration)
-        elif "/settings/" in str(item.fspath):
+        elif "/settings/" in item_path:
             item.add_marker(pytest.mark.settings)
             item.add_marker(pytest.mark.integration)
-        elif "/unit/" in str(item.fspath):
+        elif "/voice/" in item_path:
+            item.add_marker(pytest.mark.voice)
+            item.add_marker(pytest.mark.integration)
+        elif "/websocket/" in item_path:
+            item.add_marker(pytest.mark.websocket)
+            item.add_marker(pytest.mark.integration)
+        elif "/encryption/" in item_path:
+            item.add_marker(pytest.mark.encryption)
+            item.add_marker(pytest.mark.integration)
+        elif "/embeds/" in item_path:
+            item.add_marker(pytest.mark.embeds)
+            item.add_marker(pytest.mark.integration)
+        elif "/automod/" in item_path:
+            item.add_marker(pytest.mark.automod)
+            item.add_marker(pytest.mark.integration)
+        elif "/unit/" in item_path:
             item.add_marker(pytest.mark.unit)

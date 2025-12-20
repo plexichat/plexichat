@@ -31,6 +31,7 @@ logs/
 # Testing
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
 .benchmarks/
 .hypothesis/
@@ -41,6 +42,13 @@ coverage.xml
 junit.xml
 *-report.xml
 *-report.json
+test-results.xml
+test-results-*.xml
+test-reports/
+*.cover
+.tox/
+nosetests.xml
+pytest_cache/
 
 # GitLab CI/CD artifacts
 .cache/
