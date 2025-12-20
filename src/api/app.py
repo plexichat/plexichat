@@ -21,12 +21,12 @@ import utils.logger as logger
 def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> FastAPI:
     """
     Create and configure the FastAPI application.
-    
+
     Args:
         enable_rate_limiting: Whether to enable rate limiting middleware.
         enable_docs: Whether to enable documentation serving.
                      The actual path is configured in config.yaml under docs.path
-    
+
     Returns:
         Configured FastAPI application instance.
     """
@@ -50,6 +50,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
     if enable_rate_limiting:
         from src.core import ratelimit
+
         if ratelimit.is_setup():
             RateLimitMiddleware = create_rate_limit_middleware()
             app.add_middleware(RateLimitMiddleware)
@@ -71,9 +72,11 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     # Include WebSocket gateway router
     try:
         from src.api import websocket
+
         if not websocket.is_setup():
             # Setup websocket with available modules
             import src.api as api_module
+
             websocket.setup(
                 auth_module=api_module.get_auth(),
                 presence_module=api_module.get_presence(),
@@ -116,17 +119,19 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     from fastapi.responses import FileResponse
     from fastapi import Request, HTTPException
     from pathlib import Path
+    from typing import Optional
+    from src.core.auth.models import TokenInfo
 
     @app.get("/api/v1/media/attachments/{filename}")
     async def serve_attachment(filename: str, request: Request):
         """Serve uploaded attachment files. Requires authentication via Authorization header or cookie."""
         # Try Authorization header first (preferred for API calls)
-        auth_header = request.headers.get("Authorization")
-        token = None
+        auth_header: Optional[str] = request.headers.get("Authorization")
+        token: Optional[str] = None
 
         if auth_header and auth_header.startswith("Bearer "):
             token = auth_header[7:]
-        
+
         # Fallback to cookie-based auth for <img> tags and direct browser access
         # This is safe because cookies are HttpOnly and not exposed to JS
         if not token:
@@ -135,31 +140,44 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         if not token:
             raise HTTPException(
                 status_code=401,
-                detail={"error": {"code": 401, "message": "Authentication required. Use Authorization header or cookie."}}
+                detail={
+                    "error": {
+                        "code": 401,
+                        "message": "Authentication required. Use Authorization header or cookie.",
+                    }
+                },
             )
 
         # Verify token
         try:
             import src.api as api_module
+
             auth = api_module.get_auth()
             if auth:
-                token_info = auth.verify_token(token)
+                token_info: TokenInfo = auth.verify_token(token)
                 if not token_info:
                     raise HTTPException(
                         status_code=401,
-                        detail={"error": {"code": 401, "message": "Invalid or expired token"}}
+                        detail={
+                            "error": {
+                                "code": 401,
+                                "message": "Invalid or expired token",
+                            }
+                        },
                     )
             else:
                 raise HTTPException(
                     status_code=500,
-                    detail={"error": {"code": 500, "message": "Auth module not available"}}
+                    detail={
+                        "error": {"code": 500, "message": "Auth module not available"}
+                    },
                 )
         except HTTPException:
             raise
         except Exception:
             raise HTTPException(
                 status_code=401,
-                detail={"error": {"code": 401, "message": "Invalid or expired token"}}
+                detail={"error": {"code": 401, "message": "Invalid or expired token"}},
             )
 
         # Serve the file
@@ -172,18 +190,18 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             if not str(file_path).startswith(str(media_dir.resolve())):
                 raise HTTPException(
                     status_code=403,
-                    detail={"error": {"code": 403, "message": "Access denied"}}
+                    detail={"error": {"code": 403, "message": "Access denied"}},
                 )
         except Exception:
             raise HTTPException(
                 status_code=403,
-                detail={"error": {"code": 403, "message": "Access denied"}}
+                detail={"error": {"code": 403, "message": "Access denied"}},
             )
 
         if not file_path.exists():
             raise HTTPException(
                 status_code=404,
-                detail={"error": {"code": 404, "message": "File not found"}}
+                detail={"error": {"code": 404, "message": "File not found"}},
             )
 
         # Check if download is requested
@@ -191,9 +209,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
         if download:
             return FileResponse(
-                file_path,
-                filename=filename,
-                media_type="application/octet-stream"
+                file_path, filename=filename, media_type="application/octet-stream"
             )
 
         return FileResponse(file_path)

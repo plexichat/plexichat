@@ -10,6 +10,7 @@ from .opcodes import GatewayOpcode, GatewayCloseCode
 from .connection import Connection, ConnectionState
 from .session import SessionManager
 from .intents import validate_intents, DEFAULT_INTENTS
+from src.core.auth.models import TokenInfo
 
 
 class OpcodeHandler:
@@ -139,11 +140,15 @@ class OpcodeHandler:
         # Dispatch online presence to friends
         await self._dispatch_online_presence(user_id)
 
-        return GatewayOpcode.DISPATCH, {
-            "t": "READY",
-            "s": connection.increment_sequence(),
-            "d": ready_data,
-        }, None
+        return (
+            GatewayOpcode.DISPATCH,
+            {
+                "t": "READY",
+                "s": connection.increment_sequence(),
+                "d": ready_data,
+            },
+            None,
+        )
 
     async def _handle_resume(
         self,
@@ -174,11 +179,15 @@ class OpcodeHandler:
 
         logger.info(f"User {user_id} resumed session {session_id}")
 
-        return GatewayOpcode.DISPATCH, {
-            "t": "RESUMED",
-            "s": connection.sequence,
-            "d": {},
-        }, None
+        return (
+            GatewayOpcode.DISPATCH,
+            {
+                "t": "RESUMED",
+                "s": connection.sequence,
+                "d": {},
+            },
+            None,
+        )
 
     async def _handle_presence_update(
         self,
@@ -199,12 +208,14 @@ class OpcodeHandler:
 
         try:
             from src.core.presence import UserStatus
+
             status_enum = UserStatus(status)
             self._presence.set_status(connection.user_id, status_enum)
 
             if activities:
                 activity = activities[0]
                 from src.core.presence import ActivityType
+
                 activity_type = ActivityType(activity.get("type", "custom"))
                 self._presence.set_activity(
                     connection.user_id,
@@ -220,7 +231,7 @@ class OpcodeHandler:
                 connection.user_id,
                 status if status != "invisible" else "offline",
                 custom_status,
-                custom_emoji
+                custom_emoji,
             )
         except Exception as e:
             logger.warning(f"Presence update failed: {e}")
@@ -265,12 +276,17 @@ class OpcodeHandler:
             if not connection.user_id:
                 return None, None, GatewayCloseCode.NOT_AUTHENTICATED
             from src.core.voice import signaling
+
             info = signaling.create_voice_connection(connection.user_id, channel_id)
-            return GatewayOpcode.DISPATCH, {
-                "t": "VOICE_SERVER_UPDATE",
-                "s": connection.increment_sequence(),
-                "d": info.to_dict(),
-            }, None
+            return (
+                GatewayOpcode.DISPATCH,
+                {
+                    "t": "VOICE_SERVER_UPDATE",
+                    "s": connection.increment_sequence(),
+                    "d": info.to_dict(),
+                },
+                None,
+            )
         except Exception as e:
             logger.warning(f"Voice connect failed: {e}")
             return None, None, None
@@ -289,6 +305,7 @@ class OpcodeHandler:
 
         try:
             from src.core.voice import signaling
+
             signaling.disconnect_voice(connection.user_id, channel_id)
         except Exception as e:
             logger.warning(f"Voice disconnect failed: {e}")
@@ -312,7 +329,9 @@ class OpcodeHandler:
         sdp_type = data.get("type", "offer")
 
         if not channel_id or not sdp:
-            logger.warning(f"SDP offer missing required fields: channel_id={channel_id}, sdp_present={bool(sdp)}, data keys={data.keys() if data else None}")
+            logger.warning(
+                f"SDP offer missing required fields: channel_id={channel_id}, sdp_present={bool(sdp)}, data keys={data.keys() if data else None}"
+            )
             return None, None, GatewayCloseCode.DECODE_ERROR
 
         # Convert channel_id to int if it's a string
@@ -327,8 +346,11 @@ class OpcodeHandler:
 
         try:
             from src.core.voice import signaling
+
             # Use async version to actually communicate with SFU
-            answer = await signaling.handle_sdp_offer_async(connection.user_id, channel_id, sdp, sdp_type)
+            answer = await signaling.handle_sdp_offer_async(
+                connection.user_id, channel_id, sdp, sdp_type
+            )
             return GatewayOpcode.VOICE_SDP_ANSWER, answer.to_dict(), None
         except Exception as e:
             logger.warning(f"SDP offer handling failed: {e}")
@@ -353,14 +375,18 @@ class OpcodeHandler:
         sdp_mline_index = data.get("sdp_mline_index") or data.get("sdpMLineIndex")
 
         if not channel_id or not candidate:
-            logger.warning(f"ICE candidate missing required fields: channel_id={channel_id}, candidate={candidate}, data={data}")
+            logger.warning(
+                f"ICE candidate missing required fields: channel_id={channel_id}, candidate={candidate}, data={data}"
+            )
             return None, None, GatewayCloseCode.DECODE_ERROR
 
         # Convert channel_id to int if it's a string
         try:
             channel_id = int(channel_id)
         except (ValueError, TypeError):
-            logger.warning(f"Invalid channel_id type in ICE candidate: {type(channel_id)}")
+            logger.warning(
+                f"Invalid channel_id type in ICE candidate: {type(channel_id)}"
+            )
             return None, None, GatewayCloseCode.DECODE_ERROR
 
         if not connection.user_id:
@@ -368,6 +394,7 @@ class OpcodeHandler:
 
         try:
             from src.core.voice import signaling
+
             signaling.handle_ice_candidate(
                 connection.user_id, channel_id, candidate, sdp_mid, sdp_mline_index
             )
@@ -409,6 +436,7 @@ class OpcodeHandler:
         if channel_id:
             try:
                 from src.core.voice import signaling
+
                 signaling.update_quality_hint(
                     connection.user_id, channel_id, target_bitrate, quality_level
                 )
@@ -434,7 +462,7 @@ class OpcodeHandler:
             return None
 
         try:
-            token_info = self._auth.verify_token(token)
+            token_info: TokenInfo = self._auth.verify_token(token)
             return token_info.user_id
         except Exception:
             return None
@@ -465,12 +493,14 @@ class OpcodeHandler:
         if self._servers:
             try:
                 servers = self._servers.get_servers(user_id)
-                for server in (servers or []):
-                    guilds.append({
-                        "id": str(server.id),
-                        "name": server.name,
-                        "unavailable": False,
-                    })
+                for server in servers or []:
+                    guilds.append(
+                        {
+                            "id": str(server.id),
+                            "name": server.name,
+                            "unavailable": False,
+                        }
+                    )
             except Exception:
                 pass
 
@@ -497,6 +527,7 @@ class OpcodeHandler:
         if self._presence:
             try:
                 from src.core.presence.models import UserStatus
+
                 self._presence.set_status(user_id, UserStatus.ONLINE)
                 logger.debug(f"Set user {user_id} presence to ONLINE on connect")
             except Exception as e:
@@ -510,11 +541,12 @@ class OpcodeHandler:
         user_id: int,
         status: str,
         custom_status: Optional[str] = None,
-        custom_emoji: Optional[str] = None
+        custom_emoji: Optional[str] = None,
     ) -> None:
         """Dispatch presence update to friends and server members."""
         try:
             import src.api as api
+
             relationships = api.get_relationships()
 
             # Collect all user IDs who should receive this presence update
@@ -557,9 +589,11 @@ class OpcodeHandler:
                         "status": status,
                         "custom_status": custom_status,
                         "custom_emoji": custom_emoji,
-                    }
+                    },
                 )
                 await dispatcher.dispatch_event(event, list(target_user_ids))
-                logger.debug(f"Dispatched presence update for user {user_id} to {len(target_user_ids)} users")
+                logger.debug(
+                    f"Dispatched presence update for user {user_id} to {len(target_user_ids)} users"
+                )
         except Exception as e:
             logger.debug(f"Failed to dispatch presence: {e}")

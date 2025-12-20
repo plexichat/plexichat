@@ -60,7 +60,7 @@ def setup(
     settings_module: Optional[Any] = None,
     features_module: Optional[Any] = None,
     avatars_module: Optional[Any] = None,
-    reports_module: Optional[Any] = None
+    reports_module: Optional[Any] = None,
 ) -> None:
     """
     Initialize the API module with all dependencies.
@@ -84,7 +84,18 @@ def setup(
         reports_module: Reports module for message/user reporting
     """
     global _db, _auth, _messaging, _servers, _relationships, _presence
-    global _reactions, _embeds, _notifications, _webhooks, _threads, _media, _settings, _features, _avatars, _reports, _setup_complete
+    global \
+        _reactions, \
+        _embeds, \
+        _notifications, \
+        _webhooks, \
+        _threads, \
+        _media, \
+        _settings, \
+        _features, \
+        _avatars, \
+        _reports, \
+        _setup_complete
 
     _db = db
     _auth = auth_module
@@ -105,84 +116,84 @@ def setup(
     _setup_complete = True
 
 
-def get_db():
+def get_db() -> Optional[Any]:
     """Get database instance."""
     if not _setup_complete:
         raise RuntimeError("API module not initialized. Call api.setup() first.")
     return _db
 
 
-def get_auth():
+def get_auth() -> Optional[Any]:
     """Get auth module."""
     return _auth
 
 
-def get_messaging():
+def get_messaging() -> Optional[Any]:
     """Get messaging module."""
     return _messaging
 
 
-def get_servers():
+def get_servers() -> Optional[Any]:
     """Get servers module."""
     return _servers
 
 
-def get_relationships():
+def get_relationships() -> Optional[Any]:
     """Get relationships module."""
     return _relationships
 
 
-def get_presence():
+def get_presence() -> Optional[Any]:
     """Get presence module."""
     return _presence
 
 
-def get_reactions():
+def get_reactions() -> Optional[Any]:
     """Get reactions module."""
     return _reactions
 
 
-def get_embeds():
+def get_embeds() -> Optional[Any]:
     """Get embeds module."""
     return _embeds
 
 
-def get_notifications():
+def get_notifications() -> Optional[Any]:
     """Get notifications module."""
     return _notifications
 
 
-def get_webhooks():
+def get_webhooks() -> Optional[Any]:
     """Get webhooks module."""
     return _webhooks
 
 
-def get_threads():
+def get_threads() -> Optional[Any]:
     """Get threads module."""
     return _threads
 
 
-def get_media():
+def get_media() -> Optional[Any]:
     """Get media module."""
     return _media
 
 
-def get_settings():
+def get_settings() -> Optional[Any]:
     """Get settings module."""
     return _settings
 
 
-def get_features():
+def get_features() -> Optional[Any]:
     """Get features module."""
     return _features
 
 
-def get_avatars():
+def get_avatars() -> Optional[Any]:
     """Get avatars module."""
     return _avatars
 
 
-def get_reports():
+def get_reports() -> Optional[Any]:
     """Get reports module."""
     return _reports
 
