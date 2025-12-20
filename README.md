@@ -163,10 +163,32 @@ See root README.md for full configuration options.
 
 ## Testing
 
+### Quick Start
+
 ```bash
+# Install test dependencies
 pip install -r requirements-test.txt
-pytest -v
+
+# Run all tests (recommended)
+pytest -n auto -m "not slow"
+
+# Or use make
+make test
 ```
+
+### Test Suite Overview
+
+- **3000+ tests** across all repositories
+- **85%+ coverage** target (enforced)
+- **<30 minute** execution time
+- **Zero security violations** enforced
+
+### Documentation
+
+- **Quick Reference**: [TESTING_QUICK_REFERENCE.md](TESTING_QUICK_REFERENCE.md)
+- **Comprehensive Guide**: [docs/TESTING.md](docs/TESTING.md)
+- **Test Suite Details**: [src/tests/README.md](src/tests/README.md)
+- **Implementation Summary**: [TEST_VERIFICATION_SUMMARY.md](TEST_VERIFICATION_SUMMARY.md)
 
 ## Version
 
