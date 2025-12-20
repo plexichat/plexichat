@@ -4,7 +4,7 @@ Gateway endpoint - WebSocket endpoint handler.
 
 import asyncio
 import json
-from typing import Tuple, Optional, Any
+from typing import Tuple, Optional, Any, Dict, TYPE_CHECKING
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -19,6 +19,9 @@ from .compression import (
     validate_message_size,
     CompressionError,
 )
+
+if TYPE_CHECKING:
+    from .dispatcher import GatewayDispatcher
 
 
 router = APIRouter()
@@ -36,7 +39,7 @@ async def _cleanup_voice_connection(user_id: int) -> None:
 
 
 async def _dispatch_offline_presence(
-    user_id: int, presence_module: Optional[Any], dispatcher: Any
+    user_id: int, presence_module: Optional[Any], dispatcher: "GatewayDispatcher"
 ) -> None:
     """Dispatch offline presence to friends and server members when user disconnects."""
     try:
@@ -194,7 +197,7 @@ async def gateway_endpoint(websocket: WebSocket) -> None:
 async def _message_loop(
     connection: Connection,
     handler: OpcodeHandler,
-    dispatcher: Any,
+    dispatcher: "GatewayDispatcher",
 ) -> None:
     """Handle incoming messages."""
     while connection.state not in (
@@ -218,10 +221,10 @@ async def _message_loop(
         if message["type"] == "websocket.disconnect":
             return
 
-        data = None
+        data: Optional[Dict[str, Any]] = None
         if "text" in message:
             # Validate text message size
-            text_data = message["text"]
+            text_data: str = message["text"]
             if not validate_message_size(text_data.encode("utf-8")):
                 logger.warning(
                     f"Connection {connection.connection_id}: message too large"
@@ -237,7 +240,7 @@ async def _message_loop(
                 await _close_connection(connection, GatewayCloseCode.DECODE_ERROR)
                 return
         elif "bytes" in message:
-            raw_bytes = message["bytes"]
+            raw_bytes: bytes = message["bytes"]
             # Validate compressed message size before decompression
             if not validate_message_size(raw_bytes):
                 logger.warning(
@@ -266,8 +269,8 @@ async def _message_loop(
         if data is None:
             continue
 
-        opcode = data.get("op")
-        payload = data.get("d")
+        opcode: Optional[Any] = data.get("op")
+        payload: Optional[Any] = data.get("d")
 
         if opcode is None:
             logger.warning(
@@ -276,6 +279,9 @@ async def _message_loop(
             await _close_connection(connection, GatewayCloseCode.DECODE_ERROR)
             return
 
+        response_op: Optional[int]
+        response_data: Optional[Dict[str, Any]]
+        close_code: Optional[int]
         response_op, response_data, close_code = await handler.handle(
             connection, opcode, payload
         )
@@ -286,9 +292,9 @@ async def _message_loop(
 
         if response_op is not None:
             if response_op == GatewayOpcode.DISPATCH and response_data:
-                event_type = response_data.get("t")
-                event_data = response_data.get("d")
-                seq = response_data.get("s")
+                event_type: Optional[Any] = response_data.get("t")
+                event_data: Optional[Any] = response_data.get("d")
+                seq: Optional[Any] = response_data.get("s")
 
                 await connection.send_json(
                     {
@@ -300,12 +306,14 @@ async def _message_loop(
                 )
 
                 if event_type == "RESUMED":
-                    replay_seq = payload.get("seq", 0) if payload else 0
+                    replay_seq: int = payload.get("seq", 0) if payload else 0
                     await dispatcher.replay_events(connection, replay_seq)
             elif response_op == GatewayOpcode.HEARTBEAT_ACK:
                 await connection.send_json({"op": int(GatewayOpcode.HEARTBEAT_ACK)})
             elif response_op == GatewayOpcode.INVALID_SESSION:
-                resumable = response_data.get("d", False) if response_data else False
+                resumable: bool = (
+                    response_data.get("d", False) if response_data else False
+                )
                 await connection.send_json(
                     {
                         "op": int(GatewayOpcode.INVALID_SESSION),
@@ -321,7 +329,9 @@ async def _message_loop(
                 )
 
 
-async def _heartbeat_monitor(connection: Connection, dispatcher: Any) -> None:
+async def _heartbeat_monitor(
+    connection: Connection, dispatcher: "GatewayDispatcher"
+) -> None:
     """Monitor heartbeat and disconnect if missed."""
     interval = connection.heartbeat_interval_ms / 1000
 

@@ -2,7 +2,7 @@
 Gateway dispatcher - Dispatches events to connected clients.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, TYPE_CHECKING
 import asyncio
 import threading
 
@@ -15,6 +15,9 @@ from .connection import Connection
 from .session import SessionManager
 from .intents import filter_event_by_intents
 
+if TYPE_CHECKING:
+    from src.core.events.manager import EventManager
+
 
 class GatewayDispatcher:
     """Dispatches events to connected WebSocket clients."""
@@ -22,7 +25,7 @@ class GatewayDispatcher:
     def __init__(
         self,
         session_manager: SessionManager,
-        events_module: Optional[Any] = None,
+        events_module: Optional["EventManager"] = None,
         rate_limit_per_minute: int = 120,
     ):
         """
@@ -34,7 +37,7 @@ class GatewayDispatcher:
             rate_limit_per_minute: Max events per minute per connection
         """
         self._session_manager = session_manager
-        self._events_module: Optional[Any] = events_module
+        self._events_module: Optional["EventManager"] = events_module
         self._rate_limit_per_minute = rate_limit_per_minute
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._lock = threading.Lock()
@@ -320,22 +323,27 @@ class GatewayDispatcher:
         Returns:
             Number of connections event was sent to
         """
-        exclude_set = set(exclude_user_ids or [])
+        exclude_set: set[int] = set(exclude_user_ids or [])
         sent_count = 0
+        tasks: List[tuple[Connection, Dict[str, Any]]] = []
 
         with self._lock:
             for conn in self._session_manager._connections.values():
                 if not conn.is_authenticated:
                     continue
-                if conn.user_id in exclude_set:
+                # conn.user_id is guaranteed to be non-None by is_authenticated
+                if conn.user_id is not None and conn.user_id in exclude_set:
                     continue
                 if not filter_event_by_intents(event, conn.intents):
                     continue
 
                 payload = self._build_dispatch_payload(conn, event)
-                success = await self._send_to_connection(conn, payload)
-                if success:
-                    sent_count += 1
+                tasks.append((conn, payload))
+
+        for conn, payload in tasks:
+            success = await self._send_to_connection(conn, payload)
+            if success:
+                sent_count += 1
 
         return sent_count
 

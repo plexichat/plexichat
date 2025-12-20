@@ -2,7 +2,7 @@
 Opcode handlers - Handle incoming gateway messages.
 """
 
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, TYPE_CHECKING
 
 import utils.logger as logger
 
@@ -12,6 +12,11 @@ from .session import SessionManager
 from .intents import validate_intents, DEFAULT_INTENTS
 from src.core.auth.models import TokenInfo
 
+if TYPE_CHECKING:
+    from src.core.auth.manager import AuthManager
+    from src.core.presence.manager import PresenceManager
+    from src.core.servers.manager import ServerManager
+
 
 class OpcodeHandler:
     """Handles incoming gateway opcodes."""
@@ -19,9 +24,9 @@ class OpcodeHandler:
     def __init__(
         self,
         session_manager: SessionManager,
-        auth_module: Optional[Any] = None,
-        presence_module: Optional[Any] = None,
-        servers_module: Optional[Any] = None,
+        auth_module: Optional["AuthManager"] = None,
+        presence_module: Optional["PresenceManager"] = None,
+        servers_module: Optional["ServerManager"] = None,
     ):
         """
         Initialize the opcode handler.
@@ -33,9 +38,9 @@ class OpcodeHandler:
             servers_module: Servers module for guild data
         """
         self._session_manager = session_manager
-        self._auth: Optional[Any] = auth_module
-        self._presence: Optional[Any] = presence_module
-        self._servers: Optional[Any] = servers_module
+        self._auth: Optional["AuthManager"] = auth_module
+        self._presence: Optional["PresenceManager"] = presence_module
+        self._servers: Optional["ServerManager"] = servers_module
 
     async def handle(
         self,
@@ -58,7 +63,7 @@ class OpcodeHandler:
         try:
             op = GatewayOpcode(opcode)
         except ValueError:
-            return None, None, GatewayCloseCode.UNKNOWN_OPCODE
+            return None, None, int(GatewayCloseCode.UNKNOWN_OPCODE)
 
         if op == GatewayOpcode.HEARTBEAT:
             return await self._handle_heartbeat(connection, data)
@@ -85,7 +90,7 @@ class OpcodeHandler:
         elif op == GatewayOpcode.VOICE_QUALITY:
             return await self._handle_voice_quality(connection, data)
         else:
-            return None, None, GatewayCloseCode.UNKNOWN_OPCODE
+            return None, None, int(GatewayCloseCode.UNKNOWN_OPCODE)
 
     async def _handle_heartbeat(
         self,
@@ -95,7 +100,7 @@ class OpcodeHandler:
         """Handle heartbeat opcode."""
         connection.record_heartbeat()
         connection.record_heartbeat_ack()
-        return GatewayOpcode.HEARTBEAT_ACK, None, None
+        return int(GatewayOpcode.HEARTBEAT_ACK), None, None
 
     async def _handle_identify(
         self,
@@ -104,25 +109,25 @@ class OpcodeHandler:
     ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
         """Handle identify opcode."""
         if connection.state == ConnectionState.READY:
-            return None, None, GatewayCloseCode.ALREADY_AUTHENTICATED
+            return None, None, int(GatewayCloseCode.ALREADY_AUTHENTICATED)
 
         if not data:
-            return None, None, GatewayCloseCode.DECODE_ERROR
+            return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
         token = data.get("token")
         if not token:
-            return None, None, GatewayCloseCode.AUTHENTICATION_FAILED
+            return None, None, int(GatewayCloseCode.AUTHENTICATION_FAILED)
 
         intents = data.get("intents", DEFAULT_INTENTS)
         if not validate_intents(intents):
-            return None, None, GatewayCloseCode.INVALID_INTENTS
+            return None, None, int(GatewayCloseCode.INVALID_INTENTS)
 
         user_id = await self._verify_token(token)
         if user_id is None:
-            return None, None, GatewayCloseCode.AUTHENTICATION_FAILED
+            return None, None, int(GatewayCloseCode.AUTHENTICATION_FAILED)
 
         if not self._session_manager.can_user_connect(user_id):
-            return None, None, GatewayCloseCode.RATE_LIMITED
+            return None, None, int(GatewayCloseCode.RATE_LIMITED)
 
         properties = data.get("properties", {})
         connection.properties = properties
@@ -141,7 +146,7 @@ class OpcodeHandler:
         await self._dispatch_online_presence(user_id)
 
         return (
-            GatewayOpcode.DISPATCH,
+            int(GatewayOpcode.DISPATCH),
             {
                 "t": "READY",
                 "s": connection.increment_sequence(),
@@ -157,30 +162,30 @@ class OpcodeHandler:
     ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
         """Handle resume opcode."""
         if not data:
-            return None, None, GatewayCloseCode.DECODE_ERROR
+            return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
         token = data.get("token")
         session_id = data.get("session_id")
         seq = data.get("seq", 0)
 
         if not token or not session_id:
-            return GatewayOpcode.INVALID_SESSION, {"d": False}, None
+            return int(GatewayOpcode.INVALID_SESSION), {"d": False}, None
 
         user_id = await self._verify_token(token)
         if user_id is None:
-            return GatewayOpcode.INVALID_SESSION, {"d": False}, None
+            return int(GatewayOpcode.INVALID_SESSION), {"d": False}, None
 
         if not self._session_manager.can_resume_session(session_id, user_id):
-            return GatewayOpcode.INVALID_SESSION, {"d": False}, None
+            return int(GatewayOpcode.INVALID_SESSION), {"d": False}, None
 
         session = self._session_manager.resume_session(connection, session_id, seq)
         if not session:
-            return GatewayOpcode.INVALID_SESSION, {"d": False}, None
+            return int(GatewayOpcode.INVALID_SESSION), {"d": False}, None
 
         logger.info(f"User {user_id} resumed session {session_id}")
 
         return (
-            GatewayOpcode.DISPATCH,
+            int(GatewayOpcode.DISPATCH),
             {
                 "t": "RESUMED",
                 "s": connection.sequence,
@@ -196,7 +201,7 @@ class OpcodeHandler:
     ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
         """Handle presence update opcode."""
         if not connection.is_authenticated:
-            return None, None, GatewayCloseCode.NOT_AUTHENTICATED
+            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
         if not data or not self._presence:
             return None, None, None
@@ -210,6 +215,8 @@ class OpcodeHandler:
             from src.core.presence import UserStatus
 
             status_enum = UserStatus(status)
+            # connection.user_id is guaranteed non-None by is_authenticated check above
+            assert connection.user_id is not None
             self._presence.set_status(connection.user_id, status_enum)
 
             if activities:
@@ -245,7 +252,7 @@ class OpcodeHandler:
     ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
         """Handle voice state update opcode."""
         if not connection.is_authenticated:
-            return None, None, GatewayCloseCode.NOT_AUTHENTICATED
+            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
         return None, None, None
 
@@ -256,30 +263,30 @@ class OpcodeHandler:
     ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
         """Handle voice connect opcode."""
         if not connection.is_authenticated:
-            return None, None, GatewayCloseCode.NOT_AUTHENTICATED
+            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
         if not data:
-            return None, None, GatewayCloseCode.DECODE_ERROR
+            return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
         channel_id = data.get("channel_id")
         if not channel_id:
-            return None, None, GatewayCloseCode.DECODE_ERROR
+            return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
         # Convert channel_id to int if it's a string
         try:
             channel_id = int(channel_id)
         except (ValueError, TypeError):
             logger.warning(f"Invalid channel_id type: {type(channel_id)}")
-            return None, None, GatewayCloseCode.DECODE_ERROR
+            return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
         try:
             if not connection.user_id:
-                return None, None, GatewayCloseCode.NOT_AUTHENTICATED
+                return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
             from src.core.voice import signaling
 
             info = signaling.create_voice_connection(connection.user_id, channel_id)
             return (
-                GatewayOpcode.DISPATCH,
+                int(GatewayOpcode.DISPATCH),
                 {
                     "t": "VOICE_SERVER_UPDATE",
                     "s": connection.increment_sequence(),
@@ -298,10 +305,10 @@ class OpcodeHandler:
     ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
         """Handle voice disconnect opcode."""
         if not connection.is_authenticated:
-            return None, None, GatewayCloseCode.NOT_AUTHENTICATED
+            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
         assert connection.user_id is not None  # Guaranteed by is_authenticated
-        channel_id = data.get("channel_id") if data else None
+        channel_id: Optional[Any] = data.get("channel_id") if data else None
 
         try:
             from src.core.voice import signaling
@@ -319,10 +326,10 @@ class OpcodeHandler:
     ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
         """Handle voice SDP offer opcode."""
         if not connection.is_authenticated:
-            return None, None, GatewayCloseCode.NOT_AUTHENTICATED
+            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
         if not data:
-            return None, None, GatewayCloseCode.DECODE_ERROR
+            return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
         channel_id = data.get("channel_id")
         sdp = data.get("sdp")
@@ -332,17 +339,17 @@ class OpcodeHandler:
             logger.warning(
                 f"SDP offer missing required fields: channel_id={channel_id}, sdp_present={bool(sdp)}, data keys={data.keys() if data else None}"
             )
-            return None, None, GatewayCloseCode.DECODE_ERROR
+            return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
         # Convert channel_id to int if it's a string
         try:
             channel_id = int(channel_id)
         except (ValueError, TypeError):
             logger.warning(f"Invalid channel_id type in SDP offer: {type(channel_id)}")
-            return None, None, GatewayCloseCode.DECODE_ERROR
+            return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
         if not connection.user_id:
-            return None, None, GatewayCloseCode.NOT_AUTHENTICATED
+            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
         try:
             from src.core.voice import signaling
@@ -351,7 +358,7 @@ class OpcodeHandler:
             answer = await signaling.handle_sdp_offer_async(
                 connection.user_id, channel_id, sdp, sdp_type
             )
-            return GatewayOpcode.VOICE_SDP_ANSWER, answer.to_dict(), None
+            return int(GatewayOpcode.VOICE_SDP_ANSWER), answer.to_dict(), None
         except Exception as e:
             logger.warning(f"SDP offer handling failed: {e}")
             return None, None, None
@@ -363,10 +370,10 @@ class OpcodeHandler:
     ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
         """Handle voice ICE candidate opcode."""
         if not connection.is_authenticated:
-            return None, None, GatewayCloseCode.NOT_AUTHENTICATED
+            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
         if not data:
-            return None, None, GatewayCloseCode.DECODE_ERROR
+            return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
         channel_id = data.get("channel_id")
         candidate = data.get("candidate")
@@ -378,7 +385,7 @@ class OpcodeHandler:
             logger.warning(
                 f"ICE candidate missing required fields: channel_id={channel_id}, candidate={candidate}, data={data}"
             )
-            return None, None, GatewayCloseCode.DECODE_ERROR
+            return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
         # Convert channel_id to int if it's a string
         try:
@@ -387,10 +394,10 @@ class OpcodeHandler:
             logger.warning(
                 f"Invalid channel_id type in ICE candidate: {type(channel_id)}"
             )
-            return None, None, GatewayCloseCode.DECODE_ERROR
+            return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
         if not connection.user_id:
-            return None, None, GatewayCloseCode.NOT_AUTHENTICATED
+            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
         try:
             from src.core.voice import signaling
@@ -410,7 +417,7 @@ class OpcodeHandler:
     ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
         """Handle voice speaking opcode."""
         if not connection.is_authenticated:
-            return None, None, GatewayCloseCode.NOT_AUTHENTICATED
+            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
         # Speaking state is informational, broadcast to channel
         return None, None, None
@@ -422,7 +429,7 @@ class OpcodeHandler:
     ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
         """Handle voice quality opcode."""
         if not connection.is_authenticated:
-            return None, None, GatewayCloseCode.NOT_AUTHENTICATED
+            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
         assert connection.user_id is not None  # Guaranteed by is_authenticated
 
@@ -452,7 +459,7 @@ class OpcodeHandler:
     ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
         """Handle request guild members opcode."""
         if not connection.is_authenticated:
-            return None, None, GatewayCloseCode.NOT_AUTHENTICATED
+            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
         return None, None, None
 

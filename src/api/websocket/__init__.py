@@ -106,6 +106,7 @@ def get_router():
     """Get the FastAPI router for the gateway endpoint."""
     _ensure_setup()
     from .gateway import router
+
     return router
 
 
@@ -155,9 +156,9 @@ def is_setup() -> bool:
 async def broadcast_server_status(status_data: dict) -> int:
     """
     Broadcast server status to all connected clients.
-    
+
     Convenience function that delegates to the dispatcher.
-    
+
     Args:
         status_data: Status information containing:
             - state: "shutting_down", "restarting", "maintenance"
@@ -180,7 +181,7 @@ async def close_all_connections(
 ) -> int:
     """
     Gracefully close all WebSocket connections.
-    
+
     Args:
         close_code: WebSocket close code (default: SERVER_SHUTDOWN = 4017)
         reason: Close reason message

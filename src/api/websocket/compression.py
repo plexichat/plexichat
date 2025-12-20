@@ -27,7 +27,9 @@ def _get_limits() -> Tuple[int, int]:
     try:
         ws_config = config.get("websocket", {})
         max_msg = ws_config.get("max_message_size", DEFAULT_MAX_MESSAGE_SIZE)
-        max_decomp = ws_config.get("max_decompressed_size", DEFAULT_MAX_DECOMPRESSED_SIZE)
+        max_decomp = ws_config.get(
+            "max_decompressed_size", DEFAULT_MAX_DECOMPRESSED_SIZE
+        )
         return max_msg, max_decomp
     except RuntimeError:
         # Config not set up (e.g., in tests) - use defaults
@@ -36,6 +38,7 @@ def _get_limits() -> Tuple[int, int]:
 
 class CompressionError(Exception):
     """Raised when compression/decompression fails due to security limits."""
+
     pass
 
 
@@ -72,7 +75,7 @@ class ZlibDecompressor:
     def __init__(self, max_decompressed_size: Optional[int] = None):
         """
         Initialize the decompressor.
-        
+
         Args:
             max_decompressed_size: Maximum allowed decompressed size (prevents zip bombs)
         """
@@ -90,7 +93,7 @@ class ZlibDecompressor:
 
         Returns:
             Decompressed dictionary or None if incomplete
-            
+
         Raises:
             CompressionError: If decompressed size exceeds limit (zip bomb protection)
         """
@@ -102,16 +105,19 @@ class ZlibDecompressor:
         try:
             # Use max_length parameter to limit decompression (zip bomb protection)
             decompressed = self._decompressor.decompress(
-                bytes(self._buffer),
-                max_length=self._max_size
+                bytes(self._buffer), max_length=self._max_size
             )
 
             # Check if there's more data (indicates we hit the limit)
             if self._decompressor.unconsumed_tail:
                 self._buffer.clear()
                 self.reset()
-                logger.warning(f"Decompression exceeded max size limit ({self._max_size} bytes) - possible zip bomb")
-                raise CompressionError(f"Decompressed data exceeds maximum size of {self._max_size} bytes")
+                logger.warning(
+                    f"Decompression exceeded max size limit ({self._max_size} bytes) - possible zip bomb"
+                )
+                raise CompressionError(
+                    f"Decompressed data exceeds maximum size of {self._max_size} bytes"
+                )
 
             self._buffer.clear()
             return json.loads(decompressed.decode("utf-8"))
@@ -144,10 +150,7 @@ def compress_payload(data: dict) -> bytes:
     return zlib.compress(json_bytes)
 
 
-def decompress_payload(
-    data: bytes,
-    max_size: Optional[int] = None
-) -> Optional[dict]:
+def decompress_payload(data: bytes, max_size: Optional[int] = None) -> Optional[dict]:
     """
     Decompress a single payload (non-streaming) with size limit.
 
@@ -157,7 +160,7 @@ def decompress_payload(
 
     Returns:
         Decompressed dictionary or None on error
-        
+
     Raises:
         CompressionError: If decompressed size exceeds limit
     """
@@ -172,7 +175,9 @@ def decompress_payload(
         # Check for unconsumed data (hit the limit)
         if decompressor.unconsumed_tail:
             logger.warning(f"Payload decompression exceeded max size ({limit} bytes)")
-            raise CompressionError(f"Decompressed data exceeds maximum size of {limit} bytes")
+            raise CompressionError(
+                f"Decompressed data exceeds maximum size of {limit} bytes"
+            )
 
         return json.loads(decompressed.decode("utf-8"))
     except zlib.error as e:
@@ -201,10 +206,10 @@ def is_compressed(data: bytes) -> bool:
 def validate_message_size(data: bytes) -> bool:
     """
     Validate that compressed message size is within limits.
-    
+
     Args:
         data: Compressed message bytes
-        
+
     Returns:
         True if size is acceptable
     """

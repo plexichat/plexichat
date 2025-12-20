@@ -7,6 +7,7 @@ from enum import IntEnum
 
 class GatewayOpcode(IntEnum):
     """Gateway operation codes."""
+
     DISPATCH = 0
     HEARTBEAT = 1
     IDENTIFY = 2
@@ -36,6 +37,7 @@ class GatewayOpcode(IntEnum):
 
 class GatewayCloseCode(IntEnum):
     """Gateway close codes."""
+
     UNKNOWN_ERROR = 4000
     UNKNOWN_OPCODE = 4001
     DECODE_ERROR = 4002
