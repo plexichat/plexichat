@@ -14,14 +14,14 @@ Usage:
     # In main.py (setup once)
     from src.core.auth import setup
     from src.core.database import Database
-    
+
     db = Database()
     db.connect()
     setup(db)
-    
+
     # In any other file
     from src.core import auth
-    
+
     user = auth.register("username", "email@example.com", "password")
     result = auth.login("username", "password")
     token_info = auth.verify_token(result.token)
@@ -87,7 +87,7 @@ class EmailSender(Protocol):
 def setup(db, email_sender: Optional[EmailSender] = None) -> None:
     """
     Initialize the authentication module.
-    
+
     Args:
         db: Database instance (must be connected)
         email_sender: Optional email sender for verification emails
@@ -110,26 +110,27 @@ def _get_manager():
 
 # === User Registration ===
 
+
 def register(
     username: str,
     email: str,
     password: str,
     device_info: Optional[Dict[str, str]] = None,
-    ip_address: Optional[str] = None
+    ip_address: Optional[str] = None,
 ) -> User:
     """
     Register a new user account.
-    
+
     Args:
         username: Unique username
         email: Email address
         password: Password (will be validated for strength)
         device_info: Optional device information
         ip_address: Optional IP address
-        
+
     Returns:
         Created User object
-        
+
     Raises:
         UserExistsError: Username or email already taken
         WeakPasswordError: Password does not meet requirements
@@ -151,26 +152,27 @@ def resend_verification(email: str) -> bool:
 
 # === User Login ===
 
+
 def login(
     username: str,
     password: str,
     device_info: Optional[Dict[str, str]] = None,
     ip_address: Optional[str] = None,
-    user_agent: Optional[str] = None
+    user_agent: Optional[str] = None,
 ) -> AuthResult:
     """
     Authenticate a user.
-    
+
     Args:
         username: Username or email
         password: Password
         device_info: Optional device information
         ip_address: Optional IP address
         user_agent: Optional user agent string
-        
+
     Returns:
         AuthResult with status and token/challenge
-        
+
     Raises:
         InvalidCredentialsError: Wrong username or password
         AccountLockedError: Account temporarily locked
@@ -187,18 +189,21 @@ def complete_2fa(challenge_token: str, code: str) -> AuthResult:
 
 # === Session Management ===
 
-def verify_token(token: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> TokenInfo:
+
+def verify_token(
+    token: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None
+) -> TokenInfo:
     """
     Verify a session or bot token.
-    
+
     Args:
         token: The token to verify
         ip_address: Optional IP for tracking
         user_agent: Optional user agent for binding
-        
+
     Returns:
         TokenInfo with user/bot details and permissions
-        
+
     Raises:
         TokenInvalidError: Token is malformed or invalid
         TokenExpiredError: Token has expired
@@ -233,6 +238,7 @@ def revoke_session(user_id: int, session_id: int) -> bool:
 
 # === Two-Factor Authentication ===
 
+
 def setup_2fa(user_id: int) -> TwoFactorSetup:
     """
     Begin 2FA setup. Returns secret, QR URI, and backup codes.
@@ -263,6 +269,7 @@ def get_2fa_status(user_id: int) -> TwoFactorStatus:
 
 # === Password Management ===
 
+
 def change_password(user_id: int, old_password: str, new_password: str) -> bool:
     """Change password. Requires current password."""
     return _get_manager().change_password(user_id, old_password, new_password)
@@ -285,21 +292,22 @@ def validate_password(password: str) -> PasswordValidation:
 
 # === Bot Management ===
 
+
 def create_bot(
     owner_id: int,
     username: str,
     display_name: str,
-    permissions: Optional[Dict[str, bool]] = None
+    permissions: Optional[Dict[str, bool]] = None,
 ) -> Bot:
     """
     Create a bot account.
-    
+
     Args:
         owner_id: User ID of the bot owner
         username: Unique username for the bot
         display_name: Display name
         permissions: Optional custom permissions (defaults applied if None)
-        
+
     Returns:
         Bot object with token (token only returned on creation)
     """
@@ -322,9 +330,7 @@ def regenerate_bot_token(owner_id: int, bot_id: int) -> str:
 
 
 def update_bot_permissions(
-    owner_id: int,
-    bot_id: int,
-    permissions: Dict[str, bool]
+    owner_id: int, bot_id: int, permissions: Dict[str, bool]
 ) -> Bot:
     """Update bot permissions."""
     return _get_manager().update_bot_permissions(owner_id, bot_id, permissions)
@@ -347,6 +353,7 @@ def delete_bot(owner_id: int, bot_id: int) -> bool:
 
 # === Device Management ===
 
+
 def get_devices(user_id: int) -> List[Device]:
     """Get all known devices for a user."""
     return _get_manager().get_devices(user_id)
@@ -364,6 +371,7 @@ def revoke_device(user_id: int, device_id: int) -> bool:
 
 # === Audit ===
 
+
 def get_login_history(user_id: int, limit: int = 50) -> List[AuditEntry]:
     """Get login history for a user."""
     return _get_manager().get_login_history(user_id, limit)
@@ -376,6 +384,7 @@ def get_security_events(user_id: int, limit: int = 50) -> List[AuditEntry]:
 
 # === Utility ===
 
+
 def get_user(user_id: int) -> Optional[User]:
     """Get a user by ID."""
     return _get_manager().get_user(user_id)
@@ -386,7 +395,7 @@ def get_user_by_username(username: str) -> Optional[User]:
     return _get_manager().get_user_by_username(username)
 
 
-def get_users_bulk(user_ids: List[int]) -> Dict[int, 'User']:
+def get_users_bulk(user_ids: List[int]) -> Dict[int, User]:
     """Get multiple users by ID in a single query."""
     return _get_manager().get_users_bulk(user_ids)
 
@@ -404,102 +413,90 @@ def require_capability(token_info: TokenInfo, capability: str) -> None:
 
 __all__ = [
     # Setup
-    'setup',
-    'EmailSender',
-
+    "setup",
+    "EmailSender",
     # Exceptions
-    'AuthError',
-    'InvalidCredentialsError',
-    'AccountLockedError',
-    'AccountDisabledError',
-    'EmailNotVerifiedError',
-    'TokenExpiredError',
-    'TokenInvalidError',
-    'TwoFactorRequiredError',
-    'TwoFactorInvalidError',
-    'PermissionDeniedError',
-    'UserExistsError',
-    'UserNotFoundError',
-    'WeakPasswordError',
-    'BotLimitExceededError',
-    'InvalidUsernameError',
-    'InvalidEmailError',
-
+    "AuthError",
+    "InvalidCredentialsError",
+    "AccountLockedError",
+    "AccountDisabledError",
+    "EmailNotVerifiedError",
+    "TokenExpiredError",
+    "TokenInvalidError",
+    "TwoFactorRequiredError",
+    "TwoFactorInvalidError",
+    "PermissionDeniedError",
+    "UserExistsError",
+    "UserNotFoundError",
+    "WeakPasswordError",
+    "BotLimitExceededError",
+    "InvalidUsernameError",
+    "InvalidEmailError",
     # Models
-    'User',
-    'Session',
-    'Bot',
-    'Device',
-    'KnownIP',
-    'AuditEntry',
-    'TokenInfo',
-    'AuthResult',
-    'TwoFactorSetup',
-    'TwoFactorStatus',
-    'PasswordValidation',
-    'AccountType',
-    'AuthStatus',
-    'AuditEventType',
-
+    "User",
+    "Session",
+    "Bot",
+    "Device",
+    "KnownIP",
+    "AuditEntry",
+    "TokenInfo",
+    "AuthResult",
+    "TwoFactorSetup",
+    "TwoFactorStatus",
+    "PasswordValidation",
+    "AccountType",
+    "AuthStatus",
+    "AuditEventType",
     # Permissions
-    'PERMISSIONS',
-    'DEFAULT_USER_PERMISSIONS',
-    'DEFAULT_BOT_PERMISSIONS',
-    'has_permission',
-    'validate_permissions',
-
+    "PERMISSIONS",
+    "DEFAULT_USER_PERMISSIONS",
+    "DEFAULT_BOT_PERMISSIONS",
+    "has_permission",
+    "validate_permissions",
     # Registration
-    'register',
-    'verify_email',
-    'resend_verification',
-
+    "register",
+    "verify_email",
+    "resend_verification",
     # Login
-    'login',
-    'complete_2fa',
-
+    "login",
+    "complete_2fa",
     # Sessions
-    'verify_token',
-    'refresh_session',
-    'logout',
-    'logout_all',
-    'get_sessions',
-    'revoke_session',
-
+    "verify_token",
+    "refresh_session",
+    "logout",
+    "logout_all",
+    "get_sessions",
+    "revoke_session",
     # 2FA
-    'setup_2fa',
-    'confirm_2fa',
-    'disable_2fa',
-    'regenerate_backup_codes',
-    'get_2fa_status',
-
+    "setup_2fa",
+    "confirm_2fa",
+    "disable_2fa",
+    "regenerate_backup_codes",
+    "get_2fa_status",
     # Password
-    'change_password',
-    'request_password_reset',
-    'reset_password',
-    'validate_password',
-
+    "change_password",
+    "request_password_reset",
+    "reset_password",
+    "validate_password",
     # Bots
-    'create_bot',
-    'get_bot',
-    'get_user_bots',
-    'regenerate_bot_token',
-    'update_bot_permissions',
-    'disable_bot',
-    'enable_bot',
-    'delete_bot',
-
+    "create_bot",
+    "get_bot",
+    "get_user_bots",
+    "regenerate_bot_token",
+    "update_bot_permissions",
+    "disable_bot",
+    "enable_bot",
+    "delete_bot",
     # Devices
-    'get_devices',
-    'rename_device',
-    'revoke_device',
-
+    "get_devices",
+    "rename_device",
+    "revoke_device",
     # Audit
-    'get_login_history',
-    'get_security_events',
-
+    "get_login_history",
+    "get_security_events",
     # Utility
-    'get_user',
-    'get_user_by_username',
-    'has_capability',
-    'require_capability',
+    "get_user",
+    "get_user_by_username",
+    "has_capability",
+    "require_capability",
 ]

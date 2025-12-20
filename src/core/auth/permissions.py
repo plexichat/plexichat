@@ -10,7 +10,7 @@ Server/DM permissions will be handled separately in the messaging module,
 using these base permissions as a foundation.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import json
 
 # All available permissions with descriptions
@@ -23,7 +23,6 @@ PERMISSIONS = {
     "messages.delete_others": "Delete others messages (moderator)",
     "messages.pin": "Pin messages",
     "messages.react": "Add reactions to messages",
-
     # Conversations (DMs and Groups)
     "conversations.create": "Create new conversations",
     "conversations.join": "Join conversations",
@@ -32,7 +31,6 @@ PERMISSIONS = {
     "conversations.kick": "Remove others from conversations",
     "conversations.manage": "Manage conversation settings",
     "conversations.delete": "Delete conversations",
-
     # Servers (community servers)
     "servers.create": "Create new servers",
     "servers.join": "Join servers",
@@ -40,18 +38,15 @@ PERMISSIONS = {
     "servers.manage": "Manage server settings",
     "servers.delete": "Delete servers",
     "servers.invite": "Create server invites",
-
     # Channels within servers (future)
     "channels.create": "Create channels in servers",
     "channels.manage": "Manage channel settings",
     "channels.delete": "Delete channels",
-
     # Roles within servers (future)
     "roles.create": "Create roles in servers",
     "roles.manage": "Manage role permissions",
     "roles.assign": "Assign roles to members",
     "roles.delete": "Delete roles",
-
     # Voice/Video (future)
     "voice.join": "Join voice channels",
     "voice.speak": "Speak in voice channels",
@@ -62,23 +57,19 @@ PERMISSIONS = {
     "video.join": "Join video calls",
     "video.stream": "Stream video",
     "video.initiate": "Start video calls",
-
     # Account
     "account.edit_profile": "Edit own profile",
     "account.delete": "Delete own account",
     "account.view_others": "View other user profiles",
-
     # Bots
     "bots.create": "Create bot accounts",
     "bots.manage": "Manage own bots",
-
     # Moderation (future)
     "moderation.ban": "Ban users from servers",
     "moderation.kick": "Kick users from servers",
     "moderation.mute": "Mute users in servers",
     "moderation.warn": "Warn users",
     "moderation.view_audit": "View moderation audit log",
-
     # Admin
     "admin.users": "Manage all users",
     "admin.servers": "Manage all servers",
@@ -141,15 +132,15 @@ BOT_RESTRICTED_PERMISSIONS = {
 def has_permission(user_permissions: Optional[Dict[str, bool]], required: str) -> bool:
     """
     Check if user has a specific permission.
-    
+
     Supports wildcards:
     - "messages.*" grants all permissions starting with "messages."
     - "*" grants all permissions
-    
+
     Args:
         user_permissions: Dict of permission -> bool
         required: The permission to check
-        
+
     Returns:
         True if user has the permission
     """
@@ -168,7 +159,7 @@ def has_permission(user_permissions: Optional[Dict[str, bool]], required: str) -
     # e.g., if required is "messages.send", check for "messages.*"
     parts = required.split(".")
     for i in range(len(parts)):
-        wildcard = ".".join(parts[:i + 1]) + ".*"
+        wildcard = ".".join(parts[: i + 1]) + ".*"
         if user_permissions.get(wildcard, False):
             return True
 
@@ -176,16 +167,15 @@ def has_permission(user_permissions: Optional[Dict[str, bool]], required: str) -
 
 
 def validate_permissions(
-    permissions: Dict[str, bool],
-    is_bot: bool = False
-) -> tuple:
+    permissions: Dict[str, bool], is_bot: bool = False
+) -> Tuple[bool, List[str]]:
     """
     Validate a permissions dictionary.
-    
+
     Args:
         permissions: Dict of permission -> bool
         is_bot: Whether this is for a bot account
-        
+
     Returns:
         Tuple of (valid: bool, issues: list[str])
     """
@@ -206,23 +196,24 @@ def validate_permissions(
             if perm == "*" or perm.endswith(".*"):
                 for restricted in BOT_RESTRICTED_PERMISSIONS:
                     if restricted.startswith(perm.replace(".*", "")):
-                        issues.append(f"Bots cannot have permission: {restricted} (via {perm})")
+                        issues.append(
+                            f"Bots cannot have permission: {restricted} (via {perm})"
+                        )
 
     return len(issues) == 0, issues
 
 
 def merge_permissions(
-    base: Dict[str, bool],
-    override: Dict[str, bool]
+    base: Dict[str, bool], override: Dict[str, bool]
 ) -> Dict[str, bool]:
     """
     Merge two permission dictionaries.
     Override takes precedence.
-    
+
     Args:
         base: Base permissions
         override: Permissions to override with
-        
+
     Returns:
         Merged permissions dict
     """
@@ -246,7 +237,7 @@ def permissions_from_json(json_str: str) -> Dict[str, bool]:
 def get_permission_categories() -> Dict[str, List[str]]:
     """
     Get permissions organized by category.
-    
+
     Returns:
         Dict of category -> list of permissions
     """

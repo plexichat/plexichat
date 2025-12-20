@@ -119,11 +119,11 @@ class AuthManager:
             del self._user_cache[user_id]
         return None
 
-    def _cache_set_user(self, user_id: int, user: Any):
+    def _cache_set_user(self, user_id: int, user: Any) -> None:
         """Set user in cache with TTL."""
         self._user_cache[user_id] = (user, time.time() + self._user_cache_ttl)
 
-    def _cache_invalidate_user(self, user_id: int):
+    def _cache_invalidate_user(self, user_id: int) -> None:
         """Invalidate user cache entry."""
         self._user_cache.pop(user_id, None)
 
