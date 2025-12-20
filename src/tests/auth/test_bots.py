@@ -1,215 +1,487 @@
 """
-Bot account tests for auth module.
-
-Note: Bot tests need fresh users because bots accumulate on users.
-Each test creates its own user to avoid hitting the 5 bot limit.
+Comprehensive bot tests covering token leakage, permissions, and security.
 """
 
 import pytest
-import uuid
+import time
+from src.core.auth.exceptions import (
+    UserNotFoundError,
+    PermissionDeniedError,
+    InvalidUsernameError,
+    UserExistsError,
+    BotLimitExceededError,
+    TokenInvalidError,
+)
+from src.tests.fixtures.config import TEST_PASSWORD
 
 
-def unique_name(prefix):
-    """Generate a unique username."""
-    return f"{prefix}_{uuid.uuid4().hex[:8]}"
+class TestBotCreation:
+    """Tests for creating bot accounts."""
 
+    def test_create_bot_success(self, modules):
+        """Test successful bot creation."""
+        username = f"owner_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
 
-@pytest.fixture
-def fresh_user(db_and_auth):
-    """Create a fresh user for bot tests."""
-    db, auth = db_and_auth
-    name = unique_name("botuser")
-    user = auth.register(name, f"{name}@example.com", "TestPass123!")
-    return user, auth
+        bot = modules.auth.create_bot(user.id, f"bot_{time.time()}", "Test Bot", None)
 
-
-class TestBots:
-    """Test bot account management."""
-
-    def test_create_bot(self, fresh_user):
-        """Test creating a bot."""
-        user, auth = fresh_user
-
-        bot = auth.create_bot(
-            owner_id=user.id,
-            username=unique_name("bot"),
-            display_name="Test Bot"
-        )
-
-        assert bot is not None
+        assert bot.id is not None
         assert bot.owner_id == user.id
         assert bot.token is not None
 
-    def test_create_bot_with_permissions(self, fresh_user):
-        """Test creating bot with custom permissions."""
-        user, auth = fresh_user
+    def test_create_bot_returns_token_once(self, modules):
+        """Test bot token is only returned on creation."""
+        username = f"tokenonce_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
 
-        bot = auth.create_bot(
-            owner_id=user.id,
-            username=unique_name("permbot"),
-            display_name="Permission Bot",
-            permissions={"messages.send": True, "messages.read": True}
-        )
+        bot = modules.auth.create_bot(user.id, f"bot_{time.time()}", "Test Bot")
+        token = bot.token
 
+        # Retrieve bot - should not have token
+        retrieved = modules.auth.get_bot(bot.id)
+        assert retrieved.token is None
+        assert token is not None
+
+    def test_create_bot_has_default_permissions(self, modules):
+        """Test bot has default permissions when none specified."""
+        username = f"defaultperms_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
+
+        bot = modules.auth.create_bot(user.id, f"bot_{time.time()}", "Test Bot")
+
+        assert bot.permissions is not None
         assert bot.permissions.get("messages.send") is True
+        assert bot.permissions.get("bots.create") is False  # Restricted
 
-    def test_create_bot_restricted_permission_fails(self, fresh_user):
-        """Test creating bot with restricted permission fails."""
-        user, auth = fresh_user
+    def test_create_bot_custom_permissions(self, modules):
+        """Test bot with custom permissions."""
+        username = f"customperms_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
 
-        with pytest.raises(auth.PermissionDeniedError):
-            auth.create_bot(
-                owner_id=user.id,
-                username=unique_name("badbot"),
-                display_name="Bad Bot",
-                permissions={"bots.create": True}
-            )
+        perms = {"messages.send": True, "messages.read": True}
+        bot = modules.auth.create_bot(user.id, f"bot_{time.time()}", "Test Bot", perms)
 
-    def test_create_bot_duplicate_username_fails(self, fresh_user):
-        """Test creating bot with duplicate username fails."""
-        user, auth = fresh_user
+        assert bot.permissions == perms
 
-        bot_name = unique_name("uniquebot")
-        auth.create_bot(user.id, bot_name, "Unique Bot")
+    def test_create_bot_invalid_username(self, modules):
+        """Test bot creation with invalid username."""
+        username = f"owner_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
 
-        with pytest.raises(auth.UserExistsError):
-            auth.create_bot(user.id, bot_name, "Another Bot")
+        with pytest.raises(InvalidUsernameError):
+            modules.auth.create_bot(user.id, "invalid username", "Test Bot")
 
-    def test_create_bot_respects_limit(self, fresh_user):
-        """Test bot creation respects limit."""
-        user, auth = fresh_user
+    def test_create_bot_duplicate_username(self, modules):
+        """Test cannot create bot with duplicate username."""
+        username = f"owner_{time.time()}"
+        bot_username = f"bot_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
 
+        modules.auth.create_bot(user.id, bot_username, "Bot 1")
+
+        with pytest.raises(UserExistsError):
+            modules.auth.create_bot(user.id, bot_username, "Bot 2")
+
+    def test_create_bot_username_conflicts_with_user(self, modules):
+        """Test bot username cannot conflict with user username."""
+        username = f"conflict_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
+
+        with pytest.raises(UserExistsError):
+            modules.auth.create_bot(user.id, username, "Bot")
+
+    def test_create_bot_limit_enforced(self, modules):
+        """Test bot creation limit is enforced."""
+        username = f"botlimit_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
+
+        # Create max bots (5 in config)
         for i in range(5):
-            auth.create_bot(user.id, unique_name(f"limitbot{i}"), f"Bot {i}")
+            modules.auth.create_bot(user.id, f"bot{i}_{time.time()}", f"Bot {i}")
 
-        with pytest.raises(auth.BotLimitExceededError):
-            auth.create_bot(user.id, unique_name("limitbot6"), "Bot 6")
+        # 6th should fail
+        with pytest.raises(BotLimitExceededError):
+            modules.auth.create_bot(user.id, f"bot6_{time.time()}", "Bot 6")
 
-    def test_bot_token_format(self, fresh_user):
+    def test_create_bot_by_nonexistent_owner(self, modules):
+        """Test creating bot with non-existent owner fails."""
+        with pytest.raises(UserNotFoundError):
+            modules.auth.create_bot(999999999, "botname", "Bot")
+
+
+class TestBotPermissions:
+    """Tests for bot permission restrictions."""
+
+    def test_bot_cannot_create_bots(self, modules):
+        """Test bots cannot have bots.create permission."""
+        username = f"nobotcreate_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
+
+        perms = {"bots.create": True}
+
+        with pytest.raises(PermissionDeniedError):
+            modules.auth.create_bot(user.id, f"bot_{time.time()}", "Bot", perms)
+
+    def test_bot_cannot_have_admin_permissions(self, modules):
+        """Test bots cannot have admin permissions."""
+        username = f"noadmin_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
+
+        perms = {"admin.system": True}
+
+        with pytest.raises(PermissionDeniedError):
+            modules.auth.create_bot(user.id, f"bot_{time.time()}", "Bot", perms)
+
+    def test_bot_cannot_delete_account(self, modules):
+        """Test bots cannot have account.delete permission."""
+        username = f"nodelete_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
+
+        perms = {"account.delete": True}
+
+        with pytest.raises(PermissionDeniedError):
+            modules.auth.create_bot(user.id, f"bot_{time.time()}", "Bot", perms)
+
+    def test_bot_valid_permissions_accepted(self, modules):
+        """Test bots can have valid permissions."""
+        username = f"validperms_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
+
+        perms = {
+            "messages.send": True,
+            "messages.read": True,
+            "conversations.join": True,
+        }
+
+        bot = modules.auth.create_bot(user.id, f"bot_{time.time()}", "Bot", perms)
+        assert bot.permissions == perms
+
+    def test_update_bot_permissions(self, modules):
+        """Test updating bot permissions."""
+        username = f"updateperms_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
+
+        bot = modules.auth.create_bot(user.id, f"bot_{time.time()}", "Bot")
+
+        new_perms = {"messages.send": False, "messages.read": True}
+        updated = modules.auth.update_bot_permissions(user.id, bot.id, new_perms)
+
+        assert updated.permissions == new_perms
+
+    def test_update_bot_permissions_validates_restrictions(self, modules):
+        """Test updating bot permissions still validates restrictions."""
+        username = f"updaterestrict_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
+
+        bot = modules.auth.create_bot(user.id, f"bot_{time.time()}", "Bot")
+
+        with pytest.raises(PermissionDeniedError):
+            modules.auth.update_bot_permissions(user.id, bot.id, {"admin.system": True})
+
+
+class TestBotTokens:
+    """Tests for bot token security."""
+
+    def test_bot_token_format(self, modules):
         """Test bot token has correct format."""
-        user, auth = fresh_user
+        username = f"tokenformat_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
 
-        bot = auth.create_bot(user.id, unique_name("formatbot"), "Format Bot")
+        bot = modules.auth.create_bot(user.id, f"bot_{time.time()}", "Bot")
 
         assert bot.token.startswith("bot.")
         parts = bot.token.split(".")
-        assert len(parts) == 3
+        assert len(parts) == 3  # bot.id.secret
 
-    def test_verify_bot_token(self, fresh_user):
+    def test_bot_token_verify(self, modules):
         """Test verifying bot token."""
-        user, auth = fresh_user
+        username = f"verifybot_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
 
-        bot = auth.create_bot(user.id, unique_name("verifybot"), "Verify Bot")
+        bot = modules.auth.create_bot(user.id, f"bot_{time.time()}", "Bot")
 
-        token_info = auth.verify_token(bot.token)
-
+        token_info = modules.auth.verify_token(bot.token)
         assert token_info.valid is True
         assert token_info.token_type == "bot"
         assert token_info.account_id == bot.id
-        assert token_info.user_id == user.id
 
-    def test_regenerate_bot_token(self, fresh_user):
+    def test_bot_token_randomness(self, modules):
+        """Test bot tokens are randomly generated."""
+        username = f"random_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
+
+        tokens = []
+        for i in range(5):
+            bot = modules.auth.create_bot(user.id, f"bot{i}_{time.time()}", f"Bot {i}")
+            tokens.append(bot.token)
+
+        # All should be unique
+        assert len(tokens) == len(set(tokens))
+
+    def test_bot_token_sufficient_entropy(self, modules):
+        """Test bot token has sufficient entropy."""
+        username = f"entropy_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
+
+        bot = modules.auth.create_bot(user.id, f"bot_{time.time()}", "Bot")
+        secret = bot.token.split(".")[2]
+
+        # Should be at least 48 bytes base64 encoded (config)
+        assert len(secret) >= 60
+
+    def test_regenerate_bot_token(self, modules):
         """Test regenerating bot token."""
-        user, auth = fresh_user
+        username = f"regen_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
 
-        bot = auth.create_bot(user.id, unique_name("regenbot"), "Regen Bot")
+        bot = modules.auth.create_bot(user.id, f"bot_{time.time()}", "Bot")
         old_token = bot.token
 
-        new_token = auth.regenerate_bot_token(user.id, bot.id)
+        new_token = modules.auth.regenerate_bot_token(user.id, bot.id)
 
         assert new_token != old_token
         assert new_token.startswith("bot.")
 
-    def test_regenerate_bot_token_invalidates_old(self, fresh_user):
-        """Test regenerating bot token invalidates old one."""
-        user, auth = fresh_user
+        # Old token should not work
+        with pytest.raises(TokenInvalidError):
+            modules.auth.verify_token(old_token)
 
-        bot = auth.create_bot(user.id, unique_name("invalidbot"), "Invalid Bot")
-        old_token = bot.token
-
-        auth.regenerate_bot_token(user.id, bot.id)
-
-        with pytest.raises(auth.TokenInvalidError):
-            auth.verify_token(old_token)
-
-    def test_regenerate_bot_token_wrong_owner(self, db_and_auth):
-        """Test regenerating bot token by non-owner fails."""
-        db, auth = db_and_auth
-
-        name1 = unique_name("botowner")
-        name2 = unique_name("notowner")
-        user1 = auth.register(name1, f"{name1}@example.com", "TestPass123!")
-        user2 = auth.register(name2, f"{name2}@example.com", "TestPass123!")
-
-        bot = auth.create_bot(user1.id, unique_name("ownedbot"), "Owned Bot")
-
-        with pytest.raises(auth.PermissionDeniedError):
-            auth.regenerate_bot_token(user2.id, bot.id)
-
-    def test_get_bot(self, fresh_user):
-        """Test getting bot by ID."""
-        user, auth = fresh_user
-
-        created = auth.create_bot(user.id, unique_name("getbot"), "Get Bot")
-
-        bot = auth.get_bot(created.id)
-
-        assert bot is not None
-        assert bot.id == created.id
-
-    def test_get_user_bots(self, fresh_user):
-        """Test getting all bots for a user."""
-        user, auth = fresh_user
-
-        auth.create_bot(user.id, unique_name("listbot1"), "List Bot 1")
-        auth.create_bot(user.id, unique_name("listbot2"), "List Bot 2")
-
-        bots = auth.get_user_bots(user.id)
-
-        assert len(bots) >= 2
-
-    def test_disable_bot(self, fresh_user):
-        """Test disabling a bot."""
-        user, auth = fresh_user
-
-        bot = auth.create_bot(user.id, unique_name("disablebot"), "Disable Bot")
-
-        result = auth.disable_bot(user.id, bot.id)
-        assert result is True
-
-        with pytest.raises(auth.TokenInvalidError):
-            auth.verify_token(bot.token)
-
-    def test_enable_bot(self, fresh_user):
-        """Test re-enabling a bot."""
-        user, auth = fresh_user
-
-        bot = auth.create_bot(user.id, unique_name("enablebot"), "Enable Bot")
-        token = bot.token
-
-        auth.disable_bot(user.id, bot.id)
-        auth.enable_bot(user.id, bot.id)
-
-        token_info = auth.verify_token(token)
+        # New token should work
+        token_info = modules.auth.verify_token(new_token)
         assert token_info.valid is True
 
-    def test_delete_bot(self, fresh_user):
-        """Test deleting a bot."""
-        user, auth = fresh_user
+    def test_regenerate_bot_token_wrong_owner(self, modules):
+        """Test cannot regenerate token for bot owned by another user."""
+        user1 = f"user1_{time.time()}"
+        user2 = f"user2_{time.time()}"
 
-        bot = auth.create_bot(user.id, unique_name("deletebot"), "Delete Bot")
+        u1 = modules.auth.register(user1, f"{user1}@test.com", TEST_PASSWORD)
+        u2 = modules.auth.register(user2, f"{user2}@test.com", TEST_PASSWORD)
 
-        result = auth.delete_bot(user.id, bot.id)
+        bot = modules.auth.create_bot(u1.id, f"bot_{time.time()}", "Bot")
+
+        with pytest.raises(PermissionDeniedError):
+            modules.auth.regenerate_bot_token(u2.id, bot.id)
+
+
+class TestBotTokenLeakage:
+    """Tests to prevent bot token leakage."""
+
+    def test_bot_token_not_in_get_bot(self, modules):
+        """Test get_bot does not return token."""
+        username = f"noleak1_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
+
+        bot = modules.auth.create_bot(user.id, f"bot_{time.time()}", "Bot")
+        retrieved = modules.auth.get_bot(bot.id)
+
+        assert retrieved.token is None
+
+    def test_bot_token_not_in_list_bots(self, modules):
+        """Test listing bots does not return tokens."""
+        username = f"noleak2_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
+
+        modules.auth.create_bot(user.id, f"bot_{time.time()}", "Bot")
+        bots = modules.auth.get_user_bots(user.id)
+
+        for b in bots:
+            assert b.token is None
+
+    def test_bot_hash_stored_not_token(self, modules):
+        """Test only token hash is stored in database."""
+        username = f"hashonly_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
+
+        bot = modules.auth.create_bot(user.id, f"bot_{time.time()}", "Bot")
+
+        row = modules._db.fetch_one(
+            "SELECT token_hash FROM auth_bots WHERE id = ?", (bot.id,)
+        )
+        assert row["token_hash"] != bot.token
+        assert len(row["token_hash"]) == 64  # SHA-256 hex
+
+
+class TestBotManagement:
+    """Tests for bot management operations."""
+
+    def test_get_bot(self, modules):
+        """Test retrieving a bot."""
+        username = f"getbot_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
+
+        bot = modules.auth.create_bot(user.id, f"bot_{time.time()}", "Test Bot")
+        retrieved = modules.auth.get_bot(bot.id)
+
+        assert retrieved is not None
+        assert retrieved.id == bot.id
+        assert retrieved.username == bot.username
+
+    def test_get_nonexistent_bot(self, modules):
+        """Test getting non-existent bot returns None."""
+        result = modules.auth.get_bot(999999999)
+        assert result is None
+
+    def test_get_user_bots(self, modules):
+        """Test listing user's bots."""
+        username = f"listbots_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
+
+        # Create 3 bots
+        for i in range(3):
+            modules.auth.create_bot(user.id, f"bot{i}_{time.time()}", f"Bot {i}")
+
+        bots = modules.auth.get_user_bots(user.id)
+        assert len(bots) == 3
+
+    def test_get_user_bots_empty(self, modules):
+        """Test listing bots for user with no bots."""
+        username = f"nobots_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
+
+        bots = modules.auth.get_user_bots(user.id)
+        assert bots == []
+
+    def test_disable_bot(self, modules):
+        """Test disabling a bot."""
+        username = f"disable_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
+
+        bot = modules.auth.create_bot(user.id, f"bot_{time.time()}", "Bot")
+        result = modules.auth.disable_bot(user.id, bot.id)
+
         assert result is True
 
-        assert auth.get_bot(bot.id) is None
+        retrieved = modules.auth.get_bot(bot.id)
+        assert retrieved.disabled is True
 
-    def test_bot_cannot_create_bots(self, fresh_user):
-        """Test that bots cannot create other bots."""
-        user, auth = fresh_user
+    def test_disabled_bot_token_fails(self, modules):
+        """Test disabled bot's token doesn't work."""
+        username = f"disabletoken_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
 
-        bot = auth.create_bot(user.id, unique_name("parentbot"), "Parent Bot")
+        bot = modules.auth.create_bot(user.id, f"bot_{time.time()}", "Bot")
+        token = bot.token
 
-        token_info = auth.verify_token(bot.token)
+        modules.auth.disable_bot(user.id, bot.id)
 
-        assert not auth.has_capability(token_info, "bots.create")
+        with pytest.raises(TokenInvalidError):
+            modules.auth.verify_token(token)
+
+    def test_enable_bot(self, modules):
+        """Test re-enabling a disabled bot."""
+        username = f"enable_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
+
+        bot = modules.auth.create_bot(user.id, f"bot_{time.time()}", "Bot")
+        modules.auth.disable_bot(user.id, bot.id)
+
+        result = modules.auth.enable_bot(user.id, bot.id)
+        assert result is True
+
+        retrieved = modules.auth.get_bot(bot.id)
+        assert retrieved.disabled is False
+
+    def test_delete_bot(self, modules):
+        """Test deleting a bot."""
+        username = f"deletebot_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
+
+        bot = modules.auth.create_bot(user.id, f"bot_{time.time()}", "Bot")
+        result = modules.auth.delete_bot(user.id, bot.id)
+
+        assert result is True
+
+        retrieved = modules.auth.get_bot(bot.id)
+        assert retrieved is None
+
+    def test_delete_bot_wrong_owner(self, modules):
+        """Test cannot delete bot owned by another user."""
+        user1 = f"user1_{time.time()}"
+        user2 = f"user2_{time.time()}"
+
+        u1 = modules.auth.register(user1, f"{user1}@test.com", TEST_PASSWORD)
+        u2 = modules.auth.register(user2, f"{user2}@test.com", TEST_PASSWORD)
+
+        bot = modules.auth.create_bot(u1.id, f"bot_{time.time()}", "Bot")
+
+        with pytest.raises(PermissionDeniedError):
+            modules.auth.delete_bot(u2.id, bot.id)
+
+
+class TestBotAudit:
+    """Tests for bot audit logging."""
+
+    def test_bot_creation_audited(self, modules):
+        """Test bot creation creates audit log."""
+        username = f"auditcreate_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
+
+        modules.auth.create_bot(user.id, f"bot_{time.time()}", "Bot")
+
+        events = modules.auth.get_security_events(user.id, limit=10)
+        bot_events = [e for e in events if e.event_type.value == "bot_created"]
+        assert len(bot_events) > 0
+
+    def test_bot_deletion_audited(self, modules):
+        """Test bot deletion creates audit log."""
+        username = f"auditdelete_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
+
+        bot = modules.auth.create_bot(user.id, f"bot_{time.time()}", "Bot")
+        modules.auth.delete_bot(user.id, bot.id)
+
+        events = modules.auth.get_security_events(user.id, limit=10)
+        delete_events = [e for e in events if e.event_type.value == "bot_deleted"]
+        assert len(delete_events) > 0
+
+    def test_bot_token_regen_audited(self, modules):
+        """Test bot token regeneration creates audit log."""
+        username = f"auditregen_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
+
+        bot = modules.auth.create_bot(user.id, f"bot_{time.time()}", "Bot")
+        modules.auth.regenerate_bot_token(user.id, bot.id)
+
+        events = modules.auth.get_security_events(user.id, limit=10)
+        regen_events = [
+            e for e in events if e.event_type.value == "bot_token_regenerated"
+        ]
+        assert len(regen_events) > 0
+
+
+class TestBotOwnership:
+    """Tests for bot ownership validation."""
+
+    def test_only_owner_can_manage_bot(self, modules):
+        """Test only bot owner can manage the bot."""
+        user1 = f"owner_{time.time()}"
+        user2 = f"other_{time.time()}"
+
+        u1 = modules.auth.register(user1, f"{user1}@test.com", TEST_PASSWORD)
+        u2 = modules.auth.register(user2, f"{user2}@test.com", TEST_PASSWORD)
+
+        bot = modules.auth.create_bot(u1.id, f"bot_{time.time()}", "Bot")
+
+        # User 2 cannot disable
+        with pytest.raises(PermissionDeniedError):
+            modules.auth.disable_bot(u2.id, bot.id)
+
+        # User 2 cannot enable
+        with pytest.raises(PermissionDeniedError):
+            modules.auth.enable_bot(u2.id, bot.id)
+
+        # User 2 cannot update permissions
+        with pytest.raises(PermissionDeniedError):
+            modules.auth.update_bot_permissions(u2.id, bot.id, {"messages.send": True})
+
+    def test_bot_owner_in_token_info(self, modules):
+        """Test token info includes owner user_id."""
+        username = f"ownerinfo_{time.time()}"
+        user = modules.auth.register(username, f"{username}@test.com", TEST_PASSWORD)
+
+        bot = modules.auth.create_bot(user.id, f"bot_{time.time()}", "Bot")
+        token_info = modules.auth.verify_token(bot.token)
+
+        assert token_info.user_id == user.id  # Owner
+        assert token_info.account_id == bot.id  # Bot itself
