@@ -4,6 +4,7 @@ Gateway endpoint - WebSocket endpoint handler.
 
 import asyncio
 import json
+from typing import Tuple, Optional, Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -12,7 +13,12 @@ import utils.logger as logger
 from .opcodes import GatewayOpcode, GatewayCloseCode, get_close_message
 from .connection import Connection, ConnectionState
 from .handlers import OpcodeHandler
-from .compression import is_compressed, decompress_payload, validate_message_size, CompressionError
+from .compression import (
+    is_compressed,
+    decompress_payload,
+    validate_message_size,
+    CompressionError,
+)
 
 
 router = APIRouter()
@@ -22,13 +28,16 @@ async def _cleanup_voice_connection(user_id: int) -> None:
     """Clean up voice connection when WebSocket disconnects."""
     try:
         from src.core.voice import signaling
+
         await signaling.disconnect_voice_async(user_id)
         logger.debug(f"Cleaned up voice connection for user {user_id}")
     except Exception as e:
         logger.debug(f"Voice cleanup for user {user_id}: {e}")
 
 
-async def _dispatch_offline_presence(user_id: int, presence_module, dispatcher) -> None:
+async def _dispatch_offline_presence(
+    user_id: int, presence_module: Optional[Any], dispatcher: Any
+) -> None:
     """Dispatch offline presence to friends and server members when user disconnects."""
     try:
         import src.api as api
@@ -68,6 +77,7 @@ async def _dispatch_offline_presence(user_id: int, presence_module, dispatcher) 
         if presence_module:
             try:
                 from src.core.presence.models import UserStatus
+
                 presence_module.set_status(user_id, UserStatus.OFFLINE)
             except Exception:
                 pass
@@ -83,15 +93,17 @@ async def _dispatch_offline_presence(user_id: int, presence_module, dispatcher) 
                 "status": "offline",
                 "custom_status": None,
                 "custom_emoji": None,
-            }
+            },
         )
         await dispatcher.dispatch_event(event, list(target_user_ids))
-        logger.debug(f"Dispatched offline presence for user {user_id} to {len(target_user_ids)} users")
+        logger.debug(
+            f"Dispatched offline presence for user {user_id} to {len(target_user_ids)} users"
+        )
     except Exception as e:
         logger.debug(f"Failed to dispatch offline presence: {e}")
 
 
-def _get_modules():
+def _get_modules() -> Tuple[Any, Any, Optional[Any], Optional[Any], Optional[Any]]:
     """Get module references from the websocket package."""
     from . import (
         get_session_manager,
@@ -100,6 +112,7 @@ def _get_modules():
         get_presence_module,
         get_servers_module,
     )
+
     return (
         get_session_manager(),
         get_dispatcher(),
@@ -110,7 +123,7 @@ def _get_modules():
 
 
 @router.websocket("/gateway")
-async def gateway_endpoint(websocket: WebSocket):
+async def gateway_endpoint(websocket: WebSocket) -> None:
     """
     WebSocket gateway endpoint.
 
@@ -122,7 +135,9 @@ async def gateway_endpoint(websocket: WebSocket):
     """
     await websocket.accept()
 
-    session_manager, dispatcher, auth_module, presence_module, servers_module = _get_modules()
+    session_manager, dispatcher, auth_module, presence_module, servers_module = (
+        _get_modules()
+    )
 
     connection_id = session_manager.generate_connection_id()
     connection = Connection(
@@ -148,9 +163,7 @@ async def gateway_endpoint(websocket: WebSocket):
     try:
         await dispatcher.send_hello(connection)
 
-        heartbeat_task = asyncio.create_task(
-            _heartbeat_monitor(connection, dispatcher)
-        )
+        heartbeat_task = asyncio.create_task(_heartbeat_monitor(connection, dispatcher))
 
         try:
             await _message_loop(connection, handler, dispatcher)
@@ -169,7 +182,9 @@ async def gateway_endpoint(websocket: WebSocket):
         # Clean up voice connection when WebSocket disconnects
         if connection.is_authenticated and connection.user_id:
             await _cleanup_voice_connection(connection.user_id)
-            await _dispatch_offline_presence(connection.user_id, presence_module, dispatcher)
+            await _dispatch_offline_presence(
+                connection.user_id, presence_module, dispatcher
+            )
 
         connection.set_disconnected()
         session_manager.remove_connection(connection_id)
@@ -179,10 +194,13 @@ async def gateway_endpoint(websocket: WebSocket):
 async def _message_loop(
     connection: Connection,
     handler: OpcodeHandler,
-    dispatcher,
+    dispatcher: Any,
 ) -> None:
     """Handle incoming messages."""
-    while connection.state not in (ConnectionState.DISCONNECTING, ConnectionState.DISCONNECTED):
+    while connection.state not in (
+        ConnectionState.DISCONNECTING,
+        ConnectionState.DISCONNECTED,
+    ):
         try:
             message = await asyncio.wait_for(
                 connection.websocket.receive(),
@@ -205,20 +223,26 @@ async def _message_loop(
             # Validate text message size
             text_data = message["text"]
             if not validate_message_size(text_data.encode("utf-8")):
-                logger.warning(f"Connection {connection.connection_id}: message too large")
+                logger.warning(
+                    f"Connection {connection.connection_id}: message too large"
+                )
                 await _close_connection(connection, GatewayCloseCode.DECODE_ERROR)
                 return
             try:
                 data = json.loads(text_data)
             except json.JSONDecodeError as e:
-                logger.warning(f"Connection {connection.connection_id}: JSON decode error: {e}, data: {text_data[:200]}")
+                logger.warning(
+                    f"Connection {connection.connection_id}: JSON decode error: {e}, data: {text_data[:200]}"
+                )
                 await _close_connection(connection, GatewayCloseCode.DECODE_ERROR)
                 return
         elif "bytes" in message:
             raw_bytes = message["bytes"]
             # Validate compressed message size before decompression
             if not validate_message_size(raw_bytes):
-                logger.warning(f"Connection {connection.connection_id}: compressed message too large")
+                logger.warning(
+                    f"Connection {connection.connection_id}: compressed message too large"
+                )
                 await _close_connection(connection, GatewayCloseCode.DECODE_ERROR)
                 return
             if is_compressed(raw_bytes):
@@ -246,7 +270,9 @@ async def _message_loop(
         payload = data.get("d")
 
         if opcode is None:
-            logger.warning(f"Connection {connection.connection_id}: missing opcode in message: {data}")
+            logger.warning(
+                f"Connection {connection.connection_id}: missing opcode in message: {data}"
+            )
             await _close_connection(connection, GatewayCloseCode.DECODE_ERROR)
             return
 
@@ -264,12 +290,14 @@ async def _message_loop(
                 event_data = response_data.get("d")
                 seq = response_data.get("s")
 
-                await connection.send_json({
-                    "op": int(GatewayOpcode.DISPATCH),
-                    "t": event_type,
-                    "s": seq,
-                    "d": event_data,
-                })
+                await connection.send_json(
+                    {
+                        "op": int(GatewayOpcode.DISPATCH),
+                        "t": event_type,
+                        "s": seq,
+                        "d": event_data,
+                    }
+                )
 
                 if event_type == "RESUMED":
                     replay_seq = payload.get("seq", 0) if payload else 0
@@ -278,22 +306,29 @@ async def _message_loop(
                 await connection.send_json({"op": int(GatewayOpcode.HEARTBEAT_ACK)})
             elif response_op == GatewayOpcode.INVALID_SESSION:
                 resumable = response_data.get("d", False) if response_data else False
-                await connection.send_json({
-                    "op": int(GatewayOpcode.INVALID_SESSION),
-                    "d": resumable,
-                })
+                await connection.send_json(
+                    {
+                        "op": int(GatewayOpcode.INVALID_SESSION),
+                        "d": resumable,
+                    }
+                )
             else:
-                await connection.send_json({
-                    "op": int(response_op),
-                    "d": response_data,
-                })
+                await connection.send_json(
+                    {
+                        "op": int(response_op),
+                        "d": response_data,
+                    }
+                )
 
 
-async def _heartbeat_monitor(connection: Connection, dispatcher) -> None:
+async def _heartbeat_monitor(connection: Connection, dispatcher: Any) -> None:
     """Monitor heartbeat and disconnect if missed."""
     interval = connection.heartbeat_interval_ms / 1000
 
-    while connection.state not in (ConnectionState.DISCONNECTING, ConnectionState.DISCONNECTED):
+    while connection.state not in (
+        ConnectionState.DISCONNECTING,
+        ConnectionState.DISCONNECTED,
+    ):
         await asyncio.sleep(interval)
 
         if not connection.is_alive:
@@ -310,7 +345,9 @@ async def _close_connection(connection: Connection, close_code: int) -> None:
     """Close a connection with a specific code."""
     connection.set_disconnecting()
     try:
-        await connection.websocket.close(code=close_code, reason=get_close_message(close_code))
+        await connection.websocket.close(
+            code=close_code, reason=get_close_message(close_code)
+        )
     except Exception:
         pass
     connection.set_disconnected()

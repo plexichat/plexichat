@@ -3,7 +3,7 @@ Session management - Manages gateway sessions and connections.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, Dict, List, Set
+from typing import Optional, Dict, List, Set, Any
 import time
 import secrets
 import threading
@@ -14,6 +14,7 @@ from .connection import Connection, ConnectionState
 @dataclass
 class Session:
     """Represents a resumable gateway session."""
+
     session_id: str
     user_id: int
     sequence: int = 0
@@ -21,16 +22,16 @@ class Session:
     created_at: float = field(default_factory=time.monotonic)
     last_activity: float = field(default_factory=time.monotonic)
     connection_id: Optional[str] = None
-    replay_events: List[Dict] = field(default_factory=list)
+    replay_events: List[Dict[str, Any]] = field(default_factory=list)
     max_replay_events: int = 100
 
-    def add_replay_event(self, event: Dict) -> None:
+    def add_replay_event(self, event: Dict[str, Any]) -> None:
         """Add an event to the replay buffer."""
         self.replay_events.append(event)
         if len(self.replay_events) > self.max_replay_events:
             self.replay_events.pop(0)
 
-    def get_replay_events(self, after_sequence: int) -> List[Dict]:
+    def get_replay_events(self, after_sequence: int) -> List[Dict[str, Any]]:
         """Get events after a specific sequence number."""
         return [e for e in self.replay_events if e.get("s", 0) > after_sequence]
 
@@ -116,9 +117,7 @@ class SessionManager:
         with self._lock:
             conn_ids = self._user_connections.get(user_id, set())
             return [
-                self._connections[cid]
-                for cid in conn_ids
-                if cid in self._connections
+                self._connections[cid] for cid in conn_ids if cid in self._connections
             ]
 
     def get_user_connection_count(self, user_id: int) -> int:
@@ -237,7 +236,7 @@ class SessionManager:
         connection.sequence = sequence
         return session
 
-    def record_event(self, session_id: str, event: Dict) -> None:
+    def record_event(self, session_id: str, event: Dict[str, Any]) -> None:
         """
         Record an event for potential replay.
 
@@ -250,7 +249,9 @@ class SessionManager:
             session.add_replay_event(event)
             session.update_activity()
 
-    def get_replay_events(self, session_id: str, after_sequence: int) -> List[Dict]:
+    def get_replay_events(
+        self, session_id: str, after_sequence: int
+    ) -> List[Dict[str, Any]]:
         """
         Get events to replay after resume.
 
@@ -308,11 +309,12 @@ class SessionManager:
 
         return len(stale_ids)
 
-    def get_stats(self) -> Dict:
+    def get_stats(self) -> Dict[str, int]:
         """Get session manager statistics."""
         with self._lock:
             active_connections = sum(
-                1 for c in self._connections.values()
+                1
+                for c in self._connections.values()
                 if c.state == ConnectionState.READY
             )
             return {

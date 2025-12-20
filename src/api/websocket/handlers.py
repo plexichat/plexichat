@@ -19,9 +19,9 @@ class OpcodeHandler:
     def __init__(
         self,
         session_manager: SessionManager,
-        auth_module=None,
-        presence_module=None,
-        servers_module=None,
+        auth_module: Optional[Any] = None,
+        presence_module: Optional[Any] = None,
+        servers_module: Optional[Any] = None,
     ):
         """
         Initialize the opcode handler.
@@ -33,9 +33,9 @@ class OpcodeHandler:
             servers_module: Servers module for guild data
         """
         self._session_manager = session_manager
-        self._auth = auth_module
-        self._presence = presence_module
-        self._servers = servers_module
+        self._auth: Optional[Any] = auth_module
+        self._presence: Optional[Any] = presence_module
+        self._servers: Optional[Any] = servers_module
 
     async def handle(
         self,

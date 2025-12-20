@@ -11,12 +11,10 @@ import zlib
 
 from fastapi import WebSocket
 
-# Type alias for zlib compress object
-_CompressObj = Any
-
 
 class ConnectionState(Enum):
     """Connection lifecycle states."""
+
     CONNECTING = "connecting"
     CONNECTED = "connected"
     IDENTIFYING = "identifying"
@@ -29,6 +27,7 @@ class ConnectionState(Enum):
 @dataclass
 class Connection:
     """Represents a single WebSocket connection."""
+
     websocket: WebSocket
     connection_id: str
     state: ConnectionState = ConnectionState.CONNECTING
@@ -46,7 +45,7 @@ class Connection:
     event_window_start: float = field(default_factory=time.monotonic)
     missed_heartbeats: int = 0
     properties: Dict[str, Any] = field(default_factory=dict)
-    _zlib_context: Optional[_CompressObj] = field(default=None, repr=False)
+    _zlib_context: Optional[Any] = field(default=None, repr=False)
     _send_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
     def __post_init__(self):
@@ -124,6 +123,7 @@ class Connection:
             async with self._send_lock:
                 if self.compress and self._zlib_context:
                     import json
+
                     json_bytes = json.dumps(data).encode("utf-8")
                     compressed = self._zlib_context.compress(json_bytes)
                     compressed += self._zlib_context.flush(zlib.Z_SYNC_FLUSH)
