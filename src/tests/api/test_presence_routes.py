@@ -3,7 +3,6 @@ Tests for presence routes.
 """
 
 
-
 class TestUpdatePresence:
     """Tests for PUT /users/@me/presence endpoint."""
 
@@ -12,7 +11,7 @@ class TestUpdatePresence:
         response = test_client.put(
             "/api/v1/users/@me/presence",
             headers=auth_headers,
-            json={"status": "online"}
+            json={"status": "online"},
         )
 
         assert response.status_code == 200
@@ -22,9 +21,7 @@ class TestUpdatePresence:
     def test_update_presence_idle(self, test_client, auth_headers):
         """Test setting presence to idle."""
         response = test_client.put(
-            "/api/v1/users/@me/presence",
-            headers=auth_headers,
-            json={"status": "idle"}
+            "/api/v1/users/@me/presence", headers=auth_headers, json={"status": "idle"}
         )
 
         assert response.status_code == 200
@@ -34,9 +31,7 @@ class TestUpdatePresence:
     def test_update_presence_dnd(self, test_client, auth_headers):
         """Test setting presence to do not disturb."""
         response = test_client.put(
-            "/api/v1/users/@me/presence",
-            headers=auth_headers,
-            json={"status": "dnd"}
+            "/api/v1/users/@me/presence", headers=auth_headers, json={"status": "dnd"}
         )
 
         assert response.status_code == 200
@@ -48,7 +43,7 @@ class TestUpdatePresence:
         response = test_client.put(
             "/api/v1/users/@me/presence",
             headers=auth_headers,
-            json={"status": "invisible"}
+            json={"status": "invisible"},
         )
 
         assert response.status_code == 200
@@ -60,10 +55,7 @@ class TestUpdatePresence:
         response = test_client.put(
             "/api/v1/users/@me/presence",
             headers=auth_headers,
-            json={
-                "status": "online",
-                "custom_status": "Working on something cool"
-            }
+            json={"status": "online", "custom_status": "Working on something cool"},
         )
 
         assert response.status_code == 200
@@ -76,7 +68,7 @@ class TestUpdatePresence:
         response = test_client.put(
             "/api/v1/users/@me/presence",
             headers=auth_headers,
-            json={"status": "invalid_status"}
+            json={"status": "invalid_status"},
         )
 
         assert response.status_code == 400
@@ -84,8 +76,7 @@ class TestUpdatePresence:
     def test_update_presence_without_auth(self, test_client):
         """Test updating presence without authentication."""
         response = test_client.put(
-            "/api/v1/users/@me/presence",
-            json={"status": "online"}
+            "/api/v1/users/@me/presence", json={"status": "online"}
         )
 
         assert response.status_code == 401
@@ -99,8 +90,7 @@ class TestGetUserPresence:
         user_id = str(test_user["user"].id)
 
         response = test_client.get(
-            f"/api/v1/users/{user_id}/presence",
-            headers=auth_headers
+            f"/api/v1/users/{user_id}/presence", headers=auth_headers
         )
 
         assert response.status_code == 200
@@ -111,8 +101,7 @@ class TestGetUserPresence:
     def test_get_nonexistent_user_presence(self, test_client, auth_headers):
         """Test getting presence for nonexistent user."""
         response = test_client.get(
-            "/api/v1/users/999999999999999999/presence",
-            headers=auth_headers
+            "/api/v1/users/999999999999999999/presence", headers=auth_headers
         )
 
         assert response.status_code == 200

@@ -9,12 +9,11 @@ import pytest
 import uuid
 
 
-
 @pytest.fixture(scope="module")
 def test_user(modules, session_users):
     """
     Create a test user and return credentials dict.
-    
+
     Uses a user from the session pool for speed.
     Returns dict format expected by API tests.
     """
@@ -52,8 +51,7 @@ def test_server(modules, test_user):
     unique_id = uuid.uuid4().hex[:8]
 
     server = modules.servers.create_server(
-        owner_id=test_user["user"].id,
-        name=f"Test Server {unique_id}"
+        owner_id=test_user["user"].id, name=f"Test Server {unique_id}"
     )
 
     channels = modules.servers.get_channels(test_user["user"].id, server.id)
@@ -82,7 +80,7 @@ def second_auth_headers(second_test_user):
 def db_and_modules(modules):
     """
     Legacy fixture for backward compatibility.
-    
+
     Returns dict format expected by older API tests.
     """
     return {

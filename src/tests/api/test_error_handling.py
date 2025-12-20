@@ -11,8 +11,7 @@ class TestErrorResponses:
     def test_404_error_format(self, test_client, auth_headers):
         """Test 404 error response format."""
         response = test_client.get(
-            "/api/v1/users/999999999999999999",
-            headers=auth_headers
+            "/api/v1/users/999999999999999999", headers=auth_headers
         )
 
         assert response.status_code == 404
@@ -35,10 +34,7 @@ class TestErrorResponses:
 
     def test_400_error_format(self, test_client, auth_headers):
         """Test 400 error response format."""
-        response = test_client.get(
-            "/api/v1/users/invalid_id",
-            headers=auth_headers
-        )
+        response = test_client.get("/api/v1/users/invalid_id", headers=auth_headers)
 
         assert response.status_code == 400
         data = response.json()
@@ -50,9 +46,7 @@ class TestErrorResponses:
     def test_validation_error_format(self, test_client, auth_headers):
         """Test validation error response format."""
         response = test_client.post(
-            "/api/v1/servers",
-            headers=auth_headers,
-            json={"name": ""}
+            "/api/v1/servers", headers=auth_headers, json={"name": ""}
         )
 
         assert response.status_code == 400 or response.status_code == 422
@@ -71,10 +65,7 @@ class TestHTTPExceptions:
 
     def test_not_found_route(self, test_client, auth_headers):
         """Test not found route response."""
-        response = test_client.get(
-            "/api/v1/nonexistent/route",
-            headers=auth_headers
-        )
+        response = test_client.get("/api/v1/nonexistent/route", headers=auth_headers)
 
         assert response.status_code == 404
 
@@ -89,8 +80,8 @@ class TestConflictErrors:
             json={
                 "username": test_user["username"],
                 "email": "different@example.com",
-                "password": "SecurePass123!"
-            }
+                "password": "SecurePass123!",
+            },
         )
 
         assert response.status_code == 409
@@ -107,15 +98,14 @@ class TestForbiddenErrors:
         auth = db_and_modules["auth"]
         unique_id = uuid.uuid4().hex[:8]
 
-        other_user = auth.register(
+        auth.register(
             username=f"otheruser_{unique_id}",
             email=f"otheruser_{unique_id}@example.com",
-            password="SecurePass123!"
+            password="SecurePass123!",
         )
 
         result = auth.login(
-            username=f"otheruser_{unique_id}",
-            password="SecurePass123!"
+            username=f"otheruser_{unique_id}", password="SecurePass123!"
         )
 
         server_id = str(test_server["server"].id)
@@ -123,7 +113,7 @@ class TestForbiddenErrors:
         response = test_client.patch(
             f"/api/v1/servers/{server_id}",
             headers={"Authorization": f"Bearer {result.token}"},
-            json={"name": "Unauthorized Update"}
+            json={"name": "Unauthorized Update"},
         )
 
         assert response.status_code == 403 or response.status_code == 404
@@ -135,8 +125,7 @@ class TestInternalErrors:
     def test_error_does_not_leak_details(self, test_client, auth_headers):
         """Test that internal errors don't leak sensitive details."""
         response = test_client.get(
-            "/api/v1/users/999999999999999999",
-            headers=auth_headers
+            "/api/v1/users/999999999999999999", headers=auth_headers
         )
 
         data = response.json()

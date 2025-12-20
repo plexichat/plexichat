@@ -3,7 +3,6 @@ Tests for health check endpoint.
 """
 
 
-
 class TestHealthCheck:
     """Tests for the health check endpoint."""
 
