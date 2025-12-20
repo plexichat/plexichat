@@ -35,7 +35,21 @@ htmlcov/
 .benchmarks/
 .hypothesis/
 coverage/
+coverage-*/
+coverage-*.xml
+coverage.xml
 junit.xml
+*-report.xml
+*-report.json
+
+# GitLab CI/CD artifacts
+.cache/
+gl-*.json
+pyright-report.json
+ruff-report.json
+bandit-*.json
+pip-audit-*.json
+safety-*.json
 
 # Database files
 *.db
