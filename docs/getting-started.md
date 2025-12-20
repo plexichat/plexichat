@@ -202,7 +202,7 @@ curl -X PUT "http://localhost:8000/api/v1/channels/CHANNEL_ID/messages/MESSAGE_I
   -H "Authorization: Bearer your_token"
 ```
 
-Note: Emoji must be URL-encoded (👍 = `%F0%9F%91%8D`)
+Note: Emoji must be URL-encoded (thumbs up emoji = `%F0%9F%91%8D`)
 
 ### Update Your Presence
 

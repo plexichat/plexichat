@@ -44,38 +44,38 @@ All messages use JSON format:
 
 | Code | Name | Direction | Description |
 |------|------|-----------|-------------|
-| 0 | DISPATCH | Server → Client | Event dispatch |
+| 0 | DISPATCH | Server -> Client | Event dispatch |
 | 1 | HEARTBEAT | Bidirectional | Keep connection alive |
-| 2 | IDENTIFY | Client → Server | Authenticate |
-| 3 | PRESENCE_UPDATE | Client → Server | Update presence |
-| 4 | VOICE_STATE_UPDATE | Client → Server | Update voice state |
-| 6 | RESUME | Client → Server | Resume session |
-| 7 | RECONNECT | Server → Client | Reconnect requested |
-| 8 | REQUEST_GUILD_MEMBERS | Client → Server | Request member list |
-| 9 | INVALID_SESSION | Server → Client | Session invalid |
-| 10 | HELLO | Server → Client | Initial handshake |
-| 11 | HEARTBEAT_ACK | Server → Client | Heartbeat acknowledged |
-| 12 | SERVER_STATUS | Server → Client | Server status update |
+| 2 | IDENTIFY | Client -> Server | Authenticate |
+| 3 | PRESENCE_UPDATE | Client -> Server | Update presence |
+| 4 | VOICE_STATE_UPDATE | Client -> Server | Update voice state |
+| 6 | RESUME | Client -> Server | Resume session |
+| 7 | RECONNECT | Server -> Client | Reconnect requested |
+| 8 | REQUEST_GUILD_MEMBERS | Client -> Server | Request member list |
+| 9 | INVALID_SESSION | Server -> Client | Session invalid |
+| 10 | HELLO | Server -> Client | Initial handshake |
+| 11 | HEARTBEAT_ACK | Server -> Client | Heartbeat acknowledged |
+| 12 | SERVER_STATUS | Server -> Client | Server status update |
 | 13 | VERSION_CHECK | Bidirectional | Version check |
 
 ### Voice Opcodes
 
 | Code | Name | Direction | Description |
 |------|------|-----------|-------------|
-| 20 | VOICE_CONNECT | Client → Server | Voice connection request |
-| 21 | VOICE_DISCONNECT | Client → Server | Voice disconnection |
+| 20 | VOICE_CONNECT | Client -> Server | Voice connection request |
+| 21 | VOICE_DISCONNECT | Client -> Server | Voice disconnection |
 | 22 | VOICE_SDP_OFFER | Bidirectional | WebRTC SDP offer |
 | 23 | VOICE_SDP_ANSWER | Bidirectional | WebRTC SDP answer |
 | 24 | VOICE_ICE_CANDIDATE | Bidirectional | WebRTC ICE candidate |
 | 25 | VOICE_SPEAKING | Bidirectional | Speaking indicator |
-| 26 | VOICE_QUALITY | Server → Client | Voice quality metrics |
+| 26 | VOICE_QUALITY | Server -> Client | Voice quality metrics |
 
 ### Interaction Opcodes
 
 | Code | Name | Direction | Description |
 |------|------|-----------|-------------|
-| 30 | INTERACTION_CREATE | Server → Client | Application interaction |
-| 31 | INTERACTION_RESPONSE | Client → Server | Interaction response |
+| 30 | INTERACTION_CREATE | Server -> Client | Application interaction |
+| 31 | INTERACTION_RESPONSE | Client -> Server | Interaction response |
 
 ## Close Codes
 

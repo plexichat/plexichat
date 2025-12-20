@@ -23,7 +23,7 @@ Authorization: Bearer <token>
       "name": "alpha_tester",
       "display_name": "Alpha Tester",
       "description": "Early alpha tester",
-      "icon": "🧪",
+      "icon": ":test_tube:",
       "color": "#9b59b6"
     }
   ],
@@ -240,28 +240,28 @@ Authorization: Bearer <token>
       "name": "alpha_tester",
       "display_name": "Alpha Tester",
       "description": "Early alpha tester",
-      "icon": "🧪",
+      "icon": ":test_tube:",
       "color": "#9b59b6"
     },
     {
       "name": "early_supporter",
       "display_name": "Early Supporter",
       "description": "Supported the project early",
-      "icon": "💎",
+      "icon": ":gem:",
       "color": "#3498db"
     },
     {
       "name": "staff",
       "display_name": "Staff",
       "description": "PlexiChat staff member",
-      "icon": "⚙️",
+      "icon": ":gear:",
       "color": "#e74c3c"
     },
     {
       "name": "verified",
       "display_name": "Verified",
       "description": "Verified account",
-      "icon": "✓",
+      "icon": ":check:",
       "color": "#2ecc71"
     }
   ]

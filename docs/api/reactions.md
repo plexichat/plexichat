@@ -72,12 +72,12 @@ Authorization: Bearer <token>
 ```json
 [
   {
-    "emoji": "👍",
+    "emoji": ":thumbsup:",
     "count": 5,
     "me": true
   },
   {
-    "emoji": "❤️",
+    "emoji": ":heart:",
     "count": 3,
     "me": false
   }
@@ -134,7 +134,7 @@ Authorization: Bearer <token>
 
 ```json
 {
-  "emoji": "👍",
+  "emoji": ":thumbsup:",
   "count": 5,
   "me": true
 }
@@ -163,5 +163,5 @@ Authorization: Bearer <token>
 ## Emoji Format
 
 Reactions support:
-- Unicode emoji: `👍`, `❤️`, `🎉`
+- Unicode emoji: `:thumbsup:`, `:heart:`, `:tada:`
 - Custom emoji: `emoji_id` (snowflake ID)

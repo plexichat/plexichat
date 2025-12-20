@@ -175,7 +175,7 @@ PlexiChat uses a stage-based versioning scheme:
 
 ### Comparison
 
-Versions are compared by: stage → major → minor → build
+Versions are compared by: stage -> major -> minor -> build
 
 ```python
 # a.1.0-1 < a.1.0-2 < a.1.1-1 < a.2.0-1 < b.1.0-1 < r.1.0-1

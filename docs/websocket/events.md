@@ -117,7 +117,7 @@ Sent when a user's presence changes. This event is dispatched to all friends of 
     "user_id": "123456789012345678",
     "status": "online",
     "custom_status": "Working",
-    "custom_emoji": "💻"
+    "custom_emoji": ":computer:"
   }
 }
 ```
@@ -144,7 +144,7 @@ Sent when a reaction is added.
     "user_id": "123456789012345678",
     "channel_id": "123456789012345678",
     "message_id": "123456789012345678",
-    "emoji": "👍"
+    "emoji": ":thumbsup:"
   }
 }
 ```
@@ -160,7 +160,7 @@ Sent when a reaction is removed.
     "user_id": "123456789012345678",
     "channel_id": "123456789012345678",
     "message_id": "123456789012345678",
-    "emoji": "👍"
+    "emoji": ":thumbsup:"
   }
 }
 ```
