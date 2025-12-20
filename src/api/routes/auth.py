@@ -4,6 +4,7 @@ Authentication routes - Register, login, logout endpoints.
 
 import os
 import sys
+from typing import Dict, Any
 from fastapi import APIRouter, Request, HTTPException, Depends
 
 import src.api as api
@@ -46,7 +47,7 @@ def _user_to_response(user) -> UserResponse:
 
 
 @router.post("/register", response_model=LoginResponse)
-async def register(request: Request, body: RegisterRequest):
+async def register(request: Request, body: RegisterRequest) -> LoginResponse:
     """
     Register a new user account.
     
@@ -99,7 +100,7 @@ async def register(request: Request, body: RegisterRequest):
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(request: Request, body: LoginRequest):
+async def login(request: Request, body: LoginRequest) -> LoginResponse:
     """
     Authenticate a user.
     
@@ -150,7 +151,7 @@ async def login(request: Request, body: LoginRequest):
 
 
 @router.post("/2fa", response_model=LoginResponse)
-async def complete_2fa(body: TwoFactorRequest):
+async def complete_2fa(body: TwoFactorRequest) -> LoginResponse:
     """
     Complete two-factor authentication.
     
@@ -179,7 +180,7 @@ async def complete_2fa(body: TwoFactorRequest):
 
 
 @router.post("/logout")
-async def logout(current_user: TokenInfo = Depends(get_current_user)):
+async def logout(current_user: TokenInfo = Depends(get_current_user)) -> Dict[str, bool]:
     """
     Logout current session.
     
@@ -199,7 +200,7 @@ async def logout(current_user: TokenInfo = Depends(get_current_user)):
 
 
 @router.get("/2fa/status")
-async def get_2fa_status(current_user: TokenInfo = Depends(get_current_user)):
+async def get_2fa_status(current_user: TokenInfo = Depends(get_current_user)) -> Dict[str, Any]:
     """
     Get current 2FA status for the user.
     """
@@ -220,7 +221,7 @@ async def get_2fa_status(current_user: TokenInfo = Depends(get_current_user)):
 
 
 @router.get("/sessions")
-async def get_sessions_list(current_user: TokenInfo = Depends(get_current_user)):
+async def get_sessions_list(current_user: TokenInfo = Depends(get_current_user)) -> list:
     """
     Get all active sessions for the current user.
     """
@@ -246,7 +247,7 @@ async def get_sessions_list(current_user: TokenInfo = Depends(get_current_user))
 
 
 @router.delete("/sessions/{session_id}")
-async def revoke_session(session_id: str, current_user: TokenInfo = Depends(get_current_user)):
+async def revoke_session(session_id: str, current_user: TokenInfo = Depends(get_current_user)) -> Dict[str, bool]:
     """
     Revoke a specific session.
     """
@@ -268,7 +269,7 @@ async def revoke_session(session_id: str, current_user: TokenInfo = Depends(get_
 
 
 @router.post("/2fa/enable")
-async def enable_2fa(body: dict, current_user: TokenInfo = Depends(get_current_user)):
+async def enable_2fa(body: dict, current_user: TokenInfo = Depends(get_current_user)) -> Dict[str, Any]:
     """
     Enable 2FA - returns QR code and secret.
     
@@ -320,7 +321,7 @@ async def enable_2fa(body: dict, current_user: TokenInfo = Depends(get_current_u
 
 
 @router.post("/2fa/confirm")
-async def confirm_2fa_setup(body: dict, current_user: TokenInfo = Depends(get_current_user)):
+async def confirm_2fa_setup(body: dict, current_user: TokenInfo = Depends(get_current_user)) -> Dict[str, bool]:
     """
     Confirm 2FA setup with TOTP code.
     
@@ -353,7 +354,7 @@ async def confirm_2fa_setup(body: dict, current_user: TokenInfo = Depends(get_cu
 
 
 @router.post("/2fa/disable")
-async def disable_2fa(body: dict, current_user: TokenInfo = Depends(get_current_user)):
+async def disable_2fa(body: dict, current_user: TokenInfo = Depends(get_current_user)) -> Dict[str, bool]:
     """
     Disable 2FA.
     
@@ -384,7 +385,7 @@ async def disable_2fa(body: dict, current_user: TokenInfo = Depends(get_current_
 
 
 @router.post("/sessions/revoke-all")
-async def revoke_all_sessions(body: dict, current_user: TokenInfo = Depends(get_current_user)):
+async def revoke_all_sessions(body: dict, current_user: TokenInfo = Depends(get_current_user)) -> Dict[str, Any]:
     """
     Revoke all sessions except optionally the current one.
     """
@@ -411,7 +412,7 @@ async def revoke_all_sessions(body: dict, current_user: TokenInfo = Depends(get_
 
 
 @router.get("/password-requirements")
-async def get_password_requirements():
+async def get_password_requirements() -> Dict[str, Any]:
     """
     Get server password requirements.
     

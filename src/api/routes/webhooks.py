@@ -2,7 +2,7 @@
 Webhook routes - Webhook management and execution endpoints.
 """
 
-from typing import Optional
+from typing import Optional, Dict
 from fastapi import APIRouter, HTTPException, Depends
 
 import src.api as api
@@ -106,7 +106,7 @@ async def get_webhook(webhook_id: str, current_user: TokenInfo = Depends(get_cur
 
 
 @router.delete("/{webhook_id}")
-async def delete_webhook(webhook_id: str, current_user: TokenInfo = Depends(get_current_user)):
+async def delete_webhook(webhook_id: str, current_user: TokenInfo = Depends(get_current_user)) -> Dict[str, bool]:
     """
     Delete a webhook.
     

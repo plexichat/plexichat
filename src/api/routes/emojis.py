@@ -2,7 +2,7 @@
 Emoji routes - Custom emoji management endpoints.
 """
 
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
 from pydantic import BaseModel, Field, ConfigDict, field_serializer
 
@@ -264,7 +264,7 @@ async def delete_emoji(
     server_id: str,
     emoji_id: str,
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> Dict[str, bool]:
     """
     Delete a custom emoji.
     

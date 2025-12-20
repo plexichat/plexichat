@@ -2,6 +2,7 @@
 Avatar routes - Endpoints for user avatars and server icons.
 """
 
+from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, Depends, File, UploadFile
 from fastapi.responses import Response
 
@@ -51,7 +52,7 @@ async def get_user_avatar(user_id: str):
 async def upload_my_avatar(
     file: UploadFile = File(...),
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> Dict[str, Any]:
     """
     Upload current user's avatar.
     
@@ -97,7 +98,7 @@ async def upload_my_avatar(
 
 
 @router.delete("/users/@me")
-async def delete_my_avatar(current_user: TokenInfo = Depends(get_current_user)):
+async def delete_my_avatar(current_user: TokenInfo = Depends(get_current_user)) -> Dict[str, bool]:
     """
     Delete current user's avatar.
     """
@@ -155,7 +156,7 @@ async def upload_server_icon(
     server_id: str,
     file: UploadFile = File(...),
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> Dict[str, Any]:
     """
     Upload server icon.
     
@@ -228,7 +229,7 @@ async def upload_server_icon(
 async def delete_server_icon(
     server_id: str,
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> Dict[str, bool]:
     """
     Delete server icon.
     

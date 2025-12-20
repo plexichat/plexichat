@@ -169,7 +169,7 @@ async def set_setting(
 
 
 @router.delete("/{key}")
-async def delete_setting(key: str, current_user: TokenInfo = Depends(get_current_user)):
+async def delete_setting(key: str, current_user: TokenInfo = Depends(get_current_user)) -> Dict[str, bool]:
     """
     Delete a setting.
     

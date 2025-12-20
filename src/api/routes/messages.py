@@ -84,7 +84,7 @@ async def get_channel_messages(
     before: Optional[SnowflakeID] = Query(default=None),
     after: Optional[SnowflakeID] = Query(default=None),
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> list:
     """
     Get messages in a channel.
     
@@ -186,7 +186,7 @@ async def search_messages(
     content: str = Query(..., description="Search query"),
     limit: int = Query(default=25, ge=1, le=100),
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> list:
     """Search messages in a channel by content."""
     messaging = api.get_messaging()
     servers_mod = api.get_servers()
@@ -253,7 +253,7 @@ async def send_channel_message(
     channel_id: str,
     body: MessageCreateRequest,
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> Dict[str, Any]:
     """
     Send a message to a channel.
     
@@ -573,7 +573,7 @@ async def delete_message(
     channel_id: str,
     message_id: str,
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> Dict[str, bool]:
     """
     Delete a message.
     
@@ -605,7 +605,7 @@ async def delete_message(
 async def get_pinned_messages(
     channel_id: str,
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> list:
     """Get all pinned messages in a channel."""
     messaging = api.get_messaging()
     servers_mod = api.get_servers()
@@ -664,7 +664,7 @@ async def pin_message(
     channel_id: str,
     message_id: str,
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> Dict[str, bool]:
     """Pin a message in a channel."""
     messaging = api.get_messaging()
 
@@ -691,7 +691,7 @@ async def unpin_message(
     channel_id: str,
     message_id: str,
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> Dict[str, bool]:
     """Unpin a message from a channel."""
     messaging = api.get_messaging()
 
@@ -718,7 +718,7 @@ async def acknowledge_messages(
     channel_id: str,
     message_id: Optional[str] = Query(default=None, description="Mark as read up to this message ID"),
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> Dict[str, Any]:
     """
     Mark messages as read in a channel (read receipts).
     
@@ -801,7 +801,7 @@ async def acknowledge_messages(
 async def get_unread_count(
     channel_id: str,
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> Dict[str, Any]:
     """
     Get unread message count for a channel.
     """
@@ -828,7 +828,7 @@ async def get_unread_count(
 @router.get("/users/@me/unread")
 async def get_all_unread_counts(
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> Dict[str, Any]:
     """
     Get unread message counts for all conversations.
     """
@@ -849,7 +849,7 @@ async def get_all_unread_counts(
 async def trigger_typing(
     channel_id: str,
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> Dict[str, bool]:
     """
     Trigger typing indicator in a channel.
     

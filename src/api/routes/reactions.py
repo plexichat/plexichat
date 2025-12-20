@@ -2,7 +2,7 @@
 Reaction routes - Message reaction endpoints.
 """
 
-from typing import List, Optional
+from typing import List, Optional, Dict
 from fastapi import APIRouter, HTTPException, Depends, Query
 
 import src.api as api
@@ -95,7 +95,7 @@ async def add_reaction(
     message_id: str,
     emoji: str,
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> Dict[str, bool]:
     """
     Add a reaction to a message.
     
@@ -154,7 +154,7 @@ async def remove_reaction(
     message_id: str,
     emoji: str,
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> Dict[str, bool]:
     """
     Remove own reaction from a message.
     

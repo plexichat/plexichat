@@ -2,10 +2,8 @@
 Channel routes - Channel management endpoints.
 """
 
-import os
-import uuid
-from pathlib import Path
-from typing import Optional
+
+from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
 
 import src.api as api
@@ -14,6 +12,7 @@ from src.api.schemas.servers import ChannelResponse, ChannelUpdateRequest
 from src.api.schemas.common import SnowflakeID
 
 import utils.config as config
+import utils.logger as logger
 
 router = APIRouter()
 
@@ -104,7 +103,7 @@ async def update_channel(
 
 
 @router.delete("/{channel_id}")
-async def delete_channel(channel_id: str, current_user: TokenInfo = Depends(get_current_user)):
+async def delete_channel(channel_id: str, current_user: TokenInfo = Depends(get_current_user)) -> Dict[str, bool]:
     """
     Delete a channel.
     
@@ -132,7 +131,7 @@ async def delete_channel(channel_id: str, current_user: TokenInfo = Depends(get_
 
 
 @router.get("/{channel_id}/webhooks")
-async def get_channel_webhooks(channel_id: str, current_user: TokenInfo = Depends(get_current_user)):
+async def get_channel_webhooks(channel_id: str, current_user: TokenInfo = Depends(get_current_user)) -> list:
     """Get all webhooks for a channel. Requires manage webhooks permission."""
     webhooks_mod = api.get_webhooks()
     if not webhooks_mod:
@@ -171,7 +170,7 @@ async def create_channel_invite(
     channel_id: str,
     body: Optional[dict] = None,
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> Dict[str, Any]:
     """
     Create an invite for a channel.
     """
@@ -220,7 +219,7 @@ async def create_channel_invite(
 # ==================== Global Invite Routes ====================
 
 @router.get("/invites/{invite_code}")
-async def get_invite_info(invite_code: str, current_user: TokenInfo = Depends(get_current_user)):
+async def get_invite_info(invite_code: str, current_user: TokenInfo = Depends(get_current_user)) -> Dict[str, Any]:
     """
     Get invite information.
     
@@ -255,7 +254,7 @@ async def get_invite_info(invite_code: str, current_user: TokenInfo = Depends(ge
 
 
 @router.post("/invites/{invite_code}")
-async def join_server_via_invite(invite_code: str, current_user: TokenInfo = Depends(get_current_user)):
+async def join_server_via_invite(invite_code: str, current_user: TokenInfo = Depends(get_current_user)) -> Dict[str, Any]:
     """
     Join a server via invite code.
     """
@@ -281,7 +280,7 @@ async def join_server_via_invite(invite_code: str, current_user: TokenInfo = Dep
 
 
 @router.delete("/invites/{invite_code}")
-async def delete_invite(invite_code: str, current_user: TokenInfo = Depends(get_current_user)):
+async def delete_invite(invite_code: str, current_user: TokenInfo = Depends(get_current_user)) -> Dict[str, bool]:
     """
     Delete an invite.
     
@@ -336,7 +335,7 @@ async def upload_attachment(
     channel_id: str,
     file: UploadFile = File(...),
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> Dict[str, Any]:
     """
     Upload a file attachment to a channel.
     

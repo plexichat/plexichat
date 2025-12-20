@@ -2,6 +2,7 @@
 Relationship routes - Friend and block management endpoints.
 """
 
+from typing import Dict
 from fastapi import APIRouter, HTTPException, Depends
 
 import src.api as api
@@ -30,7 +31,7 @@ def _relationship_to_response(rel) -> RelationshipResponse:
 
 
 @router.get("/@me")
-async def get_relationships(current_user: TokenInfo = Depends(get_current_user)):
+async def get_relationships(current_user: TokenInfo = Depends(get_current_user)) -> list:
     """
     Get all relationships for current user.
     
@@ -233,7 +234,7 @@ async def create_relationship(
 
 
 @router.put("/{user_id}/accept")
-async def accept_friend_request(user_id: str, current_user: TokenInfo = Depends(get_current_user)):
+async def accept_friend_request(user_id: str, current_user: TokenInfo = Depends(get_current_user)) -> Dict[str, bool]:
     """
     Accept a friend request.
     
@@ -327,7 +328,7 @@ async def accept_friend_request(user_id: str, current_user: TokenInfo = Depends(
 
 
 @router.delete("/{user_id}")
-async def delete_relationship(user_id: str, current_user: TokenInfo = Depends(get_current_user)):
+async def delete_relationship(user_id: str, current_user: TokenInfo = Depends(get_current_user)) -> Dict[str, bool]:
     """
     Remove a relationship.
     

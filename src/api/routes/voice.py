@@ -13,7 +13,7 @@ router = APIRouter()
 @router.get("/voice/ice-servers")
 async def get_ice_servers(
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> Dict[str, Any]:
     """
     Get ICE server configuration for WebRTC.
     
@@ -52,7 +52,7 @@ async def get_ice_servers(
 async def get_voice_channel_info(
     channel_id: str,
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> Dict[str, Any]:
     """
     Get voice channel connection info including ICE servers.
     """

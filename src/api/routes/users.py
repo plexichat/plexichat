@@ -2,7 +2,7 @@
 User routes - User profile endpoints.
 """
 
-from typing import Optional
+from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends, File, UploadFile
 
 import src.api as api
@@ -79,7 +79,7 @@ _get_user_cached = cached(ttl=60, prefix="user")(_get_user_cached)
 
 
 @router.get("/@me", response_model=UserResponse)
-async def get_current_user_info(current_user: TokenInfo = Depends(get_current_user)):
+async def get_current_user_info(current_user: TokenInfo = Depends(get_current_user)) -> UserResponse:
     """
     Get current user information.
     
@@ -105,7 +105,7 @@ async def get_current_user_info(current_user: TokenInfo = Depends(get_current_us
 async def update_current_user(
     body: UserUpdateRequest,
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> UserResponse:
     """
     Update current user profile.
     
@@ -199,7 +199,7 @@ async def update_current_user(
 async def upload_avatar(
     file: UploadFile = File(...),
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> Dict[str, Any]:
     """
     Upload user avatar.
     
@@ -246,7 +246,7 @@ async def upload_avatar(
 
 
 @router.get("/@me/notes")
-async def get_notes_channel(current_user: TokenInfo = Depends(get_current_user)):
+async def get_notes_channel(current_user: TokenInfo = Depends(get_current_user)) -> Dict[str, Any]:
     """
     Get or create the personal notes channel for the current user.
     
@@ -279,7 +279,7 @@ async def get_notes_channel(current_user: TokenInfo = Depends(get_current_user))
 
 
 @router.get("/@me/channels")
-async def get_dm_channels(current_user: TokenInfo = Depends(get_current_user)):
+async def get_dm_channels(current_user: TokenInfo = Depends(get_current_user)) -> list:
     """
     Get all DM channels for the current user.
     """
@@ -329,7 +329,7 @@ async def get_dm_channels(current_user: TokenInfo = Depends(get_current_user)):
 
 
 @router.post("/@me/channels")
-async def create_dm_channel(body: dict, current_user: TokenInfo = Depends(get_current_user)):
+async def create_dm_channel(body: dict, current_user: TokenInfo = Depends(get_current_user)) -> Dict[str, Any]:
     """
     Create or get a DM channel with a user.
     """
@@ -390,7 +390,7 @@ async def create_dm_channel(body: dict, current_user: TokenInfo = Depends(get_cu
 async def search_user_by_username(
     username: Optional[str] = None,
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> UserPublicResponse:
     """
     Search for a user by username.
     
@@ -467,7 +467,7 @@ async def get_user(user_id: str, current_user: TokenInfo = Depends(get_current_u
 
 
 @router.get("/@me/messaging-settings", response_model=MessagingSettingsResponse)
-async def get_messaging_settings(current_user: TokenInfo = Depends(get_current_user)):
+async def get_messaging_settings(current_user: TokenInfo = Depends(get_current_user)) -> MessagingSettingsResponse:
     """Get current user's messaging settings."""
     messaging = api.get_messaging()
     if not messaging:
@@ -481,7 +481,7 @@ async def get_messaging_settings(current_user: TokenInfo = Depends(get_current_u
 async def update_messaging_settings(
     body: MessagingSettingsUpdateRequest,
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> MessagingSettingsResponse:
     """Update current user's messaging settings."""
     messaging = api.get_messaging()
     if not messaging:

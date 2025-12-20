@@ -2,10 +2,8 @@
 Server routes - Server/guild management endpoints.
 """
 
-import os
-import uuid
-from pathlib import Path
-from typing import List, Optional
+
+from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends, File, UploadFile
 
 import src.api as api
@@ -21,6 +19,7 @@ from src.core.servers.models import ChannelType
 from src.core.database import cached
 
 import utils.config as config
+import utils.logger as logger
 
 router = APIRouter()
 
@@ -243,7 +242,7 @@ async def update_server(
 
 
 @router.delete("/{server_id}")
-async def delete_server(server_id: str, current_user: TokenInfo = Depends(get_current_user)):
+async def delete_server(server_id: str, current_user: TokenInfo = Depends(get_current_user)) -> Dict[str, bool]:
     """
     Delete a server.
     
@@ -320,7 +319,7 @@ async def get_server_members(
     limit: int = 100,
     after: Optional[str] = None,
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> list:
     """Get server members."""
     servers_mod = api.get_servers()
     auth = api.get_auth()
@@ -391,7 +390,7 @@ async def kick_member(
     server_id: str,
     member_id: str,
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> Dict[str, bool]:
     """
     Kick a member from a server.
     
@@ -425,7 +424,7 @@ async def assign_role_to_member(
     member_id: str,
     role_id: str,
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> Dict[str, bool]:
     """
     Assign a role to a member.
     
@@ -462,7 +461,7 @@ async def remove_role_from_member(
     member_id: str,
     role_id: str,
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> Dict[str, bool]:
     """
     Remove a role from a member.
     
@@ -498,7 +497,7 @@ async def create_server_channel(
     server_id: str,
     body: dict,
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> ChannelResponse:
     """Create a channel in a server."""
     servers_mod = api.get_servers()
     if not servers_mod:
@@ -556,7 +555,7 @@ async def create_server_channel(
 
 
 @router.get("/{server_id}/invites")
-async def get_server_invites(server_id: str, current_user: TokenInfo = Depends(get_current_user)):
+async def get_server_invites(server_id: str, current_user: TokenInfo = Depends(get_current_user)) -> list:
     """Get all invites for a server."""
     servers_mod = api.get_servers()
     if not servers_mod:
@@ -596,7 +595,7 @@ async def get_server_invites(server_id: str, current_user: TokenInfo = Depends(g
 # ==================== Role Management ====================
 
 @router.get("/{server_id}/roles")
-async def get_server_roles(server_id: str, current_user: TokenInfo = Depends(get_current_user)):
+async def get_server_roles(server_id: str, current_user: TokenInfo = Depends(get_current_user)) -> list:
     """Get all roles in a server."""
     servers_mod = api.get_servers()
     if not servers_mod:
@@ -633,7 +632,7 @@ async def get_server_roles(server_id: str, current_user: TokenInfo = Depends(get
 
 
 @router.post("/{server_id}/roles")
-async def create_role(server_id: str, body: dict, current_user: TokenInfo = Depends(get_current_user)):
+async def create_role(server_id: str, body: dict, current_user: TokenInfo = Depends(get_current_user)) -> Dict[str, Any]:
     """Create a new role in a server."""
     servers_mod = api.get_servers()
     if not servers_mod:
@@ -680,7 +679,7 @@ async def create_role(server_id: str, body: dict, current_user: TokenInfo = Depe
 
 
 @router.patch("/{server_id}/roles/{role_id}")
-async def update_role(server_id: str, role_id: str, body: dict, current_user: TokenInfo = Depends(get_current_user)):
+async def update_role(server_id: str, role_id: str, body: dict, current_user: TokenInfo = Depends(get_current_user)) -> Dict[str, Any]:
     """Update a role in a server."""
     servers_mod = api.get_servers()
     if not servers_mod:
@@ -714,7 +713,7 @@ async def update_role(server_id: str, role_id: str, body: dict, current_user: To
 
 
 @router.delete("/{server_id}/roles/{role_id}")
-async def delete_role(server_id: str, role_id: str, current_user: TokenInfo = Depends(get_current_user)):
+async def delete_role(server_id: str, role_id: str, current_user: TokenInfo = Depends(get_current_user)) -> Dict[str, bool]:
     """Delete a role from a server."""
     servers_mod = api.get_servers()
     if not servers_mod:
@@ -741,7 +740,7 @@ async def delete_role(server_id: str, role_id: str, current_user: TokenInfo = De
 # ==================== Ban Management ====================
 
 @router.get("/{server_id}/bans")
-async def get_server_bans(server_id: str, current_user: TokenInfo = Depends(get_current_user)):
+async def get_server_bans(server_id: str, current_user: TokenInfo = Depends(get_current_user)) -> list:
     """Get all bans in a server."""
     servers_mod = api.get_servers()
     if not servers_mod:
@@ -773,7 +772,7 @@ async def get_server_bans(server_id: str, current_user: TokenInfo = Depends(get_
 
 
 @router.put("/{server_id}/bans/{user_id}")
-async def ban_member(server_id: str, user_id: str, body: Optional[dict] = None, current_user: TokenInfo = Depends(get_current_user)):
+async def ban_member(server_id: str, user_id: str, body: Optional[dict] = None, current_user: TokenInfo = Depends(get_current_user)) -> Dict[str, bool]:
     """Ban a user from a server."""
     servers_mod = api.get_servers()
     if not servers_mod:
@@ -802,7 +801,7 @@ async def ban_member(server_id: str, user_id: str, body: Optional[dict] = None, 
 
 
 @router.delete("/{server_id}/bans/{user_id}")
-async def unban_member(server_id: str, user_id: str, current_user: TokenInfo = Depends(get_current_user)):
+async def unban_member(server_id: str, user_id: str, current_user: TokenInfo = Depends(get_current_user)) -> Dict[str, bool]:
     """Unban a user from a server."""
     servers_mod = api.get_servers()
     if not servers_mod:
@@ -833,7 +832,7 @@ async def get_audit_log(
     server_id: str,
     limit: int = 50,
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> list:
     """Get audit log entries for a server. Requires view audit log permission."""
     servers_mod = api.get_servers()
     if not servers_mod:
@@ -872,7 +871,7 @@ async def get_audit_log(
 # ==================== Webhook Management ====================
 
 @router.get("/{server_id}/webhooks")
-async def get_server_webhooks(server_id: str, current_user: TokenInfo = Depends(get_current_user)):
+async def get_server_webhooks(server_id: str, current_user: TokenInfo = Depends(get_current_user)) -> list:
     """Get all webhooks in a server. Requires manage webhooks permission."""
     webhooks_mod = api.get_webhooks()
     if not webhooks_mod:
