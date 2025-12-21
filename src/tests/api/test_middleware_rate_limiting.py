@@ -310,7 +310,7 @@ class TestBypassFunctionality:
     """Tests for rate limit bypass."""
 
     @pytest.fixture
-    def bypass_app(self):
+    def bypass_app(self, modules):
         """Create app with bypass functionality."""
         from src.api.middleware.authentication import AuthenticationMiddleware
 
@@ -331,10 +331,13 @@ class TestBypassFunctionality:
             bypass_check=lambda uid, admin, internal: admin or internal,
         )
 
+        # Initialize API module to ensure auth module is available to middleware
+        modules.get_api()
+
         app = FastAPI()
-        app.add_middleware(AuthenticationMiddleware)
         RateLimitMiddleware = create_rate_limit_middleware()
         app.add_middleware(RateLimitMiddleware)
+        app.add_middleware(AuthenticationMiddleware)
 
         @app.get("/api/v1/test")
         async def test_endpoint():
@@ -537,9 +540,9 @@ class TestIntegrationWithAuthentication:
         )
 
         app = FastAPI()
-        app.add_middleware(AuthenticationMiddleware)
         RateLimitMiddleware = create_rate_limit_middleware()
         app.add_middleware(RateLimitMiddleware)
+        app.add_middleware(AuthenticationMiddleware)
 
         @app.get("/api/v1/user-data")
         async def user_data_endpoint():

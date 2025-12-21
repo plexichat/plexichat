@@ -13,6 +13,7 @@ PostgreSQL Support:
 import sqlite3
 import os
 import re
+import threading
 from typing import Any, List, Optional, Tuple, Union, Dict
 
 import utils.config as config
@@ -58,6 +59,7 @@ class Database:
         self._pool = None  # PostgreSQL connection pool
         self._cursor = None
         self._in_transaction = False
+        self._lock = threading.RLock()
         logger.info(f"Database initialized with type: {self.type}")
 
     def connect(self) -> Optional[DbConnection]:
@@ -72,18 +74,19 @@ class Database:
             sqlite3.Error: If SQLite connection fails.
             psycopg2.Error: If PostgreSQL connection fails.
         """
-        logger.info(f"Connecting to {self.type} database...")
+        with self._lock:
+            logger.info(f"Connecting to {self.type} database...")
 
-        if self.type == "sqlite":
-            self._connect_sqlite()
-        elif self.type == "postgres":
-            self._connect_postgres()
-        else:
-            error_msg = f"Unsupported database type: {self.type}"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
+            if self.type == "sqlite":
+                self._connect_sqlite()
+            elif self.type == "postgres":
+                self._connect_postgres()
+            else:
+                error_msg = f"Unsupported database type: {self.type}"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
 
-        return self.connection
+            return self.connection
 
     def _connect_sqlite(self) -> DbConnection:
         """Connect to SQLite database, creating directories if needed."""
@@ -250,27 +253,28 @@ class Database:
             ConnectionError: If not connected to database.
             sqlite3.Error/psycopg2.Error: If query execution fails.
         """
-        self._ensure_connected()
-        assert self.connection is not None  # Type narrowing for pyright
+        with self._lock:
+            self._ensure_connected()
+            assert self.connection is not None  # Type narrowing for pyright
 
-        # Convert ? to %s for PostgreSQL
-        converted_query = self._convert_placeholders(query)
+            # Convert ? to %s for PostgreSQL
+            converted_query = self._convert_placeholders(query)
 
-        cursor = self.connection.cursor()
-        try:
-            if params:
-                cursor.execute(converted_query, params)
-            else:
-                cursor.execute(converted_query)
-            if auto_commit and not self._in_transaction:
-                self.connection.commit()
-            logger.debug(f"Executed query: {query[:100]}...")
-            return cursor
-        except Exception as e:
-            logger.error(f"Query execution failed: {query[:100]}... - {e}")
-            self.connection.rollback()
-            cursor.close()
-            raise
+            cursor = self.connection.cursor()
+            try:
+                if params:
+                    cursor.execute(converted_query, params)
+                else:
+                    cursor.execute(converted_query)
+                if auto_commit and not self._in_transaction:
+                    self.connection.commit()
+                logger.debug(f"Executed query: {query[:100]}...")
+                return cursor
+            except Exception as e:
+                logger.error(f"Query execution failed: {query[:100]}... - {e}")
+                self.connection.rollback()
+                cursor.close()
+                raise
 
     def execute_many(self, query: str, params_list: List[Tuple]) -> DbCursor:
         """
@@ -283,25 +287,26 @@ class Database:
         Returns:
             Database cursor after execution.
         """
-        self._ensure_connected()
-        assert self.connection is not None  # Type narrowing for pyright
+        with self._lock:
+            self._ensure_connected()
+            assert self.connection is not None  # Type narrowing for pyright
 
-        # Convert ? to %s for PostgreSQL
-        converted_query = self._convert_placeholders(query)
+            # Convert ? to %s for PostgreSQL
+            converted_query = self._convert_placeholders(query)
 
-        cursor = self.connection.cursor()
-        try:
-            cursor.executemany(converted_query, params_list)
-            self.connection.commit()
-            logger.debug(
-                f"Executed batch query: {query[:100]}... ({len(params_list)} rows)"
-            )
-            return cursor
-        except Exception as e:
-            logger.error(f"Batch query execution failed: {query[:100]}... - {e}")
-            self.connection.rollback()
-            cursor.close()
-            raise
+            cursor = self.connection.cursor()
+            try:
+                cursor.executemany(converted_query, params_list)
+                self.connection.commit()
+                logger.debug(
+                    f"Executed batch query: {query[:100]}... ({len(params_list)} rows)"
+                )
+                return cursor
+            except Exception as e:
+                logger.error(f"Batch query execution failed: {query[:100]}... - {e}")
+                self.connection.rollback()
+                cursor.close()
+                raise
 
     def fetch_one(
         self, query: str, params: Optional[Tuple] = None
@@ -316,13 +321,14 @@ class Database:
         Returns:
             Single row result as dict or None if no results.
         """
-        cursor = self.execute(query, params)
-        result = cursor.fetchone()
-        cursor.close()
-        if result is None:
-            return None
-        # Convert sqlite3.Row or psycopg2 RealDictRow to dict
-        return dict(result)
+        with self._lock:
+            cursor = self.execute(query, params)
+            result = cursor.fetchone()
+            cursor.close()
+            if result is None:
+                return None
+            # Convert sqlite3.Row or psycopg2 RealDictRow to dict
+            return dict(result)
 
     def fetch_all(
         self, query: str, params: Optional[Tuple] = None
@@ -337,11 +343,12 @@ class Database:
         Returns:
             List of all row results as dicts.
         """
-        cursor = self.execute(query, params)
-        results = cursor.fetchall()
-        cursor.close()
-        # Convert sqlite3.Row or psycopg2 RealDictRow to dicts
-        return [dict(row) for row in results]
+        with self._lock:
+            cursor = self.execute(query, params)
+            results = cursor.fetchall()
+            cursor.close()
+            # Convert sqlite3.Row or psycopg2 RealDictRow to dicts
+            return [dict(row) for row in results]
 
     def table_exists(self, table_name: str) -> bool:
         """
@@ -353,47 +360,51 @@ class Database:
         Returns:
             True if table exists, False otherwise.
         """
-        self._ensure_connected()
+        with self._lock:
+            self._ensure_connected()
 
-        if self.type == "sqlite":
-            query = "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
-            result = self.fetch_one(query, (table_name,))
-        elif self.type == "postgres":
-            # Use ? placeholder - will be auto-converted to %s
-            query = """
-                SELECT table_name FROM information_schema.tables 
-                WHERE table_schema='public' AND table_name=?
-            """
-            result = self.fetch_one(query, (table_name,))
-        else:
-            return False
+            if self.type == "sqlite":
+                query = "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
+                result = self.fetch_one(query, (table_name,))
+            elif self.type == "postgres":
+                # Use ? placeholder - will be auto-converted to %s
+                query = """
+                    SELECT table_name FROM information_schema.tables 
+                    WHERE table_schema='public' AND table_name=?
+                """
+                result = self.fetch_one(query, (table_name,))
+            else:
+                return False
 
-        return result is not None
+            return result is not None
 
     def begin_transaction(self) -> None:
         """Begin a transaction (disables autocommit)."""
-        self._ensure_connected()
-        assert self.connection is not None  # Type narrowing for pyright
-        self._in_transaction = True
-        if self.type == "sqlite":
-            self.connection.execute("BEGIN")
-        logger.debug("Transaction started")
+        with self._lock:
+            self._ensure_connected()
+            assert self.connection is not None  # Type narrowing for pyright
+            self._in_transaction = True
+            if self.type == "sqlite":
+                self.connection.execute("BEGIN")
+            logger.debug("Transaction started")
 
     def commit(self) -> None:
         """Commit the current transaction."""
-        self._ensure_connected()
-        assert self.connection is not None  # Type narrowing for pyright
-        self.connection.commit()
-        self._in_transaction = False
-        logger.debug("Transaction committed")
+        with self._lock:
+            self._ensure_connected()
+            assert self.connection is not None  # Type narrowing for pyright
+            self.connection.commit()
+            self._in_transaction = False
+            logger.debug("Transaction committed")
 
     def rollback(self) -> None:
         """Rollback the current transaction."""
-        self._ensure_connected()
-        assert self.connection is not None  # Type narrowing for pyright
-        self.connection.rollback()
-        self._in_transaction = False
-        logger.debug("Transaction rolled back")
+        with self._lock:
+            self._ensure_connected()
+            assert self.connection is not None  # Type narrowing for pyright
+            self.connection.rollback()
+            self._in_transaction = False
+            logger.debug("Transaction rolled back")
 
     def insert_or_ignore(self, table: str, columns: List[str], values: Tuple) -> bool:
         """
@@ -409,22 +420,23 @@ class Database:
         Returns:
             True if row was inserted, False if ignored due to conflict.
         """
-        self._ensure_connected()
+        with self._lock:
+            self._ensure_connected()
 
-        placeholders = ", ".join(["?"] * len(columns))
-        cols = ", ".join(columns)
+            placeholders = ", ".join(["?"] * len(columns))
+            cols = ", ".join(columns)
 
-        if self.type == "sqlite":
-            query = f"INSERT OR IGNORE INTO {table} ({cols}) VALUES ({placeholders})"
-        elif self.type == "postgres":
-            query = f"INSERT INTO {table} ({cols}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
-        else:
-            raise ValueError(f"Unsupported database type: {self.type}")
+            if self.type == "sqlite":
+                query = f"INSERT OR IGNORE INTO {table} ({cols}) VALUES ({placeholders})"
+            elif self.type == "postgres":
+                query = f"INSERT INTO {table} ({cols}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
+            else:
+                raise ValueError(f"Unsupported database type: {self.type}")
 
-        cursor = self.execute(query, values)
-        inserted = cursor.rowcount > 0
-        cursor.close()
-        return inserted
+            cursor = self.execute(query, values)
+            inserted = cursor.rowcount > 0
+            cursor.close()
+            return inserted
 
     def upsert(
         self,
@@ -446,42 +458,44 @@ class Database:
             conflict_columns: Columns that define uniqueness (for ON CONFLICT).
             update_columns: Columns to update on conflict. If None, updates all non-conflict columns.
         """
-        self._ensure_connected()
+        with self._lock:
+            self._ensure_connected()
 
-        placeholders = ", ".join(["?"] * len(columns))
-        cols = ", ".join(columns)
+            placeholders = ", ".join(["?"] * len(columns))
+            cols = ", ".join(columns)
 
-        if update_columns is None:
-            update_columns = [c for c in columns if c not in conflict_columns]
+            if update_columns is None:
+                update_columns = [c for c in columns if c not in conflict_columns]
 
-        if self.type == "sqlite":
-            query = f"INSERT OR REPLACE INTO {table} ({cols}) VALUES ({placeholders})"
-        elif self.type == "postgres":
-            conflict_cols = ", ".join(conflict_columns)
-            if update_columns:
-                updates = ", ".join([f"{c} = EXCLUDED.{c}" for c in update_columns])
-                query = f"""INSERT INTO {table} ({cols}) VALUES ({placeholders})
-                           ON CONFLICT ({conflict_cols}) DO UPDATE SET {updates}"""
+            if self.type == "sqlite":
+                query = f"INSERT OR REPLACE INTO {table} ({cols}) VALUES ({placeholders})"
+            elif self.type == "postgres":
+                conflict_cols = ", ".join(conflict_columns)
+                if update_columns:
+                    updates = ", ".join([f"{c} = EXCLUDED.{c}" for c in update_columns])
+                    query = f"""INSERT INTO {table} ({cols}) VALUES ({placeholders})
+                               ON CONFLICT ({conflict_cols}) DO UPDATE SET {updates}"""
+                else:
+                    query = f"""INSERT INTO {table} ({cols}) VALUES ({placeholders})
+                               ON CONFLICT ({conflict_cols}) DO NOTHING"""
             else:
-                query = f"""INSERT INTO {table} ({cols}) VALUES ({placeholders})
-                           ON CONFLICT ({conflict_cols}) DO NOTHING"""
-        else:
-            raise ValueError(f"Unsupported database type: {self.type}")
+                raise ValueError(f"Unsupported database type: {self.type}")
 
-        self.execute(query, values)
+            self.execute(query, values)
 
     def close(self) -> None:
         """Close the database connection and pool."""
-        if self.connection:
-            if self._pool:
-                # Return connection to pool and close pool
-                self._pool.putconn(self.connection)
-                self._pool.closeall()
-                self._pool = None
-            else:
-                self.connection.close()
-            self.connection = None
-            logger.info("Database connection closed.")
+        with self._lock:
+            if self.connection:
+                if self._pool:
+                    # Return connection to pool and close pool
+                    self._pool.putconn(self.connection)
+                    self._pool.closeall()
+                    self._pool = None
+                else:
+                    self.connection.close()
+                self.connection = None
+                logger.info("Database connection closed.")
 
     def __enter__(self) -> "Database":
         """Context manager entry - connects to database."""

@@ -251,7 +251,7 @@ class TestExceptionHandlers:
 
     def test_http_exception_handler(self, app_with_handlers):
         """Test HTTP exception handler."""
-        client = TestClient(app_with_handlers)
+        client = TestClient(app_with_handlers, raise_server_exceptions=False)
         response = client.get("/http-exception")
         assert response.status_code == 404
         data = response.json()
@@ -260,7 +260,7 @@ class TestExceptionHandlers:
 
     def test_http_exception_with_dict_detail(self, app_with_handlers):
         """Test HTTP exception with dict detail is preserved."""
-        client = TestClient(app_with_handlers)
+        client = TestClient(app_with_handlers, raise_server_exceptions=False)
         response = client.get("/http-exception-dict")
         assert response.status_code == 400
         data = response.json()
@@ -270,7 +270,7 @@ class TestExceptionHandlers:
 
     def test_general_exception_handler(self, app_with_handlers):
         """Test general exception handler."""
-        client = TestClient(app_with_handlers)
+        client = TestClient(app_with_handlers, raise_server_exceptions=False)
         response = client.get("/general-exception")
         assert response.status_code == 500
         data = response.json()
@@ -280,7 +280,7 @@ class TestExceptionHandlers:
 
     def test_custom_not_found_exception(self, app_with_handlers):
         """Test custom NotFound exception is mapped correctly."""
-        client = TestClient(app_with_handlers)
+        client = TestClient(app_with_handlers, raise_server_exceptions=False)
         response = client.get("/custom-not-found")
         assert response.status_code == 404
         data = response.json()
@@ -289,7 +289,7 @@ class TestExceptionHandlers:
 
     def test_custom_invalid_exception(self, app_with_handlers):
         """Test custom Invalid exception is mapped correctly."""
-        client = TestClient(app_with_handlers)
+        client = TestClient(app_with_handlers, raise_server_exceptions=False)
         response = client.get("/custom-invalid")
         assert response.status_code == 400
         data = response.json()
@@ -298,7 +298,7 @@ class TestExceptionHandlers:
 
     def test_validation_exception_handler(self, app_with_handlers):
         """Test validation exception handler."""
-        client = TestClient(app_with_handlers)
+        client = TestClient(app_with_handlers, raise_server_exceptions=False)
         response = client.post("/validation-error", json={})
         assert response.status_code == 400 or response.status_code == 422
         data = response.json()
@@ -322,20 +322,20 @@ class TestCORSHeaders:
 
     def test_cors_headers_on_error_with_origin(self, app_with_cors):
         """Test CORS headers are included on error responses."""
-        client = TestClient(app_with_cors)
+        client = TestClient(app_with_cors, raise_server_exceptions=False)
         response = client.get("/error", headers={"Origin": "http://localhost:3000"})
         assert response.status_code == 404
         assert "Access-Control-Allow-Origin" in response.headers
 
     def test_cors_headers_on_error_without_origin(self, app_with_cors):
         """Test CORS headers when no origin is provided."""
-        client = TestClient(app_with_cors)
+        client = TestClient(app_with_cors, raise_server_exceptions=False)
         response = client.get("/error")
         assert response.status_code == 404
 
     def test_cors_allows_credentials(self, app_with_cors):
         """Test CORS allows credentials."""
-        client = TestClient(app_with_cors)
+        client = TestClient(app_with_cors, raise_server_exceptions=False)
         response = client.get("/error", headers={"Origin": "http://localhost:3000"})
         assert response.status_code == 404
         if "Access-Control-Allow-Origin" in response.headers:
@@ -371,7 +371,7 @@ class TestSecurityAndInformationLeakage:
 
     def test_internal_error_hides_details(self, security_app):
         """Test internal errors don't leak sensitive details."""
-        client = TestClient(security_app)
+        client = TestClient(security_app, raise_server_exceptions=False)
         response = client.get("/internal-error")
         assert response.status_code == 500
         data = response.json()
@@ -383,7 +383,7 @@ class TestSecurityAndInformationLeakage:
 
     def test_file_path_not_leaked(self, security_app):
         """Test file paths are not leaked in error responses."""
-        client = TestClient(security_app)
+        client = TestClient(security_app, raise_server_exceptions=False)
         response = client.get("/file-path-error")
         assert response.status_code == 500
         data = response.json()
@@ -394,7 +394,7 @@ class TestSecurityAndInformationLeakage:
 
     def test_stack_trace_not_included(self, security_app):
         """Test stack traces are not included in error responses."""
-        client = TestClient(security_app)
+        client = TestClient(security_app, raise_server_exceptions=False)
         response = client.get("/stack-trace-error")
         assert response.status_code == 500
         data = response.json()
@@ -434,7 +434,7 @@ class TestErrorMappingCompleteness:
 
     def test_error_mappings_have_valid_codes(self):
         """Test all error mappings have valid HTTP status codes."""
-        valid_codes = {400, 401, 403, 404, 409, 410, 423, 500}
+        valid_codes = {400, 401, 403, 404, 409, 410, 423, 429, 500}
         
         for pattern, code in ERROR_MAPPINGS.items():
             assert isinstance(code, int)
@@ -463,13 +463,13 @@ class TestValidationErrors:
 
     def test_missing_required_field(self, validation_app):
         """Test validation error for missing required field."""
-        client = TestClient(validation_app)
+        client = TestClient(validation_app, raise_server_exceptions=False)
         response = client.post("/users", json={"username": "test"})
         assert response.status_code in [400, 422]
 
     def test_invalid_field_value(self, validation_app):
         """Test validation error for invalid field value."""
-        client = TestClient(validation_app)
+        client = TestClient(validation_app, raise_server_exceptions=False)
         response = client.post("/users", json={
             "username": "ab",
             "email": "test@example.com",
@@ -479,7 +479,7 @@ class TestValidationErrors:
 
     def test_multiple_validation_errors(self, validation_app):
         """Test multiple validation errors."""
-        client = TestClient(validation_app)
+        client = TestClient(validation_app, raise_server_exceptions=False)
         response = client.post("/users", json={
             "username": "ab",
             "age": -5
@@ -516,19 +516,19 @@ class TestEdgeCases:
 
     def test_none_exception_message(self, edge_case_app):
         """Test exception with None message."""
-        client = TestClient(edge_case_app)
+        client = TestClient(edge_case_app, raise_server_exceptions=False)
         response = client.get("/none-exception")
         assert response.status_code == 500
 
     def test_empty_exception_message(self, edge_case_app):
         """Test exception with empty message."""
-        client = TestClient(edge_case_app)
+        client = TestClient(edge_case_app, raise_server_exceptions=False)
         response = client.get("/empty-exception")
         assert response.status_code == 500
 
     def test_unicode_exception_message(self, edge_case_app):
         """Test exception with unicode characters."""
-        client = TestClient(edge_case_app)
+        client = TestClient(edge_case_app, raise_server_exceptions=False)
         response = client.get("/unicode-exception")
         assert response.status_code == 500
         data = response.json()
@@ -536,7 +536,7 @@ class TestEdgeCases:
 
     def test_very_long_exception_message(self, edge_case_app):
         """Test exception with very long message."""
-        client = TestClient(edge_case_app)
+        client = TestClient(edge_case_app, raise_server_exceptions=False)
         response = client.get("/very-long-exception")
         assert response.status_code == 500
         data = response.json()

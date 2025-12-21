@@ -7,7 +7,10 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from starlette.types import ASGIApp, Receive, Send, Scope
+
 import utils.config as config
+import utils.logger as logger
 
 
 ERROR_MAPPINGS = {
@@ -24,6 +27,8 @@ ERROR_MAPPINGS = {
     "ValidationError": 400,
     "InvalidError": 400,
     "LimitError": 400,
+    "AttachmentLimitError": 400,
+    "RateLimitError": 429,
     "BlockedError": 403,
     "LockedError": 423,
     "ArchivedError": 410,
@@ -51,20 +56,73 @@ def _get_cors_headers(request: Request) -> dict:
     try:
         api_conf = config.get("api", {})
         cors_origins = api_conf.get("cors_origins", ["*"])
+        allow_wildcard = api_conf.get("allow_wildcard_cors", False)
     except Exception:
         cors_origins = ["*"]
+        allow_wildcard = False
 
     origin = request.headers.get("origin", "")
 
     # Check if origin is allowed
-    if "*" in cors_origins or origin in cors_origins:
+    is_allowed = False
+    if "*" in cors_origins:
+        if allow_wildcard or not origin:
+            is_allowed = True
+        else:
+            # If wildcard is not allowed for this origin, check if origin is explicitly allowed
+            is_allowed = origin in cors_origins
+    elif origin in cors_origins:
+        is_allowed = True
+
+    if is_allowed:
         return {
             "Access-Control-Allow-Origin": origin if origin else "*",
             "Access-Control-Allow-Credentials": "true",
             "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-            "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept",
+            "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept, X-Custom-Header",
         }
     return {}
+
+
+class ErrorHandlingMiddleware:
+    """Middleware to catch all exceptions and return JSON responses."""
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        try:
+            await self.app(scope, receive, send)
+        except Exception as exc:
+            # Determine status code and message
+            status_code = get_status_code_for_exception(exc)
+            
+            # Don't leak details for 500 errors in production
+            debug = False
+            try:
+                debug = config.get("api", {}).get("debug", False)
+            except Exception:
+                pass
+                
+            message = str(exc)
+            if status_code == 500 and not debug:
+                message = "Internal server error"
+            
+            # Get CORS headers
+            request = Request(scope, receive)
+            headers = _get_cors_headers(request)
+            
+            # Create response
+            response = JSONResponse(
+                status_code=status_code,
+                content=format_error_response(status_code, message),
+                headers=headers
+            )
+            
+            await response(scope, receive, send)
 
 
 def setup_exception_handlers(app: FastAPI):

@@ -10,7 +10,7 @@ from .common import SnowflakeID
 
 class FriendRequestCreate(BaseModel):
     """Friend request creation model."""
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
 
     user_id: SnowflakeID = Field(..., description="Target user ID")
     message: Optional[str] = Field(None, max_length=256, description="Optional message")
@@ -18,7 +18,7 @@ class FriendRequestCreate(BaseModel):
 
 class BlockCreate(BaseModel):
     """Block creation model."""
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
 
     user_id: SnowflakeID = Field(..., description="User ID to block")
 

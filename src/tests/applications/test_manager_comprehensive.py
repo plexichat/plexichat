@@ -168,6 +168,7 @@ class TestApplicationCommands:
     
     def test_register_command_with_options(self, app_manager):
         """Register command with options."""
+        from dataclasses import asdict
         app = app_manager.create_application(1, "Test App")
         
         options = [
@@ -179,9 +180,16 @@ class TestApplicationCommands:
             app.id, "ban", "Ban a user",
             options=options
         )
-        assert cmd.options == options
+        # Compare name and type of options
+        assert len(cmd.options) == 2
+        assert cmd.options[0].name == "user"
+        assert int(cmd.options[0].option_type) == 6
+        assert cmd.options[1].name == "reason"
+        assert int(cmd.options[1].option_type) == 3
     
     def test_register_guild_command(self, app_manager):
+        # ... (rest of function)
+
         """Register server-specific command."""
         app = app_manager.create_application(1, "Test App")
         
@@ -220,11 +228,15 @@ class TestApplicationCommands:
         
         new_options = [{"name": "opt1", "description": "Option 1", "type": 3}]
         updated = app_manager.update_command(cmd.id, options=new_options)
-        assert updated.options == new_options
+        assert len(updated.options) == 1
+        assert updated.options[0].name == "opt1"
+        assert int(updated.options[0].option_type) == 3
     
     def test_delete_command_not_found(self, app_manager):
         """Delete nonexistent command."""
-        assert not app_manager.delete_command(99999)
+        from src.core.applications.exceptions import CommandNotFoundError
+        with pytest.raises(CommandNotFoundError):
+            app_manager.delete_command(99999)
 
 
 class TestApplicationOAuth:

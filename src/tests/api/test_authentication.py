@@ -15,14 +15,14 @@ from src.api.app import create_app
 class TestAuthenticationAsync:
     """Enhanced asynchronous authentication tests."""
 
-    async def test_valid_bearer_token(self, auth_headers):
+    async def test_valid_bearer_token(self, auth_headers, api_module):
         """Test request with valid Bearer token."""
         app = create_app()
         async with AsyncClient(app=app, base_url="http://test") as ac:
             response = await ac.get("/api/v1/users/@me", headers=auth_headers)
             assert response.status_code == 200
 
-    async def test_invalid_bearer_token(self):
+    async def test_invalid_bearer_token(self, api_module):
         """Test request with invalid Bearer token."""
         app = create_app()
         async with AsyncClient(app=app, base_url="http://test") as ac:
@@ -33,7 +33,7 @@ class TestAuthenticationAsync:
             assert response.status_code == 401
             assert "error" in response.json()
 
-    async def test_concurrent_authenticated_requests(self, auth_headers):
+    async def test_concurrent_authenticated_requests(self, auth_headers, api_module):
         """Test multiple concurrent authenticated requests to verify thread safety and performance."""
         app = create_app()
         async with AsyncClient(app=app, base_url="http://test") as ac:
@@ -43,9 +43,14 @@ class TestAuthenticationAsync:
             for resp in responses:
                 assert resp.status_code == 200
 
-    async def test_bot_token_integration(self, db_and_modules):
+    async def test_bot_token_integration(self, db_and_modules, api_module):
         """Test request with Bot token scheme and verify permissions."""
-        db, auth, messaging, servers, rel, pres = db_and_modules
+        if isinstance(db_and_modules, dict):
+            db = db_and_modules["db"]
+            auth = db_and_modules["auth"]
+        else:
+            db, auth, messaging, servers, rel, pres = db_and_modules
+            
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
@@ -70,9 +75,10 @@ class TestAuthenticationAsync:
             data = response.json()
             assert data["username"] == f"testbot_{unique_id}"
 
-    async def test_token_revocation_propagation(self, db_and_auth):
-        """Test that token revocation is immediate across API requests."""
-        db, auth = db_and_auth
+    async def test_token_revocation_propagation(self, db_and_modules, api_module):
+        """Test that token revocation propagates across middleware."""
+        if isinstance(db_and_modules, dict):
+            auth = db_and_modules["auth"]
         user = auth.register("revoketest", "revoketest@example.com", "TestPass123!")
         login_result = auth.login("revoketest", "TestPass123!")
         token = login_result.token

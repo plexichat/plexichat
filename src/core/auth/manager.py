@@ -485,6 +485,7 @@ class AuthManager:
                updated_at = ? WHERE id = ?""",
             (self._current_time(), self._current_time(), user_id),
         )
+        self._cache_invalidate_user(user_id)
 
         logger.info(f"Login successful: {username}")
         self._log_audit(
@@ -507,6 +508,7 @@ class AuthManager:
             "UPDATE auth_users SET failed_login_attempts = failed_login_attempts + 1 WHERE id = ?",
             (user_id,),
         )
+        self._cache_invalidate_user(user_id)
 
         # Check if should lock
         user = self.db.fetch_one(
@@ -1931,6 +1933,16 @@ class AuthManager:
         )
 
         if not row:
+            # Check bots
+            row = self.db.fetch_one(
+                """SELECT id, ? as account_type, username, NULL as email, permissions, created_at,
+                          created_at as updated_at, 1 as email_verified, 0 as account_locked, NULL as locked_until,
+                          0 as failed_login_attempts, NULL as last_login_at, 0 as totp_enabled
+                   FROM auth_bots WHERE id = ?""",
+                (AccountType.BOT.value, user_id),
+            )
+
+        if not row:
             return None
 
         user = self._row_to_user(row)
@@ -1968,17 +1980,15 @@ class AuthManager:
         result = {}
         uncached_ids = []
 
-        # Check cache first
         for uid in user_ids:
             cached = self._cache_get_user(uid)
-            if cached is not None:
+            if cached:
                 result[uid] = cached
             else:
                 uncached_ids.append(uid)
 
-        # Fetch uncached users in single query
         if uncached_ids:
-            placeholders = ",".join("?" * len(uncached_ids))
+            placeholders = ", ".join(["?"] * len(uncached_ids))
             rows = self.db.fetch_all(
                 f"""SELECT id, account_type, username, email, permissions, created_at,
                           updated_at, email_verified, account_locked, locked_until,
@@ -1993,6 +2003,22 @@ class AuthManager:
                 self._cache_set_user(user.id, user)
 
         return result
+
+    def grant_permission(self, user_id: int, permission: str) -> bool:
+        """Grant a specific permission to a user."""
+        user = self.get_user(user_id)
+        if not user:
+            return False
+
+        perms = user.permissions.copy()
+        perms[permission] = True
+
+        self.db.execute(
+            "UPDATE auth_users SET permissions = ?, updated_at = ? WHERE id = ?",
+            (permissions_to_json(perms), self._current_time(), user_id),
+        )
+        self._cache_invalidate_user(user_id)
+        return True
 
     def _row_to_user(self, row: Union[Any, Dict[str, Any]]) -> User:
         """Convert database row to User model."""

@@ -671,6 +671,10 @@ class ServerManager:
         channel_type: Optional[ChannelType] = None,
     ) -> List[Channel]:
         """Get all channels in a server."""
+        if not self._server_exists(server_id):
+            from .exceptions import ServerNotFoundError
+            raise ServerNotFoundError(f"Server {server_id} not found")
+
         if not self._is_member(server_id, user_id):
             raise ServerAccessDeniedError("Not a member of this server")
 
@@ -758,6 +762,9 @@ class ServerManager:
                 f"UPDATE srv_channels SET {', '.join(updates)} WHERE id = ?",
                 tuple(params),
             )
+
+            # Invalidate cache
+            self._cache_invalidate(self._channel_cache, channel_id)
 
             self._log_audit(
                 channel.server_id,
@@ -2044,19 +2051,20 @@ class ServerManager:
     # === Helper Methods ===
 
     def _is_member(self, server_id: int, user_id: int) -> bool:
-        """Check if user is a member of a server (cached)."""
-        cache_key = (server_id, user_id)
-        cached = self._cache_get(self._member_cache, cache_key)
-        if cached is not None:
-            return cached is not False  # False means not a member
-
+        """Check if a user is a member of a server."""
         row = self._db.fetch_one(
             "SELECT 1 FROM srv_members WHERE server_id = ? AND user_id = ?",
             (server_id, user_id),
         )
-        result = row is not None
-        self._cache_set(self._member_cache, cache_key, result if result else False)
-        return result
+        return row is not None
+
+    def _server_exists(self, server_id: int) -> bool:
+        """Check if a server exists."""
+        row = self._db.fetch_one(
+            "SELECT 1 FROM srv_servers WHERE id = ? AND deleted = 0",
+            (server_id,),
+        )
+        return row is not None
 
     def _get_member_role_rows(self, server_id: int, user_id: int) -> List[Dict[str, Any]]:
         """Get raw role rows for a member."""

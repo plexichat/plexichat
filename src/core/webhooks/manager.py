@@ -684,6 +684,15 @@ class WebhookManager:
         if thread_id:
             channel_id = thread_id
 
+        # Webhook execution must use the actual conversation_id associated with the channel
+        conversation_id = channel_id
+        channel_row = self._db.fetch_one(
+            "SELECT conversation_id FROM srv_channels WHERE id = ?",
+            (channel_id,)
+        )
+        if channel_row and channel_row["conversation_id"]:
+            conversation_id = channel_row["conversation_id"]
+
         now = self._get_timestamp()
         message_id = self._generate_id()
 
@@ -697,7 +706,7 @@ class WebhookManager:
                        (id, conversation_id, author_id, content, created_at, updated_at, 
                         deleted, edited, webhook_id)
                        VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?)""",
-                    (message_id, channel_id, row["creator_id"], content or "",
+                    (message_id, conversation_id, row["creator_id"], content or "",
                      now, now, webhook_id)
                 )
             except Exception:
@@ -706,7 +715,7 @@ class WebhookManager:
                        (id, conversation_id, author_id, content, created_at, updated_at, 
                         deleted, edited)
                        VALUES (?, ?, ?, ?, ?, ?, 0, 0)""",
-                    (message_id, channel_id, row["creator_id"], content or "", now, now)
+                    (message_id, conversation_id, row["creator_id"], content or "", now, now)
                 )
 
         self._db.execute(

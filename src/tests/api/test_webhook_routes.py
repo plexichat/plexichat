@@ -80,14 +80,14 @@ class TestCreateWebhook:
 class TestGetWebhook:
     """Tests for GET /webhooks/{webhook_id} endpoint."""
 
-    def test_get_webhook_success(self, test_client, auth_headers, test_server, db_and_modules):
+    def test_get_webhook_success(self, test_client, auth_headers, test_server, db_and_modules, test_user):
         """Test getting a webhook."""
         webhooks = db_and_modules["webhooks"]
         channel_id = test_server["channel"].id
         unique_id = uuid.uuid4().hex[:8]
 
         webhook = webhooks.create_webhook(
-            user_id=db_and_modules["auth"].get_user_by_username(auth_headers["Authorization"].split()[1].split(".")[0]).id if False else 1,
+            user_id=test_user["user"].id,
             channel_id=channel_id,
             name=f"Get Test {unique_id}"
         )

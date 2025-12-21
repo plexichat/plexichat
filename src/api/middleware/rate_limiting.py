@@ -3,10 +3,11 @@ Rate limiting middleware integration for the API.
 """
 
 from typing import Optional, Dict, Any, Callable, Type
+import sys
 
 from fastapi import Request
 
-from src.core.ratelimit import RateLimitMiddleware
+from src.core.ratelimit import RateLimitMiddlewareASGI as RateLimitMiddleware
 from src.core.ratelimit.middleware import extract_route_info
 
 
@@ -39,7 +40,11 @@ def get_user_info_from_request(request: Request) -> Dict[str, Any]:
 
     if hasattr(request.state, "user") and request.state.user:
         user = request.state.user
-        user_info["user_id"] = getattr(user, "user_id", None)
+        if "pytest" in sys.modules:
+            uid = getattr(user, "user_id", None) or getattr(user, "id", None)
+            perms = getattr(user, "permissions", {})
+            print(f"[DEBUG] RateLimit User found in state: {uid}, perms: {perms}")
+        user_info["user_id"] = getattr(user, "user_id", None) or getattr(user, "id", None)
         token_type = getattr(user, "token_type", "")
         user_info["is_bot"] = token_type == "bot"
         permissions = getattr(user, "permissions", {})
@@ -49,6 +54,8 @@ def get_user_info_from_request(request: Request) -> Dict[str, Any]:
                 permissions.get("*", False) or
                 permissions.get("admin", False)
             )
+    elif "pytest" in sys.modules:
+        print("[DEBUG] RateLimit: No user found in request state")
     internal_header = request.headers.get("X-Internal-Request")
     if internal_header and internal_header.lower() == "true":
         user_info["is_internal"] = True

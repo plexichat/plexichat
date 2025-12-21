@@ -23,6 +23,7 @@ from .exceptions import (
     ApplicationNotFoundError,
     ApplicationAccessDeniedError,
     ApplicationLimitError,
+    InvalidApplicationNameError,
     InstallationNotFoundError,
     InstallationExistsError,
     WebhookSignatureError,
@@ -128,23 +129,21 @@ class ApplicationManager:
         Create a new application.
 
         Args:
-            owner_id: ID of the user creating the application
+            owner_id: User ID of the owner
             name: Application name
-            description: Application description
-            redirect_uris: List of allowed redirect URIs for OAuth2
+            description: Optional description
             bot_public: Whether the bot can be added by anyone
-            bot_require_code_grant: Whether bot requires OAuth2 code grant
-            terms_of_service_url: URL to terms of service
-            privacy_policy_url: URL to privacy policy
-            interactions_endpoint_url: URL for webhook-based interactions
+            bot_require_code_grant: Whether the bot requires OAuth2 code grant
+            terms_of_service_url: Optional TOS URL
+            privacy_policy_url: Optional privacy policy URL
+            redirect_uris: Optional list of redirect URIs
+            interactions_endpoint_url: Optional URL for interactions
 
         Returns:
-            Created Application with client_secret
-
-        Raises:
-            ApplicationLimitError: Maximum applications reached
-            PermissionDeniedError: User cannot create applications
+            Created Application object
         """
+        name = self._validate_app_name(name)
+        
         max_apps = self._config.get("max_applications_per_user", 25)
         count = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM app_applications WHERE owner_id = ?",
@@ -284,6 +283,7 @@ class ApplicationManager:
         params = []
 
         if name is not None:
+            name = self._validate_app_name(name)
             updates.append("name = ?")
             params.append(name)
 
@@ -338,35 +338,30 @@ class ApplicationManager:
     def delete_application(self, user_id: int, application_id: int) -> bool:
         """
         Delete an application.
-
-        Args:
-            user_id: ID of user deleting
-            application_id: Application ID
-
-        Returns:
-            True if deleted
-
-        Raises:
-            ApplicationNotFoundError: Application not found
-            ApplicationAccessDeniedError: User does not own application
         """
-        app = self.get_application(application_id)
+        app = self.get_application(application_id, user_id)
         if not app:
             raise ApplicationNotFoundError("Application not found")
 
         if app.owner_id != user_id:
-            raise ApplicationAccessDeniedError("You do not own this application")
-
-        if app.bot_id and self._auth:
-            try:
-                self._auth.delete_bot(user_id, app.bot_id)
-            except Exception as e:
-                logger.warning(f"Failed to delete bot for app {application_id}: {e}")
+            raise ApplicationAccessDeniedError("Only the owner can delete the application")
 
         self._db.execute("DELETE FROM app_applications WHERE id = ?", (application_id,))
-
         logger.info(f"Application deleted: {application_id}")
         return True
+
+    def _validate_app_name(self, name: str) -> str:
+        """Validate and normalize application name."""
+        if not name or not name.strip():
+            raise InvalidApplicationNameError("Application name cannot be empty")
+        
+        name = name.strip()
+        if len(name) < 2:
+            raise InvalidApplicationNameError("Application name too short (min 2 characters)")
+        if len(name) > 100:
+            raise InvalidApplicationNameError("Application name too long (max 100 characters)")
+        
+        return name
 
     def regenerate_client_secret(self, user_id: int, application_id: int) -> str:
         """

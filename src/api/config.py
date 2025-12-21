@@ -53,10 +53,17 @@ def get_api_config() -> APIConfig:
         # Fallback if version not setup (e.g. tests)
         current_ver = "0.0.0"
 
-    # SECURITY: Validate CORS origins - reject wildcards, require explicit configuration
+    # SECURITY: Validate CORS origins - reject wildcards unless explicitly allowed
     cors_origins = api_conf.get("cors_origins", [])
-    if cors_origins == ["*"] or "*" in cors_origins:
-        import utils.logger as logger
+    allow_wildcard = api_conf.get("allow_wildcard_cors", False)
+    
+    import utils.logger as logger
+    if "pytest" in sys.modules:
+        print(f"[DEBUG] Raw api_conf: {api_conf}")
+        print(f"[DEBUG] cors_origins from conf: {cors_origins}")
+        print(f"[DEBUG] allow_wildcard from conf: {allow_wildcard}")
+
+    if (cors_origins == ["*"] or "*" in cors_origins) and not allow_wildcard:
         logger.error("SECURITY ERROR: CORS wildcard '*' is not allowed. Configure explicit origins.")
         cors_origins = []  # Fail closed - no CORS allowed
     

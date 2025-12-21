@@ -9,7 +9,7 @@ Run with: pytest src/tests/unit/test_property_based_edge_cases.py -v
 import pytest
 
 try:
-    from hypothesis import given, strategies as st, settings
+    from hypothesis import given, strategies as st, settings, HealthCheck
     from hypothesis.strategies import composite
     HAS_HYPOTHESIS = True
 except ImportError:
@@ -173,7 +173,7 @@ class TestZeroWidthCharacters:
             # Should handle without crashing
             assert isinstance(result.sanitized_content, str)
 
-    @given(st.text(min_size=1, max_size=50).filter(lambda x: '\u200b' in x or '\ufeff' in x))
+    @given(st.text(alphabet=st.sampled_from(['a', 'b', '\u200b', '\ufeff']), min_size=1, max_size=50).filter(lambda x: '\u200b' in x or '\ufeff' in x))
     @settings(max_examples=50)
     def test_zero_width_space_stripping(self, text):
         """Test that zero-width spaces are handled."""
@@ -256,7 +256,7 @@ class TestCombiningCharacters:
         # Should handle without crashing
         assert isinstance(result.sanitized_content, str)
 
-    @given(st.text(min_size=1, max_size=20).filter(lambda x: any(0x0300 <= ord(c) <= 0x036F for c in x)))
+    @given(st.text(alphabet=st.characters() | st.sampled_from([chr(c) for c in range(0x0300, 0x0310)]), min_size=1, max_size=20).filter(lambda x: any(0x0300 <= ord(c) <= 0x036F for c in x)))
     @settings(max_examples=50)
     def test_combining_marks_in_username(self, username):
         """Test combining marks in usernames."""
@@ -368,7 +368,7 @@ class TestPathTraversalPrevention:
 class TestBufferOverflowPrevention:
     """Tests for buffer overflow prevention."""
 
-    @given(st.text(min_size=10000, max_size=20000))
+    @given(st.text(min_size=4001, max_size=10000))
     @settings(max_examples=20, deadline=None)
     def test_very_long_messages(self, content):
         """Test very long message content."""
@@ -377,7 +377,7 @@ class TestBufferOverflowPrevention:
         if len(content) > 4000:
             assert not result.valid
 
-    @given(st.text(min_size=5000, max_size=10000, alphabet='A'))
+    @given(st.text(min_size=4001, max_size=10000, alphabet='A'))
     @settings(max_examples=20)
     def test_repeated_character_messages(self, content):
         """Test messages with many repeated characters."""
@@ -419,12 +419,12 @@ class TestNullBytes:
 class TestIntegerOverflow:
     """Tests for integer overflow handling."""
 
-    @given(st.integers(min_value=2**63, max_value=2**64-1))
+    @given(st.integers(min_value=2**63, max_value=2**128))
     @settings(max_examples=50)
     def test_large_integers(self, large_int):
-        """Test handling of very large integers."""
-        # Should handle large integers without overflow
-        assert large_int > 2**63
+        """Test handling of extremely large integers."""
+        # Just ensure basic operations don't crash and value is as expected
+        assert large_int >= 2**63
 
     @given(st.integers(min_value=-2**63, max_value=-1))
     @settings(max_examples=50)

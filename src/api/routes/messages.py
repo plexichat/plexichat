@@ -368,7 +368,6 @@ async def send_channel_message(
         from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
         from src.core.events.models import Event
         from src.core.events.types import EventType
-        import utils.logger as logger
         import asyncio
 
         if ws_is_setup():
@@ -415,7 +414,6 @@ async def send_channel_message(
             asyncio.create_task(broadcast_message())
             logger.info(f"Created broadcast task for message in channel {cid}")
     except Exception as e:
-        import utils.logger as logger
         logger.warning(f"Failed to setup MESSAGE_CREATE broadcast: {e}", exc_info=True)
 
     return response
@@ -550,7 +548,6 @@ async def edit_message(
                         )
                         await dispatcher.dispatch_event(event, user_ids)
             except Exception as e:
-                import utils.logger as logger
                 logger.debug(f"Failed to broadcast MESSAGE_UPDATE: {e}")
 
         asyncio.create_task(dispatch_message_update())
@@ -725,7 +722,7 @@ async def acknowledge_messages(
     If message_id is provided, marks all messages up to and including that message as read.
     If not provided, marks all messages in the channel as read.
     """
-    import utils.logger as logger
+    import asyncio
 
     messaging = api.get_messaging()
     if not messaging:
@@ -929,7 +926,6 @@ async def trigger_typing(
                     )
                     await dispatcher.dispatch_event(event, user_ids)
             except Exception as e:
-                import utils.logger as logger
                 logger.debug(f"Failed to dispatch typing event: {e}")
 
         # Fire and forget - don't wait for dispatch to complete

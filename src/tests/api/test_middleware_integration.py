@@ -33,7 +33,7 @@ class TestMiddlewareExecutionOrder:
     """Tests for middleware execution order."""
 
     @pytest.fixture
-    def ordered_app(self):
+    def ordered_app(self, api_module):
         """Create app with all middleware in correct order."""
         app = FastAPI()
         
@@ -56,7 +56,7 @@ class TestMiddlewareExecutionOrder:
     def test_logging_executes_after_auth(self, mock_log, ordered_app, modules, test_user_with_token):
         """Test logging middleware executes after authentication."""
         user, token = test_user_with_token
-        client = TestClient(ordered_app)
+        client = TestClient(ordered_app, raise_server_exceptions=False)
         response = client.get("/test", headers={"Authorization": f"Bearer {token}"})
         
         assert response.status_code == 200
@@ -73,7 +73,7 @@ class TestMiddlewareExecutionOrder:
         async def error_endpoint():
             raise ValueError("Test error")
 
-        client = TestClient(app)
+        client = TestClient(app, raise_server_exceptions=False)
         response = client.get("/error")
         
         assert response.status_code == 500
@@ -85,8 +85,7 @@ class TestAuthenticationWithRateLimiting:
     """Tests for authentication and rate limiting integration."""
 
     @pytest.fixture
-    def auth_ratelimit_app(self):
-        """Create app with authentication and rate limiting."""
+    def auth_ratelimit_app(self, modules, api_module):
         storage = MemoryStorage()
         ratelimit._manager = None
         ratelimit._setup_complete = False
@@ -94,7 +93,7 @@ class TestAuthenticationWithRateLimiting:
             storage_backend=storage,
             route_configs={
                 "GET /api/v1/protected": RateLimitConfig(
-                    requests=3,
+                    requests=10,
                     window_seconds=60.0,
                     burst=0,
                     algorithm=RateLimitAlgorithm.FIXED_WINDOW,
@@ -103,10 +102,13 @@ class TestAuthenticationWithRateLimiting:
             enable_global_limit=False,
         )
 
+        # Initialize API module
+        modules.get_api()
+
         app = FastAPI()
-        app.add_middleware(AuthenticationMiddleware)
         RateLimitMiddleware = create_rate_limit_middleware()
         app.add_middleware(RateLimitMiddleware)
+        app.add_middleware(AuthenticationMiddleware)
 
         @app.get("/api/v1/protected")
         async def protected_endpoint(user: TokenInfo = Depends(get_current_user)):
@@ -128,9 +130,9 @@ class TestAuthenticationWithRateLimiting:
         login_result = modules.auth.login(f"user_{unique_id}", "TestPass123!")
         headers = {"Authorization": f"Bearer {login_result.token}"}
 
-        client = TestClient(auth_ratelimit_app)
+        client = TestClient(auth_ratelimit_app, raise_server_exceptions=False)
         
-        for i in range(3):
+        for i in range(10):
             response = client.get("/api/v1/protected", headers=headers)
             assert response.status_code == 200
             assert response.json()["user_id"] == user.id
@@ -140,7 +142,7 @@ class TestAuthenticationWithRateLimiting:
 
     def test_unauthenticated_request_returns_401_before_rate_limit(self, auth_ratelimit_app):
         """Test unauthenticated requests return 401 before hitting rate limit."""
-        client = TestClient(auth_ratelimit_app)
+        client = TestClient(auth_ratelimit_app, raise_server_exceptions=False)
         
         for i in range(5):
             response = client.get("/api/v1/protected")
@@ -148,7 +150,7 @@ class TestAuthenticationWithRateLimiting:
 
     def test_invalid_token_returns_401(self, auth_ratelimit_app):
         """Test invalid token returns 401."""
-        client = TestClient(auth_ratelimit_app)
+        client = TestClient(auth_ratelimit_app, raise_server_exceptions=False)
         response = client.get("/api/v1/protected", headers={"Authorization": "Bearer invalid"})
         assert response.status_code == 401
 
@@ -157,7 +159,7 @@ class TestAuthenticationWithErrorHandling:
     """Tests for authentication and error handling integration."""
 
     @pytest.fixture
-    def auth_error_app(self):
+    def auth_error_app(self, api_module):
         """Create app with authentication and error handling."""
         app = FastAPI()
         app.add_middleware(AuthenticationMiddleware)
@@ -178,7 +180,7 @@ class TestAuthenticationWithErrorHandling:
 
     def test_authentication_error_formatted_correctly(self, auth_error_app):
         """Test authentication errors are formatted correctly."""
-        client = TestClient(auth_error_app)
+        client = TestClient(auth_error_app, raise_server_exceptions=False)
         response = client.get("/protected")
         
         assert response.status_code == 401
@@ -188,7 +190,7 @@ class TestAuthenticationWithErrorHandling:
 
     def test_custom_error_after_auth_check(self, auth_error_app):
         """Test custom errors after auth check are handled."""
-        client = TestClient(auth_error_app)
+        client = TestClient(auth_error_app, raise_server_exceptions=False)
         response = client.get("/optional")
         
         assert response.status_code == 403
@@ -199,7 +201,7 @@ class TestAuthenticationWithErrorHandling:
     def test_valid_auth_bypasses_errors(self, auth_error_app, modules, test_user_with_token):
         """Test valid authentication bypasses auth errors."""
         user, token = test_user_with_token
-        client = TestClient(auth_error_app)
+        client = TestClient(auth_error_app, raise_server_exceptions=False)
         response = client.get("/protected", headers={"Authorization": f"Bearer {token}"})
         
         assert response.status_code == 200
@@ -211,7 +213,7 @@ class TestLoggingWithErrorHandling:
     """Tests for logging and error handling integration."""
 
     @pytest.fixture
-    def logging_error_app(self):
+    def logging_error_app(self, api_module):
         """Create app with logging and error handling."""
         app = FastAPI()
         app.add_middleware(LoggingMiddleware)
@@ -234,7 +236,7 @@ class TestLoggingWithErrorHandling:
     @patch('src.api.middleware.logging._log_info')
     def test_successful_request_logged(self, mock_log, logging_error_app):
         """Test successful requests are logged."""
-        client = TestClient(logging_error_app)
+        client = TestClient(logging_error_app, raise_server_exceptions=False)
         response = client.get("/success")
         
         assert response.status_code == 200
@@ -243,7 +245,7 @@ class TestLoggingWithErrorHandling:
     @patch('src.api.middleware.logging._log_error')
     def test_500_error_logged(self, mock_log, logging_error_app):
         """Test 500 errors are logged."""
-        client = TestClient(logging_error_app)
+        client = TestClient(logging_error_app, raise_server_exceptions=False)
         response = client.get("/error")
         
         assert response.status_code == 500
@@ -251,7 +253,7 @@ class TestLoggingWithErrorHandling:
     @patch('src.api.middleware.logging._log_warning')
     def test_404_error_logged(self, mock_log, logging_error_app):
         """Test 404 errors are logged."""
-        client = TestClient(logging_error_app)
+        client = TestClient(logging_error_app, raise_server_exceptions=False)
         response = client.get("/http-error")
         
         assert response.status_code == 404
@@ -261,7 +263,7 @@ class TestAllMiddlewareTogether:
     """Tests for all middleware working together."""
 
     @pytest.fixture
-    def full_stack_app(self):
+    def full_stack_app(self, modules, api_module):
         """Create app with all middleware."""
         storage = MemoryStorage()
         ratelimit._manager = None
@@ -282,10 +284,10 @@ class TestAllMiddlewareTogether:
 
         app = FastAPI()
         
-        app.add_middleware(LoggingMiddleware)
-        app.add_middleware(AuthenticationMiddleware)
         RateLimitMiddleware = create_rate_limit_middleware()
         app.add_middleware(RateLimitMiddleware)
+        app.add_middleware(AuthenticationMiddleware)
+        app.add_middleware(LoggingMiddleware)
         
         setup_exception_handlers(app)
 
@@ -306,7 +308,7 @@ class TestAllMiddlewareTogether:
     def test_successful_authenticated_request(self, mock_log, full_stack_app, modules, test_user_with_token):
         """Test successful authenticated request through all middleware."""
         user, token = test_user_with_token
-        client = TestClient(full_stack_app)
+        client = TestClient(full_stack_app, raise_server_exceptions=False)
         response = client.get("/api/v1/data", headers={"Authorization": f"Bearer {token}"})
         
         assert response.status_code == 200
@@ -326,7 +328,7 @@ class TestAllMiddlewareTogether:
         login_result = modules.auth.login(f"user_{unique_id}", "TestPass123!")
         headers = {"Authorization": f"Bearer {login_result.token}"}
 
-        client = TestClient(full_stack_app)
+        client = TestClient(full_stack_app, raise_server_exceptions=False)
         
         for i in range(5):
             response = client.get("/api/v1/data", headers=headers)
@@ -338,7 +340,7 @@ class TestAllMiddlewareTogether:
     @patch('src.api.middleware.logging._log_warning')
     def test_unauthenticated_request_all_middleware(self, mock_log, full_stack_app):
         """Test unauthenticated request through all middleware."""
-        client = TestClient(full_stack_app)
+        client = TestClient(full_stack_app, raise_server_exceptions=False)
         response = client.get("/api/v1/data")
         
         assert response.status_code == 401
@@ -359,7 +361,7 @@ class TestAllMiddlewareTogether:
         login_result = modules.auth.login(f"admin_{unique_id}", "TestPass123!")
         headers = {"Authorization": f"Bearer {login_result.token}"}
 
-        client = TestClient(full_stack_app)
+        client = TestClient(full_stack_app, raise_server_exceptions=False)
         
         for i in range(20):
             response = client.get("/api/v1/data", headers=headers)
@@ -370,7 +372,7 @@ class TestRealWorldScenarios:
     """Tests for complex real-world scenarios."""
 
     @pytest.fixture
-    def realistic_app(self):
+    def realistic_app(self, modules, api_module):
         """Create app mimicking real-world setup."""
         storage = MemoryStorage()
         ratelimit._manager = None
@@ -396,10 +398,10 @@ class TestRealWorldScenarios:
 
         app = FastAPI()
         
-        app.add_middleware(LoggingMiddleware)
-        app.add_middleware(AuthenticationMiddleware)
         RateLimitMiddleware = create_rate_limit_middleware()
         app.add_middleware(RateLimitMiddleware)
+        app.add_middleware(AuthenticationMiddleware)
+        app.add_middleware(LoggingMiddleware)
         
         setup_exception_handlers(app)
 
@@ -419,7 +421,7 @@ class TestRealWorldScenarios:
     @patch('src.api.middleware.logging._log_info')
     def test_login_brute_force_protection(self, mock_log, realistic_app):
         """Test login endpoint has brute force protection."""
-        client = TestClient(realistic_app)
+        client = TestClient(realistic_app, raise_server_exceptions=False)
         
         for i in range(5):
             response = client.post("/api/v1/auth/login", json={
@@ -446,7 +448,7 @@ class TestRealWorldScenarios:
         login_result = modules.auth.login(f"user_{unique_id}", "TestPass123!")
         headers = {"Authorization": f"Bearer {login_result.token}"}
 
-        client = TestClient(realistic_app)
+        client = TestClient(realistic_app, raise_server_exceptions=False)
         
         for i in range(30):
             response = client.get("/api/v1/users/@me", headers=headers)
@@ -476,7 +478,7 @@ class TestRealWorldScenarios:
         headers1 = {"Authorization": f"Bearer {login1.token}"}
         headers2 = {"Authorization": f"Bearer {login2.token}"}
 
-        client = TestClient(realistic_app)
+        client = TestClient(realistic_app, raise_server_exceptions=False)
 
         results1 = []
         results2 = []
@@ -507,7 +509,7 @@ class TestErrorPropagation:
     """Tests for error propagation through middleware stack."""
 
     @pytest.fixture
-    def error_stack_app(self):
+    def error_stack_app(self, api_module):
         """Create app for error propagation testing."""
         app = FastAPI()
         
@@ -538,7 +540,7 @@ class TestErrorPropagation:
     @patch('src.api.middleware.logging._log_warning')
     def test_validation_error_propagates(self, mock_log, error_stack_app):
         """Test validation errors propagate correctly."""
-        client = TestClient(error_stack_app)
+        client = TestClient(error_stack_app, raise_server_exceptions=False)
         response = client.get("/validation-error")
         
         assert response.status_code == 400
@@ -548,7 +550,7 @@ class TestErrorPropagation:
     @patch('src.api.middleware.logging._log_warning')
     def test_not_found_error_propagates(self, mock_log, error_stack_app):
         """Test not found errors propagate correctly."""
-        client = TestClient(error_stack_app)
+        client = TestClient(error_stack_app, raise_server_exceptions=False)
         response = client.get("/not-found")
         
         assert response.status_code == 404
@@ -559,7 +561,7 @@ class TestErrorPropagation:
     def test_permission_error_after_auth(self, mock_log, error_stack_app, modules, test_user_with_token):
         """Test permission errors after authentication."""
         user, token = test_user_with_token
-        client = TestClient(error_stack_app)
+        client = TestClient(error_stack_app, raise_server_exceptions=False)
         response = client.get("/permission-denied", headers={"Authorization": f"Bearer {token}"})
         
         assert response.status_code == 403

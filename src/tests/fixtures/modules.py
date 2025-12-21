@@ -250,6 +250,9 @@ class ModuleRegistry:
         if 'api' not in self._cache:
             import src.api as api
 
+            # Ensure ratelimit is setup
+            _ = self.ratelimit
+
             api.setup(
                 db=self._db,
                 auth_module=self.auth,

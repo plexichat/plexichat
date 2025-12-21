@@ -2,13 +2,15 @@
 FastAPI application factory - Creates and configures the API application.
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+import sys
 
 from .config import get_api_config
 from .middleware import (
     AuthenticationMiddleware,
     setup_exception_handlers,
+    ErrorHandlingMiddleware,
     LoggingMiddleware,
     create_rate_limit_middleware,
 )
@@ -31,6 +33,10 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         Configured FastAPI application instance.
     """
     config = get_api_config()
+    # Debug CORS config
+    if "pytest" in sys.modules:
+        print(f"\n[DEBUG] CORS Origins: {config.cors_origins}")
+        print(f"\n[DEBUG] CORS Headers: {config.cors_allow_headers}")
 
     app = FastAPI(
         title=config.title,
@@ -42,11 +48,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     )
 
     # Middleware order matters! They run in REVERSE order of addition.
-    # So we add them in this order: Logging -> Auth -> RateLimit -> CORS
-    # Which means they execute: CORS -> RateLimit -> Auth -> Logging
-
-    app.add_middleware(LoggingMiddleware)
-    app.add_middleware(AuthenticationMiddleware)
+    # Desired execution: Logging -> CORS -> Auth -> RateLimit -> app
 
     if enable_rate_limiting:
         from src.core import ratelimit
@@ -55,7 +57,10 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             RateLimitMiddleware = create_rate_limit_middleware()
             app.add_middleware(RateLimitMiddleware)
 
-    # CORS must be added LAST so it runs FIRST (handles OPTIONS preflight)
+    app.add_middleware(AuthenticationMiddleware)
+    app.add_middleware(ErrorHandlingMiddleware)
+
+    # CORS handles OPTIONS preflight
     app.add_middleware(
         CORSMiddleware,
         allow_origins=config.cors_origins,
@@ -63,6 +68,8 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         allow_methods=config.cors_allow_methods,
         allow_headers=config.cors_allow_headers,
     )
+
+    app.add_middleware(LoggingMiddleware)
 
     setup_exception_handlers(app)
 

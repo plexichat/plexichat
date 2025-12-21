@@ -197,23 +197,27 @@ def _run_migrations(db) -> None:
     # Migration: Add webhook_id column to msg_messages (added for webhook support)
     try:
         # Check if column exists first
-        db_type = getattr(db, "db_type", "sqlite")
+        db_type = getattr(db, "db_type", getattr(db, "type", "sqlite"))
+        column_exists = False
+        
         if db_type == "postgres":
             result = db.fetch_one(
                 """SELECT column_name FROM information_schema.columns 
                    WHERE table_name = 'msg_messages' AND column_name = 'webhook_id'"""
             )
-            if not result:
-                db.execute("ALTER TABLE msg_messages ADD COLUMN webhook_id INTEGER")
-                db.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_msg_messages_webhook ON msg_messages(webhook_id)"
-                )
+            column_exists = result is not None
         else:
-            # SQLite - try to add, ignore if exists
-            try:
-                db.execute("ALTER TABLE msg_messages ADD COLUMN webhook_id INTEGER")
-            except Exception:
-                pass  # Column already exists
+            # SQLite
+            rows = db.fetch_all("PRAGMA table_info(msg_messages)")
+            column_exists = any(row["name"] == "webhook_id" for row in rows)
+            
+        if not column_exists:
+            db.execute("ALTER TABLE msg_messages ADD COLUMN webhook_id INTEGER")
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_msg_messages_webhook ON msg_messages(webhook_id)"
+            )
+        else:
+            # Ensure index exists even if column was already there
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_msg_messages_webhook ON msg_messages(webhook_id)"
             )

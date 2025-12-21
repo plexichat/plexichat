@@ -35,6 +35,7 @@ def get_test_config():
             "security": {
                 "max_failed_attempts": 3,
                 "lockout_duration_minutes": 1,
+                "token_verify_rate_limit": 10000,
             },
             "totp": {
                 "enabled": True,
@@ -106,10 +107,11 @@ def get_test_config():
             "version": TEST_VERSION,
             "api_prefix": "/api/v1",
             "debug": True,
-            "cors_origins": ["*"],
+            "cors_origins": ["http://testserver", "http://localhost:3000"],
+            "allow_wildcard_cors": True,
             "cors_allow_credentials": True,
-            "cors_allow_methods": ["*"],
-            "cors_allow_headers": ["*"],
+            "cors_allow_methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+            "cors_allow_headers": ["Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin", "X-Custom-Header"],
             "docs_url": "/docs",
             "redoc_url": "/redoc",
             "openapi_url": "/openapi.json",

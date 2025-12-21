@@ -303,36 +303,37 @@ class TestAuthManagerTokenHandling:
 class TestAuthManagerTwoFactor:
     """Test 2FA functionality including edge cases."""
     
-    def test_2fa_setup_already_enabled(self, auth_manager):
+    def test_2fa_setup_already_enabled(self, auth_manager, monkeypatch):
         """Test 2FA setup when already enabled."""
+        import src.core.auth.totp as totp
+        monkeypatch.setattr(totp, "verify_totp_code", lambda secret, code: True)
+        
         user = auth_manager.register("testuser", "test@example.com", "Password123!")
         
         setup = auth_manager.setup_2fa(user.id)
         auth_manager.confirm_2fa(user.id, "123456")
         
-        try:
-            auth_manager._db.execute(
-                "UPDATE auth_users SET totp_enabled = 1 WHERE id = ?",
-                (user.id,)
-            )
-            with pytest.raises(AuthError):
-                auth_manager.setup_2fa(user.id)
-        except:
-            pass
+        # Now it should be enabled
+        with pytest.raises(AuthError):
+            auth_manager.setup_2fa(user.id)
     
-    def test_2fa_confirm_invalid_code(self, auth_manager):
+    def test_2fa_confirm_invalid_code(self, auth_manager, monkeypatch):
         """Test 2FA confirmation with invalid code."""
+        import src.core.auth.totp as totp
+        monkeypatch.setattr(totp, "verify_totp_code", lambda secret, code: code == "correct")
+        
         user = auth_manager.register("testuser", "test@example.com", "Password123!")
-        setup = auth_manager.setup_2fa(user.id)
+        auth_manager.setup_2fa(user.id)
         
         with pytest.raises(TwoFactorInvalidError):
-            auth_manager.confirm_2fa(user.id, "000000")
+            auth_manager.confirm_2fa(user.id, "wrong")
     
     def test_2fa_disable_wrong_password(self, auth_manager, test_db):
+        # ... (rest of function)
         """Test 2FA disable with wrong password."""
         user = auth_manager.register("testuser", "test@example.com", "Password123!")
         
-        auth_manager._db.execute(
+        auth_manager.db.execute(
             "UPDATE auth_users SET totp_enabled = 1, totp_secret_encrypted = ? WHERE id = ?",
             ("encrypted_secret", user.id)
         )
@@ -351,7 +352,7 @@ class TestAuthManagerTwoFactor:
         now = auth_manager._current_time()
         _, token_hash = create_2fa_challenge_token(challenge_id)
         
-        auth_manager._db.execute(
+        auth_manager.db.execute(
             """INSERT INTO auth_2fa_challenges 
                (id, user_id, token_hash, created_at, expires_at)
                VALUES (?, ?, ?, ?, ?)""",
@@ -374,7 +375,7 @@ class TestAuthManagerTwoFactor:
         now = auth_manager._current_time()
         _, token_hash = create_2fa_challenge_token(challenge_id)
         
-        auth_manager._db.execute(
+        auth_manager.db.execute(
             """INSERT INTO auth_2fa_challenges 
                (id, user_id, token_hash, created_at, expires_at, used)
                VALUES (?, ?, ?, ?, ?, 1)""",
@@ -390,7 +391,7 @@ class TestAuthManagerTwoFactor:
         """Test regenerating backup codes with wrong password."""
         user = auth_manager.register("testuser", "test@example.com", "Password123!")
         
-        auth_manager._db.execute(
+        auth_manager.db.execute(
             "UPDATE auth_users SET totp_enabled = 1 WHERE id = ?",
             (user.id,)
         )
@@ -437,7 +438,7 @@ class TestAuthManagerBots:
         """Test creating bot without permission."""
         user = auth_manager.register("testuser", "test@example.com", "Password123!")
         
-        auth_manager._db.execute(
+        auth_manager.db.execute(
             "UPDATE auth_users SET permissions = '{}' WHERE id = ?",
             (user.id,)
         )
@@ -686,23 +687,25 @@ class TestAuthManagerPasswordReset:
             auth_manager.reset_password("invalid_token", "NewPassword123!")
     
     def test_reset_password_weak_password(self, auth_manager, test_db, email_sender):
-        """Test resetting with weak password."""
+        """Test reset with weak password."""
         auth_manager.email_sender = email_sender
         user = auth_manager.register("testuser", "test@example.com", "Password123!")
         
-        auth_manager.request_password_reset("test@example.com")
+        # Manually create a token so we know the full token
+        token_id = 12345
+        secret = "verysecret"
+        full_token = f"email.{token_id}.{secret}"
+        from src.core.auth.tokens import hash_token
+        token_hash = hash_token(secret) # ONLY hashes the secret part
         
-        token_row = test_db.fetch_one(
-            "SELECT id FROM auth_email_tokens WHERE user_id = ? AND token_type = 'reset_password'",
-            (user.id,)
+        test_db.execute(
+            """INSERT INTO auth_email_tokens (id, user_id, token_hash, token_type, created_at, expires_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (token_id, user.id, token_hash, 'reset_password', auth_manager._current_time(), auth_manager._current_time() + 3600)
         )
         
-        if token_row:
-            from src.core.auth.tokens import create_email_token
-            full_token, _ = create_email_token(token_row["id"])
-            
-            with pytest.raises(WeakPasswordError):
-                auth_manager.reset_password(full_token, "weak")
+        with pytest.raises(WeakPasswordError):
+            auth_manager.reset_password(full_token, "weak")
     
     def test_reset_password_wrong_token_type(self, auth_manager, test_db, email_sender):
         """Test reset with wrong token type."""

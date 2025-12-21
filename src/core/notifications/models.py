@@ -16,6 +16,16 @@ class MentionType(Enum):
     CHANNEL = "channel"
 
 
+class NotificationType(Enum):
+    """Types of notifications."""
+    MESSAGE = "message"
+    MENTION = "mention"
+    FRIEND_REQUEST = "friend_request"
+    SERVER_INVITE = "server_invite"
+    REACTION = "reaction"
+    SYSTEM = "system"
+
+
 class NotificationLevel(Enum):
     """Notification level settings."""
     ALL_MESSAGES = "all"

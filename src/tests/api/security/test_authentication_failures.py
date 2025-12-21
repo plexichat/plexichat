@@ -55,27 +55,23 @@ class TestAuthenticationRequired:
         assert response.status_code == 401
     
     def test_get_relationships_requires_auth(self, test_client):
-        """Test GET /relationships requires authentication."""
-        response = test_client.get("/api/v1/relationships")
+        """Test getting relationships requires authentication."""
+        response = test_client.get("/api/v1/relationships/@me")
         assert response.status_code == 401
-    
+
     def test_add_friend_requires_auth(self, test_client):
-        """Test POST /relationships requires authentication."""
-        response = test_client.post("/api/v1/relationships", json={
-            "user_id": "123"
-        })
+        """Test adding a friend requires authentication."""
+        response = test_client.post("/api/v1/relationships")
         assert response.status_code == 401
-    
+
     def test_get_presence_requires_auth(self, test_client):
-        """Test GET /users/@me/presence requires authentication."""
+        """Test getting presence requires authentication."""
         response = test_client.get("/api/v1/users/@me/presence")
         assert response.status_code == 401
-    
+
     def test_update_presence_requires_auth(self, test_client):
-        """Test PATCH /users/@me/presence requires authentication."""
-        response = test_client.patch("/api/v1/users/@me/presence", json={
-            "status": "online"
-        })
+        """Test updating presence requires authentication."""
+        response = test_client.put("/api/v1/users/@me/presence")
         assert response.status_code == 401
 
 

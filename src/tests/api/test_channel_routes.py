@@ -3,6 +3,7 @@ Tests for channel routes.
 """
 
 import uuid
+from src.core.servers.models import ChannelType
 
 
 class TestGetChannel:
@@ -122,7 +123,7 @@ class TestDeleteChannel:
             user_id=user.id,
             server_id=server.id,
             name=f"to-delete-{unique_id}",
-            channel_type="text"
+            channel_type=ChannelType.TEXT
         )
 
         response = test_client.delete(

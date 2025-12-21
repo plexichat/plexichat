@@ -48,6 +48,106 @@ from src.tests.fixtures.config import TEST_PASSWORD
 from src.tests.fixtures.database import DatabaseManager
 from src.tests.fixtures.modules import ModuleRegistry
 from src.tests.fixtures.factories import UserFactory, ServerFactory, ConversationFactory
+from hypothesis import settings, HealthCheck
+
+# Register a global profile for CI/Tests
+settings.register_profile("ci", suppress_health_check=[
+    HealthCheck.filter_too_much,
+    HealthCheck.data_too_large,
+    HealthCheck.too_slow
+], deadline=None)
+settings.load_profile("ci")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def setup_config():
+    """Initialize global configuration for tests."""
+    import utils.config as config
+    import utils.version as version
+    from src.core import ratelimit
+    config_dir = "temp_test_config"
+    os.makedirs(config_dir, exist_ok=True)
+    config_path = os.path.join(config_dir, "config.yaml")
+    
+    # Force clean config for each session
+    if os.path.exists(config_path):
+        try:
+            os.remove(config_path)
+        except OSError:
+            pass
+            
+    # Minimal default config for tests
+    default_config = {
+        "authentication": {
+            "accounts": {
+                "allow_registration": True,
+                "require_email_verification": False,
+                "max_bots_per_user": 5,
+                "username_min_length": 3,
+                "username_max_length": 32,
+            },
+            "sessions": {
+                "token_bytes": 32,
+                "expire_hours": 168,
+                "max_per_user": 10,
+                "extend_on_activity": True,
+                "extend_threshold_hours": 24,
+            },
+            "security": {
+                "max_failed_attempts": 100,
+                "lockout_duration_minutes": 1,
+            },
+            "password": {
+                "min_length": 12,
+                "max_length": 128,
+                "require_uppercase": True,
+                "require_lowercase": True,
+                "require_digit": True,
+                "require_special": True,
+            }
+        },
+        "messaging": {
+            "max_message_length": 4000,
+            "max_attachments": 10,
+            "max_attachments_per_message": 10
+        },
+        "ratelimit": {
+            "enabled": True,
+            "global": {"limit": 100, "window": 60},
+            "user": {"limit": 5, "window": 60},
+            "ip": {"limit": 10, "window": 60},
+        },
+        "api": {
+            "cors_origins": ["http://testserver", "http://localhost:3000"],
+            "allow_wildcard_cors": True,
+            "cors_allow_headers": ["Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin", "X-Custom-Header"],
+        },
+        "version": {
+            "current": "r.1.0-1",
+            "min_client": "a.1.0-1"
+        }
+    }
+    
+    config.setup(config_path=config_path, default_config=default_config)
+    version.setup(current_version="r.1.0-1", min_supported_version="a.1.0-1")
+    
+    # Initialize logger for tests
+    import utils.logger as logger
+    log_dir = "temp_test_logs"
+    os.makedirs(log_dir, exist_ok=True)
+    try:
+        logger.setup(log_dir=log_dir, level="DEBUG", zip_logs=False)
+    except Exception:
+        pass
+        
+    yield
+    # Cleanup
+    if os.path.exists(config_path):
+        try:
+            os.remove(config_path)
+            os.rmdir(config_dir)
+        except OSError:
+            pass
 
 
 # =============================================================================
@@ -313,10 +413,35 @@ def test_server_with_members(modules, user_pool):
 @pytest.fixture
 def test_db():
     """Create a fresh in-memory database for each test."""
+    import utils.config as config
     from src.core.database import Database
-    db = Database(":memory:")
+    from src.core.auth.schema import create_tables as create_auth_tables
+    
+    # Save current config to restore later
+    old_db_conf = config.get("database", None)
+    config.set("database", {"type": "sqlite", "path": ":memory:"})
+    
+    db = Database()
     db.connect()
+    
+    # Critical: Create auth tables first because other modules have foreign keys to them
+    create_auth_tables(db)
+    
+    # Insert default users for tests that assume fixed IDs (like manager tests)
+    db.execute(
+        "INSERT INTO auth_users (id, account_type, username, email, password_hash, permissions, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (1, "user", "testowner", "fixture_owner@example.com", "fake_hash", "{}", 0, 0)
+    )
+    db.execute(
+        "INSERT INTO auth_users (id, account_type, username, email, password_hash, permissions, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (2, "user", "testother", "fixture_other@example.com", "fake_hash", "{}", 0, 0)
+    )
+    
     yield db
+    
+    # Restore config
+    if old_db_conf:
+        config.set("database", old_db_conf)
     db.close()
 
 
@@ -469,11 +594,23 @@ def api_module(modules):
 
 @pytest.fixture(scope="session")
 def test_client(api_module):
-    """Create a FastAPI test client."""
+    """Create a FastAPI test client with rate limiting disabled by default."""
     from fastapi.testclient import TestClient
     from src.api import create_app
 
-    app = create_app()
+    # Disable rate limiting for general functional tests
+    app = create_app(enable_rate_limiting=False)
+    return TestClient(app)
+
+
+@pytest.fixture(scope="session")
+def rate_limit_client(api_module):
+    """Create a FastAPI test client with rate limiting enabled."""
+    from fastapi.testclient import TestClient
+    from src.api import create_app
+
+    # Enable rate limiting specifically for rate limit tests
+    app = create_app(enable_rate_limiting=True)
     return TestClient(app)
 
 

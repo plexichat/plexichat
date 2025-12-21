@@ -413,7 +413,7 @@ async def block_user(body: BlockCreate, current_user: TokenInfo = Depends(get_cu
     try:
         target_id = int(body.user_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid user ID"}})
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid target ID"}})
 
     try:
         # Check if they were friends before blocking

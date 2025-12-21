@@ -45,7 +45,7 @@ class Connection:
     event_window_start: float = field(default_factory=time.monotonic)
     missed_heartbeats: int = 0
     properties: Dict[str, Any] = field(default_factory=dict)
-    _zlib_context: Optional[Union[zlib._Compress, Any]] = field(
+    _zlib_context: Optional[Any] = field(
         default=None, repr=False
     )
     _send_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)

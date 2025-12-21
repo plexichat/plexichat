@@ -336,13 +336,13 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     reports_dir = Path("test-reports")
     reports_dir.mkdir(exist_ok=True)
     
-    with open(reports_dir / "performance.txt", "w") as f:
+    with open(reports_dir / "performance.txt", "w", encoding="utf-8") as f:
         f.write(perf_report)
     
-    with open(reports_dir / "security.txt", "w") as f:
+    with open(reports_dir / "security.txt", "w", encoding="utf-8") as f:
         f.write(security_report)
     
-    with open(reports_dir / "metrics.txt", "w") as f:
+    with open(reports_dir / "metrics.txt", "w", encoding="utf-8") as f:
         f.write(metrics_report)
     
     # JSON reports for CI/CD

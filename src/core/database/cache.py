@@ -519,6 +519,9 @@ def get_bulk_presence(user_ids: List[int]) -> Dict[int, Dict[str, Any]]:
 # ==================== Rate Limiting Helpers ====================
 
 
+# Global dictionary for in-memory rate limiting when Redis is unavailable
+_mem_rate_limits: Dict[str, List[float]] = {}
+
 def check_rate_limit(key: str, limit: int, window_seconds: int) -> Tuple[bool, int]:
     """
     Check if a rate limit has been exceeded.
@@ -533,8 +536,23 @@ def check_rate_limit(key: str, limit: int, window_seconds: int) -> Tuple[bool, i
     """
     client = get_client()
     if not client or not is_available():
-        # If Redis unavailable, allow the request
-        return True, limit
+        # Fallback to in-memory cache if Redis is unavailable (important for tests)
+        global _mem_rate_limits
+        full_key = f"ratelimit:{key}"
+        
+        # Simple sliding window implementation in memory
+        now = time.time()
+        timestamps = _mem_rate_limits.get(full_key, [])
+        # Filter out old timestamps
+        timestamps = [ts for ts in timestamps if ts > now - window_seconds]
+        
+        if len(timestamps) < limit:
+            timestamps.append(now)
+            _mem_rate_limits[full_key] = timestamps
+            return True, limit - len(timestamps)
+        else:
+            _mem_rate_limits[full_key] = timestamps
+            return False, 0
 
     full_key = f"ratelimit:{key}"
 

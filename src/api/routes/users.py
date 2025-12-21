@@ -90,7 +90,7 @@ async def get_current_user_info(current_user: TokenInfo = Depends(get_current_us
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
 
     try:
-        user = _get_user_cached(current_user.user_id)
+        user = _get_user_cached(current_user.account_id)
         if not user:
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
 
@@ -449,6 +449,8 @@ async def get_user(user_id: str, current_user: TokenInfo = Depends(get_current_u
 
     try:
         uid = int(user_id)
+        if uid > 2**63 - 1 or uid < -2**63:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid user ID"}})
 

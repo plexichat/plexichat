@@ -400,6 +400,11 @@ def get_users_bulk(user_ids: List[int]) -> Dict[int, User]:
     return _get_manager().get_users_bulk(user_ids)
 
 
+def grant_permission(user_id: int, permission: str) -> bool:
+    """Grant a specific permission to a user."""
+    return _get_manager().grant_permission(user_id, permission)
+
+
 def has_capability(token_info: TokenInfo, capability: str) -> bool:
     """Check if token has a specific capability/permission."""
     return has_permission(token_info.permissions, capability)
@@ -497,6 +502,7 @@ __all__ = [
     # Utility
     "get_user",
     "get_user_by_username",
+    "grant_permission",
     "has_capability",
     "require_capability",
 ]

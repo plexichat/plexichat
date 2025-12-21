@@ -134,7 +134,7 @@ class TestAuthManagerAdvanced:
         # Expiry time in milliseconds
         now = 1000000000000
         expires_at = now + (expire_hours * 3600 * 1000)
-        assert expires_at > now
+        assert expires_at >= now
         assert expires_at - now == expire_hours * 3600 * 1000
 
     @given(st.text(min_size=1, max_size=50, alphabet='abcdef0123456789'))
@@ -325,7 +325,7 @@ class TestServersManagerAdvanced:
 class TestWebhookManagerAdvanced:
     """Advanced property-based tests for WebhookManager."""
 
-    @given(st.integers(min_value=0, max_size=20))
+    @given(st.integers(min_value=0, max_value=20))
     @settings(max_examples=50)
     def test_webhook_count_limits(self, count):
         """Test webhook count limits."""

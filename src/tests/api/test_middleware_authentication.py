@@ -28,10 +28,12 @@ class TestAuthenticationMiddleware:
     """Tests for AuthenticationMiddleware class."""
 
     @pytest.fixture
-    def app_with_auth_middleware(self):
+    def app_with_auth_middleware(self, api_module):
         """Create test app with authentication middleware."""
+        from src.api.middleware.error_handling import setup_exception_handlers
         app = FastAPI()
         app.add_middleware(AuthenticationMiddleware)
+        setup_exception_handlers(app)
 
         @app.get("/test")
         async def test_endpoint(request: Request):
@@ -135,16 +137,21 @@ class TestAuthenticationMiddleware:
         data = response.json()
         assert data["authenticated"] is False
 
-    def test_case_insensitive_bearer_scheme(self, app_with_auth_middleware, modules, test_user_with_token):
-        """Test that Bearer scheme is case insensitive."""
+    def test_bearer_scheme_strict_case(self, app_with_auth_middleware, modules, test_user_with_token):
+        """Test that Bearer scheme is case sensitive (strict)."""
         user, token = test_user_with_token
         client = TestClient(app_with_auth_middleware)
         
-        for scheme in ["bearer", "Bearer", "BEARER", "bEaReR"]:
+        # Valid case
+        response = client.get("/test", headers={"Authorization": f"Bearer {token}"})
+        assert response.status_code == 200
+        assert response.json()["authenticated"] is True
+
+        # Invalid cases
+        for scheme in ["bearer", "BEARER", "bEaReR"]:
             response = client.get("/test", headers={"Authorization": f"{scheme} {token}"})
             assert response.status_code == 200
-            data = response.json()
-            assert data["authenticated"] is True
+            assert response.json()["authenticated"] is False
 
     def test_auth_module_not_available(self, app_with_auth_middleware):
         """Test handling when auth module is not available."""
@@ -162,15 +169,17 @@ class TestAuthenticationMiddleware:
             api._auth = original_auth
 
     def test_extract_token_method(self):
-        """Test _extract_token method directly."""
+        """Test the internal _extract_token method."""
         middleware = AuthenticationMiddleware(None)
         
         assert middleware._extract_token("Bearer token123") == "token123"
         assert middleware._extract_token("Bot token456") == "token456"
-        assert middleware._extract_token("bearer token789") == "token789"
-        assert middleware._extract_token("InvalidFormat") is None
+        # Invalid cases
+        assert middleware._extract_token("bearer token789") is None
+        assert middleware._extract_token("BOT token000") is None
         assert middleware._extract_token("Basic dXNlcjpwYXNz") is None
-        assert middleware._extract_token("") is None
+        assert middleware._extract_token("Bearer") is None
+        assert middleware._extract_token("Bearer token extra") is None
 
 
 class TestGetCurrentUserDependency:
@@ -179,7 +188,10 @@ class TestGetCurrentUserDependency:
     @pytest.fixture
     def app_with_current_user(self):
         """Create test app using get_current_user dependency."""
+        from src.api.middleware.error_handling import setup_exception_handlers
         app = FastAPI()
+        app.add_middleware(AuthenticationMiddleware)
+        setup_exception_handlers(app)
 
         @app.get("/protected")
         async def protected_endpoint(user: TokenInfo = Depends(get_current_user)):
@@ -269,8 +281,11 @@ class TestGetOptionalUserDependency:
 
     @pytest.fixture
     def app_with_optional_user(self):
-        """Create test app using get_optional_user dependency."""
+        """Create test app with get_optional_user dependency."""
+        from src.api.middleware.error_handling import setup_exception_handlers
         app = FastAPI()
+        app.add_middleware(AuthenticationMiddleware)
+        setup_exception_handlers(app)
 
         @app.get("/optional")
         async def optional_endpoint(user: Optional[TokenInfo] = Depends(get_optional_user)):
@@ -327,9 +342,11 @@ class TestSecurityScenarios:
 
     @pytest.fixture
     def security_app(self):
-        """Create app for security testing."""
+        """Create test app with sensitive endpoint for security tests."""
+        from src.api.middleware.error_handling import setup_exception_handlers
         app = FastAPI()
         app.add_middleware(AuthenticationMiddleware)
+        setup_exception_handlers(app)
 
         @app.get("/sensitive")
         async def sensitive_endpoint(request: Request):
@@ -355,7 +372,8 @@ class TestSecurityScenarios:
         response = client.get("/sensitive", headers={"Authorization": f"Bearer {token}"})
         assert response.status_code == 200
 
-        modules.auth.logout(user.id, login_result.session.id)
+        # Logout the session
+        modules.auth.logout(login_result.token)
 
         response = client.get("/sensitive", headers={"Authorization": f"Bearer {token}"})
         assert response.status_code == 200

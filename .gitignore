@@ -19,6 +19,11 @@ temp_*_test/
 logs/
 *.log
 *.log.zip
+server_out.log
+server_err.log
+gemini.md
+GEMINI.md
+*.gemini.md
 
 # IDE
 .vscode/

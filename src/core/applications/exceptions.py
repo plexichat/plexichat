@@ -29,6 +29,11 @@ class ApplicationLimitError(ApplicationError):
         self.current = current
 
 
+class InvalidApplicationNameError(ApplicationError):
+    """Application name is invalid (too short, too long, or reserved)."""
+    pass
+
+
 class CommandNotFoundError(ApplicationError):
     """Command does not exist."""
     pass
