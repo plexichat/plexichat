@@ -13,9 +13,9 @@ from src.core.polls import (
 class TestClosePoll:
     """Tests for closing polls early."""
 
-    def test_close_poll_success(self, db_and_modules):
+    def test_close_poll_success(self, modules):
         """Test closing a poll successfully."""
-        db, auth, messaging, polls = db_and_modules
+        auth, messaging, polls = modules.auth, modules.messaging, modules.polls
 
         unique_id = uuid.uuid4().hex[:8]
         user1 = auth.register(
@@ -45,9 +45,9 @@ class TestClosePoll:
         assert closed.is_ended is True
         assert closed.ended_at is not None
 
-    def test_close_poll_not_creator_fails(self, db_and_modules):
+    def test_close_poll_not_creator_fails(self, modules):
         """Test non-creator cannot close poll."""
-        db, auth, messaging, polls = db_and_modules
+        auth, messaging, polls = modules.auth, modules.messaging, modules.polls
 
         unique_id = uuid.uuid4().hex[:8]
         user1 = auth.register(
@@ -74,9 +74,9 @@ class TestClosePoll:
         with pytest.raises(PermissionDeniedError):
             polls.close_poll(user2.id, poll.id)
 
-    def test_close_poll_already_ended_fails(self, db_and_modules):
+    def test_close_poll_already_ended_fails(self, modules):
         """Test closing already ended poll fails."""
-        db, auth, messaging, polls = db_and_modules
+        auth, messaging, polls = modules.auth, modules.messaging, modules.polls
 
         unique_id = uuid.uuid4().hex[:8]
         user1 = auth.register(
@@ -105,9 +105,9 @@ class TestClosePoll:
         with pytest.raises(PollEndedError):
             polls.close_poll(user1.id, poll.id)
 
-    def test_vote_on_closed_poll_fails(self, db_and_modules):
+    def test_vote_on_closed_poll_fails(self, modules):
         """Test voting on closed poll fails."""
-        db, auth, messaging, polls = db_and_modules
+        auth, messaging, polls = modules.auth, modules.messaging, modules.polls
 
         unique_id = uuid.uuid4().hex[:8]
         user1 = auth.register(
@@ -140,9 +140,9 @@ class TestClosePoll:
 class TestDeletePoll:
     """Tests for deleting polls."""
 
-    def test_delete_poll_success(self, db_and_modules):
+    def test_delete_poll_success(self, modules):
         """Test deleting a poll successfully."""
-        db, auth, messaging, polls = db_and_modules
+        auth, messaging, polls = modules.auth, modules.messaging, modules.polls
 
         unique_id = uuid.uuid4().hex[:8]
         user1 = auth.register(
@@ -172,9 +172,9 @@ class TestDeletePoll:
         retrieved = polls.get_poll(poll.id, user1.id)
         assert retrieved is None
 
-    def test_delete_poll_not_creator_fails(self, db_and_modules):
+    def test_delete_poll_not_creator_fails(self, modules):
         """Test non-creator cannot delete poll."""
-        db, auth, messaging, polls = db_and_modules
+        auth, messaging, polls = modules.auth, modules.messaging, modules.polls
 
         unique_id = uuid.uuid4().hex[:8]
         user1 = auth.register(
@@ -205,9 +205,9 @@ class TestDeletePoll:
 class TestCheckExpiredPolls:
     """Tests for expired poll checking."""
 
-    def test_check_expired_polls(self, db_and_modules):
+    def test_check_expired_polls(self, modules):
         """Test checking for expired polls."""
-        db, auth, messaging, polls = db_and_modules
+        polls = modules.polls
 
         count = polls.check_expired_polls()
         assert count >= 0

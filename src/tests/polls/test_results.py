@@ -19,9 +19,9 @@ class TestPollResults:
         assert results.poll.id == poll.id
         assert len(results.options) == len(poll.options)
 
-    def test_results_show_vote_counts(self, db_and_modules):
+    def test_results_show_vote_counts(self, modules):
         """Test results show correct vote counts."""
-        db, auth, messaging, polls = db_and_modules
+        auth, messaging, polls = modules.auth, modules.messaging, modules.polls
 
         unique_id = uuid.uuid4().hex[:8]
         users = []
@@ -50,9 +50,9 @@ class TestPollResults:
         option_a = next(o for o in results.options if o.text == "A")
         assert option_a.vote_count == 1
 
-    def test_results_visibility_after_vote(self, db_and_modules):
+    def test_results_visibility_after_vote(self, modules):
         """Test results hidden until user votes."""
-        db, auth, messaging, polls = db_and_modules
+        auth, messaging, polls = modules.auth, modules.messaging, modules.polls
 
         unique_id = uuid.uuid4().hex[:8]
         user1 = auth.register(
@@ -88,9 +88,9 @@ class TestPollResults:
         results_after = polls.get_results(poll.id, user2.id)
         assert results_after.user_voted is True
 
-    def test_results_total_votes(self, db_and_modules):
+    def test_results_total_votes(self, modules):
         """Test total votes calculation."""
-        db, auth, messaging, polls = db_and_modules
+        auth, messaging, polls = modules.auth, modules.messaging, modules.polls
 
         unique_id = uuid.uuid4().hex[:8]
         user1 = auth.register(

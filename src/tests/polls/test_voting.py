@@ -36,9 +36,9 @@ class TestVoting:
         voted_option = next(o for o in results.options if o.id == option_id)
         assert voted_option.vote_count >= 1
 
-    def test_vote_already_voted_fails(self, db_and_modules):
+    def test_vote_already_voted_fails(self, modules):
         """Test voting twice fails."""
-        db, auth, messaging, polls = db_and_modules
+        auth, messaging, polls = modules.auth, modules.messaging, modules.polls
 
         unique_id = uuid.uuid4().hex[:8]
         user1 = auth.register(
@@ -67,9 +67,9 @@ class TestVoting:
         with pytest.raises(AlreadyVotedError):
             polls.vote(user2.id, poll.id, [poll.options[1].id])
 
-    def test_vote_multiple_choice(self, db_and_modules):
+    def test_vote_multiple_choice(self, modules):
         """Test multiple choice voting."""
-        db, auth, messaging, polls = db_and_modules
+        auth, messaging, polls = modules.auth, modules.messaging, modules.polls
 
         unique_id = uuid.uuid4().hex[:8]
         user1 = auth.register(
@@ -101,9 +101,9 @@ class TestVoting:
         assert poll.options[0].id in results.user_votes
         assert poll.options[2].id in results.user_votes
 
-    def test_vote_multiple_not_allowed_fails(self, db_and_modules):
+    def test_vote_multiple_not_allowed_fails(self, modules):
         """Test multiple votes on single choice poll fails."""
-        db, auth, messaging, polls = db_and_modules
+        auth, messaging, polls = modules.auth, modules.messaging, modules.polls
 
         unique_id = uuid.uuid4().hex[:8]
         user1 = auth.register(
