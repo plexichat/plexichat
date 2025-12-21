@@ -108,7 +108,36 @@ class AuthManager:
         # Create tables if they don't exist
         logger.info("Initializing authentication module")
         create_tables(db)
+        
+        # Ensure system user exists
+        self._ensure_system_user()
+        
         logger.info("Authentication tables ready")
+
+    def _ensure_system_user(self) -> None:
+        """Ensure system user (ID 0) exists for system messages."""
+        system_user = self.db.fetch_one("SELECT id FROM auth_users WHERE id = 0")
+        if not system_user:
+            now = self._current_time()
+            self.db.execute(
+                """INSERT INTO auth_users 
+                   (id, account_type, username, email, password_hash, permissions, 
+                    created_at, updated_at, email_verified, account_locked)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    0, 
+                    'system', 
+                    "System", 
+                    "system@plexichat.local", 
+                    "INVALID_HASH_LOCKED", 
+                    permissions_to_json({}), 
+                    now, 
+                    now, 
+                    1, 
+                    1
+                )
+            )
+            logger.info("Created system user (ID 0)")
 
     def _cache_get_user(self, user_id: int) -> Optional[Any]:
         """Get user from cache if not expired."""
@@ -715,14 +744,15 @@ class AuthManager:
         )
 
         if active_count and active_count["count"] >= max_sessions:
-            # Revoke oldest session
-            oldest = self.db.fetch_one(
+            # Revoke oldest sessions until we're under the limit
+            excess = active_count["count"] - max_sessions + 1
+            oldest_sessions = self.db.fetch_all(
                 """SELECT id FROM auth_sessions 
                    WHERE user_id = ? AND revoked = 0
-                   ORDER BY created_at ASC LIMIT 1""",
-                (user_id,),
+                   ORDER BY created_at ASC LIMIT ?""",
+                (user_id, excess),
             )
-            if oldest:
+            for oldest in oldest_sessions:
                 self.db.execute(
                     "UPDATE auth_sessions SET revoked = 1 WHERE id = ?", (oldest["id"],)
                 )

@@ -119,3 +119,24 @@ class ConversationTypeError(MessagingError):
     """Raised when operation is invalid for conversation type."""
 
     pass
+
+
+class PinLimitError(MessagingError):
+    """Raised when pin limit is reached."""
+
+    def __init__(self, message: str, limit: int, current: int):
+        super().__init__(message)
+        self.limit = limit
+        self.current = current
+
+
+class MessageNotPinnedError(MessagingError):
+    """Raised when trying to unpin a message that is not pinned."""
+
+    pass
+
+
+class AttachmentNotFoundError(AttachmentError):
+    """Raised when an attachment cannot be found."""
+
+    pass

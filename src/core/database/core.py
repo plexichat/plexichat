@@ -59,6 +59,7 @@ class Database:
         self._pool = None  # PostgreSQL connection pool
         self._cursor = None
         self._in_transaction = False
+        self._transaction_depth = 0
         self._lock = threading.RLock()
         logger.info(f"Database initialized with type: {self.type}")
 
@@ -379,32 +380,45 @@ class Database:
             return result is not None
 
     def begin_transaction(self) -> None:
-        """Begin a transaction (disables autocommit)."""
+        """Begin a transaction (disables autocommit). Supports nesting."""
         with self._lock:
             self._ensure_connected()
             assert self.connection is not None  # Type narrowing for pyright
-            self._in_transaction = True
-            if self.type == "sqlite":
-                self.connection.execute("BEGIN")
-            logger.debug("Transaction started")
+            
+            if self._transaction_depth == 0:
+                self._in_transaction = True
+                if self.type == "sqlite":
+                    self.connection.execute("BEGIN")
+                logger.debug("Transaction started")
+            
+            self._transaction_depth += 1
 
     def commit(self) -> None:
-        """Commit the current transaction."""
+        """Commit the current transaction. Only commits if at outer level."""
         with self._lock:
             self._ensure_connected()
             assert self.connection is not None  # Type narrowing for pyright
-            self.connection.commit()
-            self._in_transaction = False
-            logger.debug("Transaction committed")
+            
+            if self._transaction_depth > 0:
+                self._transaction_depth -= 1
+            
+            if self._transaction_depth == 0:
+                self.connection.commit()
+                self._in_transaction = False
+                logger.debug("Transaction committed")
 
     def rollback(self) -> None:
-        """Rollback the current transaction."""
+        """Rollback the current transaction. Resets depth."""
         with self._lock:
             self._ensure_connected()
             assert self.connection is not None  # Type narrowing for pyright
-            self.connection.rollback()
-            self._in_transaction = False
-            logger.debug("Transaction rolled back")
+            
+            # Rollback always resets the transaction state completely
+            if self._transaction_depth > 0 or self._in_transaction:
+                self.connection.rollback()
+                self._in_transaction = False
+                self._transaction_depth = 0
+                logger.debug("Transaction rolled back")
 
     def insert_or_ignore(self, table: str, columns: List[str], values: Tuple) -> bool:
         """

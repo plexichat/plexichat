@@ -669,7 +669,9 @@ class AutoModManager:
             return True
 
         user_roles = self._db.fetch_all(
-            "SELECT role_id FROM srv_member_roles WHERE server_id = ? AND user_id = ?",
+            """SELECT role_id FROM srv_member_roles 
+               JOIN srv_members ON srv_member_roles.member_id = srv_members.id
+               WHERE srv_members.server_id = ? AND srv_members.user_id = ?""",
             (server_id, user_id)
         )
         role_ids = [r["role_id"] for r in user_roles]
@@ -710,7 +712,9 @@ class AutoModManager:
             return True
 
         user_roles = self._db.fetch_all(
-            "SELECT role_id FROM srv_member_roles WHERE server_id = ? AND user_id = ?",
+            """SELECT role_id FROM srv_member_roles 
+               JOIN srv_members ON srv_member_roles.member_id = srv_members.id
+               WHERE srv_members.server_id = ? AND srv_members.user_id = ?""",
             (rule.server_id, user_id)
         )
         user_role_ids = {r["role_id"] for r in user_roles}
@@ -924,7 +928,10 @@ class AutoModManager:
             created_at=now
         )
 
-        success = self._execute_action(action, violation, context)
+        if action_type == ActionType.LOG_ONLY:
+            success = True
+        else:
+            success = self._execute_action(action, violation, context)
 
         if success:
             audit_id = self._generate_id()

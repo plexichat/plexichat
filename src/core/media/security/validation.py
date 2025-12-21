@@ -207,6 +207,9 @@ class FileValidator:
         Returns:
             Sanitized filename
         """
+        # Normalize path separators first (handle both Unix and Windows paths)
+        filename = filename.replace("\\", "/")
+        
         # Remove path components
         filename = os.path.basename(filename)
 

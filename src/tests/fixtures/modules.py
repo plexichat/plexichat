@@ -125,8 +125,13 @@ class ModuleRegistry:
         """Get the notifications module (lazy loaded)."""
         if 'notifications' not in self._cache:
             from src.core import notifications
-            self._reset_module(notifications)
-            notifications.setup(self._db, self.auth, self.messaging, self.servers)
+            notifications.setup(
+                self._db,
+                self.messaging,
+                self.servers,
+                self.relationships,
+                self.presence
+            )
             self._cache['notifications'] = notifications
         return self._cache['notifications']
 

@@ -132,8 +132,14 @@ class WebhookManager:
                 WEBHOOK_NAME_MAX_LENGTH
             )
 
+        # Sanitize HTML tags and dangerous patterns
         name = re.sub(r'<[^>]*>', '', name)
         name = re.sub(r'javascript:', '', name, flags=re.IGNORECASE)
+        
+        # Check again after sanitization
+        name = name.strip()
+        if not name:
+            raise WebhookNameError("Webhook name contains only restricted characters or becomes empty after sanitization")
 
         return name
 
@@ -681,14 +687,12 @@ class WebhookManager:
             avatar_url = self._validate_avatar_url(avatar_url)
 
         channel_id = row["channel_id"]
-        if thread_id:
-            channel_id = thread_id
-
         # Webhook execution must use the actual conversation_id associated with the channel
-        conversation_id = channel_id
+        channel_id_for_conv = row["channel_id"]
+        conversation_id = channel_id_for_conv
         channel_row = self._db.fetch_one(
             "SELECT conversation_id FROM srv_channels WHERE id = ?",
-            (channel_id,)
+            (channel_id_for_conv,)
         )
         if channel_row and channel_row["conversation_id"]:
             conversation_id = channel_row["conversation_id"]

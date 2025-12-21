@@ -43,9 +43,11 @@ def test_server_for_automod(modules, user_pool):
 
 
 @pytest.fixture
-def keyword_rule(automod_module, test_server_for_automod):
+def keyword_rule(automod_module, test_server_for_automod, user_pool, modules):
     """Create a keyword filter rule."""
     server, channel, owner = test_server_for_automod
+    victim = user_pool.get_user()
+    modules.servers.add_member(server.id, victim.id)
 
     rule = automod_module.create_rule(
         user_id=owner.id,
@@ -63,13 +65,15 @@ def keyword_rule(automod_module, test_server_for_automod):
         ]
     )
 
-    return rule, server, channel, owner
+    return rule, server, channel, victim
 
 
 @pytest.fixture
-def regex_rule(automod_module, test_server_for_automod):
+def regex_rule(automod_module, test_server_for_automod, user_pool, modules):
     """Create a regex pattern rule."""
     server, channel, owner = test_server_for_automod
+    victim = user_pool.get_user()
+    modules.servers.add_member(server.id, victim.id)
 
     rule = automod_module.create_rule(
         user_id=owner.id,
@@ -88,13 +92,15 @@ def regex_rule(automod_module, test_server_for_automod):
         ]
     )
 
-    return rule, server, channel, owner
+    return rule, server, channel, victim
 
 
 @pytest.fixture
-def spam_rule(automod_module, test_server_for_automod):
+def spam_rule(automod_module, test_server_for_automod, user_pool, modules):
     """Create a spam detection rule."""
     server, channel, owner = test_server_for_automod
+    victim = user_pool.get_user()
+    modules.servers.add_member(server.id, victim.id)
 
     rule = automod_module.create_rule(
         user_id=owner.id,
@@ -112,13 +118,15 @@ def spam_rule(automod_module, test_server_for_automod):
         ]
     )
 
-    return rule, server, channel, owner
+    return rule, server, channel, victim
 
 
 @pytest.fixture
-def mention_rule(automod_module, test_server_for_automod):
+def mention_rule(automod_module, test_server_for_automod, user_pool, modules):
     """Create a mention spam rule."""
     server, channel, owner = test_server_for_automod
+    victim = user_pool.get_user()
+    modules.servers.add_member(server.id, victim.id)
 
     rule = automod_module.create_rule(
         user_id=owner.id,
@@ -136,7 +144,7 @@ def mention_rule(automod_module, test_server_for_automod):
         ]
     )
 
-    return rule, server, channel, owner
+    return rule, server, channel, victim
 
 
 def pytest_configure(config):

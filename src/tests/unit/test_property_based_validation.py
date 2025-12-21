@@ -10,6 +10,7 @@ Run with: pytest src/tests/unit/test_property_based_validation.py -v
 import pytest
 import json
 import string
+import re
 
 try:
     from hypothesis import given, strategies as st, assume, settings, example
@@ -21,6 +22,28 @@ except ImportError:
 
 from src.core.auth.passwords import validate_username, validate_email, validate_password
 from src.core.messaging.content import validate_content
+from src.core.webhooks.manager import WebhookManager
+from src.core.servers.manager import ServerManager
+from src.core.webhooks.exceptions import WebhookNameError
+from src.core.servers.exceptions import InvalidServerNameError, InvalidChannelNameError, InvalidRoleNameError
+from unittest.mock import MagicMock
+
+# Reusable mock managers for validation testing (initialized lazily)
+_MOCK_DB = MagicMock()
+_WEBHOOK_MANAGER_INSTANCE = None
+_SERVER_MANAGER_INSTANCE = None
+
+def _get_webhook_manager():
+    global _WEBHOOK_MANAGER_INSTANCE
+    if _WEBHOOK_MANAGER_INSTANCE is None:
+        _WEBHOOK_MANAGER_INSTANCE = WebhookManager(_MOCK_DB)
+    return _WEBHOOK_MANAGER_INSTANCE
+
+def _get_server_manager():
+    global _SERVER_MANAGER_INSTANCE
+    if _SERVER_MANAGER_INSTANCE is None:
+        _SERVER_MANAGER_INSTANCE = ServerManager(_MOCK_DB)
+    return _SERVER_MANAGER_INSTANCE
 
 
 # Custom strategies for domain-specific testing
@@ -361,18 +384,13 @@ class TestServersManagerPropertyBased:
     @settings(max_examples=200, deadline=None)
     def test_server_name_validation(self, name):
         """Test server name validation with various inputs."""
-        # Server names: min 2, max 100 chars, non-empty after strip
-        stripped = name.strip()
-        is_valid = 2 <= len(stripped) <= 100
-        
-        if not stripped:
-            assert len(stripped) == 0
-        
-        if len(stripped) < 2:
-            assert not is_valid
-        
-        if len(stripped) > 100:
-            assert not is_valid
+        try:
+            sanitized = _get_server_manager()._validate_server_name(name)
+            assert 2 <= len(sanitized) <= 100
+            assert sanitized == name.strip()
+        except InvalidServerNameError:
+            stripped = name.strip()
+            assert not stripped or len(stripped) < 2 or len(stripped) > 100
 
     @given(st.text(min_size=2, max_size=100).filter(lambda x: x.strip()))
     @settings(max_examples=100, deadline=None)
@@ -388,27 +406,28 @@ class TestServersManagerPropertyBased:
     @settings(max_examples=50)
     def test_short_server_names_rejected(self, name):
         """Server names shorter than 2 chars should be rejected."""
-        assert len(name.strip()) < 2
+        assume(len(name.strip()) < 2)
+        with pytest.raises(InvalidServerNameError):
+            _get_server_manager()._validate_server_name(name)
 
-    @given(st.text(min_size=101, max_size=200))
+    @given(st.text(min_size=101, max_size=250))
     @settings(max_examples=50)
     def test_long_server_names_rejected(self, name):
         """Server names longer than 100 chars should be rejected."""
-        assert len(name.strip()) > 100
+        assume(len(name.strip()) > 100)
+        with pytest.raises(InvalidServerNameError):
+            _get_server_manager()._validate_server_name(name)
 
     @given(st.text(min_size=0, max_size=150))
     @settings(max_examples=200, deadline=None)
     def test_channel_name_validation(self, name):
         """Test channel name validation."""
-        # Channel names: converted to lowercase, spaces to hyphens, max 100 chars
-        if not name or not name.strip():
-            is_valid = False
-        else:
-            normalized = name.strip().lower().replace(" ", "-")
-            is_valid = len(normalized) <= 100
-        
-        if not name.strip():
-            assert not is_valid
+        try:
+            sanitized = _get_server_manager()._validate_channel_name(name)
+            assert len(sanitized) <= 100
+            assert " " not in sanitized
+        except InvalidChannelNameError:
+            assert not name or not name.strip()
 
     @given(st.text(min_size=1, max_size=100, alphabet=st.characters(min_codepoint=97, max_codepoint=122) | st.sampled_from(['-'])))
     @settings(max_examples=100, deadline=None)
@@ -423,15 +442,13 @@ class TestServersManagerPropertyBased:
     @settings(max_examples=200, deadline=None)
     def test_role_name_validation(self, name):
         """Test role name validation."""
-        # Role names: non-empty after strip, max 100 chars
-        stripped = name.strip()
-        is_valid = 0 < len(stripped) <= 100
-        
-        if not stripped:
-            assert not is_valid
-        
-        if len(stripped) > 100:
-            assert not is_valid
+        try:
+            sanitized = _get_server_manager()._validate_role_name(name)
+            assert 0 < len(sanitized) <= 100
+            assert sanitized == name.strip()
+        except InvalidRoleNameError:
+            stripped = name.strip()
+            assert not stripped or len(stripped) > 100
 
     @given(st.text(min_size=1, max_size=100).filter(lambda x: x.strip()))
     @settings(max_examples=100, deadline=None)
@@ -456,15 +473,20 @@ class TestWebhookManagerPropertyBased:
     @settings(max_examples=200, deadline=None)
     def test_webhook_name_validation(self, name):
         """Test webhook name validation."""
-        # Webhook names: non-empty after strip, max 80 chars, no HTML/JS
-        stripped = name.strip()
-        is_valid = 0 < len(stripped) <= 80
-        
-        if not stripped:
-            assert not is_valid
-        
-        if len(stripped) > 80:
-            assert not is_valid
+        try:
+            sanitized = _get_webhook_manager()._validate_name(name)
+            assert 0 < len(sanitized) <= 80
+            assert sanitized == name.strip() or any(c in name for c in '<>')
+        except WebhookNameError:
+            stripped = name.strip()
+            # It's valid to raise WebhookNameError if:
+            # 1. The original name was empty/whitespace
+            # 2. The name exceeded maximum length
+            # 3. The name became empty after HTML/script sanitization
+            sanitized_via_re = re.sub(r'<[^>]*>', '', stripped)
+            sanitized_via_re = re.sub(r'javascript:', '', sanitized_via_re, flags=re.IGNORECASE).strip()
+            
+            assert not stripped or len(stripped) > 80 or not sanitized_via_re
 
     @given(st.text(min_size=1, max_size=80).filter(lambda x: x.strip() and '<' not in x))
     @settings(max_examples=100, deadline=None)
@@ -481,7 +503,10 @@ class TestWebhookManagerPropertyBased:
     @settings(max_examples=50)
     def test_long_webhook_names_rejected(self, name):
         """Webhook names longer than 80 chars should be rejected."""
-        assert len(name.strip()) > 80
+        stripped = name.strip()
+        assume(len(stripped) > 80)
+        with pytest.raises(WebhookNameError):
+            _get_webhook_manager()._validate_name(name)
 
     @given(st.sampled_from(['<script', 'javascript:']), st.text(max_size=20), st.text(max_size=20))
     @settings(max_examples=30)

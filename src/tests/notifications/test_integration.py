@@ -5,6 +5,7 @@ Tests for integration with other modules.
 from src.core.notifications import MentionType
 
 
+
 class TestMessagingIntegration:
     """Tests for integration with messaging module."""
 

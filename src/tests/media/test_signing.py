@@ -105,11 +105,13 @@ class TestUrlSigner:
             expires_in=7200,
         )
 
-        expected_expiry = int(time.time()) + 7200
+        # Expiry is stored in milliseconds
+        expected_expiry = int(time.time() * 1000) + (7200 * 1000)
         actual_expiry = signer.get_expiry_time(signed.url)
 
         assert actual_expiry is not None
-        assert abs(actual_expiry - expected_expiry) < 5
+        # Allow 5 seconds tolerance (in milliseconds)
+        assert abs(actual_expiry - expected_expiry) < 5000
 
     def test_get_expiry_time(self):
         """Test getting expiry time from signed URL."""

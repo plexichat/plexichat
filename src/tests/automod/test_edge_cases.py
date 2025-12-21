@@ -33,9 +33,11 @@ class TestEdgeCases:
 
         assert result.passed
 
-    def test_very_long_content(self, automod_module, test_server_for_automod):
+    def test_very_long_content(self, automod_module, test_server_for_automod, user_pool, modules):
         """Test checking very long content."""
         server, channel, owner = test_server_for_automod
+        member = user_pool.get_user()
+        modules.servers.add_member(server.id, member.id)
 
         rule = automod_module.create_rule(
             user_id=owner.id,
@@ -51,7 +53,7 @@ class TestEdgeCases:
         result = automod_module.check_message(
             server_id=server.id,
             channel_id=channel.id,
-            user_id=owner.id,
+            user_id=member.id,
             content=long_content
         )
 
@@ -103,9 +105,11 @@ class TestEdgeCases:
         with pytest.raises(RuleNotFoundError):
             automod_module.delete_rule(owner.id, 999999)
 
-    def test_unicode_content(self, automod_module, test_server_for_automod):
+    def test_unicode_content(self, automod_module, test_server_for_automod, user_pool, modules):
         """Test handling unicode content."""
         server, channel, owner = test_server_for_automod
+        member = user_pool.get_user()
+        modules.servers.add_member(server.id, member.id)
 
         rule = automod_module.create_rule(
             user_id=owner.id,
@@ -119,15 +123,17 @@ class TestEdgeCases:
         result = automod_module.check_message(
             server_id=server.id,
             channel_id=channel.id,
-            user_id=owner.id,
+            user_id=member.id,
             content="Hello 世界 test 🎉"
         )
 
         assert not result.passed
 
-    def test_special_regex_characters(self, automod_module, test_server_for_automod):
+    def test_special_regex_characters(self, automod_module, test_server_for_automod, user_pool, modules):
         """Test keywords with special regex characters."""
         server, channel, owner = test_server_for_automod
+        member = user_pool.get_user()
+        modules.servers.add_member(server.id, member.id)
 
         rule = automod_module.create_rule(
             user_id=owner.id,
@@ -141,7 +147,7 @@ class TestEdgeCases:
         result = automod_module.check_message(
             server_id=server.id,
             channel_id=channel.id,
-            user_id=owner.id,
+            user_id=member.id,
             content="Get $$$ now!"
         )
 

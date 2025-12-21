@@ -8,7 +8,7 @@ import uuid
 import pytest
 import asyncio
 import uuid
-from httpx import AsyncClient
+from httpx import AsyncClient, ASGITransport
 from src.api.app import create_app
 
 @pytest.mark.asyncio
@@ -18,14 +18,14 @@ class TestAuthenticationAsync:
     async def test_valid_bearer_token(self, auth_headers, api_module):
         """Test request with valid Bearer token."""
         app = create_app()
-        async with AsyncClient(app=app, base_url="http://test") as ac:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             response = await ac.get("/api/v1/users/@me", headers=auth_headers)
             assert response.status_code == 200
 
     async def test_invalid_bearer_token(self, api_module):
         """Test request with invalid Bearer token."""
         app = create_app()
-        async with AsyncClient(app=app, base_url="http://test") as ac:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             response = await ac.get(
                 "/api/v1/users/@me",
                 headers={"Authorization": "Bearer invalid_token_12345"}
@@ -36,7 +36,7 @@ class TestAuthenticationAsync:
     async def test_concurrent_authenticated_requests(self, auth_headers, api_module):
         """Test multiple concurrent authenticated requests to verify thread safety and performance."""
         app = create_app()
-        async with AsyncClient(app=app, base_url="http://test") as ac:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             tasks = [ac.get("/api/v1/users/@me", headers=auth_headers) for _ in range(20)]
             responses = await asyncio.gather(*tasks)
             
@@ -66,7 +66,7 @@ class TestAuthenticationAsync:
         )
 
         app = create_app()
-        async with AsyncClient(app=app, base_url="http://test") as ac:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             response = await ac.get(
                 "/api/v1/users/@me",
                 headers={"Authorization": f"Bot {bot.token}"}
@@ -85,7 +85,7 @@ class TestAuthenticationAsync:
         headers = {"Authorization": f"Bearer {token}"}
 
         app = create_app()
-        async with AsyncClient(app=app, base_url="http://test") as ac:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             # First request should succeed
             resp1 = await ac.get("/api/v1/users/@me", headers=headers)
             assert resp1.status_code == 200
@@ -105,7 +105,7 @@ class TestPublicEndpointsAsync:
     async def test_health_and_version_negotiation(self):
         """Test health and version negotiation without auth."""
         app = create_app()
-        async with AsyncClient(app=app, base_url="http://test") as ac:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             # Test health
             health_resp = await ac.get("/api/v1/health")
             assert health_resp.status_code == 200

@@ -1,0 +1,48 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.3, pytest-8.4.1, pluggy-1.6.0 -- C:\Users\dboyn\AppData\Local\Programs\Python\Python313\python.exe
+cachedir: .pytest_cache
+hypothesis profile 'ci' -> deadline=None, suppress_health_check=(HealthCheck.filter_too_much, HealthCheck.data_too_large, HealthCheck.too_slow)
+benchmark: 5.1.0 (defaults: timer=time.perf_counter disable_gc=False min_rounds=5 min_time=0.000005 max_time=1.0 calibration_precision=10 warmup=False warmup_iterations=100000)
+rootdir: C:\Users\dboyn\coding-plexichat\plexichat
+configfile: pytest.ini
+plugins: anyio-4.9.0, Faker-37.6.0, hypothesis-6.138.8, asyncio-1.1.0, benchmark-5.1.0, cov-6.2.1, mock-3.14.1, timeout-2.4.0, xdist-3.8.0
+asyncio: mode=Mode.STRICT, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+timeout: 60.0s
+timeout method: thread
+timeout func_only: False
+collecting ... collected 1 item
+
+src/tests/search/test_permissions.py::TestMessageSearchPermissions::test_user_can_search_server_channels FAILED [100%]
+
+================================== FAILURES ===================================
+______ TestMessageSearchPermissions.test_user_can_search_server_channels ______
+src\tests\search\test_permissions.py:97: in test_user_can_search_server_channels
+    results = search.search_messages(member.id, "test", server_id=server.id)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\core\search\__init__.py:154: in search_messages
+    return _get_manager().search_messages(
+src\core\search\manager.py:164: in search_messages
+    accessible_conversations = self._get_accessible_conversations(
+src\core\search\manager.py:516: in _get_accessible_conversations
+    if ch["conversation_id"] and self._can_access_channel(user_id, ch["id"]):
+                                                                   ^^^^^^^^
+E   KeyError: 'id'
+=============================== Custom Reports ================================
+================================================================================\nPerformance Report\n================================================================================\n\nTotal tests: 1\nTotal time: 0.02s\nAverage time: 0.016s\n\nNo slow tests detected \u2713\n
+
+================================================================================\nSecurity Violation Report\n================================================================================\n\n\u2713 No security violations detected\n
+================================================================================
+Test Metrics Report
+================================================================================
+
+Total tests: 1
+  Passed:      0 (  0.0%)
+  Failed:      1 (100.0%)
+  Skipped:     0 (  0.0%)
+
+Tests by marker:
+  search              :    1 tests (0 passed, 1 failed)
+
+=========================== short test summary info ===========================
+FAILED src/tests/search/test_permissions.py::TestMessageSearchPermissions::test_user_can_search_server_channels - KeyError: 'id'
+============================== 1 failed in 1.03s ==============================

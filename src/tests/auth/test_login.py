@@ -82,9 +82,12 @@ class TestLoginAsync:
         # We'll create 15 to trigger the cleanup logic multiple times
         for _ in range(15):
             await asyncio.to_thread(auth.login, username, "TestPass123!")
+            # Ensure unique timestamps for reliable ordering/revocation
+            await asyncio.sleep(0.01)
             
         # Check that we don't exceed the limit
         sessions = auth.get_sessions(user.id)
+        # The default limit is 10, so we should have 10 sessions
         assert len(sessions) <= 10
         
         # Verify they are the newest ones (last_activity descending)

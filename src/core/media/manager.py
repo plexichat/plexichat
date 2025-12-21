@@ -38,6 +38,7 @@ from .schema import create_tables
 from .storage import LocalStorage, S3Storage, DatabaseStorage, StorageBackendBase
 from .processing import ImageProcessor, VideoProcessor
 from .security import UrlSigner, MalwareScanner, ExternalProxy
+from .security.validation import BLOCKED_EXTENSIONS, BLOCKED_MIME_TYPES
 
 
 DEFAULT_SIZE_LIMITS = {
@@ -60,6 +61,40 @@ DEFAULT_THUMBNAIL_SIZES = [64, 128, 256, 512]
 
 class MediaManager:
     """Core media manager handling all operations."""
+
+    def _sanitize_filename(self, filename: str) -> str:
+        """
+        Sanitize filename to prevent security issues.
+        
+        Removes:
+        - Directory traversal (.., /)
+        - Null bytes
+        - Control characters
+        - Excessive length
+        """
+        # Normalize path separators first (handle both Unix and Windows paths)
+        filename = filename.replace("\\", "/")
+        
+        # Remove directory separators and path components
+        filename = os.path.basename(filename)
+        
+        # Remove path traversal attempts that might remain
+        filename = filename.replace("..", "")
+        
+        # Remove null bytes and control characters
+        filename = "".join(c for c in filename if ord(c) >= 32 and ord(c) != 127)
+        
+        # Limit length to 250 characters
+        if len(filename) > 250:
+            name, ext = os.path.splitext(filename)
+            max_name_len = 250 - len(ext)
+            filename = name[:max_name_len] + ext
+            
+        # Ensure not empty
+        if not filename or filename.strip() == ".":
+            filename = f"unnamed_file_{int(time.time())}"
+            
+        return filename
 
     def __init__(self, db, messaging_module=None):
         """
@@ -401,9 +436,6 @@ class MediaManager:
         Returns:
             True if magic bytes match content type, False otherwise
         """
-        if len(file_data) < 12:
-            return True  # Too small to validate, allow through
-
         # Magic byte signatures for common file types
         magic_signatures = {
             # Images
@@ -434,22 +466,30 @@ class MediaManager:
 
         ct_lower = content_type.lower()
 
-        # If we don't have signatures for this type, allow through
+        # If we don't have signatures for this type, allow through (unknown type)
         if ct_lower not in magic_signatures:
             return True
 
         signatures = magic_signatures[ct_lower]
 
-        # Text types have no magic bytes
+        # Text types have no magic bytes -> valid
         if not signatures:
             return True
 
+        # If file is too short to match ANY signature for this type, and it HAS enforced signatures, it's invalid
+        # Exception: some signatures might be longer than the file, but we should check if file matches prefix?
+        # No, magic bytes usually appear at start. If file < signature, it doesn't match.
+        # Check against shortest signature
+        shortest_sig_len = min(len(s) for s in signatures) if signatures else 0
+        if len(file_data) < shortest_sig_len:
+            return False
+
         # Check if file starts with any valid signature
         for sig in signatures:
-            if file_data[:len(sig)] == sig:
+            if file_data.startswith(sig):
                 return True
             # Special case for MP4/MOV - ftyp can be at offset 4
-            if ct_lower in ("video/mp4", "video/quicktime") and b"ftyp" in file_data[:12]:
+            if ct_lower in ("video/mp4", "video/quicktime") and len(file_data) >= 12 and b"ftyp" in file_data[:12]:
                 return True
 
         return False
@@ -517,11 +557,30 @@ class MediaManager:
             content_type, _ = mimetypes.guess_type(filename)
             content_type = content_type or "application/octet-stream"
 
+        filename = self._sanitize_filename(filename)
+
         media_type = self._detect_media_type(content_type)
         file_size = len(file_data)
 
         self._validate_content_type(content_type, media_type)
         self._validate_file_size(file_size, media_type)
+
+        # SECURITY: Check for blocked executable extensions
+        ext = os.path.splitext(filename.lower())[1]
+        if ext in BLOCKED_EXTENSIONS:
+            raise FileTypeError(
+                f"File type not allowed: {ext}",
+                content_type,
+                ["Executable and script files are blocked for security"]
+            )
+        
+        # SECURITY: Check for blocked MIME types
+        if content_type.lower() in BLOCKED_MIME_TYPES:
+            raise FileTypeError(
+                f"Content type not allowed: {content_type}",
+                content_type,
+                ["This content type is blocked for security"]
+            )
 
         # SECURITY: Validate magic bytes match content type (prevents MIME spoofing)
         if not self._validate_magic_bytes(file_data, content_type):
@@ -615,6 +674,10 @@ class MediaManager:
                     "has_alpha": img_meta.has_alpha,
                     "animated": img_meta.animated,
                 }
+            except ImageProcessingError as e:
+                # Security-related errors (decompression bombs, excessive dimensions) should fail the upload
+                logger.warning(f"Image security validation failed: {e}")
+                raise FileUploadError(str(e), filename)
             except Exception as e:
                 logger.warning(f"Failed to extract image metadata: {e}")
         elif media_type == MediaType.VIDEO and self._video_processor and self._video_processor.is_available():
@@ -711,9 +774,12 @@ class MediaManager:
             content_type: MIME type
             size: File size in bytes
 
+            size: File size in bytes
+
         Returns:
             UploadResult with file info and URLs
         """
+        filename = self._sanitize_filename(filename)
         media_type = self._detect_media_type(content_type)
 
         self._validate_content_type(content_type, media_type)

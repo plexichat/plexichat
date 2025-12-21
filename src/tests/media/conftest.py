@@ -154,6 +154,9 @@ def media_module(modules, temp_upload_dir):
             "uploads_per_minute": 1000,
             "uploads_per_hour": 10000,
             "max_total_size_per_day": 10 * 1024 * 1024 * 1024  # 10GB for tests
+        },
+        "compression": {
+            "enabled": False
         }
     }
 

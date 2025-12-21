@@ -508,7 +508,7 @@ class SearchManager:
 
         if server_id:
             channels = self._db.fetch_all(
-                """SELECT conversation_id FROM srv_channels 
+                """SELECT id, conversation_id FROM srv_channels 
                    WHERE server_id = ?""",
                 (server_id,)
             )
@@ -580,7 +580,7 @@ class SearchManager:
                 result.author_username = author["username"]
 
             conv = self._db.fetch_one(
-                "SELECT name, type FROM msg_conversations WHERE id = ?",
+                "SELECT name, conversation_type FROM msg_conversations WHERE id = ?",
                 (result.conversation_id,)
             )
             if conv:

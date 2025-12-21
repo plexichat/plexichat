@@ -9,17 +9,19 @@ from ..models import CommandType
 
 
 COMMAND_NAME_PATTERN = re.compile(r"^[\w-]{1,32}$")
+CONTEXT_MENU_NAME_PATTERN = re.compile(r"^[\w\s-]{1,32}$")
 MAX_COMMAND_NAME_LENGTH = 32
 MAX_COMMAND_DESCRIPTION_LENGTH = 100
 MAX_OPTIONS_PER_COMMAND = 25
 
 
-def validate_command_name(name: str) -> Tuple[bool, List[str]]:
+def validate_command_name(name: str, command_type: CommandType = CommandType.CHAT_INPUT) -> Tuple[bool, List[str]]:
     """
     Validate a command name.
     
     Args:
         name: Command name
+        command_type: Type of command
         
     Returns:
         Tuple of (valid, issues)
@@ -33,11 +35,15 @@ def validate_command_name(name: str) -> Tuple[bool, List[str]]:
     if len(name) > MAX_COMMAND_NAME_LENGTH:
         issues.append(f"Command name exceeds {MAX_COMMAND_NAME_LENGTH} characters")
 
-    if not COMMAND_NAME_PATTERN.match(name):
-        issues.append("Command name must be lowercase and contain only letters, numbers, hyphens, and underscores")
+    if command_type == CommandType.CHAT_INPUT:
+        if not COMMAND_NAME_PATTERN.match(name):
+            issues.append("Chat command name must be lowercase and contain only letters, numbers, hyphens, and underscores")
 
-    if name != name.lower():
-        issues.append("Command name must be lowercase")
+        if name != name.lower():
+            issues.append("Chat command name must be lowercase")
+    else:
+        if not CONTEXT_MENU_NAME_PATTERN.match(name):
+            issues.append("Context menu command name can only contain letters, numbers, hyphens, underscores, and spaces")
 
     return len(issues) == 0, issues
 
@@ -79,10 +85,6 @@ def validate_command(command_data: Dict[str, Any]) -> Tuple[bool, List[str]]:
     """
     issues = []
 
-    name = command_data.get("name", "")
-    name_valid, name_issues = validate_command_name(name)
-    issues.extend(name_issues)
-
     command_type = command_data.get("command_type", CommandType.CHAT_INPUT)
     if isinstance(command_type, int):
         try:
@@ -90,6 +92,10 @@ def validate_command(command_data: Dict[str, Any]) -> Tuple[bool, List[str]]:
         except ValueError:
             issues.append(f"Invalid command type: {command_type}")
             command_type = CommandType.CHAT_INPUT
+
+    name = command_data.get("name", "")
+    name_valid, name_issues = validate_command_name(name, command_type)
+    issues.extend(name_issues)
 
     description = command_data.get("description", "")
     desc_valid, desc_issues = validate_command_description(description, command_type)
@@ -129,7 +135,14 @@ def validate_command_update(update_data: Dict[str, Any]) -> Tuple[bool, List[str
     issues = []
 
     if "name" in update_data:
-        name_valid, name_issues = validate_command_name(update_data["name"])
+        command_type = update_data.get("command_type", CommandType.CHAT_INPUT)
+        if isinstance(command_type, int):
+            try:
+                command_type = CommandType(command_type)
+            except ValueError:
+                command_type = CommandType.CHAT_INPUT
+
+        name_valid, name_issues = validate_command_name(update_data["name"], command_type)
         issues.extend(name_issues)
 
     if "description" in update_data:

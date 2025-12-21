@@ -111,6 +111,14 @@ def setup_config():
             "max_attachments": 10,
             "max_attachments_per_message": 10
         },
+        "media": {
+            "compression": {
+                "enabled": False
+            }
+        },
+        "applications": {
+            "max_applications_per_user": 1000
+        },
         "ratelimit": {
             "enabled": True,
             "global": {"limit": 100, "window": 60},
@@ -416,6 +424,8 @@ def test_db():
     import utils.config as config
     from src.core.database import Database
     from src.core.auth.schema import create_tables as create_auth_tables
+    from src.core.messaging.schema import create_tables as create_messaging_tables
+    from src.core.polls.schema import create_tables as create_polls_tables
     
     # Save current config to restore later
     old_db_conf = config.get("database", None)
@@ -426,16 +436,21 @@ def test_db():
     
     # Critical: Create auth tables first because other modules have foreign keys to them
     create_auth_tables(db)
+    create_messaging_tables(db)
+    create_polls_tables(db)
+    
+    # Insert system user (ID 0) for system messages
+    db.execute(
+        "INSERT INTO auth_users (id, account_type, username, email, password_hash, permissions, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (0, "system", "system", "system@localhost", "!", "{}", 0, 0)
+    )
     
     # Insert default users for tests that assume fixed IDs (like manager tests)
-    db.execute(
-        "INSERT INTO auth_users (id, account_type, username, email, password_hash, permissions, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (1, "user", "testowner", "fixture_owner@example.com", "fake_hash", "{}", 0, 0)
-    )
-    db.execute(
-        "INSERT INTO auth_users (id, account_type, username, email, password_hash, permissions, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (2, "user", "testother", "fixture_other@example.com", "fake_hash", "{}", 0, 0)
-    )
+    for i in range(1, 11):
+        db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email, password_hash, permissions, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (i, "user", f"testuser{i}", f"fixture_user{i}@example.com", "fake_hash", "{}", 0, 0)
+        )
     
     yield db
     

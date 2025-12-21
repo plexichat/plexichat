@@ -54,6 +54,7 @@ def base_server_setup(modules):
         "servers": modules.servers,
         "embeds": modules.embeds,
         "webhooks": modules.webhooks,
+        "db": modules._db,
     }
 
 
@@ -80,6 +81,7 @@ def fresh_server(modules):
         "servers": modules.servers,
         "webhooks": modules.webhooks,
         "embeds": modules.embeds,
+        "db": modules._db,
     }
 
 

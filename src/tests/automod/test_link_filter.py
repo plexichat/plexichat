@@ -13,9 +13,13 @@ from src.core.automod.rules.links import InviteLinkRule, ExternalLinkRule
 class TestInviteLinkRule:
     """Tests for InviteLinkRule."""
 
-    def test_blocks_invite_code(self, automod_module, test_server_for_automod):
+    def test_blocks_invite_code(self, automod_module, test_server_for_automod, user_pool, modules):
         """Test invite codes are blocked when in known list."""
         server, channel, owner = test_server_for_automod
+        
+        # Use a non-owner member (owners are exempt from automod)
+        member = user_pool.get_user()
+        modules.servers.add_member(server.id, member.id)
 
         rule = automod_module.create_rule(
             user_id=owner.id,
@@ -32,16 +36,19 @@ class TestInviteLinkRule:
         result = automod.check_message(
             server_id=server.id,
             channel_id=channel.id,
-            user_id=owner.id,
+            user_id=member.id,
             content="Join my server: abc12345",
             context={"known_invite_codes": ["abc12345"]}
         )
 
         assert not result.passed
 
-    def test_allows_whitelisted_codes(self, automod_module, test_server_for_automod):
+    def test_allows_whitelisted_codes(self, automod_module, test_server_for_automod, user_pool, modules):
         """Test whitelisted invite codes pass."""
         server, channel, owner = test_server_for_automod
+        
+        member = user_pool.get_user()
+        modules.servers.add_member(server.id, member.id)
 
         rule = automod_module.create_rule(
             user_id=owner.id,
@@ -58,16 +65,19 @@ class TestInviteLinkRule:
         result = automod.check_message(
             server_id=server.id,
             channel_id=channel.id,
-            user_id=owner.id,
+            user_id=member.id,
             content="Join partner server: allowed1",
             context={"known_invite_codes": ["allowed1"]}
         )
 
         assert result.passed
 
-    def test_no_invite_passes(self, automod_module, test_server_for_automod):
+    def test_no_invite_passes(self, automod_module, test_server_for_automod, user_pool, modules):
         """Test message without invites passes."""
         server, channel, owner = test_server_for_automod
+        
+        member = user_pool.get_user()
+        modules.servers.add_member(server.id, member.id)
 
         rule = automod_module.create_rule(
             user_id=owner.id,
@@ -81,7 +91,7 @@ class TestInviteLinkRule:
         result = automod.check_message(
             server_id=server.id,
             channel_id=channel.id,
-            user_id=owner.id,
+            user_id=member.id,
             content="Just a normal message"
         )
 
@@ -92,9 +102,12 @@ class TestInviteLinkRule:
 class TestExternalLinkRule:
     """Tests for ExternalLinkRule."""
 
-    def test_blacklist_mode(self, automod_module, test_server_for_automod):
+    def test_blacklist_mode(self, automod_module, test_server_for_automod, user_pool, modules):
         """Test blacklist mode blocks specified domains."""
         server, channel, owner = test_server_for_automod
+        
+        member = user_pool.get_user()
+        modules.servers.add_member(server.id, member.id)
 
         rule = automod_module.create_rule(
             user_id=owner.id,
@@ -111,15 +124,18 @@ class TestExternalLinkRule:
         result = automod.check_message(
             server_id=server.id,
             channel_id=channel.id,
-            user_id=owner.id,
+            user_id=member.id,
             content="Check out https://malware.com/download"
         )
 
         assert not result.passed
 
-    def test_whitelist_mode(self, automod_module, test_server_for_automod):
+    def test_whitelist_mode(self, automod_module, test_server_for_automod, user_pool, modules):
         """Test whitelist mode only allows specified domains."""
         server, channel, owner = test_server_for_automod
+        
+        member = user_pool.get_user()
+        modules.servers.add_member(server.id, member.id)
 
         rule = automod_module.create_rule(
             user_id=owner.id,
@@ -136,15 +152,18 @@ class TestExternalLinkRule:
         result = automod.check_message(
             server_id=server.id,
             channel_id=channel.id,
-            user_id=owner.id,
+            user_id=member.id,
             content="Check out https://random-site.com/page"
         )
 
         assert not result.passed
 
-    def test_whitelisted_domain_passes(self, automod_module, test_server_for_automod):
+    def test_whitelisted_domain_passes(self, automod_module, test_server_for_automod, user_pool, modules):
         """Test whitelisted domains pass in whitelist mode."""
         server, channel, owner = test_server_for_automod
+        
+        member = user_pool.get_user()
+        modules.servers.add_member(server.id, member.id)
 
         rule = automod_module.create_rule(
             user_id=owner.id,
@@ -161,15 +180,18 @@ class TestExternalLinkRule:
         result = automod.check_message(
             server_id=server.id,
             channel_id=channel.id,
-            user_id=owner.id,
+            user_id=member.id,
             content="Check out https://github.com/repo"
         )
 
         assert result.passed
 
-    def test_subdomain_matching(self, automod_module, test_server_for_automod):
+    def test_subdomain_matching(self, automod_module, test_server_for_automod, user_pool, modules):
         """Test subdomain matching works."""
         server, channel, owner = test_server_for_automod
+        
+        member = user_pool.get_user()
+        modules.servers.add_member(server.id, member.id)
 
         rule = automod_module.create_rule(
             user_id=owner.id,
@@ -186,7 +208,7 @@ class TestExternalLinkRule:
         result = automod.check_message(
             server_id=server.id,
             channel_id=channel.id,
-            user_id=owner.id,
+            user_id=member.id,
             content="Check out https://sub.evil.com/page"
         )
 

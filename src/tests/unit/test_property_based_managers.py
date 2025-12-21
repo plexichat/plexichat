@@ -338,17 +338,21 @@ class TestWebhookManagerAdvanced:
         assert isinstance(exceeds_channel_limit, bool)
         assert isinstance(exceeds_server_limit, bool)
 
-    @given(st.text(min_size=0, max_size=100))
+    @given(snowflake_ids(), st.text(min_size=1, max_size=100, alphabet='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_'))
     @settings(max_examples=100)
-    def test_webhook_url_format(self, webhook_id_str):
-        """Test webhook URL format validation."""
-        # Format: /webhooks/{id}/{token}
+    def test_webhook_url_format(self, webhook_id, token):
+        """Test webhook URL format validation and component extraction."""
         import re
-        if webhook_id_str.isdigit():
-            pattern = r'^/?webhooks/(\d+)/(.+)$'
-            test_url = f"/webhooks/{webhook_id_str}/token123"
-            match = re.match(pattern, test_url)
-            assert match is not None
+        webhook_id_str = str(webhook_id)
+        
+        # Format: /webhooks/{id}/{token}
+        pattern = r'^/?webhooks/(\d+)/([^/?#]+)$'
+        test_url = f"/webhooks/{webhook_id_str}/{token}"
+        
+        match = re.match(pattern, test_url)
+        assert match is not None, f"URL {test_url} did not match pattern"
+        assert match.group(1) == webhook_id_str, "Extracted ID does not match"
+        assert match.group(2) == token, "Extracted token does not match"
 
     @given(st.text(min_size=48, max_size=48, alphabet='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_'))
     @settings(max_examples=50)

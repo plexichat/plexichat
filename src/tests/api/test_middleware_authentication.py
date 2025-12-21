@@ -455,7 +455,7 @@ class TestConcurrency:
     async def test_concurrent_valid_tokens(self, concurrent_app, modules, user_pool):
         """Test multiple concurrent requests with valid tokens."""
         import asyncio
-        from httpx import AsyncClient
+        from httpx import AsyncClient, ASGITransport
 
         unique_id = uuid.uuid4().hex[:8]
         user = modules.auth.register(
@@ -466,7 +466,7 @@ class TestConcurrency:
         login_result = modules.auth.login(f"testuser_{unique_id}", "TestPass123!")
         token = login_result.token
 
-        async with AsyncClient(app=concurrent_app, base_url="http://test") as client:
+        async with AsyncClient(transport=ASGITransport(app=concurrent_app), base_url="http://test") as client:
             tasks = [
                 client.get("/concurrent", headers={"Authorization": f"Bearer {token}"})
                 for _ in range(50)
@@ -482,7 +482,7 @@ class TestConcurrency:
     async def test_concurrent_mixed_tokens(self, concurrent_app, modules, user_pool):
         """Test concurrent requests with mix of valid and invalid tokens."""
         import asyncio
-        from httpx import AsyncClient
+        from httpx import AsyncClient, ASGITransport
 
         unique_id = uuid.uuid4().hex[:8]
         user = modules.auth.register(
@@ -493,7 +493,7 @@ class TestConcurrency:
         login_result = modules.auth.login(f"testuser_{unique_id}", "TestPass123!")
         valid_token = login_result.token
 
-        async with AsyncClient(app=concurrent_app, base_url="http://test") as client:
+        async with AsyncClient(transport=ASGITransport(app=concurrent_app), base_url="http://test") as client:
             tasks = []
             for i in range(50):
                 if i % 2 == 0:

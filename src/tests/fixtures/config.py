@@ -147,6 +147,9 @@ def get_test_config():
             "signing_expiry": 3600,
             "scanner_enabled": False,
             "proxy_enabled": False,
+            "compression": {
+                "enabled": False
+            },
         },
         "search": {
             "backend": "sqlite_fts5",
@@ -158,5 +161,8 @@ def get_test_config():
                 "bump_cooldown_hours": 0,
                 "max_tags": 10,
             },
+        },
+        "applications": {
+            "max_applications_per_user": 1000,
         },
     }

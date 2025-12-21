@@ -68,9 +68,11 @@ class TestKeywordRule:
         assert result.passed
         assert len(result.violations) == 0
 
-    def test_multiple_keywords_matched(self, automod_module, test_server_for_automod):
+    def test_multiple_keywords_matched(self, automod_module, test_server_for_automod, user_pool, modules):
         """Test multiple keywords in same message."""
         server, channel, owner = test_server_for_automod
+        member = user_pool.get_user()
+        modules.servers.add_member(server.id, member.id)
 
         rule = automod_module.create_rule(
             user_id=owner.id,
@@ -88,7 +90,7 @@ class TestKeywordRule:
         result = automod.check_message(
             server_id=server.id,
             channel_id=channel.id,
-            user_id=owner.id,
+            user_id=member.id,
             content="Message with word1 and word2 together"
         )
 

@@ -671,7 +671,8 @@ class TestKeyRotation:
         initial_time = fresh_keyring.rotated_at
         assert initial_time > 0
         
-        time.sleep(0.01)
+        # Sleep for at least 1 second since rotated_at uses int(time.time())
+        time.sleep(1.1)
         fresh_keyring.rotate()
         new_time = fresh_keyring.rotated_at
         assert new_time > initial_time

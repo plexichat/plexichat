@@ -218,6 +218,10 @@ class TestAuthManagerTokenHandling:
     
     def test_verify_token_rate_limiting(self, auth_manager, monkeypatch):
         """Test token verification rate limiting."""
+        # Clear rate limits first
+        from src.core.database.cache import _mem_rate_limits
+        _mem_rate_limits.clear()
+        
         monkeypatch.setitem(auth_manager._get_config("security", {}), "token_verify_rate_limit", 1)
         
         user = auth_manager.register("testuser", "test@example.com", "Password123!")

@@ -44,7 +44,7 @@ class TestAPIEndpointPerformance:
     def test_health_endpoint_performance(self, benchmark, api_client):
         """Benchmark health check endpoint."""
         def health_check():
-            response = api_client.get("/health")
+            response = api_client.get("/api/v1/health")
             return response
         
         response = benchmark(health_check)

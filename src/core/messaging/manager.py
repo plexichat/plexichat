@@ -49,6 +49,9 @@ from .exceptions import (
     AttachmentLimitError,
     InvalidRecipientError,
     ConversationTypeError,
+    PinLimitError,
+    MessageNotPinnedError,
+    AttachmentNotFoundError,
 )
 from .schema import create_tables
 from .content import validate_content
@@ -145,6 +148,13 @@ class MessagingManager:
         """Create or get existing DM conversation."""
         if user_id == recipient_id:
             raise InvalidRecipientError("Cannot create DM with yourself")
+
+        # Validate recipient exists
+        recipient_exists = self._db.fetch_one(
+            "SELECT 1 FROM auth_users WHERE id = ?", (recipient_id,)
+        )
+        if not recipient_exists:
+            raise InvalidRecipientError("Recipient does not exist")
 
         # Check recipient's DM settings FIRST - applies to both new and existing DMs
         recipient_settings = self.get_user_message_settings(recipient_id)
@@ -334,6 +344,14 @@ class MessagingManager:
                 max_parts,
                 len(participants),
             )
+
+        # Validate all participants exist
+        for uid in participants:
+            user_exists = self._db.fetch_one(
+                "SELECT 1 FROM auth_users WHERE id = ?", (uid,)
+            )
+            if not user_exists:
+                raise InvalidRecipientError(f"User {uid} does not exist")
 
         now = self._get_timestamp()
         conv_id = self._generate_id()
@@ -652,6 +670,13 @@ class MessagingManager:
         # Check if already participant
         if self._is_participant(conversation_id, participant_id):
             raise ParticipantExistsError("User is already a participant")
+
+        # Validate participant exists
+        user_exists = self._db.fetch_one(
+            "SELECT 1 FROM auth_users WHERE id = ?", (participant_id,)
+        )
+        if not user_exists:
+            raise InvalidRecipientError(f"User {participant_id} does not exist")
 
         # Check participant limit
         if conv.participant_count >= conv.max_participants:
@@ -1307,6 +1332,19 @@ class MessagingManager:
         if existing:
             return True  # Already pinned
 
+        # Check pin limit
+        max_pins = self._config.get("max_pinned_messages", 50)
+        pin_count = self._db.fetch_one(
+            "SELECT COUNT(*) as count FROM msg_pinned WHERE conversation_id = ?",
+            (msg["conversation_id"],)
+        )
+        if pin_count and pin_count["count"] >= max_pins:
+            raise PinLimitError(
+                f"Cannot pin more than {max_pins} messages",
+                max_pins,
+                pin_count["count"]
+            )
+
         now = self._get_timestamp()
         pin_id = self._generate_id()
 
@@ -1328,6 +1366,13 @@ class MessagingManager:
             raise ConversationAccessDeniedError(
                 "Not a participant in this conversation"
             )
+
+        # Check if pinned
+        existing = self._db.fetch_one(
+            "SELECT 1 FROM msg_pinned WHERE message_id = ?", (message_id,)
+        )
+        if not existing:
+            raise MessageNotPinnedError("Message is not pinned")
 
         self._db.execute("DELETE FROM msg_pinned WHERE message_id = ?", (message_id,))
         return True
@@ -1647,6 +1692,10 @@ class MessagingManager:
                 ),
             )
 
+        # Invalidate cache before returning fresh data
+        if user_id in self._user_filter_cache:
+            del self._user_filter_cache[user_id]
+
         return self.get_user_filter_settings(user_id)
 
     # === User Message Settings ===
@@ -1766,6 +1815,10 @@ class MessagingManager:
                     1 if new_typing else 0,
                 ),
             )
+
+        # Invalidate cache before returning fresh data
+        if user_id in self._user_settings_cache:
+            del self._user_settings_cache[user_id]
 
         return self.get_user_message_settings(user_id)
 
@@ -1905,7 +1958,7 @@ class MessagingManager:
         """Delete an attachment."""
         att = self._get_attachment(attachment_id)
         if not att:
-            raise AttachmentError("Attachment not found")
+            raise AttachmentNotFoundError("Attachment not found")
 
         msg = self._get_message_raw(att.message_id)
         if not msg or msg["author_id"] != user_id:
