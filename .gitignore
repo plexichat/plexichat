@@ -15,10 +15,11 @@ build/
 # Temp and logs
 temp/
 temp_test/
-temp_*_test/
+temp_test_*/
 logs/
 *.log
 *.log.zip
+*.tmp
 server_out.log
 server_err.log
 gemini.md

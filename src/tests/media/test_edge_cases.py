@@ -145,8 +145,8 @@ class TestFileSizeEdgeCases:
         result = media_module.upload_file(
             user_id=user.id,
             file_data=data,
-            filename="at_limit.bin",
-            content_type="application/octet-stream",
+            filename="at_limit.txt",
+            content_type="text/plain",
         )
 
         assert result.file_id is not None
@@ -161,8 +161,8 @@ class TestFileSizeEdgeCases:
             media_module.upload_file(
                 user_id=user.id,
                 file_data=data,
-                filename="over_limit.bin",
-                content_type="application/octet-stream",
+                filename="over_limit.txt",
+                content_type="text/plain",
             )
 
 

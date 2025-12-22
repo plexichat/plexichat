@@ -99,7 +99,7 @@ class TestAPIEndpointPerformance:
                 content=f"API test message {i}"
             )
         
-        login_result = modules.auth.login(user1.username, "TestPassword123!@#")
+        login_result = modules.auth.login(user1.username, "TestPass123!")
         token = login_result.token
         
         def get_messages():
@@ -117,7 +117,7 @@ class TestAPIEndpointPerformance:
         """Benchmark send message endpoint."""
         dm, user1, user2 = test_dm
         
-        login_result = modules.auth.login(user1.username, "TestPassword123!@#")
+        login_result = modules.auth.login(user1.username, "TestPass123!")
         token = login_result.token
         
         counter = [0]
@@ -138,7 +138,7 @@ class TestAPIEndpointPerformance:
         """Test concurrent API request handling."""
         dm, user1, user2 = test_dm
         
-        login_result = modules.auth.login(user1.username, "TestPassword123!@#")
+        login_result = modules.auth.login(user1.username, "TestPass123!")
         token = login_result.token
         headers = {"Authorization": f"Bearer {token}"}
         
@@ -168,7 +168,7 @@ class TestAPIThroughput:
         """Test sustained request throughput."""
         dm, user1, user2 = test_dm
         
-        login_result = modules.auth.login(user1.username, "TestPassword123!@#")
+        login_result = modules.auth.login(user1.username, "TestPass123!")
         token = login_result.token
         headers = {"Authorization": f"Bearer {token}"}
         
@@ -199,7 +199,7 @@ class TestAPIThroughput:
                 content=f"Message {i}"
             )
         
-        login_result = modules.auth.login(user1.username, "TestPassword123!@#")
+        login_result = modules.auth.login(user1.username, "TestPass123!")
         token = login_result.token
         headers = {"Authorization": f"Bearer {token}"}
         
@@ -222,7 +222,7 @@ class TestAPIThroughput:
         """Test throughput with mixed read/write operations."""
         dm, user1, user2 = test_dm
         
-        login_result = modules.auth.login(user1.username, "TestPassword123!@#")
+        login_result = modules.auth.login(user1.username, "TestPass123!")
         token = login_result.token
         headers = {"Authorization": f"Bearer {token}"}
         
@@ -257,7 +257,7 @@ class TestAPIMemory:
         """Check for memory leaks in request handling."""
         dm, user1, user2 = test_dm
         
-        login_result = modules.auth.login(user1.username, "TestPassword123!@#")
+        login_result = modules.auth.login(user1.username, "TestPass123!")
         token = login_result.token
         headers = {"Authorization": f"Bearer {token}"}
         
@@ -309,7 +309,7 @@ class TestAPIDegradation:
         """Ensure response times remain stable over time."""
         dm, user1, user2 = test_dm
         
-        login_result = modules.auth.login(user1.username, "TestPassword123!@#")
+        login_result = modules.auth.login(user1.username, "TestPass123!")
         token = login_result.token
         headers = {"Authorization": f"Bearer {token}"}
         
@@ -336,7 +336,7 @@ class TestAPIDegradation:
         """Test how API scales with concurrent load."""
         dm, user1, user2 = test_dm
         
-        login_result = modules.auth.login(user1.username, "TestPassword123!@#")
+        login_result = modules.auth.login(user1.username, "TestPass123!")
         token = login_result.token
         headers = {"Authorization": f"Bearer {token}"}
         

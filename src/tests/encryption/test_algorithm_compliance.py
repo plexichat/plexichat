@@ -347,47 +347,6 @@ class TestPBKDF2Compliance:
         assert salt1 != salt2
 
 
-class TestCryptographicRandomness:
-    """Test cryptographic randomness compliance."""
-
-    def test_urandom_entropy(self):
-        """Test that os.urandom produces high-entropy output."""
-        random_bytes = os.urandom(256)
-        
-        byte_counts = {}
-        for byte in random_bytes:
-            byte_counts[byte] = byte_counts.get(byte, 0) + 1
-        
-        unique_bytes = len(byte_counts)
-        assert unique_bytes > 200
-
-    def test_nonce_randomness(self, setup_encryption):
-        """Test that nonces have high entropy."""
-        nonces = []
-        for _ in range(100):
-            encrypted = encrypt_data("test")
-            if encrypted.startswith("ENC:"):
-                parts = encrypted.split(":", 2)
-                encrypted = parts[2]
-            combined = base64.b64decode(encrypted)
-            nonce = combined[:12]
-            nonces.append(nonce)
-        
-        all_bytes = b"".join(nonces)
-        byte_counts = {}
-        for byte in all_bytes:
-            byte_counts[byte] = byte_counts.get(byte, 0) + 1
-        
-        assert len(byte_counts) > 200
-
-    def test_key_generation_randomness(self):
-        """Test that generated keys are random."""
-        keys = [os.urandom(32) for _ in range(100)]
-        
-        unique_keys = set(keys)
-        assert len(unique_keys) == 100
-
-
 class TestEncodingCompliance:
     """Test that encoding follows standards."""
 

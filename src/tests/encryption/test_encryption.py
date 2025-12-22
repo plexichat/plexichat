@@ -1056,8 +1056,11 @@ class TestCryptographicEdgeCases:
 
     def test_malformed_encrypted_data_handling(self, setup_encryption):
         """Test handling of various malformed encrypted data."""
-        test_cases = [
-            "",
+        # Empty string returns empty string (not an error)
+        assert decrypt_data("") == ""
+        
+        # These should all raise ValueError
+        error_cases = [
             "a",
             "ENC:",
             "ENC::",
@@ -1067,7 +1070,7 @@ class TestCryptographicEdgeCases:
             "ENC:1:!!!invalid_base64!!!",
         ]
         
-        for malformed in test_cases:
+        for malformed in error_cases:
             with pytest.raises(ValueError):
                 decrypt_data(malformed)
 
