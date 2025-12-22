@@ -86,7 +86,7 @@ def stress_test_users(modules):
     users = []
     for i in range(50):
         username = f"stresstest_{i}"
-        email = f"{username}@stress.test"
+        email = f"{username}@example.com"
         password = "StressTest123!@#"
         
         try:

@@ -23,7 +23,7 @@ class TestAuthPerformance:
         
         def register_user():
             username = f"perfuser_{counter[0]}"
-            email = f"{username}@perf.test"
+            email = f"{username}@example.com"
             counter[0] += 1
             
             return modules.auth.register(
@@ -39,7 +39,7 @@ class TestAuthPerformance:
     def test_login_performance(self, benchmark, modules):
         """Benchmark login with password verification."""
         username = "loginperf_user"
-        email = f"{username}@perf.test"
+        email = f"{username}@example.com"
         password = "SecurePassword123!@#"
         
         user = modules.auth.register(username=username, email=email, password=password)
@@ -54,7 +54,7 @@ class TestAuthPerformance:
     def test_token_validation_performance(self, benchmark, modules):
         """Benchmark token validation speed."""
         username = "tokenperf_user"
-        email = f"{username}@perf.test"
+        email = f"{username}@example.com"
         password = "SecurePassword123!@#"
         
         user = modules.auth.register(username=username, email=email, password=password)
@@ -72,7 +72,7 @@ class TestAuthPerformance:
         users = []
         for i in range(20):
             username = f"concurrent_{i}"
-            email = f"{username}@perf.test"
+            email = f"{username}@example.com"
             password = "SecurePassword123!@#"
             modules.auth.register(username=username, email=email, password=password)
             users.append((username, password))
@@ -93,7 +93,7 @@ class TestAuthPerformance:
     def test_session_management_performance(self, benchmark, modules):
         """Test session retrieval performance."""
         username = "sessionperf_user"
-        email = f"{username}@perf.test"
+        email = f"{username}@example.com"
         password = "SecurePassword123!@#"
         
         user = modules.auth.register(username=username, email=email, password=password)
@@ -112,7 +112,7 @@ class TestAuthPerformance:
         tokens = []
         for i in range(50):
             username = f"bulktoken_{i}"
-            email = f"{username}@perf.test"
+            email = f"{username}@example.com"
             password = "SecurePassword123!@#"
             modules.auth.register(username=username, email=email, password=password)
             result = modules.auth.login(username=username, password=password)
@@ -135,7 +135,7 @@ class TestAuthMemory:
         
         for i in range(100):
             username = f"memleak_{i}"
-            email = f"{username}@perf.test"
+            email = f"{username}@example.com"
             password = "SecurePassword123!@#"
             modules.auth.register(username=username, email=email, password=password)
             
@@ -150,7 +150,7 @@ class TestAuthMemory:
     def test_login_memory_leak(self, modules, memory_tracker):
         """Check for memory leaks during repeated logins."""
         username = "loginmem_user"
-        email = f"{username}@perf.test"
+        email = f"{username}@example.com"
         password = "SecurePassword123!@#"
         modules.auth.register(username=username, email=email, password=password)
         
@@ -170,7 +170,7 @@ class TestAuthMemory:
     def test_token_validation_memory_leak(self, modules, memory_tracker):
         """Check for memory leaks during repeated token validations."""
         username = "tokenmem_user"
-        email = f"{username}@perf.test"
+        email = f"{username}@example.com"
         password = "SecurePassword123!@#"
         modules.auth.register(username=username, email=email, password=password)
         result = modules.auth.login(username=username, password=password)
@@ -196,7 +196,7 @@ class TestAuthDegradation:
     def test_login_performance_degradation(self, modules):
         """Ensure login performance doesn't degrade over time."""
         username = "degradation_user"
-        email = f"{username}@perf.test"
+        email = f"{username}@example.com"
         password = "SecurePassword123!@#"
         modules.auth.register(username=username, email=email, password=password)
         
@@ -221,7 +221,7 @@ class TestAuthDegradation:
             users = []
             for i in range(count):
                 username = f"scale_{workers}_{i}"
-                email = f"{username}@perf.test"
+                email = f"{username}@example.com"
                 password = "SecurePassword123!@#"
                 users.append((username, email, password))
             
@@ -250,7 +250,7 @@ class TestAuthDegradation:
     def test_session_table_growth_performance(self, modules):
         """Test performance impact of large session tables."""
         username = "sessiongrowth_user"
-        email = f"{username}@perf.test"
+        email = f"{username}@example.com"
         password = "SecurePassword123!@#"
         user = modules.auth.register(username=username, email=email, password=password)
         

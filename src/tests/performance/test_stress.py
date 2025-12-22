@@ -21,7 +21,7 @@ class TestConnectionLimits:
     def test_max_sessions_per_user(self, modules):
         """Test behavior when user hits max session limit."""
         username = "maxsessions_user"
-        email = f"{username}@stress.test"
+        email = f"{username}@example.com"
         password = "StressTest123!@#"
         
         user = modules.auth.register(username=username, email=email, password=password)
@@ -167,7 +167,7 @@ class TestRapidOperations:
     def test_rapid_login_logout(self, modules):
         """Test rapid login/logout cycles."""
         username = "rapidauth_user"
-        email = f"{username}@stress.test"
+        email = f"{username}@example.com"
         password = "StressTest123!@#"
         
         user = modules.auth.register(username=username, email=email, password=password)

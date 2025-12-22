@@ -143,7 +143,7 @@ def generate_test_users(count: int, prefix: str = "perfuser") -> List[Dict[str, 
     return [
         {
             'username': f"{prefix}_{i}",
-            'email': f"{prefix}_{i}@perf.test",
+            'email': f"{prefix}_{i}@example.com",
             'password': "PerformanceTest123!@#"
         }
         for i in range(count)

@@ -56,7 +56,7 @@ class TestAPIEndpointPerformance:
         
         def register():
             username = f"apiuser_{counter[0]}"
-            email = f"{username}@api.test"
+            email = f"{username}@example.com"
             counter[0] += 1
             
             response = api_client.post("/api/v1/auth/register", json={
@@ -73,7 +73,7 @@ class TestAPIEndpointPerformance:
     def test_login_endpoint_performance(self, benchmark, api_client, modules):
         """Benchmark login endpoint."""
         username = "loginapi_user"
-        email = f"{username}@api.test"
+        email = f"{username}@example.com"
         password = "SecurePassword123!@#"
         modules.auth.register(username=username, email=email, password=password)
         
@@ -281,7 +281,7 @@ class TestAPIMemory:
     def test_authentication_memory_leak(self, api_client, modules, memory_tracker):
         """Check for memory leaks in authentication."""
         username = "authmem_user"
-        email = f"{username}@api.test"
+        email = f"{username}@example.com"
         password = "SecurePassword123!@#"
         modules.auth.register(username=username, email=email, password=password)
         

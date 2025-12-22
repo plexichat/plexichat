@@ -23,7 +23,7 @@ class TestCompleteUserJourney:
         
         def complete_journey():
             username = f"journey_{counter[0]}"
-            email = f"{username}@journey.test"
+            email = f"{username}@example.com"
             password = "JourneyTest123!@#"
             counter[0] += 1
             
@@ -32,7 +32,7 @@ class TestCompleteUserJourney:
             modules.auth.login(username=username, password=password)
             
             username2 = f"journey_{counter[0]}"
-            email2 = f"{username2}@journey.test"
+            email2 = f"{username2}@example.com"
             counter[0] += 1
             user2 = modules.auth.register(username=username2, email=email2, password=password)
             
@@ -223,7 +223,7 @@ class TestConcurrentWorkflows:
         """Test many users registering and messaging concurrently."""
         def user_workflow(user_id):
             username = f"concurrent_{user_id}"
-            email = f"{username}@concurrent.test"
+            email = f"{username}@example.com"
             password = "ConcurrentTest123!@#"
             
             user = modules.auth.register(username=username, email=email, password=password)
