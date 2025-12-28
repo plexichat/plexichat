@@ -450,6 +450,20 @@ def invalidate_user_sessions(user_id: int) -> int:
         return 0
 
 
+def invalidate_user_servers(user_id: int) -> int:
+    """
+    Invalidate the server list cache for a user.
+    """
+    return invalidate_pattern(f"servers:{user_id}*")
+
+
+def invalidate_server_channels(server_id: int) -> int:
+    """
+    Invalidate the channel list cache for all users of a server.
+    """
+    return invalidate_pattern(f"channels:*:{server_id}*")
+
+
 # ==================== Presence Cache Helpers ====================
 
 

@@ -1,4 +1,0 @@
-# Lint dependencies for PlexiChat
-# Install with: pip install -r requirements-lint.txt
-
-ruff>=0.1.0

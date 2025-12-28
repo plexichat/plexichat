@@ -816,6 +816,34 @@ class PlexiChatServer:
         else:
             logger.info("Voice module disabled in configuration")
         
+        # Initialize rate limit module
+        rate_limit_settings = config.get("rate_limiting", {})
+        if rate_limit_settings.get("enabled", True):
+            logger.info("Initializing rate limit module...")
+            try:
+                from src.core import ratelimit
+                from src.core.ratelimit.storage import RedisStorage, MemoryStorage
+                from src.core.database import is_available as redis_is_available, get_redis_client
+                
+                storage = None
+                if redis_is_available():
+                    storage = RedisStorage()
+                    logger.info("Using Redis storage for rate limiting")
+                else:
+                    storage = MemoryStorage()
+                    logger.info("Using in-memory storage for rate limiting (Redis unavailable)")
+                
+                ratelimit.setup(
+                    storage_backend=storage,
+                    bot_multiplier=rate_limit_settings.get("bot_multiplier", 1.5),
+                    webhook_multiplier=rate_limit_settings.get("webhook_multiplier", 1.0),
+                    enable_global_limit=True
+                )
+                self._modules['ratelimit'] = ratelimit
+                logger.info("Rate limit module initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize rate limit module: {e}")
+        
         # Initialize telemetry module
         telemetry_config = config.get("telemetry") or {}
         if telemetry_config.get("enabled", True):

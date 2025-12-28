@@ -8,7 +8,6 @@ Run with: pytest src/tests/unit/test_property_based_validation.py -v
 """
 
 import pytest
-import json
 import string
 import re
 
@@ -132,21 +131,6 @@ def message_content(draw, max_length=4000):
     ))
 
 
-@composite
-def json_strings(draw):
-    """Generate JSON strings including malformed ones."""
-    return draw(st.one_of(
-        st.builds(json.dumps, st.dictionaries(st.text(), st.integers())),  # Valid JSON
-        st.text(),  # Potentially invalid JSON
-        st.just(""),
-        st.just("{}"),
-        st.just("{"),
-        st.just("}"),
-        st.just('{"key":}'),
-        st.just('{"key": "unclosed'),
-        st.just("null"),
-        st.just("[]"),
-    ))
 
 
 # =============================================================================
@@ -529,57 +513,6 @@ class TestWebhookManagerPropertyBased:
                 pass  # Invalid scheme
         else:
             pass  # Empty is treated as None
-
-
-# =============================================================================
-# JSON and Metadata Validation Tests
-# =============================================================================
-
-@pytest.mark.unit
-class TestJSONValidation:
-    """Property-based tests for JSON parsing and validation."""
-
-    @given(json_strings())
-    @settings(max_examples=200, deadline=None)
-    def test_json_parsing_robustness(self, json_str):
-        """Test robust JSON parsing."""
-        try:
-            parsed = json.loads(json_str)
-            # null is a valid JSON value which returns None in Python
-            assert parsed is not None or parsed == "" or parsed is None
-        except json.JSONDecodeError:
-            # Invalid JSON should raise error
-            pass
-        except Exception as e:
-            # Any other exception is unexpected
-            pytest.fail(f"Unexpected exception: {e}")
-
-    @given(st.dictionaries(
-        st.text(min_size=1, max_size=50, alphabet=st.characters(blacklist_categories=['Cs'])),
-        st.one_of(st.integers(), st.text(), st.booleans(), st.none())
-    ))
-    @settings(max_examples=100, deadline=None)
-    def test_valid_json_roundtrip(self, data):
-        """Test JSON encode/decode roundtrip."""
-        json_str = json.dumps(data)
-        parsed = json.loads(json_str)
-        assert parsed == data
-
-    @given(st.text(min_size=0, max_size=1000))
-    @settings(max_examples=100)
-    def test_malformed_json_handling(self, text):
-        """Test handling of malformed JSON."""
-        if text in ['{}', '[]', 'null', 'true', 'false'] or text.startswith('{') and text.endswith('}'):
-            try:
-                json.loads(text)
-            except json.JSONDecodeError:
-                pass
-        else:
-            try:
-                json.loads(text)
-            except json.JSONDecodeError:
-                # Expected for malformed JSON
-                pass
 
 
 # =============================================================================

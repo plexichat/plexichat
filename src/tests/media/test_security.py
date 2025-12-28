@@ -129,15 +129,13 @@ class TestFileUploadValidation:
 class TestMIMETypeVerification:
     """Test MIME type validation and magic byte verification."""
 
-    def test_jpeg_magic_byte_validation(self, media_module, user_pool):
+    def test_jpeg_magic_byte_validation(self, media_module, user_pool, sample_image_bytes):
         """Test that JPEG files are validated by magic bytes."""
         user = user_pool.get_user()
         
-        valid_jpeg = b'\xff\xd8\xff\xe0\x00\x10JFIF' + b'\x00' * 100
-        
         result = media_module.upload_file(
             user_id=user.id,
-            file_data=valid_jpeg,
+            file_data=sample_image_bytes,
             filename="valid.jpg",
             content_type="image/jpeg"
         )
@@ -377,10 +375,18 @@ class TestSizeLimitEnforcement:
 
     def test_exact_size_limit_allowed(self, media_module, user_pool):
         """Test that files at exactly the size limit are allowed."""
+        from PIL import Image
         user = user_pool.get_user()
         
+        # Create a small valid JPEG
+        img = Image.new("RGB", (10, 10), color="blue")
+        buffer = io.BytesIO()
+        img.save(buffer, format="JPEG")
+        valid_jpeg_base = buffer.getvalue()
+        
+        # Pad it to exactly 10MB (JPEG often ignores trailing data)
         exact_size = 10 * 1024 * 1024
-        exact_image = b'\xff\xd8\xff\xe0\x00\x10JFIF' + b'\x00' * (exact_size - 11)
+        exact_image = valid_jpeg_base + b'\x00' * (exact_size - len(valid_jpeg_base))
         
         result = media_module.upload_file(
             user_id=user.id,
@@ -819,15 +825,12 @@ class TestCDNProxySecurity:
 class TestMaliciousFileContent:
     """Test detection and blocking of malicious file content."""
 
-    def test_polyglot_file_detection(self, media_module, user_pool):
+    def test_polyglot_file_detection(self, media_module, user_pool, sample_image_bytes):
         """Test detection of polyglot files (valid in multiple formats)."""
         user = user_pool.get_user()
         
-        polyglot = (
-            b'\xff\xd8\xff\xe0\x00\x10JFIF'
-            b'<script>alert("XSS")</script>'
-            b'\x00' * 100
-        )
+        # Use a real image base and append malicious payload
+        polyglot = sample_image_bytes + b'<script>alert("XSS")</script>'
         
         result = media_module.upload_file(
             user_id=user.id,
@@ -919,7 +922,7 @@ class TestMaliciousFileContent:
 class TestRateLimitSecurity:
     """Test rate limiting security features."""
 
-    def test_per_minute_upload_limit(self, modules, temp_upload_dir, user_pool):
+    def test_per_minute_upload_limit(self, modules, temp_upload_dir, user_pool, sample_image_bytes):
         """Test per-minute upload rate limiting."""
         import utils.config as config
         
@@ -944,8 +947,6 @@ class TestRateLimitSecurity:
         
         user = user_pool.get_user()
         
-        small_image = b'\xff\xd8\xff\xe0\x00\x10JFIF' + b'\x00' * 100
-        
         successful = 0
         rate_limited = False
         
@@ -953,7 +954,7 @@ class TestRateLimitSecurity:
             try:
                 media.upload_file(
                     user_id=user.id,
-                    file_data=small_image,
+                    file_data=sample_image_bytes,
                     filename=f"rate_test_{i}.jpg",
                     content_type="image/jpeg"
                 )
@@ -970,7 +971,7 @@ class TestRateLimitSecurity:
         media._manager = None
         media._setup_complete = False
 
-    def test_per_hour_upload_limit(self, modules, temp_upload_dir, user_pool):
+    def test_per_hour_upload_limit(self, modules, temp_upload_dir, user_pool, sample_image_bytes):
         """Test per-hour upload rate limiting."""
         import utils.config as config
         
@@ -995,17 +996,15 @@ class TestRateLimitSecurity:
         
         user = user_pool.get_user()
         
-        small_image = b'\xff\xd8\xff\xe0\x00\x10JFIF' + b'\x00' * 100
-        
         successful = 0
         rate_limited = False
         
-        for i in range(7):
+        for i in range(10):
             try:
                 media.upload_file(
                     user_id=user.id,
-                    file_data=small_image,
-                    filename=f"hourly_{i}.jpg",
+                    file_data=sample_image_bytes,
+                    filename=f"rate_test_hr_{i}.jpg",
                     content_type="image/jpeg"
                 )
                 successful += 1
@@ -1016,10 +1015,6 @@ class TestRateLimitSecurity:
         
         assert successful == 5
         assert rate_limited
-        
-        config._config_instance.config["media"] = original_media_config
-        media._manager = None
-        media._setup_complete = False
 
     def test_daily_size_limit(self, modules, temp_upload_dir, user_pool):
         """Test daily total size upload rate limiting."""

@@ -616,6 +616,57 @@ class RedisClient:
             logger.error(f"Redis UNSUBSCRIBE failed: {e}")
             raise RedisOperationError(f"UNSUBSCRIBE failed: {e}")
 
+    # ==================== Lock Operations ====================
+    
+    def acquire_lock(self, key: str, timeout: float = 10.0, lock_timeout: int = 30000) -> bool:
+        """
+        Acquire a distributed lock.
+
+        Args:
+            key: Lock key.
+            timeout: How long to wait for the lock in seconds.
+            lock_timeout: How long the lock is valid for in milliseconds.
+
+        Returns:
+            True if lock acquired, False otherwise.
+        """
+        self._ensure_connected()
+        client = self._client
+        assert client is not None
+        full_key = self._prefixed_key(f"lock:{self._sanitize_key(key)}")
+        
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            # Generate a unique value for the lock to ensure only the owner can release it
+            # In a real system, we'd use a UUID or similar, but for now just True is okay
+            # if we don't have a specific value tracker. But wait, release_lock needs it.
+            # Let's use a simple timestamp + random or just something unique-ish.
+            lock_value = str(time.time())
+            if client.set(full_key, lock_value, nx=True, px=lock_timeout):
+                # We could store the lock_value to verify on release, 
+                # but RedisClient doesn't have a per-thread state here.
+                # For simplicity, we just use a basic lock.
+                return True
+            time.sleep(0.01) # Wait a bit before retrying
+        return False
+
+    def release_lock(self, key: str) -> None:
+        """
+        Release a distributed lock.
+
+        Args:
+            key: Lock key.
+        """
+        self._ensure_connected()
+        client = self._client
+        assert client is not None
+        full_key = self._prefixed_key(f"lock:{self._sanitize_key(key)}")
+        
+        try:
+            client.delete(full_key)
+        except Exception as e:
+            logger.error(f"Failed to release lock for {key}: {e}")
+
     # ==================== Utility Operations ====================
 
     def ping(self) -> bool:

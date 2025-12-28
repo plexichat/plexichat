@@ -632,6 +632,9 @@ class MessagingManager:
             (conversation_id, user_id),
         )
 
+        # Invalidate participant cache
+        self._cache_invalidate(self._participant_cache, (conversation_id, user_id))
+
         # Send system message
         self.send_system_message(
             conversation_id,
@@ -752,6 +755,9 @@ class MessagingManager:
             "DELETE FROM msg_participants WHERE conversation_id = ? AND user_id = ?",
             (conversation_id, participant_id),
         )
+
+        # Invalidate participant cache
+        self._cache_invalidate(self._participant_cache, (conversation_id, participant_id))
 
         # Send system message
         self.send_system_message(

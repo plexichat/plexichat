@@ -5,6 +5,9 @@ Tests for custom emoji handling.
 import pytest
 from src.core.reactions import (
     InvalidEmojiError,
+    InvalidEmojiNameError,
+    InvalidEmojiFileError,
+    EmojiNameExistsError,
     CustomEmojiNotFoundError,
     PermissionDeniedError,
 )
@@ -13,11 +16,11 @@ from src.core.reactions import (
 class TestCustomEmojiFormat:
     """Tests for custom emoji format parsing."""
 
-    def test_custom_emoji_format_detected(self, users_with_server):
+    def test_custom_emoji_format_detected(self, users_with_server, sample_image):
         """Test custom emoji format is detected."""
         owner, member, server, group, msg, servers, reactions = users_with_server
 
-        emoji = reactions.create_custom_emoji(owner.id, server.id, "test_emoji")
+        emoji = reactions.create_custom_emoji(owner.id, server.id, "test_emoji", sample_image, "image/png")
 
         custom_str = f"<:test_emoji:{emoji.id}>"
         reaction = reactions.add_reaction(owner.id, msg.id, custom_str)
@@ -25,11 +28,11 @@ class TestCustomEmojiFormat:
         assert reaction.is_custom is True
         assert reaction.custom_emoji_id == emoji.id
 
-    def test_animated_custom_emoji_format(self, users_with_server):
+    def test_animated_custom_emoji_format(self, users_with_server, sample_gif):
         """Test animated custom emoji format."""
         owner, member, server, group, msg, servers, reactions = users_with_server
 
-        emoji = reactions.create_custom_emoji(owner.id, server.id, "animated_test", animated=True)
+        emoji = reactions.create_custom_emoji(owner.id, server.id, "animated_test", sample_gif, "image/gif")
 
         custom_str = f"<a:animated_test:{emoji.id}>"
         reaction = reactions.add_reaction(owner.id, msg.id, custom_str)
@@ -49,11 +52,11 @@ class TestCustomEmojiFormat:
 class TestCreateCustomEmoji:
     """Tests for creating custom emoji."""
 
-    def test_create_custom_emoji_success(self, users_with_server):
+    def test_create_custom_emoji_success(self, users_with_server, sample_image):
         """Test creating custom emoji successfully."""
         owner, member, server, group, msg, servers, reactions = users_with_server
 
-        emoji = reactions.create_custom_emoji(owner.id, server.id, "new_emoji")
+        emoji = reactions.create_custom_emoji(owner.id, server.id, "new_emoji", sample_image, "image/png")
 
         assert emoji is not None
         assert emoji.name == "new_emoji"
@@ -61,52 +64,52 @@ class TestCreateCustomEmoji:
         assert emoji.animated is False
         assert emoji.created_at > 0
 
-    def test_create_animated_emoji(self, users_with_server):
+    def test_create_animated_emoji(self, users_with_server, sample_gif):
         """Test creating animated custom emoji."""
         owner, member, server, group, msg, servers, reactions = users_with_server
 
-        emoji = reactions.create_custom_emoji(owner.id, server.id, "animated_emoji", animated=True)
+        emoji = reactions.create_custom_emoji(owner.id, server.id, "animated_emoji", sample_gif, "image/gif")
 
         assert emoji.animated is True
 
-    def test_create_emoji_invalid_name_fails(self, users_with_server):
+    def test_create_emoji_invalid_name_fails(self, users_with_server, sample_image):
         """Test creating emoji with invalid name fails."""
         owner, member, server, group, msg, servers, reactions = users_with_server
 
-        with pytest.raises(InvalidEmojiError):
-            reactions.create_custom_emoji(owner.id, server.id, "a")
+        with pytest.raises(InvalidEmojiNameError):
+            reactions.create_custom_emoji(owner.id, server.id, "a", sample_image, "image/png")
 
-        with pytest.raises(InvalidEmojiError):
-            reactions.create_custom_emoji(owner.id, server.id, "invalid name")
+        with pytest.raises(InvalidEmojiNameError):
+            reactions.create_custom_emoji(owner.id, server.id, "invalid name", sample_image, "image/png")
 
-        with pytest.raises(InvalidEmojiError):
-            reactions.create_custom_emoji(owner.id, server.id, "invalid-name")
+        with pytest.raises(InvalidEmojiNameError):
+            reactions.create_custom_emoji(owner.id, server.id, "invalid-name", sample_image, "image/png")
 
-    def test_create_duplicate_emoji_fails(self, users_with_server):
+    def test_create_duplicate_emoji_fails(self, users_with_server, sample_image):
         """Test creating duplicate emoji name fails."""
         owner, member, server, group, msg, servers, reactions = users_with_server
 
-        reactions.create_custom_emoji(owner.id, server.id, "duplicate_test")
+        reactions.create_custom_emoji(owner.id, server.id, "duplicate_test", sample_image, "image/png")
 
-        with pytest.raises(InvalidEmojiError):
-            reactions.create_custom_emoji(owner.id, server.id, "duplicate_test")
+        with pytest.raises(EmojiNameExistsError):
+            reactions.create_custom_emoji(owner.id, server.id, "duplicate_test", sample_image, "image/png")
 
-    def test_create_emoji_no_permission_fails(self, users_with_server):
+    def test_create_emoji_no_permission_fails(self, users_with_server, sample_image):
         """Test member without permission cannot create emoji."""
         owner, member, server, group, msg, servers, reactions = users_with_server
 
         with pytest.raises(PermissionDeniedError):
-            reactions.create_custom_emoji(member.id, server.id, "member_emoji")
+            reactions.create_custom_emoji(member.id, server.id, "member_emoji", sample_image, "image/png")
 
 
 class TestDeleteCustomEmoji:
     """Tests for deleting custom emoji."""
 
-    def test_delete_custom_emoji_success(self, users_with_server):
+    def test_delete_custom_emoji_success(self, users_with_server, sample_image):
         """Test deleting custom emoji successfully."""
         owner, member, server, group, msg, servers, reactions = users_with_server
 
-        emoji = reactions.create_custom_emoji(owner.id, server.id, "to_delete")
+        emoji = reactions.create_custom_emoji(owner.id, server.id, "to_delete", sample_image, "image/png")
         result = reactions.delete_custom_emoji(owner.id, emoji.id)
 
         assert result is True
@@ -114,11 +117,11 @@ class TestDeleteCustomEmoji:
         deleted = reactions.get_custom_emoji(emoji.id)
         assert deleted is None
 
-    def test_delete_emoji_removes_reactions(self, users_with_server):
+    def test_delete_emoji_removes_reactions(self, users_with_server, sample_image):
         """Test deleting emoji removes associated reactions."""
         owner, member, server, group, msg, servers, reactions = users_with_server
 
-        emoji = reactions.create_custom_emoji(owner.id, server.id, "delete_with_reactions")
+        emoji = reactions.create_custom_emoji(owner.id, server.id, "delete_with_reactions", sample_image, "image/png")
         custom_str = f"<:delete_with_reactions:{emoji.id}>"
 
         reactions.add_reaction(owner.id, msg.id, custom_str)
@@ -136,11 +139,11 @@ class TestDeleteCustomEmoji:
         with pytest.raises(CustomEmojiNotFoundError):
             reactions.delete_custom_emoji(owner.id, 999999999)
 
-    def test_delete_emoji_no_permission_fails(self, users_with_server):
+    def test_delete_emoji_no_permission_fails(self, users_with_server, sample_image):
         """Test member cannot delete emoji."""
         owner, member, server, group, msg, servers, reactions = users_with_server
 
-        emoji = reactions.create_custom_emoji(owner.id, server.id, "no_delete_perm")
+        emoji = reactions.create_custom_emoji(owner.id, server.id, "no_delete_perm", sample_image, "image/png")
 
         with pytest.raises(PermissionDeniedError):
             reactions.delete_custom_emoji(member.id, emoji.id)
@@ -149,11 +152,11 @@ class TestDeleteCustomEmoji:
 class TestGetCustomEmoji:
     """Tests for getting custom emoji."""
 
-    def test_get_custom_emoji_by_id(self, users_with_server):
+    def test_get_custom_emoji_by_id(self, users_with_server, sample_image):
         """Test getting custom emoji by ID."""
         owner, member, server, group, msg, servers, reactions = users_with_server
 
-        created = reactions.create_custom_emoji(owner.id, server.id, "get_by_id")
+        created = reactions.create_custom_emoji(owner.id, server.id, "get_by_id", sample_image, "image/png")
         fetched = reactions.get_custom_emoji(created.id)
 
         assert fetched is not None
@@ -168,12 +171,12 @@ class TestGetCustomEmoji:
 
         assert result is None
 
-    def test_get_server_custom_emojis(self, users_with_server):
+    def test_get_server_custom_emojis(self, users_with_server, sample_image):
         """Test getting all custom emojis for a server."""
         owner, member, server, group, msg, servers, reactions = users_with_server
 
-        reactions.create_custom_emoji(owner.id, server.id, "server_emoji_1")
-        reactions.create_custom_emoji(owner.id, server.id, "server_emoji_2")
+        reactions.create_custom_emoji(owner.id, server.id, "server_emoji_1", sample_image, "image/png")
+        reactions.create_custom_emoji(owner.id, server.id, "server_emoji_2", sample_image, "image/png")
 
         emojis = reactions.get_server_custom_emojis(server.id)
 
@@ -185,7 +188,7 @@ class TestGetCustomEmoji:
 class TestCustomEmojiValidation:
     """Tests for custom emoji validation in reactions."""
 
-    def test_custom_emoji_not_in_server_fails(self, db_and_modules):
+    def test_custom_emoji_not_in_server_fails(self, db_and_modules, sample_image):
         """Test using custom emoji from different server fails."""
         db, auth, messaging, servers_mod, relationships, reactions = db_and_modules
         import uuid
@@ -206,7 +209,7 @@ class TestCustomEmojiValidation:
         server2 = servers_mod.create_server(owner2.id, f"Server2 {unique_id}")
         servers_mod.add_member(server2.id, owner1.id)
 
-        emoji = reactions.create_custom_emoji(owner1.id, server1.id, f"server1_only_{unique_id}")
+        emoji = reactions.create_custom_emoji(owner1.id, server1.id, f"server1_only_{unique_id}", sample_image, "image/png")
 
         channel2 = servers_mod.get_channels(owner2.id, server2.id)[0]
         msg = servers_mod.send_channel_message(owner2.id, channel2.id, "Test message")

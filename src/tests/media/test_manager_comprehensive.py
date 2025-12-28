@@ -449,13 +449,16 @@ class TestMediaProxy:
         # Mock the proxy to avoid actual HTTP requests
         from src.core.media.security.proxy import ProxiedContent
         
-        def mock_fetch(url, **kwargs):
+        def mock_fetch(url, force_refresh=False, **kwargs):
             return ProxiedContent(
-                url=url,
-                local_path="/tmp/fake",
+                id=123,
+                source_url=url,
                 content_type="image/jpeg",
                 size=100,
-                cached=False
+                storage_path="/tmp/fake",
+                cached_at=0,
+                expires_at=0,
+                last_accessed=0
             )
         
         if hasattr(media_manager, '_proxy') and media_manager._proxy:
@@ -474,13 +477,16 @@ class TestMediaProxy:
         """Proxy with force refresh."""
         from src.core.media.security.proxy import ProxiedContent
         
-        def mock_fetch(url, **kwargs):
+        def mock_fetch(url, force_refresh=False, **kwargs):
             return ProxiedContent(
-                url=url,
-                local_path="/tmp/fake",
+                id=123,
+                source_url=url,
                 content_type="image/jpeg",
                 size=100,
-                cached=False
+                storage_path="/tmp/fake",
+                cached_at=0,
+                expires_at=0,
+                last_accessed=0
             )
         
         if hasattr(media_manager, '_proxy') and media_manager._proxy:

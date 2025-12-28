@@ -176,7 +176,7 @@ class TestRapidOperations:
         
         for i in range(20):
             result = modules.auth.login(username=username, password=password)
-            modules.auth.revoke_session(user.id, result.session_id)
+            modules.auth.revoke_session(user.id, result.session.id)
         
         elapsed = (datetime.now() - start).total_seconds()
         
@@ -184,7 +184,8 @@ class TestRapidOperations:
 
     def test_rapid_status_changes(self, modules, test_user):
         """Test rapid presence status changes."""
-        statuses = ["online", "idle", "dnd", "invisible"]
+        from src.core.presence.models import UserStatus
+        statuses = [UserStatus.ONLINE, UserStatus.IDLE, UserStatus.DND, UserStatus.INVISIBLE]
         
         start = datetime.now()
         

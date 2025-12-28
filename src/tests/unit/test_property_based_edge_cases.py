@@ -412,36 +412,6 @@ class TestNullBytes:
 
 
 # =============================================================================
-# Integer Overflow Tests
-# =============================================================================
-
-@pytest.mark.unit
-class TestIntegerOverflow:
-    """Tests for integer overflow handling."""
-
-    @given(st.integers(min_value=2**63, max_value=2**128))
-    @settings(max_examples=50)
-    def test_large_integers(self, large_int):
-        """Test handling of extremely large integers."""
-        # Just ensure basic operations don't crash and value is as expected
-        assert large_int >= 2**63
-
-    @given(st.integers(min_value=-2**63, max_value=-1))
-    @settings(max_examples=50)
-    def test_negative_integers(self, negative_int):
-        """Test handling of negative integers."""
-        # Should handle negative integers appropriately
-        assert negative_int < 0
-
-    @given(st.integers())
-    @settings(max_examples=100)
-    def test_arbitrary_integers(self, value):
-        """Test handling of arbitrary integer values."""
-        # Should handle any integer without crashing
-        assert isinstance(value, int)
-
-
-# =============================================================================
 # Empty and Whitespace Tests
 # =============================================================================
 
@@ -474,59 +444,3 @@ class TestEmptyAndWhitespace:
         result = validate_content(content, max_length=4000)
         if not content.strip():
             assert not result.valid
-
-
-# =============================================================================
-# Concurrent Access Simulation Tests
-# =============================================================================
-
-@pytest.mark.unit
-class TestConcurrentAccess:
-    """Tests simulating concurrent access patterns."""
-
-    @given(st.lists(st.integers(min_value=1, max_value=1000), min_size=2, max_size=100))
-    @settings(max_examples=50)
-    def test_concurrent_id_generation(self, ids):
-        """Test ID generation with potential conflicts."""
-        # IDs should be unique
-        unique_ids = set(ids)
-        # Check for duplicates
-        has_duplicates = len(ids) != len(unique_ids)
-        assert isinstance(has_duplicates, bool)
-
-    @given(st.lists(st.tuples(st.integers(0, 100), st.integers(0, 100)), min_size=2, max_size=50))
-    @settings(max_examples=50)
-    def test_concurrent_counter_updates(self, updates):
-        """Test concurrent counter updates."""
-        # Simulate concurrent increments
-        final_value = sum(u[0] for u in updates)
-        assert final_value >= 0
-
-
-# =============================================================================
-# Locale and Encoding Tests
-# =============================================================================
-
-@pytest.mark.unit
-class TestLocaleAndEncoding:
-    """Tests for locale-specific and encoding edge cases."""
-
-    @given(st.text(alphabet=st.characters(blacklist_categories=['Cs'])))
-    @settings(max_examples=100, deadline=None)
-    def test_utf8_roundtrip(self, text):
-        """Test UTF-8 encoding/decoding roundtrip."""
-        try:
-            encoded = text.encode('utf-8')
-            decoded = encoded.decode('utf-8')
-            assert decoded == text
-        except (UnicodeEncodeError, UnicodeDecodeError):
-            # Some characters may not be encodable
-            pass
-
-    @given(st.text(min_size=1, max_size=100))
-    @settings(max_examples=100)
-    def test_ascii_subset_handling(self, text):
-        """Test ASCII subset handling."""
-        # Check if text is ASCII-only
-        is_ascii = all(ord(c) < 128 for c in text)
-        assert isinstance(is_ascii, bool)

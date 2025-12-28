@@ -16,7 +16,7 @@ from src.api.schemas.servers import (
 )
 from src.api.schemas.common import SnowflakeID
 from src.core.servers.models import ChannelType
-from src.core.database import cached
+from src.core.database import cached, invalidate_pattern, invalidate_user_servers, invalidate_server_channels
 
 import utils.config as config
 import utils.logger as logger
@@ -168,6 +168,8 @@ async def create_server(
             name=body.name,
             description=body.description
         )
+        # Invalidate user's server list cache
+        invalidate_user_servers(current_user.user_id)
         return _server_to_response(server)
     except Exception as e:
         exc_name = type(e).__name__
@@ -231,6 +233,12 @@ async def update_server(
     try:
         update_data = body.model_dump(exclude_unset=True)
         server = servers_mod.update_server(current_user.user_id, sid, **update_data)
+        # Invalidate channel list cache if default channel changed
+        if "default_channel_id" in update_data:
+            invalidate_server_channels(sid)
+        # Invalidate user's server list (name/icon might have changed)
+        # For now, we only invalidate for the current user to be safe and efficient
+        invalidate_user_servers(current_user.user_id)
         return _server_to_response(server)
     except Exception as e:
         exc_name = type(e).__name__
@@ -259,6 +267,8 @@ async def delete_server(server_id: str, current_user: TokenInfo = Depends(get_cu
 
     try:
         servers_mod.delete_server(current_user.user_id, sid)
+        # Invalidate user's server list cache
+        invalidate_user_servers(current_user.user_id)
         return {"success": True}
     except Exception as e:
         exc_name = type(e).__name__
@@ -534,6 +544,8 @@ async def create_server_channel(
             kwargs["nsfw"] = body.get("nsfw", False)
 
         channel = servers_mod.create_channel(**kwargs)
+        # Invalidate server's channel list cache
+        invalidate_server_channels(sid)
         return _channel_to_response(channel)
     except TypeError as e:
         # Handle unexpected keyword arguments by trying simpler call
@@ -543,6 +555,8 @@ async def create_server_channel(
                 server_id=sid,
                 name=name
             )
+            # Invalidate server's channel list cache
+            invalidate_server_channels(sid)
             return _channel_to_response(channel)
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
     except Exception as e:

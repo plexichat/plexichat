@@ -25,6 +25,7 @@ from .exceptions import (
     InvalidActivityError,
 )
 from .schema import create_tables
+from src.core.database import cache_get, cache_set, cache_delete, redis_available, cache_presence, get_cached_presence
 
 
 # Default typing indicator timeout in milliseconds (10 seconds)
@@ -131,6 +132,17 @@ class PresenceManager:
             "UPDATE pres_presence SET status = ?, last_seen = ?, updated_at = ? WHERE user_id = ?",
             (status.value, now, now, user_id)
         )
+
+        # Invalidate/Update cache
+        if redis_available():
+            # We fetch full presence to cache it
+            presence = self.get_presence(user_id, use_cache=False)
+            cache_set(f"presence:{user_id}", self._presence_to_dict(presence), ttl=self._presence_timeout_ms // 1000)
+
+        # Invalidate/Update cache
+        if redis_available():
+            presence = self.get_presence(user_id, use_cache=False)
+            cache_set(f"presence:{user_id}", self._presence_to_dict(presence), ttl=self._presence_timeout_ms // 1000)
 
         logger.debug(f"User {user_id} status set to {status.value}")
 
@@ -297,6 +309,10 @@ class PresenceManager:
             (now, user_id)
         )
 
+        if redis_available():
+            presence = self.get_presence(user_id, use_cache=False)
+            cache_set(f"presence:{user_id}", self._presence_to_dict(presence), ttl=self._presence_timeout_ms // 1000)
+
         logger.debug(f"User {user_id} activity set to {activity_type.value}: {name}")
 
         result = self.get_presence(user_id)
@@ -342,20 +358,29 @@ class PresenceManager:
             (now, user_id)
         )
 
+        if redis_available():
+            presence = self.get_presence(user_id, use_cache=False)
+            cache_set(f"presence:{user_id}", self._presence_to_dict(presence), ttl=self._presence_timeout_ms // 1000)
+
         result = self.get_presence(user_id)
         return result
 
     # === Presence Operations ===
 
-    def get_presence(self, user_id: int) -> Presence:
+    def get_presence(self, user_id: int, use_cache: bool = True) -> Presence:
         """Get full presence information for a user."""
+        if use_cache and redis_available():
+            cached = get_cached_presence(user_id)
+            if cached:
+                return self._dict_to_presence(cached)
+
         row = self._db.fetch_one(
             "SELECT * FROM pres_presence WHERE user_id = ?",
             (user_id,)
         )
 
         if not row:
-            return Presence(
+            presence = Presence(
                 user_id=user_id,
                 status=UserStatus.OFFLINE,
                 custom_status=None,
@@ -363,102 +388,126 @@ class PresenceManager:
                 last_seen=0,
                 updated_at=0
             )
+        else:
+            custom_status = self.get_custom_status(user_id)
+            activity = self.get_activity(user_id)
 
-        custom_status = self.get_custom_status(user_id)
-        activity = self.get_activity(user_id)
-
-        return Presence(
-            user_id=user_id,
-            status=UserStatus(row["status"]),
-            custom_status=custom_status,
-            activity=activity,
-            last_seen=row["last_seen"],
-            updated_at=row["updated_at"]
-        )
+            presence = Presence(
+                user_id=user_id,
+                status=UserStatus(row["status"]),
+                custom_status=custom_status,
+                activity=activity,
+                last_seen=row["last_seen"],
+                updated_at=row["updated_at"]
+            )
+            
+        # Cache the result
+        if use_cache and redis_available() and row:
+             cache_set(f"presence:{user_id}", self._presence_to_dict(presence), ttl=self._presence_timeout_ms // 1000)
+             
+        return presence
 
     def get_presences(self, user_ids: List[int]) -> List[Presence]:
-        """Get presence information for multiple users efficiently with batch queries."""
+        """Get presence information for multiple users efficiently with batch queries and Redis caching."""
         if not user_ids:
             return []
 
-        # Batch fetch all presence records in a single query
-        placeholders = ",".join("?" * len(user_ids))
+        results_map: Dict[int, Presence] = {}
+        missing_ids = list(user_ids)
+
+        # 1. Try to fetch from Redis bulk
+        if redis_available():
+            try:
+                from src.core.database.cache import get_bulk_presence
+                cached_data = get_bulk_presence(user_ids)
+                for uid, data in cached_data.items():
+                    try:
+                        results_map[uid] = self._dict_to_presence(data)
+                        missing_ids.remove(uid)
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.warning(f"Failed to fetch bulk presence from Redis: {e}")
+
+        if not missing_ids:
+            return [results_map[uid] for uid in user_ids]
+
+        # 2. Batch fetch missing from DB
+        placeholders = ",".join("?" * len(missing_ids))
         presence_rows = self._db.fetch_all(
             f"SELECT * FROM pres_presence WHERE user_id IN ({placeholders})",
-            tuple(user_ids)
+            tuple(missing_ids)
         )
         presence_map = {row["user_id"]: row for row in presence_rows}
 
         # Batch fetch all custom statuses
-        self._cleanup_expired_custom_status_batch(user_ids)
+        self._cleanup_expired_custom_status_batch(missing_ids)
         custom_rows = self._db.fetch_all(
             f"SELECT * FROM pres_custom_status WHERE user_id IN ({placeholders})",
-            tuple(user_ids)
+            tuple(missing_ids)
         )
         custom_map = {row["user_id"]: row for row in custom_rows}
 
         # Batch fetch all activities
         activity_rows = self._db.fetch_all(
             f"SELECT * FROM pres_activity WHERE user_id IN ({placeholders})",
-            tuple(user_ids)
+            tuple(missing_ids)
         )
         activity_map = {row["user_id"]: row for row in activity_rows}
 
-        # Build presence objects
-        results = []
-        for uid in user_ids:
+        # Build presence objects and cache them
+        for uid in missing_ids:
             pres_row = presence_map.get(uid)
             if not pres_row:
-                results.append(Presence(
+                presence = Presence(
                     user_id=uid,
                     status=UserStatus.OFFLINE,
                     custom_status=None,
                     activity=None,
                     last_seen=0,
                     updated_at=0
-                ))
-                continue
-
-            # Build custom status if exists
-            custom_status = None
-            custom_row = custom_map.get(uid)
-            if custom_row:
+                )
+            else:
+                cust_row = custom_map.get(uid)
                 custom_status = CustomStatus(
-                    text=custom_row["text"],
-                    emoji=custom_row["emoji"],
-                    expires_at=custom_row["expires_at"],
-                    created_at=custom_row["created_at"]
-                )
+                    text=cust_row["text"],
+                    emoji=cust_row["emoji"],
+                    expires_at=cust_row["expires_at"]
+                ) if cust_row else None
 
-            # Build activity if exists
-            activity = None
-            activity_row = activity_map.get(uid)
-            if activity_row:
+                act_row = activity_map.get(uid)
                 activity = Activity(
-                    activity_type=ActivityType(activity_row["activity_type"]),
-                    name=activity_row["name"],
-                    details=activity_row["details"],
-                    url=activity_row["url"],
-                    state=activity_row["state"],
-                    start_timestamp=activity_row["start_timestamp"],
-                    end_timestamp=activity_row["end_timestamp"],
-                    large_image=activity_row["large_image"],
-                    large_text=activity_row["large_text"],
-                    small_image=activity_row["small_image"],
-                    small_text=activity_row["small_text"],
-                    created_at=activity_row["created_at"]
+                    activity_type=ActivityType(act_row["activity_type"]),
+                    name=act_row["name"],
+                    details=act_row["details"],
+                    url=act_row["url"],
+                    state=act_row["state"],
+                    start_timestamp=act_row["start_timestamp"],
+                    end_timestamp=act_row["end_timestamp"],
+                    large_image=act_row["large_image"],
+                    large_text=act_row["large_text"],
+                    small_image=act_row["small_image"],
+                    small_text=act_row["small_text"],
+                    created_at=act_row["created_at"]
+                ) if act_row else None
+
+                presence = Presence(
+                    user_id=uid,
+                    status=UserStatus(pres_row["status"]),
+                    custom_status=custom_status,
+                    activity=activity,
+                    last_seen=pres_row["last_seen"],
+                    updated_at=pres_row["updated_at"]
                 )
+            
+            results_map[uid] = presence
+            
+            # Cache missing ones
+            if redis_available() and pres_row:
+                 cache_set(f"presence:{uid}", self._presence_to_dict(presence), ttl=self._presence_timeout_ms // 1000)
 
-            results.append(Presence(
-                user_id=uid,
-                status=UserStatus(pres_row["status"]),
-                custom_status=custom_status,
-                activity=activity,
-                last_seen=pres_row["last_seen"],
-                updated_at=pres_row["updated_at"]
-            ))
+        return [results_map[uid] for uid in user_ids]
 
-        return results
 
     def _cleanup_expired_custom_status_batch(self, user_ids: List[int]) -> None:
         """Remove expired custom statuses for multiple users."""
@@ -703,3 +752,61 @@ class PresenceManager:
             return False
 
         return True
+    def _presence_to_dict(self, presence: Presence) -> Dict[str, Any]:
+        """Convert Presence model to dict for caching."""
+        return {
+            "user_id": presence.user_id,
+            "status": presence.status.value,
+            "custom_status": {
+                "text": presence.custom_status.text,
+                "emoji": presence.custom_status.emoji,
+                "expires_at": presence.custom_status.expires_at
+            } if presence.custom_status else None,
+            "activity": {
+                "activity_type": presence.activity.activity_type.value,
+                "name": presence.activity.name,
+                "details": presence.activity.details,
+                "url": presence.activity.url,
+                "state": presence.activity.state,
+                "start_timestamp": presence.activity.start_timestamp,
+                "end_timestamp": presence.activity.end_timestamp,
+                "large_image": presence.activity.large_image,
+                "large_text": presence.activity.large_text,
+                "small_image": presence.activity.small_image,
+                "small_text": presence.activity.small_text,
+                "created_at": presence.activity.created_at
+            } if presence.activity else None,
+            "last_seen": presence.last_seen,
+            "updated_at": presence.updated_at
+        }
+
+    def _dict_to_presence(self, data: Dict[str, Any]) -> Presence:
+        """Convert cached dict to Presence model."""
+        custom_status = data.get("custom_status")
+        activity = data.get("activity")
+        
+        return Presence(
+            user_id=data["user_id"],
+            status=UserStatus(data["status"]),
+            custom_status=CustomStatus(
+                text=custom_status["text"],
+                emoji=custom_status["emoji"],
+                expires_at=custom_status["expires_at"]
+            ) if custom_status else None,
+            activity=Activity(
+                activity_type=ActivityType(activity["activity_type"]),
+                name=activity["name"],
+                details=activity.get("details"),
+                url=activity.get("url"),
+                state=activity.get("state"),
+                start_timestamp=activity.get("start_timestamp"),
+                end_timestamp=activity.get("end_timestamp"),
+                large_image=activity.get("large_image"),
+                large_text=activity.get("large_text"),
+                small_image=activity.get("small_image"),
+                small_text=activity.get("small_text"),
+                created_at=activity.get("created_at", 0)
+            ) if activity else None,
+            last_seen=data.get("last_seen", 0),
+            updated_at=data.get("updated_at", 0)
+        )

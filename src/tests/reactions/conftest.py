@@ -9,6 +9,27 @@ import uuid
 
 
 @pytest.fixture
+def sample_image():
+    """Generate a minimal valid PNG image."""
+    return (
+        b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00'
+        b'\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc'
+        b'\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND'
+        b'\xaeB`\x82'
+    )
+
+
+@pytest.fixture
+def sample_gif():
+    """Generate a minimal valid animated GIF."""
+    return (
+        b'GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!'
+        b'\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00'
+        b'\x00\x02\x02D\x01\x00;'
+    )
+
+
+@pytest.fixture
 def db_and_modules(modules):
     """Legacy fixture for backward compatibility."""
     return modules._db, modules.auth, modules.messaging, modules.servers, modules.relationships, modules.reactions

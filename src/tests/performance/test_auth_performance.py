@@ -62,7 +62,7 @@ class TestAuthPerformance:
         token = login_result.token
         
         def validate():
-            return modules.auth.validate_token(token)
+            return modules.auth.verify_token(token)
         
         result = benchmark(validate)
         assert result.user_id == user.id
@@ -119,7 +119,7 @@ class TestAuthPerformance:
             tokens.append(result.token)
         
         def validate_all():
-            return [modules.auth.validate_token(token) for token in tokens]
+            return [modules.auth.verify_token(token) for token in tokens]
         
         results = benchmark(validate_all)
         assert len(results) == 50
@@ -179,7 +179,7 @@ class TestAuthMemory:
         initial_memory = memory_tracker.snapshot()
         
         for i in range(500):
-            modules.auth.validate_token(token)
+            modules.auth.verify_token(token)
             
             if i % 100 == 0:
                 memory_tracker.snapshot()

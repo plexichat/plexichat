@@ -155,7 +155,8 @@ class TestFileSizeEdgeCases:
         """Test uploading file one byte over limit."""
         user = user_pool.get_user()
 
-        data = b"x" * (10 * 1024 * 1024 + 1)
+        # Document limit is 25MB, so we need 25MB + 1
+        data = b"x" * (25 * 1024 * 1024 + 1)
 
         with pytest.raises(media_module.FileSizeError):
             media_module.upload_file(
