@@ -13,7 +13,7 @@ from typing import Optional, List, Dict, Any
 
 import utils.config as config
 import utils.logger as logger
-from src.utils.encryption import generate_snowflake_id
+from src.core.base import BaseManager, SnowflakeID
 
 from .models import (
     Application, Command, Interaction, ApplicationInstallation,
@@ -36,7 +36,7 @@ from .commands import CommandRegistry
 from .interactions import InteractionHandler
 
 
-class ApplicationManager:
+class ApplicationManager(BaseManager):
     """Core application manager handling all operations."""
 
     def __init__(self, db, auth_module=None, servers_module=None, events_module=None):
@@ -49,8 +49,7 @@ class ApplicationManager:
             servers_module: Servers module for installation tracking
             events_module: Events module for interaction dispatch
         """
-        self._db = db
-        self._auth = auth_module
+        super().__init__(db, auth_module)
         self._servers = servers_module
         self._events = events_module
         self._config = self._load_config()
@@ -105,17 +104,9 @@ class ApplicationManager:
         app_config = config.get("applications", {})
         return {**defaults, **app_config}
 
-    def _current_time(self) -> int:
-        """Get current Unix timestamp."""
-        return int(time.time() * 1000)
-
-    def _generate_id(self) -> int:
-        """Generate a new Snowflake ID."""
-        return generate_snowflake_id()
-
     def create_application(
         self,
-        owner_id: int,
+        owner_id: SnowflakeID,
         name: str,
         description: Optional[str] = None,
         redirect_uris: Optional[List[str]] = None,
@@ -158,7 +149,7 @@ class ApplicationManager:
             )
 
         app_id = self._generate_id()
-        now = self._current_time()
+        now = self._get_timestamp()
 
         client_secret, secret_hash = generate_client_secret()
 
@@ -198,7 +189,7 @@ class ApplicationManager:
             client_secret_hash=secret_hash,
         )
 
-    def get_application(self, application_id: int, user_id: Optional[int] = None) -> Optional[Application]:
+    def get_application(self, application_id: SnowflakeID, user_id: Optional[SnowflakeID] = None) -> Optional[Application]:
         """
         Get an application by ID.
 
@@ -222,7 +213,7 @@ class ApplicationManager:
 
         return self._row_to_application(row)
 
-    def get_user_applications(self, user_id: int) -> List[Application]:
+    def get_user_applications(self, user_id: SnowflakeID) -> List[Application]:
         """
         Get all applications owned by a user.
 
@@ -245,8 +236,8 @@ class ApplicationManager:
 
     def update_application(
         self,
-        user_id: int,
-        application_id: int,
+        user_id: SnowflakeID,
+        application_id: SnowflakeID,
         name: Optional[str] = None,
         description: Optional[str] = None,
         icon_url: Optional[str] = None,
@@ -321,7 +312,7 @@ class ApplicationManager:
 
         if updates:
             updates.append("updated_at = ?")
-            params.append(self._current_time())
+            params.append(self._get_timestamp())
             params.append(application_id)
 
             self._db.execute(
@@ -335,7 +326,7 @@ class ApplicationManager:
         assert result is not None  # Should exist since we just updated it
         return result
 
-    def delete_application(self, user_id: int, application_id: int) -> bool:
+    def delete_application(self, user_id: SnowflakeID, application_id: SnowflakeID) -> bool:
         """
         Delete an application.
         """
@@ -363,7 +354,7 @@ class ApplicationManager:
         
         return name
 
-    def regenerate_client_secret(self, user_id: int, application_id: int) -> str:
+    def regenerate_client_secret(self, user_id: SnowflakeID, application_id: SnowflakeID) -> str:
         """
         Regenerate the client secret for an application.
 
@@ -389,7 +380,7 @@ class ApplicationManager:
 
         self._db.execute(
             "UPDATE app_applications SET client_secret_hash = ?, updated_at = ? WHERE id = ?",
-            (secret_hash, self._current_time(), application_id)
+            (secret_hash, self._get_timestamp(), application_id)
         )
 
         logger.info(f"Client secret regenerated for application: {application_id}")
@@ -397,8 +388,8 @@ class ApplicationManager:
 
     def create_bot_for_application(
         self,
-        user_id: int,
-        application_id: int,
+        user_id: SnowflakeID,
+        application_id: SnowflakeID,
         permissions: Optional[Dict[str, bool]] = None,
     ) -> Dict[str, Any]:
         """
@@ -439,7 +430,7 @@ class ApplicationManager:
 
         self._db.execute(
             "UPDATE app_applications SET bot_id = ?, updated_at = ? WHERE id = ?",
-            (bot.id, self._current_time(), application_id)
+            (bot.id, self._get_timestamp(), application_id)
         )
 
         logger.info(f"Bot created for application {application_id}: {bot.id}")
@@ -452,7 +443,7 @@ class ApplicationManager:
 
     def generate_oauth_url(
         self,
-        application_id: int,
+        application_id: SnowflakeID,
         redirect_uri: str,
         scopes: List[str],
         state: Optional[str] = None,
@@ -477,7 +468,7 @@ class ApplicationManager:
 
     def exchange_code(
         self,
-        application_id: int,
+        application_id: SnowflakeID,
         client_secret: str,
         code: str,
         redirect_uri: str,
@@ -500,13 +491,13 @@ class ApplicationManager:
             "access_token": token.access_token,
             "refresh_token": token.refresh_token,
             "token_type": "Bearer",
-            "expires_in": token.expires_at - self._current_time(),
+            "expires_in": token.expires_at - self._get_timestamp(),
             "scope": " ".join(token.scopes),
         }
 
     def refresh_token(
         self,
-        application_id: int,
+        application_id: SnowflakeID,
         client_secret: str,
         refresh_token: str,
     ) -> Dict[str, Any]:
@@ -527,7 +518,7 @@ class ApplicationManager:
             "access_token": token.access_token,
             "refresh_token": token.refresh_token,
             "token_type": "Bearer",
-            "expires_in": token.expires_at - self._current_time(),
+            "expires_in": token.expires_at - self._get_timestamp(),
             "scope": " ".join(token.scopes),
         }
 
@@ -545,11 +536,11 @@ class ApplicationManager:
 
     def register_command(
         self,
-        application_id: int,
+        application_id: SnowflakeID,
         name: str,
         description: str,
         command_type: CommandType = CommandType.CHAT_INPUT,
-        server_id: Optional[int] = None,
+        server_id: Optional[SnowflakeID] = None,
         options: Optional[List[Dict[str, Any]]] = None,
         default_member_permissions: Optional[str] = None,
         dm_permission: bool = True,
@@ -586,7 +577,7 @@ class ApplicationManager:
 
     def update_command(
         self,
-        command_id: int,
+        command_id: SnowflakeID,
         name: Optional[str] = None,
         description: Optional[str] = None,
         options: Optional[List[Dict[str, Any]]] = None,
@@ -605,14 +596,14 @@ class ApplicationManager:
             nsfw=nsfw,
         )
 
-    def delete_command(self, command_id: int) -> bool:
+    def delete_command(self, command_id: SnowflakeID) -> bool:
         """Delete a command."""
         return self._commands.delete_command(command_id)
 
     def get_commands(
         self,
-        application_id: int,
-        server_id: Optional[int] = None,
+        application_id: SnowflakeID,
+        server_id: Optional[SnowflakeID] = None,
         include_global: bool = True,
     ) -> List[Command]:
         """Get commands for an application."""
@@ -620,13 +611,13 @@ class ApplicationManager:
 
     def handle_interaction(
         self,
-        application_id: int,
+        application_id: SnowflakeID,
         interaction_type: InteractionType,
-        user_id: int,
+        user_id: SnowflakeID,
         data: Optional[Dict[str, Any]] = None,
-        server_id: Optional[int] = None,
-        channel_id: Optional[int] = None,
-        message_id: Optional[int] = None,
+        server_id: Optional[SnowflakeID] = None,
+        channel_id: Optional[SnowflakeID] = None,
+        message_id: Optional[SnowflakeID] = None,
         locale: Optional[str] = None,
         server_locale: Optional[str] = None,
     ) -> Interaction:
@@ -716,9 +707,9 @@ class ApplicationManager:
 
     def install_application(
         self,
-        application_id: int,
-        server_id: int,
-        installer_id: int,
+        application_id: SnowflakeID,
+        server_id: SnowflakeID,
+        installer_id: SnowflakeID,
         permissions: str = "0",
         scopes: Optional[List[str]] = None,
     ) -> ApplicationInstallation:
@@ -751,7 +742,7 @@ class ApplicationManager:
             raise InstallationExistsError("Application is already installed on this server")
 
         installation_id = self._generate_id()
-        now = self._current_time()
+        now = self._get_timestamp()
 
         self._db.execute(
             """INSERT INTO app_installations
@@ -782,9 +773,9 @@ class ApplicationManager:
 
     def uninstall_application(
         self,
-        application_id: int,
-        server_id: int,
-        user_id: int,
+        application_id: SnowflakeID,
+        server_id: SnowflakeID,
+        user_id: SnowflakeID,
     ) -> bool:
         """
         Uninstall an application from a server.
@@ -824,8 +815,8 @@ class ApplicationManager:
 
     def get_installations(
         self,
-        application_id: Optional[int] = None,
-        server_id: Optional[int] = None,
+        application_id: Optional[SnowflakeID] = None,
+        server_id: Optional[SnowflakeID] = None,
     ) -> List[ApplicationInstallation]:
         """
         Get application installations.
@@ -868,7 +859,7 @@ class ApplicationManager:
 
         return [self._row_to_installation(row) for row in rows]
 
-    def check_rate_limit(self, application_id: int) -> bool:
+    def check_rate_limit(self, application_id: SnowflakeID) -> bool:
         """
         Check if an application is rate limited.
 
@@ -878,21 +869,21 @@ class ApplicationManager:
         Returns:
             True if allowed, raises RateLimitError if limited
         """
-        now = self._current_time()
+        now = self._get_timestamp()
         limits = self._config.get("rate_limits", {})
         requests_per_minute = limits.get("requests_per_minute", 50)
 
         if application_id not in self._rate_limits:
-            self._rate_limits[application_id] = {"count": 0, "reset_at": now + 60}
+            self._rate_limits[application_id] = {"count": 0, "reset_at": now + 60000}
 
         rate_info = self._rate_limits[application_id]
 
         if now >= rate_info["reset_at"]:
             rate_info["count"] = 0
-            rate_info["reset_at"] = now + 60
+            rate_info["reset_at"] = now + 60000
 
         if rate_info["count"] >= requests_per_minute:
-            retry_after = rate_info["reset_at"] - now
+            retry_after = (rate_info["reset_at"] - now) // 1000
             raise RateLimitError(
                 f"Rate limit exceeded for application {application_id}",
                 retry_after

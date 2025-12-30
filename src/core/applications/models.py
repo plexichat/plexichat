@@ -5,6 +5,7 @@ Application models - Dataclasses for all application-related entities.
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 from enum import Enum, IntEnum
+from src.core.base import SnowflakeID
 
 
 class ApplicationType(Enum):
@@ -100,12 +101,12 @@ class TextInputStyle(IntEnum):
 @dataclass
 class Application:
     """Represents a registered application."""
-    id: int
-    owner_id: int
+    id: SnowflakeID
+    owner_id: SnowflakeID
     name: str
     description: Optional[str]
     icon_url: Optional[str]
-    bot_id: Optional[int]
+    bot_id: Optional[SnowflakeID]
     bot_public: bool
     bot_require_code_grant: bool
     terms_of_service_url: Optional[str]
@@ -139,12 +140,12 @@ class CommandOption:
 @dataclass
 class Command:
     """Represents an application command."""
-    id: int
-    application_id: int
+    id: SnowflakeID
+    application_id: SnowflakeID
     name: str
     description: str
     command_type: CommandType
-    server_id: Optional[int]
+    server_id: Optional[SnowflakeID]
     options: List[CommandOption]
     default_member_permissions: Optional[str]
     dm_permission: bool
@@ -164,7 +165,7 @@ class CommandChoice:
 @dataclass
 class InteractionData:
     """Data payload for an interaction."""
-    id: int
+    id: SnowflakeID
     name: str
     command_type: Optional[CommandType] = None
     resolved: Optional[Dict[str, Any]] = None
@@ -172,23 +173,23 @@ class InteractionData:
     custom_id: Optional[str] = None
     component_type: Optional[ComponentType] = None
     values: Optional[List[str]] = None
-    target_id: Optional[int] = None
+    target_id: Optional[SnowflakeID] = None
     components: Optional[List[Dict[str, Any]]] = None
 
 
 @dataclass
 class Interaction:
     """Represents an interaction from a user."""
-    id: int
-    application_id: int
+    id: SnowflakeID
+    application_id: SnowflakeID
     interaction_type: InteractionType
     data: Optional[InteractionData]
-    server_id: Optional[int]
-    channel_id: Optional[int]
-    user_id: int
+    server_id: Optional[SnowflakeID]
+    channel_id: Optional[SnowflakeID]
+    user_id: SnowflakeID
     token: str
     version: int
-    message_id: Optional[int]
+    message_id: Optional[SnowflakeID]
     locale: Optional[str]
     server_locale: Optional[str]
     created_at: int

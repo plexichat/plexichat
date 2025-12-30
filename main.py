@@ -10,6 +10,7 @@ import sys
 import signal
 import asyncio
 import threading
+import argparse
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
 
@@ -29,7 +30,7 @@ import utils.validator as validator
 import utils.version as version
 
 # Global Version Definition
-VERSION = "a.1.0-28"
+VERSION = "a.1.0-29"
 
 
 class PlexiChatServer:
@@ -55,7 +56,20 @@ class PlexiChatServer:
                 "zip_logs": True,
                 "rotate": True,
                 # SECURITY WARNING: Set to False in production to avoid leaking sensitive info
-                "include_exception_details": True
+                "include_exception_details": False
+            },
+            "selftest": {
+                "enabled": False,
+                "run_on_startup": False,
+                "exit_on_failure": False,
+                "capture_stack_traces": True,
+                "retry_on_failure": True,
+                "excluded_endpoints": ["/api/v1/auth/logout", "/api/v1/admin/logout"],
+                "test_user": {
+                    "username": "selftest_admin",
+                    "email": "selftest@internal.local",
+                    "password": "SelfTest_Password_123!"
+                }
             },
             "database": {
                 "type": "sqlite",
@@ -131,20 +145,62 @@ class PlexiChatServer:
                     "epoch": "2024-01-01T00:00:00Z",
                     "worker_id": 1,
                     "datacenter_id": 1
-                }
+                },
+                "key_rotation_days": 90
             },
             # Message encryption at rest - encrypts message content in database
             # Key is auto-generated and stored in ~/.plexichat/data/.message_encryption_key
             # IMPORTANT: Back up this key file! Without it, encrypted messages cannot be recovered.
             "messaging": {
                 "encrypt_messages": True,  # Enable message encryption at rest (default: True)
-                "encrypt_attachments": True,  # Encrypt attachment URLs
+                "encrypt_attachments": True,  # Encrypt attachment URLs in DB (replaces url with '[encrypted]')
                 "max_message_length": 4000,
                 "max_group_participants": 100,
                 "max_attachment_size": 10485760,  # 10MB
                 "max_attachments_per_message": 10,
                 "dm_auto_create": True,
                 "message_preview_length": 100
+            },
+            "presence": {
+                "typing_timeout_ms": 10000,
+                "timeout_ms": 300000,
+                "update_interval_ms": 60000
+            },
+            "stickers": {
+                "max_packs_per_server": 50,
+                "max_stickers_per_pack": 100,
+                "max_sticker_size": 524288,  # 512KB
+                "max_sticker_name_length": 32,
+                "max_pack_name_length": 64,
+                "max_pack_description_length": 256,
+                "allowed_formats": ["image/png", "image/webp", "image/gif"],
+                "max_suggestions": 10
+            },
+            "soundboard": {
+                "max_sounds_per_server": 50,
+                "max_sound_size": 2097152,  # 2MB
+                "max_sound_duration_seconds": 10,
+                "max_sound_name_length": 64,
+                "allowed_formats": ["audio/mpeg", "audio/ogg", "audio/wav", "audio/webm"],
+                "default_cooldown_seconds": 3.0,
+                "max_cooldown_seconds": 30.0
+            },
+            "webhooks": {
+                "max_webhooks_per_channel": 10,
+                "max_webhooks_per_server": 50,
+                "max_message_length": 2000,
+                "max_embeds_per_message": 10
+            },
+            "automod": {
+                "enabled": True,
+                "rules": {
+                    "caps": {
+                        "enabled": True,
+                        "max_percentage": 70.0,
+                        "min_length": 10,
+                        "ignore_commands": True
+                    }
+                }
             },
             "redis": {
                 "enabled": False,
@@ -176,10 +232,7 @@ class PlexiChatServer:
                     "http://localhost:5000", 
                     "http://127.0.0.1:5000", 
                     "http://localhost:8000", 
-                    "http://127.0.0.1:8000",
-                    "https://plexichat-app.tail79f345.ts.net:8443",
-                    "http://192.168.3.221:5000",
-                    "http://192.168.3.221:8000"
+                    "http://127.0.0.1:8000"
                 ],
                 "cors_allow_credentials": True,
                 "cors_allow_methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -386,7 +439,7 @@ class PlexiChatServer:
                 "scanner_host": "localhost",
                 "scanner_port": 3310,
                 
-                # External URL proxy
+                # External URL proxy (SSRF protected, but consider disabling for maximum production privacy)
                 "proxy_enabled": True,
                 "proxy_cache_ttl": 86400,  # 24 hours
                 "proxy_max_size": 10485760,  # 10MB
@@ -458,16 +511,10 @@ class PlexiChatServer:
                     "stun:stun3.l.google.com:19302"
                 ],
                 # TURN servers for relay (required for restrictive NATs/firewalls)
-                # Using metered.ca free TURN servers - replace with your own coturn for production
-                "turn_urls": [
-                    "turn:openrelay.metered.ca:80",
-                    "turn:openrelay.metered.ca:443",
-                    "turns:openrelay.metered.ca:443"
-                ],
-                # Static TURN credentials (for metered.ca free tier)
-                # For coturn with time-limited credentials, use turn_secret instead
-                "turn_username": "openrelayproject",
-                "turn_credential": "openrelayproject",
+                # Using metered.ca free TURN servers as fallback - replace with your own coturn for production
+                "turn_urls": [],
+                "turn_username": "",
+                "turn_credential": "",
                 # TURN secret for time-limited credentials (coturn static-auth-secret)
                 "turn_secret": "",
                 "turn_ttl": 86400,
@@ -692,9 +739,11 @@ class PlexiChatServer:
     def initialize_modules(self) -> Tuple[Any, Any, Any, Any, Any, Any, Any, Any, Any, Any]:
         """Initialize all core modules in dependency order."""
         from src.core.database import Database, setup_redis, get_redis_client
-        from src.core import auth, messaging, servers, relationships, presence, reactions, embeds, webhooks, settings, media
-        from src.core import voice
+        from src.core import auth, messaging, servers, relationships, presence, reactions, embeds, webhooks, settings, media, events
+        from src.core import voice, notifications, threads
         from src.core.voice import signaling
+        
+        failed_modules = []
         
         # Initialize database
         logger.info("Initializing database...")
@@ -749,6 +798,14 @@ class PlexiChatServer:
         logger.info("Initializing embeds module...")
         embeds.setup(self.db, messaging, servers)
         self._modules['embeds'] = embeds
+
+        logger.info("Initializing events module...")
+        events.setup(
+            relationships_module=relationships,
+            servers_module=servers,
+            messaging_module=messaging
+        )
+        self._modules['events'] = events
         
         logger.info("Initializing webhooks module...")
         webhooks.setup(self.db, auth, messaging, servers, embeds)
@@ -757,16 +814,33 @@ class PlexiChatServer:
         logger.info("Initializing settings module...")
         settings.setup(self.db)
         self._modules['settings'] = settings
+
+        logger.info("Initializing notifications module...")
+        try:
+            notifications.setup(self.db, messaging, auth)
+            self._modules['notifications'] = notifications
+        except Exception as e:
+            logger.warning(f"Failed to initialize notifications module: {e}")
+            failed_modules.append("notifications")
+
+        logger.info("Initializing threads module...")
+        try:
+            threads.setup(self.db, messaging, servers)
+            self._modules['threads'] = threads
+        except Exception as e:
+            logger.warning(f"Failed to initialize threads module: {e}")
+            failed_modules.append("threads")
         
         # Initialize user features module
         logger.info("Initializing user features module...")
+        features = None
         try:
             from src.core import features
             features.setup(self.db)
             self._modules['features'] = features
-            logger.info("User features module initialized")
         except Exception as e:
             logger.warning(f"Failed to initialize user features module: {e}")
+            failed_modules.append("features")
         
         logger.info("Initializing media module...")
         media.setup(self.db, messaging)
@@ -778,41 +852,49 @@ class PlexiChatServer:
             from src.core import avatars
             avatars.setup(self.db)
             self._modules['avatars'] = avatars
-            logger.info("Avatars module initialized")
         except Exception as e:
             logger.warning(f"Failed to initialize avatars module: {e}")
+            failed_modules.append("avatars")
         
         # Initialize voice module
         logger.info("Initializing voice module...")
-        voice.setup(self.db, auth, servers, relationships, presence)
-        self._modules['voice'] = voice
+        try:
+            voice.setup(self.db, auth, servers, relationships, presence)
+            self._modules['voice'] = voice
+        except Exception as e:
+            logger.warning(f"Failed to initialize voice module: {e}")
+            failed_modules.append("voice")
         
         # Initialize voice signaling with SFU configuration
         voice_config = config.get("voice") or {}
         if voice_config.get("enabled", False):
             logger.info("Initializing voice signaling module...")
-            sfu_backend = voice_config.get("sfu_backend", "mediasoup")
-            signaling.setup(
-                voice_module=voice,
-                events_module=None,  # TODO: Add events module when available
-                sfu_backend=sfu_backend,
-                mediasoup_url=voice_config.get("mediasoup_url", "https://localhost:4443"),
-                mediasoup_origin=voice_config.get("mediasoup_origin", "https://plexichat-app.tail79f345.ts.net:8443"),
-                janus_url=voice_config.get("janus_url", "http://localhost:8088/janus"),
-                stun_urls=voice_config.get("stun_urls", ["stun:stun.l.google.com:19302"]),
-                turn_urls=voice_config.get("turn_urls", []),
-                turn_secret=voice_config.get("turn_secret", ""),
-                turn_ttl=voice_config.get("turn_ttl", 86400),
-                turn_username=voice_config.get("turn_username", ""),
-                turn_credential=voice_config.get("turn_credential", ""),
-            )
-            self._modules['signaling'] = signaling
-            sfu_url = voice_config.get("mediasoup_url") if sfu_backend in ("mediasoup", "mediasoup-ws") else voice_config.get("janus_url")
-            logger.info(f"Voice signaling initialized with {sfu_backend} backend at {sfu_url}")
-            if voice_config.get("turn_urls"):
-                logger.info(f"TURN servers configured: {len(voice_config.get('turn_urls', []))} servers")
-            if voice_config.get("log_connections", False):
-                logger.info("Voice connection logging enabled")
+            try:
+                sfu_backend = voice_config.get("sfu_backend", "mediasoup")
+                signaling.setup(
+                    voice_module=voice,
+                    events_module=events,
+                    sfu_backend=sfu_backend,
+                    mediasoup_url=voice_config.get("mediasoup_url", "https://localhost:4443"),
+                    mediasoup_origin=voice_config.get("mediasoup_origin", "https://plexichat-app.tail79f345.ts.net:8443"),
+                    janus_url=voice_config.get("janus_url", "http://localhost:8088/janus"),
+                    stun_urls=voice_config.get("stun_urls", ["stun:stun.l.google.com:19302"]),
+                    turn_urls=voice_config.get("turn_urls", []),
+                    turn_secret=voice_config.get("turn_secret", ""),
+                    turn_ttl=voice_config.get("turn_ttl", 86400),
+                    turn_username=voice_config.get("turn_username", ""),
+                    turn_credential=voice_config.get("turn_credential", ""),
+                )
+                self._modules['signaling'] = signaling
+                sfu_url = voice_config.get("mediasoup_url") if sfu_backend in ("mediasoup", "mediasoup-ws") else voice_config.get("janus_url")
+                logger.info(f"Voice signaling initialized with {sfu_backend} backend at {sfu_url}")
+                if voice_config.get("turn_urls"):
+                    logger.info(f"TURN servers configured: {len(voice_config.get('turn_urls', []))} servers")
+                if voice_config.get("log_connections", False):
+                    logger.info("Voice connection logging enabled")
+            except Exception as e:
+                logger.warning(f"Failed to initialize voice signaling module: {e}")
+                failed_modules.append("signaling")
         else:
             logger.info("Voice module disabled in configuration")
         
@@ -823,7 +905,7 @@ class PlexiChatServer:
             try:
                 from src.core import ratelimit
                 from src.core.ratelimit.storage import RedisStorage, MemoryStorage
-                from src.core.database import is_available as redis_is_available, get_redis_client
+                from src.core.database.redis_client import is_available as redis_is_available
                 
                 storage = None
                 if redis_is_available():
@@ -840,9 +922,9 @@ class PlexiChatServer:
                     enable_global_limit=True
                 )
                 self._modules['ratelimit'] = ratelimit
-                logger.info("Rate limit module initialized")
             except Exception as e:
                 logger.warning(f"Failed to initialize rate limit module: {e}")
+                failed_modules.append("ratelimit")
         
         # Initialize telemetry module
         telemetry_config = config.get("telemetry") or {}
@@ -852,9 +934,33 @@ class PlexiChatServer:
                 from src.core import telemetry
                 telemetry.setup(self.db)
                 self._modules['telemetry'] = telemetry
-                logger.info("Telemetry module initialized")
             except Exception as e:
                 logger.warning(f"Failed to initialize telemetry module: {e}")
+                failed_modules.append("telemetry")
+
+        # Initialize feedback module
+        feedback_config = config.get("feedback") or {}
+        if feedback_config.get("enabled", True):
+            logger.info("Initializing feedback module...")
+            try:
+                from src.core import feedback
+                feedback.setup(self.db)
+                self._modules['feedback'] = feedback
+            except Exception as e:
+                logger.warning(f"Failed to initialize feedback module: {e}")
+                failed_modules.append("feedback")
+
+        # Initialize reports module
+        reports_config = config.get("reports") or {}
+        if reports_config.get("enabled", True):
+            logger.info("Initializing reports module...")
+            try:
+                from src.core import reports
+                reports.setup(self.db, messaging)
+                self._modules['reports'] = reports
+            except Exception as e:
+                logger.warning(f"Failed to initialize reports module: {e}")
+                failed_modules.append("reports")
         
         # Initialize admin module
         admin_config = config.get("admin_ui") or {}
@@ -862,18 +968,37 @@ class PlexiChatServer:
             logger.info("Initializing admin module...")
             try:
                 from src.core import admin
-                admin.setup(self.db, auth)
+                admin.setup(self.db, auth, features)
                 self._modules['admin'] = admin
                 logger.info(f"Admin module initialized (path: {admin_config.get('path', '/admin')})")
             except Exception as e:
                 logger.warning(f"Failed to initialize admin module: {e}")
+                failed_modules.append("admin")
         
+        # Log summary of initialization
+        if failed_modules:
+            logger.error(f"Module initialization incomplete. Failed modules: {', '.join(failed_modules)}")
+        else:
+            logger.info("All modules initialized successfully")
+            
         return auth, messaging, servers, relationships, presence, reactions, embeds, webhooks, settings, media
     
-    def create_application(self, auth: Any, messaging: Any, servers: Any, relationships: Any, presence: Any, reactions: Any, embeds: Any, webhooks: Any, settings: Any, media: Any) -> Any:
+    def create_application(
+        self,
+        auth: Any,
+        messaging: Any,
+        servers: Any,
+        relationships: Any,
+        presence: Any,
+        reactions: Any,
+        embeds: Any,
+        webhooks: Any,
+        settings: Any,
+        media: Any,
+    ) -> Any:
         """Create and configure the FastAPI application."""
         from src.api import setup as api_setup, create_app
-        
+
         logger.info("Initializing API module...")
         api_setup(
             db=self.db,
@@ -887,8 +1012,14 @@ class PlexiChatServer:
             webhooks_module=webhooks,
             settings_module=settings,
             media_module=media,
-            features_module=self._modules.get('features'),
-            avatars_module=self._modules.get('avatars'),
+            features_module=self._modules.get("features"),
+            avatars_module=self._modules.get("avatars"),
+            reports_module=self._modules.get("reports"),
+            feedback_module=self._modules.get("feedback"),
+            admin_module=self._modules.get("admin"),
+            events_module=self._modules.get("events"),
+            notifications_module=self._modules.get("notifications"),
+            threads_module=self._modules.get("threads"),
         )
         
         # Get rate limiting and docs settings from config
@@ -989,6 +1120,10 @@ class PlexiChatServer:
                 logger.error(f"Failed to configure TLS: {e}")
         
         # Create uvicorn config
+        assert self.app is not None
+        assert host is not None
+        assert port is not None
+        
         uvi_config = uvicorn.Config(
             self.app,
             host=host,
@@ -999,6 +1134,7 @@ class PlexiChatServer:
         )
         
         self.server = uvicorn.Server(uvi_config)
+        assert self.server is not None
         
         # Setup signal handlers for graceful shutdown
         def signal_handler(signum, frame):
@@ -1019,7 +1155,8 @@ class PlexiChatServer:
                     loop
                 )
             
-            self.server.should_exit = True
+            if self.server:
+                self.server.should_exit = True
         
         # Register signal handlers
         signal.signal(signal.SIGINT, signal_handler)
@@ -1071,8 +1208,8 @@ class PlexiChatServer:
             loop = asyncio.get_event_loop()
             if loop.is_running():
                 asyncio.ensure_future(self.notify_clients_restart())
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to notify clients of restart: {e}")
         
         if self.server:
             self.server.should_exit = True
@@ -1080,8 +1217,50 @@ class PlexiChatServer:
 
 def main() -> None:
     """Main entry point for the PlexiChat server."""
+    parser = argparse.ArgumentParser(
+        description="PlexiChat API Server",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python main.py                 # Start server normally
+  python main.py --self-test     # Run API self-test and exit
+  python main.py --create-config # Generate default config file
+  python main.py --config custom.yaml # Use custom config file
+        """
+    )
+    
+    parser.add_argument("--config", help="Path to custom configuration file")
+    parser.add_argument("--create-config", action="store_true", help="Create default config file and exit")
+    parser.add_argument("--self-test", action="store_true", help="Run automated API self-test and exit")
+    parser.add_argument("--host", help="Override server host")
+    parser.add_argument("--port", type=int, help="Override server port")
+    parser.add_argument("--version", action="store_true", help="Show version and exit")
+    
+    # Use parse_known_args to ignore uvicorn args if wrapped
+    args, _ = parser.parse_known_args()
+    
+    if args.version:
+        print(f"PlexiChat Server v{VERSION}")
+        return
+
     server = PlexiChatServer()
     
+    # Handle --create-config
+    if args.create_config:
+        config_dir = os.path.join(project_root, "config")
+        os.makedirs(config_dir, exist_ok=True)
+        config_path = os.path.join(config_dir, "config.yaml")
+        
+        if os.path.exists(config_path):
+            print(f"Config file already exists at {config_path}")
+            return
+            
+        import yaml
+        with open(config_path, "w") as f:
+            yaml.dump(server.get_default_config(), f, default_flow_style=False)
+        print(f"Created default configuration at {config_path}")
+        return
+
     # Buffer for early log messages (before logger is configured)
     early_logs = []
     
@@ -1094,7 +1273,13 @@ def main() -> None:
         early_logs.append(("debug", f"Ensured directory exists: {dir_path}"))
     
     # Setup configuration (needed for logger config)
-    config_path = server.setup_config()
+    # Use custom config path if provided
+    if args.config:
+        config.setup(config_path=args.config, default_config=server.get_default_config())
+        config_path = args.config
+    else:
+        config_path = server.setup_config()
+        
     early_logs.append(("debug", f"Config loaded from: {config_path}"))
     
     # Setup logging - NOW we can use logger
@@ -1129,8 +1314,44 @@ def main() -> None:
     server.create_application(*modules)
     
     # Get server settings
-    host = os.getenv("HOST", config.get("server", {}).get("host", "0.0.0.0"))
-    port = int(os.getenv("PORT", config.get("server", {}).get("port", 8000)))
+    host = args.host or os.getenv("HOST", config.get("server", {}).get("host", "0.0.0.0"))
+    port = args.port or int(os.getenv("PORT", config.get("server", {}).get("port", 8000)))
+    
+    # Handle self-test
+    if args.self_test:
+        logger.info("Starting Self-Test Mode...")
+        # Override host to localhost for safety
+        host = "127.0.0.1"
+        
+        # Set log level to INFO for cleaner output during self-test
+        import logging
+        logging.getLogger("AppLogger").setLevel(logging.INFO)
+        
+        # Start server in background thread
+        import uvicorn
+        uvi_config = uvicorn.Config(server.app, host=host, port=port, log_level="error")
+        uvi_server = uvicorn.Server(uvi_config)
+        
+        server_thread = threading.Thread(target=uvi_server.run, daemon=True)
+        server_thread.start()
+        
+        # Wait for server to start
+        import time
+        time.sleep(2)
+        
+        # Run self-test
+        try:
+            from src.core.selftest.runner import SelfTestRunner
+            runner = SelfTestRunner(base_url=f"http://{host}:{port}")
+            success = runner.run_all()
+            
+            # Stop server and exit
+            uvi_server.should_exit = True
+            server.cleanup()
+            sys.exit(0 if success else 1)
+        except Exception as e:
+            logger.error(f"Self-test execution failed: {e}", exc_info=True)
+            sys.exit(1)
     
     # Run server (returns True if restart was requested)
     should_restart = server.run(host, port)

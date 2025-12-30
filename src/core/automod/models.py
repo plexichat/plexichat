@@ -7,6 +7,7 @@ Defines all data structures for rules, actions, violations, and audit entries.
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, List, Dict, Any
+from src.core.base import SnowflakeID
 
 
 class RuleType(Enum):
@@ -61,26 +62,26 @@ class RuleAction:
 @dataclass
 class Rule:
     """Automod rule definition."""
-    id: int
-    server_id: int
+    id: SnowflakeID
+    server_id: SnowflakeID
     name: str
     rule_type: RuleType
     enabled: bool
     config: Dict[str, Any]
     actions: List[RuleAction]
-    exempt_roles: List[int]
-    exempt_channels: List[int]
+    exempt_roles: List[SnowflakeID]
+    exempt_channels: List[SnowflakeID]
     priority: int
     created_at: int
     updated_at: int
-    created_by: int
+    created_by: SnowflakeID
     check_all: bool = False
 
 
 @dataclass
 class RuleMatch:
     """Result of a rule check."""
-    rule_id: int
+    rule_id: SnowflakeID
     rule_type: RuleType
     matched: bool
     matched_content: Optional[str] = None
@@ -91,12 +92,12 @@ class RuleMatch:
 @dataclass
 class Violation:
     """Record of a rule violation."""
-    id: int
-    server_id: int
-    channel_id: int
-    user_id: int
-    message_id: Optional[int]
-    rule_id: int
+    id: SnowflakeID
+    server_id: SnowflakeID
+    channel_id: SnowflakeID
+    user_id: SnowflakeID
+    message_id: Optional[SnowflakeID]
+    rule_id: SnowflakeID
     rule_type: RuleType
     matched_content: str
     actions_taken: List[ActionType]
@@ -108,12 +109,12 @@ class Violation:
 @dataclass
 class AuditEntry:
     """Audit log entry for automod actions."""
-    id: int
-    server_id: int
+    id: SnowflakeID
+    server_id: SnowflakeID
     action_type: ActionType
-    target_user_id: int
-    moderator_id: Optional[int]
-    rule_id: Optional[int]
+    target_user_id: SnowflakeID
+    moderator_id: Optional[SnowflakeID]
+    rule_id: Optional[SnowflakeID]
     reason: str
     metadata: Dict[str, Any]
     created_at: int
@@ -122,8 +123,8 @@ class AuditEntry:
 @dataclass
 class UserReputation:
     """User reputation score for a server."""
-    user_id: int
-    server_id: int
+    user_id: SnowflakeID
+    server_id: SnowflakeID
     score: float
     violation_count: int
     last_violation_at: Optional[int]
@@ -135,13 +136,13 @@ class UserReputation:
 @dataclass
 class Exemption:
     """Exemption from automod rules."""
-    id: int
-    server_id: int
-    rule_id: Optional[int]
+    id: SnowflakeID
+    server_id: SnowflakeID
+    rule_id: Optional[SnowflakeID]
     target_type: str
-    target_id: int
+    target_id: SnowflakeID
     created_at: int
-    created_by: int
+    created_by: SnowflakeID
 
 
 @dataclass
@@ -170,6 +171,6 @@ class BulkScanResult:
     """Result of bulk message scanning."""
     total_scanned: int
     violations_found: int
-    messages_flagged: List[int]
-    user_violations: Dict[int, int]
+    messages_flagged: List[SnowflakeID]
+    user_violations: Dict[SnowflakeID, int]
     scan_duration_ms: int
