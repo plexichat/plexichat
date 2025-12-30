@@ -5,12 +5,11 @@ Handles poll creation, voting, results, and expiry with proper
 validation and permission checks.
 """
 
-import time
 from typing import Optional, List, Dict, Any
 
 import utils.config as config
 import utils.logger as logger
-from src.utils.encryption import generate_snowflake_id
+from ..base import BaseManager, SnowflakeID
 
 from .models import (
     Poll,
@@ -34,18 +33,19 @@ from .exceptions import (
 from .schema import create_tables
 
 
-class PollManager:
+class PollManager(BaseManager):
     """Core poll manager handling all operations."""
 
-    def __init__(self, db, messaging_module=None):
+    def __init__(self, db, auth_module=None, messaging_module=None):
         """
         Initialize the poll manager.
 
         Args:
             db: Database instance (must be connected)
+            auth_module: Optional auth module for user verification
             messaging_module: Optional messaging module for message access
         """
-        self._db = db
+        super().__init__(db, auth_module)
         self._messaging = messaging_module
         self._config = self._load_config()
 
@@ -66,14 +66,6 @@ class PollManager:
 
         poll_config = config.get("polls", {})
         return {**defaults, **poll_config}
-
-    def _get_timestamp(self) -> int:
-        """Get current timestamp in milliseconds."""
-        return int(time.time() * 1000)
-
-    def _generate_id(self) -> int:
-        """Generate a new Snowflake ID."""
-        return generate_snowflake_id()
 
     def _validate_question(self, question: str) -> str:
         """Validate and sanitize poll question."""
@@ -124,8 +116,8 @@ class PollManager:
 
     def create_poll(
         self,
-        user_id: int,
-        message_id: int,
+        user_id: SnowflakeID,
+        message_id: SnowflakeID,
         question: str,
         options: List[str],
         duration_hours: Optional[int] = None,
@@ -175,7 +167,6 @@ class PollManager:
             )
 
         validated_options = [self._validate_option(opt) for opt in options]
-
         duration_hours = self._validate_duration(duration_hours)
 
         now = self._get_timestamp()
@@ -185,22 +176,33 @@ class PollManager:
         if duration_hours:
             ends_at = now + (duration_hours * 3600 * 1000)
 
-        self._db.execute(
-            """INSERT INTO poll_polls 
-               (id, message_id, question, created_by, created_at, ends_at, 
-                allow_multiple_choice, results_visibility)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (poll_id, message_id, question, user_id, now, ends_at,
-             1 if allow_multiple_choice else 0, results_visibility.value)
-        )
+        # Use transaction for atomic creation
+        try:
+            self._db.begin_transaction()
 
-        for i, option_text in enumerate(validated_options):
-            option_id = self._generate_id()
             self._db.execute(
-                """INSERT INTO poll_options (id, poll_id, text, position)
-                   VALUES (?, ?, ?, ?)""",
-                (option_id, poll_id, option_text, i)
+                """INSERT INTO poll_polls 
+                   (id, message_id, question, created_by, created_at, ends_at, 
+                    allow_multiple_choice, results_visibility)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (poll_id, message_id, question, user_id, now, ends_at,
+                 1 if allow_multiple_choice else 0, results_visibility.value),
+                auto_commit=False
             )
+
+            for i, option_text in enumerate(validated_options):
+                option_id = self._generate_id()
+                self._db.execute(
+                    """INSERT INTO poll_options (id, poll_id, text, position)
+                       VALUES (?, ?, ?, ?)""",
+                    (option_id, poll_id, option_text, i),
+                    auto_commit=False
+                )
+
+            self._db.commit()
+        except Exception:
+            self._db.rollback()
+            raise
 
         logger.debug(f"Created poll {poll_id} on message {message_id}")
 
@@ -208,7 +210,7 @@ class PollManager:
         assert result is not None  # Should exist since we just created it
         return result
 
-    def get_poll(self, poll_id: int, user_id: int) -> Optional[Poll]:
+    def get_poll(self, poll_id: SnowflakeID, user_id: SnowflakeID) -> Optional[Poll]:
         """Get a poll by ID."""
         row = self._db.fetch_one(
             "SELECT * FROM poll_polls WHERE id = ?",
@@ -218,6 +220,7 @@ class PollManager:
         if not row:
             return None
 
+        # Verify access to the message
         if self._messaging:
             msg = self._messaging.get_message(user_id, row["message_id"])
             if not msg:
@@ -227,9 +230,9 @@ class PollManager:
 
     def vote(
         self,
-        user_id: int,
-        poll_id: int,
-        option_ids: List[int]
+        user_id: SnowflakeID,
+        poll_id: SnowflakeID,
+        option_ids: List[SnowflakeID]
     ) -> PollResults:
         """
         Vote on a poll.
@@ -249,6 +252,9 @@ class PollManager:
             AlreadyVotedError: User already voted
             MultipleVoteNotAllowedError: Multiple votes not allowed
         """
+        if not option_ids:
+            raise InvalidPollOptionError("At least one option must be selected")
+
         poll = self.get_poll(poll_id, user_id)
         if not poll:
             raise PollNotFoundError("Poll not found")
@@ -258,42 +264,55 @@ class PollManager:
                 self._end_poll(poll_id)
             raise PollEndedError("Poll has ended")
 
-        if not poll.allow_multiple_choice and len(option_ids) > 1:
+        # Handle duplicates and limits
+        unique_option_ids = list(set(option_ids))
+        if not poll.allow_multiple_choice and len(unique_option_ids) > 1:
             raise MultipleVoteNotAllowedError(
                 "This poll does not allow multiple choice voting"
             )
 
-        existing_votes = self._db.fetch_all(
-            "SELECT option_id FROM poll_votes WHERE poll_id = ? AND user_id = ?",
+        # Check if already voted
+        existing_votes = self._db.fetch_one(
+            "SELECT 1 FROM poll_votes WHERE poll_id = ? AND user_id = ? LIMIT 1",
             (poll_id, user_id)
         )
 
         if existing_votes:
             raise AlreadyVotedError("You have already voted on this poll")
 
-        for option_id in option_ids:
-            option = self._db.fetch_one(
-                "SELECT id FROM poll_options WHERE id = ? AND poll_id = ?",
-                (option_id, poll_id)
-            )
-            if not option:
-                raise PollOptionNotFoundError(f"Option {option_id} not found in this poll")
+        # Validate all options exist in this poll (optimized single query)
+        placeholders = ",".join("?" * len(unique_option_ids))
+        valid_options = self._db.fetch_all(
+            f"SELECT id FROM poll_options WHERE poll_id = ? AND id IN ({placeholders})",
+            (poll_id, *unique_option_ids)
+        )
+        
+        if len(valid_options) != len(unique_option_ids):
+            raise PollOptionNotFoundError("One or more selected options are invalid for this poll")
 
         now = self._get_timestamp()
 
-        for option_id in option_ids:
-            vote_id = self._generate_id()
-            self._db.execute(
-                """INSERT INTO poll_votes (id, poll_id, option_id, user_id, voted_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (vote_id, poll_id, option_id, user_id, now)
-            )
+        # Use transaction for atomic voting
+        try:
+            self._db.begin_transaction()
+            for option_id in unique_option_ids:
+                vote_id = self._generate_id()
+                self._db.execute(
+                    """INSERT INTO poll_votes (id, poll_id, option_id, user_id, voted_at)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (vote_id, poll_id, option_id, user_id, now),
+                    auto_commit=False
+                )
+            self._db.commit()
+        except Exception:
+            self._db.rollback()
+            raise
 
         logger.debug(f"User {user_id} voted on poll {poll_id}")
 
         return self.get_results(poll_id, user_id)
 
-    def get_results(self, poll_id: int, user_id: int) -> PollResults:
+    def get_results(self, poll_id: SnowflakeID, user_id: SnowflakeID) -> PollResults:
         """
         Get poll results.
 
@@ -311,6 +330,7 @@ class PollManager:
         if not poll:
             raise PollNotFoundError("Poll not found")
 
+        # Get user's own votes
         user_votes = self._db.fetch_all(
             "SELECT option_id FROM poll_votes WHERE poll_id = ? AND user_id = ?",
             (poll_id, user_id)
@@ -318,25 +338,25 @@ class PollManager:
         user_voted = len(user_votes) > 0
         user_vote_ids = [v["option_id"] for v in user_votes]
 
+        # Check visibility
         can_see_results = True
         if poll.results_visibility == PollResultsVisibility.AFTER_VOTE:
             can_see_results = user_voted
         elif poll.results_visibility == PollResultsVisibility.AFTER_END:
             can_see_results = poll.is_ended or (poll.ends_at and self._get_timestamp() >= poll.ends_at)
 
+        # Fetch all vote counts in a single query (optimized)
+        vote_counts = {}
+        if can_see_results:
+            rows = self._db.fetch_all(
+                "SELECT option_id, COUNT(*) as count FROM poll_votes WHERE poll_id = ? GROUP BY option_id",
+                (poll_id,)
+            )
+            vote_counts = {row["option_id"]: row["count"] for row in rows}
+
         options_with_counts = []
-        total_votes = 0
-
         for option in poll.options:
-            if can_see_results:
-                count_row = self._db.fetch_one(
-                    "SELECT COUNT(*) as count FROM poll_votes WHERE option_id = ?",
-                    (option.id,)
-                )
-                vote_count = count_row["count"] if count_row else 0
-            else:
-                vote_count = 0
-
+            vote_count = vote_counts.get(option.id, 0)
             options_with_counts.append(PollOption(
                 id=option.id,
                 poll_id=option.poll_id,
@@ -344,17 +364,23 @@ class PollManager:
                 position=option.position,
                 vote_count=vote_count
             ))
-            total_votes += vote_count
+
+        # Total votes = number of unique participants
+        voter_count_row = self._db.fetch_one(
+            "SELECT COUNT(DISTINCT user_id) as count FROM poll_votes WHERE poll_id = ?",
+            (poll_id,)
+        )
+        total_voters = voter_count_row["count"] if voter_count_row else 0
 
         return PollResults(
             poll=poll,
             options=options_with_counts,
-            total_votes=total_votes,
+            total_votes=total_voters,
             user_voted=user_voted,
             user_votes=user_vote_ids
         )
 
-    def close_poll(self, user_id: int, poll_id: int) -> Poll:
+    def close_poll(self, user_id: SnowflakeID, poll_id: SnowflakeID) -> Poll:
         """
         Close a poll early (creator only).
 
@@ -388,7 +414,7 @@ class PollManager:
         assert result is not None  # Should exist since we just updated it
         return result
 
-    def delete_poll(self, user_id: int, poll_id: int) -> bool:
+    def delete_poll(self, user_id: SnowflakeID, poll_id: SnowflakeID) -> bool:
         """
         Delete a poll (creator only).
 
@@ -417,7 +443,7 @@ class PollManager:
         logger.debug(f"Poll {poll_id} deleted")
         return True
 
-    def _end_poll(self, poll_id: int):
+    def _end_poll(self, poll_id: SnowflakeID):
         """Mark a poll as ended."""
         now = self._get_timestamp()
         self._db.execute(

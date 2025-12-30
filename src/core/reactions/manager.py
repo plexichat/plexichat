@@ -6,12 +6,11 @@ validation, permission checks, and database interactions.
 """
 
 import re
-import time
 from typing import Optional, List, Dict, Any
 
 import utils.config as config
 import utils.logger as logger
-from src.utils.encryption import generate_snowflake_id
+from src.core.base import BaseManager, SnowflakeID
 
 from .models import (
     Reaction,
@@ -40,21 +39,22 @@ from .schema import create_tables
 CUSTOM_EMOJI_PATTERN = re.compile(r"^<a?:([a-zA-Z0-9_]+):(\d+)>$")
 
 
-class ReactionManager:
+class ReactionManager(BaseManager):
     """Core reaction manager handling all operations."""
 
-    def __init__(self, db, messaging_module=None, servers_module=None, relationships_module=None, media_module=None):
+    def __init__(self, db, auth_module=None, messaging_module=None, servers_module=None, relationships_module=None, media_module=None):
         """
         Initialize the reaction manager.
 
         Args:
             db: Database instance (must be connected)
+            auth_module: Auth module for user validation
             messaging_module: Messaging module for message access
             servers_module: Servers module for permission checks
             relationships_module: Relationships module for block filtering
             media_module: Media module for emoji image uploads
         """
-        self._db = db
+        super().__init__(db, auth_module)
         self._messaging = messaging_module
         self._servers = servers_module
         self._relationships = relationships_module
@@ -65,6 +65,46 @@ class ReactionManager:
         self._migrate_emoji_table()
 
         logger.info("Reaction module initialized")
+
+    def get_conversation_id_from_message(self, message_id: SnowflakeID) -> Optional[SnowflakeID]:
+        """Get conversation ID for a message."""
+        row = self._db.fetch_one(
+            "SELECT conversation_id FROM msg_messages WHERE id = ?",
+            (message_id,)
+        )
+        return row["conversation_id"] if row else None
+
+    def get_participant_ids(self, conversation_id: SnowflakeID) -> List[SnowflakeID]:
+        """Get all participant IDs for a conversation, including server members if applicable."""
+        # Get all participants in the conversation
+        participant_rows = self._db.fetch_all(
+            "SELECT user_id FROM msg_participants WHERE conversation_id = ?",
+            (conversation_id,)
+        )
+        participant_ids = [row["user_id"] for row in participant_rows]
+
+        # Also check if this is a server channel and get server members
+        import json
+        conv_row = self._db.fetch_one(
+            "SELECT metadata FROM msg_conversations WHERE id = ?",
+            (conversation_id,)
+        )
+        if conv_row and conv_row.get("metadata"):
+            try:
+                metadata = json.loads(conv_row["metadata"]) if isinstance(conv_row["metadata"], str) else conv_row["metadata"]
+                server_id = metadata.get("server_id") if isinstance(metadata, dict) else None
+                if server_id:
+                    member_rows = self._db.fetch_all(
+                        "SELECT user_id FROM srv_members WHERE server_id = ?",
+                        (server_id,)
+                    )
+                    for row in member_rows:
+                        if row["user_id"] not in participant_ids:
+                            participant_ids.append(row["user_id"])
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.debug(f"Failed to parse conversation metadata for reactions: {e}")
+        
+        return participant_ids
 
     def _migrate_emoji_table(self):
         """Add new columns to emoji table if they don't exist."""
@@ -83,8 +123,9 @@ class ReactionManager:
             for sql in migrations:
                 try:
                     self._db.execute(sql)
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Column might already exist, log at debug level
+                    logger.debug(f"Migration step failed (possibly column exists): {e}")
 
     def _load_config(self) -> Dict[str, Any]:
         """Load reaction configuration."""
@@ -103,29 +144,21 @@ class ReactionManager:
         emojis_config = config.get("emojis", {})
         return {**defaults, **reactions_config, **emojis_config}
 
-    def _get_timestamp(self) -> int:
-        """Get current timestamp in milliseconds."""
-        return int(time.time() * 1000)
-
-    def _generate_id(self) -> int:
-        """Generate a new Snowflake ID."""
-        return generate_snowflake_id()
-
-    def _get_message(self, message_id: int) -> Optional[Dict]:
+    def _get_message(self, message_id: SnowflakeID) -> Optional[Dict]:
         """Get message from database."""
         return self._db.fetch_one(
             "SELECT * FROM msg_messages WHERE id = ? AND deleted = 0",
             (message_id,)
         )
 
-    def _get_conversation(self, conversation_id: int) -> Optional[Dict]:
+    def _get_conversation(self, conversation_id: SnowflakeID) -> Optional[Dict]:
         """Get conversation from database."""
         return self._db.fetch_one(
             "SELECT * FROM msg_conversations WHERE id = ? AND deleted = 0",
             (conversation_id,)
         )
 
-    def _is_participant(self, conversation_id: int, user_id: int) -> bool:
+    def _is_participant(self, conversation_id: SnowflakeID, user_id: SnowflakeID) -> bool:
         """Check if user is a participant in conversation."""
         # First check direct participants table
         row = self._db.fetch_one(
@@ -159,20 +192,20 @@ class ReactionManager:
 
         return False
 
-    def _get_channel_for_conversation(self, conversation_id: int) -> Optional[Dict]:
+    def _get_channel_for_conversation(self, conversation_id: SnowflakeID) -> Optional[Dict]:
         """Get server channel if conversation is a channel."""
         return self._db.fetch_one(
             "SELECT * FROM srv_channels WHERE conversation_id = ?",
             (conversation_id,)
         )
 
-    def _check_server_permission(self, user_id: int, server_id: int, channel_id: Optional[int] = None) -> bool:
+    def _check_server_permission(self, user_id: SnowflakeID, server_id: SnowflakeID, channel_id: Optional[SnowflakeID] = None) -> bool:
         """Check if user has add_reactions permission in server."""
         if not self._servers:
             return True
         return self._servers.has_permission(user_id, server_id, "messages.add_reactions", channel_id)
 
-    def _is_blocked_by_either(self, user_id: int, other_id: int) -> bool:
+    def _is_blocked_by_either(self, user_id: SnowflakeID, other_id: SnowflakeID) -> bool:
         """Check if either user has blocked the other."""
         if not self._relationships:
             return False
@@ -194,13 +227,16 @@ class ReactionManager:
         if custom_match:
             emoji_id = int(custom_match.group(2))
             return (True, emoji_id, emoji)
+            
+        if emoji.startswith(":") or emoji.startswith("<"):
+            raise InvalidEmojiError("Invalid emoji format")
 
         if len(emoji) > 32:
             raise InvalidEmojiError("Emoji is too long")
 
         return (False, None, emoji)
 
-    def _validate_custom_emoji_for_server(self, custom_emoji_id: int, server_id: int) -> bool:
+    def _validate_custom_emoji_for_server(self, custom_emoji_id: SnowflakeID, server_id: SnowflakeID) -> bool:
         """Validate that custom emoji exists in the server."""
         row = self._db.fetch_one(
             "SELECT 1 FROM react_custom_emoji WHERE id = ? AND server_id = ?",
@@ -208,7 +244,7 @@ class ReactionManager:
         )
         return row is not None
 
-    def _get_unique_emoji_count(self, message_id: int) -> int:
+    def _get_unique_emoji_count(self, message_id: SnowflakeID) -> int:
         """Get count of unique emoji on a message."""
         row = self._db.fetch_one(
             "SELECT COUNT(DISTINCT emoji) as count FROM react_reactions WHERE message_id = ?",
@@ -218,8 +254,8 @@ class ReactionManager:
 
     def add_reaction(
         self,
-        user_id: int,
-        message_id: int,
+        user_id: SnowflakeID,
+        message_id: SnowflakeID,
         emoji: str
     ) -> Reaction:
         """
@@ -284,6 +320,19 @@ class ReactionManager:
                 unique_count
             )
 
+        max_user_reactions = self._config.get("max_unique_reactions_per_user", 50)
+        user_unique_count = self._db.fetch_one(
+            "SELECT count(DISTINCT emoji) as count FROM react_reactions WHERE message_id = ? AND user_id = ?",
+            (message_id, user_id)
+        )["count"]
+
+        if not user_has_this_emoji and user_unique_count >= max_user_reactions:
+            raise ReactionLimitError(
+                f"User has reached maximum of {max_user_reactions} unique reactions per message",
+                max_user_reactions,
+                user_unique_count
+            )
+
         now = self._get_timestamp()
         reaction_id = self._generate_id()
 
@@ -303,8 +352,8 @@ class ReactionManager:
 
     def remove_reaction(
         self,
-        user_id: int,
-        message_id: int,
+        user_id: SnowflakeID,
+        message_id: SnowflakeID,
         emoji: str
     ) -> bool:
         """
@@ -331,12 +380,19 @@ class ReactionManager:
 
         is_custom, custom_emoji_id, normalized_emoji = self._validate_emoji(emoji)
 
+        any_reaction = self._db.fetch_one(
+            "SELECT 1 FROM react_reactions WHERE message_id = ? AND emoji = ?",
+            (message_id, normalized_emoji)
+        )
+        if not any_reaction:
+            raise ReactionNotFoundError("Reaction not found")
+
         existing = self._db.fetch_one(
             "SELECT id FROM react_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?",
             (message_id, user_id, normalized_emoji)
         )
         if not existing:
-            raise ReactionNotFoundError("You have not reacted with this emoji")
+            raise PermissionDeniedError("Cannot remove reaction added by someone else")
 
         self._db.execute(
             "DELETE FROM react_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?",
@@ -349,8 +405,8 @@ class ReactionManager:
 
     def remove_all_reactions(
         self,
-        user_id: int,
-        message_id: int
+        user_id: SnowflakeID,
+        message_id: SnowflakeID
     ) -> int:
         """
         Remove all reactions from a message (moderator action).
@@ -465,7 +521,7 @@ class ReactionManager:
 
         return count
 
-    def get_reaction(self, reaction_id: int) -> Optional[Reaction]:
+    def get_reaction(self, reaction_id: SnowflakeID) -> Optional[Reaction]:
         """Get a reaction by ID."""
         row = self._db.fetch_one(
             "SELECT * FROM react_reactions WHERE id = ?",
@@ -479,8 +535,8 @@ class ReactionManager:
 
     def get_reactions(
         self,
-        user_id: int,
-        message_id: int
+        user_id: SnowflakeID,
+        message_id: SnowflakeID
     ) -> MessageReactions:
         """
         Get all reactions on a message with counts.
@@ -558,11 +614,11 @@ class ReactionManager:
 
     def get_reaction_users(
         self,
-        user_id: int,
-        message_id: int,
+        user_id: SnowflakeID,
+        message_id: SnowflakeID,
         emoji: str,
         limit: int = 100,
-        after_user_id: Optional[int] = None
+        after_user_id: Optional[SnowflakeID] = None
     ) -> List[ReactionUser]:
         """
         Get users who reacted with a specific emoji.
@@ -627,8 +683,8 @@ class ReactionManager:
 
     def get_user_reactions(
         self,
-        user_id: int,
-        message_id: int
+        user_id: SnowflakeID,
+        message_id: SnowflakeID
     ) -> List[Reaction]:
         """
         Get all reactions by a specific user on a message.
@@ -671,7 +727,7 @@ class ReactionManager:
 
         return name
 
-    def _check_emoji_limits(self, server_id: int, animated: bool) -> None:
+    def _check_emoji_limits(self, server_id: SnowflakeID, animated: bool) -> None:
         """Check if server has reached emoji limits."""
         if animated:
             max_count = self._config.get("max_animated_emojis_per_server", 50)
@@ -697,8 +753,8 @@ class ReactionManager:
 
     def create_custom_emoji(
         self,
-        user_id: int,
-        server_id: int,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
         name: str,
         image_data: bytes,
         content_type: str,
@@ -800,8 +856,8 @@ class ReactionManager:
 
     def update_custom_emoji(
         self,
-        user_id: int,
-        emoji_id: int,
+        user_id: SnowflakeID,
+        emoji_id: SnowflakeID,
         name: Optional[str] = None,
     ) -> CustomEmoji:
         """
@@ -856,8 +912,8 @@ class ReactionManager:
 
     def delete_custom_emoji(
         self,
-        user_id: int,
-        emoji_id: int
+        user_id: SnowflakeID,
+        emoji_id: SnowflakeID
     ) -> bool:
         """
         Delete a custom emoji.
@@ -925,7 +981,7 @@ class ReactionManager:
 
         return [self._row_to_custom_emoji(row) for row in rows]
 
-    def get_emoji_counts(self, server_id: int) -> Dict[str, int]:
+    def get_emoji_counts(self, server_id: SnowflakeID) -> Dict[str, int]:
         """Get emoji counts for a server."""
         static_row = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM react_custom_emoji WHERE server_id = ? AND animated = 0",
@@ -1044,3 +1100,48 @@ class ReactionManager:
             available=bool(row.get("available", 1)),
             created_at=row["created_at"]
         )
+
+    def get_reaction_count(self, message_id: SnowflakeID) -> int:
+        """Get total count of reactions on a message."""
+        row = self._db.fetch_one(
+            "SELECT COUNT(*) as count FROM react_reactions WHERE message_id = ?",
+            (message_id,)
+        )
+        return row["count"] if row else 0
+
+    def get_reaction_count_by_emoji(self, message_id: SnowflakeID, emoji: str) -> int:
+        """Get count of a specific emoji on a message."""
+        is_custom, custom_id, normalized = self._validate_emoji(emoji)
+        
+        if is_custom:
+            row = self._db.fetch_one(
+                "SELECT COUNT(*) as count FROM react_reactions WHERE message_id = ? AND custom_emoji_id = ?",
+                (message_id, custom_id)
+            )
+        else:
+            row = self._db.fetch_one(
+                "SELECT COUNT(*) as count FROM react_reactions WHERE message_id = ? AND emoji = ? AND is_custom = 0",
+                (message_id, normalized)
+            )
+        return row["count"] if row else 0
+
+    def user_reacted_to_messages(self, user_id: int, message_ids: List[int]) -> List[int]:
+        """Check which of the given messages a user has reacted to."""
+        if not message_ids:
+            return []
+            
+        placeholders = ",".join("?" * len(message_ids))
+        rows = self._db.fetch_all(
+            f"SELECT DISTINCT message_id FROM react_reactions WHERE user_id = ? AND message_id IN ({placeholders})",
+            (user_id, *message_ids)
+        )
+        return [row["message_id"] for row in rows]
+
+    def get_users_who_reacted(self, message_id: SnowflakeID, emoji: str) -> List[SnowflakeID]:
+        """Legacy helper for tests."""
+        users = self.get_reaction_users(user_id=1, message_id=message_id, emoji=emoji)
+        return [u.user_id for u in users]
+
+    def get_reactions_bulk(self, message_ids: List[int]) -> Dict[int, List[Dict[str, Any]]]:
+        """Legacy helper for tests."""
+        return self.get_reactions_batch(user_id=1, message_ids=message_ids)

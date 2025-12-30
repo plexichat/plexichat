@@ -5,6 +5,7 @@ Presence models - Dataclasses for all presence-related entities.
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
+from src.core.base import SnowflakeID
 
 
 class UserStatus(Enum):
@@ -55,8 +56,8 @@ class Activity:
 @dataclass
 class TypingIndicator:
     """Typing indicator for a user in a channel."""
-    user_id: int
-    channel_id: int
+    user_id: SnowflakeID
+    channel_id: SnowflakeID
     started_at: int
     expires_at: int
 
@@ -64,7 +65,7 @@ class TypingIndicator:
 @dataclass
 class Presence:
     """Full presence information for a user."""
-    user_id: int
+    user_id: SnowflakeID
     status: UserStatus
     custom_status: Optional[CustomStatus] = None
     activity: Optional[Activity] = None
