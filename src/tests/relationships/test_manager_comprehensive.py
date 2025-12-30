@@ -116,7 +116,8 @@ class TestRelationshipErrors:
         rel_manager.block_user(1, 2)
         
         requests = rel_manager.get_outgoing_requests(1)
-        assert len([r for r in requests if r.recipient_id == 2 and r.status == RelationshipStatus.PENDING]) == 0
+        from src.core.relationships.models import FriendRequestStatus
+        assert len([r for r in requests if r.recipient_id == 2 and r.status == FriendRequestStatus.PENDING]) == 0
     
     def test_block_declines_incoming_request(self, rel_manager):
         """Blocking declines incoming friend request."""
@@ -124,7 +125,8 @@ class TestRelationshipErrors:
         rel_manager.block_user(1, 2)
         
         requests = rel_manager.get_incoming_requests(1)
-        assert len([r for r in requests if r.sender_id == 2 and r.status == RelationshipStatus.PENDING]) == 0
+        from src.core.relationships.models import FriendRequestStatus
+        assert len([r for r in requests if r.sender_id == 2 and r.status == FriendRequestStatus.PENDING]) == 0
     
     def test_unblock(self, rel_manager):
         """Can unblock user."""
@@ -216,7 +218,7 @@ class TestRelationshipStatus:
         req = rel_manager.send_friend_request(1, 2)
         rel_manager.accept_friend_request(2, req.id)
         status = rel_manager.get_relationship_status(1, 2)
-        assert status == RelationshipStatus.FRIENDS
+        assert status == RelationshipStatus.FRIEND
     
     def test_get_relationship_status_blocked(self, rel_manager):
         """Get status when blocked."""
@@ -228,7 +230,7 @@ class TestRelationshipStatus:
         """Get status when request pending."""
         rel_manager.send_friend_request(1, 2)
         status = rel_manager.get_relationship_status(1, 2)
-        assert status == RelationshipStatus.PENDING
+        assert status == RelationshipStatus.PENDING_OUTGOING
     
     def test_get_relationship_status_none(self, rel_manager):
         """Get status when no relationship."""

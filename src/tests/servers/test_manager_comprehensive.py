@@ -4,7 +4,7 @@ Targeting 80%+ coverage.
 """
 
 import pytest
-from src.core.servers.models import ChannelType
+from src.core.servers.models import ChannelType, AuditLogAction
 from src.core.servers.exceptions import *
 
 
@@ -70,6 +70,13 @@ class TestServerErrorPaths:
         role = server_manager.create_role(1, server.id, "Admin")
         server_manager.assign_role(1, server.id, 2, role.id)
         
+        # Give kicker permission to kick
+        kicker_role = server_manager.create_role(1, server.id, "Kicker", permissions={"members.kick": True})
+        server_manager.assign_role(1, server.id, 3, kicker_role.id)
+        
+        # Ensure Admin is higher
+        server_manager.move_role(1, role.id, 100)
+        
         with pytest.raises(RoleHierarchyError):
             server_manager.kick_member(3, server.id, 2)
     
@@ -77,6 +84,10 @@ class TestServerErrorPaths:
         """Cannot kick server owner."""
         server = server_manager.create_server(1, "Test Server")
         server_manager.add_member(server.id, 2)
+        
+        # Give kicker permission to kick
+        kicker_role = server_manager.create_role(1, server.id, "Kicker", permissions={"members.kick": True})
+        server_manager.assign_role(1, server.id, 2, kicker_role.id)
         
         with pytest.raises(CannotModifyOwnerError):
             server_manager.kick_member(2, server.id, 1)
@@ -102,6 +113,10 @@ class TestServerErrorPaths:
         """Cannot ban server owner."""
         server = server_manager.create_server(1, "Test Server")
         server_manager.add_member(server.id, 2)
+        
+        # Give banner permission to ban
+        banner_role = server_manager.create_role(1, server.id, "Banner", permissions={"members.ban": True})
+        server_manager.assign_role(1, server.id, 2, banner_role.id)
         
         with pytest.raises(CannotModifyOwnerError):
             server_manager.ban_member(2, server.id, 1)
@@ -216,7 +231,7 @@ class TestServerErrorPaths:
         server = server_manager.create_server(1, "Test Server")
         server_manager.add_member(server.id, 2)
         
-        with pytest.raises(ServerAccessDeniedError):
+        with pytest.raises(PermissionDeniedError):
             server_manager.update_server(2, server.id, name="New Name")
 
 
@@ -260,8 +275,11 @@ class TestServerPermissions:
         server_manager.move_role(1, high_role.id, 10)
         server_manager.assign_role(1, server.id, 2, high_role.id)
         
-        low_role = server_manager.create_role(1, server.id, "Low")
+        low_role = server_manager.create_role(1, server.id, "Low", permissions={"members.kick": True})
         server_manager.assign_role(1, server.id, 3, low_role.id)
+        
+        # Ensure Low is lower
+        server_manager.move_role(1, low_role.id, 0)
         
         with pytest.raises(RoleHierarchyError):
             server_manager.kick_member(3, server.id, 2)
@@ -577,15 +595,22 @@ class TestServerAuditLog:
         
         logs = server_manager.get_audit_log(1, server.id)
         assert len(logs) > 0
+        assert any(log.action == AuditLogAction.MEMBER_JOIN for log in logs)
     
     def test_audit_log_member_kick(self, server_manager):
         """Kicking is logged."""
         server = server_manager.create_server(1, "Test Server")
         server_manager.add_member(server.id, 2)
+        
+        # Give kicker permission
+        kicker_role = server_manager.create_role(1, server.id, "Kicker", permissions={"members.kick": True})
+        server_manager.assign_role(1, server.id, 1, kicker_role.id) # Assign to owner? Owner has all perms.
+        # Actually owner (1) kicks (2). Owner has perms.
+        
         server_manager.kick_member(1, server.id, 2)
         
         logs = server_manager.get_audit_log(1, server.id)
-        assert any(log.action == "member_kick" for log in logs)
+        assert any(log.action == AuditLogAction.MEMBER_KICK for log in logs)
     
     def test_audit_log_role_create(self, server_manager):
         """Role creation is logged."""
@@ -593,7 +618,7 @@ class TestServerAuditLog:
         server_manager.create_role(1, server.id, "Test")
         
         logs = server_manager.get_audit_log(1, server.id)
-        assert any(log.action == "role_create" for log in logs)
+        assert any(log.action == AuditLogAction.ROLE_CREATE for log in logs)
 
 
 class TestServerBans:

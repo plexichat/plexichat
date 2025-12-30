@@ -19,6 +19,16 @@ def users(modules, user_pool):
 
 
 @pytest.fixture
+def base_users(modules, user_pool):
+    """Get a set of base users for tests."""
+    user1 = user_pool.get_user()
+    user2 = user_pool.get_user()
+    user3 = user_pool.get_user()
+    user4 = user_pool.get_user()
+    return user1, user2, user3, user4, modules.auth, modules.messaging, modules.servers
+
+
+@pytest.fixture
 def server_with_members(modules, user_pool):
     """Create a server with owner, admin, and member."""
     owner = user_pool.get_user()
