@@ -9,6 +9,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from starlette.types import ASGIApp, Receive, Send, Scope
 
+import traceback
 import utils.config as config
 import utils.logger as logger
 
@@ -111,14 +112,33 @@ class ErrorHandlingMiddleware:
             if status_code == 500 and not debug:
                 message = "Internal server error"
             
-            # Get CORS headers
+            # Check for self-test debug mode
             request = Request(scope, receive)
+            include_traceback = False
+            
+            # Only allow traceback capture if:
+            # 1. Config says it's enabled
+            # 2. Request is from localhost
+            # 3. Special header is present
+            selftest_config = config.get("selftest", {})
+            is_local = request.client.host in ("127.0.0.1", "::1") if request.client else False
+            
+            if selftest_config.get("capture_stack_traces", True) and is_local:
+                if request.headers.get("X-Plexichat-SelfTest-Debug") == "true":
+                    include_traceback = True
+
+            # Get CORS headers
             headers = _get_cors_headers(request)
+            
+            # Create response content
+            content = format_error_response(status_code, message)
+            if include_traceback:
+                content["error"]["traceback"] = "".join(traceback.format_exc())
             
             # Create response
             response = JSONResponse(
                 status_code=status_code,
-                content=format_error_response(status_code, message),
+                content=content,
                 headers=headers
             )
             

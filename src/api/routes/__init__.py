@@ -35,6 +35,15 @@ def create_api_router() -> APIRouter:
     """Create and configure the main API router."""
     api_router = APIRouter()
 
+    @api_router.get("/", tags=["General"])
+    async def api_root():
+        """API v1 root endpoint."""
+        return {
+            "version": "v1",
+            "status": "online",
+            "message": "PlexiChat API v1 is operational"
+        }
+
     api_router.include_router(health_router, tags=["Health"])
     api_router.include_router(version_router, tags=["Version"])
     api_router.include_router(auth_router, prefix="/auth", tags=["Authentication"])

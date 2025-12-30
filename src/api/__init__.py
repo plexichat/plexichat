@@ -41,6 +41,9 @@ _settings = None
 _features = None
 _avatars = None
 _reports = None
+_feedback = None
+_admin = None
+_events = None
 _setup_complete = False
 
 
@@ -61,6 +64,9 @@ def setup(
     features_module: Optional[Any] = None,
     avatars_module: Optional[Any] = None,
     reports_module: Optional[Any] = None,
+    feedback_module: Optional[Any] = None,
+    admin_module: Optional[Any] = None,
+    events_module: Optional[Any] = None,
 ) -> None:
     """
     Initialize the API module with all dependencies.
@@ -82,6 +88,9 @@ def setup(
         features_module: Features module for user tiers and badges
         avatars_module: Avatars module for user/server avatars
         reports_module: Reports module for message/user reporting
+        feedback_module: Feedback module for user feedback
+        admin_module: Admin module for administration
+        events_module: Events module for event delivery
     """
     global _db, _auth, _messaging, _servers, _relationships, _presence
     global \
@@ -95,6 +104,9 @@ def setup(
         _features, \
         _avatars, \
         _reports, \
+        _feedback, \
+        _admin, \
+        _events, \
         _setup_complete
 
     _db = db
@@ -113,6 +125,9 @@ def setup(
     _features = features_module
     _avatars = avatars_module
     _reports = reports_module
+    _feedback = feedback_module
+    _admin = admin_module
+    _events = events_module
     _setup_complete = True
 
 
@@ -193,9 +208,24 @@ def get_avatars() -> Optional[Any]:
     return _avatars
 
 
+def get_events() -> Optional[Any]:
+    """Get events module."""
+    return _events
+
+
 def get_reports() -> Optional[Any]:
     """Get reports module."""
     return _reports
+
+
+def get_feedback() -> Optional[Any]:
+    """Get feedback module."""
+    return _feedback
+
+
+def get_admin() -> Optional[Any]:
+    """Get admin module."""
+    return _admin
 
 
 def is_setup() -> bool:

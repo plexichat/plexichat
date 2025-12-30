@@ -88,6 +88,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 auth_module=api_module.get_auth(),
                 presence_module=api_module.get_presence(),
                 servers_module=api_module.get_servers(),
+                events_module=api_module.get_events(),
             )
         gateway_router = websocket.get_router()
         app.include_router(gateway_router)
@@ -121,6 +122,12 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         if enable_docs and is_docs_enabled():
             response["api_docs"] = docs_path
         return response
+
+    @app.get("/health", tags=["Health"])
+    async def health_redirect():
+        """Redirect or proxy to health check endpoint."""
+        from .routes.health import health_check
+        return await health_check()
 
     # Serve uploaded media files (requires authentication)
     from fastapi.responses import FileResponse

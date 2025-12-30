@@ -40,6 +40,12 @@ class AuthenticationMiddleware:
         import sys
         if "pytest" in sys.modules:
             print(f"[DEBUG] AuthMiddleware: Headers: {dict(request.headers)}")
+        
+        # Mark request as self-test if header is present AND it's from localhost
+        is_local = request.client.host in ("127.0.0.1", "::1") if request.client else False
+        is_selftest = request.headers.get("X-Plexichat-SelfTest") == "true" and is_local
+        request.state.is_selftest = is_selftest
+
         # Get all Authorization headers
         auth_headers = request.headers.getlist("Authorization")
         if not auth_headers:
@@ -73,7 +79,7 @@ class AuthenticationMiddleware:
         try:
             ip_address: Optional[str] = request.client.host if request.client else None
             user_agent: Optional[str] = request.headers.get("User-Agent")
-            token_info: TokenInfo = auth.verify_token(token, ip_address, user_agent)
+            token_info: TokenInfo = auth.verify_token(token, ip_address, user_agent, is_selftest=request.state.is_selftest)
 
             import sys
             if "pytest" in sys.modules:
