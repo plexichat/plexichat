@@ -2,11 +2,11 @@
 Settings manager - handles CRUD operations for user settings.
 """
 
-import time
 from typing import Optional, Dict, List
 
 import utils.logger as logger
 
+from src.core.base import BaseManager, SnowflakeID
 from .models import UserSetting, SettingsConfig
 from .schema import create_tables
 from .exceptions import (
@@ -17,7 +17,7 @@ from .exceptions import (
 )
 
 
-class SettingsManager:
+class SettingsManager(BaseManager):
     """
     Manages user settings with configurable limits.
     """
@@ -30,7 +30,7 @@ class SettingsManager:
             db: Database instance (must be connected)
             config: Optional settings configuration
         """
-        self.db = db
+        super().__init__(db)
         self.config = config or SettingsConfig()
 
         # Create tables on init
@@ -55,7 +55,7 @@ class SettingsManager:
                 f"Value exceeds maximum length of {self.config.max_value_length} characters"
             )
 
-    def get(self, user_id: int, key: str) -> Optional[str]:
+    def get(self, user_id: SnowflakeID, key: str) -> Optional[str]:
         """
         Get a single setting value.
         
@@ -66,17 +66,17 @@ class SettingsManager:
         Returns:
             Setting value or None if not found
         """
-        row = self.db.fetch_one(
+        row = self._db.fetch_one(
             "SELECT value FROM user_settings WHERE user_id = ? AND key = ?",
             (user_id, key)
         )
 
         if row:
             logger.debug(f"Retrieved setting '{key}' for user {user_id}")
-            return row[0]
+            return row.get("value")
         return None
 
-    def set(self, user_id: int, key: str, value: str) -> UserSetting:
+    def set(self, user_id: SnowflakeID, key: str, value: str) -> UserSetting:
         """
         Set a setting value (insert or update).
         
@@ -97,27 +97,29 @@ class SettingsManager:
         self._validate_key(key)
         self._validate_value(value)
 
-        now = int(time.time() * 1000)
+        now = self._get_timestamp()
 
         # Check if setting exists
-        existing = self.db.fetch_one(
+        existing = self._db.fetch_one(
             "SELECT id, created_at FROM user_settings WHERE user_id = ? AND key = ?",
             (user_id, key)
         )
 
         if existing:
             # Update existing
-            self.db.execute(
+            setting_id = existing.get("id")
+            created_at = existing.get("created_at")
+            self._db.execute(
                 "UPDATE user_settings SET value = ?, updated_at = ? WHERE id = ?",
-                (value, now, existing[0])
+                (value, now, setting_id)
             )
             logger.info(f"Updated setting '{key}' for user {user_id}")
             return UserSetting(
-                id=existing[0],
+                id=setting_id,
                 user_id=user_id,
                 key=key,
                 value=value,
-                created_at=existing[1],
+                created_at=created_at,
                 updated_at=now
             )
 
@@ -129,26 +131,18 @@ class SettingsManager:
             )
 
         # Insert new - use RETURNING for PostgreSQL to get the ID
-        db_type = getattr(self.db, 'type', 'sqlite')
+        db_type = getattr(self._db, 'type', 'sqlite')
         if db_type == 'postgres':
             # For PostgreSQL, use RETURNING and fetch the result properly
-            result = self.db.fetch_one(
+            result = self._db.fetch_one(
                 """INSERT INTO user_settings (user_id, key, value, created_at, updated_at)
                    VALUES (?, ?, ?, ?, ?) RETURNING id""",
                 (user_id, key, value, now, now)
             )
-            # Result could be a dict or tuple depending on DB wrapper
-            if result:
-                if isinstance(result, dict):
-                    setting_id = result.get('id', 0)
-                elif isinstance(result, (list, tuple)):
-                    setting_id = result[0]
-                else:
-                    setting_id = int(result) if result else 0
-            else:
-                setting_id = 0
+            # Result is a dict
+            setting_id = result.get('id', 0) if result else 0
         else:
-            cursor = self.db.execute(
+            cursor = self._db.execute(
                 """INSERT INTO user_settings (user_id, key, value, created_at, updated_at)
                    VALUES (?, ?, ?, ?, ?)""",
                 (user_id, key, value, now, now)
@@ -166,7 +160,7 @@ class SettingsManager:
             updated_at=now
         )
 
-    def delete(self, user_id: int, key: str) -> bool:
+    def delete(self, user_id: SnowflakeID, key: str) -> bool:
         """
         Delete a setting.
         
@@ -177,7 +171,7 @@ class SettingsManager:
         Returns:
             True if deleted, False if not found
         """
-        cursor = self.db.execute(
+        cursor = self._db.execute(
             "DELETE FROM user_settings WHERE user_id = ? AND key = ?",
             (user_id, key)
         )
@@ -188,7 +182,7 @@ class SettingsManager:
             logger.info(f"Deleted setting '{key}' for user {user_id}")
         return deleted
 
-    def get_all(self, user_id: int) -> Dict[str, str]:
+    def get_all(self, user_id: SnowflakeID) -> Dict[str, str]:
         """
         Get all settings for a user as a dictionary.
         
@@ -198,16 +192,16 @@ class SettingsManager:
         Returns:
             Dictionary of key-value pairs
         """
-        rows = self.db.fetch_all(
+        rows = self._db.fetch_all(
             "SELECT key, value FROM user_settings WHERE user_id = ?",
             (user_id,)
         )
 
-        result = {row[0]: row[1] for row in rows}
+        result = {row.get("key"): row.get("value") for row in rows}
         logger.debug(f"Retrieved {len(result)} settings for user {user_id}")
         return result
 
-    def get_all_as_list(self, user_id: int) -> List[UserSetting]:
+    def get_all_as_list(self, user_id: SnowflakeID) -> List[UserSetting]:
         """
         Get all settings for a user as a list of UserSetting objects.
         
@@ -217,24 +211,24 @@ class SettingsManager:
         Returns:
             List of UserSetting objects
         """
-        rows = self.db.fetch_all(
+        rows = self._db.fetch_all(
             "SELECT id, user_id, key, value, created_at, updated_at FROM user_settings WHERE user_id = ?",
             (user_id,)
         )
 
         return [
             UserSetting(
-                id=row[0],
-                user_id=row[1],
-                key=row[2],
-                value=row[3],
-                created_at=row[4],
-                updated_at=row[5]
+                id=row.get("id"),
+                user_id=row.get("user_id"),
+                key=row.get("key"),
+                value=row.get("value"),
+                created_at=row.get("created_at"),
+                updated_at=row.get("updated_at")
             )
             for row in rows
         ]
 
-    def get_count(self, user_id: int) -> int:
+    def get_count(self, user_id: SnowflakeID) -> int:
         """
         Get the count of settings for a user.
         
@@ -244,8 +238,8 @@ class SettingsManager:
         Returns:
             Number of settings
         """
-        row = self.db.fetch_one(
-            "SELECT COUNT(*) FROM user_settings WHERE user_id = ?",
+        row = self._db.fetch_one(
+            "SELECT COUNT(*) as count FROM user_settings WHERE user_id = ?",
             (user_id,)
         )
-        return row[0] if row else 0
+        return row.get("count", 0) if row else 0

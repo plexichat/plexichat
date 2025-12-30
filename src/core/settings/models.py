@@ -3,6 +3,7 @@ User Settings data models.
 """
 
 from dataclasses import dataclass
+from src.core.base import SnowflakeID
 
 
 @dataclass
@@ -17,8 +18,8 @@ class SettingsConfig:
 @dataclass
 class UserSetting:
     """A single user setting."""
-    id: int
-    user_id: int
+    id: SnowflakeID
+    user_id: SnowflakeID
     key: str
     value: str
     created_at: int

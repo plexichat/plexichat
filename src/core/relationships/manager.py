@@ -5,11 +5,11 @@ Handles friend requests, blocking, and relationship queries with proper
 validation and database interactions.
 """
 
-import time
+import re
 from typing import Optional, List, Dict
 
 import utils.logger as logger
-from src.utils.encryption import generate_snowflake_id
+from src.core.base import BaseManager, SnowflakeID
 
 from .models import (
     Relationship,
@@ -31,11 +31,12 @@ from .exceptions import (
     AlreadyBlockedError,
     NotBlockedError,
     CannotBlockSelfError,
+    PermissionDeniedError,
 )
 from .schema import create_tables
 
 
-class RelationshipManager:
+class RelationshipManager(BaseManager):
     """Core relationship manager handling all operations."""
 
     def __init__(self, db, auth_module=None, servers_module=None):
@@ -47,30 +48,14 @@ class RelationshipManager:
             auth_module: Optional auth module for user verification
             servers_module: Optional servers module for mutual servers
         """
-        self._db = db
-        self._auth = auth_module
+        super().__init__(db, auth_module)
         self._servers = servers_module
 
         create_tables(db)
 
         logger.info("Relationship module initialized")
 
-    def _get_timestamp(self) -> int:
-        """Get current timestamp in milliseconds."""
-        return int(time.time() * 1000)
-
-    def _generate_id(self) -> int:
-        """Generate a new Snowflake ID."""
-        return generate_snowflake_id()
-
-    def _user_exists(self, user_id: int) -> bool:
-        """Check if a user exists."""
-        if self._auth:
-            user = self._auth.get_user(user_id)
-            return user is not None
-        return True
-
-    def _validate_users(self, user_id: int, target_id: int) -> None:
+    def _validate_users(self, user_id: SnowflakeID, target_id: SnowflakeID) -> None:
         """Validate both users exist and are different."""
         if user_id == target_id:
             raise SelfRelationshipError("Cannot create relationship with yourself")
@@ -81,7 +66,7 @@ class RelationshipManager:
         if not self._user_exists(target_id):
             raise UserNotFoundError(f"User {target_id} not found")
 
-    def _is_blocked(self, blocker_id: int, blocked_id: int) -> bool:
+    def _is_blocked(self, blocker_id: SnowflakeID, blocked_id: SnowflakeID) -> bool:
         """Check if blocker has blocked blocked_id."""
         row = self._db.fetch_one(
             "SELECT 1 FROM rel_blocked WHERE blocker_id = ? AND blocked_id = ?",
@@ -89,11 +74,11 @@ class RelationshipManager:
         )
         return row is not None
 
-    def _is_blocked_by(self, user_id: int, other_id: int) -> bool:
+    def _is_blocked_by(self, user_id: SnowflakeID, other_id: SnowflakeID) -> bool:
         """Check if user is blocked by other."""
         return self._is_blocked(other_id, user_id)
 
-    def _are_friends(self, user_id: int, other_id: int) -> bool:
+    def _are_friends(self, user_id: SnowflakeID, other_id: SnowflakeID) -> bool:
         """Check if two users are friends."""
         row = self._db.fetch_one(
             "SELECT 1 FROM rel_friends WHERE user_id = ? AND friend_id = ?",
@@ -101,7 +86,7 @@ class RelationshipManager:
         )
         return row is not None
 
-    def _get_pending_request(self, sender_id: int, recipient_id: int) -> Optional[Dict]:
+    def _get_pending_request(self, sender_id: SnowflakeID, recipient_id: SnowflakeID) -> Optional[Dict]:
         """Get pending friend request between users."""
         return self._db.fetch_one(
             """SELECT * FROM rel_friend_requests 
@@ -113,8 +98,8 @@ class RelationshipManager:
 
     def send_friend_request(
         self,
-        sender_id: int,
-        recipient_id: int,
+        sender_id: SnowflakeID,
+        recipient_id: SnowflakeID,
         message: Optional[str] = None
     ) -> FriendRequest:
         """
@@ -185,7 +170,7 @@ class RelationshipManager:
         assert result is not None  # Should exist since we just created it
         return result
 
-    def accept_friend_request(self, user_id: int, request_id: int) -> FriendRequest:
+    def accept_friend_request(self, user_id: SnowflakeID, request_id: SnowflakeID) -> FriendRequest:
         """
         Accept a friend request.
         
@@ -208,7 +193,7 @@ class RelationshipManager:
             raise FriendRequestNotFoundError("Friend request not found or already processed")
 
         if row["recipient_id"] != user_id:
-            raise FriendRequestNotFoundError("Friend request not found")
+            raise PermissionDeniedError("Cannot accept a friend request not sent to you")
 
         now = self._get_timestamp()
 
@@ -237,7 +222,7 @@ class RelationshipManager:
         assert result is not None  # Should exist since we just updated it
         return result
 
-    def decline_friend_request(self, user_id: int, request_id: int) -> FriendRequest:
+    def decline_friend_request(self, user_id: SnowflakeID, request_id: SnowflakeID) -> FriendRequest:
         """
         Decline a friend request.
         
@@ -257,7 +242,7 @@ class RelationshipManager:
             raise FriendRequestNotFoundError("Friend request not found or already processed")
 
         if row["recipient_id"] != user_id:
-            raise FriendRequestNotFoundError("Friend request not found")
+            raise PermissionDeniedError("Cannot decline a friend request not sent to you")
 
         now = self._get_timestamp()
 
@@ -272,7 +257,7 @@ class RelationshipManager:
         assert result is not None  # Should exist since we just updated it
         return result
 
-    def cancel_friend_request(self, user_id: int, request_id: int) -> FriendRequest:
+    def cancel_friend_request(self, user_id: SnowflakeID, request_id: SnowflakeID) -> FriendRequest:
         """
         Cancel a sent friend request.
         
@@ -292,7 +277,7 @@ class RelationshipManager:
             raise FriendRequestNotFoundError("Friend request not found or already processed")
 
         if row["sender_id"] != user_id:
-            raise FriendRequestNotFoundError("Friend request not found")
+            raise PermissionDeniedError("Cannot cancel a friend request you did not send")
 
         now = self._get_timestamp()
 
@@ -307,7 +292,7 @@ class RelationshipManager:
         assert result is not None  # Should exist since we just updated it
         return result
 
-    def get_friend_request(self, request_id: int) -> Optional[FriendRequest]:
+    def get_friend_request(self, request_id: SnowflakeID) -> Optional[FriendRequest]:
         """Get a friend request by ID."""
         row = self._db.fetch_one(
             "SELECT * FROM rel_friend_requests WHERE id = ?",
@@ -319,7 +304,7 @@ class RelationshipManager:
 
         return self._row_to_friend_request(row)
 
-    def get_pending_requests_incoming(self, user_id: int, limit: int = 100) -> List[FriendRequest]:
+    def get_pending_requests_incoming(self, user_id: SnowflakeID, limit: int = 100) -> List[FriendRequest]:
         """Get incoming pending friend requests."""
         rows = self._db.fetch_all(
             """SELECT * FROM rel_friend_requests 
@@ -329,7 +314,7 @@ class RelationshipManager:
         )
         return [self._row_to_friend_request(row) for row in rows]
 
-    def get_pending_requests_outgoing(self, user_id: int, limit: int = 100) -> List[FriendRequest]:
+    def get_pending_requests_outgoing(self, user_id: SnowflakeID, limit: int = 100) -> List[FriendRequest]:
         """Get outgoing pending friend requests."""
         rows = self._db.fetch_all(
             """SELECT * FROM rel_friend_requests 
@@ -339,9 +324,17 @@ class RelationshipManager:
         )
         return [self._row_to_friend_request(row) for row in rows]
 
+    def get_incoming_requests(self, user_id: SnowflakeID, limit: int = 100) -> List[FriendRequest]:
+        """Alias for compatibility with legacy tests."""
+        return self.get_pending_requests_incoming(user_id, limit)
+
+    def get_outgoing_requests(self, user_id: SnowflakeID, limit: int = 100) -> List[FriendRequest]:
+        """Alias for compatibility with legacy tests."""
+        return self.get_pending_requests_outgoing(user_id, limit)
+
     # === Friends Operations ===
 
-    def get_friends(self, user_id: int, limit: int = 100) -> List[Friend]:
+    def get_friends(self, user_id: SnowflakeID, limit: int = 100) -> List[Friend]:
         """Get list of friends for a user."""
         rows = self._db.fetch_all(
             """SELECT * FROM rel_friends 
@@ -351,7 +344,7 @@ class RelationshipManager:
         )
         return [self._row_to_friend(row) for row in rows]
 
-    def get_friend_ids(self, user_id: int) -> List[int]:
+    def get_friend_ids(self, user_id: SnowflakeID) -> List[SnowflakeID]:
         """Get list of friend user IDs."""
         rows = self._db.fetch_all(
             "SELECT friend_id FROM rel_friends WHERE user_id = ?",
@@ -359,7 +352,7 @@ class RelationshipManager:
         )
         return [row["friend_id"] for row in rows]
 
-    def remove_friend(self, user_id: int, friend_id: int) -> bool:
+    def remove_friend(self, user_id: SnowflakeID, friend_id: SnowflakeID) -> bool:
         """
         Remove a friend (unfriend).
         
@@ -368,11 +361,10 @@ class RelationshipManager:
             friend_id: ID of friend to remove
             
         Returns:
-            True if removed
-            
-        Raises:
-            NotFriendsError: Users are not friends
         """
+        if user_id == friend_id:
+            raise SelfRelationshipError("Cannot unfriend yourself")
+
         if not self._are_friends(user_id, friend_id):
             raise NotFriendsError("You are not friends with this user")
 
@@ -391,7 +383,7 @@ class RelationshipManager:
 
     # === Block Operations ===
 
-    def block_user(self, blocker_id: int, blocked_id: int, reason: Optional[str] = None) -> BlockedUser:
+    def block_user(self, blocker_id: SnowflakeID, blocked_id: SnowflakeID, reason: Optional[str] = None) -> BlockedUser:
         """
         Block a user.
         
@@ -448,7 +440,7 @@ class RelationshipManager:
         assert result is not None  # Should exist since we just created it
         return result
 
-    def unblock_user(self, blocker_id: int, blocked_id: int) -> bool:
+    def unblock_user(self, blocker_id: SnowflakeID, blocked_id: SnowflakeID) -> bool:
         """
         Unblock a user.
         
@@ -474,7 +466,7 @@ class RelationshipManager:
 
         return True
 
-    def get_block(self, block_id: int) -> Optional[BlockedUser]:
+    def get_block(self, block_id: SnowflakeID) -> Optional[BlockedUser]:
         """Get a block record by ID."""
         row = self._db.fetch_one(
             "SELECT * FROM rel_blocked WHERE id = ?",
@@ -486,7 +478,7 @@ class RelationshipManager:
 
         return self._row_to_blocked_user(row)
 
-    def get_blocked_users(self, user_id: int, limit: int = 100) -> List[BlockedUser]:
+    def get_blocked_users(self, user_id: SnowflakeID, limit: int = 100) -> List[BlockedUser]:
         """Get list of users blocked by user."""
         rows = self._db.fetch_all(
             """SELECT * FROM rel_blocked 
@@ -496,7 +488,7 @@ class RelationshipManager:
         )
         return [self._row_to_blocked_user(row) for row in rows]
 
-    def get_blocked_user_ids(self, user_id: int) -> List[int]:
+    def get_blocked_user_ids(self, user_id: SnowflakeID) -> List[SnowflakeID]:
         """Get list of blocked user IDs."""
         rows = self._db.fetch_all(
             "SELECT blocked_id FROM rel_blocked WHERE blocker_id = ?",
@@ -504,17 +496,27 @@ class RelationshipManager:
         )
         return [row["blocked_id"] for row in rows]
 
-    def is_blocked(self, blocker_id: int, blocked_id: int) -> bool:
+    def get_all_blocked_ids(self, user_id: SnowflakeID) -> List[SnowflakeID]:
+        """Get list of all user IDs that are either blocked by or blocking this user."""
+        rows = self._db.fetch_all(
+            """SELECT blocked_id as user_id FROM rel_blocked WHERE blocker_id = ?
+               UNION
+               SELECT blocker_id as user_id FROM rel_blocked WHERE blocked_id = ?""",
+            (user_id, user_id)
+        )
+        return [row["user_id"] for row in rows]
+
+    def is_blocked(self, blocker_id: SnowflakeID, blocked_id: SnowflakeID) -> bool:
         """Check if blocker has blocked blocked_id."""
         return self._is_blocked(blocker_id, blocked_id)
 
-    def is_blocked_by_either(self, user_id: int, other_id: int) -> bool:
+    def is_blocked_by_either(self, user_id: SnowflakeID, other_id: SnowflakeID) -> bool:
         """Check if either user has blocked the other."""
         return self._is_blocked(user_id, other_id) or self._is_blocked(other_id, user_id)
 
     # === Relationship Status ===
 
-    def get_relationship(self, user_id: int, target_id: int) -> Relationship:
+    def get_relationship(self, user_id: SnowflakeID, target_id: SnowflakeID) -> Relationship:
         """
         Get the relationship status between two users.
         
@@ -582,7 +584,7 @@ class RelationshipManager:
 
     # === Mutual Information ===
 
-    def get_mutual_friends(self, user_id: int, target_id: int) -> List[int]:
+    def get_mutual_friends(self, user_id: SnowflakeID, target_id: SnowflakeID) -> List[SnowflakeID]:
         """Get list of mutual friend IDs between two users."""
         rows = self._db.fetch_all(
             """SELECT f1.friend_id 
@@ -593,7 +595,7 @@ class RelationshipManager:
         )
         return [row["friend_id"] for row in rows]
 
-    def get_mutual_friend_count(self, user_id: int, target_id: int) -> int:
+    def get_mutual_friend_count(self, user_id: SnowflakeID, target_id: SnowflakeID) -> int:
         """Get count of mutual friends between two users."""
         row = self._db.fetch_one(
             """SELECT COUNT(*) as count
@@ -604,7 +606,7 @@ class RelationshipManager:
         )
         return row["count"] if row else 0
 
-    def get_mutual_servers(self, user_id: int, target_id: int) -> List[int]:
+    def get_mutual_servers(self, user_id: SnowflakeID, target_id: SnowflakeID) -> List[SnowflakeID]:
         """Get list of mutual server IDs between two users."""
         if not self._servers:
             return []
@@ -618,7 +620,7 @@ class RelationshipManager:
         )
         return [row["server_id"] for row in rows]
 
-    def get_mutual_server_count(self, user_id: int, target_id: int) -> int:
+    def get_mutual_server_count(self, user_id: SnowflakeID, target_id: SnowflakeID) -> int:
         """Get count of mutual servers between two users."""
         if not self._servers:
             return 0
@@ -632,7 +634,7 @@ class RelationshipManager:
         )
         return row["count"] if row else 0
 
-    def get_mutual_info(self, user_id: int, target_id: int) -> MutualInfo:
+    def get_mutual_info(self, user_id: SnowflakeID, target_id: SnowflakeID) -> MutualInfo:
         """Get all mutual information between two users."""
         mutual_friends = self.get_mutual_friends(user_id, target_id)
         mutual_servers = self.get_mutual_servers(user_id, target_id)
@@ -676,3 +678,28 @@ class RelationshipManager:
             reason=row["reason"] if row["reason"] else None,
             created_at=row["created_at"]
         )
+
+    def get_relationship_status(self, user_id: SnowflakeID, target_id: SnowflakeID) -> RelationshipStatus:
+        """Get the relationship status between two users."""
+        rel = self.get_relationship(user_id, target_id)
+        return rel.status
+
+    def get_suggested_friends(self, user_id: SnowflakeID, limit: int = 10) -> List[SnowflakeID]:
+        """Get friend suggestions based on mutual friends."""
+        rows = self._db.fetch_all(
+            """
+            SELECT f2.friend_id, COUNT(*) as mutual_count
+            FROM rel_friends f1
+            JOIN rel_friends f2 ON f1.friend_id = f2.user_id
+            WHERE f1.user_id = ? 
+              AND f2.friend_id != ?
+              AND f2.friend_id NOT IN (SELECT friend_id FROM rel_friends WHERE user_id = ?)
+              AND f2.friend_id NOT IN (SELECT blocked_id FROM rel_blocked WHERE blocker_id = ?)
+              AND f2.friend_id NOT IN (SELECT blocker_id FROM rel_blocked WHERE blocked_id = ?)
+            GROUP BY f2.friend_id
+            ORDER BY mutual_count DESC
+            LIMIT ?
+            """,
+            (user_id, user_id, user_id, user_id, user_id, limit)
+        )
+        return [row["friend_id"] for row in rows]

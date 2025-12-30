@@ -5,13 +5,12 @@ Handles sound upload, permissions, cooldowns, and playback triggering
 with proper validation and permission checks.
 """
 
-import time
 import re
 from typing import Optional, List, Dict, Any
 
 import utils.config as config
 import utils.logger as logger
-from src.utils.encryption import generate_snowflake_id
+from src.core.base import BaseManager, SnowflakeID
 
 from .models import (
     Sound,
@@ -33,18 +32,19 @@ from .exceptions import (
 from .schema import create_tables
 
 
-class SoundboardManager:
+class SoundboardManager(BaseManager):
     """Core soundboard manager handling all operations."""
 
-    def __init__(self, db, servers_module=None):
+    def __init__(self, db, auth_module=None, servers_module=None):
         """
         Initialize the soundboard manager.
 
         Args:
             db: Database instance (must be connected)
+            auth_module: Optional auth module for user verification
             servers_module: Optional servers module for permission checks
         """
-        self._db = db
+        super().__init__(db, auth_module)
         self._servers = servers_module
         self._config = self._load_config()
         self._cooldowns = {}
@@ -54,27 +54,8 @@ class SoundboardManager:
         logger.info("Soundboard module initialized")
 
     def _load_config(self) -> Dict[str, Any]:
-        """Load soundboard configuration."""
-        defaults = {
-            "max_sounds_per_server": 100,
-            "max_sound_size": 524288,
-            "max_sound_duration_seconds": 5,
-            "max_sound_name_length": 30,
-            "allowed_formats": ["mp3", "ogg"],
-            "default_cooldown_seconds": 5,
-            "max_cooldown_seconds": 300,
-        }
-
-        soundboard_config = config.get("soundboard", {})
-        return {**defaults, **soundboard_config}
-
-    def _get_timestamp(self) -> int:
-        """Get current timestamp in milliseconds."""
-        return int(time.time() * 1000)
-
-    def _generate_id(self) -> int:
-        """Generate a new Snowflake ID."""
-        return generate_snowflake_id()
+        """Load soundboard configuration from global config."""
+        return config.get("soundboard", {})
 
     def _validate_sound_name(self, name: str) -> str:
         """Validate and sanitize sound name."""
@@ -466,7 +447,8 @@ class SoundboardManager:
         try:
             usage_count = row["usage_count"]
         except (KeyError, IndexError):
-            pass
+            # usage_count may not be present in all queries
+            usage_count = 0
 
         return Sound(
             id=row["id"],
