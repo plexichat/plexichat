@@ -1,4 +1,4 @@
-﻿"""
+"""
 Telemetry module - Collects anonymized response time data from clients.
 
 This module provides:
@@ -21,6 +21,9 @@ Usage:
 from typing import Optional, List, Dict, Any, Callable
 from dataclasses import dataclass
 import time
+import logging
+
+logger = logging.getLogger(__name__)
 
 _db: Any = None
 _setup_complete = False
@@ -124,8 +127,8 @@ def _normalize_endpoint(endpoint: str) -> str:
     # First decode any URL-encoded characters for consistent handling
     try:
         endpoint = urllib.parse.unquote(endpoint)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to unquote endpoint '{endpoint}': {e}")
 
     # Remove query parameters for cleaner grouping
     if '?' in endpoint:

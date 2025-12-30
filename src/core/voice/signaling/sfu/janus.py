@@ -532,8 +532,8 @@ class JanusAdapter(SFUAdapter):
         for room_id, session_id in list(self._janus_sessions.items()):
             try:
                 await self._request(f"/{session_id}", {"janus": "destroy"})
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to destroy Janus session {session_id} for room {room_id}: {e}")
 
         self._janus_sessions.clear()
         self._janus_handles.clear()

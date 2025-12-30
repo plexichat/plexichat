@@ -451,6 +451,7 @@ class MeilisearchIndexer(BaseIndexer):
                     name=hit.get("name", ""),
                     description=hit.get("description") or None,
                     category=hit.get("category") or None,
+                    categories=[hit.get("category")] if hit.get("category") else [],
                     tags=hit.get("tags", []),
                     member_count=hit.get("member_count", 0),
                     score=1.0,

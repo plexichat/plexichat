@@ -416,6 +416,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
                     name=row["name"] or "",
                     description=row["description"] or None,
                     category=row["category"] or None,
+                    categories=[row["category"]] if row["category"] else [],
                     tags=tags,
                     member_count=int(row["member_count"]) if row["member_count"] else 0,
                     score=abs(float(row["rank"])) if row["rank"] else 0.0,

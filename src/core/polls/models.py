@@ -5,6 +5,7 @@ Poll models - Dataclasses for all poll-related entities.
 from dataclasses import dataclass, field
 from typing import Optional, List
 from enum import Enum
+from src.core.base import SnowflakeID
 
 
 class PollResultsVisibility(Enum):
@@ -17,8 +18,8 @@ class PollResultsVisibility(Enum):
 @dataclass
 class PollOption:
     """Represents a poll option."""
-    id: int
-    poll_id: int
+    id: SnowflakeID
+    poll_id: SnowflakeID
     text: str
     position: int = 0
     vote_count: int = 0
@@ -27,10 +28,10 @@ class PollOption:
 @dataclass
 class Poll:
     """Represents a poll attached to a message."""
-    id: int
-    message_id: int
+    id: SnowflakeID
+    message_id: SnowflakeID
     question: str
-    created_by: int
+    created_by: SnowflakeID
     created_at: int
     ends_at: Optional[int] = None
     ended_at: Optional[int] = None
@@ -44,10 +45,10 @@ class Poll:
 @dataclass
 class PollVote:
     """Represents a user's vote on a poll."""
-    id: int
-    poll_id: int
-    option_id: int
-    user_id: int
+    id: SnowflakeID
+    poll_id: SnowflakeID
+    option_id: SnowflakeID
+    user_id: SnowflakeID
     voted_at: int
 
 
@@ -58,4 +59,4 @@ class PollResults:
     options: List[PollOption]
     total_votes: int
     user_voted: bool = False
-    user_votes: List[int] = field(default_factory=list)
+    user_votes: List[SnowflakeID] = field(default_factory=list)
