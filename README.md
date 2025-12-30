@@ -14,21 +14,34 @@ git submodule update --init --recursive
 
 ## Features
 
-- REST API for user management, servers, channels, and messages
-- WebSocket gateway for real-time events
-- User authentication with 2FA support
-- Server and channel management
-- Direct messaging and group conversations
-- Friend relationships and blocking
-- Presence and typing indicators
-- File attachments and media uploads
-- User avatars and server icons (database-stored)
-- Reactions and embeds
-- Webhooks
-- Rate limiting
-- SQLite or PostgreSQL database support (automatic schema type conversion)
-- Optional Redis for caching and sessions
-- S3/MinIO compatible media storage
+- **REST API**: Comprehensive FastAPI-based API for all messaging features.
+- **Real-time Gateway**: WebSocket-based event delivery system.
+- **Advanced Messaging**:
+  - Direct messaging, group chats, and server channels.
+  - **Thread Support**: Organize conversations within channels.
+  - Reactions, pinned messages, and rich embeds.
+  - System messages for audit and automation.
+- **Identity & Security**:
+  - User authentication with 2FA (TOTP) support.
+  - Multi-session management and device tracking.
+  - **Zero-friction At-Rest Encryption**: Automatic server-side encryption for messages.
+- **Community Management**:
+  - Flexible server and channel hierarchies.
+  - Powerful role-based access control (RBAC) with granular permissions.
+  - Audit logging for server moderation.
+- **Media & Content**:
+  - File attachments and media uploads with S3/MinIO support.
+  - User avatars and server icons.
+  - **Auto-moderation**: Built-in rules for content filtering (caps, spam, etc.).
+- **Voice & Video**:
+  - High-performance WebRTC signaling via Mediasoup or Janus.
+  - Stage channels with speaker management.
+  - Screen sharing and video call support.
+- **Reliability & Maintenance**:
+  - **Self-Test System**: Automated internal API validation.
+  - Integrated telemetry for performance monitoring.
+  - Flexible database support (SQLite/PostgreSQL) with automatic migrations.
+  - Redis integration for distributed caching.
 
 ## Quick Start
 
@@ -91,29 +104,29 @@ See the root README.md for full configuration options.
 
 ```
 plexichat/
-├── main.py              # Entry point
-├── conftest.py          # Pytest configuration
+├── main.py              # Server entry point
 ├── requirements.txt     # Production dependencies
-├── requirements-test.txt # Test dependencies
-├── config/              # Default configuration
+├── config/              # Default configuration templates
+├── docs/                # API and system documentation
 ├── src/
-│   ├── api/             # FastAPI application
-│   │   ├── routes/      # API endpoints
-│   │   ├── schemas/     # Request/response models
-│   │   ├── middleware/  # Auth, rate limiting, etc.
-│   │   └── websocket/   # Gateway implementation
-│   ├── core/            # Business logic modules
-│   │   ├── auth/        # Authentication & sessions
-│   │   ├── messaging/   # Messages & conversations
-│   │   ├── servers/     # Servers & channels
-│   │   ├── presence/    # Online status & typing
-│   │   ├── relationships/ # Friends & blocking
-│   │   ├── reactions/   # Message reactions
-│   │   ├── webhooks/    # Webhook management
-│   │   └── ...          # Other modules
-│   ├── tests/           # Test suite
-│   └── utils/           # Shared utilities
-└── docs/                # Documentation
+│   ├── api/             # FastAPI application layer
+│   │   ├── routes/      # REST API endpoints
+│   │   ├── schemas/     # Pydantic data models
+│   │   ├── middleware/  # Security, rate limiting, logging
+│   │   └── websocket/   # Gateway event handlers
+│   ├── core/            # Business logic (domain layer)
+│   │   ├── auth/        # Identity and sessions
+│   │   ├── messaging/   # Conversations and messages
+│   │   ├── threads/     # Threaded conversations
+│   │   ├── servers/     # Guild management and roles
+│   │   ├── voice/       # WebRTC signaling and states
+│   │   ├── automod/     # Content moderation engine
+│   │   ├── notifications/ # Mention parsing and alerts
+│   │   ├── events/      # Internal event dispatcher
+│   │   ├── selftest/    # Self-test validation suite
+│   │   └── ...          # Additional core modules
+│   ├── tests/           # Comprehensive test suite
+│   └── utils/           # Low-level utilities and submodules
 ```
 
 ## API Overview
