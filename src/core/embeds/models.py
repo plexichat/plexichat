@@ -5,6 +5,7 @@ Embed models - Dataclasses for all embed-related entities.
 from dataclasses import dataclass, field
 from typing import Optional, List
 from enum import Enum
+from src.core.base import SnowflakeID
 
 
 class EmbedType(Enum):
@@ -70,7 +71,7 @@ class EmbedField:
 @dataclass
 class Embed:
     """Represents a rich embed."""
-    id: int
+    id: SnowflakeID
     embed_type: EmbedType = EmbedType.RICH
     title: Optional[str] = None
     description: Optional[str] = None
@@ -83,7 +84,7 @@ class Embed:
     author: Optional[EmbedAuthor] = None
     provider: Optional[EmbedProvider] = None
     fields: List[EmbedField] = field(default_factory=list)
-    created_by: int = 0
+    created_by: SnowflakeID = 0
     created_at: int = 0
     is_url_preview: bool = False
     source_url: Optional[str] = None
@@ -92,9 +93,9 @@ class Embed:
 @dataclass
 class MessageEmbed:
     """Association between a message and an embed."""
-    id: int
-    message_id: int
-    embed_id: int
+    id: SnowflakeID
+    message_id: SnowflakeID
+    embed_id: SnowflakeID
     position: int = 0
     suppressed: bool = False
     created_at: int = 0

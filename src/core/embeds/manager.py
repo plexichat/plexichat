@@ -5,7 +5,6 @@ Handles creating, updating, and managing embeds with proper
 validation, permission checks, and database interactions.
 """
 
-import time
 import socket
 import ipaddress
 from html.parser import HTMLParser
@@ -14,7 +13,7 @@ from urllib.parse import urlparse, urljoin
 
 import utils.config as config
 import utils.logger as logger
-from src.utils.encryption import generate_snowflake_id
+from src.core.base import BaseManager, SnowflakeID
 
 from .models import (
     Embed,
@@ -44,7 +43,7 @@ from .validator import (
 )
 
 
-class EmbedManager:
+class EmbedManager(BaseManager):
     """Core embed manager handling all operations."""
 
     def __init__(self, db, messaging_module=None, servers_module=None):
@@ -56,7 +55,7 @@ class EmbedManager:
             messaging_module: Messaging module for message access
             servers_module: Servers module for permission checks
         """
-        self._db = db
+        super().__init__(db)
         self._messaging = messaging_module
         self._servers = servers_module
         self._config = self._load_config()
@@ -76,22 +75,14 @@ class EmbedManager:
         embeds_config = config.get("embeds", {})
         return {**defaults, **embeds_config}
 
-    def _get_timestamp(self) -> int:
-        """Get current timestamp in milliseconds."""
-        return int(time.time() * 1000)
-
-    def _generate_id(self) -> int:
-        """Generate a new Snowflake ID."""
-        return generate_snowflake_id()
-
-    def _get_message(self, message_id: int) -> Optional[Dict]:
+    def _get_message(self, message_id: SnowflakeID) -> Optional[Dict]:
         """Get message from database."""
         return self._db.fetch_one(
             "SELECT * FROM msg_messages WHERE id = ? AND deleted = 0",
             (message_id,)
         )
 
-    def _is_participant(self, conversation_id: int, user_id: int) -> bool:
+    def _is_participant(self, conversation_id: SnowflakeID, user_id: SnowflakeID) -> bool:
         """Check if user is a participant in conversation."""
         row = self._db.fetch_one(
             "SELECT 1 FROM msg_participants WHERE conversation_id = ? AND user_id = ?",
@@ -99,14 +90,14 @@ class EmbedManager:
         )
         return row is not None
 
-    def _get_channel_for_conversation(self, conversation_id: int) -> Optional[Dict]:
+    def _get_channel_for_conversation(self, conversation_id: SnowflakeID) -> Optional[Dict]:
         """Get server channel if conversation is a channel."""
         return self._db.fetch_one(
             "SELECT * FROM srv_channels WHERE conversation_id = ?",
             (conversation_id,)
         )
 
-    def _check_embed_links_permission(self, user_id: int, server_id: int, channel_id: Optional[int] = None) -> bool:
+    def _check_embed_links_permission(self, user_id: SnowflakeID, server_id: SnowflakeID, channel_id: Optional[SnowflakeID] = None) -> bool:
         """Check if user has embed_links permission in server."""
         if not self._servers:
             return True
@@ -114,7 +105,7 @@ class EmbedManager:
 
     def create_embed(
         self,
-        user_id: int,
+        user_id: SnowflakeID,
         title: Optional[str] = None,
         description: Optional[str] = None,
         url: Optional[str] = None,
@@ -231,7 +222,7 @@ class EmbedManager:
         assert result is not None
         return result
 
-    def get_embed(self, embed_id: int) -> Optional[Embed]:
+    def get_embed(self, embed_id: SnowflakeID) -> Optional[Embed]:
         """Get an embed by ID."""
         row = self._db.fetch_one(
             "SELECT * FROM embed_embeds WHERE id = ?",
@@ -245,8 +236,8 @@ class EmbedManager:
 
     def update_embed(
         self,
-        user_id: int,
-        embed_id: int,
+        user_id: SnowflakeID,
+        embed_id: SnowflakeID,
         title: Optional[str] = None,
         description: Optional[str] = None,
         url: Optional[str] = None,
@@ -361,7 +352,7 @@ class EmbedManager:
         assert result is not None  # Should exist since we just updated it
         return result
 
-    def delete_embed(self, user_id: int, embed_id: int) -> bool:
+    def delete_embed(self, user_id: SnowflakeID, embed_id: SnowflakeID) -> bool:
         """
         Delete an embed.
         
@@ -398,9 +389,9 @@ class EmbedManager:
 
     def attach_embed_to_message(
         self,
-        user_id: int,
-        message_id: int,
-        embed_id: int,
+        user_id: SnowflakeID,
+        message_id: SnowflakeID,
+        embed_id: SnowflakeID,
         position: Optional[int] = None
     ) -> bool:
         """
@@ -492,7 +483,7 @@ class EmbedManager:
 
         return True
 
-    def remove_embed_from_message(self, user_id: int, message_id: int, embed_id: int) -> bool:
+    def remove_embed_from_message(self, user_id: SnowflakeID, message_id: SnowflakeID, embed_id: SnowflakeID) -> bool:
         """
         Remove an embed from a message.
         
@@ -524,7 +515,7 @@ class EmbedManager:
 
         return True
 
-    def get_message_embeds(self, user_id: int, message_id: int) -> List[Embed]:
+    def get_message_embeds(self, user_id: SnowflakeID, message_id: SnowflakeID) -> List[Embed]:
         """
         Get all embeds attached to a message.
         
@@ -557,7 +548,7 @@ class EmbedManager:
 
         return [self._row_to_embed(row) for row in rows]
 
-    def suppress_embeds(self, user_id: int, message_id: int) -> bool:
+    def suppress_embeds(self, user_id: SnowflakeID, message_id: SnowflakeID) -> bool:
         """
         Suppress (hide) all embeds on a message.
         
@@ -588,7 +579,7 @@ class EmbedManager:
 
         return True
 
-    def unsuppress_embeds(self, user_id: int, message_id: int) -> bool:
+    def unsuppress_embeds(self, user_id: SnowflakeID, message_id: SnowflakeID) -> bool:
         """
         Unsuppress (show) all embeds on a message.
         
@@ -621,9 +612,9 @@ class EmbedManager:
 
     def create_url_preview(
         self,
-        user_id: int,
+        user_id: SnowflakeID,
         url: str,
-        message_id: Optional[int] = None
+        message_id: Optional[SnowflakeID] = None
     ) -> Embed:
         """
         Create a URL preview embed from OpenGraph/Twitter Card metadata.

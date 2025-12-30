@@ -487,6 +487,7 @@ class ElasticsearchIndexer(BaseIndexer):
                     name=source.get("name", ""),
                     description=source.get("description") or None,
                     category=source.get("category") or None,
+                    categories=[source.get("category")] if source.get("category") else [],
                     tags=source.get("tags", []),
                     member_count=source.get("member_count", 0),
                     score=hit.get("_score", 0.0),

@@ -6,6 +6,7 @@ from typing import Optional, List, Callable
 import threading
 
 import utils.logger as logger
+from src.core.base import SnowflakeID
 
 from .models import Event
 from .router import EventRouter
@@ -38,7 +39,7 @@ class EventManager:
 
         logger.info("Events module initialized")
 
-    def subscribe(self, callback: Callable[[Event, List[int]], None]) -> None:
+    def subscribe(self, callback: Callable[[Event, List[SnowflakeID]], None]) -> None:
         """
         Subscribe to event dispatches.
 
@@ -49,7 +50,7 @@ class EventManager:
             if callback not in self._subscribers:
                 self._subscribers.append(callback)
 
-    def unsubscribe(self, callback: Callable[[Event, List[int]], None]) -> None:
+    def unsubscribe(self, callback: Callable[[Event, List[SnowflakeID]], None]) -> None:
         """
         Unsubscribe from event dispatches.
 
@@ -63,10 +64,10 @@ class EventManager:
     def dispatch(
         self,
         event: Event,
-        user_ids: Optional[List[int]] = None,
-        server_id: Optional[int] = None,
-        channel_id: Optional[int] = None,
-        exclude_user_ids: Optional[List[int]] = None,
+        user_ids: Optional[List[SnowflakeID]] = None,
+        server_id: Optional[SnowflakeID] = None,
+        channel_id: Optional[SnowflakeID] = None,
+        exclude_user_ids: Optional[List[SnowflakeID]] = None,
     ) -> int:
         """
         Dispatch an event to connected users.

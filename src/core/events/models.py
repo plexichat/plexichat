@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
 import time
 
+from src.core.base import SnowflakeID
 from .types import EventType
 
 
@@ -15,9 +16,9 @@ class Event:
     event_type: EventType
     data: Dict[str, Any]
     timestamp: int = field(default_factory=lambda: int(time.time() * 1000))
-    server_id: Optional[int] = None
-    channel_id: Optional[int] = None
-    user_id: Optional[int] = None
+    server_id: Optional[SnowflakeID] = None
+    channel_id: Optional[SnowflakeID] = None
+    user_id: Optional[SnowflakeID] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert event to dictionary for JSON serialization."""
@@ -49,7 +50,7 @@ class ReadyEvent(Event):
 @dataclass
 class MessageEvent(Event):
     """Message-related events."""
-    message_id: int = 0
+    message_id: SnowflakeID = 0
     content: Optional[str] = None
     author: Optional[Dict[str, Any]] = None
     attachments: List[Dict[str, Any]] = field(default_factory=list)
@@ -85,7 +86,7 @@ class ChannelEvent(Event):
     position: int = 0
     topic: Optional[str] = None
     nsfw: bool = False
-    parent_id: Optional[int] = None
+    parent_id: Optional[SnowflakeID] = None
 
 
 @dataclass
@@ -93,7 +94,7 @@ class GuildEvent(Event):
     """Guild/server-related events."""
     name: Optional[str] = None
     icon: Optional[str] = None
-    owner_id: Optional[int] = None
+    owner_id: Optional[SnowflakeID] = None
     member_count: int = 0
     channels: List[Dict[str, Any]] = field(default_factory=list)
     roles: List[Dict[str, Any]] = field(default_factory=list)
