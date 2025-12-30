@@ -88,4 +88,6 @@ async def get_voice_channel_info(
         exc_name = type(e).__name__
         if "NotFound" in exc_name:
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
+        if "NotConnected" in exc_name:
+            raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})

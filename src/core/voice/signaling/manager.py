@@ -30,9 +30,8 @@ from .models import (
 )
 from .exceptions import (
     SDPError,
-    NotConnectedError,
-    AlreadyConnectedError,
-    ScreenShareError,
+    ICEError,
+    SFUError,
 )
 from .sdp import parse_sdp, validate_sdp, SDPManipulator
 from .ice import ICECandidateManager, parse_ice_candidate
@@ -173,8 +172,11 @@ class SignalingManager:
         bitrate = 64000
         if self._voice:
             channel = self._voice.get_voice_channel(channel_id, user_id)
-            if channel:
-                bitrate = channel.bitrate
+            if not channel:
+                logger.warning(f"Unauthorized access attempt to voice server info for channel {channel_id} by user {user_id}")
+                from .exceptions import NotConnectedError
+                raise NotConnectedError(f"Access denied to channel {channel_id}")
+            bitrate = channel.bitrate
 
         # Build endpoint URL using the mediasoup server URL
         # The actual WebRTC connection uses ICE candidates from the SFU transport
@@ -273,8 +275,11 @@ class SignalingManager:
         bitrate = 64000
         if self._voice:
             channel = self._voice.get_voice_channel(channel_id, user_id)
-            if channel:
-                bitrate = channel.bitrate
+            if not channel:
+                logger.warning(f"Unauthorized SDP offer for channel {channel_id} by user {user_id}")
+                from .exceptions import NotConnectedError
+                raise NotConnectedError(f"Access denied to channel {channel_id}")
+            bitrate = channel.bitrate
 
         # Modify SDP for bitrate
         modified_sdp = self._sdp_manipulator.set_bitrate(sdp, bitrate)
@@ -335,9 +340,9 @@ class SignalingManager:
                 return loop.run_until_complete(
                     self.handle_sdp_offer_async(user_id, channel_id, sdp, sdp_type)
                 )
-        except RuntimeError:
+        except RuntimeError as e:
             # No event loop or already running - use sync fallback
-            pass
+            logger.debug(f"SDP offer async handle failed, using sync fallback: {e}")
 
         # Sync fallback (generates fake SDP - won't work for real media)
         connection = self._connections.get(user_id)
@@ -698,9 +703,9 @@ class SignalingManager:
                 return loop.run_until_complete(
                     self.disconnect_voice_async(user_id, channel_id)
                 )
-        except RuntimeError:
+        except RuntimeError as e:
             # No event loop - do sync cleanup only
-            pass
+            logger.debug(f"Disconnect voice async failed, using sync cleanup: {e}")
 
         # Sync fallback - just clean up local state
         return self._cleanup_local_connection(user_id, channel_id)
@@ -845,8 +850,8 @@ class SignalingManager:
         if self._voice:
             try:
                 self._voice.set_streaming(user_id, True)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to update voice streaming state for user {user_id}: {e}")
 
         logger.debug(f"User {user_id} started screen share")
 
@@ -877,8 +882,8 @@ class SignalingManager:
         if self._voice:
             try:
                 self._voice.set_streaming(user_id, False)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to stop voice streaming state for user {user_id}: {e}")
 
         logger.debug(f"User {user_id} stopped screen share")
 
@@ -950,7 +955,8 @@ class SignalingManager:
             try:
                 level = QualityLevel(quality_level)
             except ValueError:
-                pass
+                logger.warning(f"Invalid quality level: {quality_level}, defaulting to GOOD")
+                level = QualityLevel.GOOD
 
         # Determine bitrate
         bitrate = target_bitrate or 64000

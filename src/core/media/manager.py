@@ -13,6 +13,7 @@ from typing import Optional, Dict, Any, BinaryIO, Tuple
 
 import utils.config as config
 import utils.logger as logger
+from src.core.base import BaseManager
 from src.utils.encryption import generate_snowflake_id
 
 from .models import (
@@ -59,7 +60,7 @@ DEFAULT_ALLOWED_TYPES = {
 DEFAULT_THUMBNAIL_SIZES = [64, 128, 256, 512]
 
 
-class MediaManager:
+class MediaManager(BaseManager):
     """Core media manager handling all operations."""
 
     def _sanitize_filename(self, filename: str) -> str:
@@ -92,7 +93,7 @@ class MediaManager:
             
         # Ensure not empty
         if not filename or filename.strip() == ".":
-            filename = f"unnamed_file_{int(time.time())}"
+            filename = f"unnamed_file_{self._get_timestamp() // 1000}"
             
         return filename
 
@@ -104,7 +105,7 @@ class MediaManager:
             db: Database instance (must be connected)
             messaging_module: Optional messaging module for attachment integration
         """
-        self._db = db
+        super().__init__(db)
         self._messaging = messaging_module
         self._config = self._load_config()
 
@@ -122,57 +123,8 @@ class MediaManager:
         logger.info("Media module initialized")
 
     def _load_config(self) -> Dict[str, Any]:
-        """Load media configuration."""
-        defaults = {
-            "storage_backend": "local",
-            "local_path": "uploads",
-            "local_url": "/media",
-            "s3_bucket": "",
-            "s3_access_key": "",
-            "s3_secret_key": "",
-            "s3_region": "us-east-1",
-            "s3_endpoint": "",
-            "s3_public_url": "",
-            "database_url": "/api/v1/media/blob",
-            "database_max_size": 512 * 1024,  # 512KB default for DB storage
-            "auto_route_to_database": {
-                "enabled": False,
-                "max_size": 512 * 1024,
-                "content_types": ["text/plain", "application/json", "text/markdown", "text/csv"]
-            },
-            "size_limits": DEFAULT_SIZE_LIMITS.copy(),
-            "allowed_types": DEFAULT_ALLOWED_TYPES.copy(),
-            "thumbnail_sizes": DEFAULT_THUMBNAIL_SIZES.copy(),
-            "signing_key": "change-this-secret-key",
-            "signing_expiry": 3600,
-            "scanner_enabled": False,
-            "scanner_host": "localhost",
-            "scanner_port": 3310,
-            "proxy_enabled": True,
-            "proxy_cache_ttl": 86400,
-            "proxy_max_size": 10 * 1024 * 1024,
-            "rate_limit": {
-                "enabled": True,
-                "uploads_per_minute": 10,
-                "uploads_per_hour": 100,
-                "max_total_size_per_day": 512 * 1024 * 1024  # 512MB
-            }
-        }
-
-        media_config = config.get("media", {})
-
-        merged = defaults.copy()
-        for key, value in media_config.items():
-            if key in merged:
-                if isinstance(merged[key], dict) and isinstance(value, dict):
-                    merged[key] = {**merged[key], **value}
-                else:
-                    merged[key] = value
-            else:
-                # Allow additional config keys
-                merged[key] = value
-
-        return merged
+        """Load media configuration from global config."""
+        return config.get("media", {})
 
     def _init_storage(self) -> StorageBackendBase:
         """Initialize primary storage backend."""
@@ -400,14 +352,6 @@ class MediaManager:
         except Exception as e:
             logger.warning(f"External proxy unavailable: {e}")
             return None
-
-    def _get_timestamp(self) -> int:
-        """Get current timestamp in milliseconds."""
-        return int(time.time() * 1000)
-
-    def _generate_id(self) -> int:
-        """Generate a new Snowflake ID."""
-        return generate_snowflake_id()
 
     def _detect_media_type(self, content_type: str) -> MediaType:
         """Detect media type from content type."""

@@ -5,6 +5,7 @@ Voice models - Dataclasses for all voice-related entities.
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
+from src.core.base import SnowflakeID
 
 
 class VoiceChannelType(Enum):
@@ -16,9 +17,9 @@ class VoiceChannelType(Enum):
 @dataclass
 class VoiceState:
     """User's voice state in a channel."""
-    user_id: int
-    channel_id: int
-    server_id: int
+    user_id: SnowflakeID
+    channel_id: SnowflakeID
+    server_id: SnowflakeID
     self_mute: bool = False
     self_deaf: bool = False
     server_mute: bool = False
@@ -33,15 +34,15 @@ class VoiceState:
 @dataclass
 class VoiceChannel:
     """Voice channel with settings."""
-    id: int
-    server_id: int
+    id: SnowflakeID
+    server_id: SnowflakeID
     name: str
     channel_type: VoiceChannelType
     user_limit: int = 0
     bitrate: int = 64000
     region_id: Optional[str] = None
     position: int = 0
-    category_id: Optional[int] = None
+    category_id: Optional[SnowflakeID] = None
     user_count: int = 0
     created_at: int = 0
     updated_at: int = 0
@@ -50,11 +51,11 @@ class VoiceChannel:
 @dataclass
 class StageInstance:
     """Active stage instance in a stage channel."""
-    id: int
-    channel_id: int
-    server_id: int
+    id: SnowflakeID
+    channel_id: SnowflakeID
+    server_id: SnowflakeID
     topic: str
-    started_by: int
+    started_by: SnowflakeID
     started_at: int
     speaker_count: int = 0
     audience_count: int = 0
@@ -63,9 +64,9 @@ class StageInstance:
 @dataclass
 class SpeakerRequest:
     """Request to speak in a stage channel."""
-    id: int
-    user_id: int
-    channel_id: int
+    id: SnowflakeID
+    user_id: SnowflakeID
+    channel_id: SnowflakeID
     requested_at: int
 
 
@@ -98,6 +99,8 @@ DEFAULT_VOICE_REGIONS = [
 @dataclass
 class AFKSettings:
     """AFK channel settings for a server."""
-    server_id: int
-    channel_id: Optional[int]
+    server_id: SnowflakeID
+    channel_id: Optional[SnowflakeID] = None
     timeout_seconds: int = 300
+    created_at: int = 0
+    updated_at: int = 0
