@@ -11,7 +11,7 @@ import time
 
 import utils.config as config
 import utils.logger as logger
-from src.api.dependencies import get_current_user, get_db
+from src.api.dependencies import get_current_user
 from src.utils.encryption import generate_snowflake_id
 
 
@@ -73,26 +73,10 @@ def _record_feedback(user_id: int):
     _feedback_rate_limits[user_id].append(now)
 
 
-def _ensure_feedback_table(db):
-    """Ensure feedback table exists."""
-    db.execute("""
-        CREATE TABLE IF NOT EXISTS feedback (
-            id INTEGER PRIMARY KEY,
-            user_id INTEGER NOT NULL,
-            content TEXT NOT NULL,
-            category TEXT,
-            rating INTEGER,
-            created_at INTEGER NOT NULL,
-            FOREIGN KEY (user_id) REFERENCES auth_users(id)
-        )
-    """)
-
-
 @router.post("", response_model=FeedbackResponse)
 async def submit_feedback(
-    feedback: FeedbackCreate,
-    current_user = Depends(get_current_user),
-    db = Depends(get_db)
+    feedback_data: FeedbackCreate,
+    current_user = Depends(get_current_user)
 ):
     """
     Submit feedback.
@@ -121,18 +105,34 @@ async def submit_feedback(
             detail="Too many feedback submissions. Please try again later."
         )
 
-    # Ensure table exists
-    _ensure_feedback_table(db)
+    # Import feedback module
+    try:
+        from src.core import feedback
+        if not feedback.is_setup():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Feedback system not initialized"
+            )
+    except ImportError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Feedback module not available"
+        )
 
-    # Create feedback entry
-    feedback_id = generate_snowflake_id()
-    now = int(time.time() * 1000)
-
-    db.execute(
-        """INSERT INTO feedback (id, user_id, content, category, rating, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (feedback_id, user_id, feedback.content, feedback.category, feedback.rating, now)
-    )
+    # Create feedback entry via core module
+    try:
+        feedback_id = feedback.submit_feedback(
+            user_id=user_id,
+            content=feedback_data.content,
+            category=feedback_data.category,
+            rating=feedback_data.rating
+        )
+    except Exception as e:
+        logger.error(f"Failed to submit feedback: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to submit feedback"
+        )
 
     # Record for rate limiting
     _record_feedback(user_id)

@@ -16,10 +16,9 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 import time
 
+import src.api as api
 import utils.config as config
 import utils.logger as logger
-from src.api.dependencies import get_db
-
 
 router = APIRouter(tags=["admin"])
 
@@ -130,8 +129,7 @@ def _get_admin_from_token(request: Request) -> int:
 @router.post("/login")
 async def admin_login(
     request: Request,
-    login_data: AdminLoginRequest,
-    db = Depends(get_db)
+    login_data: AdminLoginRequest
 ):
     """Admin login endpoint."""
     _check_host_restriction(request)
@@ -170,8 +168,7 @@ async def admin_login(
 @router.post("/verify-otp")
 async def verify_otp(
     request: Request,
-    otp_data: OTPVerifyRequest,
-    db = Depends(get_db)
+    otp_data: OTPVerifyRequest
 ):
     """Verify OTP code for admin login."""
     _check_host_restriction(request)
@@ -196,7 +193,7 @@ async def verify_otp(
 
 
 @router.post("/logout")
-async def admin_logout(request: Request, db = Depends(get_db)):
+async def admin_logout(request: Request):
     """Admin logout endpoint."""
     _check_host_restriction(request)
 
@@ -212,7 +209,7 @@ async def admin_logout(request: Request, db = Depends(get_db)):
 # ==================== Dashboard Routes ====================
 
 @router.get("/dashboard")
-async def get_dashboard(request: Request, db = Depends(get_db)):
+async def get_dashboard(request: Request):
     """Get admin dashboard data."""
     _check_host_restriction(request)
     _get_admin_from_token(request)
@@ -248,8 +245,7 @@ async def get_tickets(
     request: Request,
     status_filter: Optional[str] = None,
     limit: int = 50,
-    offset: int = 0,
-    db = Depends(get_db)
+    offset: int = 0
 ):
     """Get feedback tickets."""
     _check_host_restriction(request)
@@ -270,7 +266,7 @@ async def get_tickets(
 
 
 @router.get("/tickets/{ticket_id}", response_model=TicketResponse)
-async def get_ticket(ticket_id: int, request: Request, db = Depends(get_db)):
+async def get_ticket(ticket_id: int, request: Request):
     """Get a single ticket."""
     _check_host_restriction(request)
     _get_admin_from_token(request)
@@ -293,8 +289,7 @@ async def get_ticket(ticket_id: int, request: Request, db = Depends(get_db)):
 async def update_ticket_status(
     ticket_id: int,
     update: TicketStatusUpdate,
-    request: Request,
-    db = Depends(get_db)
+    request: Request
 ):
     """Update ticket status."""
     _check_host_restriction(request)
@@ -312,7 +307,7 @@ async def update_ticket_status(
 
 
 @router.get("/tickets/{ticket_id}/notes", response_model=List[NoteResponse])
-async def get_ticket_notes(ticket_id: int, request: Request, db = Depends(get_db)):
+async def get_ticket_notes(ticket_id: int, request: Request):
     """Get internal notes for a ticket."""
     _check_host_restriction(request)
     _get_admin_from_token(request)
@@ -337,8 +332,7 @@ async def get_ticket_notes(ticket_id: int, request: Request, db = Depends(get_db
 async def add_ticket_note(
     ticket_id: int,
     note: InternalNoteCreate,
-    request: Request,
-    db = Depends(get_db)
+    request: Request
 ):
     """Add internal note to a ticket."""
     _check_host_restriction(request)
@@ -367,8 +361,7 @@ async def get_telemetry_stats(
     request: Request,
     hours: int = 24,
     endpoint: Optional[str] = None,
-    source: Optional[str] = None,
-    db = Depends(get_db)
+    source: Optional[str] = None
 ):
     """
     Get telemetry statistics.
@@ -432,8 +425,7 @@ async def get_telemetry_history(
     endpoint: str,
     method: str = "GET",
     hours: int = 24,
-    bucket_minutes: int = 5,
-    db = Depends(get_db)
+    bucket_minutes: int = 5
 ):
     """Get telemetry history for an endpoint."""
     _check_host_restriction(request)
@@ -457,7 +449,7 @@ async def get_telemetry_history(
 
 
 @router.post("/telemetry/reset")
-async def reset_telemetry_stats(request: Request, db = Depends(get_db)):
+async def reset_telemetry_stats(request: Request):
     """Reset all telemetry statistics."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
@@ -479,8 +471,7 @@ async def reset_telemetry_stats(request: Request, db = Depends(get_db)):
 async def export_telemetry_stats(
     request: Request,
     format: str = "json",
-    hours: int = 24,
-    db = Depends(get_db)
+    hours: int = 24
 ):
     """
     Export telemetry statistics in various formats.
@@ -659,8 +650,7 @@ async def get_hash_reports(
     request: Request,
     status_filter: Optional[str] = None,
     limit: int = 50,
-    offset: int = 0,
-    db = Depends(get_db)
+    offset: int = 0
 ):
     """Get hash reports for admin review with image preview support."""
     _check_host_restriction(request)
@@ -693,7 +683,7 @@ async def get_hash_reports(
 
 
 @router.get("/hash-reports/counts")
-async def get_hash_report_counts(request: Request, db = Depends(get_db)):
+async def get_hash_report_counts(request: Request):
     """Get counts of hash reports by status."""
     _check_host_restriction(request)
     _get_admin_from_token(request)
@@ -706,8 +696,7 @@ async def get_hash_report_counts(request: Request, db = Depends(get_db)):
 async def review_hash_report(
     report_id: int,
     review: HashReportReviewRequest,
-    request: Request,
-    db = Depends(get_db)
+    request: Request
 ):
     """Review a hash report (block, clear, or dismiss)."""
     _check_host_restriction(request)
@@ -729,8 +718,7 @@ async def review_hash_report(
 async def get_blocked_hashes(
     request: Request,
     limit: int = 100,
-    offset: int = 0,
-    db = Depends(get_db)
+    offset: int = 0
 ):
     """Get list of blocked hashes."""
     _check_host_restriction(request)
@@ -756,8 +744,7 @@ async def get_blocked_hashes(
 @router.post("/blocked-hashes")
 async def block_hash_manually(
     block_request: ManualBlockHashRequest,
-    request: Request,
-    db = Depends(get_db)
+    request: Request
 ):
     """Manually block a hash (SHA-256 or pHash)."""
     _check_host_restriction(request)
@@ -788,8 +775,7 @@ async def block_hash_manually(
 @router.delete("/blocked-hashes/{hash_value}")
 async def unblock_hash(
     hash_value: str,
-    request: Request,
-    db = Depends(get_db)
+    request: Request
 ):
     """Unblock a hash."""
     _check_host_restriction(request)
@@ -820,8 +806,7 @@ class BlockUserRequest(BaseModel):
 async def get_blocked_users(
     request: Request,
     limit: int = 100,
-    offset: int = 0,
-    db = Depends(get_db)
+    offset: int = 0
 ):
     """Get list of users blocked from uploading media."""
     _check_host_restriction(request)
@@ -846,8 +831,7 @@ async def get_blocked_users(
 @router.post("/blocked-users")
 async def block_user(
     block_request: BlockUserRequest,
-    request: Request,
-    db = Depends(get_db)
+    request: Request
 ):
     """Block a user from uploading media."""
     _check_host_restriction(request)
@@ -873,8 +857,7 @@ async def block_user(
 @router.delete("/blocked-users/{user_id}")
 async def unblock_user(
     user_id: int,
-    request: Request,
-    db = Depends(get_db)
+    request: Request
 ):
     """Unblock a user from uploading media."""
     _check_host_restriction(request)
@@ -914,8 +897,7 @@ async def admin_user_search(
     q: str,
     request: Request,
     limit: int = 20,
-    offset: int = 0,
-    db = Depends(get_db)
+    offset: int = 0
 ):
     """Search users by username or ID."""
     _check_host_restriction(request)
@@ -924,45 +906,22 @@ async def admin_user_search(
     if not q or len(q) < 2:
         return {"users": []}
 
-    # Search by username or ID
-    try:
-        # Try to parse as ID first
-        user_id = int(q)
-        rows = db.fetch_all(
-            """SELECT id, username, email, tier, badges, created_at 
-               FROM auth_users WHERE id = ? LIMIT ?""",
-            (user_id, limit)
-        )
-    except ValueError:
-        # Search by username
-        rows = db.fetch_all(
-            """SELECT id, username, email, tier, badges, created_at 
-               FROM auth_users WHERE username LIKE ? LIMIT ?""",
-            (f"%{q}%", limit)
-        )
+    admin_core = api.get_admin()
+    if not admin_core:
+        raise HTTPException(status_code=500, detail="Admin module not available")
 
+    users_data = admin_core.search_users(q, limit, offset)
+    
     users = []
-    for row in rows:
-        if isinstance(row, dict):
-            badges = row.get("badges", "") or ""
-            users.append({
-                "id": str(row["id"]),
-                "username": row["username"],
-                "email": row.get("email"),
-                "tier": row.get("tier", "free"),
-                "badges": badges.split(",") if badges else [],
-                "created_at": row["created_at"]
-            })
-        else:
-            badges = row[4] or ""
-            users.append({
-                "id": str(row[0]),
-                "username": row[1],
-                "email": row[2],
-                "tier": row[3] or "free",
-                "badges": badges.split(",") if badges else [],
-                "created_at": row[5]
-            })
+    for user in users_data:
+        users.append({
+            "id": str(user.id),
+            "username": user.username,
+            "email": user.email,
+            "tier": user.tier,
+            "badges": user.badges,
+            "created_at": user.created_at
+        })
 
     return {"users": users}
 
@@ -970,57 +929,36 @@ async def admin_user_search(
 @router.get("/users/{user_id}")
 async def get_user_details(
     user_id: int,
-    request: Request,
-    db = Depends(get_db)
+    request: Request
 ):
     """Get user details by ID."""
     _check_host_restriction(request)
     _get_admin_from_token(request)
 
-    try:
-        uid = int(user_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid user ID")
+    admin_core = api.get_admin()
+    if not admin_core:
+        raise HTTPException(status_code=500, detail="Admin module not available")
 
-    row = db.fetch_one(
-        """SELECT id, username, email, tier, badges, created_at, last_login
-           FROM auth_users WHERE id = ?""",
-        (uid,)
-    )
-
-    if not row:
+    user = admin_core.get_user_details(user_id)
+    if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    if isinstance(row, dict):
-        badges = row.get("badges", "") or ""
-        return {
-            "id": str(row["id"]),
-            "username": row["username"],
-            "email": row.get("email"),
-            "tier": row.get("tier", "free"),
-            "badges": badges.split(",") if badges else [],
-            "created_at": row["created_at"],
-            "last_login": row.get("last_login")
-        }
-    else:
-        badges = row[4] or ""
-        return {
-            "id": str(row[0]),
-            "username": row[1],
-            "email": row[2],
-            "tier": row[3] or "free",
-            "badges": badges.split(",") if badges else [],
-            "created_at": row[5],
-            "last_login": row[6]
-        }
+    return {
+        "id": str(user.id),
+        "username": user.username,
+        "email": user.email,
+        "tier": user.tier,
+        "badges": user.badges,
+        "created_at": user.created_at,
+        "last_login": user.last_login
+    }
 
 
 @router.put("/users/{user_id}/tier")
 async def update_user_tier(
     user_id: str,
     update: UserTierUpdate,
-    request: Request,
-    db = Depends(get_db)
+    request: Request
 ):
     """Update a user's tier."""
     _check_host_restriction(request)
@@ -1031,17 +969,15 @@ async def update_user_tier(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid user ID")
 
-    # Check user exists
-    row = db.fetch_one("SELECT id, username FROM auth_users WHERE id = ?", (uid,))
-    if not row:
+    admin_core = api.get_admin()
+    if not admin_core:
+        raise HTTPException(status_code=500, detail="Admin module not available")
+
+    success = admin_core.update_user_tier(uid, update.tier)
+    if not success:
         raise HTTPException(status_code=404, detail="User not found")
 
-    username = row["username"] if isinstance(row, dict) else row[1]
-
-    # Update tier
-    db.execute("UPDATE auth_users SET tier = ? WHERE id = ?", (update.tier, uid))
-
-    logger.info(f"Admin {admin_id} updated user {username} ({uid}) tier to {update.tier}")
+    logger.info(f"Admin {admin_id} updated user {uid} tier to {update.tier}")
 
     return {"success": True, "user_id": user_id, "tier": update.tier}
 
@@ -1050,8 +986,7 @@ async def update_user_tier(
 async def add_user_badge(
     user_id: str,
     badge: str,
-    request: Request,
-    db = Depends(get_db)
+    request: Request
 ):
     """Add a badge to a user."""
     _check_host_restriction(request)
@@ -1062,28 +997,24 @@ async def add_user_badge(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid user ID")
 
-    # Get current badges
-    row = db.fetch_one("SELECT badges FROM auth_users WHERE id = ?", (uid,))
-    if not row:
+    admin_core = api.get_admin()
+    if not admin_core:
+        raise HTTPException(status_code=500, detail="Admin module not available")
+
+    badges = admin_core.add_user_badge(uid, badge)
+    if badges is None:
         raise HTTPException(status_code=404, detail="User not found")
 
-    current_badges = (row["badges"] if isinstance(row, dict) else row[0]) or ""
-    badges_list = [b for b in current_badges.split(",") if b]
+    logger.info(f"Admin {admin_id} added badge '{badge}' to user {uid}")
 
-    if badge not in badges_list:
-        badges_list.append(badge)
-        db.execute("UPDATE auth_users SET badges = ? WHERE id = ?", (",".join(badges_list), uid))
-        logger.info(f"Admin {admin_id} added badge '{badge}' to user {uid}")
-
-    return {"success": True, "badges": badges_list}
+    return {"success": True, "badges": badges}
 
 
 @router.delete("/users/{user_id}/badges/{badge}")
 async def remove_user_badge(
     user_id: str,
     badge: str,
-    request: Request,
-    db = Depends(get_db)
+    request: Request
 ):
     """Remove a badge from a user."""
     _check_host_restriction(request)
@@ -1094,24 +1025,21 @@ async def remove_user_badge(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid user ID")
 
-    # Get current badges
-    row = db.fetch_one("SELECT badges FROM auth_users WHERE id = ?", (uid,))
-    if not row:
+    admin_core = api.get_admin()
+    if not admin_core:
+        raise HTTPException(status_code=500, detail="Admin module not available")
+
+    badges = admin_core.remove_user_badge(uid, badge)
+    if badges is None:
         raise HTTPException(status_code=404, detail="User not found")
 
-    current_badges = (row["badges"] if isinstance(row, dict) else row[0]) or ""
-    badges_list = [b for b in current_badges.split(",") if b]
+    logger.info(f"Admin {admin_id} removed badge '{badge}' from user {uid}")
 
-    if badge in badges_list:
-        badges_list.remove(badge)
-        db.execute("UPDATE auth_users SET badges = ? WHERE id = ?", (",".join(badges_list), uid))
-        logger.info(f"Admin {admin_id} removed badge '{badge}' from user {uid}")
-
-    return {"success": True, "badges": badges_list}
+    return {"success": True, "badges": badges}
 
 
 @router.get("/tiers")
-async def get_available_tiers(request: Request, db = Depends(get_db)):
+async def get_available_tiers(request: Request):
     """Get list of available tiers."""
     _check_host_restriction(request)
     _get_admin_from_token(request)
@@ -1128,7 +1056,7 @@ async def get_available_tiers(request: Request, db = Depends(get_db)):
 
 
 @router.get("/badges")
-async def get_available_badges(request: Request, db = Depends(get_db)):
+async def get_available_badges(request: Request):
     """Get list of available badges."""
     _check_host_restriction(request)
     _get_admin_from_token(request)

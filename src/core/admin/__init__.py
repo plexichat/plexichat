@@ -47,12 +47,14 @@ import time
 import secrets
 import string
 import os
+import json
 
 import utils.logger as logger
 import utils.config as config
 
 _db: Any = None
 _auth: Any = None
+_features: Any = None
 _setup_complete = False
 
 # Rate limiting for admin login
@@ -101,12 +103,13 @@ class AdminLoginResult:
     error: Optional[str] = None
 
 
-def setup(db: Any, auth_module: Optional[Any] = None) -> None:
+def setup(db: Any, auth_module: Optional[Any] = None, features_module: Optional[Any] = None) -> None:
     """Initialize the admin module."""
-    global _db, _auth, _setup_complete
+    global _db, _auth, _features, _setup_complete
 
     _db = db
     _auth = auth_module
+    _features = features_module
     _setup_complete = True  # Set before _create_tables() since it calls _get_db()
     _create_tables()
     _ensure_admin_user()
@@ -1129,6 +1132,246 @@ def unblock_user(user_id: int) -> bool:
         return False
 
 
+# ==================== User Management ====================
+
+@dataclass
+class AdminUserDetail:
+    """Detailed user information for admin view."""
+    id: int
+    username: str
+    email: Optional[str]
+    tier: str
+    badges: List[str]
+    created_at: int
+    last_login: Optional[int]
+
+
+def search_users(q: str, limit: int = 20, offset: int = 0) -> List[AdminUserDetail]:
+    """Search users by username or ID."""
+    db = _get_db()
+    
+    try:
+        # Try to parse as ID first
+        user_id = int(q)
+        rows = db.fetch_all(
+            """SELECT u.id, u.username, u.email, f.rate_limit_tier as tier, f.badges, u.created_at 
+               FROM auth_users u
+               LEFT JOIN user_features f ON u.id = f.user_id
+               WHERE u.id = ? LIMIT ? OFFSET ?""",
+            (user_id, limit, offset)
+        )
+    except ValueError:
+        # Search by username
+        rows = db.fetch_all(
+            """SELECT u.id, u.username, u.email, f.rate_limit_tier as tier, f.badges, u.created_at 
+               FROM auth_users u
+               LEFT JOIN user_features f ON u.id = f.user_id
+               WHERE u.username LIKE ? LIMIT ? OFFSET ?""",
+            (f"%{q}%", limit, offset)
+        )
+
+    users = []
+    for row in rows:
+        if isinstance(row, dict):
+            badges_json = row.get("badges", "[]") or "[]"
+            try:
+                badges = json.loads(badges_json) if isinstance(badges_json, str) else badges_json or []
+            except Exception:
+                badges = []
+                
+            users.append(AdminUserDetail(
+                id=row["id"],
+                username=row["username"],
+                email=row.get("email"),
+                tier=row.get("tier", "standard"),
+                badges=badges,
+                created_at=row["created_at"],
+                last_login=None # Not in search results for performance
+            ))
+        else:
+            badges_json = row[4] or "[]"
+            try:
+                badges = json.loads(badges_json) if isinstance(badges_json, str) else badges_json or []
+            except Exception:
+                badges = []
+                
+            users.append(AdminUserDetail(
+                id=row[0],
+                username=row[1],
+                email=row[2],
+                tier=row[3] or "standard",
+                badges=badges,
+                created_at=row[5],
+                last_login=None
+            ))
+    return users
+
+
+def get_user_details(user_id: int) -> Optional[AdminUserDetail]:
+    """Get full user details by ID."""
+    db = _get_db()
+    
+    row = db.fetch_one(
+        """SELECT u.id, u.username, u.email, f.rate_limit_tier as tier, f.badges, u.created_at, u.last_login
+           FROM auth_users u
+           LEFT JOIN user_features f ON u.id = f.user_id
+           WHERE u.id = ?""",
+        (user_id,)
+    )
+
+    if not row:
+        return None
+
+    if isinstance(row, dict):
+        badges_json = row.get("badges", "[]") or "[]"
+        try:
+            badges = json.loads(badges_json) if isinstance(badges_json, str) else badges_json or []
+        except Exception:
+            badges = []
+            
+        return AdminUserDetail(
+            id=row["id"],
+            username=row["username"],
+            email=row.get("email"),
+            tier=row.get("tier", "standard"),
+            badges=badges,
+            created_at=row["created_at"],
+            last_login=row.get("last_login")
+        )
+    else:
+        badges_json = row[4] or "[]"
+        try:
+            badges = json.loads(badges_json) if isinstance(badges_json, str) else badges_json or []
+        except Exception:
+            badges = []
+            
+        return AdminUserDetail(
+            id=row[0],
+            username=row[1],
+            email=row[2],
+            tier=row[3] or "standard",
+            badges=badges,
+            created_at=row[5],
+            last_login=row[6]
+        )
+
+
+def update_user_tier(user_id: int, tier: str, admin_id: int = 0) -> bool:
+    """Update a user's tier."""
+    if _features:
+        try:
+            _features.set_user_tier(user_id, admin_id, tier)
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to update tier via features module: {e}")
+
+    # Fallback to direct DB update if features module not available or fails
+    db = _get_db()
+    
+    # Verify user exists
+    row = db.fetch_one("SELECT id FROM auth_users WHERE id = ?", (user_id,))
+    if not row:
+        return False
+        
+    # Check if we should update user_features or auth_users
+    # The schema check confirms it should be in user_features
+    if db.table_exists("user_features"):
+        db.execute(
+            """INSERT INTO user_features (user_id, rate_limit_tier, granted_by, granted_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(user_id) DO UPDATE SET rate_limit_tier = ?, granted_by = ?, granted_at = ?""",
+            (user_id, tier, admin_id, int(time.time() * 1000), tier, admin_id, int(time.time() * 1000))
+        )
+    else:
+        # Emergency fallback to auth_users if user_features doesn't exist
+        db.execute("UPDATE auth_users SET tier = ? WHERE id = ?", (tier, user_id))
+    return True
+
+
+def update_user_badges(user_id: int, badges: List[str], admin_id: int = 0) -> bool:
+    """Update a user's badges."""
+    # This is a bit complex since features module only has add/remove
+    # We'll try to use direct update if features available but doesn't have bulk set
+    db = _get_db()
+    
+    # Verify user exists
+    row = db.fetch_one("SELECT id FROM auth_users WHERE id = ?", (user_id,))
+    if not row:
+        return False
+        
+    now = int(time.time() * 1000)
+    badges_json = json.dumps(badges)
+
+    if db.table_exists("user_features"):
+        db.execute(
+            """INSERT INTO user_features (user_id, badges, granted_by, granted_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(user_id) DO UPDATE SET badges = ?, granted_by = ?, granted_at = ?""",
+            (user_id, badges_json, admin_id, now, badges_json, admin_id, now)
+        )
+    else:
+        db.execute("UPDATE auth_users SET badges = ? WHERE id = ?", (badges_json, user_id))
+    return True
+
+
+def add_user_badge(user_id: int, badge: str, admin_id: int = 0) -> bool:
+    """Add a badge to a user if they don't have it."""
+    if _features:
+        try:
+            _features.add_badge(user_id, admin_id, badge)
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to add badge via features module: {e}")
+
+    db = _get_db()
+    
+    row = db.fetch_one("SELECT badges FROM user_features WHERE user_id = ?", (user_id,))
+    if not row:
+        # Create entry
+        update_user_badges(user_id, [badge], admin_id)
+        return True
+        
+    current_badges_json = (row["badges"] if isinstance(row, dict) else row[0]) or "[]"
+    try:
+        badges_list = json.loads(current_badges_json)
+    except Exception:
+        badges_list = []
+    
+    if badge not in badges_list:
+        badges_list.append(badge)
+        update_user_badges(user_id, badges_list, admin_id)
+        
+    return True
+
+
+def remove_user_badge(user_id: int, badge: str, admin_id: int = 0) -> bool:
+    """Remove a badge from a user."""
+    if _features:
+        try:
+            _features.remove_badge(user_id, admin_id, badge)
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to remove badge via features module: {e}")
+
+    db = _get_db()
+    
+    row = db.fetch_one("SELECT badges FROM user_features WHERE user_id = ?", (user_id,))
+    if not row:
+        return False
+        
+    current_badges_json = (row["badges"] if isinstance(row, dict) else row[0]) or "[]"
+    try:
+        badges_list = json.loads(current_badges_json)
+    except Exception:
+        badges_list = []
+    
+    if badge in badges_list:
+        badges_list.remove(badge)
+        update_user_badges(user_id, badges_list, admin_id)
+        
+    return True
+
+
 __all__ = [
     'setup', 'is_setup', 'login', 'verify_otp_setup', 'verify_otp',
     'validate_session', 'logout',
@@ -1141,4 +1384,7 @@ __all__ = [
     'HashReport', 'BlockedHash',
     # User blocking
     'get_blocked_users', 'block_user', 'unblock_user', 'BlockedUser',
+    # User management
+    'search_users', 'get_user_details', 'update_user_tier', 'update_user_badges',
+    'add_user_badge', 'remove_user_badge', 'AdminUserDetail',
 ]

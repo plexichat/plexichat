@@ -11,7 +11,7 @@ import time
 
 import utils.config as config
 import utils.logger as logger
-from src.api.dependencies import get_optional_user, get_db
+from src.api.dependencies import get_optional_user
 from src.core.auth.models import TokenInfo
 
 
@@ -97,8 +97,7 @@ def _record_submission(client_ip: str):
 async def submit_response_times(
     submission: TelemetrySubmission,
     request: Request,
-    current_user: Optional[TokenInfo] = Depends(get_optional_user),
-    db: Optional[Any] = Depends(get_db),
+    current_user: Optional[TokenInfo] = Depends(get_optional_user)
 ):
     """
     Submit anonymized response time telemetry data.
@@ -157,7 +156,14 @@ async def submit_response_times(
     ]
 
     # Submit to telemetry module
-    accepted = telemetry.submit_response_times(entries, client_id)
+    try:
+        accepted = telemetry.submit_response_times(entries, client_id)
+    except Exception as e:
+        logger.error(f"Failed to submit telemetry: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to record telemetry"
+        )
 
     # Record for rate limiting
     _record_submission(client_ip)
