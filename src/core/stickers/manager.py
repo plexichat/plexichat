@@ -28,10 +28,8 @@ class StickerManager:
         logger.info("Sticker module initialized")
 
     def _load_config(self) -> Dict[str, Any]:
-        defaults = {"max_packs_per_server": 50, "max_stickers_per_pack": 50, "max_sticker_size": 524288,
-                    "max_sticker_name_length": 30, "max_pack_name_length": 50, "max_pack_description_length": 200,
-                    "allowed_formats": ["png", "apng", "json"], "max_suggestions": 10}
-        return {**defaults, **config.get("stickers", {})}
+        """Load sticker configuration from global config."""
+        return config.get("stickers", {})
 
     def _get_timestamp(self) -> int:
         return int(time.time() * 1000)

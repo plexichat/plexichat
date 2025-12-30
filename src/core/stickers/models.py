@@ -5,6 +5,7 @@ Sticker models - Dataclasses for all sticker-related entities.
 from dataclasses import dataclass, field
 from typing import Optional, List
 from enum import Enum
+from src.core.base import SnowflakeID
 
 
 class StickerFormat(Enum):
@@ -24,12 +25,12 @@ class PackType(Enum):
 @dataclass
 class StickerPack:
     """Represents a sticker pack."""
-    id: int
+    id: SnowflakeID
     name: str
     description: Optional[str] = None
     pack_type: PackType = PackType.SERVER
-    server_id: Optional[int] = None
-    created_by: int = 0
+    server_id: Optional[SnowflakeID] = None
+    created_by: SnowflakeID = 0
     created_at: int = 0
     updated_at: int = 0
     sticker_count: int = 0
@@ -39,8 +40,8 @@ class StickerPack:
 @dataclass
 class Sticker:
     """Represents a single sticker."""
-    id: int
-    pack_id: int
+    id: SnowflakeID
+    pack_id: SnowflakeID
     name: str
     format: StickerFormat = StickerFormat.PNG
     tags: List[str] = field(default_factory=list)
@@ -56,10 +57,10 @@ class Sticker:
 @dataclass
 class StickerUsage:
     """Tracks sticker usage statistics."""
-    id: int
-    sticker_id: int
-    user_id: int
-    message_id: int
+    id: SnowflakeID
+    sticker_id: SnowflakeID
+    user_id: SnowflakeID
+    message_id: SnowflakeID
     used_at: int
 
 

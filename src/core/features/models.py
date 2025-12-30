@@ -4,6 +4,7 @@ User Features data models.
 
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
+from src.core.base import SnowflakeID
 
 
 # Available badge types
@@ -175,8 +176,8 @@ DEFAULT_TIER_LIMITS = {
 @dataclass
 class UserFeatures:
     """User feature flags and badges."""
-    id: int
-    user_id: int
+    id: SnowflakeID
+    user_id: SnowflakeID
 
     # Rate limiting
     rate_limit_tier: str = "standard"
@@ -185,7 +186,7 @@ class UserFeatures:
     badges: List[str] = field(default_factory=list)
 
     # Metadata
-    granted_by: Optional[int] = None  # Admin who granted
+    granted_by: Optional[SnowflakeID] = None  # Admin who granted
     granted_at: Optional[int] = None
     expires_at: Optional[int] = None  # None = permanent
     notes: Optional[str] = None

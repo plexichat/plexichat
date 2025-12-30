@@ -188,7 +188,8 @@ class EventRouter:
         if not self._servers:
             return []
         try:
-            members = self._servers.get_all_member_ids(server_id)
+            # ServerManager has get_member_user_ids
+            members = self._servers.get_member_user_ids(server_id)
             return members if members else []
         except Exception:
             return []
@@ -225,4 +226,14 @@ class EventRouter:
                 pass
 
         recipients.discard(user_id)
+
+        # Filter out blocked users
+        if self._relationships and recipients:
+            try:
+                blocked_ids = self._relationships.get_all_blocked_ids(user_id)
+                for bid in blocked_ids:
+                    recipients.discard(bid)
+            except Exception:
+                pass
+
         return list(recipients)

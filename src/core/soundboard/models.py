@@ -5,6 +5,7 @@ Soundboard models - Dataclasses for all soundboard-related entities.
 from dataclasses import dataclass
 from typing import Optional
 from enum import Enum
+from src.core.base import SnowflakeID
 
 
 class SoundFormat(Enum):
@@ -16,8 +17,8 @@ class SoundFormat(Enum):
 @dataclass
 class Sound:
     """Represents a soundboard sound."""
-    id: int
-    server_id: int
+    id: SnowflakeID
+    server_id: SnowflakeID
     name: str
     format: SoundFormat = SoundFormat.MP3
     emoji: Optional[str] = None
@@ -25,7 +26,7 @@ class Sound:
     size: int = 0
     duration_seconds: float = 0.0
     volume: float = 1.0
-    created_by: int = 0
+    created_by: SnowflakeID = 0
     created_at: int = 0
     usage_count: int = 0
 
@@ -33,17 +34,17 @@ class Sound:
 @dataclass
 class SoundPermissions:
     """Sound usage permissions per role."""
-    id: int
-    sound_id: int
-    role_id: int
+    id: SnowflakeID
+    sound_id: SnowflakeID
+    role_id: SnowflakeID
     can_use: bool = True
 
 
 @dataclass
 class SoundCooldown:
     """Sound cooldown tracking per user."""
-    user_id: int
-    sound_id: int
+    user_id: SnowflakeID
+    sound_id: SnowflakeID
     last_used_at: int
     cooldown_seconds: int
 
@@ -51,10 +52,10 @@ class SoundCooldown:
 @dataclass
 class SoundUsage:
     """Tracks sound usage statistics."""
-    id: int
-    sound_id: int
-    user_id: int
-    channel_id: int
+    id: SnowflakeID
+    sound_id: SnowflakeID
+    user_id: SnowflakeID
+    channel_id: SnowflakeID
     used_at: int
 
 
@@ -62,6 +63,6 @@ class SoundUsage:
 class SoundPlayback:
     """Sound playback event."""
     sound: Sound
-    user_id: int
-    channel_id: int
+    user_id: SnowflakeID
+    channel_id: SnowflakeID
     timestamp: int
