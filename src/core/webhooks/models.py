@@ -5,6 +5,7 @@ Webhook models - Dataclasses for all webhook-related entities.
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 from enum import Enum
+from src.core.base import SnowflakeID
 
 
 class WebhookType(Enum):
@@ -16,10 +17,10 @@ class WebhookType(Enum):
 @dataclass
 class Webhook:
     """Represents a webhook for a channel."""
-    id: int
-    channel_id: int
-    server_id: int
-    creator_id: int
+    id: SnowflakeID
+    channel_id: SnowflakeID
+    server_id: SnowflakeID
+    creator_id: SnowflakeID
     name: str
     webhook_type: WebhookType = WebhookType.INCOMING
     avatar_url: Optional[str] = None
@@ -38,14 +39,14 @@ class Webhook:
 @dataclass
 class WebhookMessage:
     """Represents a message sent via webhook."""
-    id: int
-    webhook_id: int
-    channel_id: int
+    id: SnowflakeID
+    webhook_id: SnowflakeID
+    channel_id: SnowflakeID
     content: Optional[str] = None
     username: Optional[str] = None
     avatar_url: Optional[str] = None
     embeds: List[Dict[str, Any]] = field(default_factory=list)
-    thread_id: Optional[int] = None
+    thread_id: Optional[SnowflakeID] = None
     created_at: int = 0
 
 

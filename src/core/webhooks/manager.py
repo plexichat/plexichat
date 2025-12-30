@@ -6,7 +6,6 @@ validation, permission checks, and database interactions.
 """
 
 import re
-import time
 import secrets
 import hashlib
 from typing import Optional, List, Dict, Any
@@ -14,7 +13,7 @@ from urllib.parse import urlparse
 
 import utils.config as config
 import utils.logger as logger
-from src.utils.encryption import generate_snowflake_id
+from src.core.base import BaseManager, SnowflakeID
 
 from .models import (
     Webhook,
@@ -42,7 +41,7 @@ MAX_EMBEDS_PER_MESSAGE = 10
 TOKEN_BYTES = 48
 
 
-class WebhookManager:
+class WebhookManager(BaseManager):
     """Core webhook manager handling all operations."""
 
     def __init__(self, db, auth_module=None, messaging_module=None, servers_module=None, embeds_module=None):
@@ -56,8 +55,7 @@ class WebhookManager:
             servers_module: Servers module for permission checks
             embeds_module: Embeds module for rich embeds
         """
-        self._db = db
-        self._auth = auth_module
+        super().__init__(db, auth_module)
         self._messaging = messaging_module
         self._servers = servers_module
         self._embeds = embeds_module
@@ -68,24 +66,8 @@ class WebhookManager:
         logger.info("Webhook module initialized")
 
     def _load_config(self) -> Dict[str, Any]:
-        """Load webhook configuration."""
-        defaults = {
-            "max_webhooks_per_channel": 10,
-            "max_webhooks_per_server": 50,
-            "max_message_length": 2000,
-            "max_embeds_per_message": 10,
-        }
-
-        webhooks_config = config.get("webhooks", {})
-        return {**defaults, **webhooks_config}
-
-    def _get_timestamp(self) -> int:
-        """Get current timestamp in milliseconds."""
-        return int(time.time() * 1000)
-
-    def _generate_id(self) -> int:
-        """Generate a new Snowflake ID."""
-        return generate_snowflake_id()
+        """Load webhook configuration from global config."""
+        return config.get("webhooks", {})
 
     def _generate_token(self) -> str:
         """Generate a secure webhook token."""
@@ -99,7 +81,7 @@ class WebhookManager:
         """Verify a token against its hash."""
         return secrets.compare_digest(self._hash_token(token), token_hash)
 
-    def _format_webhook_token(self, webhook_id: int, secret: str) -> str:
+    def _format_webhook_token(self, webhook_id: SnowflakeID, secret: str) -> str:
         """Format a webhook token: webhook.{id}.{secret}"""
         return f"webhook.{webhook_id}.{secret}"
 
@@ -168,27 +150,27 @@ class WebhookManager:
 
         return url
 
-    def _get_channel(self, channel_id: int) -> Optional[Dict]:
+    def _get_channel(self, channel_id: SnowflakeID) -> Optional[Dict]:
         """Get channel from database."""
         return self._db.fetch_one(
             "SELECT * FROM srv_channels WHERE id = ?",
             (channel_id,)
         )
 
-    def _get_server(self, server_id: int) -> Optional[Dict]:
+    def _get_server(self, server_id: SnowflakeID) -> Optional[Dict]:
         """Get server from database."""
         return self._db.fetch_one(
             "SELECT * FROM srv_servers WHERE id = ?",
             (server_id,)
         )
 
-    def _check_manage_webhooks_permission(self, user_id: int, server_id: int, channel_id: Optional[int] = None) -> bool:
+    def _check_manage_webhooks_permission(self, user_id: SnowflakeID, server_id: SnowflakeID, channel_id: Optional[SnowflakeID] = None) -> bool:
         """Check if user has manage_webhooks permission."""
         if not self._servers:
             return True
         return self._servers.has_permission(user_id, server_id, "webhooks.manage", channel_id)
 
-    def _get_channel_webhook_count(self, channel_id: int) -> int:
+    def _get_channel_webhook_count(self, channel_id: SnowflakeID) -> int:
         """Get count of webhooks in a channel."""
         row = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM webhook_webhooks WHERE channel_id = ?",
@@ -196,7 +178,7 @@ class WebhookManager:
         )
         return row["count"] if row else 0
 
-    def _get_server_webhook_count(self, server_id: int) -> int:
+    def _get_server_webhook_count(self, server_id: SnowflakeID) -> int:
         """Get count of webhooks in a server."""
         row = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM webhook_webhooks WHERE server_id = ?",
@@ -206,8 +188,8 @@ class WebhookManager:
 
     def create_webhook(
         self,
-        user_id: int,
-        channel_id: int,
+        user_id: SnowflakeID,
+        channel_id: SnowflakeID,
         name: str,
         avatar_url: Optional[str] = None
     ) -> Webhook:
@@ -293,7 +275,7 @@ class WebhookManager:
             updated_at=now
         )
 
-    def get_webhook(self, webhook_id: int, user_id: Optional[int] = None) -> Optional[Webhook]:
+    def get_webhook(self, webhook_id: SnowflakeID, user_id: Optional[SnowflakeID] = None) -> Optional[Webhook]:
         """
         Get a webhook by ID.
         
@@ -348,7 +330,7 @@ class WebhookManager:
 
         return self._row_to_webhook(row, include_token=False)
 
-    def get_channel_webhooks(self, user_id: int, channel_id: int) -> List[Webhook]:
+    def get_channel_webhooks(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> List[Webhook]:
         """
         Get all webhooks for a channel.
         
@@ -380,7 +362,7 @@ class WebhookManager:
 
         return [self._row_to_webhook(row, include_token=False) for row in rows]
 
-    def get_server_webhooks(self, user_id: int, server_id: int) -> List[Webhook]:
+    def get_server_webhooks(self, user_id: SnowflakeID, server_id: SnowflakeID) -> List[Webhook]:
         """
         Get all webhooks for a server.
         
@@ -413,11 +395,11 @@ class WebhookManager:
 
     def update_webhook(
         self,
-        user_id: int,
-        webhook_id: int,
+        user_id: SnowflakeID,
+        webhook_id: SnowflakeID,
         name: Optional[str] = None,
         avatar_url: Optional[str] = None,
-        channel_id: Optional[int] = None
+        channel_id: Optional[SnowflakeID] = None
     ) -> Webhook:
         """
         Update a webhook.
@@ -514,7 +496,7 @@ class WebhookManager:
         assert result is not None  # Should exist since we just updated it
         return result
 
-    def delete_webhook(self, user_id: int, webhook_id: int) -> bool:
+    def delete_webhook(self, user_id: SnowflakeID, webhook_id: SnowflakeID) -> bool:
         """
         Delete a webhook.
         
@@ -557,7 +539,7 @@ class WebhookManager:
 
         return True
 
-    def regenerate_token(self, user_id: int, webhook_id: int) -> Webhook:
+    def regenerate_token(self, user_id: SnowflakeID, webhook_id: SnowflakeID) -> Webhook:
         """
         Regenerate a webhook's token.
         
@@ -605,13 +587,13 @@ class WebhookManager:
 
     def execute_webhook(
         self,
-        webhook_id: int,
+        webhook_id: SnowflakeID,
         token: str,
         content: Optional[str] = None,
         username: Optional[str] = None,
         avatar_url: Optional[str] = None,
         embeds: Optional[List[Dict[str, Any]]] = None,
-        thread_id: Optional[int] = None,
+        thread_id: Optional[SnowflakeID] = None,
         wait: bool = False
     ) -> Optional[WebhookMessage]:
         """
@@ -705,22 +687,36 @@ class WebhookManager:
 
         if self._messaging:
             try:
-                self._db.execute(
-                    """INSERT INTO msg_messages 
-                       (id, conversation_id, author_id, content, created_at, updated_at, 
-                        deleted, edited, webhook_id)
-                       VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?)""",
-                    (message_id, conversation_id, row["creator_id"], content or "",
-                     now, now, webhook_id)
+                # Use messaging module to send the message
+                # This handles encryption, filtering, and database persistence properly
+                msg = self._messaging.send_message(
+                    user_id=row["creator_id"],
+                    conversation_id=conversation_id,
+                    content=content or "",
+                    embeds=embeds,
+                    webhook_id=webhook_id
                 )
-            except Exception:
-                self._db.execute(
-                    """INSERT INTO msg_messages 
-                       (id, conversation_id, author_id, content, created_at, updated_at, 
-                        deleted, edited)
-                       VALUES (?, ?, ?, ?, ?, ?, 0, 0)""",
-                    (message_id, conversation_id, row["creator_id"], content or "", now, now)
-                )
+                message_id = msg.id
+            except Exception as e:
+                logger.error(f"Failed to send webhook message via messaging module: {e}")
+                # Fallback to direct insert if messaging fails (legacy behavior)
+                try:
+                    self._db.execute(
+                        """INSERT INTO msg_messages 
+                           (id, conversation_id, author_id, content, created_at, updated_at, 
+                            deleted, edited, webhook_id)
+                           VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?)""",
+                        (message_id, conversation_id, row["creator_id"], content or "",
+                         now, now, webhook_id)
+                    )
+                except Exception:
+                    self._db.execute(
+                        """INSERT INTO msg_messages 
+                           (id, conversation_id, author_id, content, created_at, updated_at, 
+                            deleted, edited)
+                           VALUES (?, ?, ?, ?, ?, ?, 0, 0)""",
+                        (message_id, conversation_id, row["creator_id"], content or "", now, now)
+                    )
 
         self._db.execute(
             """INSERT INTO webhook_messages 
@@ -763,7 +759,7 @@ class WebhookManager:
         username: Optional[str] = None,
         avatar_url: Optional[str] = None,
         embeds: Optional[List[Dict[str, Any]]] = None,
-        thread_id: Optional[int] = None,
+        thread_id: Optional[SnowflakeID] = None,
         wait: bool = False
     ) -> Optional[WebhookMessage]:
         """

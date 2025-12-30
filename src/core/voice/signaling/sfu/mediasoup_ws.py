@@ -221,8 +221,9 @@ class MediasoupWSAdapter(SFUAdapter):
 
         elif method == "newDataConsumer":
             # Data channel consumer - acknowledge but don't process
-            pass
-
+            logger.debug(f"Acknowledged newDataConsumer from server for peer {connection.peer_id}")
+            # No logic needed for data consumers in this implementation
+        
         # Send response
         await connection.websocket.send(json.dumps(response))
 
@@ -235,21 +236,23 @@ class MediasoupWSAdapter(SFUAdapter):
 
         if method == "newPeer":
             # New peer joined
-            pass
+            logger.debug(f"New peer joined room {connection.room_id}: {notification_data.get('id')}")
         elif method == "peerClosed":
             # Peer left
-            pass
+            logger.debug(f"Peer left room {connection.room_id}: {notification_data.get('peerId')}")
         elif method == "producerScore":
             # Producer quality score
-            pass
+            logger.debug(f"Producer score update: {notification_data}")
         elif method == "consumerScore":
             # Consumer quality score
-            pass
+            logger.debug(f"Consumer score update: {notification_data}")
         elif method == "activeSpeaker":
             # Active speaker changed
             handler_key = f"activeSpeaker:{connection.room_id}"
             if handler_key in self._message_handlers:
                 await self._message_handlers[handler_key](notification_data)
+        else:
+            logger.debug(f"Unhandled notification method: {method}")
 
     async def _request(
         self,
@@ -355,8 +358,8 @@ class MediasoupWSAdapter(SFUAdapter):
         room_id: str,
         peer_id: str,
         rtp_capabilities: Dict[str, Any],
-        display_name: str = "User",
-    ) -> Dict[str, Any]:
+        display_name: Optional[str] = None,
+    ) -> Any:
         """
         Complete the join process by sending RTP capabilities.
         
@@ -374,7 +377,7 @@ class MediasoupWSAdapter(SFUAdapter):
         connection.rtp_capabilities = rtp_capabilities
 
         result = await self._request(connection, "join", {
-            "displayName": display_name,
+            "displayName": display_name or "User",
             "device": {"name": "PlexiChat", "version": "1.0"},
             "rtpCapabilities": rtp_capabilities,
             "sctpCapabilities": None,
@@ -428,7 +431,7 @@ class MediasoupWSAdapter(SFUAdapter):
         })
 
         # mediasoup-demo returns transportId, not id
-        transport_id = result.get("transportId") or result.get("id")
+        transport_id = str(result.get("transportId") or result.get("id") or "")
         
         transport = SFUTransport(
             id=transport_id,

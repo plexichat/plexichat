@@ -5,11 +5,11 @@ Handles message search, user search, server search, and discovery
 with proper permission checks and multiple backend support.
 """
 
-import time
 from typing import List, Dict, Any, Optional
 
 import utils.config as config
 import utils.logger as logger
+from src.core.base import BaseManager
 
 from .models import (
     ParsedQuery,
@@ -33,7 +33,7 @@ from .indexer.base import IndexerConfig
 from .discovery import DiscoveryManager
 
 
-class SearchManager:
+class SearchManager(BaseManager):
     """Core search manager handling all search operations."""
 
     def __init__(self, db, auth_module=None, messaging_module=None, servers_module=None):
@@ -46,8 +46,7 @@ class SearchManager:
             messaging_module: Messaging module for message access
             servers_module: Servers module for server data and permissions
         """
-        self._db = db
-        self._auth = auth_module
+        super().__init__(db, auth_module)
         self._messaging = messaging_module
         self._servers = servers_module
         self._config = self._load_config()
@@ -119,10 +118,6 @@ class SearchManager:
             )
 
         return SQLiteFTS5Indexer(self._db, indexer_config)
-
-    def _get_timestamp(self) -> int:
-        """Get current timestamp in milliseconds."""
-        return int(time.time() * 1000)
 
     # === Message Search ===
 
