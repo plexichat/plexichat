@@ -93,8 +93,8 @@ class TestReactionErrors:
         reaction_manager.add_reaction(1, 1, "👍")
         reaction_manager.add_reaction(2, 1, "❤️")
         
-        reactions = reaction_manager.get_reactions(1)
-        assert len(reactions) >= 2
+        reactions = reaction_manager.get_reactions(1, 1)
+        assert len(reactions.reactions) >= 2
     
     def test_get_reactions_empty(self, reaction_manager, test_db):
         """Get reactions for message with none."""
@@ -102,8 +102,8 @@ class TestReactionErrors:
         test_db.execute("INSERT INTO msg_participants (id, conversation_id, user_id, role, joined_at) VALUES (1, 1, 1, 'member', 1000)")
         test_db.execute("INSERT INTO msg_messages (id, conversation_id, author_id, content, created_at, updated_at, message_type) VALUES (1, 1, 1, 'test', 1000, 1000, 'text')")
         
-        reactions = reaction_manager.get_reactions(1)
-        assert len(reactions) == 0
+        reactions = reaction_manager.get_reactions(1, 1)
+        assert len(reactions.reactions) == 0
     
     def test_get_users_who_reacted(self, reaction_manager, test_db):
         """Can get users who reacted with specific emoji."""
@@ -139,10 +139,10 @@ class TestReactionCustomEmoji:
         test_db.execute("INSERT INTO msg_participants (id, conversation_id, user_id, role, joined_at) VALUES (1, 1, 1, 'member', 1000)")
         test_db.execute("INSERT INTO msg_messages (id, conversation_id, author_id, content, created_at, updated_at, message_type) VALUES (1, 1, 1, 'test', 1000, 1000, 'text')")
         
-        reaction_manager.add_reaction(1, 1, ":custom_emoji:123")
+        reaction_manager.add_reaction(1, 1, "<:custom_emoji:123>")
         
-        reactions = reaction_manager.get_reactions(1)
-        assert len(reactions) >= 1
+        reactions = reaction_manager.get_reactions(1, 1)
+        assert len(reactions.reactions) >= 1
     
     def test_invalid_custom_emoji_format(self, reaction_manager):
         """Invalid custom emoji format."""

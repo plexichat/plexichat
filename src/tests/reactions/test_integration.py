@@ -124,7 +124,9 @@ class TestServerIntegration:
         """Test custom emoji can be created for server."""
         owner, member, server, group, msg, servers, reactions = users_with_server
 
-        emoji = reactions.create_custom_emoji(owner.id, server.id, "server_emoji")
+        # Provide dummy image data and content type
+        dummy_image = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;"
+        emoji = reactions.create_custom_emoji(owner.id, server.id, "server_emoji", dummy_image, "image/gif")
 
         assert emoji is not None
         assert emoji.server_id == server.id

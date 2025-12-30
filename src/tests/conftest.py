@@ -133,6 +133,11 @@ def setup_config():
         "version": {
             "current": "r.1.0-1",
             "min_client": "a.1.0-1"
+        },
+        "servers": {
+            "templates": {
+                "max_templates_per_user": 1000
+            }
         }
     }
     
@@ -207,8 +212,8 @@ def session_users(modules):
     users = []
     print("\n[Setup] Creating user pool with real Argon2 hashing...")
 
-    # Reduced from 100 to 20 for faster test startup
-    for i in range(20):
+    # Increased for comprehensive server tests
+    for i in range(50):
         username = f"pooluser_{i}_{uuid.uuid4().hex[:4]}"
         email = f"{username}@test.example.com"
         password = TEST_PASSWORD
@@ -425,6 +430,14 @@ def test_db():
     from src.core.database import Database
     from src.core.auth.schema import create_tables as create_auth_tables
     from src.core.messaging.schema import create_tables as create_messaging_tables
+    from src.core.servers.schema import create_tables as create_server_tables
+    from src.core.relationships.schema import create_tables as create_relationship_tables
+    from src.core.reactions.schema import create_tables as create_reaction_tables
+    from src.core.media.schema import create_tables as create_media_tables
+    from src.core.presence.schema import create_tables as create_presence_tables
+    from src.core.webhooks.schema import create_tables as create_webhook_tables
+    from src.core.threads.schema import create_tables as create_thread_tables
+    from src.core.notifications.schema import create_tables as create_notification_tables
     from src.core.polls.schema import create_tables as create_polls_tables
     
     # Save current config to restore later
@@ -437,6 +450,14 @@ def test_db():
     # Critical: Create auth tables first because other modules have foreign keys to them
     create_auth_tables(db)
     create_messaging_tables(db)
+    create_server_tables(db)
+    create_relationship_tables(db)
+    create_reaction_tables(db)
+    create_media_tables(db)
+    create_presence_tables(db)
+    create_webhook_tables(db)
+    create_thread_tables(db)
+    create_notification_tables(db)
     create_polls_tables(db)
     
     # Insert system user (ID 0) for system messages

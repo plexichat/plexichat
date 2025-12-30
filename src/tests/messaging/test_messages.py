@@ -83,9 +83,17 @@ class TestMessagesAsync:
         tasks = [asyncio.to_thread(messaging.delete_message, user1.id, m.id) for m in msgs[:25]]
         await asyncio.gather(*tasks)
         
-        # Verify only 25 remain
+        # Verify remaining messages
         remaining = await asyncio.to_thread(messaging.get_messages, user1.id, dm.id, limit=100)
-        assert len(remaining) == 25
+        remaining_ids = {m.id for m in remaining}
+        
+        # Deleted messages should not be there
+        for m in msgs[:25]:
+            assert m.id not in remaining_ids
+            
+        # Non-deleted messages should be there
+        for m in msgs[25:]:
+            assert m.id in remaining_ids
 
     async def test_reply_chain_integrity(self, dm_conversation):
         """Test a chain of replies maintains reference integrity."""

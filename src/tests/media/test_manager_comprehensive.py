@@ -63,6 +63,8 @@ class TestMediaErrors:
     
     def test_rate_limit_minute(self, media_manager, test_db, monkeypatch):
         """Rate limit per minute."""
+        if 'rate_limit' not in media_manager._config:
+            media_manager._config['rate_limit'] = {'enabled': True}
         monkeypatch.setitem(media_manager._config['rate_limit'], 'uploads_per_minute', 1)
         
         media_manager._check_rate_limit(1, 100)
@@ -73,6 +75,8 @@ class TestMediaErrors:
     
     def test_rate_limit_daily_size(self, media_manager, test_db, monkeypatch):
         """Rate limit daily size."""
+        if 'rate_limit' not in media_manager._config:
+            media_manager._config['rate_limit'] = {'enabled': True}
         monkeypatch.setitem(media_manager._config['rate_limit'], 'max_total_size_per_day', 1000)
         
         media_manager._check_rate_limit(1, 500)
@@ -326,6 +330,8 @@ class TestMediaRateLimit:
     
     def test_rate_limit_status_disabled(self, media_manager, monkeypatch):
         """Rate limit status when disabled."""
+        if 'rate_limit' not in media_manager._config:
+            media_manager._config['rate_limit'] = {'enabled': True}
         monkeypatch.setitem(media_manager._config['rate_limit'], 'enabled', False)
         
         status = media_manager.get_rate_limit_status(1)
@@ -333,6 +339,8 @@ class TestMediaRateLimit:
     
     def test_rate_limit_hour(self, media_manager, monkeypatch):
         """Hourly rate limit."""
+        if 'rate_limit' not in media_manager._config:
+            media_manager._config['rate_limit'] = {'enabled': True}
         monkeypatch.setitem(media_manager._config['rate_limit'], 'uploads_per_hour', 2)
         
         media_manager._check_rate_limit(1, 100)
