@@ -740,7 +740,7 @@ async def delete_role(server_id: str, role_id: str, current_user: TokenInfo = De
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid ID"}})
 
     try:
-        servers_mod.delete_role(current_user.user_id, sid, rid)
+        servers_mod.delete_role(current_user.user_id, rid)
         return {"success": True}
     except Exception as e:
         exc_name = type(e).__name__

@@ -99,6 +99,11 @@ class BanExistsError(ServerError):
     pass
 
 
+class BanNotFoundError(ServerError):
+    """User is not banned from this server."""
+    pass
+
+
 class UserBannedError(ServerError):
     """User is banned from this server."""
     pass

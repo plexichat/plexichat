@@ -5,6 +5,7 @@ Server models - Dataclasses for all server-related entities.
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, List, Dict, Any
+from src.core.base import SnowflakeID
 
 
 class ChannelType(Enum):
@@ -96,20 +97,60 @@ class PermissionValue(Enum):
 class Server:
     """Represents a server (guild)."""
 
-    id: int
+    id: SnowflakeID
     name: str
-    owner_id: int
+    owner_id: SnowflakeID
     created_at: int
     updated_at: int
-    member_count: int
-    channel_count: int
-    role_count: int
     description: Optional[str] = None
     icon_url: Optional[str] = None
-    default_role_id: Optional[int] = None
-    default_channel_id: Optional[int] = None
-    system_channel_id: Optional[int] = None
+    banner_url: Optional[str] = None
     verification_level: int = 0
+    default_message_notifications: int = 0
+    explicit_content_filter: int = 0
+    afk_channel_id: Optional[SnowflakeID] = None
+    afk_timeout: int = 300
+    system_channel_id: Optional[SnowflakeID] = None
+    rules_channel_id: Optional[SnowflakeID] = None
+    public_updates_channel_id: Optional[SnowflakeID] = None
+    preferred_locale: str = "en-US"
+    features: List[str] = field(default_factory=list)
+    member_count: int = 0
+    max_members: int = 250000
+    premium_tier: int = 0
+    premium_subscription_count: int = 0
+    channel_count: int = 0
+    role_count: int = 0
+    default_role_id: Optional[SnowflakeID] = None
+    default_channel_id: Optional[SnowflakeID] = None
+    deleted: bool = False
+    deleted_at: Optional[int] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class Channel:
+    """Represents a channel within a server."""
+
+    id: SnowflakeID
+    server_id: SnowflakeID
+    name: str
+    channel_type: ChannelType
+    created_at: int
+    updated_at: int
+    position: int = 0
+    topic: Optional[str] = None
+    nsfw: bool = False
+    last_message_id: Optional[SnowflakeID] = None
+    rate_limit_per_user: int = 0
+    parent_id: Optional[SnowflakeID] = None
+    category_id: Optional[SnowflakeID] = None
+    permissions_locked: bool = True
+    user_limit: int = 0
+    bitrate: int = 64000
+    rtc_region: Optional[str] = None
+    slowmode_seconds: int = 0
+    conversation_id: Optional[SnowflakeID] = None
     deleted: bool = False
     deleted_at: Optional[int] = None
     metadata: Optional[Dict[str, Any]] = None
@@ -117,51 +158,31 @@ class Server:
 
 @dataclass
 class ChannelCategory:
-    """Represents a channel category."""
+    """Represents a channel category within a server."""
 
-    id: int
-    server_id: int
+    id: SnowflakeID
+    server_id: SnowflakeID
     name: str
     created_at: int
     updated_at: int
     position: int = 0
-
-
-@dataclass
-class Channel:
-    """Represents a channel within a server."""
-
-    id: int
-    server_id: int
-    name: str
-    channel_type: ChannelType
-    created_at: int
-    updated_at: int
-    category_id: Optional[int] = None
-    position: int = 0
-    topic: Optional[str] = None
-    nsfw: bool = False
-    slowmode_seconds: int = 0
-    conversation_id: Optional[int] = None
-    deleted: bool = False
-    deleted_at: Optional[int] = None
-    metadata: Optional[Dict[str, Any]] = None
 
 
 @dataclass
 class Role:
-    """Represents a role within a server."""
+    """Represents a server role."""
 
-    id: int
-    server_id: int
+    id: SnowflakeID
+    server_id: SnowflakeID
     name: str
     created_at: int
     updated_at: int
-    permissions: Dict[str, bool] = field(default_factory=dict)
-    color: Optional[str] = None
+    color: int = 0
     hoist: bool = False
-    mentionable: bool = False
     position: int = 0
+    permissions: Dict[str, bool] = field(default_factory=dict)
+    managed: bool = False
+    mentionable: bool = False
     is_default: bool = False
     deleted: bool = False
 
@@ -170,85 +191,79 @@ class Role:
 class Member:
     """Represents a member of a server."""
 
-    id: int
-    server_id: int
-    user_id: int
+    id: SnowflakeID
+    server_id: SnowflakeID
+    user_id: SnowflakeID
     joined_at: int
+    updated_at: int
     nickname: Optional[str] = None
+    roles: List[SnowflakeID] = field(default_factory=list)
+    deaf: bool = False
+    mute: bool = False
+    pending: bool = False
+    premium_since: Optional[int] = None
+    permissions: Optional[Dict[str, bool]] = None
     muted: bool = False
     deafened: bool = False
-    inviter_id: Optional[int] = None
-    roles: List[int] = field(default_factory=list)
-
-
-@dataclass
-class MemberRole:
-    """Represents a role assignment to a member."""
-
-    id: int
-    member_id: int
-    role_id: int
-    assigned_at: int
-    assigned_by: Optional[int] = None
+    inviter_id: Optional[SnowflakeID] = None
 
 
 @dataclass
 class ChannelOverride:
     """Represents a permission override for a channel."""
 
-    id: int
-    channel_id: int
-    target_type: str
-    target_id: int
-    created_at: int
-    updated_at: int
+    id: SnowflakeID
+    channel_id: SnowflakeID
+    target_id: SnowflakeID  # Either user_id or role_id
+    target_type: str  # "user" or "role"
     allow: Dict[str, bool] = field(default_factory=dict)
     deny: Dict[str, bool] = field(default_factory=dict)
+    created_at: int = 0
+    updated_at: int = 0
 
 
 @dataclass
 class Invite:
-    """Represents an invite to a server."""
+    """Represents a server invite."""
 
-    id: int
     code: str
-    server_id: int
-    channel_id: int
-    inviter_id: int
+    server_id: SnowflakeID
+    channel_id: SnowflakeID
+    inviter_id: SnowflakeID
     created_at: int
-    max_age: int = 86400
+    id: Optional[SnowflakeID] = None
+    expires_at: Optional[int] = None
+    max_age: int = 0
     max_uses: int = 0
     uses: int = 0
     temporary: bool = False
-    expires_at: Optional[int] = None
     revoked: bool = False
 
 
 @dataclass
 class Ban:
-    """Represents a ban on a server."""
+    """Represents a server ban."""
 
-    id: int
-    server_id: int
-    user_id: int
-    banned_by: int
+    server_id: SnowflakeID
+    user_id: SnowflakeID
     created_at: int
+    id: Optional[SnowflakeID] = None
     reason: Optional[str] = None
+    banned_by: Optional[SnowflakeID] = None
 
 
 @dataclass
 class AuditLogEntry:
-    """Represents an audit log entry."""
+    """Represents an entry in the server audit log."""
 
-    id: int
-    server_id: int
-    user_id: int
-    action: AuditLogAction
+    id: SnowflakeID
+    server_id: SnowflakeID
+    user_id: SnowflakeID
+    action_type: AuditLogAction
     created_at: int
-    target_type: Optional[str] = None
-    target_id: Optional[int] = None
-    changes: Optional[Dict[str, Any]] = None
+    target_id: Optional[SnowflakeID] = None
     reason: Optional[str] = None
+    changes: Optional[Dict[str, Any]] = None
 
 
 @dataclass

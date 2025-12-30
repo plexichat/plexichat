@@ -5,7 +5,6 @@ Handles all server operations with proper validation, permission checks,
 and database interactions.
 """
 
-import time
 import json
 import secrets
 import string
@@ -13,7 +12,7 @@ from typing import Optional, List, Dict, Any, Tuple
 
 import utils.config as config
 import utils.logger as logger
-from src.utils.encryption import generate_snowflake_id
+from src.core.base import BaseManager, SnowflakeID
 
 from .models import (
     Server,
@@ -50,6 +49,7 @@ from .exceptions import (
     InvalidChannelNameError,
     InvalidRoleNameError,
     PermissionDeniedError,
+    BanNotFoundError,
     OwnerCannotLeaveError,
     CannotModifyOwnerError,
 )
@@ -64,7 +64,7 @@ from .permissions import (
 from src.core.database import cache_get, cache_set, cache_delete, redis_available
 
 
-class ServerManager:
+class ServerManager(BaseManager):
     """Core server manager handling all operations."""
 
     def __init__(self, db, auth_module=None, messaging_module=None):
@@ -76,17 +76,16 @@ class ServerManager:
             auth_module: Optional auth module for user verification
             messaging_module: Optional messaging module for channel messages
         """
-        self._db = db
-        self._auth = auth_module
+        super().__init__(db, auth_module)
         self._messaging = messaging_module
         self._config = self._load_config()
 
         # In-memory caches with TTL (reduces DB queries significantly)
-        self._member_cache: Dict[Tuple[int, int], Tuple[Any, float]] = {}
-        self._permission_cache: Dict[Tuple[int, int, Optional[int]], Tuple[Dict[str, bool], float]] = {}
-        self._channel_cache: Dict[int, Tuple[Any, float]] = {}
-        self._server_owner_cache: Dict[int, Tuple[int, float]] = {}  # server_id -> owner_id
-        self._member_roles_cache: Dict[Tuple[int, int], Tuple[list, float]] = {}  # (server_id, user_id) -> roles
+        self._member_cache: Dict[Tuple[SnowflakeID, SnowflakeID], Tuple[Any, float]] = {}
+        self._permission_cache: Dict[Tuple[SnowflakeID, SnowflakeID, Optional[SnowflakeID]], Tuple[Dict[str, bool], float]] = {}
+        self._channel_cache: Dict[SnowflakeID, Tuple[Any, float]] = {}
+        self._server_owner_cache: Dict[SnowflakeID, Tuple[SnowflakeID, float]] = {}  # server_id -> owner_id
+        self._member_roles_cache: Dict[Tuple[SnowflakeID, SnowflakeID], Tuple[list, float]] = {}  # (server_id, user_id) -> roles
         self._cache_ttl = 60.0  # 60 second cache TTL for server data (longer = fewer DB queries)
 
         create_tables(db)
@@ -97,14 +96,14 @@ class ServerManager:
         """Get value from cache if not expired."""
         if key in cache:
             value, expires = cache[key]
-            if time.time() < expires:
+            if (self._get_timestamp() / 1000.0) < expires:
                 return value
             del cache[key]
         return default
 
     def _cache_set(self, cache: dict, key, value) -> None:
         """Set value in cache with TTL."""
-        cache[key] = (value, time.time() + self._cache_ttl)
+        cache[key] = (value, (self._get_timestamp() / 1000.0) + self._cache_ttl)
 
     def _cache_invalidate(self, cache: dict, key=None) -> None:
         """Invalidate cache entry or entire cache."""
@@ -131,14 +130,6 @@ class ServerManager:
 
         server_config = config.get("servers", {})
         return {**defaults, **server_config}
-
-    def _get_timestamp(self) -> int:
-        """Get current timestamp in milliseconds."""
-        return int(time.time() * 1000)
-
-    def _generate_id(self) -> int:
-        """Generate a new Snowflake ID."""
-        return generate_snowflake_id()
 
     def _generate_invite_code(self) -> str:
         """Generate a unique invite code."""
@@ -204,11 +195,11 @@ class ServerManager:
 
     def _log_audit(
         self,
-        server_id: int,
-        user_id: int,
+        server_id: SnowflakeID,
+        user_id: SnowflakeID,
         action: AuditLogAction,
         target_type: Optional[str] = None,
-        target_id: Optional[int] = None,
+        target_id: Optional[SnowflakeID] = None,
         changes: Optional[Dict[str, Any]] = None,
         reason: Optional[str] = None,
     ) -> None:
@@ -237,7 +228,7 @@ class ServerManager:
 
     def create_server(
         self,
-        owner_id: int,
+        owner_id: SnowflakeID,
         name: str,
         description: Optional[str] = None,
         icon_url: Optional[str] = None,
@@ -330,7 +321,7 @@ class ServerManager:
         assert result is not None  # Should exist since we just created it
         return result
 
-    def get_server(self, server_id: int, user_id: int) -> Optional[Server]:
+    def get_server(self, server_id: SnowflakeID, user_id: SnowflakeID) -> Optional[Server]:
         """Get a server by ID if user has access (cached for 5 minutes)."""
         if not self._is_member(server_id, user_id):
             return None
@@ -340,6 +331,7 @@ class ServerManager:
         if redis_available():
             cached = cache_get(cache_key)
             if cached:
+                print(f"Cache HIT for {server_id}")
                 return self._dict_to_server(cached)
 
         row = self._db.fetch_one(
@@ -363,7 +355,7 @@ class ServerManager:
 
         return server
 
-    def get_servers(self, user_id: int, limit: int = 100) -> List[Server]:
+    def get_servers(self, user_id: SnowflakeID, limit: int = 100) -> List[Server]:
         """Get all servers a user is a member of."""
         limit = min(limit, 200)
 
@@ -384,12 +376,12 @@ class ServerManager:
 
     def update_server(
         self,
-        user_id: int,
-        server_id: int,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
         name: Optional[str] = None,
         description: Optional[str] = None,
         icon_url: Optional[str] = None,
-        default_channel_id: Optional[int] = None,
+        default_channel_id: Optional[SnowflakeID] = None,
     ) -> Server:
         """Update server settings."""
         server = self.get_server(server_id, user_id)
@@ -458,7 +450,7 @@ class ServerManager:
         assert result is not None  # Should exist since we just updated it
         return result
 
-    def delete_server(self, user_id: int, server_id: int) -> bool:
+    def delete_server(self, user_id: SnowflakeID, server_id: SnowflakeID) -> bool:
         """Delete a server (owner only)."""
         server = self.get_server(server_id, user_id)
         if not server:
@@ -483,7 +475,7 @@ class ServerManager:
         return True
 
     def transfer_ownership(
-        self, user_id: int, server_id: int, new_owner_id: int
+        self, user_id: SnowflakeID, server_id: SnowflakeID, new_owner_id: SnowflakeID
     ) -> Server:
         """Transfer server ownership to another member."""
         server = self.get_server(server_id, user_id)
@@ -519,11 +511,11 @@ class ServerManager:
 
     def create_channel(
         self,
-        user_id: int,
-        server_id: int,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
         name: str,
         channel_type: ChannelType = ChannelType.TEXT,
-        category_id: Optional[int] = None,
+        category_id: Optional[SnowflakeID] = None,
         topic: Optional[str] = None,
         nsfw: bool = False,
         slowmode_seconds: int = 0,
@@ -601,8 +593,8 @@ class ServerManager:
 
     def create_category(
         self,
-        user_id: int,
-        server_id: int,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
         name: str,
     ) -> ChannelCategory:
         """Create a new channel category."""
@@ -634,7 +626,37 @@ class ServerManager:
         row = self._db.fetch_one("SELECT * FROM srv_categories WHERE id = ?", (cat_id,))
         return self._row_to_category(row)
 
-    def get_channel(self, channel_id: int, user_id: int) -> Optional[Channel]:
+    def delete_category(self, user_id: SnowflakeID, category_id: SnowflakeID) -> bool:
+        """Delete a channel category."""
+        category_row = self._db.fetch_one(
+            "SELECT * FROM srv_categories WHERE id = ?", (category_id,)
+        )
+        if not category_row:
+            raise CategoryNotFoundError("Category not found")
+
+        server_id = category_row["server_id"]
+        server = self.get_server(server_id, user_id)
+        if not server:
+            raise ServerNotFoundError("Server not found")
+
+        self.require_permission(user_id, server_id, "channels.manage")
+
+        # Unset category_id for all channels in this category
+        self._db.execute(
+            "UPDATE srv_channels SET category_id = NULL WHERE category_id = ?",
+            (category_id,),
+        )
+
+        # Delete category
+        self._db.execute("DELETE FROM srv_categories WHERE id = ?", (category_id,))
+
+        self._log_audit(
+            server_id, user_id, AuditLogAction.CHANNEL_DELETE, "category", category_id
+        )
+
+        return True
+
+    def get_channel(self, channel_id: SnowflakeID, user_id: SnowflakeID) -> Optional[Channel]:
         """Get a channel by ID if user has access (cached)."""
         # Check channel cache first (channel data rarely changes)
         cache_key = channel_id
@@ -666,8 +688,8 @@ class ServerManager:
 
     def get_channels(
         self,
-        user_id: int,
-        server_id: int,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
         channel_type: Optional[ChannelType] = None,
     ) -> List[Channel]:
         """Get all channels in a server."""
@@ -679,7 +701,7 @@ class ServerManager:
             raise ServerAccessDeniedError("Not a member of this server")
 
         query = "SELECT * FROM srv_channels WHERE server_id = ? AND deleted = 0"
-        params: list[int | str] = [server_id]
+        params: list[SnowflakeID | str] = [server_id]
 
         if channel_type:
             query += " AND channel_type = ?"
@@ -698,13 +720,13 @@ class ServerManager:
 
     def update_channel(
         self,
-        user_id: int,
-        channel_id: int,
+        user_id: SnowflakeID,
+        channel_id: SnowflakeID,
         name: Optional[str] = None,
         topic: Optional[str] = None,
         nsfw: Optional[bool] = None,
         slowmode_seconds: Optional[int] = None,
-        category_id: Optional[int] = None,
+        category_id: Optional[SnowflakeID] = None,
     ) -> Channel:
         """Update channel settings."""
         channel = self.get_channel(channel_id, user_id)
@@ -779,31 +801,43 @@ class ServerManager:
         assert result is not None  # Should exist since we just updated it
         return result
 
-    def delete_channel(self, user_id: int, channel_id: int) -> bool:
+    def delete_channel(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> bool:
         """Delete a channel."""
         channel = self.get_channel(channel_id, user_id)
         if not channel:
             raise ChannelNotFoundError("Channel not found")
 
-        self.require_permission(user_id, channel.server_id, "channels.manage")
+        self.require_permission(user_id, channel.server_id, "channels.manage", channel_id)
 
         now = self._get_timestamp()
+
+        # Unset category_id for all channels in this category - WRONG logic here? 
+        # delete_category unsets category_id. delete_channel sets deleted=1.
+
         self._db.execute(
             "UPDATE srv_channels SET deleted = 1, deleted_at = ? WHERE id = ?",
             (now, channel_id),
         )
 
+        # Invalidate channel cache
+        if hasattr(self, '_channel_cache'):
+             self._cache_invalidate(self._channel_cache, channel_id)
+
+        if hasattr(self, '_channel_cache'):
+             self._cache_invalidate(self._channel_cache, channel_id)
+
+        if redis_available():
+            cache_delete(f"channel:{channel_id}")
+            cache_delete(f"server_channels:{channel.server_id}")
+
         self._log_audit(
-            channel.server_id,
-            user_id,
-            AuditLogAction.CHANNEL_DELETE,
-            "channel",
-            channel_id,
+            channel.server_id, user_id, AuditLogAction.CHANNEL_DELETE, "channel", channel_id
         )
 
+        logger.debug(f"Deleted channel {channel_id}")
         return True
 
-    def move_channel(self, user_id: int, channel_id: int, position: int) -> Channel:
+    def move_channel(self, user_id: SnowflakeID, channel_id: SnowflakeID, position: int) -> Channel:
         """Move a channel to a new position."""
         channel = self.get_channel(channel_id, user_id)
         if not channel:
@@ -816,6 +850,13 @@ class ServerManager:
             (position, self._get_timestamp(), channel_id),
         )
 
+        if hasattr(self, '_channel_cache'):
+             self._cache_invalidate(self._channel_cache, channel_id)
+
+        if redis_available():
+            cache_delete(f"channel:{channel_id}")
+            cache_delete(f"server_channels:{channel.server_id}")
+
         result = self.get_channel(channel_id, user_id)
         assert result is not None  # Should exist since we just updated it
         return result
@@ -824,8 +865,8 @@ class ServerManager:
 
     def create_role(
         self,
-        user_id: int,
-        server_id: int,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
         name: str,
         permissions: Optional[Dict[str, bool]] = None,
         color: Optional[str] = None,
@@ -879,7 +920,7 @@ class ServerManager:
         assert result is not None  # Should exist since we just created it
         return result
 
-    def get_role(self, role_id: int, user_id: int) -> Optional[Role]:
+    def get_role(self, role_id: SnowflakeID, user_id: SnowflakeID) -> Optional[Role]:
         """Get a role by ID."""
         row = self._db.fetch_one(
             "SELECT * FROM srv_roles WHERE id = ? AND deleted = 0",
@@ -894,7 +935,7 @@ class ServerManager:
 
         return self._row_to_role(row)
 
-    def get_roles(self, user_id: int, server_id: int) -> List[Role]:
+    def get_roles(self, user_id: SnowflakeID, server_id: SnowflakeID) -> List[Role]:
         """Get all roles in a server."""
         if not self._is_member(server_id, user_id):
             raise ServerAccessDeniedError("Not a member of this server")
@@ -908,8 +949,8 @@ class ServerManager:
 
     def update_role(
         self,
-        user_id: int,
-        role_id: int,
+        user_id: SnowflakeID,
+        role_id: SnowflakeID,
         name: Optional[str] = None,
         permissions: Optional[Dict[str, bool]] = None,
         color: Optional[str] = None,
@@ -988,7 +1029,7 @@ class ServerManager:
         assert updated_role is not None
         return updated_role
 
-    def delete_role(self, user_id: int, role_id: int) -> bool:
+    def delete_role(self, user_id: SnowflakeID, role_id: SnowflakeID) -> bool:
         """Delete a role."""
         role = self.get_role(role_id, user_id)
         if not role:
@@ -1026,7 +1067,7 @@ class ServerManager:
 
         return True
 
-    def move_role(self, user_id: int, role_id: int, position: int) -> Role:
+    def move_role(self, user_id: SnowflakeID, role_id: SnowflakeID, position: int) -> Role:
         """Move a role to a new position in hierarchy."""
         role = self.get_role(role_id, user_id)
         if not role:
@@ -1065,7 +1106,7 @@ class ServerManager:
     # === Member Operations ===
 
     def add_member(
-        self, server_id: int, user_id: int, inviter_id: Optional[int] = None
+        self, server_id: SnowflakeID, user_id: SnowflakeID, inviter_id: Optional[SnowflakeID] = None
     ) -> Member:
         """Add a user as a member of a server."""
         # Check if banned
@@ -1121,7 +1162,7 @@ class ServerManager:
         assert result is not None  # Should exist since we just created it
         return result
 
-    def get_member(self, server_id: int, user_id: int) -> Optional[Member]:
+    def get_member(self, server_id: SnowflakeID, user_id: SnowflakeID) -> Optional[Member]:
         """Get a member by user ID."""
         row = self._db.fetch_one(
             "SELECT * FROM srv_members WHERE server_id = ? AND user_id = ?",
@@ -1135,10 +1176,10 @@ class ServerManager:
 
     def get_members(
         self,
-        user_id: int,
-        server_id: int,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
         limit: int = 100,
-        after_id: Optional[int] = None,
+        after_id: Optional[SnowflakeID] = None,
     ) -> List[Member]:
         """Get members of a server."""
         if not self._is_member(server_id, user_id):
@@ -1162,16 +1203,16 @@ class ServerManager:
 
     def get_member_user_ids(
         self,
-        server_id: int,
-        exclude_user_id: Optional[int] = None,
-    ) -> List[int]:
+        server_id: SnowflakeID,
+        exclude_user_id: Optional[SnowflakeID] = None,
+    ) -> List[SnowflakeID]:
         """
         Get just the user IDs of server members (optimized for typing/presence dispatch).
         
         This is faster than get_members() as it only fetches user_id column.
         """
         query = "SELECT user_id FROM srv_members WHERE server_id = ?"
-        params = [server_id]
+        params: List[SnowflakeID] = [server_id]
 
         if exclude_user_id:
             query += " AND user_id != ?"
@@ -1182,9 +1223,9 @@ class ServerManager:
 
     def update_member(
         self,
-        user_id: int,
-        server_id: int,
-        member_user_id: int,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
+        member_user_id: SnowflakeID,
         nickname: Optional[str] = None,
         muted: Optional[bool] = None,
         deafened: Optional[bool] = None,
@@ -1245,7 +1286,7 @@ class ServerManager:
         assert result is not None  # Should exist since we just updated it
         return result
 
-    def remove_member(self, user_id: int, server_id: int) -> bool:
+    def remove_member(self, user_id: SnowflakeID, server_id: SnowflakeID) -> bool:
         """Remove yourself from a server (leave)."""
         server = self.get_server(server_id, user_id)
         if not server:
@@ -1280,9 +1321,9 @@ class ServerManager:
 
     def kick_member(
         self,
-        user_id: int,
-        server_id: int,
-        member_user_id: int,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
+        member_user_id: SnowflakeID,
         reason: Optional[str] = None,
     ) -> bool:
         """Kick a member from a server."""
@@ -1340,9 +1381,9 @@ class ServerManager:
 
     def ban_member(
         self,
-        user_id: int,
-        server_id: int,
-        member_user_id: int,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
+        member_user_id: SnowflakeID,
         reason: Optional[str] = None,
         delete_message_days: int = 0,
     ) -> Ban:
@@ -1419,13 +1460,20 @@ class ServerManager:
             created_at=now,
         )
 
-    def unban_member(self, user_id: int, server_id: int, banned_user_id: int) -> bool:
+    def unban_member(self, user_id: SnowflakeID, server_id: SnowflakeID, banned_user_id: SnowflakeID) -> bool:
         """Unban a user from a server."""
         server = self.get_server(server_id, user_id)
         if not server:
             raise ServerNotFoundError("Server not found")
 
         self.require_permission(user_id, server_id, "members.ban")
+
+        existing = self._db.fetch_one(
+            "SELECT 1 FROM srv_bans WHERE server_id = ? AND user_id = ?",
+            (server_id, banned_user_id),
+        )
+        if not existing:
+            raise BanNotFoundError("User is not banned")
 
         self._db.execute(
             "DELETE FROM srv_bans WHERE server_id = ? AND user_id = ?",
@@ -1442,7 +1490,7 @@ class ServerManager:
 
         return True
 
-    def get_bans(self, user_id: int, server_id: int) -> List[Ban]:
+    def get_bans(self, user_id: SnowflakeID, server_id: SnowflakeID) -> List[Ban]:
         """Get all bans for a server."""
         server = self.get_server(server_id, user_id)
         if not server:
@@ -1460,7 +1508,7 @@ class ServerManager:
     # === Role Assignment ===
 
     def assign_role(
-        self, user_id: int, server_id: int, member_user_id: int, role_id: int
+        self, user_id: SnowflakeID, server_id: SnowflakeID, member_user_id: SnowflakeID, role_id: SnowflakeID
     ) -> bool:
         """Assign a role to a member."""
         server = self.get_server(server_id, user_id)
@@ -1518,7 +1566,7 @@ class ServerManager:
         return True
 
     def remove_role(
-        self, user_id: int, server_id: int, member_user_id: int, role_id: int
+        self, user_id: SnowflakeID, server_id: SnowflakeID, member_user_id: SnowflakeID, role_id: SnowflakeID
     ) -> bool:
         """Remove a role from a member."""
         server = self.get_server(server_id, user_id)
@@ -1568,7 +1616,7 @@ class ServerManager:
 
         return True
 
-    def get_member_roles(self, server_id: int, member_user_id: int) -> List[Role]:
+    def get_member_roles(self, server_id: SnowflakeID, member_user_id: SnowflakeID) -> List[Role]:
         """Get all roles assigned to a member."""
         member = self.get_member(server_id, member_user_id)
         if not member:
@@ -1589,9 +1637,9 @@ class ServerManager:
 
     def get_channel_override(
         self,
-        channel_id: int,
+        channel_id: SnowflakeID,
         target_type: str,
-        target_id: int,
+        target_id: SnowflakeID,
     ) -> Optional[ChannelOverride]:
         """Get permission override for a channel."""
         row = self._db.fetch_one(
@@ -1607,10 +1655,10 @@ class ServerManager:
 
     def set_channel_override(
         self,
-        user_id: int,
-        channel_id: int,
+        user_id: SnowflakeID,
+        channel_id: SnowflakeID,
         target_type: str,
-        target_id: int,
+        target_id: SnowflakeID,
         allow: Optional[Dict[str, bool]] = None,
         deny: Optional[Dict[str, bool]] = None,
     ) -> ChannelOverride:
@@ -1677,10 +1725,10 @@ class ServerManager:
 
     def delete_channel_override(
         self,
-        user_id: int,
-        channel_id: int,
+        user_id: SnowflakeID,
+        channel_id: SnowflakeID,
         target_type: str,
-        target_id: int,
+        target_id: SnowflakeID,
     ) -> bool:
         """Delete a permission override."""
         channel = self.get_channel(channel_id, user_id)
@@ -1708,10 +1756,10 @@ class ServerManager:
 
     def has_permission(
         self,
-        user_id: int,
-        server_id: int,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
         permission: str,
-        channel_id: Optional[int] = None,
+        channel_id: Optional[SnowflakeID] = None,
     ) -> bool:
         """Check if a user has a permission in a server/channel."""
         permissions = self.get_permissions(user_id, server_id, channel_id)
@@ -1719,9 +1767,9 @@ class ServerManager:
 
     def get_permissions(
         self,
-        user_id: int,
-        server_id: int,
-        channel_id: Optional[int] = None,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
+        channel_id: Optional[SnowflakeID] = None,
     ) -> Dict[str, bool]:
         """Get all permissions for a user in a server/channel (cached)."""
         cache_key = (user_id, server_id, channel_id)
@@ -1795,10 +1843,10 @@ class ServerManager:
 
     def require_permission(
         self,
-        user_id: int,
-        server_id: int,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
         permission: str,
-        channel_id: Optional[int] = None,
+        channel_id: Optional[SnowflakeID] = None,
     ) -> None:
         """Require a permission, raising if not granted."""
         if not self.has_permission(user_id, server_id, permission, channel_id):
@@ -1810,8 +1858,8 @@ class ServerManager:
 
     def create_invite(
         self,
-        user_id: int,
-        channel_id: int,
+        user_id: SnowflakeID,
+        channel_id: SnowflakeID,
         max_age: int = 86400,
         max_uses: int = 0,
         temporary: bool = False,
@@ -1871,7 +1919,7 @@ class ServerManager:
 
         return self._row_to_invite(row)
 
-    def get_invites(self, user_id: int, server_id: int) -> List[Invite]:
+    def get_invites(self, user_id: SnowflakeID, server_id: SnowflakeID) -> List[Invite]:
         """Get all invites for a server."""
         server = self.get_server(server_id, user_id)
         if not server:
@@ -1886,7 +1934,11 @@ class ServerManager:
 
         return [self._row_to_invite(row) for row in rows]
 
-    def use_invite(self, user_id: int, code: str) -> Member:
+    def get_server_invites(self, user_id: SnowflakeID, server_id: SnowflakeID) -> List[Invite]:
+        """Alias for get_invites."""
+        return self.get_invites(user_id, server_id)
+
+    def use_invite(self, user_id: SnowflakeID, code: str) -> Member:
         """Use an invite to join a server."""
         invite = self.get_invite(code)
         if not invite:
@@ -1915,7 +1967,7 @@ class ServerManager:
 
         return member
 
-    def delete_invite(self, user_id: int, code: str) -> bool:
+    def delete_invite(self, user_id: SnowflakeID, code: str) -> bool:
         """Delete an invite."""
         invite = self.get_invite(code)
         if not invite:
@@ -1948,11 +2000,11 @@ class ServerManager:
 
     def send_channel_message(
         self,
-        user_id: int,
-        channel_id: int,
+        user_id: SnowflakeID,
+        channel_id: SnowflakeID,
         content: str,
         attachments: Optional[List[Dict[str, Any]]] = None,
-        reply_to_id: Optional[int] = None,
+        reply_to_id: Optional[SnowflakeID] = None,
     ) -> Any:
         """Send a message to a text channel."""
         channel = self.get_channel(channel_id, user_id)
@@ -1981,11 +2033,11 @@ class ServerManager:
 
     def get_channel_messages(
         self,
-        user_id: int,
-        channel_id: int,
+        user_id: SnowflakeID,
+        channel_id: SnowflakeID,
         limit: int = 50,
-        before_id: Optional[int] = None,
-        after_id: Optional[int] = None,
+        before_id: Optional[SnowflakeID] = None,
+        after_id: Optional[SnowflakeID] = None,
     ) -> List[Any]:
         """Get messages from a text channel."""
         channel = self.get_channel(channel_id, user_id)
@@ -2015,11 +2067,11 @@ class ServerManager:
 
     def get_audit_log(
         self,
-        user_id: int,
-        server_id: int,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
         limit: int = 50,
         action_type: Optional[AuditLogAction] = None,
-        before_id: Optional[int] = None,
+        before_id: Optional[SnowflakeID] = None,
     ) -> List[AuditLogEntry]:
         """Get audit log entries for a server."""
         server = self.get_server(server_id, user_id)
@@ -2031,7 +2083,7 @@ class ServerManager:
         limit = min(limit, 100)
 
         query = "SELECT * FROM srv_audit_log WHERE server_id = ?"
-        params: list[int | str] = [server_id]
+        params: List[SnowflakeID | str | int] = [server_id]
 
         if action_type:
             query += " AND action = ?"
@@ -2050,7 +2102,7 @@ class ServerManager:
 
     # === Helper Methods ===
 
-    def _is_member(self, server_id: int, user_id: int) -> bool:
+    def _is_member(self, server_id: SnowflakeID, user_id: SnowflakeID) -> bool:
         """Check if a user is a member of a server."""
         row = self._db.fetch_one(
             "SELECT 1 FROM srv_members WHERE server_id = ? AND user_id = ?",
@@ -2058,7 +2110,7 @@ class ServerManager:
         )
         return row is not None
 
-    def _server_exists(self, server_id: int) -> bool:
+    def _server_exists(self, server_id: SnowflakeID) -> bool:
         """Check if a server exists."""
         row = self._db.fetch_one(
             "SELECT 1 FROM srv_servers WHERE id = ? AND deleted = 0",
@@ -2066,7 +2118,7 @@ class ServerManager:
         )
         return row is not None
 
-    def _get_member_role_rows(self, server_id: int, user_id: int) -> List[Dict[str, Any]]:
+    def _get_member_role_rows(self, server_id: SnowflakeID, user_id: SnowflakeID) -> List[Dict[str, Any]]:
         """Get raw role rows for a member."""
         member = self.get_member(server_id, user_id)
         if not member:
@@ -2184,13 +2236,13 @@ class ServerManager:
             position=row["position"],
             topic=row["topic"],
             nsfw=bool(row["nsfw"]),
-            slowmode_seconds=row["slowmode_seconds"],
-            conversation_id=row["conversation_id"],
+            slowmode_seconds=row.get("slowmode_seconds", 0),
+            conversation_id=row.get("conversation_id"),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
-            deleted=bool(row["deleted"]),
-            deleted_at=row["deleted_at"],
-            metadata=json.loads(row["metadata"]) if row["metadata"] else None,
+            deleted=bool(row.get("deleted", False)),
+            deleted_at=row.get("deleted_at"),
+            metadata=json.loads(row["metadata"]) if row.get("metadata") else None,
         )
 
     def _row_to_category(self, row: Dict[str, Any]) -> ChannelCategory:
@@ -2219,10 +2271,10 @@ class ServerManager:
             hoist=bool(row["hoist"]),
             mentionable=bool(row["mentionable"]),
             position=row["position"],
-            is_default=bool(row["is_default"]),
+            is_default=bool(row.get("is_default", False)),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
-            deleted=bool(row["deleted"]),
+            deleted=bool(row.get("deleted", False)),
         )
 
     def _row_to_member(self, row: Dict[str, Any]) -> Member:
@@ -2238,11 +2290,12 @@ class ServerManager:
             id=row["id"],
             server_id=row["server_id"],
             user_id=row["user_id"],
-            nickname=row["nickname"],
+            nickname=row.get("nickname"),
             joined_at=row["joined_at"],
-            muted=bool(row["muted"]),
-            deafened=bool(row["deafened"]),
-            inviter_id=row["inviter_id"],
+            updated_at=row["updated_at"],
+            muted=bool(row.get("muted", False)),
+            deafened=bool(row.get("deafened", False)),
+            inviter_id=row.get("inviter_id"),
             roles=role_ids,
         )
 
@@ -2305,8 +2358,7 @@ class ServerManager:
             id=row["id"],
             server_id=row["server_id"],
             user_id=row["user_id"],
-            action=AuditLogAction(row["action"]),
-            target_type=row["target_type"],
+            action_type=AuditLogAction(row.get("action_type", row.get("action"))),
             target_id=row["target_id"],
             changes=changes,
             reason=row["reason"],

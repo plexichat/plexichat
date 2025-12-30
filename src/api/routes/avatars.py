@@ -177,7 +177,7 @@ async def upload_server_icon(
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
 
     # Check permission
-    server = servers.get_server(sid)
+    server = servers.get_server(sid, current_user.user_id)
     if not server:
         raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Server not found"}})
 
@@ -250,7 +250,7 @@ async def delete_server_icon(
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
 
     # Check permission
-    server = servers.get_server(sid)
+    server = servers.get_server(sid, current_user.user_id)
     if not server:
         raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Server not found"}})
 
