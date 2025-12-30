@@ -5,12 +5,11 @@ Handles mention parsing, notification creation, settings management,
 and unread tracking with proper validation and permission checks.
 """
 
-import time
 from typing import Optional, List, Dict, Any
 
 import utils.config as config
 import utils.logger as logger
-from src.utils.encryption import generate_snowflake_id
+from src.core.base import BaseManager, SnowflakeID
 
 from .models import (
     Mention,
@@ -32,21 +31,22 @@ from .parser import parse_mentions as _parse_mentions
 from src.core.database import cache_get, cache_set, cache_delete, redis_available
 
 
-class NotificationManager:
+class NotificationManager(BaseManager):
     """Core notification manager handling all operations."""
 
-    def __init__(self, db, messaging_module=None, servers_module=None, relationships_module=None, presence_module=None):
+    def __init__(self, db, auth_module=None, messaging_module=None, servers_module=None, relationships_module=None, presence_module=None):
         """
         Initialize the notification manager.
 
         Args:
             db: Database instance (must be connected)
+            auth_module: Auth module for user existence checks
             messaging_module: Messaging module for message access
             servers_module: Servers module for role/permission checks
             relationships_module: Relationships module for block filtering
             presence_module: Presence module for @here functionality
         """
-        self._db = db
+        super().__init__(db, auth_module)
         self._messaging = messaging_module
         self._servers = servers_module
         self._relationships = relationships_module
@@ -68,30 +68,14 @@ class NotificationManager:
         notif_config = config.get("notifications", {})
         return {**defaults, **notif_config}
 
-    def _get_timestamp(self) -> int:
-        """Get current timestamp in milliseconds."""
-        return int(time.time() * 1000)
-
-    def _generate_id(self) -> int:
-        """Generate a new Snowflake ID."""
-        return generate_snowflake_id()
-
-    def _user_exists(self, user_id: int) -> bool:
-        """Check if user exists."""
-        row = self._db.fetch_one(
-            "SELECT 1 FROM auth_users WHERE id = ?",
-            (user_id,)
-        )
-        return row is not None
-
-    def _get_message(self, message_id: int) -> Optional[Dict]:
+    def _get_message(self, message_id: SnowflakeID) -> Optional[Dict]:
         """Get message from database."""
         return self._db.fetch_one(
             "SELECT * FROM msg_messages WHERE id = ? AND deleted = 0",
             (message_id,)
         )
 
-    def _get_conversation(self, conversation_id: int) -> Optional[Dict]:
+    def _get_conversation(self, conversation_id: SnowflakeID) -> Optional[Dict]:
         """Get conversation from database."""
         return self._db.fetch_one(
             "SELECT * FROM msg_conversations WHERE id = ? AND deleted = 0",
@@ -132,7 +116,7 @@ class NotificationManager:
             return content
         return content[:max_len - 3] + "..."
 
-    def _role_exists(self, role_id: int) -> bool:
+    def _role_exists(self, role_id: SnowflakeID) -> bool:
         """Check if role exists."""
         row = self._db.fetch_one(
             "SELECT 1 FROM srv_roles WHERE id = ?",
@@ -140,14 +124,14 @@ class NotificationManager:
         )
         return row is not None
 
-    def _get_role(self, role_id: int) -> Optional[Dict]:
+    def _get_role(self, role_id: SnowflakeID) -> Optional[Dict]:
         """Get role from database."""
         return self._db.fetch_one(
             "SELECT * FROM srv_roles WHERE id = ?",
             (role_id,)
         )
 
-    def _channel_exists(self, channel_id: int) -> bool:
+    def _channel_exists(self, channel_id: SnowflakeID) -> bool:
         """Check if channel exists."""
         row = self._db.fetch_one(
             "SELECT 1 FROM srv_channels WHERE id = ?",
@@ -155,14 +139,14 @@ class NotificationManager:
         )
         return row is not None
 
-    def _get_channel(self, channel_id: int) -> Optional[Dict]:
+    def _get_channel(self, channel_id: SnowflakeID) -> Optional[Dict]:
         """Get channel from database."""
         return self._db.fetch_one(
             "SELECT * FROM srv_channels WHERE id = ?",
             (channel_id,)
         )
 
-    def _get_server_members(self, server_id: int) -> List[int]:
+    def _get_server_members(self, server_id: SnowflakeID) -> List[SnowflakeID]:
         """Get all member IDs in a server."""
         rows = self._db.fetch_all(
             "SELECT user_id FROM srv_members WHERE server_id = ?",
@@ -170,7 +154,7 @@ class NotificationManager:
         )
         return [row["user_id"] for row in rows]
 
-    def _get_role_members(self, role_id: int) -> List[int]:
+    def _get_role_members(self, role_id: SnowflakeID) -> List[SnowflakeID]:
         """Get all member IDs with a specific role."""
         rows = self._db.fetch_all(
             """SELECT m.user_id FROM srv_member_roles mr
@@ -180,13 +164,13 @@ class NotificationManager:
         )
         return [row["user_id"] for row in rows]
 
-    def _has_mention_everyone_permission(self, user_id: int, server_id: int, channel_id: Optional[int] = None) -> bool:
+    def _has_mention_everyone_permission(self, user_id: SnowflakeID, server_id: SnowflakeID, channel_id: Optional[SnowflakeID] = None) -> bool:
         """Check if user has permission to use @everyone/@here."""
         if not self._servers:
             return True
         return self._servers.has_permission(user_id, server_id, "messages.mention_everyone", channel_id)
 
-    def _get_online_members(self, server_id: int) -> List[int]:
+    def _get_online_members(self, server_id: SnowflakeID) -> List[SnowflakeID]:
         """Get online member IDs in a server."""
         if not self._presence:
             return self._get_server_members(server_id)
@@ -203,10 +187,10 @@ class NotificationManager:
 
     def validate_mentions(
         self,
-        user_id: int,
+        user_id: SnowflakeID,
         mentions: List[Mention],
-        server_id: Optional[int] = None,
-        channel_id: Optional[int] = None
+        server_id: Optional[SnowflakeID] = None,
+        channel_id: Optional[SnowflakeID] = None
     ) -> List[Mention]:
         """
         Validate mentions and mark invalid ones.
@@ -278,7 +262,7 @@ class NotificationManager:
 
         return validated
 
-    def highlight_mentions(self, content: str, user_id: int) -> List[MentionPosition]:
+    def highlight_mentions(self, content: str, user_id: SnowflakeID) -> List[MentionPosition]:
         """
         Get positions of mentions relevant to a user for highlighting.
 
@@ -313,46 +297,82 @@ class NotificationManager:
                 is_self = True
 
             positions.append(MentionPosition(
-                start=mention.start_pos,
-                end=mention.end_pos,
-                mention_type=mention.mention_type,
+                start_pos=mention.start_pos,
+                end_pos=mention.end_pos,
                 is_self=is_self
             ))
 
         return positions
 
-    # === Notification Creation ===
+    # === Notification Generation ===
 
     def create_notifications_for_message(
         self,
-        sender_id: int,
-        message_id: int,
-        conversation_id: int,
+        message_id: SnowflakeID,
+        author_id: SnowflakeID,
+        conversation_id: SnowflakeID,
         content: str,
-        server_id: Optional[int] = None,
-        channel_id: Optional[int] = None
+        server_id: Optional[SnowflakeID] = None,
+        channel_id: Optional[SnowflakeID] = None,
+        thread_id: Optional[SnowflakeID] = None
     ) -> List[Notification]:
         """
         Create notifications for all mentioned users in a message.
 
         Args:
-            sender_id: ID of message sender
+            message_id: ID of the message
+            author_id: ID of message author
+            conversation_id: ID of the conversation
+            content: Message content
+            server_id: Optional server ID
+            channel_id: Optional channel ID
+            thread_id: Optional thread ID
+
+        Returns:
+            List of created notifications
+        """
+        return self.create_notifications(
+            message_id=message_id,
+            author_id=author_id,
+            conversation_id=conversation_id,
+            content=content,
+            server_id=server_id,
+            channel_id=channel_id,
+            thread_id=thread_id
+        )
+
+    def create_notifications(
+        self,
+        message_id: SnowflakeID,
+        author_id: SnowflakeID,
+        conversation_id: SnowflakeID,
+        content: str,
+        server_id: Optional[SnowflakeID] = None,
+        channel_id: Optional[SnowflakeID] = None,
+        thread_id: Optional[SnowflakeID] = None
+    ) -> List[Notification]:
+        """
+        Create notifications for all mentioned users in a message.
+
+        Args:
+            author_id: ID of message author
             message_id: ID of the message
             conversation_id: ID of the conversation
             content: Message content
             server_id: Optional server ID
             channel_id: Optional channel ID
+            thread_id: Optional thread ID
 
         Returns:
             List of created notifications
         """
         mentions = self.parse_mentions(content)
-        validated = self.validate_mentions(sender_id, mentions, server_id, channel_id)
+        validated = self.validate_mentions(author_id, mentions, server_id, channel_id)
 
         users_to_notify = set()
         mention_types = {}
 
-        blocked_users = self._get_blocked_user_ids(sender_id)
+        blocked_users = self._get_blocked_user_ids(author_id)
 
         for mention in validated:
             if not mention.valid:
@@ -360,7 +380,7 @@ class NotificationManager:
 
             if mention.mention_type == MentionType.USER:
                 target_id = mention.target_id
-                if target_id != sender_id and target_id not in blocked_users:
+                if target_id != author_id and target_id not in blocked_users:
                     users_to_notify.add(target_id)
                     mention_types[target_id] = MentionType.USER
 
@@ -369,7 +389,7 @@ class NotificationManager:
                     continue
                 role_members = self._get_role_members(mention.target_id)
                 for member_id in role_members:
-                    if member_id != sender_id and member_id not in blocked_users:
+                    if member_id != author_id and member_id not in blocked_users:
                         if member_id not in mention_types:
                             users_to_notify.add(member_id)
                             mention_types[member_id] = MentionType.ROLE
@@ -378,7 +398,7 @@ class NotificationManager:
                 if server_id:
                     server_members = self._get_server_members(server_id)
                     for member_id in server_members:
-                        if member_id != sender_id and member_id not in blocked_users:
+                        if member_id != author_id and member_id not in blocked_users:
                             if member_id not in mention_types:
                                 users_to_notify.add(member_id)
                                 mention_types[member_id] = MentionType.EVERYONE
@@ -387,7 +407,7 @@ class NotificationManager:
                 if server_id:
                     online_members = self._get_online_members(server_id)
                     for member_id in online_members:
-                        if member_id != sender_id and member_id not in blocked_users:
+                        if member_id != author_id and member_id not in blocked_users:
                             if member_id not in mention_types:
                                 users_to_notify.add(member_id)
                                 mention_types[member_id] = MentionType.HERE
@@ -398,15 +418,16 @@ class NotificationManager:
 
         for user_id in users_to_notify:
             mention_type = mention_types.get(user_id)
-            if mention_type and self._should_notify_user(user_id, sender_id, server_id, channel_id, mention_type):
+            if mention_type and self._should_notify_user(user_id, author_id, server_id, channel_id, mention_type):
                 notif = self._create_notification(
                     user_id=user_id,
-                    sender_id=sender_id,
+                    author_id=author_id,
                     message_id=message_id,
                     conversation_id=conversation_id,
                     server_id=server_id,
                     channel_id=channel_id,
-                    mention_type=mention_types.get(user_id, MentionType.USER),
+                    thread_id=thread_id,
+                    mention_type=mention_type,
                     content_preview=preview,
                     created_at=now
                 )
@@ -418,10 +439,10 @@ class NotificationManager:
 
     def _should_notify_user(
         self,
-        user_id: int,
-        sender_id: int,
-        server_id: Optional[int],
-        channel_id: Optional[int],
+        user_id: SnowflakeID,
+        author_id: SnowflakeID,
+        server_id: Optional[SnowflakeID],
+        channel_id: Optional[SnowflakeID],
         mention_type: MentionType
     ) -> bool:
         """Check if user should receive notification based on settings."""
@@ -452,12 +473,13 @@ class NotificationManager:
 
     def _create_notification(
         self,
-        user_id: int,
-        sender_id: int,
-        message_id: int,
-        conversation_id: int,
-        server_id: Optional[int],
-        channel_id: Optional[int],
+        user_id: SnowflakeID,
+        author_id: SnowflakeID,
+        message_id: SnowflakeID,
+        conversation_id: SnowflakeID,
+        server_id: Optional[SnowflakeID],
+        channel_id: Optional[SnowflakeID],
+        thread_id: Optional[SnowflakeID],
         mention_type: MentionType,
         content_preview: str,
         created_at: int
@@ -467,10 +489,10 @@ class NotificationManager:
 
         self._db.execute(
             """INSERT INTO notif_notifications
-               (id, user_id, sender_id, message_id, conversation_id, server_id, channel_id,
+               (id, user_id, sender_id, message_id, conversation_id, server_id, channel_id, thread_id,
                 mention_type, content_preview, read, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)""",
-            (notif_id, user_id, sender_id, message_id, conversation_id, server_id, channel_id,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)""",
+            (notif_id, user_id, author_id, message_id, conversation_id, server_id, channel_id, thread_id,
              mention_type.value, content_preview, created_at)
         )
 
@@ -478,7 +500,7 @@ class NotificationManager:
 
     # === Notification Operations ===
 
-    def get_notification(self, notification_id: int) -> Optional[Notification]:
+    def get_notification(self, notification_id: SnowflakeID) -> Optional[Notification]:
         """Get a notification by ID."""
         row = self._db.fetch_one(
             "SELECT * FROM notif_notifications WHERE id = ?",
@@ -490,9 +512,9 @@ class NotificationManager:
 
     def get_notifications(
         self,
-        user_id: int,
+        user_id: SnowflakeID,
         limit: int = 50,
-        before_id: Optional[int] = None,
+        before_id: Optional[SnowflakeID] = None,
         unread_only: bool = False
     ) -> List[Notification]:
         """Get notifications for a user."""
@@ -515,7 +537,7 @@ class NotificationManager:
         rows = self._db.fetch_all(query, tuple(params))
         return [self._row_to_notification(row) for row in rows]
 
-    def mark_notification_read(self, user_id: int, notification_id: int) -> bool:
+    def mark_notification_read(self, user_id: SnowflakeID, notification_id: SnowflakeID) -> bool:
         """Mark a notification as read."""
         notif = self.get_notification(notification_id)
         if not notif:
@@ -532,7 +554,7 @@ class NotificationManager:
 
         return True
 
-    def mark_all_read(self, user_id: int) -> int:
+    def mark_all_read(self, user_id: SnowflakeID) -> int:
         """Mark all notifications as read for a user."""
         count_row = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM notif_notifications WHERE user_id = ? AND read = 0",
@@ -552,7 +574,7 @@ class NotificationManager:
 
         return count
 
-    def mark_channel_read(self, user_id: int, channel_id: int) -> int:
+    def mark_channel_read(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> int:
         """Mark all notifications in a channel as read."""
         count_row = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM notif_notifications WHERE user_id = ? AND channel_id = ? AND read = 0",
@@ -572,7 +594,7 @@ class NotificationManager:
 
         return count
 
-    def mark_server_read(self, user_id: int, server_id: int) -> int:
+    def mark_server_read(self, user_id: SnowflakeID, server_id: SnowflakeID) -> int:
         """Mark all notifications in a server as read."""
         count_row = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM notif_notifications WHERE user_id = ? AND server_id = ? AND read = 0",
@@ -592,7 +614,7 @@ class NotificationManager:
 
         return count
 
-    def delete_notification(self, user_id: int, notification_id: int) -> bool:
+    def delete_notification(self, user_id: SnowflakeID, notification_id: SnowflakeID) -> bool:
         """Delete a notification."""
         notif = self.get_notification(notification_id)
         if not notif:
@@ -614,10 +636,10 @@ class NotificationManager:
 
     def _update_unread_count(
         self,
-        user_id: int,
-        conversation_id: int,
-        server_id: Optional[int],
-        channel_id: Optional[int],
+        user_id: SnowflakeID,
+        conversation_id: SnowflakeID,
+        server_id: Optional[SnowflakeID],
+        channel_id: Optional[SnowflakeID],
         is_mention: bool = False
     ):
         """Update unread count for a user/conversation."""
@@ -644,7 +666,7 @@ class NotificationManager:
                 (unread_id, user_id, conversation_id, server_id, channel_id, 1 if is_mention else 0, now)
             )
 
-    def _decrement_mention_count(self, user_id: int, conversation_id: int):
+    def _decrement_mention_count(self, user_id: SnowflakeID, conversation_id: SnowflakeID):
         """Decrement mention count for a conversation."""
         self._db.execute(
             """UPDATE notif_unread SET mention_count = MAX(0, mention_count - 1)
@@ -652,7 +674,7 @@ class NotificationManager:
             (user_id, conversation_id)
         )
 
-    def get_unread_count(self, user_id: int, server_id: Optional[int] = None) -> UnreadCount:
+    def get_unread_count(self, user_id: SnowflakeID, server_id: Optional[SnowflakeID] = None) -> UnreadCount:
         """Get unread count for a user, optionally filtered by server."""
         if server_id:
             row = self._db.fetch_one(
@@ -668,12 +690,14 @@ class NotificationManager:
             )
 
         return UnreadCount(
+            user_id=user_id,
+            conversation_id=0,  # Global unread count doesn't have a conversation ID
             total_unread=row["total"] if row else 0,
             mention_count=row["mentions"] if row else 0,
             server_id=server_id
         )
 
-    def get_unread_counts(self, user_id: int) -> Dict[int, UnreadCount]:
+    def get_unread_counts(self, user_id: SnowflakeID) -> Dict[SnowflakeID, UnreadCount]:
         """Get unread counts per server/conversation for a user."""
         rows = self._db.fetch_all(
             """SELECT conversation_id, server_id, channel_id, unread_count, mention_count
@@ -685,6 +709,8 @@ class NotificationManager:
         for row in rows:
             conv_id = row["conversation_id"]
             counts[conv_id] = UnreadCount(
+                user_id=user_id,
+                conversation_id=conv_id,
                 total_unread=row["unread_count"],
                 mention_count=row["mention_count"],
                 server_id=row["server_id"],
@@ -693,7 +719,7 @@ class NotificationManager:
 
         return counts
 
-    def get_mention_count(self, user_id: int, server_id: Optional[int] = None) -> int:
+    def get_mention_count(self, user_id: SnowflakeID, server_id: Optional[SnowflakeID] = None) -> int:
         """Get count of unread mentions for a user."""
         if server_id:
             row = self._db.fetch_one(
@@ -712,9 +738,9 @@ class NotificationManager:
 
     def get_notification_feed(
         self,
-        user_id: int,
+        user_id: SnowflakeID,
         limit: int = 50,
-        before_id: Optional[int] = None
+        before_id: Optional[SnowflakeID] = None
     ) -> NotificationFeed:
         """Get recent mentions across all servers."""
         max_items = self._config.get("max_feed_items", 100)
@@ -759,7 +785,7 @@ class NotificationManager:
 
     # === Settings Operations ===
 
-    def get_notification_settings(self, user_id: int, server_id: Optional[int] = None) -> NotificationSettings:
+    def get_notification_settings(self, user_id: SnowflakeID, server_id: Optional[SnowflakeID] = None) -> NotificationSettings:
         """Get notification settings for a user (cached for 10 minutes)."""
         # Try cache first
         cache_key = f"notif_settings:{user_id}:{server_id or 'global'}"
@@ -817,8 +843,8 @@ class NotificationManager:
 
     def update_notification_settings(
         self,
-        user_id: int,
-        server_id: Optional[int] = None,
+        user_id: SnowflakeID,
+        server_id: Optional[SnowflakeID] = None,
         **kwargs
     ) -> NotificationSettings:
         """Update notification settings for a user."""
@@ -871,7 +897,7 @@ class NotificationManager:
 
         return self.get_notification_settings(user_id, server_id)
 
-    def get_channel_override(self, user_id: int, channel_id: int) -> Optional[ChannelNotificationOverride]:
+    def get_channel_override(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> Optional[ChannelNotificationOverride]:
         """Get channel notification override for a user."""
         row = self._db.fetch_one(
             "SELECT * FROM notif_channel_overrides WHERE user_id = ? AND channel_id = ?",
@@ -885,8 +911,8 @@ class NotificationManager:
 
     def set_channel_override(
         self,
-        user_id: int,
-        channel_id: int,
+        user_id: SnowflakeID,
+        channel_id: SnowflakeID,
         level: NotificationLevel,
         muted_until: Optional[int] = None
     ) -> ChannelNotificationOverride:
@@ -921,7 +947,7 @@ class NotificationManager:
         assert result is not None  # Should exist since we just created/updated it
         return result
 
-    def delete_channel_override(self, user_id: int, channel_id: int) -> bool:
+    def delete_channel_override(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> bool:
         """Delete channel notification override."""
         existing = self._db.fetch_one(
             "SELECT 1 FROM notif_channel_overrides WHERE user_id = ? AND channel_id = ?",
@@ -945,7 +971,7 @@ class NotificationManager:
         sender_name = "Someone"
         row = self._db.fetch_one(
             "SELECT username FROM auth_users WHERE id = ?",
-            (notification.sender_id,)
+            (notification.author_id,)
         )
         if row:
             sender_name = row["username"]
@@ -973,6 +999,7 @@ class NotificationManager:
                 "conversation_id": notification.conversation_id,
                 "server_id": notification.server_id,
                 "channel_id": notification.channel_id,
+                "thread_id": notification.thread_id,
                 "mention_type": notification.mention_type.value,
             },
             badge_count=unread.mention_count,
@@ -987,11 +1014,12 @@ class NotificationManager:
         return Notification(
             id=row["id"],
             user_id=row["user_id"],
-            sender_id=row["sender_id"],
+            author_id=row["sender_id"],
             message_id=row["message_id"],
             conversation_id=row["conversation_id"],
             server_id=row["server_id"],
             channel_id=row["channel_id"],
+            thread_id=row.get("thread_id"),
             mention_type=MentionType(row["mention_type"]),
             content_preview=row["content_preview"],
             read=bool(row["read"]),

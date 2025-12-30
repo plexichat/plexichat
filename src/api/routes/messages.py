@@ -25,7 +25,7 @@ def _message_to_response(
     author_avatar_url: Optional[str] = None,
     channel_id: Optional[int] = None,
     reactions_data=None,
-) -> Dict[str, Any]:
+) -> MessageResponse:
     """Convert message object to response model."""
     attachments = []
     if hasattr(msg, "attachments") and msg.attachments:
@@ -47,7 +47,7 @@ def _message_to_response(
     # Use explicit channel_id if provided, otherwise fall back to message attributes
     effective_channel_id = channel_id or getattr(msg, "channel_id", 0) or getattr(msg, "conversation_id", 0)
 
-    response = MessageResponse(
+    return MessageResponse(
         id=SnowflakeID(msg.id),
         channel_id=SnowflakeID(effective_channel_id),
         author_id=SnowflakeID(msg.author_id),
@@ -58,23 +58,13 @@ def _message_to_response(
         attachments=attachments,
         embeds=getattr(msg, "embeds", []) or [],
         pinned=getattr(msg, "pinned", False),
-        status=getattr(msg, "status", None).value if getattr(msg, "status", None) else None,
+        status=getattr(getattr(msg, "status", None), "value", None),
         delivery_count=getattr(msg, "delivery_count", 0),
         read_count=getattr(msg, "read_count", 0),
+        author_username=author_username or getattr(msg, "author_username", None) or f"User {msg.author_id}",
+        author_avatar_url=author_avatar_url or getattr(msg, "author_avatar_url", None),
+        reactions=reactions_data or [],
     )
-
-    # Add author_username and author_avatar_url as extra fields (not in schema but useful for client)
-    response_dict = response.model_dump()
-    response_dict["author_username"] = author_username or getattr(msg, "author_username", None) or f"User {msg.author_id}"
-    response_dict["author_avatar_url"] = author_avatar_url or getattr(msg, "author_avatar_url", None)
-
-    # Add reactions data if provided
-    if reactions_data is not None:
-        response_dict["reactions"] = reactions_data
-    else:
-        response_dict["reactions"] = []
-
-    return response_dict
 
 
 @router.get("/channels/{channel_id}/messages")
@@ -253,7 +243,7 @@ async def send_channel_message(
     channel_id: str,
     body: MessageCreateRequest,
     current_user: TokenInfo = Depends(get_current_user)
-) -> Dict[str, Any]:
+) -> MessageResponse:
     """
     Send a message to a channel.
     
@@ -399,7 +389,7 @@ async def send_channel_message(
                         logger.info(f"Broadcasting MESSAGE_CREATE to {len(user_ids)} users for channel {cid}: {user_ids[:5]}...")
                         event = Event(
                             event_type=EventType.MESSAGE_CREATE,
-                            data=response,
+                            data=response.model_dump(),
                             server_id=server_id,  # Set for proper intent filtering
                             channel_id=cid,
                         )
@@ -443,7 +433,7 @@ async def get_message(
         msg = messaging.get_message(current_user.user_id, mid)
         if not msg:
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Message not found"}})
-        return _message_to_response(msg)
+        return _message_to_response(msg).model_dump()
     except HTTPException:
         raise
     except Exception as e:
@@ -542,7 +532,7 @@ async def edit_message(
 
                         event = Event(
                             event_type=EventType.MESSAGE_UPDATE,
-                            data=response,
+                            data=response.model_dump(),
                             server_id=event_server_id,
                             channel_id=cid,
                         )

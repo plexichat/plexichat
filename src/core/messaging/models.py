@@ -8,6 +8,7 @@ Uses Snowflake IDs for distributed unique identification.
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Any
 from enum import Enum
+from src.core.base import SnowflakeID
 
 
 class ConversationType(Enum):
@@ -16,6 +17,7 @@ class ConversationType(Enum):
     DM = "dm"
     GROUP = "group"
     NOTES = "notes"  # Personal notes - single user conversation
+    THREAD = "thread"  # Dedicated conversation for a thread
 
 
 class MessageType(Enum):
@@ -55,15 +57,15 @@ class FilterAction(Enum):
 class Conversation:
     """Conversation model (DM or group)."""
 
-    id: int
+    id: SnowflakeID
     conversation_type: ConversationType
     created_at: int
     updated_at: int
     name: Optional[str] = None
-    owner_id: Optional[int] = None
+    owner_id: Optional[SnowflakeID] = None
     max_participants: int = 100
     participant_count: int = 0
-    last_message_id: Optional[int] = None
+    last_message_id: Optional[SnowflakeID] = None
     last_message_at: Optional[int] = None
     encrypted: bool = False
     deleted: bool = False
@@ -75,12 +77,12 @@ class Conversation:
 class Participant:
     """Participant in a conversation."""
 
-    id: int
-    conversation_id: int
-    user_id: int
+    id: SnowflakeID
+    conversation_id: SnowflakeID
+    user_id: SnowflakeID
     role: ParticipantRole
     joined_at: int
-    last_read_message_id: Optional[int] = None
+    last_read_message_id: Optional[SnowflakeID] = None
     last_read_at: Optional[int] = None
     muted: bool = False
     muted_until: Optional[int] = None
@@ -92,44 +94,40 @@ class Participant:
 class Message:
     """Message model."""
 
-    id: int
-    conversation_id: int
-    author_id: int
+    id: SnowflakeID
+    conversation_id: SnowflakeID
+    author_id: SnowflakeID
     content: str
     created_at: int
     updated_at: int
     content_encrypted: Optional[str] = None
     message_type: MessageType = MessageType.TEXT
     edited: bool = False
-    deleted: bool = False
-    deleted_at: Optional[int] = None
-    reply_to_id: Optional[int] = None
+    edited_at: Optional[int] = None
+    reply_to_id: Optional[SnowflakeID] = None
     pinned: bool = False
     pinned_at: Optional[int] = None
-    pinned_by: Optional[int] = None
-    metadata: Optional[Dict[str, Any]] = None
-
-    # Populated on fetch, not stored directly
-    attachments: List["Attachment"] = field(default_factory=list)
-    status: Optional[MessageStatusType] = None
+    pinned_by: Optional[SnowflakeID] = None
+    attachments: List[Any] = field(default_factory=list)
+    embeds: List[Any] = field(default_factory=list)
+    reactions: List[Any] = field(default_factory=list)
+    status: MessageStatusType = MessageStatusType.SENT
     delivery_count: int = 0
     read_count: int = 0
-
-    @property
-    def embeds(self) -> List[Dict[str, Any]]:
-        """Get embeds from metadata."""
-        if self.metadata and "embeds" in self.metadata:
-            return self.metadata["embeds"]
-        return []
+    deleted: bool = False
+    deleted_at: Optional[int] = None
+    metadata: Optional[Dict[str, Any]] = None
+    author_username: Optional[str] = None
+    author_avatar_url: Optional[str] = None
 
 
 @dataclass
 class MessageStatus:
     """Delivery/read status for a message per user."""
 
-    id: int
-    message_id: int
-    user_id: int
+    id: SnowflakeID
+    message_id: SnowflakeID
+    user_id: SnowflakeID
     status: MessageStatusType
     timestamp: int
 
@@ -138,8 +136,8 @@ class MessageStatus:
 class Attachment:
     """Message attachment model."""
 
-    id: int
-    message_id: int
+    id: SnowflakeID
+    message_id: SnowflakeID
     filename: str
     content_type: str
     size: int
@@ -154,7 +152,7 @@ class Attachment:
 class ContentFilter:
     """User content filter settings."""
 
-    user_id: int
+    user_id: SnowflakeID
     profanity_filter: bool = False
     nsfw_filter: bool = False
     spoiler_click_to_reveal: bool = True
@@ -166,7 +164,7 @@ class ContentFilter:
 class UserMessageSettings:
     """User-specific message settings."""
 
-    user_id: int
+    user_id: SnowflakeID
     allow_dms_from: str = "everyone"  # "everyone", "friends", "none"
     auto_create_dms: bool = True
     max_message_length: Optional[int] = None  # None = use global default
@@ -180,10 +178,10 @@ class UserMessageSettings:
 class PinnedMessage:
     """Pinned message record."""
 
-    id: int
-    conversation_id: int
-    message_id: int
-    pinned_by: int
+    id: SnowflakeID
+    conversation_id: SnowflakeID
+    message_id: SnowflakeID
+    pinned_by: SnowflakeID
     pinned_at: int
 
 
@@ -191,14 +189,17 @@ class PinnedMessage:
 class ConversationSummary:
     """Summary of conversation for listing."""
 
-    id: int
+    id: SnowflakeID
     conversation_type: ConversationType
     name: Optional[str]
     participant_count: int
-    last_message_preview: Optional[str]
     last_message_at: Optional[int]
-    unread_count: int
-    muted: bool
+    unread_count: int = 0
+    last_message_id: Optional[SnowflakeID] = None
+    last_message_content: Optional[str] = None
+    last_message_author: Optional[str] = None
+    muted: bool = False
+    encrypted: bool = False
 
 
 # Rich text formatting markers

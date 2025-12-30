@@ -5,11 +5,10 @@ Handles thread creation, membership, messages, and state management
 with proper validation, permission checks, and database interactions.
 """
 
-import time
 from typing import Optional, List, Dict, Any
 
 import utils.logger as logger
-from src.utils.encryption import generate_snowflake_id
+from src.core.base import BaseManager, SnowflakeID
 
 from .models import (
     Thread,
@@ -33,7 +32,7 @@ from .exceptions import (
 from .schema import create_tables
 
 
-class ThreadManager:
+class ThreadManager(BaseManager):
     """Core thread manager handling all operations."""
 
     MAX_THREAD_NAME_LENGTH = 100
@@ -49,8 +48,7 @@ class ThreadManager:
             servers_module: Optional servers module for channel/permission checks
             notifications_module: Optional notifications module for thread mentions
         """
-        self._db = db
-        self._auth = auth_module
+        super().__init__(db, auth_module)
         self._messaging = messaging_module
         self._servers = servers_module
         self._notifications = notifications_module
@@ -58,14 +56,6 @@ class ThreadManager:
         create_tables(db)
 
         logger.info("Threads module initialized")
-
-    def _get_timestamp(self) -> int:
-        """Get current timestamp in milliseconds."""
-        return int(time.time() * 1000)
-
-    def _generate_id(self) -> int:
-        """Generate a new Snowflake ID."""
-        return generate_snowflake_id()
 
     def _validate_thread_name(self, name: str) -> str:
         """Validate and sanitize thread name."""
@@ -210,13 +200,22 @@ class ThreadManager:
         now = self._get_timestamp()
         thread_id = self._generate_id()
 
+        # Create conversation for the thread
+        conversation_id = None
+        if self._messaging:
+            try:
+                conv = self._messaging.create_thread_conversation(server_id, channel_id, name)
+                conversation_id = conv.id
+            except Exception as e:
+                logger.warning(f"Failed to create conversation for thread: {e}")
+
         self._db.execute(
             """INSERT INTO thread_threads 
                (id, channel_id, server_id, owner_id, name, thread_type, state, 
-                auto_archive_duration, message_count, member_count, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                auto_archive_duration, message_count, member_count, created_at, conversation_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (thread_id, channel_id, server_id, user_id, name, thread_type.value,
-             ThreadState.ACTIVE.value, auto_archive_duration.value, 0, 1, now)
+             ThreadState.ACTIVE.value, auto_archive_duration.value, 0, 1, now, conversation_id)
         )
 
         self._db.execute(
@@ -285,13 +284,24 @@ class ThreadManager:
         now = self._get_timestamp()
         thread_id = self._generate_id()
 
+        # Create conversation for the thread
+        conversation_id = None
+        if self._messaging:
+            try:
+                conv = self._messaging.create_thread_conversation(server_id, channel_id, name)
+                conversation_id = conv.id
+            except Exception as e:
+                logger.warning(f"Failed to create conversation for thread: {e}")
+
         self._db.execute(
             """INSERT INTO thread_threads 
                (id, channel_id, server_id, owner_id, name, thread_type, state,
-                parent_message_id, auto_archive_duration, message_count, member_count, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                parent_message_id, auto_archive_duration, message_count, member_count, 
+                created_at, conversation_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (thread_id, channel_id, server_id, user_id, name, thread_type.value,
-             ThreadState.ACTIVE.value, message_id, auto_archive_duration.value, 0, 1, now)
+             ThreadState.ACTIVE.value, message_id, auto_archive_duration.value, 0, 1, 
+             now, conversation_id)
         )
 
         self._db.execute(
@@ -542,6 +552,21 @@ class ThreadManager:
         now = self._get_timestamp()
         message_id = self._generate_id()
 
+        # Send actual message via messaging module if conversation exists
+        if self._messaging and thread.conversation_id:
+            try:
+                # messaging.send_message handles its own DB transaction
+                msg = self._messaging.send_message(
+                    user_id=user_id,
+                    conversation_id=thread.conversation_id,
+                    content=content,
+                    attachments=attachments
+                )
+                message_id = msg.id
+            except Exception as e:
+                logger.error(f"Failed to send message via messaging module for thread {thread_id}: {e}")
+                # Fallback to local message ID if messaging fails (though content might be lost)
+
         self._db.execute(
             """INSERT INTO thread_messages (id, thread_id, message_id, user_id, created_at)
                VALUES (?, ?, ?, ?, ?)""",
@@ -578,34 +603,53 @@ class ThreadManager:
             after_id: Get messages after this ID
 
         Returns:
-            List of messages
+            List of messages with content
         """
         if not self.can_view_thread(user_id, thread_id):
             raise ThreadAccessDeniedError("Cannot access this thread")
 
-        if before_id:
-            rows = self._db.fetch_all(
-                """SELECT * FROM thread_messages 
-                   WHERE thread_id = ? AND message_id < ?
-                   ORDER BY message_id DESC LIMIT ?""",
-                (thread_id, before_id, limit)
-            )
-        elif after_id:
-            rows = self._db.fetch_all(
-                """SELECT * FROM thread_messages 
-                   WHERE thread_id = ? AND message_id > ?
-                   ORDER BY message_id ASC LIMIT ?""",
-                (thread_id, after_id, limit)
-            )
-        else:
-            rows = self._db.fetch_all(
-                """SELECT * FROM thread_messages 
-                   WHERE thread_id = ?
-                   ORDER BY message_id DESC LIMIT ?""",
-                (thread_id, limit)
-            )
+        # Join with msg_messages to get actual content
+        query = """
+            SELECT tm.*, m.content, m.content_encrypted, m.author_id, m.created_at as message_created_at
+            FROM thread_messages tm
+            JOIN msg_messages m ON tm.message_id = m.id
+            WHERE tm.thread_id = ?
+        """
+        params: List[Any] = [thread_id]
 
-        return [dict(row) for row in rows]
+        if before_id:
+            query += " AND tm.message_id < ?"
+            params.append(before_id)
+            query += " ORDER BY tm.message_id DESC LIMIT ?"
+        elif after_id:
+            query += " AND tm.message_id > ?"
+            params.append(after_id)
+            query += " ORDER BY tm.message_id ASC LIMIT ?"
+        else:
+            query += " ORDER BY tm.message_id DESC LIMIT ?"
+        
+        params.append(limit)
+
+        rows = self._db.fetch_all(query, tuple(params))
+
+        # Handle message decryption if needed
+        from src.utils.encryption import decrypt_message
+        
+        results = []
+        for row in rows:
+            data = dict(row)
+            content = data.get("content", "")
+            
+            # Use decrypt_message helper which handles prefix detection
+            try:
+                data["content"] = decrypt_message(content, data["message_id"])
+            except Exception as e:
+                # If decryption fails, keep as is (might be plaintext or corrupted)
+                logger.debug(f"Failed to decrypt message {data['message_id']} in thread {thread_id}: {e}")
+                
+            results.append(data)
+
+        return results
 
     def get_message_count(self, thread_id: int) -> int:
         """Get the message count for a thread."""

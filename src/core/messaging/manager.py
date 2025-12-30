@@ -5,16 +5,15 @@ Handles all messaging operations with proper validation, permission checks,
 and database interactions.
 """
 
-import time
 import json
 from typing import Optional, List, Dict, Any, Tuple
 
 import utils.config as config
 import utils.logger as logger
+from ..base import BaseManager, SnowflakeID
 from src.utils.encryption import (
     encrypt_data,
     decrypt_data,
-    generate_snowflake_id,
     encrypt_message,
     decrypt_message,
     is_message_encrypted,
@@ -44,7 +43,6 @@ from .exceptions import (
     ParticipantLimitError,
     InvalidContentError,
     ContentTooLongError,
-    AttachmentError,
     AttachmentTooLargeError,
     AttachmentLimitError,
     InvalidRecipientError,
@@ -57,7 +55,7 @@ from .schema import create_tables
 from .content import validate_content
 
 
-class MessagingManager:
+class MessagingManager(BaseManager):
     """Core messaging manager handling all operations."""
 
     def __init__(self, db: Any, auth_module: Optional[Any] = None) -> None:
@@ -68,14 +66,13 @@ class MessagingManager:
             db: Database instance (must be connected)
             auth_module: Optional auth module for permission checks
         """
-        self._db = db
-        self._auth = auth_module
+        super().__init__(db, auth_module)
         self._config = self._load_config()
 
         # In-memory caches with TTL (reduces DB queries significantly)
-        self._user_settings_cache: Dict[int, Tuple[UserMessageSettings, float]] = {}
-        self._user_filter_cache: Dict[int, Tuple[ContentFilter, float]] = {}
-        self._participant_cache: Dict[Tuple[int, int], Tuple[bool, float]] = {}
+        self._user_settings_cache: Dict[SnowflakeID, Tuple[UserMessageSettings, float]] = {}
+        self._user_filter_cache: Dict[SnowflakeID, Tuple[ContentFilter, float]] = {}
+        self._participant_cache: Dict[Tuple[SnowflakeID, SnowflakeID], Tuple[bool, float]] = {}
         self._cache_ttl = 60.0  # 60 second cache TTL
 
         # Create tables
@@ -92,46 +89,29 @@ class MessagingManager:
         """Get value from cache if not expired."""
         if key in cache:
             value, expires = cache[key]
-            if time.time() < expires:
+            if (self._get_timestamp() / 1000.0) < expires:
                 return value
             del cache[key]
         return default
 
     def _cache_set(
-        self, cache: Dict[Any, Tuple[Any, float]], key: Any, value: Any
+        self,
+        cache: Dict[Any, Tuple[Any, float]],
+        key: Any,
+        value: Any,
     ) -> None:
         """Set value in cache with TTL."""
-        cache[key] = (value, time.time() + self._cache_ttl)
+        cache[key] = (value, (self._get_timestamp() / 1000.0) + self._cache_ttl)
 
     def _cache_invalidate(self, cache: Dict[Any, Tuple[Any, float]], key: Any) -> None:
         """Invalidate a cache entry."""
         cache.pop(key, None)
 
     def _load_config(self) -> Dict[str, Any]:
-        """Load messaging configuration."""
-        defaults = {
-            "max_message_length": 4000,
-            "max_group_participants": 100,
-            "max_attachment_size": 10485760,  # 10MB
-            "max_attachments_per_message": 10,
-            "dm_auto_create": True,
-            "encrypt_messages": True,
-            "encrypt_attachments": True,
-            "message_preview_length": 100,
-        }
+        """Load messaging configuration from global config."""
+        return config.get("messaging", {})
 
-        messaging_config = config.get("messaging", {})
-        return {**defaults, **messaging_config}
-
-    def _get_timestamp(self) -> int:
-        """Get current timestamp in milliseconds."""
-        return int(time.time() * 1000)
-
-    def _generate_id(self) -> int:
-        """Generate a new Snowflake ID."""
-        return generate_snowflake_id()
-
-    def _check_permission(self, user_id: int, permission: str) -> bool:
+    def _check_permission(self, user_id: SnowflakeID, permission: str) -> bool:
         """Check if user has a permission via auth module."""
         if not self._auth:
             return True  # No auth module, allow all
@@ -143,7 +123,7 @@ class MessagingManager:
     # === Conversations ===
 
     def create_dm(
-        self, user_id: int, recipient_id: int, auto_create: Optional[bool] = None
+        self, user_id: SnowflakeID, recipient_id: SnowflakeID, auto_create: Optional[bool] = None
     ) -> Conversation:
         """Create or get existing DM conversation."""
         if user_id == recipient_id:
@@ -227,7 +207,7 @@ class MessagingManager:
         return conversation
 
     def _get_existing_dm(
-        self, user_id: int, recipient_id: int
+        self, user_id: SnowflakeID, recipient_id: SnowflakeID
     ) -> Optional[Conversation]:
         """Get existing DM between two users."""
         user1, user2 = min(user_id, recipient_id), max(user_id, recipient_id)
@@ -242,7 +222,7 @@ class MessagingManager:
             return self.get_conversation(row["conversation_id"], user_id)
         return None
 
-    def get_or_create_notes(self, user_id: int) -> Conversation:
+    def get_or_create_notes(self, user_id: SnowflakeID) -> Conversation:
         """
         Get or create a personal notes conversation for a user.
 
@@ -307,9 +287,9 @@ class MessagingManager:
 
     def create_group(
         self,
-        owner_id: int,
+        owner_id: SnowflakeID,
         name: str,
-        participant_ids: Optional[List[int]] = None,
+        participant_ids: Optional[List[SnowflakeID]] = None,
         max_participants: Optional[int] = None,
     ) -> Conversation:
         """Create a group conversation."""
@@ -407,7 +387,7 @@ class MessagingManager:
         return conversation
 
     def create_server_channel_conversation(
-        self, server_id: int, channel_id: int
+        self, server_id: SnowflakeID, channel_id: SnowflakeID
     ) -> Conversation:
         """Create a conversation for a server channel."""
         now = self._get_timestamp()
@@ -439,8 +419,43 @@ class MessagingManager:
             encrypted=self._config.get("encrypt_messages", False),
         )
 
+    def create_thread_conversation(
+        self, server_id: SnowflakeID, channel_id: SnowflakeID, name: str
+    ) -> Conversation:
+        """Create a conversation for a thread."""
+        now = self._get_timestamp()
+        conv_id = self._generate_id()
+
+        self._db.execute(
+            """INSERT INTO msg_conversations 
+               (id, conversation_type, name, created_at, updated_at, encrypted, metadata)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                conv_id,
+                ConversationType.THREAD.value,
+                name,
+                now,
+                now,
+                1 if self._config.get("encrypt_messages") else 0,
+                json.dumps({"server_id": server_id, "channel_id": channel_id}),
+            ),
+        )
+
+        logger.debug(
+            f"Created thread conversation {conv_id} for thread '{name}'"
+        )
+
+        return Conversation(
+            id=conv_id,
+            conversation_type=ConversationType.THREAD,
+            name=name,
+            created_at=now,
+            updated_at=now,
+            encrypted=self._config.get("encrypt_messages", False),
+        )
+
     def get_conversation(
-        self, conversation_id: int, user_id: int
+        self, conversation_id: SnowflakeID, user_id: SnowflakeID
     ) -> Optional[Conversation]:
         """Get a conversation by ID if user has access."""
         # Check access
@@ -462,9 +477,9 @@ class MessagingManager:
 
     def get_conversations(
         self,
-        user_id: int,
+        user_id: SnowflakeID,
         limit: int = 50,
-        before_id: Optional[int] = None,
+        before_id: Optional[SnowflakeID] = None,
         conversation_type: Optional[ConversationType] = None,
     ) -> List[Conversation]:
         """Get user's conversations with pagination."""
@@ -495,8 +510,8 @@ class MessagingManager:
 
     def update_conversation(
         self,
-        user_id: int,
-        conversation_id: int,
+        user_id: SnowflakeID,
+        conversation_id: SnowflakeID,
         name: Optional[str] = None,
         max_participants: Optional[int] = None,
     ) -> Conversation:
@@ -556,7 +571,7 @@ class MessagingManager:
             )
         return conversation
 
-    def delete_conversation(self, user_id: int, conversation_id: int) -> bool:
+    def delete_conversation(self, user_id: SnowflakeID, conversation_id: SnowflakeID) -> bool:
         """Delete a conversation (soft delete)."""
         conv = self.get_conversation(conversation_id, user_id)
         if not conv:
@@ -584,7 +599,7 @@ class MessagingManager:
         logger.debug(f"Deleted conversation {conversation_id}")
         return True
 
-    def leave_conversation(self, user_id: int, conversation_id: int) -> bool:
+    def leave_conversation(self, user_id: SnowflakeID, conversation_id: SnowflakeID) -> bool:
         """Leave a conversation."""
         conv = self.get_conversation(conversation_id, user_id)
         if not conv:
@@ -649,9 +664,9 @@ class MessagingManager:
 
     def add_participant(
         self,
-        user_id: int,
-        conversation_id: int,
-        participant_id: int,
+        user_id: SnowflakeID,
+        conversation_id: SnowflakeID,
+        participant_id: SnowflakeID,
         role: ParticipantRole = ParticipantRole.MEMBER,
     ) -> Participant:
         """Add a participant to a group conversation."""
@@ -716,7 +731,7 @@ class MessagingManager:
         return result
 
     def remove_participant(
-        self, user_id: int, conversation_id: int, participant_id: int
+        self, user_id: SnowflakeID, conversation_id: SnowflakeID, participant_id: SnowflakeID
     ) -> bool:
         """Remove a participant from a group conversation."""
         conv = self.get_conversation(conversation_id, user_id)
@@ -771,9 +786,9 @@ class MessagingManager:
 
     def update_participant_role(
         self,
-        user_id: int,
-        conversation_id: int,
-        participant_id: int,
+        user_id: SnowflakeID,
+        conversation_id: SnowflakeID,
+        participant_id: SnowflakeID,
         role: ParticipantRole,
     ) -> Participant:
         """Update a participant's role."""
@@ -814,7 +829,7 @@ class MessagingManager:
         assert result is not None  # Should exist since we just updated it
         return result
 
-    def get_participants(self, user_id: int, conversation_id: int) -> List[Participant]:
+    def get_participants(self, user_id: SnowflakeID, conversation_id: SnowflakeID) -> List[Participant]:
         """Get all participants in a conversation."""
         if not self._is_participant(conversation_id, user_id):
             raise ConversationAccessDeniedError(
@@ -828,10 +843,23 @@ class MessagingManager:
 
         return [self._row_to_participant(row) for row in rows]
 
+    def get_participant_ids(self, conversation_id: SnowflakeID) -> List[SnowflakeID]:
+        """
+        Get all participant user IDs in a conversation (internal use).
+        
+        This bypasses permission checks and should only be used by core system 
+        components like the event router.
+        """
+        rows = self._db.fetch_all(
+            "SELECT user_id FROM msg_participants WHERE conversation_id = ?",
+            (conversation_id,),
+        )
+        return [row["user_id"] for row in rows]
+
     def mute_conversation(
         self,
-        user_id: int,
-        conversation_id: int,
+        user_id: SnowflakeID,
+        conversation_id: SnowflakeID,
         muted: bool = True,
         until: Optional[int] = None,
     ) -> bool:
@@ -848,7 +876,7 @@ class MessagingManager:
 
         return True
 
-    def _is_participant(self, conversation_id: int, user_id: int) -> bool:
+    def _is_participant(self, conversation_id: SnowflakeID, user_id: SnowflakeID) -> bool:
         """Check if user is a participant in conversation (cached)."""
         cache_key = (conversation_id, user_id)
 
@@ -904,7 +932,7 @@ class MessagingManager:
         return False
 
     def _get_participant(
-        self, conversation_id: int, user_id: int
+        self, conversation_id: SnowflakeID, user_id: SnowflakeID
     ) -> Optional[Participant]:
         """Get participant record."""
         row = self._db.fetch_one(
@@ -917,13 +945,14 @@ class MessagingManager:
 
     def send_message(
         self,
-        user_id: int,
-        conversation_id: int,
+        user_id: SnowflakeID,
+        conversation_id: SnowflakeID,
         content: str,
         message_type: MessageType = MessageType.TEXT,
-        reply_to_id: Optional[int] = None,
+        reply_to_id: Optional[SnowflakeID] = None,
         attachments: Optional[List[Dict[str, Any]]] = None,
         embeds: Optional[List[Dict[str, Any]]] = None,
+        webhook_id: Optional[SnowflakeID] = None,
     ) -> Message:
         """Send a message to a conversation."""
         # Check access
@@ -1010,8 +1039,8 @@ class MessagingManager:
             self._db.execute(
                 """INSERT INTO msg_messages 
                    (id, conversation_id, author_id, content, content_encrypted, message_type, 
-                    created_at, updated_at, reply_to_id, metadata)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    created_at, updated_at, reply_to_id, metadata, webhook_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     msg_id,
                     conversation_id,
@@ -1023,6 +1052,7 @@ class MessagingManager:
                     now,
                     reply_to_id,
                     json.dumps(metadata) if metadata else None,
+                    webhook_id,
                 ),
                 auto_commit=False,
             )
@@ -1101,7 +1131,7 @@ class MessagingManager:
             attachments=attachment_list,
         )
 
-    def edit_message(self, user_id: int, message_id: int, content: str) -> Message:
+    def edit_message(self, user_id: SnowflakeID, message_id: SnowflakeID, content: str) -> Message:
         """Edit a message (own messages only)."""
         msg = self._get_message_raw(message_id)
         if not msg:
@@ -1147,7 +1177,7 @@ class MessagingManager:
         return result
 
     def delete_message(
-        self, user_id: int, message_id: int, hard_delete: bool = False
+        self, user_id: SnowflakeID, message_id: SnowflakeID, hard_delete: bool = False
     ) -> bool:
         """Delete a message."""
         msg = self._get_message_raw(message_id)
@@ -1182,7 +1212,7 @@ class MessagingManager:
 
         return True
 
-    def get_message(self, user_id: int, message_id: int) -> Optional[Message]:
+    def get_message(self, user_id: SnowflakeID, message_id: SnowflakeID) -> Optional[Message]:
         """Get a single message by ID."""
         msg = self._get_message_raw(message_id)
         if not msg:
@@ -1200,11 +1230,11 @@ class MessagingManager:
 
     def get_messages(
         self,
-        user_id: int,
-        conversation_id: int,
+        user_id: SnowflakeID,
+        conversation_id: SnowflakeID,
         limit: int = 50,
-        before_id: Optional[int] = None,
-        after_id: Optional[int] = None,
+        before_id: Optional[SnowflakeID] = None,
+        after_id: Optional[SnowflakeID] = None,
     ) -> List[Message]:
         """Get messages from a conversation with cursor pagination."""
         if not self._is_participant(conversation_id, user_id):
@@ -1243,15 +1273,15 @@ class MessagingManager:
             for msg in messages:
                 msg.attachments = attachments_map.get(msg.id, [])
                 stats = status_map.get(msg.id, {})
-                msg.status = stats.get("status")
+                msg.status = stats.get("status", MessageStatusType.SENT)
                 msg.delivery_count = stats.get("delivery_count", 0)
                 msg.read_count = stats.get("read_count", 0)
 
         return messages
 
     def _get_attachments_batch(
-        self, message_ids: List[int]
-    ) -> Dict[int, List[Attachment]]:
+        self, message_ids: List[SnowflakeID]
+    ) -> Dict[SnowflakeID, List[Attachment]]:
         """Batch load attachments for multiple messages (avoids N+1 queries)."""
         if not message_ids:
             return {}
@@ -1262,7 +1292,7 @@ class MessagingManager:
             tuple(message_ids),
         )
 
-        result: Dict[int, List[Attachment]] = {mid: [] for mid in message_ids}
+        result: Dict[SnowflakeID, List[Attachment]] = {mid: [] for mid in message_ids}
         for row in rows:
             att = self._row_to_attachment(row)
             result[att.message_id].append(att)
@@ -1270,8 +1300,8 @@ class MessagingManager:
         return result
 
     def _get_message_statuses_batch(
-        self, user_id: int, message_ids: List[int]
-    ) -> Dict[int, Dict[str, Any]]:
+        self, user_id: SnowflakeID, message_ids: List[SnowflakeID]
+    ) -> Dict[SnowflakeID, Dict[str, Any]]:
         """Batch load message statuses and counts (avoids N+1 queries)."""
         if not message_ids:
             return {}
@@ -1309,14 +1339,14 @@ class MessagingManager:
         for mid in message_ids:
             stats = counts_map.get(mid, {"delivery_count": 0, "read_count": 0})
             result[mid] = {
-                "status": status_map.get(mid),
+                "status": status_map.get(mid, MessageStatusType.SENT),
                 "delivery_count": stats["delivery_count"],
                 "read_count": stats["read_count"],
             }
 
         return result
 
-    def pin_message(self, user_id: int, message_id: int) -> bool:
+    def pin_message(self, user_id: SnowflakeID, message_id: SnowflakeID) -> bool:
         """Pin a message in its conversation."""
         msg = self._get_message_raw(message_id)
         if not msg:
@@ -1362,7 +1392,7 @@ class MessagingManager:
 
         return True
 
-    def unpin_message(self, user_id: int, message_id: int) -> bool:
+    def unpin_message(self, user_id: SnowflakeID, message_id: SnowflakeID) -> bool:
         """Unpin a message."""
         msg = self._get_message_raw(message_id)
         if not msg:
@@ -1383,7 +1413,7 @@ class MessagingManager:
         self._db.execute("DELETE FROM msg_pinned WHERE message_id = ?", (message_id,))
         return True
 
-    def get_pinned_messages(self, user_id: int, conversation_id: int) -> List[Message]:
+    def get_pinned_messages(self, user_id: SnowflakeID, conversation_id: SnowflakeID) -> List[Message]:
         """Get all pinned messages in a conversation."""
         if not self._is_participant(conversation_id, user_id):
             raise ConversationAccessDeniedError(
@@ -1400,7 +1430,7 @@ class MessagingManager:
 
         return [self._row_to_message(row) for row in rows]
 
-    def _get_message_raw(self, message_id: int) -> Optional[Dict[str, Any]]:
+    def _get_message_raw(self, message_id: SnowflakeID) -> Optional[Dict[str, Any]]:
         """Get raw message row from database."""
         return self._db.fetch_one(
             "SELECT * FROM msg_messages WHERE id = ?", (message_id,)
@@ -1408,7 +1438,7 @@ class MessagingManager:
 
     # === Message Status ===
 
-    def mark_delivered(self, user_id: int, message_ids: List[int]) -> int:
+    def mark_delivered(self, user_id: SnowflakeID, message_ids: List[SnowflakeID]) -> int:
         """Mark messages as delivered."""
         count = 0
         now = self._get_timestamp()
@@ -1456,7 +1486,10 @@ class MessagingManager:
         return count
 
     def mark_read(
-        self, user_id: int, conversation_id: int, up_to_message_id: Optional[int] = None
+        self,
+        user_id: SnowflakeID,
+        conversation_id: SnowflakeID,
+        up_to_message_id: Optional[SnowflakeID] = None,
     ) -> int:
         """Mark messages as read (optimized batch operation)."""
         if not self._is_participant(conversation_id, user_id):
@@ -1468,7 +1501,7 @@ class MessagingManager:
 
         # Build the message filter
         msg_filter = "conversation_id = ? AND author_id != ? AND deleted = 0"
-        params: List[int] = [conversation_id, user_id]
+        params: List[SnowflakeID] = [conversation_id, user_id]
 
         if up_to_message_id:
             msg_filter += " AND id <= ?"
@@ -1538,8 +1571,8 @@ class MessagingManager:
         return count
 
     def get_unread_count(
-        self, user_id: int, conversation_id: Optional[int] = None
-    ) -> Dict[int, int]:
+        self, user_id: SnowflakeID, conversation_id: Optional[SnowflakeID] = None
+    ) -> Dict[SnowflakeID, int]:
         """Get unread message counts (optimized batch query)."""
         result = {}
 
@@ -1588,7 +1621,7 @@ class MessagingManager:
 
         return result
 
-    def get_message_status(self, user_id: int, message_id: int) -> List[MessageStatus]:
+    def get_message_status(self, user_id: SnowflakeID, message_id: SnowflakeID) -> List[MessageStatus]:
         """Get delivery/read status for a message."""
         msg = self._get_message_raw(message_id)
         if not msg:
@@ -1607,7 +1640,7 @@ class MessagingManager:
 
     # === Content Filtering ===
 
-    def get_user_filter_settings(self, user_id: int) -> ContentFilter:
+    def get_user_filter_settings(self, user_id: SnowflakeID) -> ContentFilter:
         """Get user's content filter settings (cached)."""
         # Check cache first
         cached = self._cache_get(self._user_filter_cache, user_id)
@@ -1640,7 +1673,7 @@ class MessagingManager:
 
     def update_user_filter_settings(
         self,
-        user_id: int,
+        user_id: SnowflakeID,
         profanity_filter: Optional[bool] = None,
         nsfw_filter: Optional[bool] = None,
         spoiler_click_to_reveal: Optional[bool] = None,
@@ -1706,7 +1739,7 @@ class MessagingManager:
 
     # === User Message Settings ===
 
-    def get_user_message_settings(self, user_id: int) -> UserMessageSettings:
+    def get_user_message_settings(self, user_id: SnowflakeID) -> UserMessageSettings:
         """Get user's message settings (cached)."""
         # Check cache first
         cached = self._cache_get(self._user_settings_cache, user_id)
@@ -1737,7 +1770,7 @@ class MessagingManager:
 
     def update_user_message_settings(
         self,
-        user_id: int,
+        user_id: SnowflakeID,
         allow_dms_from: Optional[str] = None,
         auto_create_dms: Optional[bool] = None,
         max_message_length: Optional[int] = None,
@@ -1832,8 +1865,8 @@ class MessagingManager:
 
     def add_attachment(
         self,
-        user_id: int,
-        message_id: int,
+        user_id: SnowflakeID,
+        message_id: SnowflakeID,
         filename: str,
         content_type: str,
         size: int,
@@ -1907,14 +1940,14 @@ class MessagingManager:
 
     def _add_attachment_no_commit(
         self,
-        user_id: int,
-        message_id: int,
+        user_id: SnowflakeID,
+        message_id: SnowflakeID,
         filename: str,
         content_type: str,
         size: int,
         url: str,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> int:
+    ) -> SnowflakeID:
         """Add an attachment without committing (for use in transactions)."""
         now = self._get_timestamp()
         att_id = self._generate_id()
@@ -1944,7 +1977,7 @@ class MessagingManager:
         )
         return att_id
 
-    def get_attachments(self, user_id: int, message_id: int) -> List[Attachment]:
+    def get_attachments(self, user_id: SnowflakeID, message_id: SnowflakeID) -> List[Attachment]:
         """Get attachments for a message."""
         msg = self._get_message_raw(message_id)
         if not msg:
@@ -1960,7 +1993,7 @@ class MessagingManager:
 
         return [self._row_to_attachment(row) for row in rows]
 
-    def delete_attachment(self, user_id: int, attachment_id: int) -> bool:
+    def delete_attachment(self, user_id: SnowflakeID, attachment_id: SnowflakeID) -> bool:
         """Delete an attachment."""
         att = self._get_attachment(attachment_id)
         if not att:
@@ -1976,7 +2009,7 @@ class MessagingManager:
 
         return True
 
-    def _get_attachment(self, attachment_id: int) -> Optional[Attachment]:
+    def _get_attachment(self, attachment_id: SnowflakeID) -> Optional[Attachment]:
         """Get attachment by ID."""
         row = self._db.fetch_one(
             "SELECT * FROM msg_attachments WHERE id = ? AND deleted = 0",
@@ -1988,7 +2021,7 @@ class MessagingManager:
 
     def send_system_message(
         self,
-        conversation_id: int,
+        conversation_id: SnowflakeID,
         content: str,
         event_type: str,
         metadata: Optional[Dict[str, Any]] = None,
@@ -2098,18 +2131,18 @@ class MessagingManager:
             conversation_id=row["conversation_id"],
             author_id=row["author_id"],
             content=content,
-            content_encrypted=row["content_encrypted"],
-            message_type=MessageType(row["message_type"]),
+            content_encrypted=row.get("content_encrypted"),
+            message_type=MessageType(row.get("message_type", "text")),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
-            edited=bool(row["edited"]),
-            deleted=bool(row["deleted"]),
-            deleted_at=row["deleted_at"],
-            reply_to_id=row["reply_to_id"],
+            edited=bool(row.get("edited", False)),
+            deleted=bool(row.get("deleted", False)),
+            deleted_at=row.get("deleted_at"),
+            reply_to_id=row.get("reply_to_id"),
             pinned=pin_row is not None,
             pinned_at=pin_row["pinned_at"] if pin_row else None,
             pinned_by=pin_row["pinned_by"] if pin_row else None,
-            metadata=json.loads(row["metadata"]) if row["metadata"] else None,
+            metadata=json.loads(row["metadata"]) if row.get("metadata") else None,
         )
 
     def _row_to_message_status(self, row: Dict[str, Any]) -> MessageStatus:
