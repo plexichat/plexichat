@@ -122,7 +122,11 @@ class OpcodeHandler:
         if not validate_intents(intents):
             return None, None, int(GatewayCloseCode.INVALID_INTENTS)
 
-        user_id = await self._verify_token(token)
+        user_id = await self._verify_token(
+            token,
+            ip_address=connection.websocket.client.host if connection.websocket.client else None,
+            user_agent=connection.properties.get("browser")
+        )
         if user_id is None:
             return None, None, int(GatewayCloseCode.AUTHENTICATION_FAILED)
 
@@ -463,13 +467,20 @@ class OpcodeHandler:
 
         return None, None, None
 
-    async def _verify_token(self, token: str) -> Optional[int]:
+    async def _verify_token(
+        self,
+        token: str,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> Optional[int]:
         """Verify a token and return user ID."""
         if not self._auth:
             return None
 
         try:
-            token_info: TokenInfo = self._auth.verify_token(token)
+            token_info: TokenInfo = self._auth.verify_token(
+                token, ip_address, user_agent
+            )
             return token_info.user_id
         except Exception:
             return None

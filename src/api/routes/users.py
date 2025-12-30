@@ -112,7 +112,6 @@ async def update_current_user(
     Updates the authenticated user's profile fields.
     """
     auth = api.get_auth()
-    db = api.get_db()
     if not auth:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module not available"}})
 
@@ -137,47 +136,15 @@ async def update_current_user(
         if "current_password" in update_data:
             del update_data["current_password"]
 
-        # Update profile fields directly in database
-        if update_data and db:
-            allowed_fields = {"username", "email"}
-            updates = []
-            params = []
-
-            for field, value in update_data.items():
-                if field in allowed_fields and value is not None:
-                    # Check for uniqueness of username/email
-                    if field == "username":
-                        existing = db.fetch_one(
-                            "SELECT id FROM auth_users WHERE username = ? AND id != ?",
-                            (value, current_user.user_id)
-                        )
-                        if existing:
-                            raise HTTPException(
-                                status_code=409,
-                                detail={"error": {"code": 409, "message": "Username already taken"}}
-                            )
-                    elif field == "email":
-                        existing = db.fetch_one(
-                            "SELECT id FROM auth_users WHERE email = ? AND id != ?",
-                            (value, current_user.user_id)
-                        )
-                        if existing:
-                            raise HTTPException(
-                                status_code=409,
-                                detail={"error": {"code": 409, "message": "Email already taken"}}
-                            )
-
-                    updates.append(f"{field} = ?")
-                    params.append(value)
-
-            if updates:
-                params.append(current_user.user_id)
-                db.execute(
-                    f"UPDATE auth_users SET {', '.join(updates)} WHERE id = ?",
-                    tuple(params)
-                )
-                # Invalidate user cache
-                invalidate_pattern(f"user:*{current_user.user_id}*")
+        # Update profile fields via auth module (replaces direct database access)
+        if update_data:
+            auth.update_user(
+                current_user.user_id,
+                username=update_data.get("username"),
+                email=update_data.get("email"),
+            )
+            # Invalidate user cache
+            invalidate_pattern(f"user:*{current_user.user_id}*")
 
         user = auth.get_user(current_user.user_id)
         if not user:
@@ -405,25 +372,8 @@ async def search_user_by_username(
 
     try:
         # Try to find user by username
-        if hasattr(auth, 'get_user_by_username'):
-            user = auth.get_user_by_username(username)
-        else:
-            # Fallback: search in database directly
-            db = api.get_db()
-            if db:
-                row = db.fetch_one(
-                    "SELECT id, username, avatar_url, created_at FROM auth_users WHERE username = ? COLLATE NOCASE",
-                    (username,)
-                )
-                if row:
-                    return {
-                        "id": str(row["id"]),
-                        "username": row["username"],
-                        "avatar_url": row.get("avatar_url"),
-                        "created_at": row.get("created_at"),
-                    }
-            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
-
+        user = auth.get_user_by_username(username)
+        
         if not user:
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
 

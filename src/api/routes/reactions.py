@@ -24,49 +24,18 @@ async def _dispatch_reaction_event(event_type: str, user_id: int, message_id: in
             return
 
         dispatcher = get_dispatcher()
+        reactions = api.get_reactions()
 
-        # Get conversation participants to dispatch to
-        db = api.get_db()
-        if not db:
+        if not reactions:
             return
 
-        # Get the message to find conversation_id
-        msg_row = db.fetch_one(
-            "SELECT conversation_id FROM msg_messages WHERE id = ?",
-            (message_id,)
-        )
-        if not msg_row:
+        # Get the conversation ID from the message
+        conversation_id = reactions.get_conversation_id_from_message(message_id)
+        if not conversation_id:
             return
 
-        conversation_id = msg_row["conversation_id"]
-
-        # Get all participants in the conversation
-        participant_rows = db.fetch_all(
-            "SELECT user_id FROM msg_participants WHERE conversation_id = ?",
-            (conversation_id,)
-        )
-        participant_ids = [row["user_id"] for row in participant_rows]
-
-        # Also check if this is a server channel and get server members
-        import json
-        conv_row = db.fetch_one(
-            "SELECT metadata FROM msg_conversations WHERE id = ?",
-            (conversation_id,)
-        )
-        if conv_row and conv_row.get("metadata"):
-            try:
-                metadata = json.loads(conv_row["metadata"]) if isinstance(conv_row["metadata"], str) else conv_row["metadata"]
-                server_id = metadata.get("server_id") if isinstance(metadata, dict) else None
-                if server_id:
-                    member_rows = db.fetch_all(
-                        "SELECT user_id FROM srv_members WHERE server_id = ?",
-                        (server_id,)
-                    )
-                    for row in member_rows:
-                        if row["user_id"] not in participant_ids:
-                            participant_ids.append(row["user_id"])
-            except (json.JSONDecodeError, TypeError):
-                pass
+        # Get all participants in the conversation (including server members)
+        participant_ids = reactions.get_participant_ids(conversation_id)
 
         if not participant_ids:
             return

@@ -6,6 +6,7 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, ConfigDict
 
 from .common import SnowflakeID
+from .reactions import ReactionResponse
 
 
 class AttachmentRequest(BaseModel):
@@ -64,6 +65,9 @@ class MessageResponse(BaseModel):
     status: Optional[str] = Field(None, description="Status for the current user (sent, delivered, read)")
     delivery_count: int = Field(0, description="Number of users who received the message")
     read_count: int = Field(0, description="Number of users who read the message")
+    author_username: Optional[str] = Field(None, description="Author's username")
+    author_avatar_url: Optional[str] = Field(None, description="Author's avatar URL")
+    reactions: List[ReactionResponse] = Field(default_factory=list, description="Message reactions")
 
 class MessagingSettingsResponse(BaseModel):
     """User messaging settings response."""

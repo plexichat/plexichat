@@ -12,8 +12,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 import utils.logger as logger
-from src.api.dependencies import get_db, get_current_user
-
+from src.api.dependencies import get_current_user
 
 router = APIRouter(prefix="/media", tags=["Media"])
 
@@ -78,8 +77,7 @@ class CompressionStatusResponse(BaseModel):
 async def report_content_hash(
     report: HashReportRequest,
     request: Request,
-    user = Depends(get_current_user),
-    db = Depends(get_db)
+    user = Depends(get_current_user)
 ):
     """
     Report a file hash for content moderation.
@@ -121,8 +119,7 @@ async def report_content_hash(
 @router.get("/hash/{hash_value}/status")
 async def check_hash_status(
     hash_value: str,
-    user = Depends(get_current_user),
-    db = Depends(get_db)
+    user = Depends(get_current_user)
 ):
     """Check if a hash is blocked."""
     from src.core import media
@@ -141,8 +138,7 @@ async def check_hash_status(
 @router.post("/upload/session", response_model=ChunkedUploadSessionResponse)
 async def create_upload_session(
     session_request: ChunkedUploadSessionRequest,
-    user = Depends(get_current_user),
-    db = Depends(get_db)
+    user = Depends(get_current_user)
 ):
     """
     Create a chunked upload session for large files.
@@ -179,8 +175,7 @@ async def upload_chunk(
     chunk_index: int,
     chunk_checksum: Optional[str] = None,
     file: UploadFile = File(...),
-    user = Depends(get_current_user),
-    db = Depends(get_db)
+    user = Depends(get_current_user)
 ):
     """
     Upload a chunk to an existing upload session.
@@ -217,8 +212,7 @@ async def upload_chunk(
 @router.post("/upload/complete/{session_id}")
 async def complete_upload_session(
     session_id: str,
-    user = Depends(get_current_user),
-    db = Depends(get_db)
+    user = Depends(get_current_user)
 ):
     """
     Complete a chunked upload session and process the file.
@@ -250,8 +244,7 @@ async def complete_upload_session(
 @router.delete("/upload/session/{session_id}")
 async def cancel_upload_session(
     session_id: str,
-    user = Depends(get_current_user),
-    db = Depends(get_db)
+    user = Depends(get_current_user)
 ):
     """Cancel an upload session and clean up resources."""
     from src.core import media
@@ -269,8 +262,7 @@ async def cancel_upload_session(
 
 @router.get("/upload/sessions")
 async def get_user_upload_sessions(
-    user = Depends(get_current_user),
-    db = Depends(get_db)
+    user = Depends(get_current_user)
 ):
     """Get all active upload sessions for the current user."""
 
@@ -302,8 +294,7 @@ async def get_user_upload_sessions(
 
 @router.get("/compression/status", response_model=CompressionStatusResponse)
 async def get_compression_status(
-    user = Depends(get_current_user),
-    db = Depends(get_db)
+    user = Depends(get_current_user)
 ):
     """Get compression system status."""
     from src.core import media
