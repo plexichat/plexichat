@@ -180,7 +180,7 @@ class EncryptionManager:
         Returns:
             bool: True if rotation occurred.
         """
-        rotation_days = config.get("encryption", {}).get("key_rotation_days", 90)
+        rotation_days = config.get("encryption.key_rotation_days", 90)
         if rotation_days <= 0 and not force:
             return False
 

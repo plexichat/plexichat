@@ -406,9 +406,9 @@ Get server password policy (no authentication required).
 
 | Setting | Default |
 |---------|---------|
-| Max concurrent sessions | 3 |
-| Access token expiration | 30 minutes |
-| Refresh token expiration | 7 days |
+| Max sessions per user | 10 |
+| Session expiration | 7 days (168 hours) |
+| Extend on activity | Yes |
 
 ## Account Lockout
 

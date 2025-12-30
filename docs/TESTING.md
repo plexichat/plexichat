@@ -336,7 +336,6 @@ The `.gitlab-ci.yml` is configured with three stages:
 1. **Lint** (fast feedback)
    - Ruff linting
    - Format checking
-   - Type checking (Pyright)
 
 2. **Security** (critical checks)
    - Secret detection (MUST pass)

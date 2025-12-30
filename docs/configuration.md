@@ -85,25 +85,23 @@ The database module automatically handles differences between SQLite and Postgre
 
 ```yaml
 authentication:
-  jwt:
-    secret_key: CHANGE_THIS_IN_PRODUCTION  # MUST change in production
-    algorithm: HS256
-    access_token_expire_minutes: 30
-    refresh_token_expire_days: 7
+  accounts:
+    allow_registration: true
+    require_email_verification: false
+    max_bots_per_user: 5
   
-  password:
-    min_length: 8
-    require_uppercase: true
-    require_lowercase: true
-    require_digit: true
-    require_special: true
+  sessions:
+    token_bytes: 32
+    expire_hours: 168
+    max_per_user: 10
+    extend_on_activity: true
   
-  account_lockout:
+  security:
     max_failed_attempts: 5
     lockout_duration_minutes: 15
-  
-  session:
-    max_concurrent_sessions: 3
+    token_cache_ttl: 30
+    token_verify_rate_limit: 100
+    token_binding: false
 ```
 
 ### Encryption
@@ -329,6 +327,25 @@ voice:
   log_quality_metrics: true
 ```
 
+### Self-Test
+
+Automated API validation suite.
+
+```yaml
+selftest:
+  enabled: false          # Allow running self-tests
+  run_on_startup: false   # Run test suite once when server starts
+  exit_on_failure: false  # Exit server process if any test fails
+  capture_stack_traces: true  # Capture server tracebacks for localhost failures
+  retry_on_failure: true  # Retry failed endpoints with debug headers
+  excluded_endpoints:     # Endpoints to skip
+    - "/api/v1/auth/logout"
+  test_user:              # User to create for testing
+    username: "selftest_admin"
+    email: "selftest@internal.local"
+    password: "SelfTest_Password_123!"
+```
+
 ## Rate Limits
 
 Rate limits are configured per-endpoint. See [Rate Limits](rate-limits.md) for details.
@@ -337,14 +354,7 @@ Rate limits are configured per-endpoint. See [Rate Limits](rate-limits.md) for d
 
 Before deploying to production:
 
-1. **Change JWT secret key**
-   ```yaml
-   authentication:
-     jwt:
-       secret_key: <generate-secure-random-key>
-   ```
-
-2. **Disable debug mode**
+1. **Disable debug mode**
    ```yaml
    api:
      debug: false
@@ -417,7 +427,6 @@ On startup, the server checks for default/placeholder security keys and logs war
 | `HOST` | `server.host` | Server bind address |
 | `PORT` | `server.port` | Server port |
 | `DATABASE_URL` | `database.*` | Full database URL (overrides config) |
-| `JWT_SECRET` | `authentication.jwt.secret_key` | JWT signing key |
 | `LOG_LEVEL` | `logging.level` | Log level (DEBUG, INFO, WARNING, ERROR) |
 
 ### Database URL Format
