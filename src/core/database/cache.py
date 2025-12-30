@@ -63,18 +63,18 @@ def _generate_cache_key(prefix: str, *args, **kwargs) -> str:
     for arg in args:
         if isinstance(arg, (dict, list)):
             key_parts.append(
-                hashlib.md5(json.dumps(arg, sort_keys=True).encode()).hexdigest()[:8]
+                f"{type(arg).__name__}:{hashlib.md5(json.dumps(arg, sort_keys=True).encode()).hexdigest()[:8]}"
             )
         else:
-            key_parts.append(str(arg))
+            key_parts.append(f"{type(arg).__name__}:{arg}")
 
     for k, v in sorted(kwargs.items()):
         if isinstance(v, (dict, list)):
             key_parts.append(
-                f"{k}:{hashlib.md5(json.dumps(v, sort_keys=True).encode()).hexdigest()[:8]}"
+                f"{k}:{type(v).__name__}:{hashlib.md5(json.dumps(v, sort_keys=True).encode()).hexdigest()[:8]}"
             )
         else:
-            key_parts.append(f"{k}:{v}")
+            key_parts.append(f"{k}:{type(v).__name__}:{v}")
 
     return ":".join(key_parts)
 

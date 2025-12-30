@@ -16,8 +16,26 @@ def run_all_migrations(db: Any) -> None:
 
     _migrate_messaging_webhook_id(db)
     _migrate_media_deduplication_v2(db)
+    _migrate_threads_conversation_id(db)
 
     logger.info("All migrations completed.")
+
+
+def _migrate_threads_conversation_id(db: Any) -> None:
+    """Add conversation_id column to thread_threads if missing."""
+    try:
+        if not db.table_exists("thread_threads"):
+            return
+
+        if not _column_exists(db, "thread_threads", "conversation_id"):
+            logger.info("Migration: Adding conversation_id to thread_threads")
+            db.execute("ALTER TABLE thread_threads ADD COLUMN conversation_id BIGINT")
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_thread_conversation ON thread_threads(conversation_id)"
+            )
+            logger.info("Migration: conversation_id added successfully")
+    except Exception as e:
+        logger.error(f"Migration failed (thread_conversation_id): {e}")
 
 
 def _migrate_messaging_webhook_id(db: Any) -> None:

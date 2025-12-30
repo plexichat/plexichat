@@ -7,6 +7,7 @@ All models are dataclasses for clean, immutable data structures.
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Any
 from enum import Enum
+from src.core.base import SnowflakeID
 
 
 class AccountType(Enum):
@@ -56,7 +57,7 @@ class AuditEventType(Enum):
 class User:
     """User account model."""
 
-    id: int
+    id: SnowflakeID
     account_type: AccountType
     username: str
     email: Optional[str]
@@ -81,9 +82,9 @@ class User:
 class Session:
     """User session model."""
 
-    id: int
-    user_id: int
-    device_id: Optional[int]
+    id: SnowflakeID
+    user_id: SnowflakeID
+    device_id: Optional[SnowflakeID]
     ip_address: Optional[str]
     user_agent: Optional[str]
     created_at: int
@@ -100,8 +101,8 @@ class Session:
 class Bot:
     """Bot account model."""
 
-    id: int
-    owner_id: int
+    id: SnowflakeID
+    owner_id: SnowflakeID
     username: str
     display_name: str
     permissions: Dict[str, bool]
@@ -117,8 +118,8 @@ class Bot:
 class Device:
     """Known device model."""
 
-    id: int
-    user_id: int
+    id: SnowflakeID
+    user_id: SnowflakeID
     fingerprint: str
     name: Optional[str]
     device_type: Optional[str]
@@ -130,8 +131,8 @@ class Device:
 class KnownIP:
     """Known IP address model."""
 
-    id: int
-    user_id: int
+    id: SnowflakeID
+    user_id: SnowflakeID
     ip_address: str
     first_seen_at: int
     last_seen_at: int
@@ -141,11 +142,11 @@ class KnownIP:
 class AuditEntry:
     """Audit log entry model."""
 
-    id: int
-    user_id: Optional[int]
+    id: SnowflakeID
+    user_id: Optional[SnowflakeID]
     event_type: AuditEventType
     ip_address: Optional[str]
-    device_id: Optional[int]
+    device_id: Optional[SnowflakeID]
     timestamp: int
     details: Optional[Dict[str, Any]]
     success: bool
@@ -157,9 +158,9 @@ class TokenInfo:
 
     valid: bool
     token_type: str  # "user" or "bot"
-    account_id: int  # User ID or Bot ID
-    user_id: int  # Always the human user (for bots, the owner)
-    session_id: Optional[int]  # Only for user tokens
+    account_id: SnowflakeID  # User ID or Bot ID
+    user_id: SnowflakeID  # Always the human user (for bots, the owner)
+    session_id: Optional[SnowflakeID]  # Only for user tokens
     permissions: Dict[str, bool]
     rate_limit_tier: str
     expires_at: Optional[int]
@@ -215,8 +216,8 @@ class PasswordValidation:
 class EmailToken:
     """Email verification/reset token model."""
 
-    id: int
-    user_id: int
+    id: SnowflakeID
+    user_id: SnowflakeID
     token_type: str  # 'verify_email' or 'reset_password'
     created_at: int
     expires_at: int
@@ -231,11 +232,11 @@ class EmailToken:
 class TwoFactorChallenge:
     """Temporary 2FA challenge during login."""
 
-    id: int
-    user_id: int
+    id: SnowflakeID
+    user_id: SnowflakeID
     created_at: int
     expires_at: int
-    device_id: Optional[int]
+    device_id: Optional[SnowflakeID]
     ip_address: Optional[str]
     user_agent: Optional[str]
     used: bool = False

@@ -48,12 +48,17 @@ class Database:
 
     def __init__(self):
         """Initialize the database manager with configuration."""
-        self.config = config.get("database")
-        if not self.config:
-            raise ValueError(
-                "Database configuration not found. Ensure config is set up."
-            )
+        db_config = config.get("database")
+        
+        # Robust handling of missing or malformed configuration
+        if db_config is None:
+            logger.warning("Database configuration not found in config. Using default SQLite.")
+            db_config = {"type": "sqlite", "path": "data/database.db"}
+        elif not isinstance(db_config, dict):
+            logger.error(f"Database configuration is malformed (expected dict, got {type(db_config).__name__}). Using default SQLite.")
+            db_config = {"type": "sqlite", "path": "data/database.db"}
 
+        self.config = db_config
         self.type = self.config.get("type", "sqlite")
         self.connection: Optional[DbConnection] = None
         self._pool = None  # PostgreSQL connection pool
@@ -92,6 +97,9 @@ class Database:
     def _connect_sqlite(self) -> DbConnection:
         """Connect to SQLite database, creating directories if needed."""
         path = self.config.get("path", "data/database.db")
+        if not isinstance(path, str):
+            logger.warning(f"Database path is malformed (expected str, got {type(path).__name__}). Using default.")
+            path = "data/database.db"
 
         db_dir = os.path.dirname(path)
         if db_dir and not os.path.exists(db_dir):
@@ -140,7 +148,12 @@ class Database:
                 "Install with: pip install psycopg2-binary"
             )
 
-        pg_config = self.config.get("postgres", {})
+        pg_config = self.config.get("postgres")
+        if not isinstance(pg_config, dict):
+            if pg_config is not None:
+                logger.warning(f"PostgreSQL configuration is malformed (expected dict, got {type(pg_config).__name__}). Using defaults.")
+            pg_config = {}
+
         host = pg_config.get("host", "localhost")
         port = pg_config.get("port", 5432)
         user = pg_config.get("user", "postgres")
@@ -149,7 +162,12 @@ class Database:
         sslmode = pg_config.get("sslmode", "prefer")
 
         # Connection pool settings
-        pool_config = self.config.get("connection_pool", {})
+        pool_config = self.config.get("connection_pool")
+        if not isinstance(pool_config, dict):
+            if pool_config is not None:
+                logger.warning(f"Connection pool configuration is malformed (expected dict, got {type(pool_config).__name__}). Using defaults.")
+            pool_config = {}
+
         min_conn = pool_config.get("min_connections", 2)
         max_conn = pool_config.get("max_connections", 20)
 
