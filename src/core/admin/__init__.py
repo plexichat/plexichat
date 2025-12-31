@@ -1372,6 +1372,53 @@ def remove_user_badge(user_id: int, badge: str, admin_id: int = 0) -> bool:
     return True
 
 
+def is_admin(user_id: int) -> bool:
+    """Check if a user has admin privileges."""
+    db = _get_db()
+    row = db.fetch_one("SELECT permissions FROM auth_users WHERE id = ?", (user_id,))
+    if not row:
+        return False
+    
+    perms_json = row["permissions"] if isinstance(row, dict) else row[0]
+    try:
+        from src.core.auth.permissions import permissions_from_json, has_permission
+        perms = permissions_from_json(perms_json)
+        return has_permission(perms, "*") or has_permission(perms, "admin.*")
+    except Exception:
+        return False
+
+
+def set_admin(user_id: int, admin_status: bool) -> bool:
+    """Set or unset admin privileges for a user."""
+    db = _get_db()
+    row = db.fetch_one("SELECT permissions FROM auth_users WHERE id = ?", (user_id,))
+    if not row:
+        return False
+    
+    perms_json = row["permissions"] if isinstance(row, dict) else row[0]
+    try:
+        from src.core.auth.permissions import permissions_from_json, permissions_to_json
+        perms = permissions_from_json(perms_json)
+        
+        if admin_status:
+            perms["*"] = True
+        else:
+            perms.pop("*", None)
+            # Also remove specific admin perms if any
+            for key in list(perms.keys()):
+                if key.startswith("admin."):
+                    perms.pop(key)
+        
+        db.execute(
+            "UPDATE auth_users SET permissions = ? WHERE id = ?",
+            (permissions_to_json(perms), user_id)
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Failed to set admin status: {e}")
+        return False
+
+
 __all__ = [
     'setup', 'is_setup', 'login', 'verify_otp_setup', 'verify_otp',
     'validate_session', 'logout',
@@ -1387,4 +1434,5 @@ __all__ = [
     # User management
     'search_users', 'get_user_details', 'update_user_tier', 'update_user_badges',
     'add_user_badge', 'remove_user_badge', 'AdminUserDetail',
+    'is_admin', 'set_admin',
 ]

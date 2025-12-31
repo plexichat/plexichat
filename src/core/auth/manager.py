@@ -90,6 +90,27 @@ class AuthManager(BaseManager):
     session management, 2FA, bot accounts, and audit logging.
     """
 
+    # Re-expose exceptions for easy access in tests
+    AuthError = AuthError
+    InvalidCredentialsError = InvalidCredentialsError
+    AccountLockedError = AccountLockedError
+    EmailNotVerifiedError = EmailNotVerifiedError
+    TokenExpiredError = TokenExpiredError
+    TokenInvalidError = TokenInvalidError
+    TwoFactorInvalidError = TwoFactorInvalidError
+    PermissionDeniedError = PermissionDeniedError
+    UserExistsError = UserExistsError
+    UserNotFoundError = UserNotFoundError
+    WeakPasswordError = WeakPasswordError
+    BotLimitExceededError = BotLimitExceededError
+    InvalidUsernameError = InvalidUsernameError
+    InvalidEmailError = InvalidEmailError
+
+    # Re-expose Enums
+    AuditEventType = AuditEventType
+    AuthStatus = AuthStatus
+    AccountType = AccountType
+
     def __init__(self, db, email_sender=None):
         """
         Initialize the auth manager.
@@ -119,28 +140,26 @@ class AuthManager(BaseManager):
 
     def _ensure_system_user(self) -> None:
         """Ensure system user (ID 0) exists for system messages."""
-        system_user = self._db.fetch_one("SELECT id FROM auth_users WHERE id = 0")
-        if not system_user:
-            now = self._get_timestamp()
-            self._db.execute(
-                """INSERT INTO auth_users 
-                   (id, account_type, username, email, password_hash, permissions, 
-                    created_at, updated_at, email_verified, account_locked)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    0, 
-                    'system', 
-                    "System", 
-                    "system@plexichat.local", 
-                    "INVALID_HASH_LOCKED", 
-                    permissions_to_json({}), 
-                    now, 
-                    now, 
-                    1, 
-                    1
-                )
+        now = self._get_timestamp()
+        self._db.insert_or_ignore(
+            "auth_users",
+            ["id", "account_type", "username", "email", "password_hash", "permissions", 
+             "created_at", "updated_at", "email_verified", "account_locked"],
+            (
+                0, 
+                'system', 
+                "System", 
+                "system@plexichat.local", 
+                "INVALID_HASH_LOCKED", 
+                permissions_to_json({}), 
+                now, 
+                now, 
+                1, 
+                1
             )
-            logger.info("Created system user (ID 0)")
+        )
+        # Note: We don't log "Created system user" here anymore because insert_or_ignore 
+        # might not have actually inserted if it already existed.
 
     def _cache_get_user(self, user_id: SnowflakeID) -> Optional[Any]:
         """Get user from cache if not expired."""
@@ -186,10 +205,9 @@ class AuthManager(BaseManager):
         audit_id = self._generate_id()
         details_json = json.dumps(details) if details else None
 
-        self._db.execute(
-            """INSERT INTO auth_audit_log 
-               (id, user_id, event_type, ip_address, device_id, timestamp, details, success)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        self._db.insert_or_ignore(
+            "auth_audit_log",
+            ["id", "user_id", "event_type", "ip_address", "device_id", "timestamp", "details", "success"],
             (
                 audit_id,
                 user_id,
@@ -263,11 +281,10 @@ class AuthManager(BaseManager):
             "accounts.require_email_verification", False
         )
 
-        self._db.execute(
-            """INSERT INTO auth_users 
-               (id, account_type, username, email, password_hash, permissions,
-                created_at, updated_at, email_verified)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        inserted = self._db.insert_or_ignore(
+            "auth_users",
+            ["id", "account_type", "username", "email", "password_hash", "permissions",
+             "created_at", "updated_at", "email_verified"],
             (
                 user_id,
                 AccountType.USER.value,
@@ -280,6 +297,11 @@ class AuthManager(BaseManager):
                 0 if require_verification else 1,
             ),
         )
+        
+        if not inserted:
+            # This should only happen if another request registered the same user 
+            # between our check and our insert
+            raise UserExistsError("Username or email already taken", "username")
 
         logger.info(f"User registered successfully: {username} (ID: {user_id})")
 
@@ -2153,6 +2175,68 @@ class AuthManager(BaseManager):
         if not user:
             raise UserNotFoundError("User not found after update")
         return user
+
+    def has_capability(self, token_info: TokenInfo, capability: str) -> bool:
+        """
+        Check if a token has a specific capability.
+        
+        Args:
+            token_info: Validated token info
+            capability: Capability name (e.g. 'messages.send')
+            
+        Returns:
+            True if token has the capability
+        """
+        return has_permission(token_info.permissions, capability)
+
+    def require_capability(self, token_info: TokenInfo, capability: str) -> None:
+        """
+        Require a specific capability, raising PermissionDeniedError if missing.
+        
+        Args:
+            token_info: Validated token info
+            capability: Capability name
+            
+        Raises:
+            PermissionDeniedError: If capability is missing
+        """
+        if not self.has_capability(token_info, capability):
+            raise PermissionDeniedError(f"Missing required capability: {capability}")
+
+    def delete_user(self, user_id: SnowflakeID) -> bool:
+        """
+        Hard delete a user and all associated data.
+        
+        Args:
+            user_id: ID of the user to delete
+            
+        Returns:
+            True if user was deleted
+        """
+        # Delete from all auth tables
+        tables = [
+            "auth_sessions",
+            "auth_bots",
+            "auth_devices",
+            "auth_known_ips",
+            "auth_audit_log",
+            "auth_email_tokens",
+            "auth_2fa_challenges"
+        ]
+        
+        for table in tables:
+            self._db.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
+            
+        # Also need to handle owner_id for bots
+        self._db.execute("DELETE FROM auth_bots WHERE owner_id = ?", (user_id,))
+        
+        # Finally delete the user
+        result = self._db.execute("DELETE FROM auth_users WHERE id = ?", (user_id,))
+        
+        self._cache_invalidate_user(user_id)
+        
+        count = result.rowcount if hasattr(result, "rowcount") else 0
+        return count > 0
 
     def _row_to_user(self, row: Union[Any, Dict[str, Any]]) -> User:
         """Convert database row to User model."""

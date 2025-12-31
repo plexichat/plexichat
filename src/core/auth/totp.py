@@ -23,18 +23,20 @@ import pyotp
 
 def get_totp_config() -> Dict[str, Any]:
     """Get TOTP configuration from config system."""
+    defaults = {
+        "enabled": True,
+        "issuer": "PlexiChat",
+        "digits": 6,
+        "interval": 30,
+        "backup_code_count": 10,
+        "backup_code_length": 8,
+    }
+    
     auth_config = config.get("authentication", {})
-    return auth_config.get(
-        "totp",
-        {
-            "enabled": True,
-            "issuer": "PlexiChat",
-            "digits": 6,
-            "interval": 30,
-            "backup_code_count": 10,
-            "backup_code_length": 8,
-        },
-    )
+    user_totp_config = auth_config.get("totp", {})
+    
+    # Merge user config into defaults
+    return {**defaults, **user_totp_config}
 
 
 def generate_totp_secret() -> str:
