@@ -79,8 +79,15 @@ class TestAuthenticationAsync:
         """Test that token revocation propagates across middleware."""
         if isinstance(db_and_modules, dict):
             auth = db_and_modules["auth"]
-        user = auth.register("revoketest", "revoketest@example.com", "TestPass123!")
-        login_result = auth.login("revoketest", "TestPass123!")
+        else:
+            db, auth, messaging, servers, rel, pres = db_and_modules
+            
+        unique_id = uuid.uuid4().hex[:8]
+        username = f"revoketest_{unique_id}"
+        email = f"revoketest_{unique_id}@example.com"
+        
+        user = auth.register(username, email, "TestPass123!")
+        login_result = auth.login(username, "TestPass123!")
         token = login_result.token
         headers = {"Authorization": f"Bearer {token}"}
 

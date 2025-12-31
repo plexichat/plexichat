@@ -174,7 +174,21 @@ def db_manager():
     
     This is the key optimization - ONE database for all tests.
     """
-    encryption.setup(argon2_time_cost=1, argon2_memory_cost=8192, argon2_parallelism=1)
+    # Use xdist worker ID to ensure unique snowflake IDs across parallel workers
+    worker_id = os.environ.get('PYTEST_XDIST_WORKER')
+    worker_num = 1
+    if worker_id and worker_id.startswith('gw'):
+        try:
+            worker_num = int(worker_id[2:]) + 1
+        except ValueError:
+            worker_num = 1
+            
+    encryption.setup(
+        worker_id=worker_num,
+        argon2_time_cost=1, 
+        argon2_memory_cost=8192, 
+        argon2_parallelism=1
+    )
     manager = DatabaseManager(test_dir="temp/test_session")
     manager.setup()
 
@@ -697,7 +711,8 @@ def pytest_collection_modifyitems(config, items):
     """Auto-mark tests based on their location."""
     for item in items:
         # Add markers based on test file path
-        item_path = str(item.fspath)
+        # Normalize path to use forward slashes for cross-platform compatibility
+        item_path = str(item.fspath).replace(os.sep, "/")
         
         # Security tests (mark as critical)
         if "/security/" in item_path or "test_security" in item.name.lower():

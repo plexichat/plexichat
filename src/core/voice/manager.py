@@ -1049,7 +1049,7 @@ class VoiceManager(BaseManager):
         Returns:
             True if set successfully
         """
-        self._require_permission(user_id, server_id, "servers.manage")
+        self._require_permission(user_id, server_id, "server.manage")
 
         if channel_id:
             channel = self._get_server_channel(channel_id)

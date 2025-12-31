@@ -172,12 +172,12 @@ class TestAuthManagerErrorPaths:
         auth_manager.email_sender = email_sender
         assert auth_manager.resend_verification("nonexistent@example.com")
     
-    def test_resend_verification_already_verified(self, auth_manager, email_sender):
+    def test_resend_verification_already_verified(self, auth_manager, email_sender, test_db):
         """Test resending to already verified user."""
         auth_manager.email_sender = email_sender
         user = auth_manager.register("testuser", "test@example.com", "Password123!")
         
-        auth_manager.db.execute(
+        test_db.execute(
             "UPDATE auth_users SET email_verified = 1 WHERE id = ?",
             (user.id,)
         )
@@ -337,7 +337,7 @@ class TestAuthManagerTwoFactor:
         """Test 2FA disable with wrong password."""
         user = auth_manager.register("testuser", "test@example.com", "Password123!")
         
-        auth_manager.db.execute(
+        test_db.execute(
             "UPDATE auth_users SET totp_enabled = 1, totp_secret_encrypted = ? WHERE id = ?",
             ("encrypted_secret", user.id)
         )
@@ -356,7 +356,7 @@ class TestAuthManagerTwoFactor:
         now = auth_manager._current_time()
         _, token_hash = create_2fa_challenge_token(challenge_id)
         
-        auth_manager.db.execute(
+        test_db.execute(
             """INSERT INTO auth_2fa_challenges 
                (id, user_id, token_hash, created_at, expires_at)
                VALUES (?, ?, ?, ?, ?)""",
@@ -379,7 +379,7 @@ class TestAuthManagerTwoFactor:
         now = auth_manager._current_time()
         _, token_hash = create_2fa_challenge_token(challenge_id)
         
-        auth_manager.db.execute(
+        test_db.execute(
             """INSERT INTO auth_2fa_challenges 
                (id, user_id, token_hash, created_at, expires_at, used)
                VALUES (?, ?, ?, ?, ?, 1)""",
@@ -395,7 +395,7 @@ class TestAuthManagerTwoFactor:
         """Test regenerating backup codes with wrong password."""
         user = auth_manager.register("testuser", "test@example.com", "Password123!")
         
-        auth_manager.db.execute(
+        test_db.execute(
             "UPDATE auth_users SET totp_enabled = 1 WHERE id = ?",
             (user.id,)
         )
@@ -442,7 +442,7 @@ class TestAuthManagerBots:
         """Test creating bot without permission."""
         user = auth_manager.register("testuser", "test@example.com", "Password123!")
         
-        auth_manager.db.execute(
+        test_db.execute(
             "UPDATE auth_users SET permissions = '{}' WHERE id = ?",
             (user.id,)
         )

@@ -134,6 +134,19 @@ class SFUAdapter(ABC):
         """
         pass
 
+    async def complete_join(
+        self,
+        room_id: str,
+        peer_id: str,
+        rtp_capabilities: Dict[str, Any],
+        display_name: Optional[str] = None,
+    ) -> Any:
+        """
+        Optional: Complete the join process.
+        Used by some SFUs like mediasoup-demo.
+        """
+        return True
+
     @abstractmethod
     async def leave_room(self, room_id: str, peer_id: str) -> bool:
         """
