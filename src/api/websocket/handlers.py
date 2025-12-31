@@ -579,19 +579,14 @@ class OpcodeHandler:
                 if friend_ids:
                     target_user_ids.update(friend_ids)
 
-            # Add server members (users in shared servers)
+            # Add server members (users in shared servers) - Optimized single query
             if self._servers:
                 try:
-                    user_servers = self._servers.get_servers(user_id)
-                    if user_servers:
-                        for server in user_servers:
-                            members = self._servers.get_members(user_id, server.id)
-                            if members:
-                                for member in members:
-                                    if member.user_id != user_id:
-                                        target_user_ids.add(member.user_id)
+                    shared_member_ids = self._servers.get_all_shared_member_ids(user_id)
+                    if shared_member_ids:
+                        target_user_ids.update(shared_member_ids)
                 except Exception as e:
-                    logger.debug(f"Failed to get server members for presence: {e}")
+                    logger.debug(f"Failed to get shared server members for presence: {e}")
 
             if not target_user_ids:
                 return

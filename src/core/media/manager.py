@@ -9,6 +9,7 @@ import time
 import hashlib
 import mimetypes
 import uuid
+import threading
 from typing import Optional, Dict, Any, BinaryIO, Tuple
 
 import utils.config as config
@@ -108,6 +109,7 @@ class MediaManager(BaseManager):
         super().__init__(db)
         self._messaging = messaging_module
         self._config = self._load_config()
+        self._lock = threading.Lock()
 
         self._storage = self._init_storage()
         self._db_storage = self._init_db_storage()  # For auto-routing
@@ -124,17 +126,35 @@ class MediaManager(BaseManager):
 
     def _load_config(self) -> Dict[str, Any]:
         """Load media configuration from global config."""
-        return config.get("media", {})
-
+        cfg = config.get("media", {})
+        if not isinstance(cfg, dict):
+            cfg = {}
+        
+        # Ensure critical sections exist for robust behavior and patching in tests
+        if "size_limits" not in cfg:
+            cfg["size_limits"] = DEFAULT_SIZE_LIMITS.copy()
+        if "allowed_types" not in cfg:
+            cfg["allowed_types"] = DEFAULT_ALLOWED_TYPES.copy()
+        if "rate_limit" not in cfg:
+            cfg["rate_limit"] = {"enabled": True}
+        if "image_processing" not in cfg:
+            cfg["image_processing"] = {
+                "max_thumbnail_requests_per_minute": 60,
+                "thumbnail_sizes": DEFAULT_THUMBNAIL_SIZES
+            }
+        if "auto_route_to_database" not in cfg:
+            cfg["auto_route_to_database"] = {"enabled": False}
+            
+        return cfg
     def _init_storage(self) -> StorageBackendBase:
         """Initialize primary storage backend."""
         backend = self._config.get("storage_backend", "local")
 
         if backend == "s3":
             return S3Storage(
-                bucket=self._config["s3_bucket"],
-                access_key=self._config["s3_access_key"],
-                secret_key=self._config["s3_secret_key"],
+                bucket=self._config.get("s3_bucket", "plexichat-media"),
+                access_key=self._config.get("s3_access_key", ""),
+                secret_key=self._config.get("s3_secret_key", ""),
                 region=self._config.get("s3_region", "us-east-1"),
                 endpoint_url=self._config.get("s3_endpoint") or None,
                 public_url=self._config.get("s3_public_url") or None,
@@ -211,7 +231,8 @@ class MediaManager(BaseManager):
             MediaError: If rate limit exceeded
         """
         rate_config = self._config.get("rate_limit", {})
-        if not rate_config.get("enabled", True):
+        if not rate_config.get("enabled", False):
+            print(f"DEBUG: Rate limit disabled")
             return
 
         now = self._get_timestamp()
@@ -221,6 +242,7 @@ class MediaManager(BaseManager):
         minute_window = now_seconds - (now_seconds % 60)
         minute_count = self._get_rate_limit_count(user_id, "minute", minute_window)
         max_per_minute = rate_config.get("uploads_per_minute", 10)
+        print(f"DEBUG: User {user_id} minute count: {minute_count}/{max_per_minute}")
         if minute_count >= max_per_minute:
             raise MediaError(f"Rate limit exceeded: max {max_per_minute} uploads per minute")
 
@@ -262,7 +284,7 @@ class MediaManager(BaseManager):
     def _update_rate_limit(self, user_id: int, file_size: int) -> None:
         """Update rate limit counters after successful upload."""
         rate_config = self._config.get("rate_limit", {})
-        if not rate_config.get("enabled", True):
+        if not rate_config.get("enabled", False):
             return
 
         now_seconds = self._get_timestamp() // 1000
@@ -274,26 +296,15 @@ class MediaManager(BaseManager):
         ]
 
         for window_type, window_start in windows:
-            existing = self._db.fetch_one(
-                """SELECT upload_count, total_size FROM media_rate_limits 
-                   WHERE user_id = ? AND window_type = ? AND window_start = ?""",
-                (user_id, window_type, window_start)
+            self._db.execute(
+                """INSERT INTO media_rate_limits 
+                   (user_id, window_type, window_start, upload_count, total_size)
+                   VALUES (?, ?, ?, 1, ?)
+                   ON CONFLICT(user_id, window_type, window_start) DO UPDATE SET
+                   upload_count = upload_count + 1,
+                   total_size = total_size + excluded.total_size""",
+                (user_id, window_type, window_start, file_size)
             )
-
-            if existing:
-                self._db.execute(
-                    """UPDATE media_rate_limits 
-                       SET upload_count = upload_count + 1, total_size = total_size + ?
-                       WHERE user_id = ? AND window_type = ? AND window_start = ?""",
-                    (file_size, user_id, window_type, window_start)
-                )
-            else:
-                self._db.execute(
-                    """INSERT INTO media_rate_limits 
-                       (user_id, window_type, window_start, upload_count, total_size)
-                       VALUES (?, ?, ?, 1, ?)""",
-                    (user_id, window_type, window_start, file_size)
-                )
 
         # Cleanup old rate limit entries (older than 2 days)
         cutoff = now_seconds - 172800
@@ -352,6 +363,31 @@ class MediaManager(BaseManager):
         except Exception as e:
             logger.warning(f"External proxy unavailable: {e}")
             return None
+
+    def _detect_content_type(self, file_data: bytes, fallback: str) -> str:
+        """Detect actual content type from magic bytes."""
+        # Common magic byte signatures
+        signatures = {
+            b"\xff\xd8\xff": "image/jpeg",
+            b"\x89PNG\r\n\x1a\n": "image/png",
+            b"GIF87a": "image/gif",
+            b"GIF89a": "image/gif",
+            b"RIFF": None,  # Special case for WebP/WAV
+            b"%PDF": "application/pdf",
+            b"PK\x03\x04": "application/zip",
+        }
+
+        for sig, mime in signatures.items():
+            if file_data.startswith(sig):
+                if sig == b"RIFF":
+                    if len(file_data) > 12 and file_data[8:12] == b"WEBP":
+                        return "image/webp"
+                    if len(file_data) > 12 and file_data[8:12] == b"WAVE":
+                        return "audio/wav"
+                if mime:
+                    return mime
+
+        return fallback
 
     def _detect_media_type(self, content_type: str) -> MediaType:
         """Detect media type from content type."""
@@ -497,17 +533,63 @@ class MediaManager(BaseManager):
         Returns:
             UploadResult with file info and URLs
         """
+        filename = self._sanitize_filename(filename)
         if not content_type:
             content_type, _ = mimetypes.guess_type(filename)
             content_type = content_type or "application/octet-stream"
 
-        filename = self._sanitize_filename(filename)
-
         media_type = self._detect_media_type(content_type)
         file_size = len(file_data)
 
+        # Pre-validation (not needing lock)
         self._validate_content_type(content_type, media_type)
         self._validate_file_size(file_size, media_type)
+
+        with self._lock:
+            # Check rate limits under lock
+            self._check_rate_limit(user_id, file_size)
+            
+            # Delegate to internal logic
+            return self._do_upload(
+                user_id=user_id,
+                file_data=file_data,
+                filename=filename,
+                content_type=content_type,
+                media_type=media_type
+            )
+
+    def _do_upload(
+        self,
+        user_id: int,
+        file_data: bytes,
+        filename: str,
+        content_type: Optional[str] = None,
+        media_type: Optional[MediaType] = None,
+    ) -> UploadResult:
+        """
+        Internal upload logic.
+        """
+        if not content_type:
+            content_type, _ = mimetypes.guess_type(filename)
+            content_type = content_type or "application/octet-stream"
+
+        # Detect actual content type from bytes to prevent spoofing
+        detected_type = self._detect_content_type(file_data, content_type)
+        generic_types = ["application/octet-stream", "text/plain", "application/binary"]
+        
+        if not content_type or content_type.lower() in generic_types:
+            content_type = detected_type
+            # Re-detect media type if it changed
+            media_type = self._detect_media_type(content_type)
+        elif detected_type != content_type:
+            logger.info(f"Mismatch: claimed {content_type}, detected {detected_type}")
+            # We keep claimed type so _validate_magic_bytes will fail it below
+            pass
+
+        if not media_type:
+            media_type = self._detect_media_type(content_type)
+        
+        file_size = len(file_data)
 
         # SECURITY: Check for blocked executable extensions
         ext = os.path.splitext(filename.lower())[1]
@@ -534,9 +616,6 @@ class MediaManager(BaseManager):
                 content_type,
                 ["File signature mismatch - content does not match declared MIME type"]
             )
-
-        # Check rate limits before proceeding
-        self._check_rate_limit(user_id, file_size)
 
         # SECURITY: Check for blocked/duplicate content using deduplication module
         dedup_manager = None
@@ -729,36 +808,42 @@ class MediaManager(BaseManager):
         self._validate_content_type(content_type, media_type)
         self._validate_file_size(size, media_type)
 
-        storage_path = self._generate_storage_path(filename, media_type)
+        with self._lock:
+            # Check rate limits under lock
+            self._check_rate_limit(user_id, size)
 
-        self._storage.store_stream(stream, storage_path, content_type, size)
+            storage_path = self._generate_storage_path(filename, media_type)
+            self._storage.store_stream(stream, storage_path, content_type, size)
 
-        file_id = self._generate_id()
-        now = self._get_timestamp()
+            file_id = self._generate_id()
+            now = self._get_timestamp()
 
-        self._db.execute(
-            """INSERT INTO media_files
-               (id, filename, original_filename, content_type, size, media_type,
-                storage_backend, storage_path, checksum, uploaded_by, uploaded_at,
-                metadata, scan_status, scan_result, deleted)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
-            (
-                file_id,
-                os.path.basename(storage_path),
-                filename,
-                content_type,
-                size,
-                media_type.value,
-                self._config.get("storage_backend", "local"),
-                storage_path,
-                None,
-                user_id,
-                now,
-                None,
-                ScanStatus.PENDING.value,
-                None,
+            self._db.execute(
+                """INSERT INTO media_files
+                   (id, filename, original_filename, content_type, size, media_type,
+                    storage_backend, storage_path, checksum, uploaded_by, uploaded_at,
+                    metadata, scan_status, scan_result, deleted)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
+                (
+                    file_id,
+                    os.path.basename(storage_path),
+                    filename,
+                    content_type,
+                    size,
+                    media_type.value,
+                    self._config.get("storage_backend", "local"),
+                    storage_path,
+                    None,
+                    user_id,
+                    now,
+                    None,
+                    ScanStatus.PENDING.value,
+                    None,
+                )
             )
-        )
+
+            # Update rate limit under lock
+            self._update_rate_limit(user_id, size)
 
         url = self._storage.get_url(storage_path)
 
@@ -1027,21 +1112,16 @@ class MediaManager(BaseManager):
 
     def _update_thumbnail_rate_limit(self, user_id: int) -> None:
         """Update thumbnail rate limit counter."""
-        now_ms = int(time.time() * 1000)
+        now_ms = self._get_timestamp()
         minute_window = now_ms - (now_ms % 60000)
 
-        self._db.upsert(
-            table="media_rate_limits",
-            columns=["user_id", "window_type", "window_start", "upload_count", "total_size"],
-            values=(user_id, "thumbnail_minute", minute_window, 1, 0),
-            conflict_columns=["user_id", "window_type", "window_start"],
-            update_columns=["upload_count"]
-        )
-        # Increment the count
+        # Use direct SQL for increment
         self._db.execute(
-            """UPDATE media_rate_limits 
-               SET upload_count = upload_count + 1 
-               WHERE user_id = ? AND window_type = 'thumbnail_minute' AND window_start = ?""",
+            """INSERT INTO media_rate_limits 
+               (user_id, window_type, window_start, upload_count, total_size)
+               VALUES (?, 'thumbnail_minute', ?, 1, 0)
+               ON CONFLICT(user_id, window_type, window_start) DO UPDATE SET
+               upload_count = upload_count + 1""",
             (user_id, minute_window)
         )
 

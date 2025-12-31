@@ -142,6 +142,27 @@ def _validate_content_type(content_type: str) -> bool:
     return content_type.lower() in [t.lower() for t in allowed]
 
 
+def _detect_content_type(image_data: bytes, fallback: str) -> str:
+    """Detect actual content type from magic bytes."""
+    signatures = {
+        b"\xff\xd8\xff": "image/jpeg",
+        b"\x89PNG\r\n\x1a\n": "image/png",
+        b"GIF87a": "image/gif",
+        b"GIF89a": "image/gif",
+        b"RIFF": "image/webp",
+    }
+
+    for sig, mime in signatures.items():
+        if image_data.startswith(sig):
+            if sig == b"RIFF":
+                if len(image_data) > 12 and image_data[8:12] == b"WEBP":
+                    return "image/webp"
+                return fallback
+            return mime
+
+    return fallback
+
+
 def _process_image(image_data: bytes, content_type: str) -> Tuple[bytes, int, int, bool]:
     """
     Process and resize image if needed.
@@ -154,16 +175,41 @@ def _process_image(image_data: bytes, content_type: str) -> Tuple[bytes, int, in
         logger.warning("Pillow not installed, storing avatar without processing")
         return image_data, 0, 0, False
 
+    # Security: Prevent decompression bombs
+    # Use same default as Media module (~178MP)
+    max_pixels = _get_config("max_pixels", 178956970)
+    Image.MAX_IMAGE_PIXELS = max_pixels
+    
+    # Do not allow images with more than 16k width/height
+    max_dim = _get_config("max_dimension", 16384)
+
+    # Detect actual content type from bytes to prevent spoofing
+    actual_type = _detect_content_type(image_data, content_type)
+    if actual_type != content_type:
+        logger.info(f"Avatar: Detected actual type {actual_type} for file claimed as {content_type}")
+        content_type = actual_type
+
+    # Open image (lazy)
+    try:
+        img = Image.open(io.BytesIO(image_data))
+        
+        # Security: Validate dimensions before processing
+        width, height = img.size
+        if width > max_dim or height > max_dim:
+            raise ValueError(f"Image dimensions ({width}x{height}) exceed maximum allowed ({max_dim}x{max_dim})")
+            
+        if width * height > max_pixels:
+            raise ValueError(f"Image has too many pixels ({width*height}) - maximum is {max_pixels}")
+
+        original_format = img.format
+        n_frames = getattr(img, "n_frames", 1)
+        is_animated = bool(getattr(img, "is_animated", False)) or (n_frames > 1)
+    except Exception as e:
+        if isinstance(e, ValueError): raise e
+        logger.error(f"Failed to open avatar image: {e}")
+        raise ValueError(f"Invalid image file: {e}")
+
     max_size = _get_max_size()
-
-    # Open image
-    img = Image.open(io.BytesIO(image_data))
-    original_format = img.format
-    n_frames = getattr(img, "n_frames", 1)
-    is_animated = bool(getattr(img, "is_animated", False)) or (n_frames > 1)
-
-    # Get original dimensions
-    width, height = img.size
 
     # Check if resize needed
     if width > max_size or height > max_size:

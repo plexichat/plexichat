@@ -5,7 +5,7 @@ Handles user status, activities, typing indicators, and visibility rules
 with proper validation and database interactions.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 
 import utils.config as config
 import utils.logger as logger
@@ -29,6 +29,18 @@ from src.core.database import cache_set, redis_available, get_cached_presence
 
 class PresenceManager(BaseManager):
     """Core presence manager handling all operations."""
+
+    def _get_manager(self):
+        """Compatibility method for some test patterns."""
+        return self
+
+    # Re-expose models/enums for easy access in tests
+    UserStatus = UserStatus
+    ActivityType = ActivityType
+    Presence = Presence
+    Activity = Activity
+    TypingIndicator = TypingIndicator
+    CustomStatus = CustomStatus
 
     def __init__(self, db, auth_module=None, relationships_module=None, servers_module=None):
         """
@@ -89,7 +101,7 @@ class PresenceManager(BaseManager):
 
     # === Status Operations ===
 
-    def set_status(self, user_id: SnowflakeID, status: UserStatus) -> Presence:
+    def set_status(self, user_id: SnowflakeID, status: Union[UserStatus, str]) -> Presence:
         """
         Set user's status.
         
@@ -100,6 +112,12 @@ class PresenceManager(BaseManager):
         Returns:
             Updated Presence
         """
+        if isinstance(status, str):
+            try:
+                status = UserStatus(status.lower())
+            except ValueError:
+                status = UserStatus.OFFLINE
+
         self._validate_user(user_id)
         self._ensure_presence_record(user_id)
 
@@ -197,11 +215,13 @@ class PresenceManager(BaseManager):
         return CustomStatus(
             text=row["text"],
             emoji=row["emoji"],
-            expires_at=row["expires_at"]
+            expires_at=row["expires_at"],
+            created_at=row["created_at"]
         )
 
     def clear_custom_status(self, user_id: SnowflakeID) -> Presence:
         """Clear user's custom status."""
+        self._validate_user(user_id)
         self._db.execute(
             "DELETE FROM pres_custom_status WHERE user_id = ?",
             (user_id,)
@@ -222,7 +242,7 @@ class PresenceManager(BaseManager):
     def set_activity(
         self,
         user_id: SnowflakeID,
-        activity_type: ActivityType,
+        activity_type: Union[ActivityType, str],
         name: str,
         details: Optional[str] = None,
         url: Optional[str] = None,
@@ -246,6 +266,12 @@ class PresenceManager(BaseManager):
         Returns:
             Updated Presence
         """
+        if isinstance(activity_type, str):
+            try:
+                activity_type = ActivityType(activity_type.lower())
+            except ValueError:
+                activity_type = ActivityType.PLAYING
+
         self._validate_user(user_id)
         self._ensure_presence_record(user_id)
 

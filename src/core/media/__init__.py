@@ -306,18 +306,19 @@ def get_thumbnails(file_id: int) -> Dict[int, str]:
     return _get_manager().get_thumbnails(file_id)
 
 
-def create_thumbnail(file_id: int, size: int) -> Optional[str]:
+def create_thumbnail(file_id: int, size: int, user_id: Optional[int] = None) -> Optional[str]:
     """
     Create thumbnail at specific size.
 
     Args:
         file_id: File ID
         size: Thumbnail size
+        user_id: Optional user ID for rate limiting
 
     Returns:
         Thumbnail URL or None
     """
-    return _get_manager().create_thumbnail(file_id, size)
+    return _get_manager().create_thumbnail(file_id, size, user_id)
 
 
 # === Image Processing ===

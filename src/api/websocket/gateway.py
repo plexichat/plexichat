@@ -59,20 +59,15 @@ async def _dispatch_offline_presence(
             except Exception:
                 pass
 
-        # Add server members (users in shared servers)
+        # Add server members (users in shared servers) - Optimized single query
         servers = api.get_servers()
         if servers:
             try:
-                user_servers = servers.get_servers(user_id)
-                if user_servers:
-                    for server in user_servers:
-                        members = servers.get_members(user_id, server.id)
-                        if members:
-                            for member in members:
-                                if member.user_id != user_id:
-                                    target_user_ids.add(member.user_id)
-            except Exception:
-                pass
+                shared_member_ids = servers.get_all_shared_member_ids(user_id)
+                if shared_member_ids:
+                    target_user_ids.update(shared_member_ids)
+            except Exception as e:
+                logger.debug(f"Failed to get shared server members for offline presence: {e}")
 
         if not target_user_ids:
             return
