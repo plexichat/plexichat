@@ -2,6 +2,7 @@
 Audit logging tests for auth module.
 """
 
+import uuid
 
 
 class TestAudit:
@@ -42,8 +43,10 @@ class TestAudit:
     def test_password_change_creates_audit_entry(self, db_and_auth):
         """Test password change creates audit entry."""
         db, auth = db_and_auth
+        unique_id = uuid.uuid4().hex[:16]
+        username = f"auditpwd_{unique_id}"
 
-        user = auth.register("auditpwd", "auditpwd@example.com", "TestPass123!")
+        user = auth.register(username, f"{username}@example.com", "TestPass123!")
         auth.change_password(user.id, "TestPass123!", "NewSecurePass456!")
 
         events = auth.get_security_events(user.id)
@@ -53,8 +56,10 @@ class TestAudit:
         """Test enabling 2FA creates audit entry."""
         db, auth = db_and_auth
         import pyotp
+        unique_id = uuid.uuid4().hex[:16]
+        username = f"audit2fa_{unique_id}"
 
-        user = auth.register("audit2fa", "audit2fa@example.com", "TestPass123!")
+        user = auth.register(username, f"{username}@example.com", "TestPass123!")
         setup = auth.setup_2fa(user.id)
         totp = pyotp.TOTP(setup.secret)
         auth.confirm_2fa(user.id, totp.now())

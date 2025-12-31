@@ -3,6 +3,7 @@ Device management tests for auth module.
 """
 
 import pytest
+import uuid
 
 
 class TestDevices:
@@ -68,11 +69,12 @@ class TestDevices:
         assert result is True
 
     def test_rename_device_wrong_user(self, db_and_auth):
-        """Test renaming device of another user fails."""
+        """Test user cannot rename another user's device."""
         db, auth = db_and_auth
-
-        user1 = auth.register("devuser1", "devuser1@example.com", "TestPass123!")
-        user2 = auth.register("devuser2", "devuser2@example.com", "TestPass123!")
+        unique_id = uuid.uuid4().hex[:16]
+        
+        user1 = auth.register(f"dev1_{unique_id}", f"dev1_{unique_id}@example.com", "TestPass123!")
+        user2 = auth.register(f"dev2_{unique_id}", f"dev2_{unique_id}@example.com", "TestPass123!")
 
         auth.login("devuser1", "TestPass123!", device_info={"fingerprint": "user1_device"})
 
@@ -99,10 +101,12 @@ class TestDevices:
         assert not any(d.fingerprint == fp for d in devices_after)
 
     def test_revoke_device_logs_out_sessions(self, db_and_auth):
-        """Test revoking device logs out all its sessions."""
+        """Test revoking a device invalidates all its sessions."""
         db, auth = db_and_auth
+        unique_id = uuid.uuid4().hex[:16]
+        username = f"revdev_{unique_id}"
 
-        user = auth.register("revokedev", "revokedev@example.com", "TestPass123!")
+        user = auth.register(username, f"{username}@example.com", "TestPass123!")
 
         result = auth.login("revokedev", "TestPass123!", device_info={"fingerprint": "session_device"})
         token = result.token

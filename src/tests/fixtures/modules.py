@@ -42,7 +42,7 @@ class ModuleRegistry:
             from src.core import auth
             self._reset_module(auth)
             auth.setup(self._db)
-            self._cache['auth'] = auth
+            self._cache['auth'] = auth._manager
         return self._cache['auth']
 
     @property
@@ -52,7 +52,7 @@ class ModuleRegistry:
             from src.core import messaging
             self._reset_module(messaging)
             messaging.setup(self._db, self.auth)
-            self._cache['messaging'] = messaging
+            self._cache['messaging'] = messaging._manager
         return self._cache['messaging']
 
     @property
@@ -62,7 +62,7 @@ class ModuleRegistry:
             from src.core import servers
             self._reset_module(servers)
             servers.setup(self._db, self.auth, self.messaging)
-            self._cache['servers'] = servers
+            self._cache['servers'] = servers._manager
         return self._cache['servers']
 
     @property
@@ -72,7 +72,7 @@ class ModuleRegistry:
             from src.core import relationships
             self._reset_module(relationships)
             relationships.setup(self._db, self.auth, self.servers)
-            self._cache['relationships'] = relationships
+            self._cache['relationships'] = relationships._manager
         return self._cache['relationships']
 
     @property
@@ -82,7 +82,7 @@ class ModuleRegistry:
             from src.core import presence
             self._reset_module(presence)
             presence.setup(self._db, self.auth, self.relationships, self.servers)
-            self._cache['presence'] = presence
+            self._cache['presence'] = presence._manager
         return self._cache['presence']
 
     @property
@@ -92,7 +92,7 @@ class ModuleRegistry:
             from src.core import reactions
             self._reset_module(reactions)
             reactions.setup(self._db, self.messaging, self.servers, self.relationships)
-            self._cache['reactions'] = reactions
+            self._cache['reactions'] = reactions._manager
         return self._cache['reactions']
 
     @property
@@ -102,7 +102,7 @@ class ModuleRegistry:
             from src.core import embeds
             self._reset_module(embeds)
             embeds.setup(self._db, self.messaging, self.servers)
-            self._cache['embeds'] = embeds
+            self._cache['embeds'] = embeds._manager
         return self._cache['embeds']
 
     @property
@@ -112,7 +112,7 @@ class ModuleRegistry:
             from src.core import webhooks
             self._reset_module(webhooks)
             webhooks.setup(self._db, self.auth, self.messaging, self.servers, self.embeds)
-            self._cache['webhooks'] = webhooks
+            self._cache['webhooks'] = webhooks._manager
         return self._cache['webhooks']
 
     @property
@@ -122,7 +122,7 @@ class ModuleRegistry:
             from src.core import threads
             self._reset_module(threads)
             threads.setup(self._db, self.auth, self.messaging, self.servers)
-            self._cache['threads'] = threads
+            self._cache['threads'] = threads._manager
         return self._cache['threads']
 
     @property
@@ -132,12 +132,13 @@ class ModuleRegistry:
             from src.core import notifications
             notifications.setup(
                 self._db,
+                self.auth,
                 self.messaging,
                 self.servers,
                 self.relationships,
                 self.presence
             )
-            self._cache['notifications'] = notifications
+            self._cache['notifications'] = notifications._manager
         return self._cache['notifications']
 
     @property
@@ -153,7 +154,7 @@ class ModuleRegistry:
                 bot_multiplier=1.5,
                 enable_global_limit=True,
             )
-            self._cache['ratelimit'] = ratelimit
+            self._cache['ratelimit'] = ratelimit._manager
         return self._cache['ratelimit']
 
     @property
@@ -163,7 +164,7 @@ class ModuleRegistry:
             from src.core import voice
             self._reset_module(voice)
             voice.setup(self._db, self.auth, self.servers)
-            self._cache['voice'] = voice
+            self._cache['voice'] = voice._manager
         return self._cache['voice']
 
     @property
@@ -177,7 +178,7 @@ class ModuleRegistry:
                 servers_module=self.servers,
                 messaging_module=self.messaging,
             )
-            self._cache['events'] = events
+            self._cache['events'] = events._manager
         return self._cache['events']
 
     @property
@@ -187,7 +188,7 @@ class ModuleRegistry:
             from src.core import media
             self._reset_module(media)
             media.setup(self._db, self.messaging)
-            self._cache['media'] = media
+            self._cache['media'] = media._manager
         return self._cache['media']
 
     @property
@@ -197,7 +198,7 @@ class ModuleRegistry:
             from src.core import search
             self._reset_module(search)
             search.setup(self._db, self.auth, self.messaging, self.servers)
-            self._cache['search'] = search
+            self._cache['search'] = search._manager
         return self._cache['search']
 
     @property
@@ -207,7 +208,7 @@ class ModuleRegistry:
             from src.core import applications
             self._reset_module(applications)
             applications.setup(self._db, self.auth, self.servers, self.events)
-            self._cache['applications'] = applications
+            self._cache['applications'] = applications._manager
         return self._cache['applications']
 
     @property
@@ -217,7 +218,7 @@ class ModuleRegistry:
             from src.core import stickers
             self._reset_module(stickers)
             stickers.setup(self._db, self.messaging, self.servers)
-            self._cache['stickers'] = stickers
+            self._cache['stickers'] = stickers._manager
         return self._cache['stickers']
 
     @property
@@ -227,7 +228,7 @@ class ModuleRegistry:
             from src.core import polls
             self._reset_module(polls)
             polls.setup(self._db, self.messaging)
-            self._cache['polls'] = polls
+            self._cache['polls'] = polls._manager
         return self._cache['polls']
 
     @property
@@ -237,7 +238,7 @@ class ModuleRegistry:
             from src.core import soundboard
             self._reset_module(soundboard)
             soundboard.setup(self._db, self.servers)
-            self._cache['soundboard'] = soundboard
+            self._cache['soundboard'] = soundboard._manager
         return self._cache['soundboard']
 
     @property
@@ -247,7 +248,7 @@ class ModuleRegistry:
             from src.core import settings
             self._reset_module(settings)
             settings.setup(self._db)
-            self._cache['settings'] = settings
+            self._cache['settings'] = settings._manager
         return self._cache['settings']
 
     def get_api(self):

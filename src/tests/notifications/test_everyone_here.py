@@ -110,7 +110,7 @@ class TestEveryoneNotifications:
         msg = messaging.send_message(owner.id, group.id, content)
 
         notifs = notifications.create_notifications_for_message(
-            sender_id=owner.id,
+            author_id=owner.id,
             message_id=msg.id,
             conversation_id=group.id,
             content=content,
@@ -135,7 +135,7 @@ class TestEveryoneNotifications:
         msg = messaging.send_message(owner.id, group.id, content)
 
         notifs = notifications.create_notifications_for_message(
-            sender_id=owner.id,
+            author_id=owner.id,
             message_id=msg.id,
             conversation_id=group.id,
             content=content,
@@ -159,7 +159,7 @@ class TestHereNotifications:
         msg = messaging.send_message(owner.id, group.id, content)
 
         notifs = notifications.create_notifications_for_message(
-            sender_id=owner.id,
+            author_id=owner.id,
             message_id=msg.id,
             conversation_id=group.id,
             content=content,
@@ -179,7 +179,7 @@ class TestHereNotifications:
         msg = messaging.send_message(owner.id, group.id, content)
 
         notifs = notifications.create_notifications_for_message(
-            sender_id=owner.id,
+            author_id=owner.id,
             message_id=msg.id,
             conversation_id=group.id,
             content=content,

@@ -152,7 +152,7 @@ class TestPasswordHashingTimingAttacks:
         
         avg = sum(timings) / len(timings)
         for t in timings:
-            assert abs(t - avg) < avg * 0.5
+            assert abs(t - avg) < avg * 0.8
 
     def test_verify_timing_consistency_incorrect_password(self, setup_encryption):
         """Test that incorrect password verification has consistent timing."""

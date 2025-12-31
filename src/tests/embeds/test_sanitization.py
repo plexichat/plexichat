@@ -348,14 +348,14 @@ class TestSanitizeContentFunction:
         """Test sanitizing content with script raises error."""
         db, auth, messaging, servers, embeds = db_and_modules
 
-        with pytest.raises(EmbedSanitizationError):
+        with pytest.raises(embeds.EmbedSanitizationError):
             embeds.sanitize_embed_content("<script>alert('xss')</script>")
 
     def test_sanitize_content_with_event_handler(self, db_and_modules):
         """Test sanitizing content with event handler raises error."""
         db, auth, messaging, servers, embeds = db_and_modules
 
-        with pytest.raises(EmbedSanitizationError):
+        with pytest.raises(embeds.EmbedSanitizationError):
             embeds.sanitize_embed_content("onclick=alert('xss')")
 
 

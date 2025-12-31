@@ -3,6 +3,7 @@ Password management tests for auth module.
 """
 
 import pytest
+import uuid
 
 
 class TestPasswords:
@@ -64,10 +65,12 @@ class TestPasswords:
         assert any("special" in issue.lower() for issue in result.issues)
 
     def test_change_password_success(self, db_and_auth):
-        """Test changing password successfully."""
+        """Test successful password change."""
         db, auth = db_and_auth
+        unique_id = uuid.uuid4().hex[:16]
+        username = f"chpass_{unique_id}"
 
-        user = auth.register("changepwd", "changepwd@example.com", "TestPass123!")
+        user = auth.register(username, f"{username}@example.com", "TestPass123!")
 
         result = auth.change_password(user.id, "TestPass123!", "NewSecurePass456!")
         assert result is True

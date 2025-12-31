@@ -136,11 +136,13 @@ class TestFileSizeEdgeCases:
         assert result.file_id is not None
         assert result.size == 1
 
-    def test_file_at_size_limit(self, media_module, user_pool):
+    def test_file_at_size_limit(self, media_module, user_pool, monkeypatch):
         """Test uploading file exactly at size limit."""
+        # Use smaller limit for testing to avoid MemoryError
+        monkeypatch.setitem(media_module._get_manager()._config["size_limits"], "document", 1024)
         user = user_pool.get_user()
 
-        data = b"x" * (10 * 1024 * 1024)
+        data = b"x" * 1024
 
         result = media_module.upload_file(
             user_id=user.id,
@@ -151,12 +153,14 @@ class TestFileSizeEdgeCases:
 
         assert result.file_id is not None
 
-    def test_file_one_byte_over_limit(self, media_module, user_pool):
+    def test_file_one_byte_over_limit(self, media_module, user_pool, monkeypatch):
         """Test uploading file one byte over limit."""
+        # Use smaller limit for testing to avoid MemoryError
+        monkeypatch.setitem(media_module._get_manager()._config["size_limits"], "document", 1024)
         user = user_pool.get_user()
 
-        # Document limit is 25MB, so we need 25MB + 1
-        data = b"x" * (25 * 1024 * 1024 + 1)
+        # Smaller data for testing
+        data = b"x" * (1024 + 1)
 
         with pytest.raises(media_module.FileSizeError):
             media_module.upload_file(

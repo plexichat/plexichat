@@ -96,7 +96,7 @@ class TestServerPerformance:
         
         for _ in range(20):
             start = datetime.now()
-            modules.servers.get_members(server.id)
+            modules.servers.get_members(owner.id, server.id)
             elapsed = (datetime.now() - start).total_seconds()
             times.append(elapsed)
         
@@ -140,13 +140,13 @@ class TestServerPerformance:
         times = []
         for _ in range(20):
             start = datetime.now()
-            channel_list = modules.servers.get_channels(server.id)
+            channel_list = modules.servers.get_channels(owner.id, server.id)
             elapsed = (datetime.now() - start).total_seconds()
             times.append(elapsed)
         
         avg_time = sum(times) / len(times)
         assert avg_time < 0.15, f"Get channels too slow with 50 channels: {avg_time}s"
-        assert len(channel_list) == 50
+        assert len(channel_list) == 51
 
 
 class TestCrossModulePerformance:
@@ -158,9 +158,9 @@ class TestCrossModulePerformance:
         user2 = user_pool.get_user()
         
         def relationship_messaging():
-            modules.relationships.send_friend_request(user1.id, user2.id)
+            req = modules.relationships.send_friend_request(user1.id, user2.id)
             
-            modules.relationships.accept_friend_request(user2.id, user1.id)
+            modules.relationships.accept_friend_request(user2.id, req.id)
             
             dm = modules.messaging.create_dm(user1.id, user2.id)
             
@@ -169,6 +169,9 @@ class TestCrossModulePerformance:
                 conversation_id=dm.id,
                 content="Friend message"
             )
+            
+            # Cleanup for next round
+            modules.relationships.remove_friend(user1.id, user2.id)
             
             return message
         
@@ -221,8 +224,11 @@ class TestConcurrentWorkflows:
 
     def test_concurrent_user_registrations_and_messaging(self, modules):
         """Test many users registering and messaging concurrently."""
+        import uuid
+        test_run_id = uuid.uuid4().hex[:6]
+        
         def user_workflow(user_id):
-            username = f"concurrent_{user_id}"
+            username = f"concurrent_{test_run_id}_{user_id}"
             email = f"{username}@example.com"
             password = "ConcurrentTest123!@#"
             

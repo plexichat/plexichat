@@ -27,7 +27,7 @@ class TestGetNotificationFeed:
         msg = messaging.send_message(user1.id, dm.id, content)
 
         notifications.create_notifications_for_message(
-            sender_id=user1.id,
+            author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
             content=content
@@ -47,7 +47,7 @@ class TestGetNotificationFeed:
             content = f"<@{member1.id}> message {i}"
             msg = messaging.send_message(owner.id, group.id, content)
             notifications.create_notifications_for_message(
-                sender_id=owner.id,
+                author_id=owner.id,
                 message_id=msg.id,
                 conversation_id=group.id,
                 content=content
@@ -67,7 +67,7 @@ class TestGetNotificationFeed:
             content = f"<@{member1.id}> message {i}"
             msg = messaging.send_message(owner.id, group.id, content)
             notifications.create_notifications_for_message(
-                sender_id=owner.id,
+                author_id=owner.id,
                 message_id=msg.id,
                 conversation_id=group.id,
                 content=content
@@ -92,7 +92,7 @@ class TestGetNotificationFeed:
             content = f"<@{member1.id}> message {i}"
             msg = messaging.send_message(owner.id, group.id, content)
             notifications.create_notifications_for_message(
-                sender_id=owner.id,
+                author_id=owner.id,
                 message_id=msg.id,
                 conversation_id=group.id,
                 content=content
@@ -114,7 +114,7 @@ class TestGetNotifications:
         msg = messaging.send_message(user1.id, dm.id, content)
 
         notifications.create_notifications_for_message(
-            sender_id=user1.id,
+            author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
             content=content
@@ -132,7 +132,7 @@ class TestGetNotifications:
             content = f"<@{member1.id}> message {i}"
             msg = messaging.send_message(owner.id, group.id, content)
             notifications.create_notifications_for_message(
-                sender_id=owner.id,
+                author_id=owner.id,
                 message_id=msg.id,
                 conversation_id=group.id,
                 content=content
@@ -154,7 +154,7 @@ class TestGetNotifications:
             content = f"<@{member1.id}> message {i}"
             msg = messaging.send_message(owner.id, group.id, content)
             notifications.create_notifications_for_message(
-                sender_id=owner.id,
+                author_id=owner.id,
                 message_id=msg.id,
                 conversation_id=group.id,
                 content=content
@@ -182,7 +182,7 @@ class TestDeleteNotification:
         msg = messaging.send_message(user1.id, dm.id, content)
 
         notifs = notifications.create_notifications_for_message(
-            sender_id=user1.id,
+            author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
             content=content
@@ -214,7 +214,7 @@ class TestDeleteNotification:
         msg = messaging.send_message(user1.id, dm.id, content)
 
         notifs = notifications.create_notifications_for_message(
-            sender_id=user1.id,
+            author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
             content=content

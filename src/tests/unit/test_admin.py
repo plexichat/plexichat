@@ -39,19 +39,22 @@ class TestAdminModule:
 
     def test_is_admin_returns_false_for_non_admin(self, admin_module, mock_db):
         """Test is_admin returns False for non-admin user."""
-        mock_db.fetch_one.return_value = {"is_admin": 0}
+        mock_db.fetch_one.return_value = {"permissions": "{}"}
 
         assert admin_module.is_admin(123) is False
 
     def test_is_admin_returns_true_for_admin(self, admin_module, mock_db):
         """Test is_admin returns True for admin user."""
-        mock_db.fetch_one.return_value = {"is_admin": 1}
+        mock_db.fetch_one.return_value = {"permissions": '{"*": true}'}
 
         assert admin_module.is_admin(123) is True
 
     def test_set_admin_updates_flag(self, admin_module, mock_db):
         """Test set_admin updates the is_admin flag."""
+        mock_db.fetch_one.return_value = {"permissions": "{}"}
         result = admin_module.set_admin(123, True)
 
         assert result is True
-        mock_db.execute.assert_called()
+        # Check that it tried to update permissions
+        args, _ = mock_db.execute.call_args
+        assert "UPDATE auth_users SET permissions =" in args[0]

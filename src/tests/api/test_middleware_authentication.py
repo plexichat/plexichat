@@ -186,7 +186,7 @@ class TestGetCurrentUserDependency:
     """Tests for get_current_user dependency."""
 
     @pytest.fixture
-    def app_with_current_user(self):
+    def app_with_current_user(self, api_module):
         """Create test app using get_current_user dependency."""
         from src.api.middleware.error_handling import setup_exception_handlers
         app = FastAPI()
@@ -280,7 +280,7 @@ class TestGetOptionalUserDependency:
     """Tests for get_optional_user dependency."""
 
     @pytest.fixture
-    def app_with_optional_user(self):
+    def app_with_optional_user(self, api_module):
         """Create test app with get_optional_user dependency."""
         from src.api.middleware.error_handling import setup_exception_handlers
         app = FastAPI()
@@ -341,7 +341,7 @@ class TestSecurityScenarios:
     """Security-focused tests for authentication middleware."""
 
     @pytest.fixture
-    def security_app(self):
+    def security_app(self, api_module):
         """Create test app with sensitive endpoint for security tests."""
         from src.api.middleware.error_handling import setup_exception_handlers
         app = FastAPI()

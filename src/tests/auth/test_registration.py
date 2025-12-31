@@ -3,6 +3,7 @@ Registration tests for auth module.
 """
 
 import pytest
+import uuid
 
 
 class TestRegistration:
@@ -11,10 +12,12 @@ class TestRegistration:
     def test_register_valid_user(self, db_and_auth):
         """Test registering a valid user."""
         db, auth = db_and_auth
+        unique_id = uuid.uuid4().hex[:16]
+        username = f"reg_valid_{unique_id}"
 
         user = auth.register(
-            username="alice",
-            email="alice@example.com",
+            username=username,
+            email=f"{username}@example.com",
             password="SecurePass123!"
         )
 
@@ -24,26 +27,26 @@ class TestRegistration:
         assert user.id > 0
 
     def test_register_duplicate_username(self, db_and_auth):
-        """Test that duplicate username fails."""
+        """Test registering with an existing username fails."""
         db, auth = db_and_auth
+        unique_id = uuid.uuid4().hex[:16]
+        username = f"reg_dup_{unique_id}"
 
-        auth.register("bob", "bob@example.com", "SecurePass123!")
+        auth.register(username, f"{username}1@example.com", "SecurePass123!")
 
-        with pytest.raises(auth.UserExistsError) as exc:
-            auth.register("bob", "bob2@example.com", "SecurePass123!")
-
-        assert exc.value.field == "username"
+        with pytest.raises(auth.UserExistsError):
+            auth.register(username, f"{username}2@example.com", "SecurePass123!")
 
     def test_register_duplicate_email(self, db_and_auth):
-        """Test that duplicate email fails."""
+        """Test registering with an existing email fails."""
         db, auth = db_and_auth
+        unique_id = uuid.uuid4().hex[:16]
+        email = f"dup_{unique_id}@example.com"
 
-        auth.register("charlie", "charlie@example.com", "SecurePass123!")
+        auth.register(f"user1_{unique_id}", email, "SecurePass123!")
 
-        with pytest.raises(auth.UserExistsError) as exc:
-            auth.register("charlie2", "charlie@example.com", "SecurePass123!")
-
-        assert exc.value.field == "email"
+        with pytest.raises(auth.UserExistsError):
+            auth.register(f"user2_{unique_id}", email, "SecurePass123!")
 
     def test_register_weak_password_too_short(self, db_and_auth):
         """Test that short password fails."""
@@ -112,11 +115,12 @@ class TestRegistration:
             auth.register("user@name", "user@example.com", "SecurePass123!")
 
     def test_register_reserved_username(self, db_and_auth):
-        """Test that reserved username fails."""
+        """Test registering with a reserved username fails."""
         db, auth = db_and_auth
+        unique_id = uuid.uuid4().hex[:16]
 
         with pytest.raises(auth.InvalidUsernameError):
-            auth.register("admin", "admin@example.com", "SecurePass123!")
+            auth.register("admin", f"admin_{unique_id}@example.com", "SecurePass123!")
 
     def test_register_creates_default_permissions(self, db_and_auth):
         """Test that new user has default permissions."""

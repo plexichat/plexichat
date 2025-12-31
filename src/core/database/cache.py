@@ -454,7 +454,16 @@ def invalidate_user_servers(user_id: int) -> int:
     """
     Invalidate the server list cache for a user.
     """
-    return invalidate_pattern(f"servers:{user_id}*")
+    return invalidate_pattern(f"servers:*:{user_id}*")
+
+
+def invalidate_server(server_id: int) -> int:
+    """
+    Invalidate the server list cache for all users who might have this server in their list.
+    Since we don't know all members here, we invalidate the entire servers cache.
+    In a production environment, you might want to be more specific.
+    """
+    return invalidate_pattern("servers:*")
 
 
 def invalidate_server_channels(server_id: int) -> int:

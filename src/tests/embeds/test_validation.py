@@ -449,3 +449,5 @@ class TestValidateEmbedFunction:
         })
 
         assert result["total_chars"] == 10
+
+        assert result["total_chars"] == 10

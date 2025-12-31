@@ -63,7 +63,7 @@ def invalid_tokens():
 def create_user_with_token(modules):
     """Factory fixture to create users with authentication tokens."""
     def _create():
-        unique_id = uuid.uuid4().hex[:8]
+        unique_id = uuid.uuid4().hex[:16]
         username = f"sectest_{unique_id}"
         email = f"{username}@test.example.com"
         password = "SecurePass123!"

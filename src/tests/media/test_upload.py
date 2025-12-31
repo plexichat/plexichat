@@ -3,11 +3,9 @@ Tests for file upload functionality.
 """
 
 import pytest
-
-
-import pytest
 import asyncio
 import io
+import uuid
 import uuid
 
 @pytest.mark.asyncio
@@ -53,9 +51,20 @@ class TestMediaAsync:
         
         assert "declared type" in str(exc_info.value) or "signature" in str(exc_info.value).lower()
 
-    async def test_rate_limit_enforcement(self, media_module, user_pool, sample_text_bytes):
+    async def test_rate_limit_enforcement(self, media_module, modules, sample_text_bytes, monkeypatch):
         """Test that upload rate limits are strictly enforced across concurrent requests."""
-        user = user_pool.get_user()
+        # Explicitly set limit to 10 per minute
+        monkeypatch.setitem(media_module._get_manager()._config["rate_limit"], "uploads_per_minute", 10)
+        monkeypatch.setitem(media_module._get_manager()._config["rate_limit"], "enabled", True)
+        
+        # Use fresh user for isolation
+        unique_id = uuid.uuid4().hex[:8]
+        user = await asyncio.to_thread(
+            modules.auth.register,
+            username=f"async_rate_{unique_id}",
+            email=f"async_rate_{unique_id}@example.com",
+            password="TestPass123!"
+        )
         
         # Default limit is 10 per minute in our manager logic
         # We'll try to upload 15 small text files

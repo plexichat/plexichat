@@ -81,6 +81,9 @@ class TestTLSModule:
             with open(result_key, "r") as f:
                 key_content = f.read()
                 assert "BEGIN RSA PRIVATE KEY" in key_content
+            
+            # Shutdown logger to release file handles before tmpdir cleanup
+            logger.shutdown()
 
     @pytest.mark.skipif(
         not pytest.importorskip("cryptography", reason="cryptography not installed"),
@@ -121,6 +124,9 @@ class TestTLSModule:
                 # Modification time should be the same
                 second_mtime = os.path.getmtime(cert_path)
                 assert first_mtime == second_mtime
+            
+            # Shutdown logger to release file handles before tmpdir cleanup
+            logger.shutdown()
 
     def test_get_ssl_context_missing_cert(self):
         """Test get_ssl_context raises error for missing cert."""

@@ -76,7 +76,7 @@ class TestNotificationErrors:
         msg = messaging.send_message(user1.id, dm.id, content)
 
         notifs = notifications.create_notifications_for_message(
-            sender_id=user1.id,
+            author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
             content=content
@@ -142,7 +142,7 @@ class TestLargeContent:
         msg = messaging.send_message(user1.id, dm.id, content)
 
         notifs = notifications.create_notifications_for_message(
-            sender_id=user1.id,
+            author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
             content=content
@@ -242,7 +242,7 @@ class TestNotificationGet:
         msg = messaging.send_message(user1.id, dm.id, content)
 
         notifs = notifications.create_notifications_for_message(
-            sender_id=user1.id,
+            author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
             content=content

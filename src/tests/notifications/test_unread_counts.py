@@ -24,7 +24,7 @@ class TestGetUnreadCount:
         msg = messaging.send_message(user1.id, dm.id, content)
 
         notifications.create_notifications_for_message(
-            sender_id=user1.id,
+            author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
             content=content
@@ -44,7 +44,7 @@ class TestGetUnreadCount:
         msg = messaging.send_message(owner.id, group.id, content)
 
         notifications.create_notifications_for_message(
-            sender_id=owner.id,
+            author_id=owner.id,
             message_id=msg.id,
             conversation_id=group.id,
             content=content,
@@ -68,7 +68,7 @@ class TestGetUnreadCounts:
         msg = messaging.send_message(owner.id, group.id, content)
 
         notifications.create_notifications_for_message(
-            sender_id=owner.id,
+            author_id=owner.id,
             message_id=msg.id,
             conversation_id=group.id,
             content=content
@@ -107,7 +107,7 @@ class TestGetMentionCount:
         msg = messaging.send_message(user1.id, dm.id, content)
 
         notifications.create_notifications_for_message(
-            sender_id=user1.id,
+            author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
             content=content
@@ -127,7 +127,7 @@ class TestGetMentionCount:
         msg = messaging.send_message(owner.id, group.id, content)
 
         notifications.create_notifications_for_message(
-            sender_id=owner.id,
+            author_id=owner.id,
             message_id=msg.id,
             conversation_id=group.id,
             content=content,
@@ -150,7 +150,7 @@ class TestMarkRead:
         msg = messaging.send_message(user1.id, dm.id, content)
 
         notifs = notifications.create_notifications_for_message(
-            sender_id=user1.id,
+            author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
             content=content
@@ -173,7 +173,7 @@ class TestMarkRead:
             content = f"<@{member1.id}> message {i}"
             msg = messaging.send_message(owner.id, group.id, content)
             notifications.create_notifications_for_message(
-                sender_id=owner.id,
+                author_id=owner.id,
                 message_id=msg.id,
                 conversation_id=group.id,
                 content=content
@@ -196,7 +196,7 @@ class TestMarkRead:
         msg = messaging.send_message(owner.id, group.id, content)
 
         notifications.create_notifications_for_message(
-            sender_id=owner.id,
+            author_id=owner.id,
             message_id=msg.id,
             conversation_id=group.id,
             content=content,
@@ -218,7 +218,7 @@ class TestMarkRead:
         msg = messaging.send_message(owner.id, group.id, content)
 
         notifications.create_notifications_for_message(
-            sender_id=owner.id,
+            author_id=owner.id,
             message_id=msg.id,
             conversation_id=group.id,
             content=content,

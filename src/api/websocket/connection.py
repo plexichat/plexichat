@@ -137,6 +137,15 @@ class Connection:
         except Exception:
             return False
 
+    async def close(self, code: int = 1000, reason: str = "") -> None:
+        """Close the connection."""
+        self.set_disconnecting()
+        try:
+            await self.websocket.close(code, reason)
+        except Exception:
+            pass
+        self.set_disconnected()
+
     def set_identified(
         self,
         user_id: int,

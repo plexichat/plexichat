@@ -34,6 +34,7 @@ from .models import (
     FilterAction,
 )
 from .exceptions import (
+    MessagingError,
     ConversationNotFoundError,
     ConversationAccessDeniedError,
     MessageNotFoundError,
@@ -45,18 +46,55 @@ from .exceptions import (
     ContentTooLongError,
     AttachmentTooLargeError,
     AttachmentLimitError,
+    AttachmentError,
+    RateLimitError,
     InvalidRecipientError,
     ConversationTypeError,
     PinLimitError,
     MessageNotPinnedError,
     AttachmentNotFoundError,
+    MessagingError,
+    AttachmentError,
+    RateLimitError,
+    InvalidRecipientError,
 )
 from .schema import create_tables
 from .content import validate_content
 
 
+from . import exceptions as _exc
+from . import models as _models
+
 class MessagingManager(BaseManager):
     """Core messaging manager handling all operations."""
+
+    # Re-expose exceptions for easy access in tests
+    MessagingError = _exc.MessagingError
+    ConversationNotFoundError = _exc.ConversationNotFoundError
+    ConversationAccessDeniedError = _exc.ConversationAccessDeniedError
+    ConversationTypeError = _exc.ConversationTypeError
+    MessageNotFoundError = _exc.MessageNotFoundError
+    MessageAccessDeniedError = _exc.MessageAccessDeniedError
+    ParticipantNotFoundError = _exc.ParticipantNotFoundError
+    ParticipantExistsError = _exc.ParticipantExistsError
+    ParticipantLimitError = _exc.ParticipantLimitError
+    InvalidContentError = _exc.InvalidContentError
+    ContentTooLongError = _exc.ContentTooLongError
+    AttachmentError = _exc.AttachmentError
+    AttachmentTooLargeError = _exc.AttachmentTooLargeError
+    AttachmentLimitError = _exc.AttachmentLimitError
+    RateLimitError = _exc.RateLimitError
+    InvalidRecipientError = _exc.InvalidRecipientError
+    PinLimitError = _exc.PinLimitError
+    MessageNotPinnedError = _exc.MessageNotPinnedError
+    AttachmentNotFoundError = _exc.AttachmentNotFoundError
+
+    # Re-expose models/enums for easy access in tests
+    ConversationType = _models.ConversationType
+    MessageType = _models.MessageType
+    MessageStatusType = _models.MessageStatusType
+    ParticipantRole = _models.ParticipantRole
+    FilterAction = _models.FilterAction
 
     def __init__(self, db: Any, auth_module: Optional[Any] = None) -> None:
         """
@@ -1499,13 +1537,26 @@ class MessagingManager(BaseManager):
 
         now = self._get_timestamp()
 
-        # Build the message filter
+        # Build the message filter for marking as read
+        # Must not be the author and must not already have a 'read' status
         msg_filter = "conversation_id = ? AND author_id != ? AND deleted = 0"
         params: List[SnowflakeID] = [conversation_id, user_id]
 
         if up_to_message_id:
             msg_filter += " AND id <= ?"
             params.append(up_to_message_id)
+
+        # Get count of messages that will be marked as read (not already read)
+        count_row = self._db.fetch_one(
+            f"""SELECT COUNT(*) as cnt FROM msg_messages m
+                WHERE {msg_filter}
+                AND NOT EXISTS (
+                    SELECT 1 FROM msg_message_status s 
+                    WHERE s.message_id = m.id AND s.user_id = ? AND s.status = ?
+                )""",
+            tuple(params) + (user_id, MessageStatusType.READ.value),
+        )
+        count = count_row["cnt"] if count_row else 0
 
         # Only update public read statuses if user has read receipts enabled
         user_settings = self.get_user_message_settings(user_id)
@@ -1525,8 +1576,7 @@ class MessagingManager(BaseManager):
                 + tuple(params),
             )
 
-            # Batch insert new statuses for messages without any status
-            # Use INSERT OR IGNORE to handle race conditions
+            # Batch insert new statuses for messages without any status for this user
             self._db.execute(
                 f"""INSERT OR IGNORE INTO msg_message_status (id, message_id, user_id, status, timestamp)
                     SELECT 
@@ -1545,13 +1595,6 @@ class MessagingManager(BaseManager):
                 + tuple(params)
                 + (user_id,),
             )
-
-        # Get count of all unread messages being marked (for return info)
-        count_row = self._db.fetch_one(
-            f"SELECT COUNT(*) as cnt FROM msg_messages WHERE {msg_filter}",
-            tuple(params),
-        )
-        count = count_row["cnt"] if count_row else 0
 
         # Update participant's last read (essential for unread counts regardless of privacy)
         last_msg_id = up_to_message_id

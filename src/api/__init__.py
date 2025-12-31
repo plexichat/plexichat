@@ -156,6 +156,7 @@ def get_db() -> Optional[Any]:
 def get_auth() -> Optional[Any]:
     """Get auth module."""
     if _auth: return _auth
+    if _setup_complete: return None # If setup was called but _auth is None, it's explicitly unavailable
     # Fallback to importing if already setup globally but not passed here
     try:
         from src.core import auth

@@ -8,27 +8,39 @@ import pytest
 import uuid
 
 
+def _init_embeds(modules):
+    """Reliably initialize the embeds module."""
+    from src.core import embeds
+    embeds._manager = None
+    embeds._setup_complete = False
+    embeds.setup(modules._db, modules.messaging, modules.servers)
+    return embeds
+
+
 @pytest.fixture
 def db_and_modules(modules):
     """Legacy fixture for backward compatibility."""
-    return modules._db, modules.auth, modules.messaging, modules.servers, modules.embeds
+    embeds = _init_embeds(modules)
+    return modules._db, modules.auth, modules.messaging, modules.servers, embeds
 
 
 @pytest.fixture
 def users_with_dm(modules, user_pool):
     """Create users with a DM conversation and message."""
+    embeds = _init_embeds(modules)
     user1 = user_pool.get_user()
     user2 = user_pool.get_user()
 
     dm = modules.messaging.create_dm(user1.id, user2.id)
     msg = modules.messaging.send_message(user1.id, dm.id, "Test message for embeds")
 
-    return user1, user2, dm, msg, modules.embeds
+    return user1, user2, dm, msg, embeds
 
 
 @pytest.fixture
 def fresh_users_with_dm(modules):
     """Create fresh users with DM for isolated tests."""
+    embeds = _init_embeds(modules)
     unique_id = uuid.uuid4().hex[:8]
 
     user1 = modules.auth.register(
@@ -46,12 +58,13 @@ def fresh_users_with_dm(modules):
     dm = modules.messaging.create_dm(user1.id, user2.id)
     msg = modules.messaging.send_message(user1.id, dm.id, "Fresh test message")
 
-    return user1, user2, dm, msg, modules.embeds, modules.messaging
+    return user1, user2, dm, msg, embeds, modules.messaging
 
 
 @pytest.fixture
 def users_with_server(modules):
     """Create users with a server for testing."""
+    embeds = _init_embeds(modules)
     unique_id = uuid.uuid4().hex[:8]
 
     owner = modules.auth.register(
@@ -72,12 +85,13 @@ def users_with_server(modules):
     group = modules.messaging.create_group(owner.id, f"Server Group {unique_id}", [member.id])
     msg = modules.messaging.send_message(owner.id, group.id, "Server message for embeds")
 
-    return owner, member, server, group, msg, modules.servers, modules.embeds, modules.messaging
+    return owner, member, server, group, msg, modules.servers, embeds, modules.messaging
 
 
 @pytest.fixture
 def group_with_message(modules):
     """Create a group conversation with a message."""
+    embeds = _init_embeds(modules)
     unique_id = uuid.uuid4().hex[:8]
 
     owner = modules.auth.register(
@@ -95,4 +109,4 @@ def group_with_message(modules):
     group = modules.messaging.create_group(owner.id, f"Test Group {unique_id}", [member1.id])
     msg = modules.messaging.send_message(owner.id, group.id, "Group message for embeds")
 
-    return owner, member1, group, msg, modules.messaging, modules.embeds
+    return owner, member1, group, msg, modules.messaging, embeds

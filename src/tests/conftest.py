@@ -89,9 +89,13 @@ def setup_config():
             "sessions": {
                 "token_bytes": 32,
                 "expire_hours": 168,
-                "max_per_user": 10,
+                "max_per_user": 20,
                 "extend_on_activity": True,
                 "extend_threshold_hours": 24,
+            },
+            "totp": {
+                "backup_code_count": 10,
+                "issuer": "TestApp"
             },
             "security": {
                 "max_failed_attempts": 100,
@@ -462,6 +466,16 @@ def test_db():
     db.connect()
     
     # Critical: Create auth tables first because other modules have foreign keys to them
+    # Use unique worker_id for parallel tests
+    worker_id = os.environ.get('PYTEST_XDIST_WORKER')
+    worker_num = 1
+    if worker_id and worker_id.startswith('gw'):
+        try:
+            worker_num = int(worker_id[2:]) + 1
+        except ValueError:
+            worker_num = 1
+    encryption.setup(worker_id=worker_num, argon2_time_cost=1, argon2_memory_cost=8192, argon2_parallelism=1)
+
     create_auth_tables(db)
     create_messaging_tables(db)
     create_server_tables(db)

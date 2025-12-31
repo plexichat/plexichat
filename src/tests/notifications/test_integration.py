@@ -17,7 +17,7 @@ class TestMessagingIntegration:
         msg = messaging.send_message(user1.id, dm.id, content)
 
         notifs = notifications.create_notifications_for_message(
-            sender_id=user1.id,
+            author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
             content=content
@@ -34,7 +34,7 @@ class TestMessagingIntegration:
         msg = messaging.send_message(user1.id, dm.id, content)
 
         notifs = notifications.create_notifications_for_message(
-            sender_id=user1.id,
+            author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
             content=content
@@ -51,7 +51,7 @@ class TestMessagingIntegration:
         msg = messaging.send_message(owner.id, group.id, content)
 
         notifs = notifications.create_notifications_for_message(
-            sender_id=owner.id,
+            author_id=owner.id,
             message_id=msg.id,
             conversation_id=group.id,
             content=content
@@ -76,7 +76,7 @@ class TestServersIntegration:
         msg = messaging.send_message(owner.id, group.id, content)
 
         notifs = notifications.create_notifications_for_message(
-            sender_id=owner.id,
+            author_id=owner.id,
             message_id=msg.id,
             conversation_id=group.id,
             content=content,
@@ -96,7 +96,7 @@ class TestServersIntegration:
         msg = messaging.send_message(owner.id, group.id, content)
 
         notifs = notifications.create_notifications_for_message(
-            sender_id=owner.id,
+            author_id=owner.id,
             message_id=msg.id,
             conversation_id=group.id,
             content=content,
@@ -117,7 +117,7 @@ class TestServersIntegration:
         msg = messaging.send_message(owner.id, group.id, content)
 
         notifs = notifications.create_notifications_for_message(
-            sender_id=owner.id,
+            author_id=owner.id,
             message_id=msg.id,
             conversation_id=group.id,
             content=content,
@@ -137,7 +137,7 @@ class TestServersIntegration:
         msg = messaging.send_message(owner.id, group.id, content)
 
         notifs = notifications.create_notifications_for_message(
-            sender_id=owner.id,
+            author_id=owner.id,
             message_id=msg.id,
             conversation_id=group.id,
             content=content,
@@ -162,7 +162,7 @@ class TestRelationshipsIntegration:
         msg = messaging.send_message(owner.id, group.id, content)
 
         notifs = notifications.create_notifications_for_message(
-            sender_id=owner.id,
+            author_id=owner.id,
             message_id=msg.id,
             conversation_id=group.id,
             content=content
@@ -201,7 +201,7 @@ class TestRelationshipsIntegration:
         msg = messaging.send_message(user1.id, group.id, content)
 
         notifs = notifications.create_notifications_for_message(
-            sender_id=user1.id,
+            author_id=user1.id,
             message_id=msg.id,
             conversation_id=group.id,
             content=content
@@ -270,7 +270,7 @@ class TestPushPayload:
         msg = messaging.send_message(user1.id, dm.id, content)
 
         notifs = notifications.create_notifications_for_message(
-            sender_id=user1.id,
+            author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
             content=content
@@ -294,7 +294,7 @@ class TestPushPayload:
             content = f"<@{member1.id}> message {i}"
             msg = messaging.send_message(owner.id, group.id, content)
             notifs = notifications.create_notifications_for_message(
-                sender_id=owner.id,
+                author_id=owner.id,
                 message_id=msg.id,
                 conversation_id=group.id,
                 content=content
