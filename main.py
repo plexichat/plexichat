@@ -824,7 +824,14 @@ class PlexiChatServer:
 
         logger.info("Initializing notifications module...")
         try:
-            notifications.setup(self.db, messaging, auth)
+            notifications.setup(
+                self.db,
+                auth_module=auth,
+                messaging_module=messaging,
+                servers_module=servers,
+                relationships_module=relationships,
+                presence_module=presence
+            )
             self._modules['notifications'] = notifications
         except Exception as e:
             logger.warning(f"Failed to initialize notifications module: {e}")

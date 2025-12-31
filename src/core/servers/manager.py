@@ -8,7 +8,7 @@ and database interactions.
 import json
 import secrets
 import string
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, Union
 
 import utils.config as config
 import utils.logger as logger
@@ -66,6 +66,9 @@ from src.core.database import cache_get, cache_set, cache_delete, redis_availabl
 
 class ServerManager(BaseManager):
     """Core server manager handling all operations."""
+
+    ChannelType = ChannelType
+
 
     def __init__(self, db, auth_module=None, messaging_module=None):
         """
@@ -534,13 +537,21 @@ class ServerManager(BaseManager):
         user_id: SnowflakeID,
         server_id: SnowflakeID,
         name: str,
-        channel_type: ChannelType = ChannelType.TEXT,
+        channel_type: Union[ChannelType, str] = ChannelType.TEXT,
         category_id: Optional[SnowflakeID] = None,
         topic: Optional[str] = None,
         nsfw: bool = False,
         slowmode_seconds: int = 0,
     ) -> Channel:
         """Create a new channel in a server."""
+        # Convert string to Enum if needed
+        if isinstance(channel_type, str):
+            try:
+                channel_type = ChannelType(channel_type.lower())
+            except ValueError:
+                # Default to TEXT if invalid
+                channel_type = ChannelType.TEXT
+
         server = self.get_server(server_id, user_id)
         if not server:
             raise ServerNotFoundError("Server not found")
@@ -847,11 +858,7 @@ class ServerManager(BaseManager):
         )
 
         # Invalidate channel cache
-        if hasattr(self, '_channel_cache'):
-             self._cache_invalidate(self._channel_cache, channel_id)
-
-        if hasattr(self, '_channel_cache'):
-             self._cache_invalidate(self._channel_cache, channel_id)
+        self._cache_invalidate(self._channel_cache, channel_id)
 
         if redis_available():
             cache_delete(f"channel:{channel_id}")
@@ -877,8 +884,7 @@ class ServerManager(BaseManager):
             (position, self._get_timestamp(), channel_id),
         )
 
-        if hasattr(self, '_channel_cache'):
-             self._cache_invalidate(self._channel_cache, channel_id)
+        self._cache_invalidate(self._channel_cache, channel_id)
 
         if redis_available():
             cache_delete(f"channel:{channel_id}")

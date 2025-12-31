@@ -17,7 +17,7 @@ from src.api.schemas.servers import (
 )
 from src.api.schemas.common import SnowflakeID
 from src.core.servers.models import ChannelType
-from src.core.database import cached, invalidate_pattern, invalidate_user_servers, invalidate_server_channels
+from src.core.database import cached, invalidate_pattern, invalidate_user_servers, invalidate_server_channels, invalidate_server
 
 import utils.config as config
 import utils.logger as logger
@@ -204,9 +204,8 @@ async def update_server(
         # Invalidate channel list cache if default channel changed
         if "default_channel_id" in update_data:
             invalidate_server_channels(sid)
-        # Invalidate user's server list (name/icon might have changed)
-        # For now, we only invalidate for the current user to be safe and efficient
-        invalidate_user_servers(current_user.user_id)
+        # Invalidate server list cache for all members
+        invalidate_server(sid)
         return _server_to_response(server)
     except Exception as e:
         exc_name = type(e).__name__

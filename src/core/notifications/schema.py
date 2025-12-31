@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS notif_notifications (
     conversation_id INTEGER NOT NULL,
     server_id INTEGER,
     channel_id INTEGER,
+    thread_id INTEGER,
     mention_type TEXT NOT NULL DEFAULT 'user',
     content_preview TEXT NOT NULL DEFAULT '',
     read INTEGER NOT NULL DEFAULT 0,

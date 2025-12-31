@@ -97,12 +97,13 @@ _manager = None
 _setup_complete = False
 
 
-def setup(db, messaging_module=None, servers_module=None, relationships_module=None, presence_module=None):
+def setup(db, auth_module=None, messaging_module=None, servers_module=None, relationships_module=None, presence_module=None):
     """
     Initialize the notifications module.
 
     Args:
         db: Database instance (must be connected)
+        auth_module: Optional auth module for user existence checks
         messaging_module: Optional messaging module for message access
         servers_module: Optional servers module for role/permission checks
         relationships_module: Optional relationships module for block filtering
@@ -112,7 +113,7 @@ def setup(db, messaging_module=None, servers_module=None, relationships_module=N
 
     from .manager import NotificationManager
 
-    _manager = NotificationManager(db, messaging_module, servers_module, relationships_module, presence_module)
+    _manager = NotificationManager(db, auth_module, messaging_module, servers_module, relationships_module, presence_module)
     _setup_complete = True
 
 
@@ -152,8 +153,8 @@ def highlight_mentions(content: str, user_id: int) -> List[MentionPosition]:
 
 
 def create_notifications_for_message(
-    sender_id: int,
     message_id: int,
+    author_id: int,
     conversation_id: int,
     content: str,
     server_id: Optional[int] = None,
@@ -161,7 +162,7 @@ def create_notifications_for_message(
 ) -> List[Notification]:
     """Create notifications for all mentioned users in a message."""
     return _get_manager().create_notifications_for_message(
-        sender_id, message_id, conversation_id, content, server_id, channel_id
+        message_id, author_id, conversation_id, content, server_id, channel_id
     )
 
 

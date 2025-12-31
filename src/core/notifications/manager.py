@@ -100,7 +100,7 @@ class NotificationManager(BaseManager):
         """Get IDs of users blocked by or blocking this user."""
         blocked = set()
         if self._relationships:
-            blocked.update(self._relationships.get_blocked_user_ids(user_id))
+            blocked.update(self._relationships.get_all_blocked_ids(user_id))
             rows = self._db.fetch_all(
                 "SELECT blocker_id FROM rel_blocked WHERE blocked_id = ?",
                 (user_id,)
@@ -299,6 +299,7 @@ class NotificationManager(BaseManager):
             positions.append(MentionPosition(
                 start_pos=mention.start_pos,
                 end_pos=mention.end_pos,
+                mention_type=mention.mention_type,
                 is_self=is_self
             ))
 
@@ -309,12 +310,13 @@ class NotificationManager(BaseManager):
     def create_notifications_for_message(
         self,
         message_id: SnowflakeID,
-        author_id: SnowflakeID,
-        conversation_id: SnowflakeID,
-        content: str,
+        author_id: Optional[SnowflakeID] = None,
+        conversation_id: SnowflakeID = 0,
+        content: str = "",
         server_id: Optional[SnowflakeID] = None,
         channel_id: Optional[SnowflakeID] = None,
-        thread_id: Optional[SnowflakeID] = None
+        thread_id: Optional[SnowflakeID] = None,
+        **kwargs
     ) -> List[Notification]:
         """
         Create notifications for all mentioned users in a message.
@@ -327,13 +329,18 @@ class NotificationManager(BaseManager):
             server_id: Optional server ID
             channel_id: Optional channel ID
             thread_id: Optional thread ID
+            **kwargs: Support for legacy 'sender_id'
 
         Returns:
             List of created notifications
         """
+        actual_author_id = author_id or kwargs.get("sender_id")
+        if actual_author_id is None:
+            raise ValueError("author_id or sender_id must be provided")
+
         return self.create_notifications(
             message_id=message_id,
-            author_id=author_id,
+            author_id=actual_author_id,
             conversation_id=conversation_id,
             content=content,
             server_id=server_id,

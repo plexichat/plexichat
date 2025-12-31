@@ -24,7 +24,14 @@ from .models import (
     IndexedServer,
 )
 from .exceptions import (
+    SearchError,
     SearchLimitError,
+    MinimumMembersError,
+    CooldownError,
+    AlreadyListedError,
+    NotListedError,
+    CategoryNotFoundError,
+    SearchRateLimitError,
 )
 from .schema import create_tables
 from .query import QueryParser, FilterProcessor, RankingEngine
@@ -34,7 +41,21 @@ from .discovery import DiscoveryManager
 
 
 class SearchManager(BaseManager):
-    """Core search manager handling all search operations."""
+    """Core search manager handling all operations."""
+
+    # Re-expose for tests
+    SearchError = SearchError
+    SearchLimitError = SearchLimitError
+    MinimumMembersError = MinimumMembersError
+    CooldownError = CooldownError
+    AlreadyListedError = AlreadyListedError
+    NotListedError = NotListedError
+    CategoryNotFoundError = CategoryNotFoundError
+    SearchRateLimitError = SearchRateLimitError
+
+    def _get_manager(self):
+        """Compatibility method for some test patterns."""
+        return self
 
     def __init__(self, db, auth_module=None, messaging_module=None, servers_module=None):
         """
@@ -128,6 +149,10 @@ class SearchManager(BaseManager):
         conversation_id: Optional[int] = None,
         server_id: Optional[int] = None,
         channel_id: Optional[int] = None,
+        author_id: Optional[int] = None,
+        after_timestamp: Optional[int] = None,
+        has_attachments: Optional[bool] = None,
+        mentions_user: Optional[int] = None,
         limit: int = 25,
         offset: int = 0,
     ) -> List[MessageSearchResult]:
@@ -140,6 +165,10 @@ class SearchManager(BaseManager):
             conversation_id: Optional conversation to search within
             server_id: Optional server to search within
             channel_id: Optional channel to search within
+            author_id: Optional author to filter by
+            after_timestamp: Optional timestamp to filter by (results after this)
+            has_attachments: Optional filter for messages with attachments
+            mentions_user: Optional filter for messages mentioning a user
             limit: Maximum results to return
             offset: Offset for pagination
             
@@ -170,6 +199,10 @@ class SearchManager(BaseManager):
             conversation_ids=accessible_conversations,
             server_ids=[server_id] if server_id else None,
             channel_ids=[channel_id] if channel_id else None,
+            author_id=author_id,
+            after_timestamp=after_timestamp,
+            has_attachments=has_attachments,
+            mentions_user=mentions_user,
             limit=limit * 2,
             offset=offset,
         )

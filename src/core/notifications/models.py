@@ -52,6 +52,7 @@ class MentionPosition:
     """Position of a mention in message content for highlighting."""
     start_pos: int
     end_pos: int
+    mention_type: MentionType = MentionType.USER
     is_self: bool = False
 
 
