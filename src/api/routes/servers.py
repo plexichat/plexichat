@@ -498,14 +498,41 @@ async def create_server_channel(
         channel = servers_mod.create_channel(**kwargs)
         # Invalidate server's channel list cache
         invalidate_server_channels(sid)
-        return _channel_to_response(channel)
+        
+        response = _channel_to_response(channel)
+
+        # Broadcast CHANNEL_CREATE event via WebSocket (fire and forget)
+        import asyncio
+        async def dispatch_channel_create():
+            try:
+                from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+                from src.core.events.models import Event
+                from src.core.events.types import EventType
+
+                if ws_is_setup():
+                    dispatcher = get_dispatcher()
+                    user_ids = servers_mod.get_member_user_ids(sid)
+                    
+                    if user_ids:
+                        event = Event(
+                            event_type=EventType.CHANNEL_CREATE,
+                            data=response.model_dump(),
+                            server_id=sid,
+                        )
+                        await dispatcher.dispatch_event(event, user_ids)
+            except Exception as e:
+                logger.debug(f"Failed to broadcast CHANNEL_CREATE: {e}")
+
+        asyncio.create_task(dispatch_channel_create())
+
+        return response
     except TypeError as e:
         # Handle unexpected keyword arguments by trying simpler call
         if "unexpected keyword argument" in str(e):
             channel = servers_mod.create_channel(
                 user_id=current_user.user_id,
                 server_id=sid,
-                name=name
+                name=body.name
             )
             # Invalidate server's channel list cache
             invalidate_server_channels(sid)
