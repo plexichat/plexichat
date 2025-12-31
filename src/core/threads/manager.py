@@ -72,14 +72,12 @@ class ThreadManager(BaseManager):
         return name
 
     def _get_channel(self, channel_id: int) -> Optional[Dict[str, Any]]:
-        """Get channel info from servers module or database."""
-        if self._servers:
-            row = self._db.fetch_one(
-                "SELECT * FROM srv_channels WHERE id = ? AND deleted = 0",
-                (channel_id,)
-            )
-            return dict(row) if row else None
-        return None
+        """Get channel info from database."""
+        row = self._db.fetch_one(
+            "SELECT * FROM srv_channels WHERE id = ? AND deleted = 0",
+            (channel_id,)
+        )
+        return dict(row) if row else None
 
     def _get_message(self, message_id: int) -> Optional[Dict[str, Any]]:
         """Get message info from database."""
@@ -117,6 +115,7 @@ class ThreadManager(BaseManager):
             created_at=row["created_at"],
             archived_at=row["archived_at"],
             last_message_at=row["last_message_at"],
+            conversation_id=row.get("conversation_id"),
             locked=bool(row["locked"]),
         )
 

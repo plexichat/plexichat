@@ -192,14 +192,17 @@ class TemplateManager:
 
     def get_template(self, code: str, user_id: Optional[int] = None) -> Optional[ServerTemplate]:
         """Get a template by code."""
+        print(f"Looking up template: {code}")
         row = self._db.fetch_one(
             "SELECT * FROM srv_templates WHERE code = ?",
             (code,),
         )
+        print(f"Lookup result: {row}")
         if not row:
             return None
 
         if not row["is_public"] and user_id and row["creator_id"] != user_id:
+            print(f"Template access denied: creator {row['creator_id']} != user {user_id}")
             return None
 
         return self._row_to_template(row)

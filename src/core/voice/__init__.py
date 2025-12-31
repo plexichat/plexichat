@@ -109,6 +109,8 @@ __all__ = [
     # AFK
     "set_afk_channel",
     "get_afk_channel",
+    "set_afk_timeout",
+    "get_afk_timeout",
     "check_afk_timeout",
     # User voice state queries
     "get_user_voice_state",
@@ -343,9 +345,9 @@ def get_voice_regions() -> List[VoiceRegion]:
 # === AFK ===
 
 
-def set_afk_channel(user_id: int, server_id: int, channel_id: Optional[int], timeout_seconds: int = 300) -> bool:
+def set_afk_channel(user_id: int, server_id: int, channel_id: Optional[int]) -> bool:
     """Set AFK channel for a server."""
-    return _get_manager().set_afk_channel(user_id, server_id, channel_id, timeout_seconds)
+    return _get_manager().set_afk_channel(user_id, server_id, channel_id)
 
 
 def get_afk_channel(server_id: int) -> Optional[int]:
@@ -353,8 +355,18 @@ def get_afk_channel(server_id: int) -> Optional[int]:
     return _get_manager().get_afk_channel(server_id)
 
 
-def check_afk_timeout(user_id: int) -> Optional[VoiceState]:
-    """Check and apply AFK timeout if needed. Returns new state if moved."""
+def set_afk_timeout(user_id: int, server_id: int, timeout: int) -> bool:
+    """Set AFK timeout for a server."""
+    return _get_manager().set_afk_timeout(user_id, server_id, timeout)
+
+
+def get_afk_timeout(server_id: int) -> int:
+    """Get AFK timeout for a server."""
+    return _get_manager().get_afk_timeout(server_id)
+
+
+def check_afk_timeout(user_id: int) -> bool:
+    """Check and apply AFK timeout if needed. Returns True if moved."""
     return _get_manager().check_afk_timeout(user_id)
 
 
