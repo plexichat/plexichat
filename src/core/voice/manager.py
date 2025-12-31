@@ -1081,7 +1081,7 @@ class VoiceManager(BaseManager):
         Returns:
             True if set successfully
         """
-        self._require_permission(user_id, server_id, "servers.manage")
+        self._require_permission(user_id, server_id, "server.manage")
 
         timeout = max(60, min(3600, timeout))
 

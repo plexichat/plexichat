@@ -706,7 +706,65 @@ async def delete_message(
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid message ID"}})
 
     try:
+        # Get message details BEFORE deleting for broadcast
+        msg = messaging.get_message(current_user.user_id, mid)
+        if not msg:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Message not found"}})
+        
+        cid = msg.conversation_id
+        
         messaging.delete_message(current_user.user_id, mid)
+
+        # Broadcast MESSAGE_DELETE event via WebSocket (fire and forget)
+        import asyncio
+
+        async def dispatch_delete():
+            try:
+                from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+                from src.core.events.models import Event
+                from src.core.events.types import EventType
+
+                if ws_is_setup():
+                    dispatcher = get_dispatcher()
+                    servers_mod = api.get_servers()
+
+                    # Determine server_id for intent filtering
+                    server_id = None
+                    user_ids = []
+                    if servers_mod:
+                        try:
+                            channel = servers_mod.get_channel(cid, current_user.user_id)
+                            if channel:
+                                server_id = getattr(channel, "server_id", None)
+                                if server_id:
+                                    user_ids = servers_mod.get_member_user_ids(server_id)
+                        except Exception:
+                            pass
+
+                    if not user_ids and messaging:
+                        try:
+                            participants = messaging.get_participants(current_user.user_id, cid)
+                            user_ids = [p.user_id for p in (participants or [])]
+                        except Exception:
+                            pass
+
+                    if user_ids:
+                        event = Event(
+                            event_type=EventType.MESSAGE_DELETE,
+                            data={
+                                "id": str(mid),
+                                "channel_id": str(cid),
+                                "server_id": str(server_id) if server_id else None
+                            },
+                            server_id=server_id,
+                            channel_id=cid,
+                        )
+                        await dispatcher.dispatch_event(event, user_ids)
+            except Exception as e:
+                logger.debug(f"Failed to broadcast MESSAGE_DELETE: {e}")
+
+        asyncio.create_task(dispatch_delete())
+
         return {"success": True}
     except Exception as e:
         exc_name = type(e).__name__
@@ -793,6 +851,54 @@ async def pin_message(
     try:
         if messaging:
             messaging.pin_message(current_user.user_id, mid)
+            
+            # Fetch updated message for broadcast
+            msg = messaging.get_message(current_user.user_id, mid)
+            if msg:
+                response = _message_to_response(msg, channel_id=cid)
+                
+                # Broadcast update (fire and forget)
+                import asyncio
+                async def dispatch_pin():
+                    try:
+                        from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+                        from src.core.events.models import Event
+                        from src.core.events.types import EventType
+
+                        if ws_is_setup():
+                            dispatcher = get_dispatcher()
+                            servers_mod = api.get_servers()
+
+                            user_ids = []
+                            server_id = None
+                            if servers_mod:
+                                try:
+                                    channel = servers_mod.get_channel(cid, current_user.user_id)
+                                    if channel:
+                                        server_id = getattr(channel, "server_id", None)
+                                        if server_id:
+                                            user_ids = servers_mod.get_member_user_ids(server_id)
+                                except Exception: pass
+
+                            if not user_ids and messaging:
+                                try:
+                                    participants = messaging.get_participants(current_user.user_id, cid)
+                                    user_ids = [p.user_id for p in (participants or [])]
+                                except Exception: pass
+
+                            if user_ids:
+                                event = Event(
+                                    event_type=EventType.MESSAGE_UPDATE,
+                                    data=response.model_dump(),
+                                    server_id=server_id,
+                                    channel_id=cid,
+                                )
+                                await dispatcher.dispatch_event(event, user_ids)
+                    except Exception as e:
+                        logger.debug(f"Failed to broadcast pin update: {e}")
+                
+                asyncio.create_task(dispatch_pin())
+
         return {"success": True}
     except Exception as e:
         exc_name = type(e).__name__
@@ -820,6 +926,54 @@ async def unpin_message(
     try:
         if messaging:
             messaging.unpin_message(current_user.user_id, mid)
+
+            # Fetch updated message for broadcast
+            msg = messaging.get_message(current_user.user_id, mid)
+            if msg:
+                response = _message_to_response(msg, channel_id=cid)
+                
+                # Broadcast update (fire and forget)
+                import asyncio
+                async def dispatch_unpin():
+                    try:
+                        from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+                        from src.core.events.models import Event
+                        from src.core.events.types import EventType
+
+                        if ws_is_setup():
+                            dispatcher = get_dispatcher()
+                            servers_mod = api.get_servers()
+
+                            user_ids = []
+                            server_id = None
+                            if servers_mod:
+                                try:
+                                    channel = servers_mod.get_channel(cid, current_user.user_id)
+                                    if channel:
+                                        server_id = getattr(channel, "server_id", None)
+                                        if server_id:
+                                            user_ids = servers_mod.get_member_user_ids(server_id)
+                                except Exception: pass
+
+                            if not user_ids and messaging:
+                                try:
+                                    participants = messaging.get_participants(current_user.user_id, cid)
+                                    user_ids = [p.user_id for p in (participants or [])]
+                                except Exception: pass
+
+                            if user_ids:
+                                event = Event(
+                                    event_type=EventType.MESSAGE_UPDATE,
+                                    data=response.model_dump(),
+                                    server_id=server_id,
+                                    channel_id=cid,
+                                )
+                                await dispatcher.dispatch_event(event, user_ids)
+                    except Exception as e:
+                        logger.debug(f"Failed to broadcast unpin update: {e}")
+                
+                asyncio.create_task(dispatch_unpin())
+
         return {"success": True}
     except Exception as e:
         exc_name = type(e).__name__
