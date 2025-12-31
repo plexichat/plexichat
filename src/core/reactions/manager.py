@@ -1034,35 +1034,32 @@ class ReactionManager(BaseManager):
 
         # Build query with placeholders
         placeholders = ",".join("?" * len(message_ids))
+        
+        # Base query
+        query = f"""SELECT message_id, emoji, is_custom, custom_emoji_id, 
+                           COUNT(*) as count,
+                           MAX(CASE WHEN user_id = ? THEN 1 ELSE 0 END) as me
+                    FROM react_reactions 
+                    WHERE message_id IN ({placeholders})"""
+        params = [user_id] + list(message_ids)
 
-        # Single query to get all reactions grouped by message and emoji
-        rows = self._db.fetch_all(
-            f"""SELECT message_id, emoji, is_custom, custom_emoji_id, 
-                       COUNT(*) as count,
-                       MAX(CASE WHEN user_id = ? THEN 1 ELSE 0 END) as me
-                FROM react_reactions 
-                WHERE message_id IN ({placeholders})
-                GROUP BY message_id, emoji, is_custom, custom_emoji_id
-                ORDER BY message_id, MIN(created_at)""",
-            (user_id,) + tuple(message_ids)
-        )
+        # Filter out blocked users in the main query to avoid N+1
+        if blocked_users:
+            blocked_placeholders = ",".join("?" * len(blocked_users))
+            query += f" AND user_id NOT IN ({blocked_placeholders})"
+            params.extend(list(blocked_users))
+
+        query += " GROUP BY message_id, emoji, is_custom, custom_emoji_id ORDER BY message_id, MIN(created_at)"
+
+        # Single query to get all filtered reactions grouped by message and emoji
+        rows = self._db.fetch_all(query, tuple(params))
 
         # Build result dict
         result: Dict[int, List[Dict[str, Any]]] = {mid: [] for mid in message_ids}
 
         for row in rows:
             msg_id = row["message_id"]
-
-            # If we have blocked users, we need to get accurate count excluding them
-            if blocked_users:
-                actual_count = self._db.fetch_one(
-                    f"""SELECT COUNT(*) as count FROM react_reactions 
-                        WHERE message_id = ? AND emoji = ? AND user_id NOT IN ({",".join("?" * len(blocked_users))})""",
-                    (msg_id, row["emoji"]) + tuple(blocked_users)
-                )
-                count = actual_count["count"] if actual_count else 0
-            else:
-                count = row["count"]
+            count = row["count"]
 
             if count > 0:
                 result[msg_id].append({

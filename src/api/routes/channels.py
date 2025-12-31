@@ -92,7 +92,36 @@ async def update_channel(
     try:
         update_data = body.model_dump(exclude_unset=True)
         channel = servers_mod.update_channel(current_user.user_id, cid, **update_data)
-        return _channel_to_response(channel)
+        
+        response = _channel_to_response(channel)
+        sid = channel.server_id
+
+        # Broadcast CHANNEL_UPDATE event via WebSocket (fire and forget)
+        import asyncio
+        async def dispatch_channel_update():
+            try:
+                from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+                from src.core.events.models import Event
+                from src.core.events.types import EventType
+
+                if ws_is_setup():
+                    dispatcher = get_dispatcher()
+                    user_ids = servers_mod.get_member_user_ids(sid)
+                    
+                    if user_ids:
+                        event = Event(
+                            event_type=EventType.CHANNEL_UPDATE,
+                            data=response.model_dump(),
+                            server_id=sid,
+                            channel_id=cid,
+                        )
+                        await dispatcher.dispatch_event(event, user_ids)
+            except Exception as e:
+                logger.debug(f"Failed to broadcast CHANNEL_UPDATE: {e}")
+
+        asyncio.create_task(dispatch_channel_update())
+
+        return response
     except Exception as e:
         exc_name = type(e).__name__
         if "NotFound" in exc_name:
@@ -119,7 +148,43 @@ async def delete_channel(channel_id: str, current_user: TokenInfo = Depends(get_
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
 
     try:
+        # Get channel details BEFORE deleting for broadcast
+        channel = servers_mod.get_channel(cid, current_user.user_id)
+        if not channel:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
+        
+        sid = channel.server_id
+
         servers_mod.delete_channel(current_user.user_id, cid)
+
+        # Broadcast CHANNEL_DELETE event via WebSocket (fire and forget)
+        import asyncio
+        async def dispatch_channel_delete():
+            try:
+                from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+                from src.core.events.models import Event
+                from src.core.events.types import EventType
+
+                if ws_is_setup():
+                    dispatcher = get_dispatcher()
+                    user_ids = servers_mod.get_member_user_ids(sid)
+                    
+                    if user_ids:
+                        event = Event(
+                            event_type=EventType.CHANNEL_DELETE,
+                            data={
+                                "id": str(cid),
+                                "server_id": str(sid)
+                            },
+                            server_id=sid,
+                            channel_id=cid,
+                        )
+                        await dispatcher.dispatch_event(event, user_ids)
+            except Exception as e:
+                logger.debug(f"Failed to broadcast CHANNEL_DELETE: {e}")
+
+        asyncio.create_task(dispatch_channel_delete())
+
         return {"success": True}
     except Exception as e:
         exc_name = type(e).__name__

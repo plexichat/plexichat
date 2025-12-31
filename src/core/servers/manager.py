@@ -1248,6 +1248,25 @@ class ServerManager(BaseManager):
         rows = self._db.fetch_all(query, tuple(params))
         return [row["user_id"] for row in rows]
 
+    def get_all_shared_member_ids(self, user_id: SnowflakeID) -> List[SnowflakeID]:
+        """
+        Get all unique user IDs that share at least one server with the given user.
+        
+        Args:
+            user_id: ID of the user to find shared members for
+            
+        Returns:
+            List of unique user IDs
+        """
+        rows = self._db.fetch_all(
+            """SELECT DISTINCT m2.user_id 
+               FROM srv_members m1
+               JOIN srv_members m2 ON m1.server_id = m2.server_id
+               WHERE m1.user_id = ? AND m2.user_id != ?""",
+            (user_id, user_id)
+        )
+        return [row["user_id"] for row in rows]
+
     def update_member(
         self,
         user_id: SnowflakeID,
