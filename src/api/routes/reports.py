@@ -79,7 +79,7 @@ async def report_message(
     
     if messaging:
         try:
-            msg = messaging.get_message(message_id)
+            msg = messaging.get_message(current_user.user_id, message_id)
             if msg:
                 reported_user_id = msg.author_id
                 message_content = msg.content[:500] if msg.content else None

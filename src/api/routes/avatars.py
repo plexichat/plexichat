@@ -188,8 +188,8 @@ async def upload_server_icon(
     if not is_owner:
         member = servers.get_member(sid, current_user.user_id)
         if member:
-            # Check for MANAGE_SERVER permission
-            has_permission = servers.member_has_permission(sid, current_user.user_id, "MANAGE_SERVER")
+            # Check for server.manage permission
+            has_permission = servers.has_permission(current_user.user_id, sid, "server.manage")
 
     if not is_owner and not has_permission:
         raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": "Permission denied"}})
@@ -260,7 +260,7 @@ async def delete_server_icon(
     if not is_owner:
         member = servers.get_member(sid, current_user.user_id)
         if member:
-            has_permission = servers.member_has_permission(sid, current_user.user_id, "MANAGE_SERVER")
+            has_permission = servers.has_permission(current_user.user_id, sid, "server.manage")
 
     if not is_owner and not has_permission:
         raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": "Permission denied"}})

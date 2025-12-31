@@ -293,7 +293,6 @@ async def send_channel_message(
                 conversation_id = getattr(channel, "conversation_id", None)
 
                 # Send directly to messaging module using cached conversation_id
-                # This avoids the duplicate get_channel() call in send_channel_message()
                 if conversation_id and messaging:
                     msg = messaging.send_message(
                         user_id=current_user.user_id,
@@ -303,14 +302,33 @@ async def send_channel_message(
                         attachments=attachments,
                         embeds=body.embeds
                     )
+                else:
+                    # Found server channel but it has no conversation_id
+                    logger.warning(f"Server channel {cid} has no conversation_id linked")
+                    # Fall back to trying the channel ID as conversation ID (backward compatibility)
+                    if messaging:
+                        try:
+                            msg = messaging.send_message(
+                                user_id=current_user.user_id,
+                                conversation_id=cid,
+                                content=body.content or "",
+                                reply_to_id=reply_to,
+                                attachments=attachments,
+                                embeds=body.embeds
+                            )
+                        except Exception:
+                            msg = None
         except Exception as e:
             exc_name = type(e).__name__
             if "NotFound" not in exc_name:
-                if "Permission" in exc_name:
+                if "Permission" in exc_name or "Access" in exc_name:
                     raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
                 elif "Content" in exc_name or "Invalid" in exc_name:
                     raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": str(e)}})
-            # Channel not found in servers, try as DM conversation
+                # For other errors, log and potentially re-raise
+                logger.error(f"Error sending message in server channel {cid}: {e}", exc_info=True)
+                raise
+            # Channel not found in servers, fall through to try as DM conversation
             msg = None
 
     # If not a server channel, try as DM conversation
@@ -407,6 +425,118 @@ async def send_channel_message(
         logger.warning(f"Failed to setup MESSAGE_CREATE broadcast: {e}", exc_info=True)
 
     return response
+
+
+@router.get("/channels/{channel_id}/messages/unread")
+async def get_unread_count(
+    channel_id: str,
+    current_user: TokenInfo = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """
+    Get unread message count for a channel.
+    """
+    messaging = api.get_messaging()
+    if not messaging:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
+
+    try:
+        cid = int(channel_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
+
+    try:
+        counts = messaging.get_unread_count(current_user.user_id, cid)
+        return {"channel_id": channel_id, "unread_count": counts.get(cid, 0)}
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name or "Access" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
+        logger.error(f"Error getting unread count for channel {cid}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+@router.post("/channels/{channel_id}/messages/ack")
+async def acknowledge_messages(
+    channel_id: str,
+    message_id: Optional[str] = Query(default=None, description="Mark as read up to this message ID"),
+    current_user: TokenInfo = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """
+    Mark messages as read in a channel (read receipts).
+    
+    If message_id is provided, marks all messages up to and including that message as read.
+    If not provided, marks all messages in the channel as read.
+    """
+    import asyncio
+
+    messaging = api.get_messaging()
+    if not messaging:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
+
+    try:
+        cid = int(channel_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
+
+    up_to_id = int(message_id) if message_id else None
+
+    try:
+        count = messaging.mark_read(current_user.user_id, cid, up_to_id)
+        logger.debug(f"User {current_user.user_id} marked {count} messages as read in channel {cid}")
+
+        # Broadcast read receipt event via WebSocket (fire and forget)
+        import asyncio
+
+        async def dispatch_ack():
+            try:
+                from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+                from src.core.events.models import Event
+                from src.core.events.types import EventType
+
+                if ws_is_setup():
+                    dispatcher = get_dispatcher()
+                    servers_mod = api.get_servers()
+
+                    user_ids = []
+                    if servers_mod:
+                        try:
+                            channel = servers_mod.get_channel(cid, current_user.user_id)
+                            if channel:
+                                server_id = getattr(channel, "server_id", None)
+                                if server_id:
+                                    user_ids = servers_mod.get_member_user_ids(server_id)
+                        except Exception:
+                            pass
+
+                    if not user_ids and messaging:
+                        try:
+                            participants = messaging.get_participants(current_user.user_id, cid)
+                            user_ids = [p.user_id for p in (participants or [])]
+                        except Exception:
+                            pass
+
+                    if user_ids:
+                        event = Event(
+                            event_type=EventType.MESSAGE_ACK,
+                            data={
+                                "channel_id": str(cid),
+                                "user_id": str(current_user.user_id),
+                                "message_id": str(up_to_id) if up_to_id else None,
+                            }
+                        )
+                        await dispatcher.dispatch_event(event, user_ids)
+            except Exception as e:
+                logger.debug(f"Failed to broadcast MESSAGE_ACK: {e}")
+
+        asyncio.create_task(dispatch_ack())
+
+        return {"success": True, "messages_marked": count}
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name or "Access" in exc_name:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
+        logger.error(f"Error acknowledging messages in channel {cid}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
 
 
 @router.get("/channels/{channel_id}/messages/{message_id}", response_model=MessageResponse)
@@ -697,118 +827,6 @@ async def unpin_message(
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Message not found"}})
         elif "Permission" in exc_name:
             raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
-
-
-@router.post("/channels/{channel_id}/messages/ack")
-async def acknowledge_messages(
-    channel_id: str,
-    message_id: Optional[str] = Query(default=None, description="Mark as read up to this message ID"),
-    current_user: TokenInfo = Depends(get_current_user)
-) -> Dict[str, Any]:
-    """
-    Mark messages as read in a channel (read receipts).
-    
-    If message_id is provided, marks all messages up to and including that message as read.
-    If not provided, marks all messages in the channel as read.
-    """
-    import asyncio
-
-    messaging = api.get_messaging()
-    if not messaging:
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
-
-    try:
-        cid = int(channel_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
-
-    up_to_id = int(message_id) if message_id else None
-
-    try:
-        count = messaging.mark_read(current_user.user_id, cid, up_to_id)
-        logger.debug(f"User {current_user.user_id} marked {count} messages as read in channel {cid}")
-
-        # Broadcast read receipt event via WebSocket (fire and forget)
-        import asyncio
-
-        async def dispatch_ack():
-            try:
-                from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
-                from src.core.events.models import Event
-                from src.core.events.types import EventType
-
-                if ws_is_setup():
-                    dispatcher = get_dispatcher()
-                    servers_mod = api.get_servers()
-
-                    user_ids = []
-                    if servers_mod:
-                        try:
-                            channel = servers_mod.get_channel(cid, current_user.user_id)
-                            if channel:
-                                server_id = getattr(channel, "server_id", None)
-                                if server_id:
-                                    user_ids = servers_mod.get_member_user_ids(server_id)
-                        except Exception:
-                            pass
-
-                    if not user_ids and messaging:
-                        try:
-                            participants = messaging.get_participants(current_user.user_id, cid)
-                            user_ids = [p.user_id for p in (participants or [])]
-                        except Exception:
-                            pass
-
-                    if user_ids:
-                        event = Event(
-                            event_type=EventType.MESSAGE_ACK,
-                            data={
-                                "channel_id": str(cid),
-                                "user_id": str(current_user.user_id),
-                                "message_id": str(up_to_id) if up_to_id else None,
-                            }
-                        )
-                        await dispatcher.dispatch_event(event, user_ids)
-            except Exception as e:
-                logger.debug(f"Failed to broadcast MESSAGE_ACK: {e}")
-
-        asyncio.create_task(dispatch_ack())
-
-        return {"success": True, "messages_marked": count}
-    except Exception as e:
-        exc_name = type(e).__name__
-        if "NotFound" in exc_name or "Access" in exc_name:
-            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
-        logger.error(f"Error acknowledging messages in channel {cid}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
-
-
-@router.get("/channels/{channel_id}/messages/unread")
-async def get_unread_count(
-    channel_id: str,
-    current_user: TokenInfo = Depends(get_current_user)
-) -> Dict[str, Any]:
-    """
-    Get unread message count for a channel.
-    """
-    messaging = api.get_messaging()
-    if not messaging:
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
-
-    try:
-        cid = int(channel_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
-
-    try:
-        counts = messaging.get_unread_count(current_user.user_id, cid)
-        return {"channel_id": channel_id, "unread_count": counts.get(cid, 0)}
-    except Exception as e:
-        exc_name = type(e).__name__
-        if "NotFound" in exc_name or "Access" in exc_name:
-            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
-        logger.error(f"Error getting unread count for channel {cid}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
 
 

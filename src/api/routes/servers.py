@@ -13,6 +13,7 @@ from src.api.schemas.servers import (
     ServerUpdateRequest,
     ServerResponse,
     ChannelResponse,
+    ChannelCreateRequest,
 )
 from src.api.schemas.common import SnowflakeID
 from src.core.servers.models import ChannelType
@@ -93,29 +94,6 @@ def _channel_to_dict(channel) -> dict:
     }
 
 
-def _get_servers_cached(user_id: int):
-    """Get user's servers as JSON-serializable dicts for caching."""
-    servers_mod = api.get_servers()
-    if not servers_mod:
-        return None
-    servers = servers_mod.get_servers(user_id)
-    return [_server_to_dict(s) for s in servers] if servers else []
-
-
-def _get_channels_cached(user_id: int, server_id: int):
-    """Get server channels as JSON-serializable dicts for caching."""
-    servers_mod = api.get_servers()
-    if not servers_mod:
-        return None
-    channels = servers_mod.get_channels(user_id, server_id)
-    return [_channel_to_dict(c) for c in channels] if channels else []
-
-
-# Apply caching (30s TTL for server lists, 30s for channels)
-_get_servers_cached = cached(ttl=30, prefix="servers")(_get_servers_cached)
-_get_channels_cached = cached(ttl=30, prefix="channels")(_get_channels_cached)
-
-
 @router.get("", response_model=List[ServerResponse])
 async def get_servers(current_user: TokenInfo = Depends(get_current_user)):
     """
@@ -128,20 +106,10 @@ async def get_servers(current_user: TokenInfo = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
 
     try:
-        servers = _get_servers_cached(current_user.user_id)
+        servers = servers_mod.get_servers(current_user.user_id)
         if servers is None:
             raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Failed to fetch servers"}})
-        # Cached data is already dict format, convert to response
-        return [ServerResponse(
-            id=SnowflakeID(s["id"]),
-            name=s["name"],
-            description=s.get("description"),
-            icon_url=s.get("icon_url"),
-            owner_id=SnowflakeID(s["owner_id"]),
-            member_count=s.get("member_count", 0),
-            default_channel_id=SnowflakeID(s["default_channel_id"]) if s.get("default_channel_id") else None,
-            created_at=s["created_at"],
-        ) for s in servers]
+        return [_server_to_response(s) for s in servers]
     except HTTPException:
         raise
     except Exception as e:
@@ -191,7 +159,7 @@ async def get_server(server_id: str, current_user: TokenInfo = Depends(get_curre
 
     try:
         sid = int(server_id)
-    except ValueError:
+    except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
 
     try:
@@ -227,7 +195,7 @@ async def update_server(
 
     try:
         sid = int(server_id)
-    except ValueError:
+    except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
 
     try:
@@ -262,7 +230,7 @@ async def delete_server(server_id: str, current_user: TokenInfo = Depends(get_cu
 
     try:
         sid = int(server_id)
-    except ValueError:
+    except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
 
     try:
@@ -292,26 +260,14 @@ async def get_server_channels(server_id: str, current_user: TokenInfo = Depends(
 
     try:
         sid = int(server_id)
-    except ValueError:
+    except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
 
     try:
-        channels = _get_channels_cached(current_user.user_id, sid)
+        channels = servers_mod.get_channels(current_user.user_id, sid)
         if channels is None:
             raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Failed to fetch channels"}})
-        # Cached data is already dict format, convert to response
-        return [ChannelResponse(
-            id=SnowflakeID(c["id"]),
-            server_id=SnowflakeID(c["server_id"]),
-            name=c["name"],
-            channel_type=c.get("channel_type", "text"),
-            topic=c.get("topic"),
-            position=c.get("position", 0),
-            category_id=SnowflakeID(c["category_id"]) if c.get("category_id") else None,
-            nsfw=c.get("nsfw", False),
-            slowmode_seconds=c.get("slowmode_seconds", 0),
-            created_at=c["created_at"],
-        ) for c in channels]
+        return [_channel_to_response(c) for c in channels]
     except HTTPException:
         raise
     except Exception as e:
@@ -340,7 +296,7 @@ async def get_server_members(
 
     try:
         sid = int(server_id)
-    except ValueError:
+    except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
 
     try:
@@ -413,7 +369,7 @@ async def kick_member(
     try:
         sid = int(server_id)
         mid = int(member_id)
-    except ValueError:
+    except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid ID"}})
 
     try:
@@ -505,7 +461,7 @@ async def remove_role_from_member(
 @router.post("/{server_id}/channels")
 async def create_server_channel(
     server_id: str,
-    body: dict,
+    body: ChannelCreateRequest,
     current_user: TokenInfo = Depends(get_current_user)
 ) -> ChannelResponse:
     """Create a channel in a server."""
@@ -515,33 +471,29 @@ async def create_server_channel(
 
     try:
         sid = int(server_id)
-    except ValueError:
+    except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
-
-    name = body.get("name")
-    if not name:
-        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Channel name required"}})
 
     try:
         # Build kwargs, only including supported parameters
         kwargs = {
             "user_id": current_user.user_id,
             "server_id": sid,
-            "name": name,
+            "name": body.name,
         }
-        if body.get("type"):
+        if body.type:
             # Convert string to ChannelType enum
-            type_str = body.get("type", "text").lower()
+            type_str = body.type.lower()
             try:
                 kwargs["channel_type"] = ChannelType(type_str)
             except ValueError:
                 kwargs["channel_type"] = ChannelType.TEXT
-        if body.get("topic"):
-            kwargs["topic"] = body.get("topic")
-        if body.get("category_id"):
-            kwargs["category_id"] = int(body["category_id"])
-        if body.get("nsfw"):
-            kwargs["nsfw"] = body.get("nsfw", False)
+        if body.topic:
+            kwargs["topic"] = body.topic
+        if body.category_id:
+            kwargs["category_id"] = int(body.category_id)
+        if body.nsfw:
+            kwargs["nsfw"] = body.nsfw
 
         channel = servers_mod.create_channel(**kwargs)
         # Invalidate server's channel list cache
@@ -577,7 +529,7 @@ async def get_server_invites(server_id: str, current_user: TokenInfo = Depends(g
 
     try:
         sid = int(server_id)
-    except ValueError:
+    except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
 
     try:
@@ -617,7 +569,7 @@ async def get_server_roles(server_id: str, current_user: TokenInfo = Depends(get
 
     try:
         sid = int(server_id)
-    except ValueError:
+    except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
 
     try:
@@ -654,7 +606,7 @@ async def create_role(server_id: str, body: dict, current_user: TokenInfo = Depe
 
     try:
         sid = int(server_id)
-    except ValueError:
+    except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
 
     name = body.get("name", "New Role")
@@ -706,7 +658,8 @@ async def update_role(server_id: str, role_id: str, body: dict, current_user: To
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid ID"}})
 
     try:
-        role = servers_mod.update_role(current_user.user_id, sid, rid, **body)
+        # Note: manager.update_role doesn't need server_id as role_id is unique
+        role = servers_mod.update_role(current_user.user_id, rid, **body)
         return {
             "id": str(role.id),
             "server_id": str(sid),
@@ -762,7 +715,7 @@ async def get_server_bans(server_id: str, current_user: TokenInfo = Depends(get_
 
     try:
         sid = int(server_id)
-    except ValueError:
+    except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
 
     try:
@@ -795,7 +748,7 @@ async def ban_member(server_id: str, user_id: str, body: Optional[dict] = None, 
     try:
         sid = int(server_id)
         uid = int(user_id)
-    except ValueError:
+    except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid ID"}})
 
     body = body or {}
@@ -809,7 +762,7 @@ async def ban_member(server_id: str, user_id: str, body: Optional[dict] = None, 
         exc_name = type(e).__name__
         if "NotFound" in exc_name:
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
-        elif "Permission" in exc_name:
+        elif "Permission" in exc_name or "Hierarchy" in exc_name or "CannotModify" in exc_name:
             raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": str(e)}})
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
 
@@ -854,7 +807,7 @@ async def get_audit_log(
 
     try:
         sid = int(server_id)
-    except ValueError:
+    except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
 
     try:
@@ -864,7 +817,7 @@ async def get_audit_log(
                 "id": str(e.id),
                 "server_id": str(e.server_id),
                 "user_id": str(e.user_id),
-                "action": e.action.value if hasattr(e.action, "value") else str(e.action),
+                "action": e.action_type.value if hasattr(e.action_type, "value") else str(e.action_type),
                 "target_type": getattr(e, "target_type", None),
                 "target_id": str(e.target_id) if getattr(e, "target_id", None) else None,
                 "changes": getattr(e, "changes", None),
@@ -893,7 +846,7 @@ async def get_server_webhooks(server_id: str, current_user: TokenInfo = Depends(
 
     try:
         sid = int(server_id)
-    except ValueError:
+    except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
 
     try:
@@ -952,7 +905,7 @@ async def upload_server_icon(
 
     try:
         sid = int(server_id)
-    except ValueError:
+    except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
 
     # Check permission

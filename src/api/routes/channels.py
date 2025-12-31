@@ -50,7 +50,7 @@ async def get_channel(channel_id: str, current_user: TokenInfo = Depends(get_cur
 
     try:
         cid = int(channel_id)
-    except ValueError:
+    except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
 
     try:
@@ -86,7 +86,7 @@ async def update_channel(
 
     try:
         cid = int(channel_id)
-    except ValueError:
+    except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
 
     try:
@@ -115,7 +115,7 @@ async def delete_channel(channel_id: str, current_user: TokenInfo = Depends(get_
 
     try:
         cid = int(channel_id)
-    except ValueError:
+    except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
 
     try:
@@ -139,7 +139,7 @@ async def get_channel_webhooks(channel_id: str, current_user: TokenInfo = Depend
 
     try:
         cid = int(channel_id)
-    except ValueError:
+    except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
 
     try:
@@ -180,7 +180,7 @@ async def create_channel_invite(
 
     try:
         cid = int(channel_id)
-    except ValueError:
+    except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
 
     body = body or {}
@@ -351,7 +351,7 @@ async def upload_attachment(
 
     try:
         cid = int(channel_id)
-    except ValueError:
+    except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid channel ID"}})
 
     # Verify user has access to channel (try server channel first, then DM)
