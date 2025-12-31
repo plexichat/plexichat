@@ -434,7 +434,7 @@ def upload_server_icon(server_id: int, image_data: bytes, content_type: str) -> 
 
     # Update server's icon_url
     icon_url = f"/api/v1/avatars/servers/{server_id}"
-    db.execute("UPDATE servers SET icon_url = ? WHERE id = ?", (icon_url, server_id))
+    db.execute("UPDATE srv_servers SET icon_url = ? WHERE id = ?", (icon_url, server_id))
 
     logger.info(f"Icon uploaded for server {server_id}: {width}x{height}, {len(processed_data)} bytes")
 
@@ -510,7 +510,7 @@ def delete_server_icon(server_id: int) -> bool:
     result = db.execute("DELETE FROM server_icons WHERE server_id = ?", (server_id,))
 
     # Clear icon_url in servers
-    db.execute("UPDATE servers SET icon_url = NULL WHERE id = ?", (server_id,))
+    db.execute("UPDATE srv_servers SET icon_url = NULL WHERE id = ?", (server_id,))
 
     deleted = result.rowcount if hasattr(result, 'rowcount') else 0
     if deleted:

@@ -33,9 +33,18 @@ class BaseManager:
         self._db = db
         self._auth = auth_module
 
+    @property
+    def db(self):
+        """Get the database instance."""
+        return self._db
+
     def _get_timestamp(self) -> int:
         """Get current timestamp in milliseconds."""
         return int(time.time() * 1000)
+
+    def _current_time(self) -> int:
+        """Get current timestamp in milliseconds (alias for _get_timestamp)."""
+        return self._get_timestamp()
 
     def _generate_id(self) -> SnowflakeID:
         """Generate a new Snowflake ID."""

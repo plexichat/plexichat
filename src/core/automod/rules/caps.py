@@ -17,9 +17,16 @@ class CapsPercentageRule(BaseRule):
 
     def __init__(self, rule: Rule):
         super().__init__(rule)
-        self._max_percentage: float = self.config.get("max_percentage", 70.0)
-        self._min_length: int = self.config.get("min_length", 10)
-        self._ignore_commands: bool = self.config.get("ignore_commands", True)
+        import utils.config as config
+        self._max_percentage: float = self.config.get(
+            "max_percentage", config.get("automod.rules.caps.max_percentage", 70.0)
+        )
+        self._min_length: int = self.config.get(
+            "min_length", config.get("automod.rules.caps.min_length", 10)
+        )
+        self._ignore_commands: bool = self.config.get(
+            "ignore_commands", config.get("automod.rules.caps.ignore_commands", True)
+        )
 
     def check(
         self,
