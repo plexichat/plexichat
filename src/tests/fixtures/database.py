@@ -57,10 +57,6 @@ class DatabaseManager:
         except Exception:
             pass  # Logger may already be setup
 
-        # Setup encryption
-        from encryption import setup as encryption_setup
-        encryption_setup(worker_id=1, datacenter_id=1)
-
         # Setup config
         import utils.config as config
         from .config import get_test_config

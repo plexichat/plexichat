@@ -25,6 +25,11 @@ class ModuleRegistry:
         self._db = db
         self._cache: Dict[str, Any] = {}
 
+    @property
+    def db(self):
+        """Get the database instance."""
+        return self._db
+
     def _reset_module(self, module):
         """Reset a module's internal state for fresh initialization."""
         module._manager = None

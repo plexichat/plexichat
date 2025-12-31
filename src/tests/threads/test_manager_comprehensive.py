@@ -56,10 +56,10 @@ class TestThreadErrors:
         """Cannot add to private thread without permission."""
         test_db.execute("INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)")
         test_db.execute("INSERT INTO srv_channels (id, server_id, name, channel_type, created_at, updated_at, position) VALUES (1, 1, 'test', 'text', 1000, 1000, 0)")
-        test_db.execute("INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000), (2, 1, 2, 1000), (3, 1, 3, 1000)")
+        test_db.execute("INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000), (2, 1, 2, 1000, 1000), (3, 1, 3, 1000, 1000)")
         
         thread = thread_manager.create_thread(1, 1, "Private", ThreadType.PRIVATE)
-        thread_manager.join_thread(2, thread.id)
+        thread_manager.add_member(1, thread.id, 2)
         
         with pytest.raises(PermissionDeniedError):
             thread_manager.add_member(2, thread.id, 3)
@@ -68,7 +68,7 @@ class TestThreadErrors:
         """Cannot remove member without permission."""
         test_db.execute("INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)")
         test_db.execute("INSERT INTO srv_channels (id, server_id, name, channel_type, created_at, updated_at, position) VALUES (1, 1, 'test', 'text', 1000, 1000, 0)")
-        test_db.execute("INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000), (2, 1, 2, 1000), (3, 1, 3, 1000)")
+        test_db.execute("INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000), (2, 1, 2, 1000, 1000), (3, 1, 3, 1000, 1000)")
         
         thread = thread_manager.create_thread(1, 1, "Test")
         thread_manager.join_thread(2, thread.id)
@@ -91,7 +91,7 @@ class TestThreadErrors:
         """Cannot archive without permission."""
         test_db.execute("INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)")
         test_db.execute("INSERT INTO srv_channels (id, server_id, name, channel_type, created_at, updated_at, position) VALUES (1, 1, 'test', 'text', 1000, 1000, 0)")
-        test_db.execute("INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000), (2, 1, 2, 1000)")
+        test_db.execute("INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000), (2, 1, 2, 1000, 1000)")
         
         thread = thread_manager.create_thread(1, 1, "Test")
         
@@ -134,7 +134,7 @@ class TestThreadErrors:
         """Cannot send message in locked thread."""
         test_db.execute("INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)")
         test_db.execute("INSERT INTO srv_channels (id, server_id, name, channel_type, created_at, updated_at, position) VALUES (1, 1, 'test', 'text', 1000, 1000, 0)")
-        test_db.execute("INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000), (2, 1, 2, 1000)")
+        test_db.execute("INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000), (2, 1, 2, 1000, 1000)")
         
         thread = thread_manager.create_thread(1, 1, "Test")
         thread_manager.lock_thread(1, thread.id)
@@ -145,19 +145,19 @@ class TestThreadErrors:
     
     def test_get_thread_not_found(self, thread_manager):
         """Get nonexistent thread."""
-        thread = thread_manager.get_thread(99999)
+        thread = thread_manager.get_thread(1, 99999)
         assert thread is None
     
     def test_get_thread_members(self, thread_manager, test_db):
         """Get thread members."""
         test_db.execute("INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)")
         test_db.execute("INSERT INTO srv_channels (id, server_id, name, channel_type, created_at, updated_at, position) VALUES (1, 1, 'test', 'text', 1000, 1000, 0)")
-        test_db.execute("INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000), (2, 1, 2, 1000)")
+        test_db.execute("INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000), (2, 1, 2, 1000, 1000)")
         
         thread = thread_manager.create_thread(1, 1, "Test")
         thread_manager.join_thread(2, thread.id)
         
-        members = thread_manager.get_members(thread.id)
+        members = thread_manager.get_thread_members(1, thread.id)
         assert len(members) >= 2
     
     def test_list_channel_threads(self, thread_manager, test_db):
@@ -168,19 +168,23 @@ class TestThreadErrors:
         thread_manager.create_thread(1, 1, "Thread 1")
         thread_manager.create_thread(1, 1, "Thread 2")
         
-        threads = thread_manager.list_threads(1, 1)
+        threads = thread_manager.get_active_threads(1, 1)
         assert len(threads) >= 2
     
     def test_auto_archive_inactive_threads(self, thread_manager, test_db, monkeypatch):
         """Inactive threads are auto-archived."""
-        monkeypatch.setitem(thread_manager._config, "auto_archive_duration_minutes", 1)
-        
         test_db.execute("INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)")
         test_db.execute("INSERT INTO srv_channels (id, server_id, name, channel_type, created_at, updated_at, position) VALUES (1, 1, 'test', 'text', 1000, 1000, 0)")
         
         thread = thread_manager.create_thread(1, 1, "Test")
         
-        thread_manager._auto_archive_inactive_threads()
+        # Manually set last_message_at to far in the past to trigger auto-archive
+        # ONE_DAY is 1440 minutes
+        past_time = thread_manager._get_timestamp() - (1500 * 60 * 1000)
+        test_db.execute("UPDATE thread_threads SET last_message_at = ?, created_at = ? WHERE id = ?", (past_time, past_time, thread.id))
         
-        updated = thread_manager.get_thread(thread.id)
-        assert updated.state in [ThreadState.ACTIVE, ThreadState.ARCHIVED]
+        # Trigger check via get_active_threads or get_thread
+        thread_manager.get_active_threads(1, 1)
+        
+        updated = thread_manager.get_thread(1, thread.id)
+        assert updated.state == ThreadState.ARCHIVED
