@@ -73,9 +73,14 @@ class MessagingSettingsResponse(BaseModel):
     """User messaging settings response."""
     model_config = ConfigDict(from_attributes=True)
 
+    user_id: SnowflakeID = Field(..., description="User ID")
     read_receipts_enabled: bool = Field(True, description="Whether to send read receipts")
     typing_indicators_enabled: bool = Field(True, description="Whether to show typing indicators")
     allow_dms_from: str = Field("everyone", description="Who can send DMs (everyone, friends, none)")
+    auto_create_dms: bool = Field(True, description="Whether to automatically create DM conversations")
+    max_message_length: Optional[int] = Field(None, description="Maximum message length (None = global default)")
+    max_attachment_size: Optional[int] = Field(None, description="Maximum attachment size (None = global default)")
+    max_attachments_per_message: Optional[int] = Field(None, description="Maximum attachments per message (None = global default)")
 
 
 class MessagingSettingsUpdateRequest(BaseModel):
@@ -85,3 +90,7 @@ class MessagingSettingsUpdateRequest(BaseModel):
     read_receipts_enabled: Optional[bool] = Field(None, description="Whether to send read receipts")
     typing_indicators_enabled: Optional[bool] = Field(None, description="Whether to show typing indicators")
     allow_dms_from: Optional[str] = Field(None, description="Who can send DMs (everyone, friends, none)")
+    auto_create_dms: Optional[bool] = Field(None, description="Whether to automatically create DM conversations")
+    max_message_length: Optional[int] = Field(None, description="Maximum message length")
+    max_attachment_size: Optional[int] = Field(None, description="Maximum attachment size")
+    max_attachments_per_message: Optional[int] = Field(None, description="Maximum attachments per message")

@@ -54,6 +54,17 @@ class ServerResponse(BaseModel):
     created_at: int = Field(..., description="Creation timestamp")
 
 
+class ChannelCreateRequest(BaseModel):
+    """Channel creation request."""
+    model_config = ConfigDict(from_attributes=True)
+
+    name: str = Field(..., min_length=1, max_length=100, description="Channel name")
+    type: Optional[str] = Field("text", description="Channel type: text, voice, category")
+    topic: Optional[str] = Field(None, max_length=1024, description="Channel topic")
+    category_id: Optional[SnowflakeID] = Field(None, description="Parent category ID")
+    nsfw: bool = Field(False, description="NSFW flag")
+
+
 class ChannelResponse(BaseModel):
     """Channel information response."""
 

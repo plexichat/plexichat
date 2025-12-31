@@ -39,7 +39,7 @@ async def get_ice_servers(
             ice_servers.append(server_config)
 
         return {"ice_servers": ice_servers}
-    except Exception:
+    except (RuntimeError, Exception):
         # Return default STUN servers if signaling not available
         return {
             "ice_servers": [
@@ -84,8 +84,10 @@ async def get_voice_channel_info(
             "ice_servers": ice_servers,
             "bitrate": info.bitrate,
         }
-    except Exception as e:
+    except (RuntimeError, Exception) as e:
         exc_name = type(e).__name__
+        if isinstance(e, RuntimeError) and "not initialized" in str(e):
+            raise HTTPException(status_code=503, detail={"error": {"code": 503, "message": "Voice signaling service currently unavailable"}})
         if "NotFound" in exc_name:
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Channel not found"}})
         if "NotConnected" in exc_name:

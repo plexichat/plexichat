@@ -45,6 +45,7 @@ class Connection:
     event_window_start: float = field(default_factory=time.monotonic)
     missed_heartbeats: int = 0
     properties: Dict[str, Any] = field(default_factory=dict)
+    is_selftest: bool = False
     _zlib_context: Optional[Any] = field(
         default=None, repr=False
     )

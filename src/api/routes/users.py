@@ -433,14 +433,20 @@ async def get_messaging_settings(current_user: TokenInfo = Depends(get_current_u
 async def update_messaging_settings(
     body: MessagingSettingsUpdateRequest,
     current_user: TokenInfo = Depends(get_current_user)
-) -> MessagingSettingsResponse:
+):
     """Update current user's messaging settings."""
     messaging = api.get_messaging()
     if not messaging:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Messaging module not available"}})
 
-    settings = messaging.update_user_message_settings(
-        user_id=current_user.user_id,
-        **body.model_dump(exclude_unset=True)
-    )
-    return settings
+    try:
+        update_data = body.model_dump(exclude_unset=True)
+        # Ensure we map the schema fields to the manager method arguments
+        settings = messaging.update_user_message_settings(
+            user_id=current_user.user_id,
+            **update_data
+        )
+        return MessagingSettingsResponse.model_validate(settings)
+    except Exception as e:
+        logger.error(f"Failed to update messaging settings: {e}")
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
