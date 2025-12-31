@@ -138,21 +138,21 @@ class TestSearchUserFeatures:
     
     def test_search_users_by_username(self, search_manager, test_db):
         """Search users by username."""
-        test_db.execute("INSERT INTO auth_users (id, username, email, account_type, created_at, updated_at, email_verified) VALUES (1, 'john_doe', 'john@example.com', 'user', 1000, 1000, 1)")
+        test_db.execute("INSERT INTO auth_users (id, username, email, account_type, password_hash, permissions, created_at, updated_at, email_verified) VALUES (1, 'john_doe', 'john@example.com', 'user', 'hash', '{}', 1000, 1000, 1)")
         
         results = search_manager.search_users("john")
         assert len(results) >= 1
     
     def test_search_users_partial(self, search_manager, test_db):
         """Search users with partial match."""
-        test_db.execute("INSERT INTO auth_users (id, username, email, account_type, created_at, updated_at, email_verified) VALUES (1, 'developer123', 'dev@example.com', 'user', 1000, 1000, 1)")
+        test_db.execute("INSERT INTO auth_users (id, username, email, account_type, password_hash, permissions, created_at, updated_at, email_verified) VALUES (1, 'developer123', 'dev@example.com', 'user', 'hash', '{}', 1000, 1000, 1)")
         
         results = search_manager.search_users("dev")
         assert len(results) >= 1
     
     def test_search_users_exclude_bots(self, search_manager, test_db):
         """Search excludes bots by default."""
-        test_db.execute("INSERT INTO auth_users (id, username, email, account_type, created_at, updated_at, email_verified) VALUES (1, 'botuser', 'bot@example.com', 'bot', 1000, 1000, 1)")
+        test_db.execute("INSERT INTO auth_users (id, username, email, account_type, password_hash, permissions, created_at, updated_at, email_verified) VALUES (1, 'botuser', 'bot@example.com', 'bot', 'hash', '{}', 1000, 1000, 1)")
         
         results = search_manager.search_users("bot", include_bots=False)
         assert len([r for r in results if r.account_type == 'bot']) == 0 or len(results) == 0
@@ -160,7 +160,7 @@ class TestSearchUserFeatures:
     def test_search_users_limit(self, search_manager, test_db):
         """User search respects limit."""
         for i in range(10):
-            test_db.execute(f"INSERT INTO auth_users (id, username, email, account_type, created_at, updated_at, email_verified) VALUES ({i+1}, 'user{i}', 'user{i}@example.com', 'user', 1000, 1000, 1)")
+            test_db.execute(f"INSERT INTO auth_users (id, username, email, account_type, password_hash, permissions, created_at, updated_at, email_verified) VALUES ({i+1}, 'user{i}', 'user{i}@example.com', 'user', 'hash', '{}', 1000, 1000, 1)")
         
         results = search_manager.search_users("user", limit=5)
         assert len(results) <= 5
@@ -172,7 +172,7 @@ class TestSearchServerFeatures:
     def test_search_servers_by_name(self, search_manager, test_db):
         """Search servers by name."""
         test_db.execute("INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Gaming Community', 1, 1000, 1000)")
-        test_db.execute("INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)")
+        test_db.execute("INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)")
         
         results = search_manager.search_servers(1, "gaming")
         assert len(results) >= 1
@@ -187,7 +187,7 @@ class TestSearchServerFeatures:
     def test_search_servers_with_description(self, search_manager, test_db):
         """Search servers includes description."""
         test_db.execute("INSERT INTO srv_servers (id, name, description, owner_id, created_at, updated_at) VALUES (1, 'Server', 'gaming community', 1, 1000, 1000)")
-        test_db.execute("INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)")
+        test_db.execute("INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)")
         
         results = search_manager.search_servers(1, "gaming")
         assert len(results) >= 1
