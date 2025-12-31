@@ -109,9 +109,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             user_info["is_bot"] = getattr(user, "token_type", "") == "bot"
             permissions = getattr(user, "permissions", {})
             user_info["is_admin"] = permissions.get("admin.*", False) or permissions.get("*", False)
+        
+        # Bypass rate limits for secure self-tests or internal requests
+        is_selftest = getattr(request.state, "is_selftest", False)
         internal_header = request.headers.get("X-Internal-Request")
-        if internal_header == "true":
+        if internal_header == "true" or is_selftest:
             user_info["is_internal"] = True
+            
         return user_info
 
     def _should_exclude(self, path: str) -> bool:
@@ -249,6 +253,10 @@ class RateLimitMiddlewareASGI:
                 user_info["is_bot"] = getattr(user, "token_type", "") == "bot"
                 permissions = getattr(user, "permissions", {})
                 user_info["is_admin"] = permissions.get("admin.*", False) or permissions.get("*", False)
+
+        # Bypass rate limits for secure self-tests
+        if getattr(request.state, "is_selftest", False):
+            user_info["is_internal"] = True
 
         route, resource_id, webhook_id = extract_route_info(path, method)
         if webhook_id is not None:

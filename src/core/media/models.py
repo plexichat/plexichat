@@ -5,6 +5,7 @@ Media models - Dataclasses for all media-related entities.
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any
 from enum import Enum
+from src.core.base import SnowflakeID
 
 
 class MediaType(Enum):
@@ -43,7 +44,7 @@ class ScanStatus(Enum):
 @dataclass
 class MediaFile:
     """Represents an uploaded media file."""
-    id: int
+    id: SnowflakeID
     filename: str
     original_filename: str
     content_type: str
@@ -53,7 +54,7 @@ class MediaFile:
     storage_path: str
     url: Optional[str] = None
     checksum: Optional[str] = None
-    uploaded_by: int = 0
+    uploaded_by: SnowflakeID = 0
     uploaded_at: int = 0
     metadata: Optional[Dict[str, Any]] = None
     scan_status: ScanStatus = ScanStatus.PENDING
@@ -65,8 +66,8 @@ class MediaFile:
 @dataclass
 class Thumbnail:
     """Represents a generated thumbnail."""
-    id: int
-    media_file_id: int
+    id: SnowflakeID
+    media_file_id: SnowflakeID
     size: int
     width: int
     height: int

@@ -155,6 +155,26 @@ def create_server_channel_conversation(server_id: int, channel_id: int) -> Conve
     return _get_manager().create_server_channel_conversation(server_id, channel_id)
 
 
+def create_thread_conversation(server_id: int, channel_id: int, name: str) -> Conversation:
+    """
+    Create a conversation for a thread.
+
+    Args:
+        server_id: Server ID
+        channel_id: Channel ID
+        name: Thread name
+
+    Returns:
+        Conversation object
+    """
+    return _get_manager().create_thread_conversation(server_id, channel_id, name)
+
+
+def get_or_create_notes(user_id: int) -> Conversation:
+    """Get or create personal notes channel."""
+    return _get_manager().get_or_create_notes(user_id)
+
+
 def get_conversation(conversation_id: int, user_id: int) -> Optional[Conversation]:
     """Get a conversation by ID if user has access."""
     return _get_manager().get_conversation(conversation_id, user_id)
@@ -257,6 +277,7 @@ def send_message(
     reply_to_id: Optional[int] = None,
     attachments: Optional[List[Dict[str, Any]]] = None,
     embeds: Optional[List[Dict[str, Any]]] = None,
+    webhook_id: Optional[int] = None,
 ) -> Message:
     """
     Send a message to a conversation.
@@ -269,6 +290,7 @@ def send_message(
         reply_to_id: Optional message ID to reply to
         attachments: Optional list of attachment data
         embeds: Optional list of rich embeds (stored in metadata)
+        webhook_id: Optional webhook ID if sent via webhook
 
     Returns:
         Created Message object
@@ -287,6 +309,7 @@ def send_message(
         reply_to_id,
         attachments,
         embeds,
+        webhook_id,
     )
 
 
@@ -441,6 +464,8 @@ def update_user_message_settings(
     max_message_length: Optional[int] = None,
     max_attachment_size: Optional[int] = None,
     max_attachments_per_message: Optional[int] = None,
+    read_receipts_enabled: Optional[bool] = None,
+    typing_indicators_enabled: Optional[bool] = None,
 ) -> UserMessageSettings:
     """Update user's message settings."""
     return _get_manager().update_user_message_settings(
@@ -450,6 +475,8 @@ def update_user_message_settings(
         max_message_length,
         max_attachment_size,
         max_attachments_per_message,
+        read_receipts_enabled,
+        typing_indicators_enabled,
     )
 
 
@@ -531,6 +558,7 @@ __all__ = [
     # Conversations
     "create_dm",
     "create_group",
+    "get_or_create_notes",
     "get_conversation",
     "get_conversations",
     "update_conversation",
