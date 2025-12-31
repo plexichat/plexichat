@@ -100,7 +100,8 @@ def setup(db: Any, messaging_module: Optional[Any] = None, servers_module: Optio
 
     from .manager import ReactionManager
 
-    _manager = ReactionManager(db, messaging_module, servers_module, relationships_module, media_module)
+    # Pass None for auth_module as it's not currently used by ReactionManager
+    _manager = ReactionManager(db, None, messaging_module, servers_module, relationships_module, media_module)
     _setup_complete = True
 
 

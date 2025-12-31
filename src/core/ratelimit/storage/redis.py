@@ -4,7 +4,7 @@ Distributed implementation for multi-instance deployments.
 """
 
 import time
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, cast
 
 from src.core.database.redis_client import get_client, is_available, RedisOperationError
 from .base import RateLimitStorage
@@ -34,7 +34,7 @@ class RedisStorage(RateLimitStorage):
 
         full_key = self._get_key(key)
         try:
-            return client.get_json(full_key)
+            return cast(Optional[Dict[str, Any]], client.get_json(full_key))
         except RedisOperationError:
             return None
 
@@ -116,7 +116,7 @@ class RedisStorage(RateLimitStorage):
         full_key = self._get_key(key)
         if client.acquire_lock(full_key):
             try:
-                bucket = client.get_json(full_key) or {}
+                bucket = cast(Dict[str, Any], client.get_json(full_key) or {})
                 current = bucket.get(field, 0)
                 new_value = current + amount
                 bucket[field] = new_value
@@ -143,7 +143,7 @@ class RedisStorage(RateLimitStorage):
         full_key = self._get_key(key)
         if client.acquire_lock(full_key):
             try:
-                bucket = client.get_json(full_key) or {}
+                bucket = cast(Dict[str, Any], client.get_json(full_key) or {})
                 previous = bucket.get(field, default)
                 bucket[field] = value
                 client.set_json(full_key, bucket)
@@ -163,7 +163,7 @@ class RedisStorage(RateLimitStorage):
         full_key = self._get_key(key)
         if client.acquire_lock(full_key):
             try:
-                bucket = client.get_json(full_key) or {}
+                bucket = cast(Dict[str, Any], client.get_json(full_key) or {})
                 lst = bucket.get(field, [])
                 if not isinstance(lst, list):
                     lst = []
@@ -188,7 +188,7 @@ class RedisStorage(RateLimitStorage):
         full_key = self._get_key(key)
         if client.acquire_lock(full_key):
             try:
-                bucket = client.get_json(full_key) or {}
+                bucket = cast(Dict[str, Any], client.get_json(full_key) or {})
                 lst = bucket.get(field, [])
                 if not isinstance(lst, list):
                     return 0

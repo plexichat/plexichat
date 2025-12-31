@@ -60,3 +60,8 @@ class NotBlockedError(RelationshipError):
 class CannotBlockSelfError(RelationshipError):
     """Cannot block yourself."""
     pass
+
+
+class PermissionDeniedError(RelationshipError):
+    """User does not have permission to perform this action."""
+    pass

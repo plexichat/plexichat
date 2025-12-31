@@ -41,12 +41,12 @@ class BaseIndexer(ABC):
         Returns:
             True if initialization successful
         """
-        pass
+        raise NotImplementedError()
 
     @abstractmethod
     def close(self):
         """Close the indexer and release resources."""
-        pass
+        raise NotImplementedError()
 
     @abstractmethod
     def index_message(self, message: IndexedMessage) -> bool:
@@ -59,7 +59,7 @@ class BaseIndexer(ABC):
         Returns:
             True if indexed successfully
         """
-        pass
+        raise NotImplementedError()
 
     @abstractmethod
     def index_messages_batch(self, messages: List[IndexedMessage]) -> int:
@@ -72,7 +72,7 @@ class BaseIndexer(ABC):
         Returns:
             Number of messages indexed
         """
-        pass
+        raise NotImplementedError()
 
     @abstractmethod
     def remove_message(self, message_id: int) -> bool:
@@ -85,7 +85,7 @@ class BaseIndexer(ABC):
         Returns:
             True if removed successfully
         """
-        pass
+        raise NotImplementedError()
 
     @abstractmethod
     def update_message(self, message: IndexedMessage) -> bool:
@@ -98,7 +98,7 @@ class BaseIndexer(ABC):
         Returns:
             True if updated successfully
         """
-        pass
+        raise NotImplementedError()
 
     @abstractmethod
     def search_messages(

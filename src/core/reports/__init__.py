@@ -223,7 +223,7 @@ def report_message(
            (id, message_id, channel_id, server_id, reporter_id, reported_user_id,
             reason, category, details, message_content, status, reported_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)""",
-        (report_id, message_id, channel_id, server_id, reporter_id, reported_user_id,
+        (report_id, message_id, channel_id, server_id, reporter_id, reported_user_id or 0,
          reason, category, details, message_content, now)
     )
     
