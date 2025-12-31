@@ -10,6 +10,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Receive, Send, Scope
 
 import traceback
+import src.api as api
 import utils.config as config
 import utils.logger as logger
 
@@ -119,11 +120,19 @@ class ErrorHandlingMiddleware:
             # Only allow traceback capture if:
             # 1. Config says it's enabled
             # 2. Request is from localhost
-            # 3. Special header is present
+            # 3. Secure internal secret is present and matches
             selftest_config = config.get("selftest", {})
             is_local = request.client.host in ("127.0.0.1", "::1") if request.client else False
             
-            if selftest_config.get("capture_stack_traces", True) and is_local:
+            internal_secret = api.get_internal_secret()
+            provided_secret = request.headers.get("X-Plexichat-Internal-Secret")
+            is_selftest = (
+                internal_secret is not None 
+                and provided_secret == internal_secret 
+                and is_local
+            )
+
+            if selftest_config.get("capture_stack_traces", True) and is_selftest:
                 if request.headers.get("X-Plexichat-SelfTest-Debug") == "true":
                     include_traceback = True
 

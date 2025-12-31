@@ -44,6 +44,7 @@ _reports = None
 _feedback = None
 _admin = None
 _events = None
+_internal_secret = None
 _setup_complete = False
 
 
@@ -131,101 +132,206 @@ def setup(
     _setup_complete = True
 
 
+def set_internal_secret(secret: str) -> None:
+    """Set the one-time internal secret for self-test validation."""
+    global _internal_secret
+    _internal_secret = secret
+
+
+def get_internal_secret() -> Optional[str]:
+    """Get the one-time internal secret."""
+    return _internal_secret
+
+
 def get_db() -> Optional[Any]:
     """Get database instance."""
     if not _setup_complete:
+        # If not setup but we have a database from somewhere else (like test runner)
+        # return it, otherwise raise
+        if _db: return _db
         raise RuntimeError("API module not initialized. Call api.setup() first.")
     return _db
 
 
 def get_auth() -> Optional[Any]:
     """Get auth module."""
-    return _auth
+    if _auth: return _auth
+    # Fallback to importing if already setup globally but not passed here
+    try:
+        from src.core import auth
+        return auth
+    except ImportError:
+        return None
 
 
 def get_messaging() -> Optional[Any]:
     """Get messaging module."""
-    return _messaging
+    if _messaging: return _messaging
+    try:
+        from src.core import messaging
+        return messaging
+    except ImportError:
+        return None
 
 
 def get_servers() -> Optional[Any]:
     """Get servers module."""
-    return _servers
+    if _servers: return _servers
+    try:
+        from src.core import servers
+        return servers
+    except ImportError:
+        return None
 
 
 def get_relationships() -> Optional[Any]:
     """Get relationships module."""
-    return _relationships
+    if _relationships: return _relationships
+    try:
+        from src.core import relationships
+        return relationships
+    except ImportError:
+        return None
 
 
 def get_presence() -> Optional[Any]:
     """Get presence module."""
-    return _presence
+    if _presence: return _presence
+    try:
+        from src.core import presence
+        return presence
+    except ImportError:
+        return None
 
 
 def get_reactions() -> Optional[Any]:
     """Get reactions module."""
-    return _reactions
+    if _reactions: return _reactions
+    try:
+        from src.core import reactions
+        return reactions
+    except ImportError:
+        return None
 
 
 def get_embeds() -> Optional[Any]:
     """Get embeds module."""
-    return _embeds
+    if _embeds: return _embeds
+    try:
+        from src.core import embeds
+        return embeds
+    except ImportError:
+        return None
 
 
 def get_notifications() -> Optional[Any]:
     """Get notifications module."""
-    return _notifications
+    if _notifications: return _notifications
+    try:
+        from src.core import notifications
+        return notifications
+    except ImportError:
+        return None
 
 
 def get_webhooks() -> Optional[Any]:
     """Get webhooks module."""
-    return _webhooks
+    if _webhooks: return _webhooks
+    try:
+        from src.core import webhooks
+        return webhooks
+    except ImportError:
+        return None
 
 
 def get_threads() -> Optional[Any]:
     """Get threads module."""
-    return _threads
+    if _threads: return _threads
+    try:
+        from src.core import threads
+        return threads
+    except ImportError:
+        return None
 
 
 def get_media() -> Optional[Any]:
     """Get media module."""
-    return _media
+    if _media: return _media
+    try:
+        from src.core import media
+        return media
+    except ImportError:
+        return None
 
 
 def get_settings() -> Optional[Any]:
     """Get settings module."""
-    return _settings
+    if _settings: return _settings
+    try:
+        from src.core import settings
+        return settings
+    except ImportError:
+        return None
 
 
 def get_features() -> Optional[Any]:
     """Get features module."""
-    return _features
+    if _features: return _features
+    try:
+        from src.core import features
+        return features
+    except ImportError:
+        return None
 
 
 def get_avatars() -> Optional[Any]:
     """Get avatars module."""
-    return _avatars
+    if _avatars: return _avatars
+    try:
+        from src.core import avatars
+        return avatars
+    except ImportError:
+        return None
 
 
 def get_events() -> Optional[Any]:
     """Get events module."""
-    return _events
+    if _events: return _events
+    try:
+        from src.core import events
+        return events
+    except ImportError:
+        return None
 
 
 def get_reports() -> Optional[Any]:
     """Get reports module."""
-    return _reports
+    if _reports: return _reports
+    try:
+        from src.core import reports
+        return reports
+    except ImportError:
+        return None
 
 
 def get_feedback() -> Optional[Any]:
     """Get feedback module."""
-    return _feedback
+    if _feedback: return _feedback
+    try:
+        from src.core import feedback
+        return feedback
+    except ImportError:
+        return None
 
 
 def get_admin() -> Optional[Any]:
     """Get admin module."""
-    return _admin
+    if _admin: return _admin
+    try:
+        from src.core import admin
+        return admin
+    except ImportError:
+        return None
 
 
 def is_setup() -> bool:

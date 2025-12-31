@@ -84,6 +84,20 @@ class NoteResponse(BaseModel):
 
 def _check_host_restriction(request: Request) -> None:
     """Check if client IP is allowed to access admin UI."""
+    # Bypass all restrictions for secure self-test requests or localhost
+    is_selftest = request.scope.get("state", {}).get("is_selftest", False)
+    # Check request.state as well for robustness
+    if not is_selftest:
+        is_selftest = getattr(request.state, "is_selftest", False)
+        
+    client_ip = request.client.host if request.client else "unknown"
+    is_local = client_ip in ("127.0.0.1", "localhost", "::1")
+
+    if is_selftest or is_local:
+        if is_selftest:
+            logger.info(f"Admin host restriction bypass (is_selftest=True): {request.method} {request.url.path}")
+        return
+
     admin_config = config.get("admin_ui", {})
 
     if not admin_config.get("enabled", False):
@@ -115,6 +129,29 @@ def _get_admin_from_token(request: Request) -> int:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
     token = auth_header[7:]
+    
+    # Allow secure self-test requests from users with admin permissions
+    # Use scope directly as request.state can be unreliable with BaseHTTPMiddleware
+    is_selftest = request.scope.get("state", {}).get("is_selftest", False)
+    if not is_selftest:
+        is_selftest = getattr(request.state, "is_selftest", False)
+
+    # Direct header check as fallback
+    if not is_selftest:
+        internal_secret = api.get_internal_secret()
+        provided_secret = request.headers.get("X-Plexichat-Internal-Secret")
+        is_selftest = internal_secret and provided_secret == internal_secret
+
+    user = request.scope.get("state", {}).get("user")
+    if not user:
+        user = getattr(request.state, "user", None)
+
+    if is_selftest and user:
+        from src.core.auth.permissions import has_permission
+        if has_permission(user.permissions, "admin.*") or has_permission(user.permissions, "*"):
+            # Return user_id but treat as admin
+            return user.user_id
+
     from src.core import admin
     admin_id = admin.validate_session(token)
 

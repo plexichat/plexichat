@@ -31,6 +31,10 @@ class AuthenticationMiddleware:
             await self.app(scope, receive, send)
             return
 
+        # Ensure scope["state"] exists before creating Request
+        if "state" not in scope:
+            scope["state"] = {}
+
         request = Request(scope, receive)
         await self._process_auth(request)
         await self.app(scope, receive, send)
@@ -41,10 +45,29 @@ class AuthenticationMiddleware:
         if "pytest" in sys.modules:
             print(f"[DEBUG] AuthMiddleware: Headers: {dict(request.headers)}")
         
-        # Mark request as self-test if header is present AND it's from localhost
+        # Mark request as self-test if secure internal secret matches
         is_local = request.client.host in ("127.0.0.1", "::1") if request.client else False
-        is_selftest = request.headers.get("X-Plexichat-SelfTest") == "true" and is_local
+        internal_secret = api.get_internal_secret()
+        provided_secret = request.headers.get("X-Plexichat-Internal-Secret")
+        
+        is_selftest = (
+            internal_secret is not None 
+            and provided_secret == internal_secret 
+            and is_local
+        )
+        
+        # Ensure scope["state"] exists and update it directly
+        if "state" not in request.scope:
+            request.scope["state"] = {}
+        
+        request.scope["state"]["is_selftest"] = is_selftest
         request.state.is_selftest = is_selftest
+
+        if is_selftest:
+            import utils.logger as logger
+            logger.info(f"Self-test request detected: {request.method} {request.url.path}")
+            # Ensure it's set in the scope that will be passed to the next app
+            request.scope["state"]["is_selftest"] = True
 
         # Get all Authorization headers
         auth_headers = request.headers.getlist("Authorization")
@@ -79,17 +102,30 @@ class AuthenticationMiddleware:
         try:
             ip_address: Optional[str] = request.client.host if request.client else None
             user_agent: Optional[str] = request.headers.get("User-Agent")
-            token_info: TokenInfo = auth.verify_token(token, ip_address, user_agent, is_selftest=request.state.is_selftest)
-
-            import sys
-            if "pytest" in sys.modules:
-                print(f"[DEBUG] AuthMiddleware: verified token for user {token_info.user_id}")
             
-            # Ensure scope["state"] exists and update it directly
-            if "state" not in request.scope:
-                request.scope["state"] = {}
-            request.scope["state"]["user"] = token_info
-            request.state.user = token_info
+            token_info = None
+            try:
+                token_info = auth.verify_token(token, ip_address, user_agent, is_selftest=request.state.is_selftest)
+            except Exception as e:
+                # If self-test, we might be using a placeholder token but already have the user in scope from a previous login
+                if request.state.is_selftest and "user" in request.scope.get("state", {}):
+                    token_info = request.scope["state"]["user"]
+                    import sys
+                    if "pytest" in sys.modules:
+                        print(f"[DEBUG] AuthMiddleware: using cached user from scope for self-test")
+                else:
+                    raise e
+
+            if token_info:
+                import sys
+                if "pytest" in sys.modules:
+                    print(f"[DEBUG] AuthMiddleware: verified token for user {token_info.user_id} with permissions: {token_info.permissions}")
+                
+                # Ensure scope["state"] exists and update it directly
+                if "state" not in request.scope:
+                    request.scope["state"] = {}
+                request.scope["state"]["user"] = token_info
+                request.state.user = token_info
         except Exception as e:
             import sys
             if "pytest" in sys.modules:

@@ -11,6 +11,7 @@ import signal
 import asyncio
 import threading
 import argparse
+import secrets
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
 
@@ -742,7 +743,13 @@ class PlexiChatServer:
         from src.core import auth, messaging, servers, relationships, presence, reactions, embeds, webhooks, settings, media, events
         from src.core import voice, notifications, threads
         from src.core.voice import signaling
+        import src.api as api
         
+        # Generate and set internal secret for secure self-test validation
+        internal_secret = secrets.token_hex(32)
+        api.set_internal_secret(internal_secret)
+        logger.info("Internal security secret generated for self-test")
+
         failed_modules = []
         
         # Initialize database
