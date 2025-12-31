@@ -53,6 +53,9 @@ slowapi>=0.1.9
 # Logging
 colorlog>=6.8.0
 
+# QR Code Generation
+qrcode[pil]>=7.4.2
+
 # S3/MinIO Storage (optional, for cloud media storage)
 boto3>=1.34.0              # AWS S3 SDK (also works with MinIO)
 

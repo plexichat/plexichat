@@ -1207,7 +1207,7 @@ ADMIN_LOGIN_HTML = """
                     adminId = data.admin_id;
                     document.getElementById('login-form').style.display = 'none';
                     document.getElementById('otp-setup').style.display = 'block';
-                    document.getElementById('qr-code').src = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(data.otp_qr_uri);
+                    document.getElementById('qr-code').src = '/api/v1/qr?size=200x200&data=' + encodeURIComponent(data.otp_qr_uri);
                     document.getElementById('otp-secret').textContent = data.otp_secret;
                 } else if (data.status === 'otp_required') {
                     adminId = data.admin_id;

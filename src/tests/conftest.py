@@ -230,8 +230,8 @@ def session_users(modules):
     users = []
     print("\n[Setup] Creating user pool with real Argon2 hashing...")
 
-    # Increased for comprehensive server tests
-    for i in range(50):
+    # Increased for performance/integration tests that consume many pooled users
+    for i in range(200):
         username = f"pooluser_{i}_{uuid.uuid4().hex[:4]}"
         email = f"{username}@test.example.com"
         password = TEST_PASSWORD

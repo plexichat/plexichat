@@ -302,6 +302,13 @@ DEFAULT_ROUTE_LIMITS: Dict[str, RateLimitConfig] = {
         algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
         scope=BucketType.USER,
     ),
+    "GET /qr": RateLimitConfig(
+        requests=20,
+        window_seconds=60.0,
+        burst=5,
+        algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
+        scope=BucketType.IP,
+    ),
 }
 
 

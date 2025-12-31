@@ -138,7 +138,7 @@ class TestTwoFactorAuth:
         result1 = auth.login(username, "TestPass123!")
         auth.complete_2fa(result1.challenge_token, backup_code)
 
-        result2 = auth.login("singleuse", "TestPass123!")
+        result2 = auth.login(username, "TestPass123!")
 
         with pytest.raises(TwoFactorInvalidError):
             auth.complete_2fa(result2.challenge_token, backup_code)

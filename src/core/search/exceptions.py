@@ -61,6 +61,14 @@ class SearchLimitError(SearchError):
         self.requested = requested
 
 
+class SearchRateLimitError(SearchError):
+    """Search rate limit exceeded."""
+
+    def __init__(self, message: str, retry_after_seconds: int | None = None):
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
+
+
 class DiscoveryError(SearchError):
     """Error in server discovery operations."""
     pass
@@ -72,6 +80,19 @@ class ServerNotListedError(DiscoveryError):
     def __init__(self, message: str, server_id: int | None = None):
         super().__init__(message)
         self.server_id = server_id
+
+
+class AlreadyListedError(DiscoveryError):
+    """Server is already listed in the discovery directory."""
+
+    def __init__(self, message: str, server_id: int | None = None):
+        super().__init__(message)
+        self.server_id = server_id
+
+
+class NotListedError(ServerNotListedError):
+    """Backward-compatible alias for ServerNotListedError."""
+    pass
 
 
 class VerificationError(DiscoveryError):
@@ -90,6 +111,11 @@ class BumpCooldownError(DiscoveryError):
         super().__init__(message)
         self.server_id = server_id
         self.cooldown_remaining = cooldown_remaining
+
+
+class CooldownError(BumpCooldownError):
+    """Backward-compatible alias for BumpCooldownError."""
+    pass
 
 
 class CategoryNotFoundError(DiscoveryError):

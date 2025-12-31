@@ -76,9 +76,9 @@ class TestPasswords:
         assert result is True
 
         with pytest.raises(auth.InvalidCredentialsError):
-            auth.login("changepwd", "TestPass123!")
+            auth.login(username, "TestPass123!")
 
-        login_result = auth.login("changepwd", "NewSecurePass456!")
+        login_result = auth.login(username, "NewSecurePass456!")
         assert login_result.status == auth.AuthStatus.SUCCESS
 
     def test_change_password_wrong_old(self, db_and_auth):

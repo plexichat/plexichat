@@ -25,6 +25,7 @@ git submodule update --init --recursive
   - User authentication with 2FA (TOTP) support.
   - Multi-session management and device tracking.
   - **Zero-friction At-Rest Encryption**: Automatic server-side encryption for messages.
+  - **Local QR Generation**: Privacy-focused QR code generation without external services.
 - **Community Management**:
   - Flexible server and channel hierarchies.
   - Powerful role-based access control (RBAC) with granular permissions.

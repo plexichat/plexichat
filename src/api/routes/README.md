@@ -23,6 +23,7 @@ Each file contains routes for a specific resource domain:
 | `features.py` | `/admin`, `/users/@me/features` | User features/badges |
 | `health.py` | `/health` | Health check |
 | `version.py` | `/version`, `/status` | Version and status |
+| `qr.py` | `/qr` | Local QR code generation |
 | `docs.py` | `/docs/api` | Documentation server |
 | `media.py` | `/media` | Media file serving |
 | `admin.py` | `/admin` | Admin endpoints |

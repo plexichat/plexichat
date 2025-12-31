@@ -73,10 +73,12 @@ class TestDevices:
         db, auth = db_and_auth
         unique_id = uuid.uuid4().hex[:16]
         
-        user1 = auth.register(f"dev1_{unique_id}", f"dev1_{unique_id}@example.com", "TestPass123!")
-        user2 = auth.register(f"dev2_{unique_id}", f"dev2_{unique_id}@example.com", "TestPass123!")
+        username1 = f"dev1_{unique_id}"
+        username2 = f"dev2_{unique_id}"
+        user1 = auth.register(username1, f"{username1}@example.com", "TestPass123!")
+        user2 = auth.register(username2, f"{username2}@example.com", "TestPass123!")
 
-        auth.login("devuser1", "TestPass123!", device_info={"fingerprint": "user1_device"})
+        auth.login(username1, "TestPass123!", device_info={"fingerprint": "user1_device"})
 
         devices = auth.get_devices(user1.id)
         device = devices[0]
@@ -108,7 +110,7 @@ class TestDevices:
 
         user = auth.register(username, f"{username}@example.com", "TestPass123!")
 
-        result = auth.login("revokedev", "TestPass123!", device_info={"fingerprint": "session_device"})
+        result = auth.login(username, "TestPass123!", device_info={"fingerprint": "session_device"})
         token = result.token
 
         devices = auth.get_devices(user.id)

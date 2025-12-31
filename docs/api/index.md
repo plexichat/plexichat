@@ -27,6 +27,7 @@ Authorization: Bot <bot_token>
 | GET | `/version` | Server version info | No |
 | POST | `/version/negotiate` | Version compatibility check | No |
 | GET | `/status` | Server operational status | No |
+| GET | `/qr` | Generate QR code locally | No |
 
 ### Authentication
 

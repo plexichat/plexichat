@@ -6,11 +6,13 @@ with proper permission checks and multiple backend support.
 """
 
 from typing import List, Dict, Any, Optional
+import time
 
 import utils.config as config
 import utils.logger as logger
 from src.core.base import BaseManager
 
+from . import models
 from .models import (
     ParsedQuery,
     MessageSearchResult,
@@ -42,6 +44,8 @@ from .discovery import DiscoveryManager
 
 class SearchManager(BaseManager):
     """Core search manager handling all operations."""
+
+    models = models
 
     # Re-expose for tests
     SearchError = SearchError
@@ -83,6 +87,9 @@ class SearchManager(BaseManager):
 
         self._discovery = DiscoveryManager(db, servers_module)
 
+        self._search_rate_window_started_ms: Dict[int, float] = {}
+        self._search_rate_count: Dict[int, int] = {}
+
         logger.info("Search module initialized")
 
     def _load_config(self) -> Dict[str, Any]:
@@ -106,6 +113,7 @@ class SearchManager(BaseManager):
                 "bump_cooldown_hours": 4,
                 "max_tags": 10,
             },
+            "rate_limit_per_minute": 60,
         }
 
         search_config = config.get("search", {})
@@ -183,6 +191,17 @@ class SearchManager(BaseManager):
                 requested=limit
             )
 
+        rate_limit = self._config.get("rate_limit_per_minute")
+        if rate_limit:
+            now = time.time() * 1000
+            window_start = self._search_rate_window_started_ms.get(user_id)
+            if window_start is None or now - window_start >= 60_000:
+                self._search_rate_window_started_ms[user_id] = now
+                self._search_rate_count[user_id] = 0
+            self._search_rate_count[user_id] = self._search_rate_count.get(user_id, 0) + 1
+            if self._search_rate_count[user_id] > int(rate_limit):
+                raise SearchRateLimitError("Search rate limit exceeded", retry_after_seconds=60)
+
         parsed = self._query_parser.parse(query)
 
         accessible_conversations = self._get_accessible_conversations(
@@ -199,13 +218,19 @@ class SearchManager(BaseManager):
             conversation_ids=accessible_conversations,
             server_ids=[server_id] if server_id else None,
             channel_ids=[channel_id] if channel_id else None,
-            author_id=author_id,
-            after_timestamp=after_timestamp,
-            has_attachments=has_attachments,
-            mentions_user=mentions_user,
+            author_ids=[author_id] if author_id is not None else None,
             limit=limit * 2,
             offset=offset,
         )
+
+        if after_timestamp is not None:
+            results = [r for r in results if r.created_at and r.created_at > after_timestamp]
+
+        if has_attachments is not None:
+            results = [r for r in results if r.has_attachments == has_attachments]
+
+        if mentions_user is not None:
+            results = [r for r in results if f"<@{mentions_user}>" in (r.content or "") or f"<@!{mentions_user}>" in (r.content or "")]
 
         results = self._filter_processor.apply_filters(results, parsed, user_id)
 
@@ -216,6 +241,47 @@ class SearchManager(BaseManager):
         )
 
         return results[:limit]
+
+    def clear_cache(self):
+        self._search_rate_window_started_ms.clear()
+        self._search_rate_count.clear()
+
+    def reindex_all(self) -> int:
+        messages = self._db.fetch_all(
+            "SELECT id, content, author_id, conversation_id, created_at FROM msg_messages WHERE deleted = 0"
+        )
+        indexed = 0
+        for msg in messages:
+            self.index_message(
+                message_id=msg["id"],
+                content=msg["content"] or "",
+                metadata={
+                    "author_id": msg["author_id"],
+                    "conversation_id": msg["conversation_id"],
+                    "created_at": msg["created_at"],
+                },
+            )
+            indexed += 1
+        return indexed
+
+    def search_server_messages(
+        self,
+        user_id: int,
+        server_id: int,
+        query: str,
+        limit: int = 25,
+        offset: int = 0,
+    ) -> List[MessageSearchResult]:
+        if not self._can_access_server(user_id, server_id):
+            return []
+        return self.search_messages(user_id, query, server_id=server_id, limit=limit, offset=offset)
+
+    def _can_access_server(self, user_id: int, server_id: int) -> bool:
+        member = self._db.fetch_one(
+            "SELECT 1 FROM srv_members WHERE server_id = ? AND user_id = ?",
+            (server_id, user_id),
+        )
+        return member is not None
 
     def index_message(
         self,

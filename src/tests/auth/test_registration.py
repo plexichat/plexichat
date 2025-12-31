@@ -22,8 +22,8 @@ class TestRegistration:
         )
 
         assert user is not None
-        assert user.username == "alice"
-        assert user.email == "alice@example.com"
+        assert user.username == username
+        assert user.email == f"{username}@example.com"
         assert user.id > 0
 
     def test_register_duplicate_username(self, db_and_auth):

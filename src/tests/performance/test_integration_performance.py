@@ -51,11 +51,11 @@ class TestCompleteUserJourney:
 
     def test_server_creation_to_messaging(self, benchmark, modules, user_pool):
         """Benchmark: create server -> add members -> create channel -> send message."""
+        owner = user_pool.get_user()
+        member1 = user_pool.get_user()
+        member2 = user_pool.get_user()
+
         def server_journey():
-            owner = user_pool.get_user()
-            member1 = user_pool.get_user()
-            member2 = user_pool.get_user()
-            
             server = modules.servers.create_server(
                 owner_id=owner.id,
                 name="Performance Server"
