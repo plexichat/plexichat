@@ -107,7 +107,7 @@ class GatewayDispatcher:
                 )
                 continue
 
-            if not connection.check_rate_limit(self._rate_limit_per_minute):
+            if not getattr(connection, "is_selftest", False) and not connection.check_rate_limit(self._rate_limit_per_minute):
                 logger.debug(
                     f"Rate limited connection {getattr(connection, 'id', None)}"
                 )

@@ -191,7 +191,7 @@ def complete_2fa(challenge_token: str, code: str) -> AuthResult:
 
 
 def verify_token(
-    token: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None
+    token: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None, is_selftest: bool = False
 ) -> TokenInfo:
     """
     Verify a session or bot token.
@@ -200,6 +200,7 @@ def verify_token(
         token: The token to verify
         ip_address: Optional IP for tracking
         user_agent: Optional user agent for binding
+        is_selftest: Whether this is an internal self-test request
 
     Returns:
         TokenInfo with user/bot details and permissions
@@ -208,7 +209,7 @@ def verify_token(
         TokenInvalidError: Token is malformed or invalid
         TokenExpiredError: Token has expired
     """
-    return _get_manager().verify_token(token, ip_address, user_agent)
+    return _get_manager().verify_token(token, ip_address, user_agent, is_selftest)
 
 
 def refresh_session(token: str) -> Optional[str]:
@@ -234,6 +235,30 @@ def get_sessions(user_id: int) -> List[Session]:
 def revoke_session(user_id: int, session_id: int) -> bool:
     """Revoke a specific session."""
     return _get_manager().revoke_session(user_id, session_id)
+
+
+# === User Profile ===
+
+
+def update_user(
+    user_id: int,
+    username: Optional[str] = None,
+    email: Optional[str] = None,
+    permissions: Optional[Dict[str, bool]] = None,
+) -> User:
+    """
+    Update user profile information.
+
+    Args:
+        user_id: ID of the user to update
+        username: New username (optional)
+        email: New email address (optional)
+        permissions: New permissions (optional)
+
+    Returns:
+        Updated User object
+    """
+    return _get_manager().update_user(user_id, username, email, permissions)
 
 
 # === Two-Factor Authentication ===

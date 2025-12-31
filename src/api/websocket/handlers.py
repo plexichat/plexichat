@@ -125,12 +125,14 @@ class OpcodeHandler:
         user_id = await self._verify_token(
             token,
             ip_address=connection.websocket.client.host if connection.websocket.client else None,
-            user_agent=connection.properties.get("browser")
+            user_agent=connection.properties.get("browser"),
+            is_selftest=connection.is_selftest
         )
         if user_id is None:
             return None, None, int(GatewayCloseCode.AUTHENTICATION_FAILED)
 
-        if not self._session_manager.can_user_connect(user_id):
+        # Bypass rate limits for self-test
+        if not connection.is_selftest and not self._session_manager.can_user_connect(user_id):
             return None, None, int(GatewayCloseCode.RATE_LIMITED)
 
         properties = data.get("properties", {})
@@ -175,7 +177,7 @@ class OpcodeHandler:
         if not token or not session_id:
             return int(GatewayOpcode.INVALID_SESSION), {"d": False}, None
 
-        user_id = await self._verify_token(token)
+        user_id = await self._verify_token(token, is_selftest=connection.is_selftest)
         if user_id is None:
             return int(GatewayOpcode.INVALID_SESSION), {"d": False}, None
 
@@ -472,6 +474,7 @@ class OpcodeHandler:
         token: str,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
+        is_selftest: bool = False,
     ) -> Optional[int]:
         """Verify a token and return user ID."""
         if not self._auth:
@@ -479,7 +482,7 @@ class OpcodeHandler:
 
         try:
             token_info: TokenInfo = self._auth.verify_token(
-                token, ip_address, user_agent
+                token, ip_address, user_agent, is_selftest=is_selftest
             )
             return token_info.user_id
         except Exception:

@@ -8,6 +8,7 @@ from typing import Tuple, Optional, Any, Dict, TYPE_CHECKING
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+import src.api as api
 import utils.logger as logger
 
 from .opcodes import GatewayOpcode, GatewayCloseCode, get_close_message
@@ -138,6 +139,16 @@ async def gateway_endpoint(websocket: WebSocket) -> None:
     """
     await websocket.accept()
 
+    # Detect if this is a secure self-test connection
+    is_local = websocket.client.host in ("127.0.0.1", "::1") if websocket.client else False
+    internal_secret = api.get_internal_secret()
+    provided_secret = websocket.headers.get("X-Plexichat-Internal-Secret")
+    is_selftest = (
+        internal_secret is not None 
+        and provided_secret == internal_secret 
+        and is_local
+    )
+
     session_manager, dispatcher, auth_module, presence_module, servers_module = (
         _get_modules()
     )
@@ -148,6 +159,8 @@ async def gateway_endpoint(websocket: WebSocket) -> None:
         connection_id=connection_id,
         heartbeat_interval_ms=session_manager.heartbeat_interval_ms,
     )
+    # Store is_selftest on connection for handlers to use
+    connection.is_selftest = is_selftest
 
     session_manager.add_connection(connection)
     connection.state = ConnectionState.CONNECTED

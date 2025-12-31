@@ -105,6 +105,9 @@ class AuthManager(BaseManager):
         self._user_cache: Dict[int, Tuple[Any, float]] = {}
         self._user_cache_ttl = 60.0  # 60 second TTL
 
+        # Cache configuration for performance and to allow overrides in tests
+        self._config = config.get("authentication", {})
+
         # Create tables if they don't exist
         logger.info("Initializing authentication module")
         create_tables(db)
@@ -158,19 +161,17 @@ class AuthManager(BaseManager):
 
     def _get_config(self, key: str, default: Any = None) -> Any:
         """Get auth configuration value."""
-        auth_config = config.get("authentication", {})
+        if self._config is None:
+            self._config = config.get("authentication", {})
+            
         keys = key.split(".")
-        value = auth_config
+        value = self._config
         for k in keys:
             if isinstance(value, dict):
                 value = value.get(k, default)
             else:
                 return default
         return value if value is not None else default
-
-    def _current_time(self) -> int:
-        """Get current Unix timestamp."""
-        return self._get_timestamp()
 
     def _log_audit(
         self,
@@ -760,7 +761,8 @@ class AuthManager(BaseManager):
         session_id = self._generate_id()
         now = self._get_timestamp()
         expire_hours = self._get_config("sessions.expire_hours", 168)
-        expires_at = now + (expire_hours * 3600)
+        # Fix: expire_hours * seconds_in_hour * ms_per_second
+        expires_at = now + (expire_hours * 3600 * 1000)
 
         token_bytes = self._get_config("sessions.token_bytes", 32)
         full_token, token_hash = create_session_token(session_id, token_bytes)
@@ -967,9 +969,11 @@ class AuthManager(BaseManager):
 
         if extend_on_activity:
             time_since_activity = now - session["last_activity"]
-            if time_since_activity > (threshold_hours * 3600):
+            # Fix: threshold_hours * seconds_in_hour * ms_per_second
+            if time_since_activity > (threshold_hours * 3600 * 1000):
                 expire_hours = self._get_config("sessions.expire_hours", 168)
-                new_expires = now + (expire_hours * 3600)
+                # Fix: expire_hours * seconds_in_hour * ms_per_second
+                new_expires = now + (expire_hours * 3600 * 1000)
                 self._db.execute(
                     "UPDATE auth_sessions SET last_activity = ?, expires_at = ? WHERE id = ?",
                     (now, new_expires, parsed["id"]),
@@ -1990,6 +1994,7 @@ class AuthManager(BaseManager):
         )
 
         if not row:
+            logger.info(f"get_user_by_username: user '{username}' NOT FOUND in database")
             return None
 
         return self._row_to_user(row)
