@@ -14,6 +14,7 @@ from urllib.parse import urlparse, urljoin
 import utils.config as config
 import utils.logger as logger
 from src.core.base import BaseManager, SnowflakeID
+from src.utils.security import URLValidator
 
 from .models import (
     Embed,
@@ -28,6 +29,7 @@ from .models import (
 from .exceptions import (
     EmbedNotFoundError,
     EmbedValidationError,
+    EmbedSanitizationError,
     EmbedLimitError,
     MessageNotFoundError,
     PermissionDeniedError,
@@ -46,6 +48,32 @@ from .validator import (
 class EmbedManager(BaseManager):
     """Core embed manager handling all operations."""
 
+    def _get_manager(self):
+        """Compatibility method for some test patterns."""
+        return self
+
+    # Re-expose for tests
+    EmbedType = EmbedType
+    EmbedSanitizationError = EmbedSanitizationError
+
+    def validate_embed(self, embed_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Re-exposed validation for tests."""
+        result = validate_embed_data(embed_data)
+        return {
+            "valid": result.valid,
+            "issues": result.issues,
+            "total_chars": result.total_chars,
+            "sanitized_data": result.sanitized_data,
+        }
+
+    def sanitize_embed_content(self, content: str) -> str:
+        """Re-exposed sanitization for tests."""
+        return sanitize_content(content, "content")
+
+    def _get_manager(self):
+        """Compatibility method for some test patterns."""
+        return self
+
     def __init__(self, db, messaging_module=None, servers_module=None):
         """
         Initialize the embed manager.
@@ -59,6 +87,7 @@ class EmbedManager(BaseManager):
         self._messaging = messaging_module
         self._servers = servers_module
         self._config = self._load_config()
+        self._url_validator = URLValidator()
 
         create_tables(db)
 
@@ -746,100 +775,20 @@ class EmbedManager(BaseManager):
 
         return metadata
 
-    def _validate_external_preview_url(self, url: str) -> Tuple[str, str, str]:
-        """Validate URL for preview scraping (SSRF protection).
-
-        Returns:
-            Tuple of (normalized_url, base_url, hostname)
-        """
-        validated_url = validate_url(url, "url")
-        parsed = urlparse(validated_url)
-
-        scheme = (parsed.scheme or "").lower()
-        if scheme not in {"http", "https"}:
-            raise ValueError("Only http/https URLs are allowed")
-
-        hostname = parsed.hostname or ""
-        if not hostname:
-            raise ValueError("Invalid URL: missing hostname")
-
-        hostname_lower = hostname.lower()
-        blocked_hosts = {
-            "localhost",
-            "127.0.0.1",
-            "::1",
-            "0.0.0.0",
-            "localhost.localdomain",
-            "local",
-        }
-        if hostname_lower in blocked_hosts:
-            raise ValueError("Access to localhost is not allowed")
-
-        if hostname_lower.endswith(".local") or hostname_lower.endswith(".internal"):
-            raise ValueError("Access to internal hosts is not allowed")
-
-        try:
-            addr_info = socket.getaddrinfo(hostname, None)
-            for _, _, _, _, sockaddr in addr_info:
-                ip = str(sockaddr[0])
-                if self._is_private_ip(ip):
-                    raise ValueError("Access to private IP addresses is not allowed")
-        except socket.gaierror:
-            # If DNS resolution fails, let the HTTP client error out.
-            pass
-
-        base_url = f"{parsed.scheme}://{parsed.netloc}"
-        return validated_url, base_url, hostname
-
-    def _is_private_ip(self, ip: str) -> bool:
-        try:
-            addr = ipaddress.ip_address(ip)
-            return (
-                addr.is_private
-                or addr.is_loopback
-                or addr.is_link_local
-                or addr.is_reserved
-                or addr.is_multicast
-            )
-        except ValueError:
-            return True
-
-    class _MetaParser(HTMLParser):
-        def __init__(self):
-            super().__init__()
-            self.title: Optional[str] = None
-            self._in_title = False
-            self._title_parts: List[str] = []
-            self.meta: Dict[str, str] = {}
-
-        def handle_starttag(self, tag: str, attrs):
-            tag_lower = tag.lower()
-            if tag_lower == "title":
-                self._in_title = True
-                return
-
-            if tag_lower != "meta":
-                return
-
-            attr_map = {k.lower(): (v or "") for k, v in attrs if k}
-            key = (attr_map.get("property") or attr_map.get("name") or "").strip().lower()
-            content = (attr_map.get("content") or "").strip()
-            if key and content and key not in self.meta:
-                self.meta[key] = content
-
-        def handle_endtag(self, tag: str):
-            if tag.lower() == "title":
-                self._in_title = False
-                if self._title_parts and self.title is None:
-                    self.title = "".join(self._title_parts).strip() or None
-
-        def handle_data(self, data: str):
-            if self._in_title and data:
-                self._title_parts.append(data)
-
     def _scrape_url_metadata(self, url: str) -> Dict[str, Any]:
         """Fetch HTML and extract OpenGraph/Twitter metadata securely."""
-        validated_url, base_url, _ = self._validate_external_preview_url(url)
+        # SSRF Protection: Validate URL and resolve to IP to prevent DNS rebinding
+        hostname, resolved_ip = self._url_validator.validate_url_for_request(url)
+        
+        parsed = urlparse(url)
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+        
+        # Rewrite URL to use resolved IP but keep Host header
+        # This prevents DNS rebinding because the HTTP client uses the IP directly
+        port = parsed.port or (80 if parsed.scheme == "http" else 443)
+        request_url = f"{parsed.scheme}://{resolved_ip}:{port}{parsed.path}"
+        if parsed.query:
+            request_url += f"?{parsed.query}"
 
         # Keep these defaults conservative; allow override via config if present.
         preview_cfg = self._config.get("url_preview", {}) if isinstance(self._config, dict) else {}
@@ -855,6 +804,7 @@ class EmbedManager(BaseManager):
         headers = {
             "User-Agent": "PlexiChat/1.0 (+https://plexichat)",
             "Accept": "text/html,application/xhtml+xml",
+            "Host": hostname, # Crucial for virtual hosting
         }
 
         with httpx.Client(
@@ -863,8 +813,10 @@ class EmbedManager(BaseManager):
             headers=headers,
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
             max_redirects=max_redirects,
+            verify=False if parsed.scheme == "http" else True, # Caution with IP-based HTTPS
         ) as client:
-            with client.stream("GET", validated_url) as resp:
+            # We use the request_url (with IP) but headers have original Host
+            with client.stream("GET", request_url) as resp:
                 resp.raise_for_status()
 
                 content_type = (resp.headers.get("content-type") or "").lower()

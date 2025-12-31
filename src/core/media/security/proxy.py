@@ -8,6 +8,7 @@ from typing import Optional, Tuple, BinaryIO
 from urllib.parse import urlparse
 
 import utils.logger as logger
+from src.utils.security import URLValidator
 
 from ..models import ProxiedContent
 from ..exceptions import ProxyError, ProxyFetchError, ProxyCacheError
@@ -60,6 +61,7 @@ class ExternalProxy:
         self._allowed_types = allowed_types or self.DEFAULT_ALLOWED_TYPES
         self._user_agent = user_agent
         self._timeout = timeout
+        self._url_validator = URLValidator()
 
         try:
             import requests
@@ -78,7 +80,11 @@ class ExternalProxy:
         Returns:
             ProxiedContent object
         """
-        self._validate_url(url)
+        # SSRF Protection: Validate URL and resolve to IP to prevent DNS rebinding
+        try:
+            hostname, resolved_ip = self._url_validator.validate_url_for_request(url)
+        except ValueError as e:
+            raise ProxyFetchError(str(e), url)
 
         if not force_refresh:
             cached = self._get_cached(url)
@@ -86,7 +92,7 @@ class ExternalProxy:
                 self._update_access(cached.id)
                 return cached
 
-        content_type, data = self._fetch_url(url)
+        content_type, data = self._fetch_url(url, hostname, resolved_ip)
 
         return self._cache_content(url, content_type, data)
 
@@ -153,6 +159,16 @@ class ExternalProxy:
 
         return True
 
+    def _validate_url(self, url: str) -> Tuple[str, str]:
+        """
+        Validate URL for proxying.
+        Internal method used by tests.
+        """
+        try:
+            return self._url_validator.validate_url_for_request(url)
+        except ValueError as e:
+            raise ProxyFetchError(str(e), url)
+
     def cleanup_expired(self) -> int:
         """
         Remove expired cache entries.
@@ -184,80 +200,6 @@ class ExternalProxy:
             logger.debug(f"Cleaned up {count} expired proxy cache entries")
 
         return count
-
-    def _validate_url(self, url: str):
-        """
-        Validate URL is allowed.
-        
-        Security checks:
-        - Only HTTP/HTTPS schemes allowed
-        - Block internal/private IP addresses (SSRF protection)
-        - Block localhost and loopback addresses
-        """
-        parsed = urlparse(url)
-
-        if parsed.scheme.lower() not in self.ALLOWED_SCHEMES:
-            raise ProxyFetchError(f"Scheme not allowed: {parsed.scheme}", url)
-
-        if not parsed.netloc:
-            raise ProxyFetchError("Invalid URL: no host", url)
-
-        # SSRF Protection: Block internal/private IP addresses
-        hostname = parsed.hostname or ""
-        hostname_lower = hostname.lower()
-
-        # Block localhost variants
-        blocked_hosts = {
-            "localhost", "127.0.0.1", "::1", "0.0.0.0",
-            "localhost.localdomain", "local"
-        }
-        if hostname_lower in blocked_hosts:
-            raise ProxyFetchError("Access to localhost is not allowed", url)
-
-        # Block internal hostnames
-        if hostname_lower.endswith(".local") or hostname_lower.endswith(".internal"):
-            raise ProxyFetchError("Access to internal hosts is not allowed", url)
-
-        # Try to resolve and check for private IPs
-        import socket
-        try:
-            # Get all IP addresses for the hostname
-            addr_info = socket.getaddrinfo(hostname, None)
-            for family, _, _, _, sockaddr in addr_info:
-                ip = str(sockaddr[0])
-                if self._is_private_ip(ip):
-                    raise ProxyFetchError("Access to private IP addresses is not allowed", url)
-        except socket.gaierror:
-            # DNS resolution failed - allow through (will fail on fetch anyway)
-            pass
-
-    def _is_private_ip(self, ip: str) -> bool:
-        """
-        Check if IP address is private/internal.
-        
-        Blocks:
-        - 10.0.0.0/8 (private)
-        - 172.16.0.0/12 (private)
-        - 192.168.0.0/16 (private)
-        - 127.0.0.0/8 (loopback)
-        - 169.254.0.0/16 (link-local)
-        - ::1 (IPv6 loopback)
-        - fc00::/7 (IPv6 private)
-        - fe80::/10 (IPv6 link-local)
-        """
-        try:
-            import ipaddress
-            addr = ipaddress.ip_address(ip)
-            return (
-                addr.is_private or
-                addr.is_loopback or
-                addr.is_link_local or
-                addr.is_reserved or
-                addr.is_multicast
-            )
-        except ValueError:
-            # Invalid IP format - block to be safe
-            return True
 
     def _get_cached(self, url: str) -> Optional[ProxiedContent]:
         """Get cached content if valid."""
@@ -291,14 +233,24 @@ class ExternalProxy:
             checksum=row["checksum"],
         )
 
-    def _fetch_url(self, url: str) -> Tuple[str, bytes]:
-        """Fetch content from URL."""
+    def _fetch_url(self, url: str, hostname: str, resolved_ip: str) -> Tuple[str, bytes]:
+        """Fetch content from URL using safe IP."""
+        parsed = urlparse(url)
+        port = parsed.port or (80 if parsed.scheme == "http" else 443)
+        request_url = f"{parsed.scheme}://{resolved_ip}:{port}{parsed.path}"
+        if parsed.query:
+            request_url += f"?{parsed.query}"
+
         try:
             response = self._requests.get(
-                url,
-                headers={"User-Agent": self._user_agent},
+                request_url,
+                headers={
+                    "User-Agent": self._user_agent,
+                    "Host": hostname # Important for virtual hosting
+                },
                 timeout=self._timeout,
                 stream=True,
+                verify=False if parsed.scheme == "http" else True,
             )
 
             response.raise_for_status()
