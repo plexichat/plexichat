@@ -1317,6 +1317,71 @@ class MessagingManager(BaseManager):
 
         return messages
 
+    def search_messages(
+        self,
+        user_id: SnowflakeID,
+        conversation_id: SnowflakeID,
+        query: str,
+        limit: int = 50,
+        before_id: Optional[SnowflakeID] = None,
+        after_id: Optional[SnowflakeID] = None,
+    ) -> List[Message]:
+        """
+        Search for messages in a conversation using database search.
+        
+        Args:
+            user_id: ID of the user searching
+            conversation_id: ID of the conversation
+            query: Search query string
+            limit: Maximum number of results
+            before_id: Cursor for pagination (messages before this ID)
+            after_id: Cursor for pagination (messages after this ID)
+            
+        Returns:
+            List of matching Message objects
+        """
+        if not self._is_participant(conversation_id, user_id):
+            raise ConversationAccessDeniedError(
+                "Not a participant in this conversation"
+            )
+
+        limit = min(limit, 100)
+        
+        # Base query
+        sql_query = "SELECT * FROM msg_messages WHERE conversation_id = ? AND deleted = 0 AND content LIKE ?"
+        params = [conversation_id, f"%{query}%"]
+
+        if before_id:
+            sql_query += " AND id < ?"
+            params.append(before_id)
+            sql_query += " ORDER BY id DESC"
+        elif after_id:
+            sql_query += " AND id > ?"
+            params.append(after_id)
+            sql_query += " ORDER BY id ASC"
+        else:
+            sql_query += " ORDER BY id DESC"
+
+        sql_query += " LIMIT ?"
+        params.append(limit)
+
+        rows = self._db.fetch_all(sql_query, tuple(params))
+        messages = [self._row_to_message(row) for row in rows]
+
+        if messages:
+            message_ids = [msg.id for msg in messages]
+            attachments_map = self._get_attachments_batch(message_ids)
+            status_map = self._get_message_statuses_batch(user_id, message_ids)
+
+            for msg in messages:
+                msg.attachments = attachments_map.get(msg.id, [])
+                stats = status_map.get(msg.id, {})
+                msg.status = stats.get("status", MessageStatusType.SENT)
+                msg.delivery_count = stats.get("delivery_count", 0)
+                msg.read_count = stats.get("read_count", 0)
+
+        return messages
+
     def _get_attachments_batch(
         self, message_ids: List[SnowflakeID]
     ) -> Dict[SnowflakeID, List[Attachment]]:

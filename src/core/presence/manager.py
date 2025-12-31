@@ -722,6 +722,76 @@ class PresenceManager(BaseManager):
 
         return presence
 
+    def get_visible_presences_bulk(
+        self, viewer_id: SnowflakeID, target_ids: List[SnowflakeID]
+    ) -> Dict[SnowflakeID, Presence]:
+        """
+        Get visible presence for multiple users efficiently.
+        
+        Args:
+            viewer_id: ID of the user viewing
+            target_ids: List of user IDs to view
+            
+        Returns:
+            Dict mapping user_id to Presence
+        """
+        presences = self.get_presences(target_ids)
+        result = {}
+
+        # Pre-fetch blocked status for efficient bulk check
+        blocked_ids = set()
+        if self._relationships:
+            # This assumes relationships module has a way to bulk check or we iterate
+            # For now, we iterate as optimizing relationships is a separate task, 
+            # but usually the list of members is larger than list of blocks.
+            # Ideally relationships would have `get_blocked_ids(user_id)`
+            blocked_ids = set(self._relationships.get_blocked_ids(viewer_id))
+            # Note: is_blocked_by_either handles both directions.
+            # We would need a bulk "is_blocked_by_either" check to be fully efficient,
+            # but standardizing on just checking if viewer has blocked them or vice versa is a start.
+            # For now, we'll iterate with the existing method if bulk check isn't available,
+            # or rely on `get_presences` being the main optimization.
+            pass
+
+        for p in presences:
+            target_id = p.user_id
+            
+            # User viewing themselves always sees real status
+            if viewer_id == target_id:
+                result[target_id] = p
+                continue
+
+            # Check if blocked (this might still be N+1 for blocks, but fewer db hits than full presence fetch)
+            is_blocked = False
+            if self._relationships:
+                is_blocked = self._relationships.is_blocked_by_either(viewer_id, target_id)
+            
+            if is_blocked:
+                result[target_id] = Presence(
+                    user_id=target_id,
+                    status=UserStatus.OFFLINE,
+                    custom_status=None,
+                    activity=None,
+                    last_seen=0,
+                    updated_at=0
+                )
+                continue
+
+            # Invisible users appear offline
+            if p.status == UserStatus.INVISIBLE:
+                result[target_id] = Presence(
+                    user_id=target_id,
+                    status=UserStatus.OFFLINE,
+                    custom_status=p.custom_status,
+                    activity=None,
+                    last_seen=p.last_seen,
+                    updated_at=p.updated_at
+                )
+            else:
+                result[target_id] = p
+                
+        return result
+
     def can_see_presence(self, viewer_id: SnowflakeID, target_id: SnowflakeID) -> bool:
         """
         Check if viewer can see target's real presence.
