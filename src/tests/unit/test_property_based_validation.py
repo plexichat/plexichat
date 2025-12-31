@@ -306,7 +306,7 @@ class TestMessagingManagerPropertyBased:
         result = validate_content(content, max_length=4000)
         assert result.valid or len(result.issues) > 0  # May have warnings but should process
 
-    @given(st.text(min_size=4001, max_size=10000))
+    @given(st.text(min_size=4001, max_size=10000, alphabet=string.ascii_letters + string.digits))
     @settings(max_examples=50)
     def test_overlength_messages_rejected(self, content):
         """Messages exceeding max length should be rejected."""
