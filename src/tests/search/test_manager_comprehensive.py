@@ -39,7 +39,7 @@ class TestSearchErrors:
     def test_search_servers(self, search_manager, test_db):
         """Search servers."""
         test_db.execute("INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test Server', 1, 1000, 1000)")
-        test_db.execute("INSERT INTO srv_members (id, server_id, user_id, joined_at) VALUES (1, 1, 1, 1000)")
+        test_db.execute("INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)")
         
         results = search_manager.search_servers(1, "Test")
         assert len(results) >= 1
