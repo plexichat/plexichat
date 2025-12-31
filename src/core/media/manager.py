@@ -232,7 +232,6 @@ class MediaManager(BaseManager):
         """
         rate_config = self._config.get("rate_limit", {})
         if not rate_config.get("enabled", False):
-            print(f"DEBUG: Rate limit disabled")
             return
 
         now = self._get_timestamp()
@@ -242,7 +241,6 @@ class MediaManager(BaseManager):
         minute_window = now_seconds - (now_seconds % 60)
         minute_count = self._get_rate_limit_count(user_id, "minute", minute_window)
         max_per_minute = rate_config.get("uploads_per_minute", 10)
-        print(f"DEBUG: User {user_id} minute count: {minute_count}/{max_per_minute}")
         if minute_count >= max_per_minute:
             raise MediaError(f"Rate limit exceeded: max {max_per_minute} uploads per minute")
 
