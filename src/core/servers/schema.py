@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS srv_members (
     user_id INTEGER NOT NULL,
     nickname TEXT,
     joined_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
     muted INTEGER DEFAULT 0,
     deafened INTEGER DEFAULT 0,
     inviter_id INTEGER,

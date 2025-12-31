@@ -79,6 +79,7 @@ class ServerManager(BaseManager):
         super().__init__(db, auth_module)
         self._messaging = messaging_module
         self._config = self._load_config()
+        self.instance_id = secrets.token_hex(4)
 
         # In-memory caches with TTL (reduces DB queries significantly)
         self._member_cache: Dict[Tuple[SnowflakeID, SnowflakeID], Tuple[Any, float]] = {}
@@ -270,13 +271,15 @@ class ServerManager(BaseManager):
             (role_id, server_id),
         )
 
+        logger.info(f"[Instance:{self.instance_id}] create_server: sid={server_id}, owner={owner_id}, role_id={role_id}")
+
         # Add owner as member
         member_id = self._generate_id()
         self._db.execute(
             """INSERT INTO srv_members 
-               (id, server_id, user_id, joined_at)
-               VALUES (?, ?, ?, ?)""",
-            (member_id, server_id, owner_id, now),
+               (id, server_id, user_id, joined_at, updated_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (member_id, server_id, owner_id, now, now),
         )
 
         # Assign default role to owner
@@ -286,6 +289,19 @@ class ServerManager(BaseManager):
                VALUES (?, ?, ?, ?)""",
             (mr_id, member_id, role_id, now),
         )
+
+        logger.info(f"create_server: sid={server_id}, owner={owner_id}, member_id={member_id}")
+
+        # Invalidate membership and role caches for the owner
+        self._cache_invalidate(self._member_cache, (server_id, owner_id))
+        self._cache_invalidate(self._member_roles_cache, (server_id, owner_id))
+        self._cache_invalidate(self._permission_cache, (owner_id, server_id, None))
+        
+        # Also invalidate server list for the user in Redis if available
+        if redis_available():
+            cache_delete(f"user_servers:{owner_id}")
+            cache_delete(f"server:{server_id}")
+            cache_delete(f"server_channels:{server_id}")
 
         # Create default general channel
         channel_id = self._generate_id()
@@ -323,7 +339,10 @@ class ServerManager(BaseManager):
 
     def get_server(self, server_id: SnowflakeID, user_id: SnowflakeID) -> Optional[Server]:
         """Get a server by ID if user has access (cached for 5 minutes)."""
-        if not self._is_member(server_id, user_id):
+        logger.info(f"[Instance:{self.instance_id}] get_server: sid={server_id}, uid={user_id}")
+        is_member = self._is_member(server_id, user_id)
+        if not is_member:
+            logger.warning(f"get_server: user {user_id} is NOT a member of server {server_id}")
             return None
 
         # Try cache first
@@ -331,7 +350,7 @@ class ServerManager(BaseManager):
         if redis_available():
             cached = cache_get(cache_key)
             if cached:
-                print(f"Cache HIT for {server_id}")
+                logger.info(f"get_server: cache hit for {server_id}")
                 return self._dict_to_server(cached)
 
         row = self._db.fetch_one(
@@ -345,6 +364,7 @@ class ServerManager(BaseManager):
         )
 
         if not row:
+            logger.warning(f"get_server: server {server_id} NOT FOUND in database (or deleted)")
             return None
 
         server = self._row_to_server(row)
@@ -585,6 +605,10 @@ class ServerManager(BaseManager):
             channel_id,
         )
 
+        # Invalidate server channels cache
+        if redis_available():
+            cache_delete(f"server_channels:{server_id}")
+
         logger.debug(f"Created channel {channel_id} in server {server_id}")
 
         result = self.get_channel(channel_id, user_id)
@@ -668,6 +692,7 @@ class ServerManager(BaseManager):
                 (channel_id,),
             )
             if not row:
+                logger.warning(f"get_channel: channel {channel_id} NOT FOUND in database (or deleted)")
                 return None
             # Cache the raw row data
             self._cache_set(self._channel_cache, cache_key, dict(row))
@@ -677,11 +702,13 @@ class ServerManager(BaseManager):
 
         # Membership check is already cached in _is_member
         if not self._is_member(server_id, user_id):
+            logger.warning(f"get_channel: user {user_id} is NOT a member of server {server_id}")
             return None
 
         # Check if user is server owner (use cached permission check)
         # has_permission already handles owner check internally
         if not self.has_permission(user_id, server_id, "channels.view", channel_id):
+            logger.warning(f"get_channel: user {user_id} does NOT have channels.view permission for channel {channel_id}")
             return None
 
         return self._row_to_channel(cached_row)
@@ -1134,9 +1161,9 @@ class ServerManager(BaseManager):
 
         self._db.execute(
             """INSERT INTO srv_members 
-               (id, server_id, user_id, joined_at, inviter_id)
-               VALUES (?, ?, ?, ?, ?)""",
-            (member_id, server_id, user_id, now, inviter_id),
+               (id, server_id, user_id, joined_at, updated_at, inviter_id)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (member_id, server_id, user_id, now, now, inviter_id),
         )
 
         # Assign default role
@@ -1785,11 +1812,14 @@ class ServerManager(BaseManager):
                 (server_id,),
             )
             if not server:
+                logger.warning(f"get_permissions: server {server_id} NOT FOUND")
                 return {}
             owner_id = server["owner_id"]
             self._cache_set(self._server_owner_cache, server_id, owner_id)
 
         is_owner = owner_id == user_id
+        if is_owner:
+            logger.debug(f"get_permissions: user {user_id} is OWNER of server {server_id}")
 
         # Get member's roles (cached)
         roles_cache_key = (server_id, user_id)
@@ -2103,12 +2133,62 @@ class ServerManager(BaseManager):
     # === Helper Methods ===
 
     def _is_member(self, server_id: SnowflakeID, user_id: SnowflakeID) -> bool:
-        """Check if a user is a member of a server."""
+        """Check if user is a member of server (cached)."""
+        # Ensure we are working with ints
+        try:
+            sid = int(server_id)
+            uid = int(user_id)
+        except (ValueError, TypeError):
+            logger.error(f"[Instance:{self.instance_id}] _is_member: invalid ID types: sid={type(server_id)}, uid={type(user_id)}")
+            return False
+
+        cache_key = (sid, uid)
+        cached = self._cache_get(self._member_cache, cache_key)
+        
+        # If cached as member, return True immediately
+        if cached is True:
+            logger.info(f"[Instance:{self.instance_id}] _is_member: user {uid} is cached as member of server {sid}")
+            return True
+
+        # Check if user is the owner (from server table) - ALWAYS check even if cached as False
+        # as the user might have just become the owner or member
+        owner_id = self._cache_get(self._server_owner_cache, sid)
+        if owner_id is None:
+            row = self._db.fetch_one(
+                "SELECT owner_id FROM srv_servers WHERE id = ? AND deleted = 0",
+                (sid,),
+            )
+            if row:
+                owner_id = int(row["owner_id"])
+                self._cache_set(self._server_owner_cache, sid, owner_id)
+                logger.info(f"[Instance:{self.instance_id}] _is_member: fetched owner_id {owner_id} for server {sid}")
+            else:
+                logger.warning(f"[Instance:{self.instance_id}] _is_member: server {sid} NOT FOUND when checking owner")
+        
+        if owner_id == uid:
+            logger.info(f"[Instance:{self.instance_id}] _is_member: user {uid} is recognized as owner of server {sid} (owner_id={owner_id})")
+            self._cache_set(self._member_cache, cache_key, True)
+            return True
+
+        # If it was cached as False and we verified they aren't the owner, respect cache
+        if cached is False:
+            logger.info(f"[Instance:{self.instance_id}] _is_member: user {uid} is cached as NOT a member of server {sid}")
+            return False
+
+        logger.info(f"[Instance:{self.instance_id}] _is_member: checking DB for membership: sid={sid}, uid={uid}")
         row = self._db.fetch_one(
             "SELECT 1 FROM srv_members WHERE server_id = ? AND user_id = ?",
-            (server_id, user_id),
+            (sid, uid),
         )
-        return row is not None
+
+        is_member = row is not None
+        if not is_member:
+            logger.info(f"[Instance:{self.instance_id}] _is_member: user {uid} is NOT a member of server {sid} (owner is {owner_id})")
+        else:
+            logger.info(f"[Instance:{self.instance_id}] _is_member: user {uid} found in srv_members for server {sid}")
+        
+        self._cache_set(self._member_cache, cache_key, is_member)
+        return is_member
 
     def _server_exists(self, server_id: SnowflakeID) -> bool:
         """Check if a server exists."""
@@ -2137,6 +2217,10 @@ class ServerManager(BaseManager):
 
     def _row_to_server(self, row: Dict[str, Any]) -> Server:
         """Convert database row to Server model."""
+        sid = row["id"]
+        owner_id = row["owner_id"]
+        logger.info(f"_row_to_server: sid={sid}, owner={owner_id}")
+        
         # Handle both dict and sqlite3.Row
         member_count = 0
         channel_count = 0
@@ -2292,7 +2376,7 @@ class ServerManager(BaseManager):
             user_id=row["user_id"],
             nickname=row.get("nickname"),
             joined_at=row["joined_at"],
-            updated_at=row["updated_at"],
+            updated_at=row.get("updated_at", row["joined_at"]),
             muted=bool(row.get("muted", False)),
             deafened=bool(row.get("deafened", False)),
             inviter_id=row.get("inviter_id"),
@@ -2350,17 +2434,28 @@ class ServerManager(BaseManager):
 
     def _row_to_audit_entry(self, row: Dict[str, Any]) -> AuditLogEntry:
         """Convert database row to AuditLogEntry model."""
-        changes = row["changes"]
+        changes = row.get("changes")
         if isinstance(changes, str):
-            changes = json.loads(changes) if changes else None
+            try:
+                changes = json.loads(changes) if changes else None
+            except json.JSONDecodeError:
+                changes = None
+
+        action_val = row.get("action_type") or row.get("action")
+        try:
+            action_type = AuditLogAction(action_val)
+        except (ValueError, KeyError):
+            # Fallback to SERVER_UPDATE if unknown
+            action_type = AuditLogAction.SERVER_UPDATE
 
         return AuditLogEntry(
             id=row["id"],
             server_id=row["server_id"],
             user_id=row["user_id"],
-            action_type=AuditLogAction(row.get("action_type", row.get("action"))),
-            target_id=row["target_id"],
+            action_type=action_type,
+            target_type=row.get("target_type"),
+            target_id=row.get("target_id"),
             changes=changes,
-            reason=row["reason"],
+            reason=row.get("reason"),
             created_at=row["created_at"],
         )

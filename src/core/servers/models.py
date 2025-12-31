@@ -261,6 +261,7 @@ class AuditLogEntry:
     user_id: SnowflakeID
     action_type: AuditLogAction
     created_at: int
+    target_type: Optional[str] = None
     target_id: Optional[SnowflakeID] = None
     reason: Optional[str] = None
     changes: Optional[Dict[str, Any]] = None

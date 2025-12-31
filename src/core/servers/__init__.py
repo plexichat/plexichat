@@ -21,7 +21,6 @@ from .models import (
     ChannelCategory,
     Role,
     Member,
-    MemberRole,
     ChannelOverride,
     Invite,
     Ban,
@@ -64,6 +63,7 @@ from .exceptions import (
     InvalidChannelNameError,
     InvalidRoleNameError,
     PermissionDeniedError,
+    BanNotFoundError,
     OwnerCannotLeaveError,
     CannotModifyOwnerError,
     ScheduledEventNotFoundError,
@@ -84,7 +84,6 @@ __all__ = [
     "ChannelCategory",
     "Role",
     "Member",
-    "MemberRole",
     "ChannelOverride",
     "Invite",
     "Ban",
@@ -126,6 +125,7 @@ __all__ = [
     "InvalidChannelNameError",
     "InvalidRoleNameError",
     "PermissionDeniedError",
+    "BanNotFoundError",
     "OwnerCannotLeaveError",
     "CannotModifyOwnerError",
     "ScheduledEventNotFoundError",
@@ -825,7 +825,7 @@ def apply_template(
     code: str,
     server_name: str,
     server_description: Optional[str] = None,
-) -> Server:
+) -> Optional[Server]:
     """Apply a template to create a new server."""
     return _get_template_manager().apply_template(user_id, code, server_name, server_description)
 
