@@ -27,3 +27,16 @@ class UserPublicResponse(BaseModel):
     username: str = Field(..., description="Username")
     avatar_url: Optional[str] = Field(None, description="Avatar URL")
     created_at: int = Field(..., description="Account creation timestamp")
+
+
+class UserAvatarResponse(BaseModel):
+    """User avatar upload response."""
+    model_config = ConfigDict(from_attributes=True)
+
+    success: bool = Field(..., description="Whether the upload was successful")
+    avatar_url: str = Field(..., description="The URL of the uploaded avatar")
+    width: int = Field(..., description="Avatar width in pixels")
+    height: int = Field(..., description="Avatar height in pixels")
+    size: int = Field(..., description="Avatar file size in bytes")
+    animated: bool = Field(False, description="Whether the avatar is animated")
+

@@ -94,3 +94,26 @@ class MessagingSettingsUpdateRequest(BaseModel):
     max_message_length: Optional[int] = Field(None, description="Maximum message length")
     max_attachment_size: Optional[int] = Field(None, description="Maximum attachment size")
     max_attachments_per_message: Optional[int] = Field(None, description="Maximum attachments per message")
+
+
+class UnreadCountResponse(BaseModel):
+    """Unread message count response."""
+    model_config = ConfigDict(from_attributes=True)
+
+    channel_id: SnowflakeID = Field(..., description="Channel ID")
+    unread_count: int = Field(..., description="Number of unread messages")
+
+
+class AllUnreadCountsResponse(BaseModel):
+    """All unread message counts response."""
+    model_config = ConfigDict(from_attributes=True)
+
+    unread_counts: Dict[str, int] = Field(..., description="Map of channel IDs to unread counts")
+
+
+class AckResponse(BaseModel):
+    """Message acknowledgement response."""
+    model_config = ConfigDict(from_attributes=True)
+
+    success: bool = Field(True, description="Whether operation was successful")
+    messages_marked: int = Field(..., description="Number of messages marked as read")

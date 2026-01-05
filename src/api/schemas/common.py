@@ -77,6 +77,24 @@ class PaginatedResponse(BaseModel, Generic[T]):
     total: Optional[int] = None
 
 
+class SuccessResponse(BaseModel):
+    """Simple success response."""
+    model_config = ConfigDict(from_attributes=True)
+
+    success: bool = Field(True, description="Whether the operation was successful")
+
+
+class RootResponse(BaseModel):
+    """Root endpoint response."""
+    model_config = ConfigDict(from_attributes=True)
+
+    name: str = Field(..., description="API name")
+    version: str = Field(..., description="API version")
+    docs: str = Field(..., description="API docs URL")
+    api: str = Field(..., description="API prefix")
+    api_docs: Optional[str] = Field(default=None, description="Detailed API documentation path")
+
+
 def snowflake_to_str(v: Any) -> Optional[str]:
     """Convert snowflake ID to string."""
     if v is None:

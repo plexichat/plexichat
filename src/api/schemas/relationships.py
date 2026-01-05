@@ -2,10 +2,33 @@
 Relationship schemas - Request/response models for relationship endpoints.
 """
 
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, ConfigDict
 
 from .common import SnowflakeID
+
+
+class PresenceInfo(BaseModel):
+    """Presence information in relationship response."""
+    status: str = Field(..., description="User online status")
+
+
+class DetailedRelationshipInfo(BaseModel):
+    """Detailed relationship info including user details."""
+    model_config = ConfigDict(from_attributes=True)
+
+    user_id: str = Field(..., description="User ID")
+    username: str = Field(..., description="Username")
+    avatar_url: Optional[str] = Field(None, description="User avatar URL")
+    status: str = Field(..., description="Relationship status (friend, pending_incoming, pending_outgoing, blocked)")
+    presence: Optional[PresenceInfo] = Field(None, description="User presence status")
+    message: Optional[str] = Field(None, description="Optional message (for pending requests)")
+    created_at: Optional[int] = Field(None, description="Creation timestamp")
+
+
+class RelationshipListResponse(BaseModel):
+    """List of detailed relationships."""
+    relationships: List[DetailedRelationshipInfo] = Field(..., description="List of relationships")
 
 
 class FriendRequestCreate(BaseModel):

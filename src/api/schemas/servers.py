@@ -2,7 +2,7 @@
 Server schemas - Request/response models for server/guild endpoints.
 """
 
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, ConfigDict
 
 from .common import SnowflakeID
@@ -98,33 +98,99 @@ class ChannelUpdateRequest(BaseModel):
     )
 
 
+class PresenceResponse(BaseModel):
+    """Presence information."""
+    model_config = ConfigDict(from_attributes=True)
+    status: str = Field("offline", description="User status: online, idle, dnd, offline")
+
+
+class MemberResponse(BaseModel):
+    """Server member information response."""
+    model_config = ConfigDict(from_attributes=True)
+    user_id: SnowflakeID = Field(..., description="User ID")
+    username: str = Field(..., description="Username")
+    nickname: Optional[str] = Field(None, description="Server-specific nickname")
+    avatar_url: Optional[str] = Field(None, description="User avatar URL")
+    joined_at: Optional[int] = Field(None, description="Join timestamp")
+    roles: List[SnowflakeID] = Field(default_factory=list, description="List of role IDs")
+    presence: PresenceResponse = Field(default_factory=lambda: PresenceResponse(status="offline"))
+
+
 class RoleResponse(BaseModel):
     """Role information response."""
-
     model_config = ConfigDict(from_attributes=True)
-
     id: SnowflakeID = Field(..., description="Role ID")
     server_id: SnowflakeID = Field(..., description="Server ID")
     name: str = Field(..., description="Role name")
     color: Optional[str] = Field(None, description="Role color hex")
     position: int = Field(0, description="Role position")
-    permissions: Dict[str, bool] = Field(
-        default_factory=dict, description="Role permissions"
-    )
+    permissions: Dict[str, Any] = Field(default_factory=dict, description="Role permissions")
+    hoist: bool = Field(False, description="Display separately in member list")
+    mentionable: bool = Field(False, description="Can be mentioned")
+    is_default: bool = Field(False, description="Whether this is the @everyone role")
+
+
+class RoleCreateRequest(BaseModel):
+    """Role creation request."""
+    model_config = ConfigDict(from_attributes=True)
+    name: str = Field(..., min_length=1, max_length=100, description="Role name")
+    color: Optional[str] = Field(None, description="Role color hex")
+    permissions: Dict[str, Any] = Field(default_factory=dict, description="Role permissions")
     hoist: bool = Field(False, description="Display separately in member list")
     mentionable: bool = Field(False, description="Can be mentioned")
 
 
-class MemberResponse(BaseModel):
-    """Server member response."""
-
+class RoleUpdateRequest(BaseModel):
+    """Role update request."""
     model_config = ConfigDict(from_attributes=True)
+    name: Optional[str] = Field(None, min_length=1, max_length=100, description="Role name")
+    color: Optional[str] = Field(None, description="Role color hex")
+    permissions: Optional[Dict[str, Any]] = Field(None, description="Role permissions")
+    hoist: Optional[bool] = Field(None, description="Display separately in member list")
+    mentionable: Optional[bool] = Field(None, description="Can be mentioned")
+    position: Optional[int] = Field(None, ge=0, description="Role position")
 
-    user_id: SnowflakeID = Field(..., description="User ID")
+
+class BanResponse(BaseModel):
+    """Server ban information response."""
+    model_config = ConfigDict(from_attributes=True)
+    user_id: SnowflakeID = Field(..., description="Banned user ID")
+    reason: Optional[str] = Field(None, description="Reason for ban")
+    banned_by: Optional[SnowflakeID] = Field(None, description="User who performed the ban")
+    banned_at: Optional[int] = Field(None, description="Ban timestamp")
+
+
+class BanCreateRequest(BaseModel):
+    """Ban creation request."""
+    model_config = ConfigDict(from_attributes=True)
+    reason: Optional[str] = Field(None, max_length=512, description="Reason for ban")
+    delete_message_days: int = Field(0, ge=0, le=7, description="Number of days of messages to delete")
+
+
+class AuditLogEntryResponse(BaseModel):
+    """Audit log entry response."""
+    model_config = ConfigDict(from_attributes=True)
+    id: SnowflakeID = Field(..., description="Entry ID")
     server_id: SnowflakeID = Field(..., description="Server ID")
-    nickname: Optional[str] = Field(None, description="Server nickname")
-    roles: List[SnowflakeID] = Field(default_factory=list, description="Role IDs")
-    joined_at: int = Field(..., description="Join timestamp")
+    user_id: SnowflakeID = Field(..., description="User who performed action")
+    action: str = Field(..., description="Action type")
+    target_type: Optional[str] = Field(None, description="Target object type")
+    target_id: Optional[SnowflakeID] = Field(None, description="Target object ID")
+    changes: Optional[List[Dict[str, Any]]] = Field(None, description="List of changes")
+    reason: Optional[str] = Field(None, description="Reason for action")
+    created_at: int = Field(..., description="Creation timestamp")
+
+
+class WebhookResponse(BaseModel):
+    """Webhook information response."""
+    model_config = ConfigDict(from_attributes=True)
+    id: SnowflakeID = Field(..., description="Webhook ID")
+    channel_id: SnowflakeID = Field(..., description="Channel ID")
+    server_id: SnowflakeID = Field(..., description="Server ID")
+    creator_id: Optional[SnowflakeID] = Field(None, description="Creator user ID")
+    name: str = Field(..., description="Webhook name")
+    avatar_url: Optional[str] = Field(None, description="Webhook avatar URL")
+    created_at: int = Field(..., description="Creation timestamp")
 
 
 class InviteResponse(BaseModel):
