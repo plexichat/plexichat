@@ -223,6 +223,35 @@ def get_docs_config() -> DocsConfig:
     return _config_cache
 
 
+def is_docs_enabled() -> bool:
+    """Check if documentation server is enabled."""
+    return get_docs_config().enabled
+
+
+def clear_docs_cache() -> bool:
+    """Clear documentation caches."""
+    global _docs_cache, _html_cache, _config_cache
+    _docs_cache.clear()
+    _html_cache.clear()
+    _config_cache = None
+    return True
+
+
+def get_docs_stats() -> Dict[str, Any]:
+    """Get documentation server statistics."""
+    return {
+        "cache": {
+            "docs_entries": len(_docs_cache),
+            "html_entries": len(_html_cache),
+        },
+        "config": {
+            "enabled": is_docs_enabled(),
+            "path": get_docs_config().path,
+        },
+        "uptime": time.time() - _config_cache_time if _config_cache_time else 0,
+    }
+
+
 def get_api_rate_limits() -> Dict[str, Any]:
     """Get actual API rate limits from the rate limit configuration."""
     try:
