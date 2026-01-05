@@ -129,6 +129,52 @@ class PlexiChatServer:
                     "require_owner_2fa": False
                 }
             },
+            # OAuth configuration for external identity providers
+            # SECURITY: Store client_secret values in environment variables for production:
+            # - OAUTH_GOOGLE_CLIENT_SECRET
+            # - OAUTH_GITHUB_CLIENT_SECRET  
+            # - OAUTH_MICROSOFT_CLIENT_SECRET
+            "oauth": {
+                # State token TTL in seconds (default: 600 = 10 minutes)
+                # Shorter is more secure but may cause issues with slow connections
+                "state_ttl_seconds": 600,
+                # Entropy for state tokens in bytes (minimum 32 recommended)
+                "state_token_bytes": 32,
+                # Entropy for OIDC nonce in bytes (minimum 32 recommended)
+                "nonce_token_bytes": 32,
+                # Clean up expired states on each verification (recommended: true)
+                "cleanup_on_verify": True,
+                # Maximum pending OAuth states per IP address (0 = unlimited)
+                # Helps prevent state flooding attacks
+                "max_states_per_ip": 10,
+                # Enable PKCE (Proof Key for Code Exchange) for supported providers
+                # Recommended: True for better security against code interception
+                "pkce_enabled": True,
+                # PKCE configuration
+                "pkce": {
+                    # Length of random bytes for code verifier (32-96, default 64)
+                    "verifier_length": 64,
+                    # Minimum verifier length per RFC 7636 (do not change unless required)
+                    "min_verifier_length": 43,
+                    # Maximum verifier length per RFC 7636 (do not change unless required)
+                    "max_verifier_length": 128
+                },
+                # Google OAuth configuration
+                "google": {
+                    "client_id": "",
+                    "client_secret": ""
+                },
+                # GitHub OAuth configuration
+                "github": {
+                    "client_id": "",
+                    "client_secret": ""
+                },
+                # Microsoft OAuth configuration (works with personal and work accounts)
+                "microsoft": {
+                    "client_id": "",
+                    "client_secret": ""
+                }
+            },
             "encryption": {
                 "argon2": {
                     "time_cost": 2,
@@ -346,6 +392,12 @@ class PlexiChatServer:
                 # Primary storage backend: "local", "s3", or "database"
                 "storage_backend": "local",
                 
+                # Client-side encryption at rest
+                # When enabled, files are encrypted with AES-256-GCM before storage
+                # Keys are stored in ~/.plexichat/data/file_keyring.json
+                # IMPORTANT: Back up this keyring file! Without it, encrypted files cannot be recovered.
+                "encrypt_at_rest": True,
+                
                 # Local filesystem storage
                 "local_path": str(home_dir / "media"),
                 "local_url": "/media",
@@ -489,6 +541,33 @@ class PlexiChatServer:
                     "image/gif",
                     "image/webp"
                 ]
+            },
+            # Embeds configuration (rich embeds and URL previews)
+            "embeds": {
+                "max_embeds_per_message": 10,
+                "max_fields_per_embed": 25,
+                "total_char_limit": 6000,
+                # URL preview settings (link unfurling)
+                "url_preview": {
+                    "enabled": True,
+                    # Request timeout for fetching URLs
+                    "timeout_seconds": 8,
+                    # Maximum HTML size to download
+                    "max_html_bytes": 524288,  # 512KB
+                    # Maximum redirects to follow
+                    "max_redirects": 5,
+                    # Maximum image size for preview thumbnails
+                    "max_image_size": 5242880,  # 5MB
+                    # Cache TTL for preview metadata
+                    "cache_ttl_seconds": 3600,  # 1 hour
+                    # Rate limiting per user
+                    "rate_limit_requests": 10,
+                    "rate_limit_window_seconds": 60,
+                    # Proxy images through our server (prevents IP leakage)
+                    "proxy_images": True,
+                    # Allowed URL schemes
+                    "allowed_schemes": ["http", "https"]
+                }
             },
             # Telemetry configuration
             "telemetry": {

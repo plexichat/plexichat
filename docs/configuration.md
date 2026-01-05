@@ -106,8 +106,41 @@ authentication:
 
 ### OAuth
 
+OAuth allows users to sign in using external identity providers (Google, GitHub, Microsoft).
+
 ```yaml
 oauth:
+  # State token TTL in seconds (default: 600 = 10 minutes)
+  # Controls how long users have to complete the OAuth flow
+  state_ttl_seconds: 600
+  
+  # Entropy for state tokens in bytes (minimum 32 recommended)
+  state_token_bytes: 32
+  
+  # Entropy for OIDC nonce in bytes (minimum 32 recommended)
+  nonce_token_bytes: 32
+  
+  # Clean up expired states on each verification (recommended: true)
+  cleanup_on_verify: true
+  
+  # Maximum pending OAuth states per IP address (0 = unlimited)
+  # Helps prevent state flooding attacks
+  max_states_per_ip: 10
+  
+  # Enable PKCE (Proof Key for Code Exchange) for supported providers
+  # Recommended: true for better security against authorization code interception
+  pkce_enabled: true
+  
+  # PKCE configuration
+  pkce:
+    # Length of random bytes for code verifier (32-96, default 64)
+    verifier_length: 64
+    # Minimum verifier length per RFC 7636 (do not change unless required)
+    min_verifier_length: 43
+    # Maximum verifier length per RFC 7636 (do not change unless required)
+    max_verifier_length: 128
+  
+  # Provider configurations
   google:
     client_id: "YOUR_GOOGLE_CLIENT_ID"
     client_secret: "YOUR_GOOGLE_CLIENT_SECRET"
@@ -119,10 +152,40 @@ oauth:
     client_secret: "YOUR_MICROSOFT_CLIENT_SECRET"
 ```
 
-For production, it is highly recommended to provide these secrets via environment variables:
+#### Security Features
+
+- **Server-side State Storage**: CSRF protection tokens are stored in the database, preventing state forgery attacks
+- **PKCE Support**: Proof Key for Code Exchange prevents authorization code interception (enabled for Google and Microsoft)
+- **Nonce Support**: OpenID Connect nonce for replay attack prevention (Google and Microsoft)
+- **Single-use States**: Each state token can only be used once, preventing replay attacks
+- **State Expiration**: States expire after 10 minutes by default
+- **IP Rate Limiting**: Limits pending OAuth states per IP to prevent flooding attacks
+
+#### Environment Variables
+
+For production, provide secrets via environment variables:
 - `OAUTH_GOOGLE_CLIENT_SECRET`
 - `OAUTH_GITHUB_CLIENT_SECRET`
 - `OAUTH_MICROSOFT_CLIENT_SECRET`
+
+#### Setting Up OAuth Providers
+
+**Google:**
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a project and enable the Google+ API
+3. Create OAuth 2.0 credentials (Web application)
+4. Add authorized redirect URI: `https://your-domain.com/oauth/callback/google`
+
+**GitHub:**
+1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
+2. Create a new OAuth App
+3. Set Authorization callback URL: `https://your-domain.com/oauth/callback/github`
+
+**Microsoft:**
+1. Go to [Azure Portal](https://portal.azure.com/)
+2. Register an application in Azure AD
+3. Add redirect URI: `https://your-domain.com/oauth/callback/microsoft`
+4. Use "common" tenant for personal + work accounts
 
 ### Encryption
 

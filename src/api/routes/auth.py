@@ -6,7 +6,8 @@ import os
 import sys
 import httpx
 import secrets
-from typing import Dict, Any, List
+from urllib.parse import urlencode
+from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, Request, HTTPException, Depends, Query
 from fastapi.responses import RedirectResponse
 
@@ -31,6 +32,14 @@ from src.api.schemas.auth import (
     PasswordRequirementsResponse,
 )
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
+
+# Import OAuth security module
+from src.core.auth.oauth import (
+    create_oauth_state,
+    verify_oauth_state,
+    generate_pkce_pair,
+    verify_pkce,
+)
 
 # Import config utility
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
@@ -240,24 +249,32 @@ async def login(request: Request, body: LoginRequest) -> LoginResponse:
 
 
 # OAuth Providers Configuration
+# Each provider has auth/token/userinfo URLs and required scopes
+# PKCE support is indicated per provider (GitHub doesn't support it)
 OAUTH_PROVIDERS = {
     "google": {
         "auth_url": "https://accounts.google.com/o/oauth2/v2/auth",
         "token_url": "https://oauth2.googleapis.com/token",
         "user_info_url": "https://www.googleapis.com/oauth2/v3/userinfo",
         "scopes": ["openid", "email", "profile"],
+        "supports_pkce": True,
+        "supports_nonce": True,  # OpenID Connect
     },
     "github": {
         "auth_url": "https://github.com/login/oauth/authorize",
         "token_url": "https://github.com/login/oauth/access_token",
         "user_info_url": "https://api.github.com/user",
         "scopes": ["read:user", "user:email"],
+        "supports_pkce": False,  # GitHub doesn't support PKCE
+        "supports_nonce": False,
     },
     "microsoft": {
         "auth_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
         "token_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
         "user_info_url": "https://graph.microsoft.com/v1.0/me",
         "scopes": ["openid", "email", "profile", "User.Read"],
+        "supports_pkce": True,
+        "supports_nonce": True,  # OpenID Connect
     }
 }
 
@@ -268,12 +285,19 @@ OAUTH_PROVIDERS = {
     summary="Initiate OAuth login",
     responses={
         400: {"model": ErrorResponse, "description": "Invalid provider"},
+        429: {"model": ErrorResponse, "description": "Too many pending OAuth requests"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def oauth_login_init(provider: str, redirect_uri: str) -> OAuthLoginResponse:
+async def oauth_login_init(request: Request, provider: str, redirect_uri: str) -> OAuthLoginResponse:
     """
-    Initiate an OAuth login flow.
+    Initiate an OAuth login flow with secure server-side state management.
+    
+    Security features:
+    - Server-side state storage (CSRF protection)
+    - PKCE support for providers that support it
+    - Nonce for OpenID Connect providers
+    - Rate limiting per IP address
     
     Returns the authorization URL to redirect the user to.
     """
@@ -295,28 +319,79 @@ async def oauth_login_init(provider: str, redirect_uri: str) -> OAuthLoginRespon
             detail={"error": {"code": 500, "message": f"OAuth not configured for {provider}"}}
         )
 
-    # Generate state for CSRF protection
-    state = secrets.token_urlsafe(32)
-    
-    # Construct authorization URL
     provider_info = OAUTH_PROVIDERS[provider]
+    ip_address = request.client.host if request.client else None
+    
+    # Check if PKCE is enabled in config (default: True for supported providers)
+    pkce_enabled = oauth_config.get("pkce_enabled", True) and provider_info.get("supports_pkce", False)
+    
+    # Generate PKCE pair if enabled, using config for parameters
+    pkce_challenge = None
+    code_verifier = None
+    if pkce_enabled:
+        pkce_config = oauth_config.get("pkce", {})
+        pkce = generate_pkce_pair(config=pkce_config)
+        pkce_challenge = pkce.code_challenge
+        code_verifier = pkce.code_verifier
+    
+    # Create server-side state with optional nonce for OIDC providers
+    include_nonce = provider_info.get("supports_nonce", False)
+    oauth_state = create_oauth_state(
+        provider=provider,
+        redirect_uri=redirect_uri,
+        include_nonce=include_nonce,
+        pkce_challenge=pkce_challenge,
+        ip_address=ip_address,
+    )
+    
+    if not oauth_state:
+        # Could be rate limited or state manager not initialized
+        logger.warning(f"Failed to create OAuth state for {provider} from {ip_address}")
+        raise HTTPException(
+            status_code=429,
+            detail={"error": {"code": 429, "message": "Too many pending OAuth requests. Please try again later."}}
+        )
+    
+    # Build authorization URL parameters
     params = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
         "response_type": "code",
         "scope": " ".join(provider_info["scopes"]),
-        "state": state,
+        "state": oauth_state.state_token,
     }
     
-    # Some providers need extra params
+    # Add PKCE parameters if enabled
+    if pkce_enabled and pkce_challenge:
+        params["code_challenge"] = pkce_challenge
+        params["code_challenge_method"] = "S256"
+    
+    # Add nonce for OIDC providers
+    if include_nonce and oauth_state.nonce_value:
+        params["nonce"] = oauth_state.nonce_value
+    
+    # Provider-specific parameters
     if provider == "google":
         params["access_type"] = "offline"
         params["prompt"] = "select_account"
     
-    query_string = "&".join(f"{k}={v}" for k, v in params.items())
+    # URL-encode parameters properly
+    query_string = urlencode(params)
     auth_url = f"{provider_info['auth_url']}?{query_string}"
     
-    return OAuthLoginResponse(url=auth_url, state=state)
+    logger.info(f"OAuth login initiated for {provider} from {ip_address}")
+    
+    # Return state token and code_verifier (client needs verifier for token exchange)
+    response = OAuthLoginResponse(url=auth_url, state=oauth_state.state_token)
+    
+    # If PKCE is enabled, we need to return the code_verifier to the client
+    # The client must store this and send it back during callback
+    # We store the challenge server-side, client keeps the verifier
+    if code_verifier:
+        # Add code_verifier to response - client must include this in callback
+        response.code_verifier = code_verifier
+    
+    return response
 
 
 @router.get(
@@ -334,10 +409,16 @@ async def oauth_callback(
     provider: str,
     code: str,
     state: str,
-    redirect_uri: str
+    redirect_uri: str,
+    code_verifier: Optional[str] = Query(None, description="PKCE code verifier (required if PKCE was used)"),
 ) -> LoginResponse:
     """
-    Handle OAuth callback and complete login.
+    Handle OAuth callback and complete login with secure state verification.
+    
+    Security features:
+    - Server-side state verification (CSRF protection)
+    - PKCE verification if enabled
+    - Single-use state tokens (replay protection)
     """
     if provider not in OAUTH_PROVIDERS:
         raise HTTPException(
@@ -348,6 +429,38 @@ async def oauth_callback(
     auth = api.get_auth()
     if not auth:
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module unavailable"}})
+
+    # Verify state server-side (CSRF protection)
+    valid, state_record, error_msg = verify_oauth_state(
+        state_token=state,
+        provider=provider,
+        redirect_uri=redirect_uri,
+    )
+    
+    if not valid:
+        logger.warning(f"OAuth state verification failed for {provider}: {error_msg}")
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": f"Security verification failed: {error_msg}"}}
+        )
+    
+    # Verify PKCE if it was used
+    if state_record.pkce_challenge:
+        if not code_verifier:
+            logger.warning(f"OAuth PKCE verification failed for {provider}: missing code_verifier")
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "PKCE code_verifier required"}}
+            )
+        # Get PKCE config for verification
+        oauth_config = config_util.get("oauth", {}) if config_util else {}
+        pkce_config = oauth_config.get("pkce", {})
+        if not verify_pkce(code_verifier, state_record.pkce_challenge, config=pkce_config):
+            logger.warning(f"OAuth PKCE verification failed for {provider}: invalid code_verifier")
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "PKCE verification failed"}}
+            )
 
     # Get config for provider
     oauth_config = config_util.get("oauth", {}) if config_util else {}
@@ -370,6 +483,10 @@ async def oauth_callback(
             "redirect_uri": redirect_uri,
         }
         
+        # Include PKCE verifier in token exchange if used
+        if code_verifier and state_record.pkce_challenge:
+            token_data["code_verifier"] = code_verifier
+        
         headers = {"Accept": "application/json"}
         
         try:
@@ -380,6 +497,9 @@ async def oauth_callback(
             if not access_token:
                 logger.error(f"Failed to get access token from {provider}: {token_result}")
                 raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Failed to get access token"}})
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Token exchange failed with {provider}: {e.response.status_code} - {e.response.text}")
+            raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Token exchange failed"}})
         except Exception as e:
             logger.error(f"Error during token exchange with {provider}: {e}")
             raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Token exchange failed"}})
@@ -453,6 +573,7 @@ async def oauth_callback(
                 expires_in=result.expires_in,
             )
 
+        logger.info(f"OAuth login successful for {provider}:{external_id}")
         return LoginResponse(
             status="success",
             token=result.token,

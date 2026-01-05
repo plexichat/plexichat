@@ -153,3 +153,4 @@ class OAuthLoginResponse(BaseModel):
 
     url: str = Field(..., description="OAuth authorization URL")
     state: str = Field(..., description="CSRF state token")
+    code_verifier: Optional[str] = Field(None, description="PKCE code verifier (client must store and return in callback)")

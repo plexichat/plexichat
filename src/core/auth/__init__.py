@@ -95,8 +95,20 @@ def setup(db, email_sender: Optional[EmailSender] = None) -> None:
     global _manager, _setup_complete
 
     from .manager import AuthManager
+    from .oauth import state as oauth_state
 
     _manager = AuthManager(db, email_sender)
+    
+    # Initialize OAuth state manager for secure OAuth flows
+    # Get OAuth config for state TTL settings
+    try:
+        import utils.config as config_util
+        oauth_config = config_util.get("oauth", {}) if config_util else {}
+    except ImportError:
+        oauth_config = {}
+    
+    oauth_state.setup(db, oauth_config)
+    
     _setup_complete = True
 
 
