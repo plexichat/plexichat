@@ -85,3 +85,19 @@ class EmbedSanitizationError(EmbedError):
     def __init__(self, message: str, field: Optional[str] = None):
         super().__init__(message)
         self.field = field
+
+
+class PreviewRateLimitError(EmbedError):
+    """Rate limit exceeded for URL preview generation."""
+
+    def __init__(self, message: str, retry_after: Optional[int] = None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+class PreviewFetchError(EmbedError):
+    """Failed to fetch URL for preview."""
+
+    def __init__(self, message: str, url: Optional[str] = None):
+        super().__init__(message)
+        self.url = url

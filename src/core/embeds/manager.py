@@ -33,6 +33,7 @@ from .exceptions import (
     EmbedLimitError,
     MessageNotFoundError,
     PermissionDeniedError,
+    PreviewRateLimitError,
 )
 from .schema import create_tables
 from .validator import (
@@ -43,6 +44,7 @@ from .validator import (
     MAX_FIELDS,
     TOTAL_CHAR_LIMIT,
 )
+from .link_preview import LinkPreviewService, PreviewMetadata
 
 
 class EmbedManager(BaseManager):
@@ -74,7 +76,7 @@ class EmbedManager(BaseManager):
         """Compatibility method for some test patterns."""
         return self
 
-    def __init__(self, db, messaging_module=None, servers_module=None):
+    def __init__(self, db, messaging_module=None, servers_module=None, media_proxy=None):
         """
         Initialize the embed manager.
 
@@ -82,12 +84,14 @@ class EmbedManager(BaseManager):
             db: Database instance (must be connected)
             messaging_module: Messaging module for message access
             servers_module: Servers module for permission checks
+            media_proxy: Optional media proxy for image caching
         """
         super().__init__(db)
         self._messaging = messaging_module
         self._servers = servers_module
         self._config = self._load_config()
         self._url_validator = URLValidator()
+        self._link_preview_service = LinkPreviewService(db, media_proxy)
 
         create_tables(db)
 
@@ -648,8 +652,12 @@ class EmbedManager(BaseManager):
         """
         Create a URL preview embed from OpenGraph/Twitter Card metadata.
         
-        This simulates parsing URL metadata for preview generation.
-        In production, this would fetch and parse the actual URL.
+        Uses the secure LinkPreviewService which provides:
+        - SSRF protection (private IP blocking, DNS rebinding prevention)
+        - Rate limiting per user
+        - Preview caching
+        - Image proxying (prevents IP leakage)
+        - Redirect chain validation
         
         Args:
             user_id: ID of user creating preview
@@ -661,24 +669,30 @@ class EmbedManager(BaseManager):
             
         Raises:
             InvalidUrlError: Invalid URL
+            PreviewRateLimitError: Rate limit exceeded
         """
+        # Validate URL format first
         validated_url = validate_url(url, "url")
-        metadata = self.parse_url_metadata(validated_url)
+        
+        # Use secure link preview service
+        try:
+            metadata = self._link_preview_service.generate_preview(user_id, validated_url)
+        except RuntimeError as e:
+            if "rate limit" in str(e).lower():
+                raise PreviewRateLimitError(str(e))
+            raise
+        except ValueError as e:
+            from .exceptions import InvalidUrlError
+            raise InvalidUrlError(str(e))
 
-        # Validate/sanitize scraped metadata using existing embed validation rules
+        # Build embed data from metadata
         embed_data = {
-            "title": metadata.get("title"),
-            "description": metadata.get("description"),
+            "title": metadata.title,
+            "description": metadata.description,
             "url": validated_url,
-            "image": {"url": metadata.get("image"), "width": metadata.get("image_width"), "height": metadata.get("image_height")}
-            if metadata.get("image")
-            else None,
-            "provider": {"name": metadata.get("site_name"), "url": metadata.get("site_url")}
-            if metadata.get("site_name") or metadata.get("site_url")
-            else None,
-            "author": {"name": metadata.get("author")}
-            if metadata.get("author")
-            else None,
+            "image": {"url": metadata.image_url} if metadata.image_url else None,
+            "provider": {"name": metadata.site_name} if metadata.site_name else None,
+            "author": {"name": metadata.author} if metadata.author else None,
             "fields": [],
         }
 
@@ -693,9 +707,9 @@ class EmbedManager(BaseManager):
         embed_id = self._generate_id()
 
         embed_type = EmbedType.LINK
-        if metadata.get("type") == "video":
+        if metadata.embed_type == "video":
             embed_type = EmbedType.VIDEO
-        elif metadata.get("type") == "article":
+        elif metadata.embed_type == "article":
             embed_type = EmbedType.ARTICLE
 
         self._db.execute(
@@ -737,7 +751,7 @@ class EmbedManager(BaseManager):
         logger.debug(f"URL preview embed {embed_id} created for {validated_url}")
 
         embed = self.get_embed(embed_id)
-        assert embed is not None  # Should exist since we just created it
+        assert embed is not None
 
         if message_id:
             self.attach_embed_to_message(user_id, message_id, embed_id)
@@ -748,6 +762,8 @@ class EmbedManager(BaseManager):
         """
         Parse URL metadata (OpenGraph/Twitter Card) without creating embed.
         
+        Uses the secure LinkPreviewService for safe fetching.
+        
         Args:
             url: URL to parse
             
@@ -755,132 +771,21 @@ class EmbedManager(BaseManager):
             Dict with metadata (title, description, image, etc.)
         """
         validated_url = validate_url(url, "url")
-        parsed = urlparse(validated_url)
-
-        # Baseline metadata (even if scraping fails)
-        domain = parsed.netloc.lower()
-        metadata: Dict[str, Any] = {
-            "url": validated_url,
-            "site_name": domain,
-            "site_url": f"{parsed.scheme}://{parsed.netloc}",
-            "type": "link",
-        }
-
+        
+        # Use secure service (with user_id=0 for system/anonymous requests)
         try:
-            scraped = self._scrape_url_metadata(validated_url)
-            metadata.update({k: v for k, v in scraped.items() if v is not None})
+            metadata = self._link_preview_service.generate_preview(0, validated_url)
+            return metadata.to_dict()
         except Exception as e:
-            # Fail closed: we still return minimal metadata, but do not raise here.
-            logger.warning(f"Failed to scrape URL metadata for {validated_url}: {e}")
-
-        return metadata
-
-    def _scrape_url_metadata(self, url: str) -> Dict[str, Any]:
-        """Fetch HTML and extract OpenGraph/Twitter metadata securely."""
-        # SSRF Protection: Validate URL and resolve to IP to prevent DNS rebinding
-        hostname, resolved_ip = self._url_validator.validate_url_for_request(url)
-        
-        parsed = urlparse(url)
-        base_url = f"{parsed.scheme}://{parsed.netloc}"
-        
-        # Rewrite URL to use resolved IP but keep Host header
-        # This prevents DNS rebinding because the HTTP client uses the IP directly
-        port = parsed.port or (80 if parsed.scheme == "http" else 443)
-        request_url = f"{parsed.scheme}://{resolved_ip}:{port}{parsed.path}"
-        if parsed.query:
-            request_url += f"?{parsed.query}"
-
-        # Keep these defaults conservative; allow override via config if present.
-        preview_cfg = self._config.get("url_preview", {}) if isinstance(self._config, dict) else {}
-        timeout_seconds = int(preview_cfg.get("timeout_seconds", 8))
-        max_html_bytes = int(preview_cfg.get("max_html_bytes", 512 * 1024))
-        max_redirects = int(preview_cfg.get("max_redirects", 5))
-
-        try:
-            import httpx
-        except ImportError as e:
-            raise RuntimeError("httpx is required for URL preview scraping") from e
-
-        headers = {
-            "User-Agent": "PlexiChat/1.0 (+https://plexichat)",
-            "Accept": "text/html,application/xhtml+xml",
-            "Host": hostname, # Crucial for virtual hosting
-        }
-
-        with httpx.Client(
-            follow_redirects=True,
-            timeout=httpx.Timeout(timeout_seconds, connect=min(5, timeout_seconds)),
-            headers=headers,
-            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
-            max_redirects=max_redirects,
-            verify=False if parsed.scheme == "http" else True, # Caution with IP-based HTTPS
-        ) as client:
-            # We use the request_url (with IP) but headers have original Host
-            with client.stream("GET", request_url) as resp:
-                resp.raise_for_status()
-
-                content_type = (resp.headers.get("content-type") or "").lower()
-                if "text/html" not in content_type and "application/xhtml+xml" not in content_type:
-                    raise ValueError(f"Unsupported content-type for preview: {content_type}")
-
-                chunks: List[bytes] = []
-                total = 0
-                for chunk in resp.iter_bytes():
-                    if not chunk:
-                        continue
-                    total += len(chunk)
-                    if total > max_html_bytes:
-                        break
-                    chunks.append(chunk)
-
-        html_bytes = b"".join(chunks)
-        # Best-effort decode; HTMLParser accepts str.
-        html_text = html_bytes.decode("utf-8", errors="replace")
-
-        parser = self._MetaParser()
-        parser.feed(html_text)
-
-        def pick(*keys: str) -> Optional[str]:
-            for k in keys:
-                v = parser.meta.get(k)
-                if v:
-                    return v
-            return None
-
-        og_type = pick("og:type")
-        title = pick("og:title", "twitter:title") or parser.title
-        description = pick("og:description", "twitter:description", "description")
-        site_name = pick("og:site_name")
-        image = pick(
-            "og:image:secure_url",
-            "og:image:url",
-            "og:image",
-            "twitter:image",
-            "twitter:image:src",
-        )
-
-        if image:
-            image = urljoin(base_url + "/", image)
-
-        embed_type = "link"
-        if og_type:
-            og_type_lower = og_type.lower()
-            if og_type_lower.startswith("video"):
-                embed_type = "video"
-            elif og_type_lower in {"article", "profile", "website"}:
-                embed_type = "article" if og_type_lower == "article" else "link"
-
-        return {
-            "type": embed_type,
-            "title": title,
-            "description": description,
-            "site_name": site_name,
-            "site_url": base_url,
-            "image": image,
-            "image_width": None,
-            "image_height": None,
-            "author": pick("author", "article:author"),
-        }
+            # Fallback to minimal metadata on error
+            parsed = urlparse(validated_url)
+            logger.warning(f"Failed to parse URL metadata for {validated_url}: {e}")
+            return {
+                "url": validated_url,
+                "site_name": parsed.netloc,
+                "site_url": f"{parsed.scheme}://{parsed.netloc}",
+                "type": "link",
+            }
 
     def validate_embed_data(self, embed_data: Dict[str, Any]) -> Dict[str, Any]:
         """

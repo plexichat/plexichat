@@ -37,6 +37,8 @@ from .exceptions import (
     MessageNotFoundError,
     PermissionDeniedError,
     EmbedSanitizationError,
+    PreviewRateLimitError,
+    PreviewFetchError,
 )
 
 __all__ = [
@@ -61,6 +63,8 @@ __all__ = [
     "MessageNotFoundError",
     "PermissionDeniedError",
     "EmbedSanitizationError",
+    "PreviewRateLimitError",
+    "PreviewFetchError",
     # Setup
     "setup",
     # Embed operations
@@ -85,7 +89,7 @@ _manager = None
 _setup_complete = False
 
 
-def setup(db: Any, messaging_module: Optional[Any] = None, servers_module: Optional[Any] = None) -> None:
+def setup(db: Any, messaging_module: Optional[Any] = None, servers_module: Optional[Any] = None, media_proxy: Optional[Any] = None) -> None:
     """
     Initialize the embeds module.
 
@@ -93,12 +97,13 @@ def setup(db: Any, messaging_module: Optional[Any] = None, servers_module: Optio
         db: Database instance (must be connected)
         messaging_module: Optional messaging module for message access
         servers_module: Optional servers module for permission checks
+        media_proxy: Optional media proxy for image caching in link previews
     """
     global _manager, _setup_complete
 
     from .manager import EmbedManager
 
-    _manager = EmbedManager(db, messaging_module, servers_module)
+    _manager = EmbedManager(db, messaging_module, servers_module, media_proxy)
     _setup_complete = True
 
 

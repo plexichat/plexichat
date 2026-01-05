@@ -56,11 +56,39 @@ CREATE TABLE IF NOT EXISTS embed_message_embeds (
     UNIQUE(message_id, embed_id)
 );
 
+-- URL preview cache table
+CREATE TABLE IF NOT EXISTS embed_preview_cache (
+    id INTEGER PRIMARY KEY,
+    url_hash TEXT NOT NULL UNIQUE,
+    url TEXT NOT NULL,
+    title TEXT,
+    description TEXT,
+    image_url TEXT,
+    proxied_image_id INTEGER,
+    site_name TEXT,
+    embed_type TEXT NOT NULL DEFAULT 'link',
+    metadata TEXT,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    fetch_count INTEGER NOT NULL DEFAULT 1
+);
+
+-- URL preview rate limits table
+CREATE TABLE IF NOT EXISTS embed_preview_rate_limits (
+    user_id INTEGER NOT NULL,
+    window_start INTEGER NOT NULL,
+    request_count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, window_start)
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_embed_created_by ON embed_embeds(created_by);
 CREATE INDEX IF NOT EXISTS idx_embed_fields_embed ON embed_fields(embed_id);
 CREATE INDEX IF NOT EXISTS idx_embed_message ON embed_message_embeds(message_id);
 CREATE INDEX IF NOT EXISTS idx_embed_embed ON embed_message_embeds(embed_id);
+CREATE INDEX IF NOT EXISTS idx_embed_preview_cache_hash ON embed_preview_cache(url_hash);
+CREATE INDEX IF NOT EXISTS idx_embed_preview_cache_expires ON embed_preview_cache(expires_at);
+CREATE INDEX IF NOT EXISTS idx_embed_preview_rate_user ON embed_preview_rate_limits(user_id);
 """
 
 

@@ -285,6 +285,38 @@ def rotate_keys(force: bool = False) -> bool:
     return _get_manager().rotate_keys(force)
 
 
+# === File Encryption (at rest) ===
+
+def encrypt_file(data: bytes, aad: Optional[bytes] = None) -> bytes:
+    """
+    Encrypt file data for storage at rest.
+    
+    Args:
+        data (bytes): Raw file bytes.
+        aad (bytes, optional): Additional Authenticated Data (e.g., file path).
+        
+    Returns:
+        bytes: Encrypted blob with header.
+    """
+    from .file_encryption import encrypt_file as _encrypt_file
+    return _encrypt_file(data, aad)
+
+
+def decrypt_file(blob: bytes, aad: Optional[bytes] = None) -> bytes:
+    """
+    Decrypt file data from storage.
+    
+    Args:
+        blob (bytes): Encrypted blob with header.
+        aad (bytes, optional): Additional Authenticated Data used during encryption.
+        
+    Returns:
+        bytes: Decrypted file data.
+    """
+    from .file_encryption import decrypt_file as _decrypt_file
+    return _decrypt_file(blob, aad)
+
+
 __all__ = [
     'EncryptionManager',
     'SnowflakeGenerator',
@@ -303,5 +335,7 @@ __all__ = [
     'decrypt_message',
     'is_message_encrypted',
     'is_message_key_auto_generated',
-    'rotate_keys'
+    'rotate_keys',
+    'encrypt_file',
+    'decrypt_file',
 ]
