@@ -4,7 +4,8 @@ External URL proxy for fetching, caching, and serving external content.
 
 import hashlib
 import time
-from typing import Optional, Tuple, BinaryIO
+import io
+from typing import Optional, Tuple, BinaryIO, Iterator
 from urllib.parse import urlparse
 
 import utils.logger as logger
@@ -12,6 +13,61 @@ from src.utils.security import URLValidator
 
 from ..models import ProxiedContent
 from ..exceptions import ProxyError, ProxyFetchError, ProxyCacheError
+
+
+class ResponseStreamWrapper(io.RawIOBase):
+    """
+    Wrapper for requests response stream that tracks size and calculates hash
+    while reading, preventing large files from being fully loaded into memory.
+    """
+
+    def __init__(self, response_iterator: Iterator[bytes], max_size: int):
+        self._iterator = response_iterator
+        self._max_size = max_size
+        self._bytes_read = 0
+        self._hash = hashlib.sha256()
+        self._buffer = b""
+
+    def read(self, size: int = -1) -> bytes:
+        if size == -1:
+            # Not recommended for large streams, but implemented for completeness
+            chunks = []
+            while True:
+                chunk = self.read(8192)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            return b"".join(chunks)
+
+        while len(self._buffer) < size:
+            try:
+                chunk = next(self._iterator)
+                if not chunk:
+                    break
+                
+                self._bytes_read += len(chunk)
+                if self._bytes_read > self._max_size:
+                    raise ValueError(f"Content exceeds maximum size of {self._max_size} bytes")
+                
+                self._hash.update(chunk)
+                self._buffer += chunk
+            except StopIteration:
+                break
+
+        res = self._buffer[:size]
+        self._buffer = self._buffer[size:]
+        return res
+
+    def readable(self) -> bool:
+        return True
+
+    @property
+    def bytes_read(self) -> int:
+        return self._bytes_read
+
+    @property
+    def hex_digest(self) -> str:
+        return self._hash.hexdigest()
 
 
 class ExternalProxy:
@@ -39,6 +95,7 @@ class ExternalProxy:
         allowed_types: Optional[set] = None,
         user_agent: str = "PlexiChat/1.0",
         timeout: int = 30,
+        buffer_size: int = 65536,
     ):
         """
         Initialize external proxy.
@@ -52,6 +109,7 @@ class ExternalProxy:
             allowed_types: Allowed content types
             user_agent: User agent for requests
             timeout: Request timeout in seconds
+            buffer_size: Buffer size for streaming
         """
         self._storage = storage_backend
         self._db = db
@@ -61,6 +119,7 @@ class ExternalProxy:
         self._allowed_types = allowed_types or self.DEFAULT_ALLOWED_TYPES
         self._user_agent = user_agent
         self._timeout = timeout
+        self._buffer_size = buffer_size
         self._url_validator = URLValidator()
 
         try:
@@ -92,9 +151,9 @@ class ExternalProxy:
                 self._update_access(cached.id)
                 return cached
 
-        content_type, data = self._fetch_url(url, hostname, resolved_ip)
+        content_type, stream_wrapper = self._fetch_url(url, hostname, resolved_ip)
 
-        return self._cache_content(url, content_type, data)
+        return self._cache_content(url, content_type, stream_wrapper)
 
     def get_content(self, url: str) -> Tuple[bytes, str]:
         """
@@ -233,7 +292,7 @@ class ExternalProxy:
             checksum=row["checksum"],
         )
 
-    def _fetch_url(self, url: str, hostname: str, resolved_ip: str) -> Tuple[str, bytes]:
+    def _fetch_url(self, url: str, hostname: str, resolved_ip: str) -> Tuple[str, ResponseStreamWrapper]:
         """Fetch content from URL using safe IP."""
         parsed = urlparse(url)
         port = parsed.port or (80 if parsed.scheme == "http" else 443)
@@ -265,32 +324,30 @@ class ExternalProxy:
             if content_length and int(content_length) > self._max_size:
                 raise ProxyFetchError(f"Content too large: {content_length} bytes", url)
 
-            chunks = []
-            total_size = 0
+            # Create stream wrapper for memory-safe reading and hashing
+            stream_wrapper = ResponseStreamWrapper(
+                response.iter_content(chunk_size=self._buffer_size),
+                self._max_size
+            )
 
-            for chunk in response.iter_content(chunk_size=8192):
-                total_size += len(chunk)
-                if total_size > self._max_size:
-                    raise ProxyFetchError(f"Content too large: exceeded {self._max_size} bytes", url)
-                chunks.append(chunk)
-
-            return content_type, b"".join(chunks)
-        except self._requests.RequestException as e:
+            return content_type, stream_wrapper
+        except (self._requests.RequestException, ValueError) as e:
             raise ProxyFetchError(f"Failed to fetch URL: {e}", url)
 
-    def _cache_content(self, url: str, content_type: str, data: bytes) -> ProxiedContent:
-        """Cache fetched content."""
+    def _cache_content(self, url: str, content_type: str, stream_wrapper: ResponseStreamWrapper) -> ProxiedContent:
+        """Cache fetched content from stream."""
         url_hash = hashlib.sha256(url.encode()).hexdigest()[:16]
         ext = self._get_extension(content_type)
         storage_path = f"{self._cache_path}/{url_hash[:2]}/{url_hash}{ext}"
 
-        checksum = hashlib.sha256(data).hexdigest()
-
         try:
-            self._storage.store(data, storage_path, content_type)
+            # store_stream will consume the wrapper, calculating hash and size
+            self._storage.store_stream(stream_wrapper, storage_path, content_type, -1)
         except Exception as e:
             raise ProxyCacheError(f"Failed to cache content: {e}", url)
 
+        checksum = stream_wrapper.hex_digest
+        size = stream_wrapper.bytes_read
         now = int(time.time() * 1000)
         expires_at = now + (self._cache_ttl * 1000)
 
@@ -305,7 +362,7 @@ class ExternalProxy:
                    content_type = ?, size = ?, storage_path = ?, checksum = ?,
                    cached_at = ?, expires_at = ?, last_accessed = ?, access_count = access_count + 1
                    WHERE id = ?""",
-                (content_type, len(data), storage_path, checksum, now, expires_at, now, existing["id"])
+                (content_type, size, storage_path, checksum, now, expires_at, now, existing["id"])
             )
             cache_id = existing["id"]
         else:
@@ -317,14 +374,14 @@ class ExternalProxy:
                    (id, source_url, content_type, size, storage_path, checksum,
                     cached_at, expires_at, last_accessed, access_count)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
-                (cache_id, url, content_type, len(data), storage_path, checksum, now, expires_at, now)
+                (cache_id, url, content_type, size, storage_path, checksum, now, expires_at, now)
             )
 
         return ProxiedContent(
             id=cache_id,
             source_url=url,
             content_type=content_type,
-            size=len(data),
+            size=size,
             storage_path=storage_path,
             cached_at=now,
             expires_at=expires_at,

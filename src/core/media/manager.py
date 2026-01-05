@@ -37,7 +37,7 @@ from .exceptions import (
     PermissionDeniedError,
 )
 from .schema import create_tables
-from .storage import LocalStorage, S3Storage, DatabaseStorage, StorageBackendBase
+from .storage import LocalStorage, S3Storage, DatabaseStorage, StorageBackendBase, wrap_storage_with_encryption
 from .processing import ImageProcessor, VideoProcessor
 from .security import UrlSigner, MalwareScanner, ExternalProxy
 from .security.validation import BLOCKED_EXTENSIONS, BLOCKED_MIME_TYPES
@@ -149,9 +149,10 @@ class MediaManager(BaseManager):
     def _init_storage(self) -> StorageBackendBase:
         """Initialize primary storage backend."""
         backend = self._config.get("storage_backend", "local")
+        encrypt_at_rest = self._config.get("encrypt_at_rest", True)
 
         if backend == "s3":
-            return S3Storage(
+            storage = S3Storage(
                 bucket=self._config.get("s3_bucket", "plexichat-media"),
                 access_key=self._config.get("s3_access_key", ""),
                 secret_key=self._config.get("s3_secret_key", ""),
@@ -160,16 +161,23 @@ class MediaManager(BaseManager):
                 public_url=self._config.get("s3_public_url") or None,
             )
         elif backend == "database":
-            return DatabaseStorage(
+            storage = DatabaseStorage(
                 db=self._db,
                 base_url=self._config.get("database_url", "/api/v1/media/blob"),
                 max_size=self._config.get("database_max_size", 512 * 1024),
             )
         else:
-            return LocalStorage(
+            storage = LocalStorage(
                 base_path=self._config.get("local_path", "uploads"),
                 base_url=self._config.get("local_url", "/media"),
             )
+        
+        # Wrap with encryption if enabled
+        if encrypt_at_rest:
+            storage = wrap_storage_with_encryption(storage, enabled=True)
+            logger.info(f"File encryption at rest enabled for {backend} storage")
+        
+        return storage
 
     def _init_db_storage(self) -> Optional[DatabaseStorage]:
         """Initialize database storage for auto-routing (if enabled and not primary)."""
@@ -357,6 +365,7 @@ class MediaManager(BaseManager):
                 db=self._db,
                 cache_ttl=self._config.get("proxy_cache_ttl", 86400),
                 max_size=self._config.get("proxy_max_size", 10 * 1024 * 1024),
+                buffer_size=self._config.get("proxy_buffer_size", 65536),
             )
         except Exception as e:
             logger.warning(f"External proxy unavailable: {e}")
