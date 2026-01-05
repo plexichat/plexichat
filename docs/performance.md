@@ -126,6 +126,22 @@ Each module maintains in-memory caches with configurable TTL:
 
 Default TTL: 30-60 seconds
 
+### Memory Safety & Resource Capping
+
+To prevent Out-Of-Memory (OOM) scenarios, PlexiChat implements strict resource capping:
+
+1.  **Capped In-Memory Caches**: All module-level caches use a LRU-style eviction policy. The maximum number of items is configurable via `redis.cache_max_items` (default: 1000).
+2.  **Streaming Media Proxy**: The external URL proxy streams content directly to storage with a small memory buffer (default: 64KB), preventing large file downloads from consuming excessive RAM.
+3.  **Media Size Limits**: Enforced at the proxy level (`proxy_max_size`) and upload level to ensure process stability.
+
+```yaml
+redis:
+  cache_max_items: 1000  # Max items per in-process cache
+
+media:
+  proxy_buffer_size: 65536  # 64KB streaming buffer
+```
+
 ## WebSocket Optimizations
 
 ### Connection Pooling
