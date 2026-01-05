@@ -206,4 +206,4 @@ make test
 
 ## Version
 
-Current version: `a.1.0-29` (Alpha)
+Current version: `a.1.0-30` (Alpha)

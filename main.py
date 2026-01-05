@@ -31,7 +31,7 @@ import utils.validator as validator
 import utils.version as version
 
 # Global Version Definition
-VERSION = "a.1.0-29"
+VERSION = "a.1.0-30"
 
 
 class PlexiChatServer:

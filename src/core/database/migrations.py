@@ -17,6 +17,7 @@ def run_all_migrations(db: Any) -> None:
     _migrate_messaging_webhook_id(db)
     _migrate_media_deduplication_v2(db)
     _migrate_threads_conversation_id(db)
+    _migrate_srv_members_updated_at(db)
 
     logger.info("All migrations completed.")
 
@@ -105,6 +106,23 @@ def _migrate_media_deduplication_v2(db: Any) -> None:
 
     except Exception as e:
         logger.error(f"Migration failed (media_v2): {e}")
+
+
+def _migrate_srv_members_updated_at(db: Any) -> None:
+    """Add updated_at column to srv_members if missing."""
+    try:
+        if not db.table_exists("srv_members"):
+            return
+
+        if not _column_exists(db, "srv_members", "updated_at"):
+            logger.info("Migration: Adding updated_at to srv_members")
+            # Add column with default value of joined_at for existing rows
+            db.execute("ALTER TABLE srv_members ADD COLUMN updated_at BIGINT")
+            # Backfill existing rows: set updated_at = joined_at
+            db.execute("UPDATE srv_members SET updated_at = joined_at WHERE updated_at IS NULL")
+            logger.info("Migration: updated_at added to srv_members successfully")
+    except Exception as e:
+        logger.error(f"Migration failed (srv_members_updated_at): {e}")
 
 
 def _column_exists(db: Any, table_name: str, column_name: str) -> bool:
