@@ -6,6 +6,7 @@ Handles user registration, login, sessions, 2FA, bots, and audit logging.
 
 import time
 import json
+import secrets
 from typing import Optional, List, Dict, Any, Tuple, Union
 
 import utils.config as config
@@ -588,6 +589,192 @@ class AuthManager(BaseManager):
             ip_address,
             details={"reason": "wrong_password"},
         )
+
+    def oauth_login(
+        self,
+        provider: str,
+        external_id: str,
+        email: Optional[str] = None,
+        username_hint: Optional[str] = None,
+        device_info: Optional[Dict[str, str]] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> AuthResult:
+        """Authenticate a user via OAuth."""
+        logger.info(f"OAuth login attempt: {provider}:{external_id}")
+
+        # Find existing external account
+        ext_row = self._db.fetch_one(
+            "SELECT user_id FROM auth_external_accounts WHERE provider = ? AND external_id = ?",
+            (provider, external_id),
+        )
+
+        user_id = None
+        if ext_row:
+            user_id = ext_row["user_id"]
+            # Update last login for external account
+            self._db.execute(
+                "UPDATE auth_external_accounts SET last_login_at = ? WHERE provider = ? AND external_id = ?",
+                (self._get_timestamp(), provider, external_id),
+            )
+        else:
+            # Check if a user with this email already exists
+            if email:
+                user_row = self._db.fetch_one(
+                    "SELECT id FROM auth_users WHERE email = ?", (email,)
+                )
+                if user_row:
+                    user_id = user_row["id"]
+                    # Link existing user to this provider
+                    self.link_external_account(user_id, provider, external_id, email)
+            
+            # If no user found/linked, create a new one
+            if not user_id:
+                # Generate unique username
+                base_username = username_hint or (email.split("@")[0] if email else f"{provider}_user")
+                # Remove invalid characters
+                base_username = "".join(c for c in base_username if c.isalnum() or c == "_")
+                if not base_username:
+                    base_username = "user"
+                
+                username = base_username
+                suffix = 1
+                while True:
+                    existing = self._db.fetch_one(
+                        "SELECT id FROM auth_users WHERE username = ?", (username,)
+                    )
+                    if not existing:
+                        break
+                    username = f"{base_username}{suffix}"
+                    suffix += 1
+                
+                # Register new user with a random secure password
+                # This ensures we satisfy DB constraints and password policy
+                random_password = secrets.token_urlsafe(32)
+                user = self.register(
+                    username=username,
+                    email=email or f"{external_id}@{provider}.external",
+                    password=random_password,
+                    device_info=device_info,
+                    ip_address=ip_address,
+                )
+                user_id = user.id
+                
+                # Auto-verify email if it came from a trusted provider
+                self._db.execute(
+                    "UPDATE auth_users SET email_verified = 1 WHERE id = ?", (user_id,)
+                )
+                
+                # Link external account
+                self.link_external_account(user_id, provider, external_id, email)
+
+        # Proceed with login for user_id
+        user_row = self._db.fetch_one(
+            """SELECT id, account_type, username, email, password_hash, permissions,
+                      created_at, updated_at, email_verified, account_locked,
+                      locked_until, failed_login_attempts, last_login_at, totp_enabled,
+                      totp_secret_encrypted, backup_codes_hash, avatar_url
+               FROM auth_users WHERE id = ?""",
+            (user_id,),
+        )
+
+        if not user_row:
+            logger.error(f"OAuth login failed: linked user {user_id} not found")
+            raise UserNotFoundError("Linked user not found")
+
+        # Check if account is locked
+        if user_row["account_locked"]:
+            locked_until = user_row["locked_until"]
+            if locked_until and locked_until > self._get_timestamp():
+                logger.warning(f"OAuth login failed - account locked: {user_id}")
+                raise AccountLockedError(
+                    "Account is temporarily locked due to too many failed attempts",
+                    locked_until,
+                )
+            else:
+                # Unlock account
+                self._db.execute(
+                    """UPDATE auth_users SET account_locked = 0, locked_until = NULL,
+                       failed_login_attempts = 0 WHERE id = ?""",
+                    (user_id,),
+                )
+
+        # Track device and IP
+        device_id = None
+        if device_info:
+            device_id = self._track_device(user_id, device_info)
+        if ip_address:
+            self._track_ip(user_id, ip_address)
+
+        # Check if 2FA is required (even for OAuth)
+        if user_row["totp_enabled"]:
+            logger.info(f"2FA required for OAuth user: {user_id}")
+            challenge = self._create_2fa_challenge(
+                user_id, device_id, ip_address, user_agent
+            )
+            return AuthResult(
+                status=AuthStatus.TWO_FACTOR_REQUIRED,
+                challenge_token=challenge.token,
+                methods=["totp", "backup_code"],
+                expires_in=300,
+            )
+
+        # Create session
+        session = self._create_session(user_id, device_id, ip_address, user_agent)
+
+        # Update last login
+        self._db.execute(
+            """UPDATE auth_users SET failed_login_attempts = 0, last_login_at = ?,
+               updated_at = ? WHERE id = ?""",
+            (self._get_timestamp(), self._get_timestamp(), user_id),
+        )
+        self._cache_invalidate_user(user_id)
+
+        logger.info(f"OAuth login successful: {provider}:{external_id} -> {user_id}")
+        self._log_audit(
+            AuditEventType.OAUTH_LOGIN,
+            user_id,
+            True,
+            ip_address,
+            device_id,
+            details={"provider": provider, "external_id": external_id},
+        )
+
+        user = self._row_to_user(user_row)
+
+        return AuthResult(
+            status=AuthStatus.SUCCESS, token=session.token, user=user, session=session
+        )
+
+    def link_external_account(
+        self, user_id: SnowflakeID, provider: str, external_id: str, email: Optional[str] = None
+    ) -> bool:
+        """Link an external account to a user."""
+        # Check if already linked
+        existing = self._db.fetch_one(
+            "SELECT user_id FROM auth_external_accounts WHERE provider = ? AND external_id = ?",
+            (provider, external_id),
+        )
+        if existing:
+            if existing["user_id"] == user_id:
+                return True
+            raise AuthError(f"This {provider} account is already linked to another user")
+
+        now = self._get_timestamp()
+        self._db.insert_or_ignore(
+            "auth_external_accounts",
+            ["id", "user_id", "provider", "external_id", "email", "created_at", "last_login_at"],
+            (self._generate_id(), user_id, provider, external_id, email, now, now),
+        )
+        
+        logger.info(f"Linked {provider} account {external_id} to user {user_id}")
+        self._log_audit(
+            AuditEventType.OAUTH_LINK,
+            user_id,
+            True,
+            details={"provider": provider, "external_id": external_id},
+        )
+        return True
 
     def complete_2fa(self, challenge_token: str, code: str) -> AuthResult:
         """Complete 2FA challenge."""

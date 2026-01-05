@@ -105,6 +105,19 @@ CREATE TABLE IF NOT EXISTS auth_email_tokens (
     FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE
 );
 
+-- External accounts (OAuth)
+CREATE TABLE IF NOT EXISTS auth_external_accounts (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    provider TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    email TEXT,
+    created_at INTEGER NOT NULL,
+    last_login_at INTEGER,
+    FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
+    UNIQUE(provider, external_id)
+);
+
 -- 2FA challenge tokens (temporary during login)
 CREATE TABLE IF NOT EXISTS auth_2fa_challenges (
     id INTEGER PRIMARY KEY,
@@ -132,6 +145,7 @@ CREATE INDEX IF NOT EXISTS idx_auth_audit_timestamp ON auth_audit_log(timestamp)
 CREATE INDEX IF NOT EXISTS idx_auth_audit_type ON auth_audit_log(event_type);
 CREATE INDEX IF NOT EXISTS idx_auth_email_tokens_hash ON auth_email_tokens(token_hash);
 CREATE INDEX IF NOT EXISTS idx_auth_2fa_challenges_hash ON auth_2fa_challenges(token_hash);
+CREATE INDEX IF NOT EXISTS idx_auth_external_accounts_user ON auth_external_accounts(user_id);
 """
 
 # Split into individual statements for execution

@@ -51,6 +51,8 @@ class AuditEventType(Enum):
     ACCOUNT_LOCKED = "account_locked"
     ACCOUNT_UNLOCKED = "account_unlocked"
     PERMISSIONS_CHANGED = "permissions_changed"
+    OAUTH_LOGIN = "oauth_login"
+    OAUTH_LINK = "oauth_link"
 
 
 @dataclass
