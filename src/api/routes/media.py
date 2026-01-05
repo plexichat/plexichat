@@ -8,77 +8,43 @@ Provides endpoints for:
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request, UploadFile, File
-from pydantic import BaseModel, Field
 from typing import Optional
 
 import utils.logger as logger
-from src.api.dependencies import get_current_user
+from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.schemas.media import (
+    HashReportRequest,
+    HashReportResponse,
+    ChunkedUploadSessionRequest,
+    ChunkedUploadSessionResponse,
+    ChunkUploadResponse,
+    CompressionStatusResponse,
+    HashStatusResponse,
+    CompleteUploadResponse,
+    UploadSessionsResponse,
+    UploadSessionInfo
+)
+from src.api.schemas.common import ErrorResponse, SuccessResponse
 
 router = APIRouter(prefix="/media", tags=["Media"])
 
 
-# ==================== Request/Response Models ====================
+# === Content Reporting ===
 
-class HashReportRequest(BaseModel):
-    """Report a file hash for content moderation."""
-    hash_value: str = Field(..., min_length=16, max_length=128, description="SHA-256 or perceptual hash of the file")
-    reason: str = Field(..., min_length=1, max_length=500, description="Reason for report")
-    details: Optional[str] = Field(None, max_length=2000, description="Additional details")
-    phash_value: Optional[str] = Field(None, max_length=64, description="Perceptual hash (for images)")
-    uploader_id: Optional[int] = Field(None, description="User ID of the uploader")
-    message_id: Optional[int] = Field(None, description="Message ID containing the attachment")
-    attachment_url: Optional[str] = Field(None, max_length=2000, description="URL of the attachment")
-    block_uploader: bool = Field(False, description="Request to block the uploader")
-
-
-class HashReportResponse(BaseModel):
-    """Response for hash report submission."""
-    success: bool
-    report_id: int
-    message: str
-
-
-class ChunkedUploadSessionRequest(BaseModel):
-    """Create a chunked upload session."""
-    filename: str = Field(..., min_length=1, max_length=255)
-    content_type: str = Field(..., min_length=1, max_length=100)
-    total_size: int = Field(..., gt=0, le=1024 * 1024 * 1024)  # Max 1GB
-
-
-class ChunkedUploadSessionResponse(BaseModel):
-    """Response for chunked upload session creation."""
-    session_id: str
-    chunk_size: int
-    total_chunks: int
-    expires_at: int
-
-
-class ChunkUploadResponse(BaseModel):
-    """Response for chunk upload."""
-    success: bool
-    chunk_index: int
-    uploaded_chunks: int
-    total_chunks: int
-    progress_percent: float
-    is_complete: bool
-    error: Optional[str] = None
-
-
-class CompressionStatusResponse(BaseModel):
-    """Compression system status."""
-    enabled: bool
-    image_compression: bool
-    video_compression: bool
-
-
-# ==================== Content Reporting ====================
-
-@router.post("/report", response_model=HashReportResponse)
+@router.post(
+    "/report",
+    response_model=HashReportResponse,
+    summary="Report content hash",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def report_content_hash(
     report: HashReportRequest,
     request: Request,
-    user = Depends(get_current_user)
-):
+    user: TokenInfo = Depends(get_current_user)
+) -> HashReportResponse:
     """
     Report a file hash for content moderation.
     
@@ -109,37 +75,62 @@ async def report_content_hash(
             message="Report submitted successfully"
         )
     except Exception as e:
-        logger.error(f"Failed to submit hash report: {e}")
+        logger.error(f"Failed to submit hash report for user {user.user_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to submit report"
+            detail={"error": {"code": 500, "message": "Internal server error"}}
         )
 
 
-@router.get("/hash/{hash_value}/status")
+@router.get(
+    "/hash/{hash_value}/status",
+    response_model=HashStatusResponse,
+    summary="Check hash status",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def check_hash_status(
     hash_value: str,
-    user = Depends(get_current_user)
-):
+    user: TokenInfo = Depends(get_current_user)
+) -> HashStatusResponse:
     """Check if a hash is blocked."""
     from src.core import media
 
-    is_blocked, reason = media.is_hash_blocked(hash_value)
+    try:
+        is_blocked, reason = media.is_hash_blocked(hash_value)
+        logger.debug(f"User {user.user_id} checked status for hash {hash_value[:16]}... (is_blocked={is_blocked})")
 
-    return {
-        "hash_value": hash_value,
-        "is_blocked": is_blocked,
-        "reason": reason if is_blocked else None
-    }
+        return HashStatusResponse(
+            hash_value=hash_value,
+            is_blocked=is_blocked,
+            reason=reason if is_blocked else None
+        )
+    except Exception as e:
+        logger.error(f"Failed to check hash status for user {user.user_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
 
 
 # ==================== Chunked Uploads ====================
 
-@router.post("/upload/session", response_model=ChunkedUploadSessionResponse)
+@router.post(
+    "/upload/session",
+    response_model=ChunkedUploadSessionResponse,
+    summary="Create upload session",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request or file too large"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def create_upload_session(
     session_request: ChunkedUploadSessionRequest,
-    user = Depends(get_current_user)
-):
+    user: TokenInfo = Depends(get_current_user)
+) -> ChunkedUploadSessionResponse:
     """
     Create a chunked upload session for large files.
     
@@ -148,35 +139,56 @@ async def create_upload_session(
     """
     from src.core import media
 
-    session = media.create_upload_session(
-        user_id=user.user_id,
-        filename=session_request.filename,
-        content_type=session_request.content_type,
-        total_size=session_request.total_size
-    )
-
-    if not session:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Failed to create upload session. File may be too large."
+    try:
+        session = media.create_upload_session(
+            user_id=user.user_id,
+            filename=session_request.filename,
+            content_type=session_request.content_type,
+            total_size=session_request.total_size
         )
 
-    return ChunkedUploadSessionResponse(
-        session_id=session.id,
-        chunk_size=session.chunk_size,
-        total_chunks=session.total_chunks,
-        expires_at=session.expires_at
-    )
+        if not session:
+            logger.warning(f"Failed to create upload session for user {user.user_id} (file too large or invalid)")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"code": 400, "message": "Failed to create upload session. File may be too large."}}
+            )
+
+        logger.info(f"User {user.user_id} created upload session {session.id} for '{session_request.filename}'")
+
+        return ChunkedUploadSessionResponse(
+            session_id=session.id,
+            chunk_size=session.chunk_size,
+            total_chunks=session.total_chunks,
+            expires_at=session.expires_at
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to create upload session for user {user.user_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
 
 
-@router.post("/upload/chunk/{session_id}", response_model=ChunkUploadResponse)
+@router.post(
+    "/upload/chunk/{session_id}",
+    response_model=ChunkUploadResponse,
+    summary="Upload chunk",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid chunk or session"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def upload_chunk(
     session_id: str,
     chunk_index: int,
     chunk_checksum: Optional[str] = None,
     file: UploadFile = File(...),
-    user = Depends(get_current_user)
-):
+    user: TokenInfo = Depends(get_current_user)
+) -> ChunkUploadResponse:
     """
     Upload a chunk to an existing upload session.
     
@@ -188,32 +200,59 @@ async def upload_chunk(
     """
     from src.core import media
 
-    chunk_data = await file.read()
+    try:
+        chunk_data = await file.read()
 
-    result = media.upload_chunk(
-        session_id=session_id,
-        user_id=user.user_id,
-        chunk_index=chunk_index,
-        chunk_data=chunk_data,
-        chunk_checksum=chunk_checksum
-    )
+        result = media.upload_chunk(
+            session_id=session_id,
+            user_id=user.user_id,
+            chunk_index=chunk_index,
+            chunk_data=chunk_data,
+            chunk_checksum=chunk_checksum
+        )
 
-    return ChunkUploadResponse(
-        success=result.success,
-        chunk_index=result.chunk_index,
-        uploaded_chunks=result.uploaded_chunks,
-        total_chunks=result.total_chunks,
-        progress_percent=result.progress_percent,
-        is_complete=result.is_complete,
-        error=result.error
-    )
+        if not result.success:
+             logger.warning(f"Chunk upload failed for session {session_id}, user {user.user_id}, index {chunk_index}: {result.error}")
+        else:
+             logger.debug(f"User {user.user_id} uploaded chunk {chunk_index} for session {session_id} ({result.progress_percent}%)")
+
+        return ChunkUploadResponse(
+            success=result.success,
+            chunk_index=result.chunk_index,
+            uploaded_chunks=result.uploaded_chunks,
+            total_chunks=result.total_chunks,
+            progress_percent=result.progress_percent,
+            is_complete=result.is_complete,
+            error=result.error
+        )
+    except ValueError as e:
+        logger.warning(f"Invalid chunk upload request for session {session_id}, user {user.user_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": str(e)}}
+        )
+    except Exception as e:
+        logger.error(f"Chunk upload failed for session {session_id}, user {user.user_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
 
 
-@router.post("/upload/complete/{session_id}")
+@router.post(
+    "/upload/complete/{session_id}",
+    response_model=CompleteUploadResponse,
+    summary="Complete upload session",
+    responses={
+        400: {"model": ErrorResponse, "description": "Upload session not complete or not found"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def complete_upload_session(
     session_id: str,
-    user = Depends(get_current_user)
-):
+    user: TokenInfo = Depends(get_current_user)
+) -> CompleteUploadResponse:
     """
     Complete a chunked upload session and process the file.
     
@@ -221,88 +260,148 @@ async def complete_upload_session(
     """
     from src.core import media
 
-    # Get the assembled file data
-    file_data = media.complete_upload_session(session_id, user.user_id)
+    try:
+        # Get the assembled file data
+        file_data = media.complete_upload_session(session_id, user.user_id)
 
-    if file_data is None:
+        if file_data is None:
+            logger.warning(f"Failed to complete upload session {session_id} for user {user.user_id} (not complete or not found)")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"code": 400, "message": "Upload session not complete or not found"}}
+            )
+
+        logger.info(f"User {user.user_id} completed upload session {session_id} ({len(file_data)} bytes)")
+
+        return CompleteUploadResponse(
+            success=True,
+            size=len(file_data),
+            message="Upload complete. File ready for processing."
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to complete upload session {session_id} for user {user.user_id}: {e}", exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Upload session not complete or not found"
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
         )
 
-    # Get session info for filename/content_type
-    # We need to get session info before completing - this is a limitation
-    # For now, return the raw data size
 
-    return {
-        "success": True,
-        "size": len(file_data),
-        "message": "Upload complete. File ready for processing."
-    }
-
-
-@router.delete("/upload/session/{session_id}")
+@router.delete(
+    "/upload/session/{session_id}",
+    response_model=SuccessResponse,
+    summary="Cancel upload session",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "Session not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def cancel_upload_session(
     session_id: str,
-    user = Depends(get_current_user)
-):
+    user: TokenInfo = Depends(get_current_user)
+) -> SuccessResponse:
     """Cancel an upload session and clean up resources."""
     from src.core import media
 
-    success = media.cancel_upload_session(session_id, user.user_id)
+    try:
+        success = media.cancel_upload_session(session_id, user.user_id)
 
-    if not success:
+        if not success:
+            logger.warning(f"Failed to cancel upload session {session_id} for user {user.user_id} (not found)")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error": {"code": 404, "message": "Session not found"}}
+            )
+
+        logger.info(f"User {user.user_id} cancelled upload session {session_id}")
+        return SuccessResponse(success=True)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to cancel upload session {session_id} for user {user.user_id}: {e}", exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found"
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
         )
 
-    return {"success": True, "message": "Upload session cancelled"}
 
-
-@router.get("/upload/sessions")
+@router.get(
+    "/upload/sessions",
+    response_model=UploadSessionsResponse,
+    summary="Get my upload sessions",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_user_upload_sessions(
-    user = Depends(get_current_user)
-):
+    user: TokenInfo = Depends(get_current_user)
+) -> UploadSessionsResponse:
     """Get all active upload sessions for the current user."""
 
     # Access the chunked manager directly
     from src.core import media as media_module
-    manager = media_module._get_chunked_manager()
+    
+    try:
+        manager = media_module._get_chunked_manager()
+        sessions = manager.get_user_sessions(user.user_id)
+        logger.debug(f"User {user.user_id} retrieved {len(sessions)} upload sessions")
 
-    sessions = manager.get_user_sessions(user.user_id)
-
-    return {
-        "sessions": [
-            {
-                "session_id": s.id,
-                "filename": s.filename,
-                "content_type": s.content_type,
-                "total_size": s.total_size,
-                "uploaded_chunks": s.uploaded_chunks,
-                "total_chunks": s.total_chunks,
-                "progress_percent": (s.uploaded_chunks / s.total_chunks * 100) if s.total_chunks > 0 else 0,
-                "status": s.status.value,
-                "expires_at": s.expires_at
-            }
-            for s in sessions
-        ]
-    }
+        return UploadSessionsResponse(
+            sessions=[
+                UploadSessionInfo(
+                    session_id=s.id,
+                    filename=s.filename,
+                    content_type=s.content_type,
+                    total_size=s.total_size,
+                    uploaded_chunks=s.uploaded_chunks,
+                    total_chunks=s.total_chunks,
+                    progress_percent=(s.uploaded_chunks / s.total_chunks * 100) if s.total_chunks > 0 else 0,
+                    status=s.status.value,
+                    expires_at=s.expires_at
+                )
+                for s in sessions
+            ]
+        )
+    except Exception as e:
+        logger.error(f"Failed to get upload sessions for user {user.user_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
 
 
 # ==================== Compression ====================
 
-@router.get("/compression/status", response_model=CompressionStatusResponse)
+@router.get(
+    "/compression/status",
+    response_model=CompressionStatusResponse,
+    summary="Get compression status",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_compression_status(
-    user = Depends(get_current_user)
-):
+    user: TokenInfo = Depends(get_current_user)
+) -> CompressionStatusResponse:
     """Get compression system status."""
     from src.core import media
 
-    status = media.get_compression_status()
+    try:
+        status_data = media.get_compression_status()
+        logger.debug(f"User {user.user_id} requested compression status")
 
-    return CompressionStatusResponse(
-        enabled=status["enabled"],
-        image_compression=status["image_compression"],
-        video_compression=status["video_compression"]
-    )
+        return CompressionStatusResponse(
+            enabled=status_data["enabled"],
+            image_compression=status_data["image_compression"],
+            video_compression=status_data["video_compression"]
+        )
+    except Exception as e:
+        logger.error(f"Failed to get compression status for user {user.user_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )

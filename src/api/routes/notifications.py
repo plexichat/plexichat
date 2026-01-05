@@ -1,30 +1,48 @@
 """
 Notifications API routes.
 
-Handles user notifications (placeholder for now).
+Handles user notifications.
 """
 
-from typing import Dict, Any
-from fastapi import APIRouter, Depends
+import utils.logger as logger
+from typing import List
+from fastapi import APIRouter, Depends, status, HTTPException
 
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.schemas.notifications import NotificationsResponse, NotificationInfo
+from src.api.schemas.common import ErrorResponse
+
+router = APIRouter(tags=["Notifications"])
 
 
-router = APIRouter()
-
-
-@router.get("/users/@me/notifications")
+@router.get(
+    "/users/@me/notifications",
+    response_model=NotificationsResponse,
+    summary="Get my notifications",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_notifications(
     limit: int = 20,
     current_user: TokenInfo = Depends(get_current_user)
-) -> Dict[str, Any]:
+) -> NotificationsResponse:
     """
     Get user notifications.
     
     Returns an empty list for now (placeholder).
     """
-    # Return empty notifications list for now
-    return {
-        "notifications": [],
-        "unread_count": 0
-    }
+    try:
+        logger.debug(f"User {current_user.user_id} requested notifications (limit={limit})")
+        # Return empty notifications list for now
+        return NotificationsResponse(
+            notifications=[],
+            unread_count=0
+        )
+    except Exception as e:
+        logger.error(f"Failed to get notifications for user {current_user.user_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )

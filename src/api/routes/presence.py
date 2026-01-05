@@ -7,9 +7,10 @@ from fastapi import APIRouter, HTTPException, Depends
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.presence import PresenceUpdate, PresenceResponse
-from src.api.schemas.common import SnowflakeID
+from src.api.schemas.common import SnowflakeID, ErrorResponse
+import utils.logger as logger
 
-router = APIRouter()
+router = APIRouter(tags=["Presence"])
 
 
 def _presence_to_response(pres, user_id: int) -> PresenceResponse:
@@ -50,8 +51,7 @@ async def _dispatch_presence_event(user_id: int, presence_data: dict, target_use
             # Send to all users who should see this presence update
             await dispatcher.dispatch_event(event, target_user_ids)
     except Exception as e:
-        import utils.logger as logger
-        logger.debug(f"Failed to dispatch presence event: {e}")
+        logger.debug(f"Failed to dispatch presence event for user {user_id}: {e}")
 
 
 async def _get_presence_targets(user_id: int) -> list:
@@ -65,8 +65,8 @@ async def _get_presence_targets(user_id: int) -> list:
             friend_ids = relationships.get_friend_ids(user_id)
             if friend_ids:
                 target_user_ids.update(friend_ids)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Error fetching friend IDs for presence targets (user {user_id}): {e}")
 
     # Add server members (users in shared servers)
     servers = api.get_servers()
@@ -80,17 +80,26 @@ async def _get_presence_targets(user_id: int) -> list:
                         for member in members:
                             if member.user_id != user_id:
                                 target_user_ids.add(member.user_id)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Error fetching shared server members for presence targets (user {user_id}): {e}")
 
     return list(target_user_ids)
 
 
-@router.put("/users/@me/presence", response_model=PresenceResponse)
+@router.put(
+    "/users/@me/presence",
+    response_model=PresenceResponse,
+    summary="Update my presence",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid status or data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def update_presence(
     body: PresenceUpdate,
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> PresenceResponse:
     """
     Update current user's presence.
     
@@ -98,57 +107,91 @@ async def update_presence(
     """
     presence = api.get_presence()
     if not presence:
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Presence module not available"}})
+        logger.error("Presence module not available")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Presence module not available"}}
+        )
 
     valid_statuses = ["online", "idle", "dnd", "invisible", "offline"]
     if body.status not in valid_statuses:
+        logger.warning(f"User {current_user.user_id} provided invalid presence status: {body.status}")
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": 400, "message": f"Invalid status. Must be one of: {', '.join(valid_statuses)}"}}
         )
 
     try:
-        from src.core.presence.models import UserStatus
-        status_enum = UserStatus(body.status)
-        presence.set_status(current_user.user_id, status_enum)
+        try:
+            from src.core.presence.models import UserStatus
+            status_enum = UserStatus(body.status)
+            presence.set_status(current_user.user_id, status_enum)
 
-        if body.custom_status is not None or body.custom_emoji is not None:
-            if body.custom_status or body.custom_emoji:
-                presence.set_custom_status(
-                    user_id=current_user.user_id,
-                    text=body.custom_status,
-                    emoji=body.custom_emoji
+            if body.custom_status is not None or body.custom_emoji is not None:
+                if body.custom_status or body.custom_emoji:
+                    presence.set_custom_status(
+                        user_id=current_user.user_id,
+                        text=body.custom_status,
+                        emoji=body.custom_emoji
+                    )
+                else:
+                    presence.clear_custom_status(current_user.user_id)
+
+            pres = presence.get_presence(current_user.user_id)
+            response = _presence_to_response(pres, current_user.user_id)
+
+            # Get all users who should receive this presence update
+            target_user_ids = await _get_presence_targets(current_user.user_id)
+
+            # For invisible status, show as offline to others
+            visible_status = body.status if body.status != "invisible" else "offline"
+
+            if target_user_ids:
+                await _dispatch_presence_event(current_user.user_id, {
+                    "user_id": str(current_user.user_id),
+                    "status": visible_status,
+                    "custom_status": body.custom_status,
+                    "custom_emoji": body.custom_emoji,
+                }, target_user_ids)
+
+            return response
+        except Exception as e:
+            exc_name = type(e).__name__
+            if "Invalid" in exc_name:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": {"code": 400, "message": str(e)}}
                 )
-            else:
-                presence.clear_custom_status(current_user.user_id)
-
-        pres = presence.get_presence(current_user.user_id)
-        response = _presence_to_response(pres, current_user.user_id)
-
-        # Get all users who should receive this presence update
-        target_user_ids = await _get_presence_targets(current_user.user_id)
-
-        # For invisible status, show as offline to others
-        visible_status = body.status if body.status != "invisible" else "offline"
-
-        if target_user_ids:
-            await _dispatch_presence_event(current_user.user_id, {
-                "user_id": str(current_user.user_id),
-                "status": visible_status,
-                "custom_status": body.custom_status,
-                "custom_emoji": body.custom_emoji,
-            }, target_user_ids)
-
-        return response
-    except Exception as e:
-        exc_name = type(e).__name__
-        if "Invalid" in exc_name:
-            raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": str(e)}})
+            
+            logger.error(f"Failed to update presence for user {current_user.user_id}: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": f"Failed to update presence: {str(e)}"}}
+            )
+    except HTTPException:
         raise
+    except Exception as e:
+        logger.error(f"Unexpected error in update_presence for user {current_user.user_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": str(e)}}
+        )
 
 
-@router.get("/users/{user_id}/presence", response_model=PresenceResponse)
-async def get_user_presence(user_id: str, current_user: TokenInfo = Depends(get_current_user)):
+@router.get(
+    "/users/{user_id}/presence",
+    response_model=PresenceResponse,
+    summary="Get user presence",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid user ID"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_user_presence(
+    user_id: str,
+    current_user: TokenInfo = Depends(get_current_user)
+) -> PresenceResponse:
     """
     Get a user's presence.
     
@@ -156,32 +199,54 @@ async def get_user_presence(user_id: str, current_user: TokenInfo = Depends(get_
     """
     presence = api.get_presence()
     if not presence:
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Presence module not available"}})
+        logger.error("Presence module not available")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Presence module not available"}}
+        )
 
     try:
-        uid = int(user_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid user ID"}})
+        try:
+            uid = int(user_id)
+        except (ValueError, TypeError):
+            logger.warning(f"Invalid user ID format for presence request: {user_id}")
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid user ID"}}
+            )
 
-    try:
-        pres = presence.get_visible_presence(current_user.user_id, uid)
-        if not pres:
-            return PresenceResponse(
-                user_id=SnowflakeID(uid),
-                status="offline",
-                custom_status=None,
-                custom_emoji=None,
-                last_seen=None,
+        try:
+            pres = presence.get_visible_presence(current_user.user_id, uid)
+            if not pres:
+                return PresenceResponse(
+                    user_id=SnowflakeID(uid),
+                    status="offline",
+                    custom_status=None,
+                    custom_emoji=None,
+                    last_seen=None,
+                )
+            return _presence_to_response(pres, uid)
+        except Exception as e:
+            exc_name = type(e).__name__
+            if "NotFound" in exc_name:
+                return PresenceResponse(
+                    user_id=SnowflakeID(uid),
+                    status="offline",
+                    custom_status=None,
+                    custom_emoji=None,
+                    last_seen=None,
+                )
+            
+            logger.error(f"Failed to fetch presence for user {uid} (requested by {current_user.user_id}): {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": f"Failed to fetch presence: {str(e)}"}}
             )
-        return _presence_to_response(pres, uid)
-    except Exception as e:
-        exc_name = type(e).__name__
-        if "NotFound" in exc_name:
-            return PresenceResponse(
-                user_id=SnowflakeID(uid),
-                status="offline",
-                custom_status=None,
-                custom_emoji=None,
-                last_seen=None,
-            )
+    except HTTPException:
         raise
+    except Exception as e:
+        logger.error(f"Unexpected error in get_user_presence for user {user_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": str(e)}}
+        )

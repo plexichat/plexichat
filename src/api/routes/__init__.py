@@ -4,6 +4,7 @@ API routes - Route registration for all endpoints.
 
 from fastapi import APIRouter
 
+from pydantic import BaseModel
 from .health import router as health_router
 from .auth import router as auth_router
 from .users import router as users_router
@@ -30,20 +31,45 @@ from .reports import router as reports_router
 from .qr import router as qr_router
 
 import utils.config as config
+import utils.logger as logger
+from src.api.schemas.common import ErrorResponse
+
+
+class RootResponse(BaseModel):
+    """API root response schema."""
+    version: str
+    status: str
+    message: str
 
 
 def create_api_router() -> APIRouter:
     """Create and configure the main API router."""
     api_router = APIRouter()
 
-    @api_router.get("/", tags=["General"])
-    async def api_root():
+    @api_router.get(
+        "/",
+        tags=["General"],
+        response_model=RootResponse,
+        summary="API root",
+        responses={
+            500: {"model": ErrorResponse, "description": "Internal server error"},
+        },
+    )
+    async def api_root() -> RootResponse:
         """API v1 root endpoint."""
-        return {
-            "version": "v1",
-            "status": "online",
-            "message": "PlexiChat API v1 is operational"
-        }
+        try:
+            return RootResponse(
+                version="v1",
+                status="online",
+                message="PlexiChat API v1 is operational"
+            )
+        except Exception as e:
+            logger.error(f"API root endpoint failed: {e}", exc_info=True)
+            from fastapi import HTTPException, status
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={"error": {"code": 500, "message": "Internal server error"}}
+            )
 
     api_router.include_router(health_router, tags=["Health"])
     api_router.include_router(version_router, tags=["Version"])

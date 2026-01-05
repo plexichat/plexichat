@@ -5,7 +5,6 @@ Handles client-submitted response time telemetry data.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
-from pydantic import BaseModel, Field
 from typing import List, Optional, Any
 import time
 
@@ -13,32 +12,11 @@ import utils.config as config
 import utils.logger as logger
 from src.api.dependencies import get_optional_user
 from src.core.auth.models import TokenInfo
+from src.api.schemas.telemetry import TelemetrySubmission, TelemetryResponse
+from src.api.schemas.common import ErrorResponse
 
 
-router = APIRouter(prefix="/telemetry", tags=["telemetry"])
-
-
-class ResponseTimeEntry(BaseModel):
-    """A single response time measurement."""
-
-    endpoint: str = Field(..., max_length=255)
-    method: str = Field(..., max_length=10)
-    response_time_ms: float = Field(..., ge=0)
-    status_code: int = Field(..., ge=100, le=599)
-    timestamp: Optional[int] = None
-
-
-class TelemetrySubmission(BaseModel):
-    """Batch submission of response time data."""
-
-    entries: List[ResponseTimeEntry] = Field(..., max_length=100)
-
-
-class TelemetryResponse(BaseModel):
-    """Response for telemetry submission."""
-
-    accepted: int
-    message: str
+router = APIRouter(prefix="/telemetry", tags=["Telemetry"])
 
 
 # Rate limiting for telemetry submissions (per client IP)
@@ -93,86 +71,78 @@ def _record_submission(client_ip: str):
     _telemetry_rate_limits[client_ip].append(now)
 
 
-@router.post("/response-times", response_model=TelemetryResponse)
+@router.post(
+    "/response-times",
+    response_model=TelemetryResponse,
+    summary="Submit response times",
+    responses={
+        429: {"model": ErrorResponse, "description": "Too many requests"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def submit_response_times(
     submission: TelemetrySubmission,
     request: Request,
     current_user: Optional[TokenInfo] = Depends(get_optional_user)
-):
+) -> TelemetryResponse:
     """
-    Submit anonymized response time telemetry data.
-
-    Clients can batch up to 100 entries per submission.
-    Rate limited to prevent abuse.
+    Submit client-side response time data.
+    
+    Data is stored for analysis of client-perceived performance.
     """
-    # Check if telemetry collection is enabled
-    if not config.get("telemetry.enabled", True):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Telemetry collection is currently disabled",
-        )
-
-    # Get client IP for rate limiting
     client_ip = request.client.host if request.client else "unknown"
-
-    # Check rate limit
+    
     if not _check_rate_limit(client_ip):
+        logger.warning(f"Telemetry submission rate limit exceeded for {client_ip}")
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many telemetry submissions. Please try again later.",
+            detail={"error": {"code": 429, "message": "Telemetry submission rate limit exceeded"}}
         )
+    
+    user_id = current_user.user_id if current_user else None
 
-    # Import telemetry module
     try:
-        from src.core import telemetry
-
-        if not telemetry.is_setup():
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Telemetry system not initialized",
+        from src.api import get_telemetry
+        telemetry = get_telemetry()
+        
+        if not telemetry:
+            # Silently ignore if telemetry is disabled, but still count against rate limit
+            logger.info(f"Telemetry submission received from {client_ip} (user: {user_id}) but telemetry module is not available")
+            _record_submission(client_ip)
+            return TelemetryResponse(
+                accepted=0,
+                message="Telemetry module not available"
             )
-    except ImportError:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Telemetry module not available",
+            
+        accepted_count = 0
+        try:
+            for entry in submission.entries:
+                telemetry.record_response_time(
+                    endpoint=entry.endpoint,
+                    method=entry.method,
+                    response_time_ms=entry.response_time_ms,
+                    status_code=entry.status_code,
+                    user_id=user_id,
+                    timestamp=entry.timestamp
+                )
+                accepted_count += 1
+        except Exception as te:
+            logger.error(f"Error recording telemetry entries from {client_ip} (user: {user_id}): {te}", exc_info=True)
+            # Continue to return what we have
+            
+        _record_submission(client_ip)
+        
+        if accepted_count > 0:
+            logger.debug(f"Accepted {accepted_count} telemetry entries from {client_ip} (user: {user_id})")
+        
+        return TelemetryResponse(
+            accepted=accepted_count,
+            message=f"Successfully accepted {accepted_count} telemetry entries"
         )
-
-    # Generate anonymized client ID (hash of IP + user agent)
-    import hashlib
-
-    user_agent = request.headers.get("user-agent", "")
-    client_id = hashlib.sha256(f"{client_ip}:{user_agent}".encode()).hexdigest()[:16]
-
-    # Convert entries to dict format
-    entries = [
-        {
-            "endpoint": e.endpoint,
-            "method": e.method.upper(),
-            "response_time_ms": e.response_time_ms,
-            "status_code": e.status_code,
-            "timestamp": e.timestamp or int(time.time() * 1000),
-        }
-        for e in submission.entries
-    ]
-
-    # Submit to telemetry module
-    try:
-        accepted = telemetry.submit_response_times(entries, client_id)
     except Exception as e:
-        logger.error(f"Failed to submit telemetry: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to record telemetry"
+        logger.error(f"Failed to process telemetry submission from {client_ip} (user: {user_id}): {e}", exc_info=True)
+        # Return success to client even if recording fails (don't break client app)
+        return TelemetryResponse(
+            accepted=0,
+            message="Telemetry processing failed"
         )
-
-    # Record for rate limiting
-    _record_submission(client_ip)
-
-    logger.debug(
-        f"Telemetry: accepted {accepted}/{len(entries)} entries from {client_id}"
-    )
-
-    return TelemetryResponse(
-        accepted=accepted,
-        message=f"Accepted {accepted} of {len(submission.entries)} entries",
-    )

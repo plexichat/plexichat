@@ -3,11 +3,12 @@ Version negotiation and server status endpoints.
 """
 
 import time
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, status
 from typing import Optional
 
 import utils.version as version_util
 from utils.version import InvalidVersionError
+import utils.logger as logger
 
 from ..schemas.version import (
     ServerVersionResponse,
@@ -34,42 +35,61 @@ _update_url: Optional[str] = None
 
 def _version_to_info(ver) -> VersionInfo:
     """Convert Version object to VersionInfo schema."""
-    return VersionInfo(
-        stage=ver.stage.value,
-        major=ver.major,
-        minor=ver.minor,
-        build=ver.build,
-        string=version_util.format_version(ver),
-    )
+    try:
+        return VersionInfo(
+            stage=ver.stage.value,
+            major=ver.major,
+            minor=ver.minor,
+            build=ver.build,
+            string=version_util.format_version(ver),
+        )
+    except Exception as e:
+        logger.error(f"Error converting version object: {e}")
+        return VersionInfo(
+            stage="unknown",
+            major=0,
+            minor=0,
+            build=0,
+            string="0.0.0",
+        )
 
 
-@router.get("/version", response_model=ServerVersionResponse)
-async def get_server_version():
+@router.get("/version", response_model=ServerVersionResponse, summary="Get server version")
+async def get_server_version() -> ServerVersionResponse:
     """
     Get server version information.
     
     Returns the current server version and minimum supported client version.
     Clients should call this on startup to verify compatibility.
     """
-    current = version_util.current()
-    min_supported = version_util.min_supported()
+    try:
+        current = version_util.current()
+        min_supported = version_util.min_supported()
 
-    return ServerVersionResponse(
-        version=_version_to_info(current),
-        min_supported_version=_version_to_info(min_supported) if min_supported else None,
-        api_version="v1",
-    )
+        return ServerVersionResponse(
+            version=_version_to_info(current),
+            min_supported_version=_version_to_info(min_supported) if min_supported else None,
+            api_version="v1",
+        )
+    except Exception as e:
+        logger.error(f"Error in get_server_version: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": 500, "message": str(e)}}
+        )
 
 
 @router.post(
     "/version/negotiate",
     response_model=VersionNegotiateResponse,
+    summary="Negotiate version",
     responses={
         400: {"model": VersionErrorResponse, "description": "Invalid version format"},
         426: {"model": VersionErrorResponse, "description": "Client update required"},
+        500: {"model": VersionErrorResponse, "description": "Internal server error"},
     },
 )
-async def negotiate_version(request: VersionNegotiateRequest):
+async def negotiate_version(request: VersionNegotiateRequest) -> VersionNegotiateResponse:
     """
     Negotiate version compatibility with the server.
     
@@ -77,81 +97,111 @@ async def negotiate_version(request: VersionNegotiateRequest):
     The server will indicate if an update is required or recommended.
     """
     try:
-        client_ver = version_util.parse(request.client_version)
-    except InvalidVersionError as e:
+        try:
+            client_ver = version_util.parse(request.client_version)
+        except InvalidVersionError as e:
+            logger.warning(f"Invalid version format negotiated: {request.client_version}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": {
+                        "code": "INVALID_VERSION_FORMAT",
+                        "message": str(e),
+                        "client_version": request.client_version,
+                    }
+                },
+            )
+
+        try:
+            server_ver = version_util.current()
+            min_supported = version_util.min_supported()
+
+            # Check compatibility
+            is_compatible = version_util.is_client_compatible(request.client_version)
+
+            # Determine if update is recommended (client is older than server)
+            update_recommended = False
+            if is_compatible:
+                comparison = version_util.compare(
+                    request.client_version,
+                    version_util.current_string()
+                )
+                update_recommended = comparison < 0
+
+            message = None
+            if not is_compatible:
+                min_version_str = version_util.format_version(min_supported) if min_supported else "latest"
+                message = (
+                    f"Client version {request.client_version} is no longer supported. "
+                    f"Please update to at least {min_version_str}."
+                )
+
+            response = VersionNegotiateResponse(
+                compatible=is_compatible,
+                server_version=_version_to_info(server_ver),
+                client_version=_version_to_info(client_ver),
+                min_supported_version=_version_to_info(min_supported) if min_supported else None,
+                update_required=not is_compatible,
+                update_recommended=update_recommended,
+                update_url=_update_url,
+                message=message,
+            )
+
+            if not is_compatible:
+                logger.info(f"Client version {request.client_version} is outdated. Min supported: {version_util.format_version(min_supported) if min_supported else 'N/A'}")
+                raise HTTPException(
+                    status_code=status.HTTP_426_UPGRADE_REQUIRED,
+                    detail={
+                        "error": {
+                            "code": "VERSION_OUTDATED",
+                            "message": response.message,
+                            "client_version": request.client_version,
+                            "min_version": version_util.format_version(min_supported) if min_supported is not None else None,
+                            "server_version": version_util.current_string(),
+                            "update_url": _update_url,
+                        }
+                    },
+                )
+
+            if update_recommended:
+                response.message = (
+                    f"A newer version ({version_util.current_string()}) is available. "
+                    "Consider updating for the latest features and fixes."
+                )
+            else:
+                response.message = "Client version is compatible."
+
+            return response
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error in negotiate_version business logic: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={
+                    "error": {
+                        "code": "INTERNAL_SERVER_ERROR",
+                        "message": f"Failed to negotiate version: {str(e)}"
+                    }
+                }
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in negotiate_version: {e}", exc_info=True)
         raise HTTPException(
-            status_code=400,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
                 "error": {
-                    "code": "INVALID_VERSION_FORMAT",
-                    "message": str(e),
-                    "client_version": request.client_version,
+                    "code": "INTERNAL_SERVER_ERROR",
+                    "message": str(e)
                 }
-            },
+            }
         )
 
-    server_ver = version_util.current()
-    min_supported = version_util.min_supported()
 
-    # Check compatibility
-    is_compatible = version_util.is_client_compatible(request.client_version)
-
-    # Determine if update is recommended (client is older than server)
-    update_recommended = False
-    if is_compatible:
-        comparison = version_util.compare(
-            request.client_version,
-            version_util.current_string()
-        )
-        update_recommended = comparison < 0
-
-    message = None
-    if not is_compatible:
-        min_version_str = version_util.format_version(min_supported) if min_supported else "latest"
-        message = (
-            f"Client version {request.client_version} is no longer supported. "
-            f"Please update to at least {min_version_str}."
-        )
-
-    response = VersionNegotiateResponse(
-        compatible=is_compatible,
-        server_version=_version_to_info(server_ver),
-        client_version=_version_to_info(client_ver),
-        min_supported_version=_version_to_info(min_supported) if min_supported else None,
-        update_required=not is_compatible,
-        update_recommended=update_recommended,
-        update_url=_update_url,
-        message=message,
-    )
-
-    if not is_compatible:
-        raise HTTPException(
-            status_code=426,  # Upgrade Required
-            detail={
-                "error": {
-                    "code": "VERSION_OUTDATED",
-                    "message": response.message,
-                    "client_version": request.client_version,
-                    "min_version": version_util.format_version(min_supported) if min_supported is not None else None,
-                    "server_version": version_util.current_string(),
-                    "update_url": _update_url,
-                }
-            },
-        )
-
-    if update_recommended:
-        response.message = (
-            f"A newer version ({version_util.current_string()}) is available. "
-            "Consider updating for the latest features and fixes."
-        )
-    else:
-        response.message = "Client version is compatible."
-
-    return response
-
-
-@router.get("/status", response_model=ServerStatusResponse)
-async def get_server_status():
+@router.get("/status", response_model=ServerStatusResponse, summary="Get server status")
+async def get_server_status() -> ServerStatusResponse:
     """
     Get current server status.
     
@@ -161,17 +211,24 @@ async def get_server_status():
     Recommended polling interval: 60 seconds during normal operation,
     5 seconds when state is not 'running'.
     """
-    current = version_util.current()
-    uptime = int(time.time() - _server_start_time)
+    try:
+        current = version_util.current()
+        uptime = int(time.time() - _server_start_time)
 
-    return ServerStatusResponse(
-        state=_server_state,
-        version=_version_to_info(current),
-        uptime_seconds=uptime,
-        maintenance_message=_maintenance_message,
-        estimated_downtime_seconds=_estimated_downtime,
-        restart_at=_restart_at,
-    )
+        return ServerStatusResponse(
+            state=_server_state,
+            version=_version_to_info(current),
+            uptime_seconds=uptime,
+            maintenance_message=_maintenance_message,
+            estimated_downtime_seconds=_estimated_downtime,
+            restart_at=_restart_at,
+        )
+    except Exception as e:
+        logger.error(f"Error in get_server_status: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": 500, "message": str(e)}}
+        )
 
 
 # Internal functions for server state management (called by system/admin)

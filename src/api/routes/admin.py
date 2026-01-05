@@ -12,74 +12,49 @@ in place (VPN, firewall, reverse proxy auth, etc.)
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Union
 import time
 
 import src.api as api
 import utils.config as config
 import utils.logger as logger
+from src.api.schemas.admin import (
+    AdminLoginRequest,
+    AdminLoginResponse,
+    OTPVerifyRequest,
+    TicketStatusUpdate,
+    InternalNoteCreate,
+    HashReportReviewRequest,
+    ManualBlockHashRequest,
+    TicketResponse,
+    NoteResponse,
+    AdminDashboardResponse,
+    TelemetryStatsResponse,
+    TelemetryHistoryResponse,
+    TelemetryResetResponse,
+    HashReportResponse,
+    HashReportCountsResponse,
+    BlockedHashResponse,
+    BlockUserRequest,
+    BlockedUserResponse,
+    UserTierUpdate,
+    UserSearchResponse,
+    UserSearchListResponse,
+    UserDetailsResponse,
+    UserTierUpdateResponse,
+    UserBadgeUpdateResponse,
+    HashReportReviewResponse,
+    BlockHashResponse,
+    BlockUserResponse,
+    TelemetryExportResponse,
+    AvailableTierInfo,
+    AvailableTiersResponse,
+    AvailableBadgesResponse,
+    TelemetryEndpointStat,
+)
+from src.api.schemas.common import ErrorResponse, SuccessResponse
 
-router = APIRouter(tags=["admin"])
-
-
-class AdminLoginRequest(BaseModel):
-    """Admin login request."""
-    username: str = Field(..., min_length=1, max_length=100)
-    password: str = Field(..., min_length=1, max_length=200)
-
-
-class OTPVerifyRequest(BaseModel):
-    """OTP verification request."""
-    admin_id: str  # String to avoid JavaScript precision loss with large integers
-    code: str = Field(..., min_length=6, max_length=8)
-    is_setup: bool = False
-
-
-class TicketStatusUpdate(BaseModel):
-    """Update ticket status."""
-    status: str = Field(..., pattern="^(open|in_progress|resolved|closed)$")
-
-
-class InternalNoteCreate(BaseModel):
-    """Create internal note."""
-    content: str = Field(..., min_length=1, max_length=2000)
-
-
-class HashReportReviewRequest(BaseModel):
-    """Review a hash report."""
-    action: str = Field(..., pattern="^(block|clear|dismiss)$")
-    notes: Optional[str] = Field(None, max_length=2000)
-
-
-class ManualBlockHashRequest(BaseModel):
-    """Manually block a hash."""
-    hash_value: str = Field(..., min_length=64, max_length=128)
-    reason: str = Field(..., min_length=1, max_length=500)
-
-
-class TicketResponse(BaseModel):
-    """Feedback ticket response."""
-    id: int
-    user_id: int
-    username: str
-    content: str
-    category: Optional[str]
-    rating: Optional[int]
-    status: str
-    created_at: int
-    resolved_at: Optional[int]
-    resolved_by: Optional[int]
-
-
-class NoteResponse(BaseModel):
-    """Admin note response."""
-    id: int
-    ticket_id: int
-    admin_id: int
-    admin_username: str
-    content: str
-    created_at: int
+router = APIRouter(tags=["Admin Management"])
 
 
 def _check_host_restriction(request: Request) -> None:
@@ -101,7 +76,10 @@ def _check_host_restriction(request: Request) -> None:
     admin_config = config.get("admin_ui", {})
 
     if not admin_config.get("enabled", False):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": 404, "message": "Not found"}}
+        )
 
     host_restriction = admin_config.get("host_restriction", {})
     if host_restriction.get("enabled", True):
@@ -111,7 +89,10 @@ def _check_host_restriction(request: Request) -> None:
         from src.core import admin
         if not admin.check_host_restriction(client_ip, allowed_hosts):
             logger.warning(f"Admin access denied from {client_ip}")
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": {"code": 403, "message": "Access denied"}}
+            )
 
     # Check origin if allowed_origins is configured
     allowed_origins = admin_config.get("allowed_origins", [])
@@ -119,14 +100,20 @@ def _check_host_restriction(request: Request) -> None:
         origin = request.headers.get("origin", "")
         if origin and origin not in allowed_origins:
             logger.warning(f"Admin access denied - origin {origin} not in allowed_origins")
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Origin not allowed")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": {"code": 403, "message": "Origin not allowed"}}
+            )
 
 
 def _get_admin_from_token(request: Request) -> int:
     """Get admin ID from Authorization header."""
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": {"code": 401, "message": "Invalid token"}}
+        )
 
     token = auth_header[7:]
     
@@ -156,57 +143,98 @@ def _get_admin_from_token(request: Request) -> int:
     admin_id = admin.validate_session(token)
 
     if not admin_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": {"code": 401, "message": "Invalid or expired token"}}
+        )
 
     return admin_id
 
 
 # ==================== Auth Routes ====================
 
-@router.post("/login")
+@router.post(
+    "/login",
+    response_model=AdminLoginResponse,
+    summary="Admin login",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid credentials"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def admin_login(
     request: Request,
     login_data: AdminLoginRequest
-):
+) -> AdminLoginResponse:
     """Admin login endpoint."""
     _check_host_restriction(request)
 
     from src.core import admin
 
-    client_ip = request.client.host if request.client else "unknown"
-    result = admin.login(login_data.username, login_data.password, client_ip)
+    try:
+        client_ip = request.client.host if request.client else "unknown"
+        result = admin.login(login_data.username, login_data.password, client_ip)
 
-    if not result.success:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=result.error)
+        if not result.success:
+            logger.warning(f"Admin login failed for user '{login_data.username}' from {client_ip}: {result.error}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"error": {"code": 401, "message": result.error}}
+            )
 
-    # If token is returned directly (OTP not required), login is complete
-    if result.token:
-        return {"status": "success", "token": result.token}
+        # If token is returned directly (OTP not required), login is complete
+        if result.token:
+            logger.info(f"Admin '{login_data.username}' logged in successfully")
+            return AdminLoginResponse(status="success", token=result.token)
 
-    if result.requires_otp_setup:
-        return {
-            "status": "otp_setup_required",
-            "admin_id": str(result.user_id),  # String to avoid JS precision loss
-            "otp_secret": result.otp_secret,
-            "otp_qr_uri": result.otp_qr_uri,
-            "message": "Scan the QR code with your authenticator app, then enter the code"
-        }
+        if result.requires_otp_setup:
+            logger.info(f"Admin '{login_data.username}' requires OTP setup")
+            return AdminLoginResponse(
+                status="otp_setup_required",
+                admin_id=str(result.user_id),  # String to avoid JS precision loss
+                otp_secret=result.otp_secret,
+                otp_qr_uri=result.otp_qr_uri,
+                message="Scan the QR code with your authenticator app, then enter the code"
+            )
 
-    if result.requires_otp_verify:
-        return {
-            "status": "otp_required",
-            "admin_id": str(result.user_id),  # String to avoid JS precision loss
-            "message": "Enter your 2FA code"
-        }
+        if result.requires_otp_verify:
+            logger.info(f"Admin '{login_data.username}' requires OTP verification")
+            return AdminLoginResponse(
+                status="otp_required",
+                admin_id=str(result.user_id),  # String to avoid JS precision loss
+                message="Enter your 2FA code"
+            )
 
-    return {"status": "success", "token": result.token}
+        logger.info(f"Admin '{login_data.username}' logged in successfully (default)")
+        return AdminLoginResponse(status="success", token=result.token)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in admin_login for '{login_data.username}': {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": str(e)}}
+        )
 
 
-@router.post("/verify-otp")
+@router.post(
+    "/verify-otp",
+    response_model=AdminLoginResponse,
+    summary="Verify admin OTP",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid admin_id"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired OTP code"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def verify_otp(
     request: Request,
     otp_data: OTPVerifyRequest
-):
+) -> AdminLoginResponse:
     """Verify OTP code for admin login."""
     _check_host_restriction(request)
 
@@ -216,190 +244,373 @@ async def verify_otp(
     try:
         admin_id = int(otp_data.admin_id)
     except ValueError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid admin_id")
+        logger.warning(f"Invalid admin_id format: {otp_data.admin_id}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": "Invalid admin_id"}}
+        )
 
-    if otp_data.is_setup:
-        result = admin.verify_otp_setup(admin_id, otp_data.code)
-    else:
-        result = admin.verify_otp(admin_id, otp_data.code)
+    try:
+        if otp_data.is_setup:
+            result = admin.verify_otp_setup(admin_id, otp_data.code)
+        else:
+            result = admin.verify_otp(admin_id, otp_data.code)
 
-    if not result.success:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=result.error)
+        if not result.success:
+            logger.warning(f"Admin OTP verification failed for admin {admin_id}: {result.error}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"error": {"code": 401, "message": result.error}}
+            )
 
-    return {"status": "success", "token": result.token}
+        logger.info(f"Admin {admin_id} OTP verified successfully")
+        return AdminLoginResponse(status="success", token=result.token)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in verify_otp for admin {admin_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": str(e)}}
+        )
 
 
-@router.post("/logout")
-async def admin_logout(request: Request):
+@router.post(
+    "/logout",
+    response_model=SuccessResponse,
+    summary="Admin logout",
+    responses={
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def admin_logout(request: Request) -> SuccessResponse:
     """Admin logout endpoint."""
     _check_host_restriction(request)
 
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        token = auth_header[7:]
-        from src.core import admin
-        admin.logout(token)
+    try:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+            from src.core import admin
+            admin.logout(token)
+            logger.info("Admin logged out successfully")
 
-    return {"success": True}
+        return SuccessResponse(success=True)
+    except Exception as e:
+        logger.error(f"Admin logout failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": str(e)}}
+        )
 
 
 # ==================== Dashboard Routes ====================
 
-@router.get("/dashboard")
-async def get_dashboard(request: Request):
+@router.get(
+    "/dashboard",
+    response_model=AdminDashboardResponse,
+    summary="Get admin dashboard data",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_dashboard(request: Request) -> AdminDashboardResponse:
     """Get admin dashboard data."""
     _check_host_restriction(request)
-    _get_admin_from_token(request)
+    admin_id = _get_admin_from_token(request)
 
     from src.core import admin
 
-    ticket_counts = admin.get_ticket_counts()
-
-    telemetry_stats = []
     try:
-        from src.core import telemetry
-        if telemetry.is_setup():
-            stats = telemetry.get_endpoint_stats(hours=24)
-            telemetry_stats = [
-                {
-                    "endpoint": s.endpoint,
-                    "method": s.method,
-                    "count": s.count,
-                    "avg_ms": round(s.avg_response_time_ms, 2),
-                    "p95_ms": round(s.p95_response_time_ms, 2),
-                    "error_rate": round(s.error_rate * 100, 2)
-                }
-                for s in stats[:20]
-            ]
-    except Exception:
-        pass
+        ticket_counts = admin.get_ticket_counts()
 
-    return {"tickets": ticket_counts, "telemetry": telemetry_stats}
+        telemetry_stats = []
+        try:
+            from src.core import telemetry
+            if telemetry.is_setup():
+                stats = telemetry.get_endpoint_stats(hours=24)
+                telemetry_stats = [
+                    TelemetryEndpointStat(
+                        endpoint=s.endpoint,
+                        method=s.method,
+                        count=s.count,
+                        avg_ms=round(s.avg_response_time_ms, 2),
+                        min_ms=round(getattr(s, "min_response_time_ms", 0), 2),
+                        max_ms=round(getattr(s, "max_response_time_ms", 0), 2),
+                        p50_ms=round(getattr(s, "p50_response_time_ms", 0), 2),
+                        p95_ms=round(s.p95_response_time_ms, 2),
+                        p99_ms=round(getattr(s, "p99_response_time_ms", 0), 2),
+                        error_rate=round(s.error_rate * 100, 2)
+                    )
+                    for s in stats[:20]
+                ]
+        except Exception as te:
+            logger.debug(f"Failed to get telemetry stats for dashboard: {te}")
+
+        logger.info(f"Admin {admin_id} retrieved dashboard data")
+        return AdminDashboardResponse(tickets=ticket_counts, telemetry=telemetry_stats)
+    except Exception as e:
+        logger.error(f"Failed to get dashboard data for admin {admin_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": str(e)}}
+        )
 
 
-@router.get("/tickets", response_model=List[TicketResponse])
+@router.get(
+    "/tickets",
+    response_model=List[TicketResponse],
+    summary="Get feedback tickets",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_tickets(
     request: Request,
     status_filter: Optional[str] = None,
     limit: int = 50,
     offset: int = 0
-):
+) -> List[TicketResponse]:
     """Get feedback tickets."""
     _check_host_restriction(request)
-    _get_admin_from_token(request)
+    admin_id = _get_admin_from_token(request)
 
     from src.core import admin
-    tickets = admin.get_feedback_tickets(status_filter, limit, offset)
+    
+    try:
+        tickets = admin.get_feedback_tickets(status_filter, limit, offset)
 
-    return [
-        TicketResponse(
-            id=t.id, user_id=t.user_id, username=t.username,
-            content=t.content, category=t.category, rating=t.rating,
-            status=t.status, created_at=t.created_at,
-            resolved_at=t.resolved_at, resolved_by=t.resolved_by
+        logger.debug(f"Admin {admin_id} retrieved {len(tickets)} tickets (status={status_filter})")
+        return [
+            TicketResponse(
+                id=t.id, user_id=t.user_id, username=t.username,
+                content=t.content, category=t.category, rating=t.rating,
+                status=t.status, created_at=t.created_at,
+                resolved_at=t.resolved_at, resolved_by=t.resolved_by
+            )
+            for t in tickets
+        ]
+    except Exception as e:
+        logger.error(f"Failed to get tickets for admin {admin_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": str(e)}}
         )
-        for t in tickets
-    ]
 
 
-@router.get("/tickets/{ticket_id}", response_model=TicketResponse)
-async def get_ticket(ticket_id: int, request: Request):
+@router.get(
+    "/tickets/{ticket_id}",
+    response_model=TicketResponse,
+    summary="Get a single ticket",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Ticket not found or Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_ticket(ticket_id: int, request: Request) -> TicketResponse:
     """Get a single ticket."""
     _check_host_restriction(request)
-    _get_admin_from_token(request)
+    admin_id = _get_admin_from_token(request)
 
     from src.core import admin
-    ticket = admin.get_ticket(ticket_id)
+    
+    try:
+        ticket = admin.get_ticket(ticket_id)
 
-    if not ticket:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+        if not ticket:
+            logger.warning(f"Ticket {ticket_id} not found (admin {admin_id})")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error": {"code": 404, "message": "Ticket not found"}}
+            )
 
-    return TicketResponse(
-        id=ticket.id, user_id=ticket.user_id, username=ticket.username,
-        content=ticket.content, category=ticket.category, rating=ticket.rating,
-        status=ticket.status, created_at=ticket.created_at,
-        resolved_at=ticket.resolved_at, resolved_by=ticket.resolved_by
-    )
+        return TicketResponse(
+            id=ticket.id, user_id=ticket.user_id, username=ticket.username,
+            content=ticket.content, category=ticket.category, rating=ticket.rating,
+            status=ticket.status, created_at=ticket.created_at,
+            resolved_at=ticket.resolved_at, resolved_by=ticket.resolved_by
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get ticket {ticket_id} for admin {admin_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": str(e)}}
+        )
 
 
-@router.patch("/tickets/{ticket_id}/status")
+@router.patch(
+    "/tickets/{ticket_id}/status",
+    response_model=SuccessResponse,
+    summary="Update ticket status",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Ticket not found or Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def update_ticket_status(
     ticket_id: int,
     update: TicketStatusUpdate,
     request: Request
-):
+) -> SuccessResponse:
     """Update ticket status."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
 
     from src.core import admin
 
-    if not admin.get_ticket(ticket_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    try:
+        if not admin.get_ticket(ticket_id):
+            logger.warning(f"Ticket {ticket_id} not found for status update (admin {admin_id})")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error": {"code": 404, "message": "Ticket not found"}}
+            )
 
-    admin.update_ticket_status(ticket_id, update.status, admin_id)
-    logger.info(f"Admin {admin_id} updated ticket {ticket_id} status to {update.status}")
+        admin.update_ticket_status(ticket_id, update.status, admin_id)
+        logger.info(f"Admin {admin_id} updated ticket {ticket_id} status to {update.status}")
 
-    return {"success": True, "status": update.status}
-
-
-@router.get("/tickets/{ticket_id}/notes", response_model=List[NoteResponse])
-async def get_ticket_notes(ticket_id: int, request: Request):
-    """Get internal notes for a ticket."""
-    _check_host_restriction(request)
-    _get_admin_from_token(request)
-
-    from src.core import admin
-
-    if not admin.get_ticket(ticket_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
-
-    notes = admin.get_ticket_notes(ticket_id)
-
-    return [
-        NoteResponse(
-            id=n.id, ticket_id=n.ticket_id, admin_id=n.admin_id,
-            admin_username=n.admin_username, content=n.content, created_at=n.created_at
+        return SuccessResponse(success=True)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update ticket {ticket_id} status by admin {admin_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": str(e)}}
         )
-        for n in notes
-    ]
 
 
-@router.post("/tickets/{ticket_id}/notes", response_model=NoteResponse)
-async def add_ticket_note(
-    ticket_id: int,
-    note: InternalNoteCreate,
-    request: Request
-):
-    """Add internal note to a ticket."""
+@router.get(
+    "/tickets/{ticket_id}/notes",
+    response_model=List[NoteResponse],
+    summary="Get internal notes for a ticket",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Ticket not found or Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_ticket_notes(ticket_id: int, request: Request) -> List[NoteResponse]:
+    """Get internal notes for a ticket."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
 
     from src.core import admin
 
-    if not admin.get_ticket(ticket_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    try:
+        if not admin.get_ticket(ticket_id):
+            logger.warning(f"Ticket {ticket_id} not found for notes retrieval (admin {admin_id})")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error": {"code": 404, "message": "Ticket not found"}}
+            )
 
-    new_note = admin.add_internal_note(ticket_id, admin_id, note.content)
-    logger.info(f"Admin {admin_id} added note to ticket {ticket_id}")
+        notes = admin.get_ticket_notes(ticket_id)
 
-    if new_note is None:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create note")
+        return [
+            NoteResponse(
+                id=n.id, ticket_id=n.ticket_id, admin_id=n.admin_id,
+                admin_username=n.admin_username, content=n.content, created_at=n.created_at
+            )
+            for n in notes
+        ]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get ticket {ticket_id} notes for admin {admin_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": str(e)}}
+        )
 
-    return NoteResponse(
-        id=new_note.id, ticket_id=new_note.ticket_id, admin_id=new_note.admin_id,
-        admin_username=new_note.admin_username, content=new_note.content,
-        created_at=new_note.created_at
-    )
+
+@router.post(
+    "/tickets/{ticket_id}/notes",
+    response_model=NoteResponse,
+    summary="Add internal note to a ticket",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Ticket not found or Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def add_ticket_note(
+    ticket_id: int,
+    note: InternalNoteCreate,
+    request: Request
+) -> NoteResponse:
+    """Add an internal note to a ticket."""
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
+
+    from src.core import admin
+
+    try:
+        if not admin.get_ticket(ticket_id):
+            logger.warning(f"Ticket {ticket_id} not found for note addition (admin {admin_id})")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error": {"code": 404, "message": "Ticket not found"}}
+            )
+
+        new_note = admin.add_internal_note(ticket_id, admin_id, note.content)
+        
+        if new_note is None:
+            logger.error(f"Failed to create note for ticket {ticket_id} by admin {admin_id}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={"error": {"code": 500, "message": "Failed to create note"}}
+            )
+
+        logger.info(f"Admin {admin_id} added note to ticket {ticket_id}")
+        return NoteResponse(
+            id=new_note.id, ticket_id=new_note.ticket_id, admin_id=new_note.admin_id,
+            admin_username=new_note.admin_username, content=new_note.content,
+            created_at=new_note.created_at
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to add note to ticket {ticket_id} by admin {admin_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
 
 
-@router.get("/telemetry/stats")
+@router.get(
+    "/telemetry/stats",
+    response_model=TelemetryStatsResponse,
+    summary="Get telemetry statistics",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_telemetry_stats(
     request: Request,
     hours: int = 24,
     endpoint: Optional[str] = None,
     source: Optional[str] = None
-):
+) -> TelemetryStatsResponse:
     """
     Get telemetry statistics.
     
@@ -409,12 +620,13 @@ async def get_telemetry_stats(
         source: Optional source filter - "server" for server-side only, "client" for client-side only
     """
     _check_host_restriction(request)
-    _get_admin_from_token(request)
+    admin_id = _get_admin_from_token(request)
 
     try:
         from src.core import telemetry
         if not telemetry.is_setup():
-            return {"stats": [], "message": "Telemetry not initialized"}
+            logger.info(f"Admin {admin_id} requested telemetry stats but telemetry is not setup")
+            return TelemetryStatsResponse(stats=[], source=source or "all")
 
         # Map source to client_id filter
         client_id_filter = None
@@ -422,7 +634,6 @@ async def get_telemetry_stats(
             client_id_filter = "server"
         elif source == "client":
             # For client, we want everything except server
-            # This requires a different approach - for now, just return all
             pass
 
         stats = telemetry.get_endpoint_stats(
@@ -434,44 +645,60 @@ async def get_telemetry_stats(
         # Normalize emoji endpoints for display
         import urllib.parse
 
-        return {
-            "stats": [
-                {
-                    "endpoint": urllib.parse.unquote(s.endpoint),
-                    "method": s.method,
-                    "count": s.count,
-                    "avg_ms": round(s.avg_response_time_ms, 2),
-                    "min_ms": round(s.min_response_time_ms, 2),
-                    "max_ms": round(s.max_response_time_ms, 2),
-                    "p50_ms": round(s.p50_response_time_ms, 2),
-                    "p95_ms": round(s.p95_response_time_ms, 2),
-                    "p99_ms": round(s.p99_response_time_ms, 2),
-                    "error_rate": round(s.error_rate * 100, 2)
-                }
+        logger.debug(f"Admin {admin_id} retrieved {len(stats)} telemetry stats")
+        return TelemetryStatsResponse(
+            stats=[
+                TelemetryEndpointStat(
+                    endpoint=urllib.parse.unquote(s.endpoint),
+                    method=s.method,
+                    count=s.count,
+                    avg_ms=round(s.avg_response_time_ms, 2),
+                    min_ms=round(getattr(s, "min_response_time_ms", 0), 2),
+                    max_ms=round(getattr(s, "max_response_time_ms", 0), 2),
+                    p50_ms=round(getattr(s, "p50_response_time_ms", 0), 2),
+                    p95_ms=round(s.p95_response_time_ms, 2),
+                    p99_ms=round(getattr(s, "p99_response_time_ms", 0), 2),
+                    error_rate=round(s.error_rate * 100, 2)
+                )
                 for s in stats
             ],
-            "source": source or "all"
-        }
-    except ImportError:
-        return {"stats": [], "message": "Telemetry module not available"}
+            source=source or "all"
+        )
+    except Exception as e:
+        logger.error(f"Failed to get telemetry stats for admin {admin_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
 
 
-@router.get("/telemetry/history")
+@router.get(
+    "/telemetry/history",
+    response_model=TelemetryHistoryResponse,
+    summary="Get telemetry history for an endpoint",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_telemetry_history(
     request: Request,
     endpoint: str,
     method: str = "GET",
     hours: int = 24,
     bucket_minutes: int = 5
-):
+) -> TelemetryHistoryResponse:
     """Get telemetry history for an endpoint."""
     _check_host_restriction(request)
-    _get_admin_from_token(request)
+    admin_id = _get_admin_from_token(request)
 
     try:
         from src.core import telemetry
         if not telemetry.is_setup():
-            return {"history": [], "message": "Telemetry not initialized"}
+            logger.info(f"Admin {admin_id} requested telemetry history but telemetry is not setup")
+            return TelemetryHistoryResponse(history=[])
 
         history = telemetry.get_response_time_history(
             endpoint=endpoint,
@@ -480,13 +707,28 @@ async def get_telemetry_history(
             bucket_minutes=bucket_minutes
         )
 
-        return {"history": history}
-    except ImportError:
-        return {"history": [], "message": "Telemetry module not available"}
+        logger.debug(f"Admin {admin_id} retrieved telemetry history for {method} {endpoint}")
+        return TelemetryHistoryResponse(history=history)
+    except Exception as e:
+        logger.error(f"Failed to get telemetry history for {method} {endpoint} (admin {admin_id}): {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
 
 
-@router.post("/telemetry/reset")
-async def reset_telemetry_stats(request: Request):
+@router.post(
+    "/telemetry/reset",
+    response_model=TelemetryResetResponse,
+    summary="Reset all telemetry statistics",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def reset_telemetry_stats(request: Request) -> TelemetryResetResponse:
     """Reset all telemetry statistics."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
@@ -494,22 +736,46 @@ async def reset_telemetry_stats(request: Request):
     try:
         from src.core import telemetry
         if not telemetry.is_setup():
-            return {"success": False, "message": "Telemetry not initialized"}
+            logger.info(f"Admin {admin_id} requested telemetry reset but telemetry is not setup")
+            return TelemetryResetResponse(success=False, deleted_count=0)
 
         deleted_count = telemetry.reset_all_stats()
         logger.info(f"Admin {admin_id} reset telemetry stats, deleted {deleted_count} records")
 
-        return {"success": True, "deleted_count": deleted_count}
-    except ImportError:
-        return {"success": False, "message": "Telemetry module not available"}
+        return TelemetryResetResponse(success=True, deleted_count=deleted_count)
+    except Exception as e:
+        logger.error(f"Failed to reset telemetry stats by admin {admin_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
 
 
-@router.get("/telemetry/export")
+@router.get(
+    "/telemetry/export",
+    response_model=TelemetryExportResponse,
+    summary="Export telemetry statistics",
+    responses={
+        200: {
+            "description": "Exported statistics in the requested format",
+            "content": {
+                "application/json": {"schema": {"$ref": "#/components/schemas/TelemetryExportResponse"}},
+                "text/csv": {"schema": {"type": "string"}},
+                "text/plain": {"schema": {"type": "string"}},
+                "text/html": {"schema": {"type": "string"}},
+            }
+        },
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def export_telemetry_stats(
     request: Request,
     format: str = "json",
     hours: int = 24
-):
+) -> Union[TelemetryExportResponse, Response]:
     """
     Export telemetry statistics in various formats.
     
@@ -518,36 +784,42 @@ async def export_telemetry_stats(
         hours: Number of hours to include
     """
     _check_host_restriction(request)
-    _get_admin_from_token(request)
+    admin_id = _get_admin_from_token(request)
 
     try:
         from src.core import telemetry
         if not telemetry.is_setup():
-            raise HTTPException(status_code=500, detail="Telemetry not initialized")
+            logger.error(f"Admin {admin_id} requested telemetry export but telemetry is not setup")
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Telemetry not initialized"}}
+            )
 
         stats = telemetry.get_endpoint_stats(hours=hours)
         export_time = time.strftime('%Y-%m-%d %H:%M:%S')
 
+        logger.info(f"Admin {admin_id} exporting telemetry stats (format={format}, hours={hours})")
+
         if format == "json":
-            return {
-                "export_time": export_time,
-                "hours": hours,
-                "stats": [
-                    {
-                        "endpoint": s.endpoint,
-                        "method": s.method,
-                        "count": s.count,
-                        "avg_ms": round(s.avg_response_time_ms, 2),
-                        "min_ms": round(s.min_response_time_ms, 2),
-                        "max_ms": round(s.max_response_time_ms, 2),
-                        "p50_ms": round(s.p50_response_time_ms, 2),
-                        "p95_ms": round(s.p95_response_time_ms, 2),
-                        "p99_ms": round(s.p99_response_time_ms, 2),
-                        "error_rate": round(s.error_rate * 100, 2)
-                    }
+            return TelemetryExportResponse(
+                export_time=export_time,
+                hours=hours,
+                stats=[
+                    TelemetryEndpointStat(
+                        endpoint=s.endpoint,
+                        method=s.method,
+                        count=s.count,
+                        avg_ms=round(s.avg_response_time_ms, 2),
+                        min_ms=round(s.min_response_time_ms, 2),
+                        max_ms=round(s.max_response_time_ms, 2),
+                        p50_ms=round(s.p50_response_time_ms, 2),
+                        p95_ms=round(s.p95_response_time_ms, 2),
+                        p99_ms=round(s.p99_response_time_ms, 2),
+                        error_rate=round(s.error_rate * 100, 2)
+                    )
                     for s in stats
                 ]
-            }
+            )
 
         elif format == "csv":
             import csv
@@ -674,438 +946,804 @@ async def export_telemetry_stats(
             )
 
         else:
-            raise HTTPException(status_code=400, detail=f"Unsupported format: {format}. Use json, csv, txt, or html")
+            logger.warning(f"Admin {admin_id} requested unsupported export format: {format}")
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": f"Unsupported format: {format}. Use json, csv, txt, or html"}}
+            )
 
+    except HTTPException:
+        raise
     except ImportError:
-        raise HTTPException(status_code=500, detail="Telemetry module not available")
+        logger.error(f"Telemetry module not available for admin {admin_id}")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
+    except Exception as e:
+        logger.error(f"Failed to export telemetry stats for admin {admin_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
 
 
 # ==================== Hash Reports Routes ====================
 
-@router.get("/hash-reports")
+@router.get(
+    "/hash-reports",
+    response_model=List[HashReportResponse],
+    summary="Get hash reports",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_hash_reports(
     request: Request,
     status_filter: Optional[str] = None,
     limit: int = 50,
     offset: int = 0
-):
+) -> List[HashReportResponse]:
     """Get hash reports for admin review with image preview support."""
     _check_host_restriction(request)
-    _get_admin_from_token(request)
+    admin_id = _get_admin_from_token(request)
 
     from src.core import admin
-    reports = admin.get_hash_reports(status_filter, limit, offset)
+    try:
+        reports = admin.get_hash_reports(status_filter, limit, offset)
+        logger.debug(f"Admin {admin_id} retrieved {len(reports)} hash reports (filter={status_filter})")
 
-    return [
-        {
-            "id": r.id,
-            "hash_value": r.hash_value,
-            "phash_value": r.phash_value,
-            "reporter_id": r.reporter_id,
-            "reporter_username": r.reporter_username,
-            "reason": r.reason,
-            "details": r.details,
-            "status": r.status,
-            "reported_at": r.reported_at,
-            "reviewed_at": r.reviewed_at,
-            "reviewed_by": r.reviewed_by,
-            "admin_notes": r.admin_notes,
-            "uploader_id": r.uploader_id,
-            "message_id": r.message_id,
-            "attachment_url": r.attachment_url,
-            "block_uploader": r.block_uploader
-        }
-        for r in reports
-    ]
+        return [
+            HashReportResponse(
+                id=r.id,
+                hash_value=r.hash_value,
+                phash_value=r.phash_value,
+                reporter_id=r.reporter_id,
+                reporter_username=r.reporter_username,
+                reason=r.reason,
+                details=r.details,
+                status=r.status,
+                reported_at=r.reported_at,
+                reviewed_at=r.reviewed_at,
+                reviewed_by=r.reviewed_by,
+                admin_notes=r.admin_notes,
+                uploader_id=r.uploader_id,
+                message_id=r.message_id,
+                attachment_url=r.attachment_url,
+                block_uploader=r.block_uploader
+            )
+            for r in reports
+        ]
+    except Exception as e:
+        logger.error(f"Failed to get hash reports for admin {admin_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
 
 
-@router.get("/hash-reports/counts")
-async def get_hash_report_counts(request: Request):
+@router.get(
+    "/hash-reports/counts",
+    response_model=HashReportCountsResponse,
+    summary="Get hash report counts",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_hash_report_counts(request: Request) -> HashReportCountsResponse:
     """Get counts of hash reports by status."""
     _check_host_restriction(request)
-    _get_admin_from_token(request)
+    admin_id = _get_admin_from_token(request)
 
     from src.core import admin
-    return admin.get_hash_report_counts()
+    try:
+        counts = admin.get_hash_report_counts()
+        logger.debug(f"Admin {admin_id} retrieved hash report counts")
+        return HashReportCountsResponse(**counts)
+    except Exception as e:
+        logger.error(f"Failed to get hash report counts for admin {admin_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
 
 
-@router.post("/hash-reports/{report_id}/review")
+@router.post(
+    "/hash-reports/{report_id}/review",
+    response_model=HashReportReviewResponse,
+    summary="Review a hash report",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Report not found or Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def review_hash_report(
     report_id: int,
     review: HashReportReviewRequest,
     request: Request
-):
+) -> HashReportReviewResponse:
     """Review a hash report (block, clear, or dismiss)."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
 
     from src.core import admin
 
-    success = admin.review_hash_report(report_id, admin_id, review.action, review.notes)
+    try:
+        success = admin.review_hash_report(report_id, admin_id, review.action, review.notes)
 
-    if not success:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+        if not success:
+            logger.warning(f"Hash report {report_id} not found for review by admin {admin_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error": {"code": 404, "message": "Report not found"}}
+            )
 
-    logger.info(f"Admin {admin_id} reviewed hash report {report_id}: {review.action}")
+        logger.info(f"Admin {admin_id} reviewed hash report {report_id}: {review.action}")
 
-    return {"success": True, "action": review.action}
+        return HashReportReviewResponse(success=True, action=review.action)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to review hash report {report_id} by admin {admin_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
 
 
-@router.get("/blocked-hashes")
+@router.get(
+    "/blocked-hashes",
+    response_model=List[BlockedHashResponse],
+    summary="Get blocked hashes",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_blocked_hashes(
     request: Request,
     limit: int = 100,
     offset: int = 0
-):
+) -> List[BlockedHashResponse]:
     """Get list of blocked hashes."""
     _check_host_restriction(request)
-    _get_admin_from_token(request)
+    admin_id = _get_admin_from_token(request)
 
     from src.core import admin
-    hashes = admin.get_blocked_hashes(limit, offset)
+    try:
+        hashes = admin.get_blocked_hashes(limit, offset)
+        logger.debug(f"Admin {admin_id} retrieved {len(hashes)} blocked hashes")
 
-    return [
-        {
-            "hash_value": h.hash_value,
-            "reason": h.reason,
-            "blocked_at": h.blocked_at,
-            "blocked_by": h.blocked_by,
-            "auto_blocked": h.auto_blocked,
-            "hash_type": h.hash_type,
-            "phash_threshold": h.phash_threshold
-        }
-        for h in hashes
-    ]
+        return [
+            BlockedHashResponse(
+                hash_value=h.hash_value,
+                reason=h.reason,
+                blocked_at=h.blocked_at,
+                blocked_by=h.blocked_by,
+                auto_blocked=h.auto_blocked,
+                hash_type=h.hash_type,
+                phash_threshold=h.phash_threshold
+            )
+            for h in hashes
+        ]
+    except Exception as e:
+        logger.error(f"Failed to get blocked hashes for admin {admin_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
 
 
-@router.post("/blocked-hashes")
+@router.post(
+    "/blocked-hashes",
+    response_model=BlockHashResponse,
+    summary="Manually block a hash",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def block_hash_manually(
     block_request: ManualBlockHashRequest,
     request: Request
-):
+) -> BlockHashResponse:
     """Manually block a hash (SHA-256 or pHash)."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
 
     from src.core import admin
 
-    # Determine hash type based on length (pHash is typically 16 chars, SHA-256 is 64)
-    hash_type = "phash" if len(block_request.hash_value) <= 32 else "sha256"
-    phash_threshold = 10 if hash_type == "phash" else 0
+    try:
+        # Determine hash type based on length (pHash is typically 16 chars, SHA-256 is 64)
+        hash_type = "phash" if len(block_request.hash_value) <= 32 else "sha256"
+        phash_threshold = 10 if hash_type == "phash" else 0
 
-    success = admin.block_hash(
-        block_request.hash_value,
-        block_request.reason,
-        admin_id,
-        hash_type=hash_type,
-        phash_threshold=phash_threshold
-    )
+        success = admin.block_hash(
+            block_request.hash_value,
+            block_request.reason,
+            admin_id,
+            hash_type=hash_type,
+            phash_threshold=phash_threshold
+        )
 
-    if not success:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to block hash")
+        if not success:
+            logger.error(f"Failed to manually block {hash_type} hash by admin {admin_id}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={"error": {"code": 500, "message": "Failed to block hash"}}
+            )
 
-    logger.info(f"Admin {admin_id} manually blocked {hash_type} hash {block_request.hash_value[:16]}...")
+        logger.info(f"Admin {admin_id} manually blocked {hash_type} hash {block_request.hash_value[:16]}...")
 
-    return {"success": True, "hash_value": block_request.hash_value, "hash_type": hash_type}
+        return BlockHashResponse(success=True, hash_value=block_request.hash_value, hash_type=hash_type)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to manually block hash by admin {admin_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
 
 
-@router.delete("/blocked-hashes/{hash_value}")
+@router.delete(
+    "/blocked-hashes/{hash_value}",
+    response_model=SuccessResponse,
+    summary="Unblock a hash",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def unblock_hash(
     hash_value: str,
     request: Request
-):
+) -> SuccessResponse:
     """Unblock a hash."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
 
     from src.core import admin
 
-    success = admin.unblock_hash(hash_value)
+    try:
+        success = admin.unblock_hash(hash_value)
 
-    if not success:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to unblock hash")
+        if not success:
+            logger.warning(f"Failed to unblock hash {hash_value[:16]}... by admin {admin_id}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={"error": {"code": 500, "message": "Failed to unblock hash"}}
+            )
 
-    logger.info(f"Admin {admin_id} unblocked hash {hash_value[:16]}...")
-
-    return {"success": True}
+        logger.info(f"Admin {admin_id} unblocked hash {hash_value[:16]}...")
+        return SuccessResponse(success=True)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to unblock hash {hash_value[:16]}... by admin {admin_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
 
 
 # ==================== Blocked Users (Media Uploads) ====================
 
-class BlockUserRequest(BaseModel):
-    """Block a user from uploading media."""
-    user_id: int = Field(..., description="User ID to block")
-    reason: str = Field(..., min_length=1, max_length=500, description="Reason for blocking")
-    duration_hours: Optional[int] = Field(None, description="Duration in hours (None = permanent)")
-
-
-@router.get("/blocked-users")
+@router.get(
+    "/blocked-users",
+    response_model=List[BlockedUserResponse],
+    summary="Get blocked users",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_blocked_users(
     request: Request,
     limit: int = 100,
     offset: int = 0
-):
+) -> List[BlockedUserResponse]:
     """Get list of users blocked from uploading media."""
     _check_host_restriction(request)
-    _get_admin_from_token(request)
+    admin_id = _get_admin_from_token(request)
 
     from src.core import admin
-    users = admin.get_blocked_users(limit, offset)
+    try:
+        users = admin.get_blocked_users(limit, offset)
+        logger.debug(f"Admin {admin_id} retrieved {len(users)} blocked users")
 
-    return [
-        {
-            "user_id": u.user_id,
-            "username": u.username,
-            "reason": u.reason,
-            "blocked_at": u.blocked_at,
-            "blocked_by": u.blocked_by,
-            "expires_at": u.expires_at
-        }
-        for u in users
-    ]
+        return [
+            BlockedUserResponse(
+                user_id=u.user_id,
+                username=u.username,
+                reason=u.reason,
+                blocked_at=u.blocked_at,
+                blocked_by=u.blocked_by,
+                expires_at=u.expires_at
+            )
+            for u in users
+        ]
+    except Exception as e:
+        logger.error(f"Failed to get blocked users for admin {admin_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
 
 
-@router.post("/blocked-users")
+@router.post(
+    "/blocked-users",
+    response_model=BlockUserResponse,
+    summary="Block a user from uploading",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def block_user(
     block_request: BlockUserRequest,
     request: Request
-):
+) -> BlockUserResponse:
     """Block a user from uploading media."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
 
     from src.core import admin
 
-    success = admin.block_user(
-        block_request.user_id,
-        block_request.reason,
-        admin_id,
-        block_request.duration_hours
-    )
+    try:
+        success = admin.block_user(
+            block_request.user_id,
+            block_request.reason,
+            admin_id,
+            block_request.duration_hours
+        )
 
-    if not success:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to block user")
+        if not success:
+            logger.error(f"Failed to block user {block_request.user_id} by admin {admin_id}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={"error": {"code": 500, "message": "Failed to block user"}}
+            )
 
-    logger.info(f"Admin {admin_id} blocked user {block_request.user_id} from uploads")
+        logger.info(f"Admin {admin_id} blocked user {block_request.user_id} from uploads")
 
-    return {"success": True, "user_id": block_request.user_id}
+        return BlockUserResponse(success=True, user_id=block_request.user_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to block user {block_request.user_id} by admin {admin_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
 
 
-@router.delete("/blocked-users/{user_id}")
+@router.delete(
+    "/blocked-users/{user_id}",
+    response_model=SuccessResponse,
+    summary="Unblock a user from uploading",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def unblock_user(
     user_id: int,
     request: Request
-):
+) -> SuccessResponse:
     """Unblock a user from uploading media."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
 
     from src.core import admin
 
-    success = admin.unblock_user(user_id)
+    try:
+        success = admin.unblock_user(user_id)
 
-    if not success:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to unblock user")
+        if not success:
+            logger.warning(f"Failed to unblock user {user_id} by admin {admin_id}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={"error": {"code": 500, "message": "Failed to unblock user"}}
+            )
 
-    logger.info(f"Admin {admin_id} unblocked user {user_id} from uploads")
+        logger.info(f"Admin {admin_id} unblocked user {user_id} from uploads")
 
-    return {"success": True}
+        return SuccessResponse(success=True)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to unblock user {user_id} by admin {admin_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
 
 
 # ==================== User Tier Management ====================
 
-class UserTierUpdate(BaseModel):
-    """Update user tier."""
-    tier: str = Field(..., pattern="^(free|alpha|beta|premium|staff)$")
-
-
-class UserSearchResponse(BaseModel):
-    """User search result."""
-    id: str
-    username: str
-    email: Optional[str]
-    tier: str
-    badges: List[str]
-    created_at: int
-
-
-@router.get("/users/search")
+@router.get(
+    "/users/search",
+    response_model=UserSearchListResponse,
+    summary="Search users",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def admin_user_search(
     q: str,
     request: Request,
     limit: int = 20,
     offset: int = 0
-):
+) -> UserSearchListResponse:
     """Search users by username or ID."""
     _check_host_restriction(request)
-    _get_admin_from_token(request)
+    admin_id = _get_admin_from_token(request)
 
     if not q or len(q) < 2:
-        return {"users": []}
+        return UserSearchListResponse(users=[])
 
-    admin_core = api.get_admin()
-    if not admin_core:
-        raise HTTPException(status_code=500, detail="Admin module not available")
+    try:
+        admin_core = api.get_admin()
+        if not admin_core:
+            logger.error(f"Admin module not available for user search (admin {admin_id})")
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Internal server error"}}
+            )
 
-    users_data = admin_core.search_users(q, limit, offset)
-    
-    users = []
-    for user in users_data:
-        users.append({
-            "id": str(user.id),
-            "username": user.username,
-            "email": user.email,
-            "tier": user.tier,
-            "badges": user.badges,
-            "created_at": user.created_at
-        })
+        users_data = admin_core.search_users(q, limit, offset)
+        logger.debug(f"Admin {admin_id} searched users with query '{q}', found {len(users_data)} results")
+        
+        users = []
+        for user in users_data:
+            users.append(UserSearchResponse(
+                id=str(user.id),
+                username=user.username,
+                email=user.email,
+                tier=user.tier,
+                badges=user.badges,
+                created_at=user.created_at
+            ))
 
-    return {"users": users}
+        return UserSearchListResponse(users=users)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to search users with query '{q}' (admin {admin_id}): {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
 
 
-@router.get("/users/{user_id}")
+@router.get(
+    "/users/{user_id}",
+    response_model=UserDetailsResponse,
+    summary="Get user details",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "User not found or Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_user_details(
     user_id: int,
     request: Request
-):
+) -> UserDetailsResponse:
     """Get user details by ID."""
     _check_host_restriction(request)
-    _get_admin_from_token(request)
+    admin_id = _get_admin_from_token(request)
 
-    admin_core = api.get_admin()
-    if not admin_core:
-        raise HTTPException(status_code=500, detail="Admin module not available")
+    try:
+        admin_core = api.get_admin()
+        if not admin_core:
+            logger.error(f"Admin module not available for user details (admin {admin_id})")
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Internal server error"}}
+            )
 
-    user = admin_core.get_user_details(user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        user = admin_core.get_user_details(user_id)
+        if not user:
+            logger.warning(f"Admin {admin_id} requested details for non-existent user {user_id}")
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "User not found"}}
+            )
 
-    return {
-        "id": str(user.id),
-        "username": user.username,
-        "email": user.email,
-        "tier": user.tier,
-        "badges": user.badges,
-        "created_at": user.created_at,
-        "last_login": user.last_login
-    }
+        logger.debug(f"Admin {admin_id} retrieved details for user {user_id}")
+
+        return UserDetailsResponse(
+            id=str(user.id),
+            username=user.username,
+            email=user.email,
+            tier=user.tier,
+            badges=user.badges,
+            created_at=user.created_at,
+            last_login=user.last_login
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get user details for {user_id} (admin {admin_id}): {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
 
 
-@router.put("/users/{user_id}/tier")
+@router.put(
+    "/users/{user_id}/tier",
+    response_model=UserTierUpdateResponse,
+    summary="Update user tier",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid user ID"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "User not found or Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def update_user_tier(
     user_id: str,
     update: UserTierUpdate,
     request: Request
-):
+) -> UserTierUpdateResponse:
     """Update a user's tier."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
 
     try:
-        uid = int(user_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid user ID")
+        try:
+            uid = int(user_id)
+        except ValueError:
+            logger.warning(f"Admin {admin_id} provided invalid user ID for tier update: {user_id}")
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid user ID"}}
+            )
 
-    admin_core = api.get_admin()
-    if not admin_core:
-        raise HTTPException(status_code=500, detail="Admin module not available")
+        admin_core = api.get_admin()
+        if not admin_core:
+            logger.error(f"Admin module not available for tier update (admin {admin_id})")
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Internal server error"}}
+            )
 
-    success = admin_core.update_user_tier(uid, update.tier)
-    if not success:
-        raise HTTPException(status_code=404, detail="User not found")
+        success = admin_core.update_user_tier(uid, update.tier)
+        if not success:
+            logger.warning(f"Admin {admin_id} failed to update tier for non-existent user {uid}")
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "User not found"}}
+            )
 
-    logger.info(f"Admin {admin_id} updated user {uid} tier to {update.tier}")
+        logger.info(f"Admin {admin_id} updated user {uid} tier to {update.tier}")
 
-    return {"success": True, "user_id": user_id, "tier": update.tier}
+        return UserTierUpdateResponse(success=True, user_id=user_id, tier=update.tier)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update user {user_id} tier (admin {admin_id}): {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
 
 
-@router.post("/users/{user_id}/badges/{badge}")
+@router.post(
+    "/users/{user_id}/badges/{badge}",
+    response_model=UserBadgeUpdateResponse,
+    summary="Add user badge",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid user ID"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "User not found or Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def add_user_badge(
     user_id: str,
     badge: str,
     request: Request
-):
+) -> UserBadgeUpdateResponse:
     """Add a badge to a user."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
 
     try:
-        uid = int(user_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid user ID")
+        try:
+            uid = int(user_id)
+        except ValueError:
+            logger.warning(f"Admin {admin_id} provided invalid user ID for badge add: {user_id}")
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid user ID"}}
+            )
 
-    admin_core = api.get_admin()
-    if not admin_core:
-        raise HTTPException(status_code=500, detail="Admin module not available")
+        admin_core = api.get_admin()
+        if not admin_core:
+            logger.error(f"Admin module not available for badge add (admin {admin_id})")
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Internal server error"}}
+            )
 
-    badges = admin_core.add_user_badge(uid, badge)
-    if badges is None:
-        raise HTTPException(status_code=404, detail="User not found")
+        badges = admin_core.add_user_badge(uid, badge)
+        if badges is None:
+            logger.warning(f"Admin {admin_id} failed to add badge '{badge}' to non-existent user {uid}")
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "User not found"}}
+            )
 
-    logger.info(f"Admin {admin_id} added badge '{badge}' to user {uid}")
+        logger.info(f"Admin {admin_id} added badge '{badge}' to user {uid}")
 
-    return {"success": True, "badges": badges}
+        return UserBadgeUpdateResponse(success=True, badges=badges)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to add badge '{badge}' to user {user_id} (admin {admin_id}): {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
 
 
-@router.delete("/users/{user_id}/badges/{badge}")
+@router.delete(
+    "/users/{user_id}/badges/{badge}",
+    response_model=UserBadgeUpdateResponse,
+    summary="Remove user badge",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid user ID"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "User not found or Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def remove_user_badge(
     user_id: str,
     badge: str,
     request: Request
-):
+) -> UserBadgeUpdateResponse:
     """Remove a badge from a user."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
 
     try:
-        uid = int(user_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid user ID")
+        try:
+            uid = int(user_id)
+        except ValueError:
+            logger.warning(f"Admin {admin_id} provided invalid user ID for badge removal: {user_id}")
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid user ID"}}
+            )
 
-    admin_core = api.get_admin()
-    if not admin_core:
-        raise HTTPException(status_code=500, detail="Admin module not available")
+        admin_core = api.get_admin()
+        if not admin_core:
+            logger.error(f"Admin module not available for badge removal (admin {admin_id})")
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Internal server error"}}
+            )
 
-    badges = admin_core.remove_user_badge(uid, badge)
-    if badges is None:
-        raise HTTPException(status_code=404, detail="User not found")
+        badges = admin_core.remove_user_badge(uid, badge)
+        if badges is None:
+            logger.warning(f"Admin {admin_id} failed to remove badge '{badge}' from non-existent user {uid}")
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "User not found"}}
+            )
 
-    logger.info(f"Admin {admin_id} removed badge '{badge}' from user {uid}")
+        logger.info(f"Admin {admin_id} removed badge '{badge}' from user {uid}")
 
-    return {"success": True, "badges": badges}
+        return UserBadgeUpdateResponse(success=True, badges=badges)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to remove badge '{badge}' from user {user_id} (admin {admin_id}): {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
 
 
-@router.get("/tiers")
-async def get_available_tiers(request: Request):
+@router.get(
+    "/tiers",
+    response_model=AvailableTiersResponse,
+    summary="Get available tiers",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_available_tiers(request: Request) -> AvailableTiersResponse:
     """Get list of available tiers."""
     _check_host_restriction(request)
-    _get_admin_from_token(request)
+    admin_id = _get_admin_from_token(request)
 
-    return {
-        "tiers": [
-            {"id": "free", "name": "Free", "description": "Basic access"},
-            {"id": "alpha", "name": "Alpha", "description": "Alpha tester access"},
-            {"id": "beta", "name": "Beta", "description": "Beta tester access"},
-            {"id": "premium", "name": "Premium", "description": "Premium features"},
-            {"id": "staff", "name": "Staff", "description": "Staff member"}
-        ]
-    }
+    try:
+        logger.debug(f"Admin {admin_id} requested available tiers")
+        return AvailableTiersResponse(
+            tiers=[
+                AvailableTierInfo(id="free", name="Free", description="Basic access"),
+                AvailableTierInfo(id="alpha", name="Alpha", description="Alpha tester access"),
+                AvailableTierInfo(id="beta", name="Beta", description="Beta tester access"),
+                AvailableTierInfo(id="premium", name="Premium", description="Premium features"),
+                AvailableTierInfo(id="staff", name="Staff", description="Staff member")
+            ]
+        )
+    except Exception as e:
+        logger.error(f"Failed to get available tiers (admin {admin_id}): {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
 
 
-@router.get("/badges")
-async def get_available_badges(request: Request):
+@router.get(
+    "/badges",
+    response_model=AvailableBadgesResponse,
+    summary="Get available badges",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_available_badges(request: Request) -> AvailableBadgesResponse:
     """Get list of available badges."""
     _check_host_restriction(request)
-    _get_admin_from_token(request)
+    admin_id = _get_admin_from_token(request)
 
-    badges_config = config.get("user_features", {}).get("available_badges", [])
-
-    return {
-        "badges": badges_config or [
+    try:
+        badges_config = config.get("user_features", {}).get("available_badges", [])
+        
+        badges = badges_config or [
             "alpha_tester", "early_supporter", "staff",
             "verified", "bug_hunter", "contributor", "moderator", "partner"
         ]
-    }
+
+        logger.debug(f"Admin {admin_id} requested available badges, found {len(badges)}")
+        return AvailableBadgesResponse(badges=badges)
+    except Exception as e:
+        logger.error(f"Failed to get available badges (admin {admin_id}): {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
 
 
 # ==================== Admin UI HTML ====================
@@ -2193,14 +2831,32 @@ ADMIN_DASHBOARD_HTML = """
 """
 
 
-@router.get("", response_class=HTMLResponse)
+@router.get(
+    "",
+    response_class=HTMLResponse,
+    summary="Admin login page",
+    responses={
+        200: {"description": "Admin login page HTML"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Admin UI disabled"},
+    },
+)
 async def admin_login_page(request: Request):
     """Serve the admin login page."""
     _check_host_restriction(request)
     return HTMLResponse(content=ADMIN_LOGIN_HTML)
 
 
-@router.get("/ui", response_class=HTMLResponse)
+@router.get(
+    "/ui",
+    response_class=HTMLResponse,
+    summary="Admin dashboard page",
+    responses={
+        200: {"description": "Admin dashboard page HTML"},
+        403: {"model": ErrorResponse, "description": "Access denied (host restriction)"},
+        404: {"model": ErrorResponse, "description": "Admin UI disabled"},
+    },
+)
 async def admin_dashboard_page(request: Request):
     """Serve the admin dashboard page."""
     _check_host_restriction(request)

@@ -2,40 +2,29 @@
 User Settings routes - Cloud-synced key-value store for user preferences.
 """
 
-from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, HTTPException, Depends, status
 from typing import Dict
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.schemas.settings import SettingValue, SettingResponse, SettingsResponse
+from src.api.schemas.common import ErrorResponse, SuccessResponse
 
 import utils.logger as logger
 
-router = APIRouter()
+router = APIRouter(tags=["User Settings"])
 
 
-class SettingValue(BaseModel):
-    """Request body for setting a value."""
-    value: str = Field(..., max_length=10000, description="Setting value")
-
-
-class SettingResponse(BaseModel):
-    """Response for a single setting."""
-    key: str
-    value: str
-    created_at: int
-    updated_at: int
-
-
-class SettingsResponse(BaseModel):
-    """Response for all settings."""
-    settings: Dict[str, str]
-    count: int
-    limit: int
-
-
-@router.get("", response_model=SettingsResponse)
-async def get_all_settings(current_user: TokenInfo = Depends(get_current_user)):
+@router.get(
+    "",
+    response_model=SettingsResponse,
+    summary="Get all settings",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_all_settings(current_user: TokenInfo = Depends(get_current_user)) -> SettingsResponse:
     """
     Get all settings for the current user.
     
@@ -43,6 +32,7 @@ async def get_all_settings(current_user: TokenInfo = Depends(get_current_user)):
     """
     settings_module = api.get_settings()
     if not settings_module:
+        logger.error("Settings module not available")
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Settings module not available"}}
@@ -60,15 +50,24 @@ async def get_all_settings(current_user: TokenInfo = Depends(get_current_user)):
             limit=100  # Default limit from SettingsConfig
         )
     except Exception as e:
-        logger.error(f"Failed to get settings for user {current_user.user_id}: {e}")
+        logger.error(f"Failed to get settings for user {current_user.user_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
-@router.get("/{key}", response_model=SettingResponse)
-async def get_setting(key: str, current_user: TokenInfo = Depends(get_current_user)):
+@router.get(
+    "/{key}",
+    response_model=SettingResponse,
+    summary="Get a specific setting",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "Setting not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_setting(key: str, current_user: TokenInfo = Depends(get_current_user)) -> SettingResponse:
     """
     Get a specific setting by key.
     
@@ -76,6 +75,7 @@ async def get_setting(key: str, current_user: TokenInfo = Depends(get_current_us
     """
     settings_module = api.get_settings()
     if not settings_module:
+        logger.error("Settings module not available")
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Settings module not available"}}
@@ -87,6 +87,7 @@ async def get_setting(key: str, current_user: TokenInfo = Depends(get_current_us
         setting = next((s for s in settings_list if s.key == key), None)
 
         if not setting:
+            logger.warning(f"Setting '{key}' not found for user {current_user.user_id}")
             raise HTTPException(
                 status_code=404,
                 detail={"error": {"code": 404, "message": f"Setting '{key}' not found"}}
@@ -101,19 +102,28 @@ async def get_setting(key: str, current_user: TokenInfo = Depends(get_current_us
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to get setting '{key}' for user {current_user.user_id}: {e}")
+        logger.error(f"Failed to get setting '{key}' for user {current_user.user_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
-@router.put("/{key}", response_model=SettingResponse)
+@router.put(
+    "/{key}",
+    response_model=SettingResponse,
+    summary="Set a setting",
+    responses={
+        400: {"model": ErrorResponse, "description": "Limit exceeded or invalid key/value"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def set_setting(
     key: str,
     body: SettingValue,
     current_user: TokenInfo = Depends(get_current_user)
-):
+) -> SettingResponse:
     """
     Set a setting value.
     
@@ -121,13 +131,24 @@ async def set_setting(
     """
     settings_module = api.get_settings()
     if not settings_module:
+        logger.error("Settings module not available")
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Settings module not available"}}
         )
 
     try:
-        setting = settings_module.set_setting(current_user.user_id, key, body.value)
+        try:
+            setting = settings_module.set_setting(current_user.user_id, key, body.value)
+        except Exception as e:
+            exc_name = type(e).__name__
+            if any(x in exc_name for x in ["LimitExceeded", "KeyTooLong", "ValueTooLong", "KeyReserved"]):
+                logger.warning(f"Failed to set setting '{key}' for user {current_user.user_id}: {e}")
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": {"code": 400, "message": str(e)}}
+                )
+            raise
 
         logger.info(f"Set setting '{key}' for user {current_user.user_id}")
 
@@ -137,39 +158,30 @@ async def set_setting(
             created_at=setting.created_at,
             updated_at=setting.updated_at
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        exc_name = type(e).__name__
-
-        if "LimitExceeded" in exc_name:
-            raise HTTPException(
-                status_code=400,
-                detail={"error": {"code": 400, "message": str(e)}}
-            )
-        elif "KeyTooLong" in exc_name:
-            raise HTTPException(
-                status_code=400,
-                detail={"error": {"code": 400, "message": str(e)}}
-            )
-        elif "ValueTooLong" in exc_name:
-            raise HTTPException(
-                status_code=400,
-                detail={"error": {"code": 400, "message": str(e)}}
-            )
-        elif "KeyReserved" in exc_name:
-            raise HTTPException(
-                status_code=400,
-                detail={"error": {"code": 400, "message": str(e)}}
-            )
-
-        logger.error(f"Failed to set setting '{key}' for user {current_user.user_id}: {e}")
+        logger.error(f"Failed to set setting '{key}' for user {current_user.user_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
-@router.delete("/{key}")
-async def delete_setting(key: str, current_user: TokenInfo = Depends(get_current_user)) -> Dict[str, bool]:
+@router.delete(
+    "/{key}",
+    response_model=SuccessResponse,
+    summary="Delete a setting",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "Setting not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def delete_setting(
+    key: str,
+    current_user: TokenInfo = Depends(get_current_user)
+) -> SuccessResponse:
     """
     Delete a setting.
     
@@ -177,6 +189,7 @@ async def delete_setting(key: str, current_user: TokenInfo = Depends(get_current
     """
     settings_module = api.get_settings()
     if not settings_module:
+        logger.error("Settings module not available")
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Settings module not available"}}
@@ -186,6 +199,7 @@ async def delete_setting(key: str, current_user: TokenInfo = Depends(get_current
         deleted = settings_module.delete_setting(current_user.user_id, key)
 
         if not deleted:
+            logger.warning(f"Setting '{key}' not found for user {current_user.user_id} during delete")
             raise HTTPException(
                 status_code=404,
                 detail={"error": {"code": 404, "message": f"Setting '{key}' not found"}}
@@ -193,11 +207,11 @@ async def delete_setting(key: str, current_user: TokenInfo = Depends(get_current
 
         logger.info(f"Deleted setting '{key}' for user {current_user.user_id}")
 
-        return {"success": True}
+        return SuccessResponse(success=True)
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to delete setting '{key}' for user {current_user.user_id}: {e}")
+        logger.error(f"Failed to delete setting '{key}' for user {current_user.user_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": str(e)}}
