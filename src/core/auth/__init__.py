@@ -453,6 +453,34 @@ def require_capability(token_info: TokenInfo, capability: str) -> None:
         raise PermissionDeniedError(f"Missing required permission: {capability}")
 
 
+# === OAuth ===
+
+
+def oauth_login(
+    provider: str,
+    external_id: str,
+    email: Optional[str] = None,
+    username_hint: Optional[str] = None,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+) -> AuthResult:
+    """
+    Login or register via OAuth provider.
+    
+    If user exists with this OAuth link, logs them in.
+    If email matches existing user, links OAuth and logs in.
+    Otherwise creates new account.
+    """
+    return _get_manager().oauth_login(
+        provider=provider,
+        external_id=external_id,
+        email=email,
+        username_hint=username_hint,
+        ip_address=ip_address,
+        user_agent=user_agent,
+    )
+
+
 __all__ = [
     # Setup
     "setup",
@@ -502,6 +530,7 @@ __all__ = [
     # Login
     "login",
     "complete_2fa",
+    "oauth_login",
     # Sessions
     "verify_token",
     "refresh_session",
