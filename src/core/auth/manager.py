@@ -81,6 +81,7 @@ from src.core.database import (
     invalidate_pattern,
     redis_available,
 )
+from src.core.database.cache import check_rate_limit
 from src.core.database.collections import CappedDict
 
 
