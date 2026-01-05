@@ -60,6 +60,7 @@ from .exceptions import (
 )
 from .schema import create_tables
 from .content import validate_content
+from src.core.database.collections import CappedDict
 
 
 from . import exceptions as _exc
@@ -107,10 +108,13 @@ class MessagingManager(BaseManager):
         super().__init__(db, auth_module)
         self._config = self._load_config()
 
+        # Cache size limit from config
+        max_cache = config.get("redis.cache_max_items", 1000)
+
         # In-memory caches with TTL (reduces DB queries significantly)
-        self._user_settings_cache: Dict[SnowflakeID, Tuple[UserMessageSettings, float]] = {}
-        self._user_filter_cache: Dict[SnowflakeID, Tuple[ContentFilter, float]] = {}
-        self._participant_cache: Dict[Tuple[SnowflakeID, SnowflakeID], Tuple[bool, float]] = {}
+        self._user_settings_cache = CappedDict(max_size=max_cache)
+        self._user_filter_cache = CappedDict(max_size=max_cache)
+        self._participant_cache = CappedDict(max_size=max_cache)
         self._cache_ttl = 60.0  # 60 second cache TTL
 
         # Create tables

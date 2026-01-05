@@ -4,7 +4,8 @@ Category manager - Manage server discovery categories.
 
 from typing import List, Optional, Dict
 
-
+import utils.config as config
+from src.core.database.collections import CappedDict
 from ..models import ServerCategory
 from ..exceptions import CategoryNotFoundError
 
@@ -14,7 +15,11 @@ class CategoryManager:
 
     def __init__(self, db):
         self._db = db
-        self._cache: Dict[str, ServerCategory] = {}
+        
+        # Cache size limit from config
+        max_cache = config.get("redis.cache_max_items", 1000)
+        
+        self._cache = CappedDict(max_size=max_cache)
         self._cache_loaded = False
 
     def get_all_categories(self) -> List[ServerCategory]:

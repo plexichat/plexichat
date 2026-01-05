@@ -5,6 +5,8 @@ Filter processor - Apply parsed filters to search results.
 from typing import List, Dict, Optional, Callable
 from datetime import datetime
 
+import utils.config as config
+from src.core.database.collections import CappedDict
 from ..models import ParsedQuery, QueryFilter, FilterType, MessageSearchResult
 
 
@@ -15,8 +17,12 @@ class FilterProcessor:
         self._db = db
         self._auth = auth_module
         self._servers = servers_module
-        self._user_cache: Dict[str, int] = {}
-        self._channel_cache: Dict[str, int] = {}
+        
+        # Cache size limit from config
+        max_cache = config.get("redis.cache_max_items", 1000)
+        
+        self._user_cache = CappedDict(max_size=max_cache)
+        self._channel_cache = CappedDict(max_size=max_cache)
 
     def apply_filters(
         self,

@@ -78,9 +78,10 @@ from src.core.database import (
     cache_get,
     cache_set,
     cache_delete,
-    check_rate_limit,
+    invalidate_pattern,
     redis_available,
 )
+from src.core.database.collections import CappedDict
 
 
 class AuthManager(BaseManager):
@@ -123,12 +124,13 @@ class AuthManager(BaseManager):
         super().__init__(db)
         self.email_sender = email_sender
 
-        # In-memory cache for user lookups (reduces DB queries)
-        self._user_cache: Dict[int, Tuple[Any, float]] = {}
-        self._user_cache_ttl = 60.0  # 60 second TTL
-
-        # Cache configuration for performance and to allow overrides in tests
+        # Cache configuration
         self._config = config.get("authentication", {})
+        max_cache = config.get("redis.cache_max_items", 1000)
+
+        # In-memory cache for user lookups (reduces DB queries)
+        self._user_cache = CappedDict(max_size=max_cache)
+        self._user_cache_ttl = 60.0  # 60 second TTL
 
         # Create tables if they don't exist
         logger.info("Initializing authentication module")

@@ -62,6 +62,7 @@ from .permissions import (
     can_manage_member,
 )
 from src.core.database import cache_get, cache_set, cache_delete, redis_available
+from src.core.database.collections import CappedDict
 
 
 class ServerManager(BaseManager):
@@ -84,12 +85,15 @@ class ServerManager(BaseManager):
         self._config = self._load_config()
         self.instance_id = secrets.token_hex(4)
 
+        # Cache size limit from config
+        max_cache = config.get("redis.cache_max_items", 1000)
+
         # In-memory caches with TTL (reduces DB queries significantly)
-        self._member_cache: Dict[Tuple[SnowflakeID, SnowflakeID], Tuple[Any, float]] = {}
-        self._permission_cache: Dict[Tuple[SnowflakeID, SnowflakeID, Optional[SnowflakeID]], Tuple[Dict[str, bool], float]] = {}
-        self._channel_cache: Dict[SnowflakeID, Tuple[Any, float]] = {}
-        self._server_owner_cache: Dict[SnowflakeID, Tuple[SnowflakeID, float]] = {}  # server_id -> owner_id
-        self._member_roles_cache: Dict[Tuple[SnowflakeID, SnowflakeID], Tuple[list, float]] = {}  # (server_id, user_id) -> roles
+        self._member_cache = CappedDict(max_size=max_cache)
+        self._permission_cache = CappedDict(max_size=max_cache)
+        self._channel_cache = CappedDict(max_size=max_cache)
+        self._server_owner_cache = CappedDict(max_size=max_cache)
+        self._member_roles_cache = CappedDict(max_size=max_cache)
         self._cache_ttl = 60.0  # 60 second cache TTL for server data (longer = fewer DB queries)
 
         create_tables(db)

@@ -265,7 +265,8 @@ class PlexiChatServer:
                     "session": 1800,
                     "presence": 300,
                     "cache": 60
-                }
+                },
+                "cache_max_items": 1000
             },
             "api": {
                 "title": "PlexiChat API",
@@ -496,6 +497,7 @@ class PlexiChatServer:
                 "proxy_enabled": True,
                 "proxy_cache_ttl": 86400,  # 24 hours
                 "proxy_max_size": 10485760,  # 10MB
+                "proxy_buffer_size": 65536,  # 64KB buffer for streaming
                 
                 # Rate limiting for uploads
                 "rate_limit": {
