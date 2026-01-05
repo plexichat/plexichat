@@ -104,6 +104,26 @@ authentication:
     token_binding: false
 ```
 
+### OAuth
+
+```yaml
+oauth:
+  google:
+    client_id: "YOUR_GOOGLE_CLIENT_ID"
+    client_secret: "YOUR_GOOGLE_CLIENT_SECRET"
+  github:
+    client_id: "YOUR_GITHUB_CLIENT_ID"
+    client_secret: "YOUR_GITHUB_CLIENT_SECRET"
+  microsoft:
+    client_id: "YOUR_MICROSOFT_CLIENT_ID"
+    client_secret: "YOUR_MICROSOFT_CLIENT_SECRET"
+```
+
+For production, it is highly recommended to provide these secrets via environment variables:
+- `OAUTH_GOOGLE_CLIENT_SECRET`
+- `OAUTH_GITHUB_CLIENT_SECRET`
+- `OAUTH_MICROSOFT_CLIENT_SECRET`
+
 ### Encryption
 
 ```yaml

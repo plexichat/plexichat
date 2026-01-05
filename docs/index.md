@@ -1,77 +1,35 @@
-# PlexiChat API Documentation
+# Welcome to PlexiChat Documentation
 
-Welcome to the PlexiChat API documentation. PlexiChat is a real-time messaging platform with a REST API for resource management and a WebSocket gateway for real-time events.
+PlexiChat is a high-performance, secure, and modern real-time messaging platform. This documentation portal provides everything you need to deploy, configure, and integrate with PlexiChat.
 
-## Quick Navigation
+## Quick Links
 
-| Section | Description |
-|---------|-------------|
-| [Getting Started](getting-started.md) | Authentication, setup, and first API call |
-| [Configuration](configuration.md) | Server configuration options |
-| [REST API Reference](api/index.md) | Complete endpoint documentation |
-| [WebSocket Gateway](websocket/index.md) | Real-time events and connection handling |
-| [Rate Limits](rate-limits.md) | Rate limiting policies |
-| [Error Handling](errors.md) | Error codes and responses |
-| [Data Types](data-types.md) | Common data formats |
+- [Getting Started](/getting-started) - Setup your server in minutes.
+- [Configuration](/configuration) - Fine-tune every aspect of your deployment.
+- [Deployment Guide](/deployment) - Best practices for production environments.
+- [API Reference](/reference) - Detailed documentation for all REST endpoints.
+- [WebSocket Gateway](/websocket) - Real-time event system and opcodes.
 
-## Base URLs
+## Platform Features
 
-| Service | Development | Production |
-|---------|-------------|------------|
-| REST API | `http://localhost:8000/api/v1` | Configure in `config.yaml` |
-| WebSocket Gateway | `ws://localhost:8000/gateway` | Configure in `config.yaml` |
-| Interactive Docs | `http://localhost:8000/docs` | Disabled in production |
+- **High Performance**: Built on FastAPI and asynchronous Python architecture.
+- **Security First**: Zero-friction at-rest encryption and robust authentication.
+- **Flexible Storage**: Support for local storage and S3-compatible backends.
+- **Multi-Account**: Seamless support for human users and bot accounts.
+- **Rich Messaging**: Markdown support, reactions, and multi-media attachments.
 
-## Authentication
+## Project Structure
 
-All authenticated endpoints require a token in the `Authorization` header:
+This workspace contains three primary components:
 
-```http
-Authorization: Bearer <session_token>
-```
+| Component | Description |
+|-----------|-------------|
+| plexichat/ | Core Server - FastAPI REST API and WebSocket gateway |
+| plexichat-client/ | Web Client - Flask-based web interface |
+| common-utils/ | Shared Utilities - Logging, config, and validation |
 
-For bot applications:
+## Community and Support
 
-```http
-Authorization: Bot <bot_token>
-```
-
-See [Authentication](api/authentication.md) for complete details.
-
-## API Features
-
-- RESTful JSON API with consistent error handling
-- WebSocket gateway for real-time events
-- Snowflake IDs for all resources
-- Cursor-based pagination
-- Rate limiting with headers
-- Two-factor authentication support
-- User presence and status
-- Server/guild management
-- Direct messages and group conversations
-- Message reactions and embeds
-- File attachments and media
-- Webhooks for integrations
-- User settings sync
-
-## Version Information
-
-- API Version: `v1`
-- Current Server Version: Check `/api/v1/version`
-
-## Data Storage
-
-Default data location: `~/.plexichat/`
-
-| Directory | Contents |
-|-----------|----------|
-| `data/` | Database files |
-| `logs/` | Application logs |
-| `media/` | Uploaded files and attachments |
-| `config/` | Configuration files |
-
-## Related Documentation
-
-- [API Reference](api/index.md) - All REST endpoints
-- [WebSocket Events](websocket/events.md) - Real-time event types
-- [Performance Guide](performance.md) - Optimization tips
+- **Bug Reports**: Use the /bug command in the CLI.
+- **Feature Requests**: Open a ticket in the admin panel.
+- **Documentation**: Managed within the repository for version consistency.

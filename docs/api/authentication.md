@@ -416,3 +416,48 @@ Get server password policy (no authentication required).
 |---------|---------|
 | Max failed attempts | 5 |
 | Lockout duration | 15 minutes |
+
+## OAuth Sign-In
+
+OAuth allows users to sign in using external providers like Google, GitHub, and Microsoft.
+
+### GET /auth/oauth/{provider}/login
+
+Initiate an OAuth login flow.
+
+**Path Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| provider | string | `google`, `github`, or `microsoft` |
+
+**Query Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| redirect_uri | string | Yes | The URI where the provider should redirect after auth |
+
+**Response (200 OK):**
+```json
+{
+  "url": "https://accounts.google.com/o/oauth2/v2/auth?...",
+  "state": "random_state_string"
+}
+```
+
+### GET /auth/oauth/{provider}/callback
+
+Handle the callback from the OAuth provider.
+
+**Path Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| provider | string | `google`, `github`, or `microsoft` |
+
+**Query Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| code | string | Yes | Authorization code from the provider |
+| state | string | Yes | State parameter from the provider |
+| redirect_uri | string | Yes | Same redirect URI used in initiation |
+
+**Response (200 OK):**
+Standard `LoginResponse` (same as `/auth/login`).
