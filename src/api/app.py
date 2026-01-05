@@ -276,12 +276,25 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             # Check if download is requested
             download = request.query_params.get("download", "0") == "1"
 
+            # Determine media type for proper content-type header
+            import mimetypes
+            media_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
+
             if download:
-                return FileResponse(
+                response = FileResponse(
                     file_path, filename=filename, media_type="application/octet-stream"
                 )
-
-            return FileResponse(file_path)
+            else:
+                response = FileResponse(file_path, media_type=media_type)
+            
+            # Add CORS headers to prevent OpaqueResponseBlocking
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+            # Cache for 24 hours
+            response.headers["Cache-Control"] = "public, max-age=86400"
+            
+            return response
         except HTTPException:
             raise
         except Exception as e:
