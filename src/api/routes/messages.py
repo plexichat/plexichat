@@ -1344,6 +1344,8 @@ async def trigger_typing(
     Broadcasts a typing event to other users in the channel.
     Works for both server channels and DM conversations.
     """
+    import asyncio
+    
     presence = api.get_presence()
     servers_mod = api.get_servers()
     messaging = api.get_messaging()
@@ -1390,8 +1392,6 @@ async def trigger_typing(
 
         # Broadcast typing event via WebSocket dispatcher (fire and forget)
         if user_ids:
-            import asyncio
-
             # Capture username from token - no extra DB lookup needed!
             username = current_user.username
 
