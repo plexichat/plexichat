@@ -589,6 +589,8 @@ async def acknowledge_messages(
     If not provided, marks all messages in the channel as read.
     """
     messaging = api.get_messaging()
+    servers_mod = api.get_servers()
+    
     if not messaging:
         raise HTTPException(
             status_code=500,
@@ -603,6 +605,20 @@ async def acknowledge_messages(
                 status_code=400,
                 detail={"error": {"code": 400, "message": "Invalid channel ID"}}
             )
+
+        # Check if this is a voice channel - voice channels don't have messages to ack
+        if servers_mod:
+            try:
+                channel = servers_mod.get_channel(cid, current_user.user_id)
+                if channel:
+                    channel_type = getattr(channel, "channel_type", None)
+                    # Handle both enum and string types
+                    channel_type_str = channel_type.value if hasattr(channel_type, 'value') else str(channel_type)
+                    if channel_type_str in ('voice', 'stage'):
+                        # Voice channels don't have messages - return success with 0 marked
+                        return AckResponse(success=True, messages_marked=0)
+            except Exception:
+                pass  # If we can't check, continue with normal flow
 
         up_to_id = int(message_id) if message_id else None
 
@@ -1367,6 +1383,13 @@ async def trigger_typing(
             try:
                 channel = servers_mod.get_channel(cid, current_user.user_id)
                 if channel:
+                    # Check if this is a voice channel - voice channels don't have typing indicators
+                    channel_type = getattr(channel, "channel_type", None)
+                    channel_type_str = channel_type.value if hasattr(channel_type, 'value') else str(channel_type)
+                    if channel_type_str in ('voice', 'stage'):
+                        # Voice channels don't support typing - return success silently
+                        return SuccessResponse(success=True)
+                    
                     server_id = getattr(channel, "server_id", None)
                     if server_id:
                         # Use optimized function that only fetches user IDs
@@ -1423,8 +1446,8 @@ async def trigger_typing(
                 except Exception as e:
                     logger.debug(f"Failed to dispatch typing event: {e}")
 
-        # Fire and forget - don't wait for dispatch to complete
-        asyncio.create_task(dispatch_typing())
+            # Fire and forget - don't wait for dispatch to complete
+            asyncio.create_task(dispatch_typing())
 
         return SuccessResponse(success=True)
     except HTTPException:
