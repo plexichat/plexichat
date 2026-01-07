@@ -666,21 +666,27 @@ class PlexiChatServer:
         logger.debug(f"Created directories in {home_dir}")
 
     def setup_config(self) -> str:
-        """Setup configuration from file or defaults, with environment variable overrides."""
+        """Setup configuration from file or defaults, with environment variable overrides.
+        
+        Config file search order:
+        1. Project config: ./config/config.yaml
+        2. Home folder config: ~/.plexichat/config/config.yaml
+        """
         # Try project config first, then home folder config
         config_paths = [
-            os.path.join(project_root, "config", "config.yaml"),
-            Path.home() / ".plexichat" / "config" / "config.yaml",
+            (os.path.join(project_root, "config", "config.yaml"), "project directory"),
+            (str(Path.home() / ".plexichat" / "config" / "config.yaml"), "home directory"),
         ]
 
         config_path = None
-        for cp in config_paths:
+        for cp, source in config_paths:
             if os.path.exists(cp):
                 config_path = str(cp)
                 break
 
         if not config_path:
-            config_path = str(config_paths[0])
+            # Use project config as default (will be created)
+            config_path = str(config_paths[0][0])
 
         config.setup(config_path=config_path, default_config=self.get_default_config())
 
@@ -1401,18 +1407,35 @@ Examples:
         early_logs.append(("debug", f"Ensured directory exists: {dir_path}"))
 
     # Setup configuration (needed for logger config)
-    # Use custom config path if provided
+    # Priority: 1. --config arg, 2. PLEXICHAT_CONFIG env var, 3. auto-detect
+    config_path = None
+    config_source = None
+    
     if args.config:
-        config.setup(
-            config_path=args.config, default_config=server.get_default_config()
-        )
         config_path = args.config
+        config_source = "command line argument"
+    elif os.environ.get("PLEXICHAT_CONFIG"):
+        config_path = os.environ.get("PLEXICHAT_CONFIG")
+        config_source = "PLEXICHAT_CONFIG environment variable"
+    
+    if config_path:
+        config.setup(
+            config_path=config_path, default_config=server.get_default_config()
+        )
+        early_logs.append(("info", f"Config loaded from {config_source}: {config_path}"))
     else:
         config_path = server.setup_config()
-
-    early_logs.append(("debug", f"Config loaded from: {config_path}"))
+        early_logs.append(("info", f"Config loaded from auto-detected path: {config_path}"))
 
     # Setup logging - NOW we can use logger
+    log_config = config.get("logging", {})
+    storage_config = config.get("storage", {})
+    log_dir = storage_config.get("logs_dir", os.path.join(project_root, "logs"))
+    
+    early_logs.append(("info", f"Initializing logger..."))
+    early_logs.append(("info", f"  Log directory: {log_dir}"))
+    early_logs.append(("info", f"  Log level: {log_config.get('level', 'INFO')}"))
+    
     server.setup_logging()
 
     # Replay buffered logs
