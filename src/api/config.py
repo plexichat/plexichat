@@ -22,6 +22,7 @@ except ImportError:
 @dataclass
 class APIConfig:
     """API configuration settings."""
+
     title: str = "PlexiChat API"
     description: str = "REST API for PlexiChat messaging platform"
     version: Optional[str] = None
@@ -30,8 +31,18 @@ class APIConfig:
     # SECURITY: Empty list = fail closed (no CORS allowed). Must be explicitly configured.
     cors_origins: List[str] = field(default_factory=list)
     cors_allow_credentials: bool = True
-    cors_allow_methods: List[str] = field(default_factory=lambda: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
-    cors_allow_headers: List[str] = field(default_factory=lambda: ["Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin"])
+    cors_allow_methods: List[str] = field(
+        default_factory=lambda: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    )
+    cors_allow_headers: List[str] = field(
+        default_factory=lambda: [
+            "Authorization",
+            "Content-Type",
+            "X-Requested-With",
+            "Accept",
+            "Origin",
+        ]
+    )
     docs_url: Optional[str] = "/docs"
     redoc_url: Optional[str] = "/redoc"
     openapi_url: Optional[str] = "/openapi.json"
@@ -47,6 +58,7 @@ def get_api_config() -> APIConfig:
         return APIConfig()
 
     import utils.version as version
+
     try:
         current_ver = version.current_string()
     except RuntimeError:
@@ -56,29 +68,45 @@ def get_api_config() -> APIConfig:
     # SECURITY: Validate CORS origins - reject wildcards unless explicitly allowed
     cors_origins = api_conf.get("cors_origins", [])
     allow_wildcard = api_conf.get("allow_wildcard_cors", False)
-    
+
     import utils.logger as logger
+
     if "pytest" in sys.modules:
         print(f"[DEBUG] Raw api_conf: {api_conf}")
         print(f"[DEBUG] cors_origins from conf: {cors_origins}")
         print(f"[DEBUG] allow_wildcard from conf: {allow_wildcard}")
 
     if (cors_origins == ["*"] or "*" in cors_origins) and not allow_wildcard:
-        logger.error("SECURITY ERROR: CORS wildcard '*' is not allowed. Configure explicit origins.")
+        logger.error(
+            "SECURITY ERROR: CORS wildcard '*' is not allowed. Configure explicit origins."
+        )
         cors_origins = []  # Fail closed - no CORS allowed
-    
+
     # SECURITY: Reject wildcard methods/headers
-    cors_methods = api_conf.get("cors_allow_methods", ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+    cors_methods = api_conf.get(
+        "cors_allow_methods", ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    )
     if cors_methods == ["*"] or "*" in cors_methods:
         cors_methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
-    
-    cors_headers = api_conf.get("cors_allow_headers", ["Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin"])
+
+    cors_headers = api_conf.get(
+        "cors_allow_headers",
+        ["Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin"],
+    )
     if cors_headers == ["*"] or "*" in cors_headers:
-        cors_headers = ["Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin"]
+        cors_headers = [
+            "Authorization",
+            "Content-Type",
+            "X-Requested-With",
+            "Accept",
+            "Origin",
+        ]
 
     return APIConfig(
         title=api_conf.get("title", "PlexiChat API"),
-        description=api_conf.get("description", "REST API for PlexiChat messaging platform"),
+        description=api_conf.get(
+            "description", "REST API for PlexiChat messaging platform"
+        ),
         version=current_ver,
         api_prefix=api_conf.get("api_prefix", "/api/v1"),
         debug=api_conf.get("debug", False),

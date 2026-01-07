@@ -4,7 +4,7 @@ Connection state management - Tracks individual WebSocket connections.
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any
 import time
 import asyncio
 import zlib
@@ -46,9 +46,7 @@ class Connection:
     missed_heartbeats: int = 0
     properties: Dict[str, Any] = field(default_factory=dict)
     is_selftest: bool = False
-    _zlib_context: Optional[Any] = field(
-        default=None, repr=False
-    )
+    _zlib_context: Optional[Any] = field(default=None, repr=False)
     _send_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
     def __post_init__(self) -> None:

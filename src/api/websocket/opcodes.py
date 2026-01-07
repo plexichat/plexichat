@@ -33,6 +33,9 @@ class GatewayOpcode(IntEnum):
     # PlexiChat application interaction opcodes
     INTERACTION_CREATE = 30
     INTERACTION_RESPONSE = 31
+    # PlexiChat typing indicator opcodes
+    TYPING_START = 40
+    TYPING_STOP = 41
 
 
 class GatewayCloseCode(IntEnum):

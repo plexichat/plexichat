@@ -23,6 +23,7 @@ __all__ = [
     "setup",
     "APIConfig",
     "get_api_config",
+    "get_telemetry",
 ]
 
 _db = None
@@ -44,6 +45,7 @@ _reports = None
 _feedback = None
 _admin = None
 _events = None
+_telemetry = None
 _internal_secret = None
 _setup_complete = False
 
@@ -68,6 +70,7 @@ def setup(
     feedback_module: Optional[Any] = None,
     admin_module: Optional[Any] = None,
     events_module: Optional[Any] = None,
+    telemetry_module: Optional[Any] = None,
 ) -> None:
     """
     Initialize the API module with all dependencies.
@@ -92,6 +95,7 @@ def setup(
         feedback_module: Feedback module for user feedback
         admin_module: Admin module for administration
         events_module: Events module for event delivery
+        telemetry_module: Telemetry module for client metrics
     """
     global _db, _auth, _messaging, _servers, _relationships, _presence
     global \
@@ -108,6 +112,7 @@ def setup(
         _feedback, \
         _admin, \
         _events, \
+        _telemetry, \
         _setup_complete
 
     _db = db
@@ -129,6 +134,7 @@ def setup(
     _feedback = feedback_module
     _admin = admin_module
     _events = events_module
+    _telemetry = telemetry_module
     _setup_complete = True
 
 
@@ -148,18 +154,24 @@ def get_db() -> Optional[Any]:
     if not _setup_complete:
         # If not setup but we have a database from somewhere else (like test runner)
         # return it, otherwise raise
-        if _db: return _db
+        if _db:
+            return _db
         raise RuntimeError("API module not initialized. Call api.setup() first.")
     return _db
 
 
 def get_auth() -> Optional[Any]:
     """Get auth module."""
-    if _auth: return _auth
-    if _setup_complete: return None # If setup was called but _auth is None, it's explicitly unavailable
+    if _auth:
+        return _auth
+    if _setup_complete:
+        return (
+            None  # If setup was called but _auth is None, it's explicitly unavailable
+        )
     # Fallback to importing if already setup globally but not passed here
     try:
         from src.core import auth
+
         return auth
     except ImportError:
         return None
@@ -167,9 +179,11 @@ def get_auth() -> Optional[Any]:
 
 def get_messaging() -> Optional[Any]:
     """Get messaging module."""
-    if _messaging: return _messaging
+    if _messaging:
+        return _messaging
     try:
         from src.core import messaging
+
         return messaging
     except ImportError:
         return None
@@ -177,9 +191,11 @@ def get_messaging() -> Optional[Any]:
 
 def get_servers() -> Optional[Any]:
     """Get servers module."""
-    if _servers: return _servers
+    if _servers:
+        return _servers
     try:
         from src.core import servers
+
         return servers
     except ImportError:
         return None
@@ -187,9 +203,11 @@ def get_servers() -> Optional[Any]:
 
 def get_relationships() -> Optional[Any]:
     """Get relationships module."""
-    if _relationships: return _relationships
+    if _relationships:
+        return _relationships
     try:
         from src.core import relationships
+
         return relationships
     except ImportError:
         return None
@@ -197,9 +215,11 @@ def get_relationships() -> Optional[Any]:
 
 def get_presence() -> Optional[Any]:
     """Get presence module."""
-    if _presence: return _presence
+    if _presence:
+        return _presence
     try:
         from src.core import presence
+
         return presence
     except ImportError:
         return None
@@ -207,9 +227,11 @@ def get_presence() -> Optional[Any]:
 
 def get_reactions() -> Optional[Any]:
     """Get reactions module."""
-    if _reactions: return _reactions
+    if _reactions:
+        return _reactions
     try:
         from src.core import reactions
+
         return reactions
     except ImportError:
         return None
@@ -217,9 +239,11 @@ def get_reactions() -> Optional[Any]:
 
 def get_embeds() -> Optional[Any]:
     """Get embeds module."""
-    if _embeds: return _embeds
+    if _embeds:
+        return _embeds
     try:
         from src.core import embeds
+
         return embeds
     except ImportError:
         return None
@@ -227,9 +251,11 @@ def get_embeds() -> Optional[Any]:
 
 def get_notifications() -> Optional[Any]:
     """Get notifications module."""
-    if _notifications: return _notifications
+    if _notifications:
+        return _notifications
     try:
         from src.core import notifications
+
         return notifications
     except ImportError:
         return None
@@ -237,9 +263,11 @@ def get_notifications() -> Optional[Any]:
 
 def get_webhooks() -> Optional[Any]:
     """Get webhooks module."""
-    if _webhooks: return _webhooks
+    if _webhooks:
+        return _webhooks
     try:
         from src.core import webhooks
+
         return webhooks
     except ImportError:
         return None
@@ -247,9 +275,11 @@ def get_webhooks() -> Optional[Any]:
 
 def get_threads() -> Optional[Any]:
     """Get threads module."""
-    if _threads: return _threads
+    if _threads:
+        return _threads
     try:
         from src.core import threads
+
         return threads
     except ImportError:
         return None
@@ -257,9 +287,11 @@ def get_threads() -> Optional[Any]:
 
 def get_media() -> Optional[Any]:
     """Get media module."""
-    if _media: return _media
+    if _media:
+        return _media
     try:
         from src.core import media
+
         return media
     except ImportError:
         return None
@@ -267,9 +299,11 @@ def get_media() -> Optional[Any]:
 
 def get_settings() -> Optional[Any]:
     """Get settings module."""
-    if _settings: return _settings
+    if _settings:
+        return _settings
     try:
         from src.core import settings
+
         return settings
     except ImportError:
         return None
@@ -277,9 +311,11 @@ def get_settings() -> Optional[Any]:
 
 def get_features() -> Optional[Any]:
     """Get features module."""
-    if _features: return _features
+    if _features:
+        return _features
     try:
         from src.core import features
+
         return features
     except ImportError:
         return None
@@ -287,9 +323,11 @@ def get_features() -> Optional[Any]:
 
 def get_avatars() -> Optional[Any]:
     """Get avatars module."""
-    if _avatars: return _avatars
+    if _avatars:
+        return _avatars
     try:
         from src.core import avatars
+
         return avatars
     except ImportError:
         return None
@@ -297,9 +335,11 @@ def get_avatars() -> Optional[Any]:
 
 def get_events() -> Optional[Any]:
     """Get events module."""
-    if _events: return _events
+    if _events:
+        return _events
     try:
         from src.core import events
+
         return events
     except ImportError:
         return None
@@ -307,9 +347,11 @@ def get_events() -> Optional[Any]:
 
 def get_reports() -> Optional[Any]:
     """Get reports module."""
-    if _reports: return _reports
+    if _reports:
+        return _reports
     try:
         from src.core import reports
+
         return reports
     except ImportError:
         return None
@@ -317,9 +359,11 @@ def get_reports() -> Optional[Any]:
 
 def get_feedback() -> Optional[Any]:
     """Get feedback module."""
-    if _feedback: return _feedback
+    if _feedback:
+        return _feedback
     try:
         from src.core import feedback
+
         return feedback
     except ImportError:
         return None
@@ -327,10 +371,24 @@ def get_feedback() -> Optional[Any]:
 
 def get_admin() -> Optional[Any]:
     """Get admin module."""
-    if _admin: return _admin
+    if _admin:
+        return _admin
     try:
         from src.core import admin
+
         return admin
+    except ImportError:
+        return None
+
+
+def get_telemetry() -> Optional[Any]:
+    """Get telemetry module."""
+    if _telemetry:
+        return _telemetry
+    try:
+        from src.core import telemetry
+
+        return telemetry
     except ImportError:
         return None
 

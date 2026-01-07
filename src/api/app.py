@@ -137,9 +137,10 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         except Exception as e:
             logger.error(f"Root endpoint failed: {e}", exc_info=True)
             from fastapi import status
+
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={"error": {"code": 500, "message": "Internal server error"}}
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )
 
     @app.get(
@@ -155,20 +156,22 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         """Redirect or proxy to health check endpoint."""
         try:
             from .routes.health import health_check
+
             return await health_check()
         except HTTPException:
             raise
         except Exception as e:
             logger.error(f"Health redirect failed: {e}", exc_info=True)
             from fastapi import status
+
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={"error": {"code": 500, "message": "Internal server error"}}
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )
 
     # Serve uploaded media files (requires authentication)
     from fastapi.responses import FileResponse
-    from fastapi import Request, HTTPException, status
+    from fastapi import status
     from pathlib import Path
     from typing import Optional
     from src.core.auth.models import TokenInfo
@@ -235,16 +238,23 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     raise HTTPException(
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                         detail={
-                            "error": {"code": 500, "message": "Auth module not available"}
+                            "error": {
+                                "code": 500,
+                                "message": "Auth module not available",
+                            }
                         },
                     )
             except HTTPException:
                 raise
             except Exception as e:
-                logger.error(f"Token verification failed for media access: {e}", exc_info=True)
+                logger.error(
+                    f"Token verification failed for media access: {e}", exc_info=True
+                )
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail={"error": {"code": 401, "message": "Invalid or expired token"}},
+                    detail={
+                        "error": {"code": 401, "message": "Invalid or expired token"}
+                    },
                 )
 
             # Serve the file
@@ -255,7 +265,9 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             try:
                 file_path = file_path.resolve()
                 if not str(file_path).startswith(str(media_dir.resolve())):
-                    logger.warning(f"Blocked path traversal attempt for filename: {filename}")
+                    logger.warning(
+                        f"Blocked path traversal attempt for filename: {filename}"
+                    )
                     raise HTTPException(
                         status_code=status.HTTP_403_FORBIDDEN,
                         detail={"error": {"code": 403, "message": "Access denied"}},
@@ -278,7 +290,10 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
             # Determine media type for proper content-type header
             import mimetypes
-            media_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
+
+            media_type = (
+                mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
+            )
 
             if download:
                 response = FileResponse(
@@ -286,14 +301,16 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 )
             else:
                 response = FileResponse(file_path, media_type=media_type)
-            
+
             # Add CORS headers to prevent OpaqueResponseBlocking
             response.headers["Access-Control-Allow-Origin"] = "*"
             response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
-            response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+            response.headers["Access-Control-Allow-Headers"] = (
+                "Authorization, Content-Type"
+            )
             # Cache for 24 hours
             response.headers["Cache-Control"] = "public, max-age=86400"
-            
+
             return response
         except HTTPException:
             raise
@@ -301,7 +318,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             logger.error(f"Error serving attachment {filename}: {e}", exc_info=True)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={"error": {"code": 500, "message": "Internal server error"}}
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )
 
     return app

@@ -2,7 +2,7 @@
 Opcode handlers - Handle incoming gateway messages.
 """
 
-from typing import Optional, Dict, Any, Tuple, TYPE_CHECKING
+from typing import Optional, Dict, Any, Tuple, List, TYPE_CHECKING
 
 import utils.logger as logger
 
@@ -89,6 +89,10 @@ class OpcodeHandler:
             return await self._handle_voice_speaking(connection, data)
         elif op == GatewayOpcode.VOICE_QUALITY:
             return await self._handle_voice_quality(connection, data)
+        elif op == GatewayOpcode.TYPING_START:
+            return await self._handle_typing_start(connection, data)
+        elif op == GatewayOpcode.TYPING_STOP:
+            return await self._handle_typing_stop(connection, data)
         else:
             return None, None, int(GatewayCloseCode.UNKNOWN_OPCODE)
 
@@ -124,15 +128,19 @@ class OpcodeHandler:
 
         user_id = await self._verify_token(
             token,
-            ip_address=connection.websocket.client.host if connection.websocket.client else None,
+            ip_address=connection.websocket.client.host
+            if connection.websocket.client
+            else None,
             user_agent=connection.properties.get("browser"),
-            is_selftest=connection.is_selftest
+            is_selftest=connection.is_selftest,
         )
         if user_id is None:
             return None, None, int(GatewayCloseCode.AUTHENTICATION_FAILED)
 
         # Bypass rate limits for self-test
-        if not connection.is_selftest and not self._session_manager.can_user_connect(user_id):
+        if not connection.is_selftest and not self._session_manager.can_user_connect(
+            user_id
+        ):
             return None, None, int(GatewayCloseCode.RATE_LIMITED)
 
         properties = data.get("properties", {})
@@ -469,6 +477,166 @@ class OpcodeHandler:
 
         return None, None, None
 
+    async def _handle_typing_start(
+        self,
+        connection: Connection,
+        data: Optional[Dict[str, Any]],
+    ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
+        """Handle typing start opcode - user started typing in a channel."""
+        if not connection.is_authenticated:
+            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+
+        if not data:
+            return None, None, None
+
+        channel_id = data.get("channel_id")
+        if not channel_id:
+            return None, None, None
+
+        try:
+            channel_id = int(channel_id)
+        except (ValueError, TypeError):
+            return None, None, None
+
+        assert connection.user_id is not None
+
+        # Get username for the typing event
+        username = None
+        if self._auth:
+            try:
+                user = self._auth.get_user(connection.user_id)
+                if user:
+                    username = user.username
+            except Exception:
+                pass
+
+        # Record typing in presence module
+        if self._presence:
+            try:
+                self._presence.start_typing(connection.user_id, channel_id)
+            except Exception:
+                pass
+
+        # Dispatch typing event to channel members
+        await self._dispatch_typing_event(
+            connection.user_id, channel_id, username, is_start=True
+        )
+
+        return None, None, None
+
+    async def _handle_typing_stop(
+        self,
+        connection: Connection,
+        data: Optional[Dict[str, Any]],
+    ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
+        """Handle typing stop opcode - user stopped typing in a channel."""
+        if not connection.is_authenticated:
+            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+
+        if not data:
+            return None, None, None
+
+        channel_id = data.get("channel_id")
+        if not channel_id:
+            return None, None, None
+
+        try:
+            channel_id = int(channel_id)
+        except (ValueError, TypeError):
+            return None, None, None
+
+        assert connection.user_id is not None
+
+        # Clear typing in presence module
+        if self._presence:
+            try:
+                self._presence.stop_typing(connection.user_id, channel_id)
+            except Exception:
+                pass
+
+        # Dispatch typing stop event to channel members
+        await self._dispatch_typing_event(
+            connection.user_id, channel_id, None, is_start=False
+        )
+
+        return None, None, None
+
+    async def _dispatch_typing_event(
+        self,
+        user_id: int,
+        channel_id: int,
+        username: Optional[str],
+        is_start: bool,
+    ) -> None:
+        """Dispatch typing start/stop event to channel members."""
+        try:
+            import src.api as api
+            from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+            from src.core.events.models import Event
+            from src.core.events.types import EventType
+
+            if not ws_is_setup():
+                return
+
+            dispatcher = get_dispatcher()
+            user_ids: List[int] = []
+            server_id: Optional[int] = None
+
+            # Try to get channel members from servers module
+            if self._servers:
+                try:
+                    channel = self._servers.get_channel(channel_id, user_id)
+                    if channel:
+                        server_id = getattr(channel, "server_id", None)
+                        if server_id:
+                            user_ids = self._servers.get_member_user_ids(
+                                server_id, exclude_user_id=user_id
+                            )
+                except Exception:
+                    pass
+
+            # If not a server channel, try DM
+            if not user_ids:
+                messaging = api.get_messaging()
+                if messaging:
+                    try:
+                        participants = messaging.get_participants(user_id, channel_id)
+                        if participants:
+                            user_ids = [
+                                p.user_id for p in participants if p.user_id != user_id
+                            ]
+                    except Exception:
+                        pass
+
+            if not user_ids:
+                return
+
+            if is_start:
+                event = Event(
+                    event_type=EventType.TYPING_START,
+                    data={
+                        "channel_id": str(channel_id),
+                        "user_id": str(user_id),
+                        "username": username or "Someone",
+                    },
+                    server_id=server_id,
+                    channel_id=channel_id,
+                )
+            else:
+                event = Event(
+                    event_type=EventType.TYPING_STOP,
+                    data={
+                        "channel_id": str(channel_id),
+                        "user_id": str(user_id),
+                    },
+                    server_id=server_id,
+                    channel_id=channel_id,
+                )
+
+            await dispatcher.dispatch_event(event, user_ids)
+        except Exception as e:
+            logger.debug(f"Failed to dispatch typing event: {e}")
+
     async def _verify_token(
         self,
         token: str,
@@ -482,7 +650,7 @@ class OpcodeHandler:
 
         try:
             token_info: TokenInfo = self._auth.verify_token(
-                token, ip_address, user_agent, is_selftest=is_selftest
+                token, ip_address, user_agent
             )
             return token_info.user_id
         except Exception:
@@ -586,7 +754,9 @@ class OpcodeHandler:
                     if shared_member_ids:
                         target_user_ids.update(shared_member_ids)
                 except Exception as e:
-                    logger.debug(f"Failed to get shared server members for presence: {e}")
+                    logger.debug(
+                        f"Failed to get shared server members for presence: {e}"
+                    )
 
             if not target_user_ids:
                 return

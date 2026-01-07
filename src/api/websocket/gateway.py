@@ -67,7 +67,36 @@ async def _dispatch_offline_presence(
                 if shared_member_ids:
                     target_user_ids.update(shared_member_ids)
             except Exception as e:
-                logger.debug(f"Failed to get shared server members for offline presence: {e}")
+                logger.debug(
+                    f"Failed to get shared server members for offline presence: {e}"
+                )
+
+        # Clear typing indicators and dispatch TYPING_STOP events
+        if presence_module:
+            try:
+                typing_channels = presence_module.clear_all_typing(user_id)
+                if typing_channels:
+                    from src.core.events.models import Event
+                    from src.core.events.types import EventType
+
+                    # Dispatch TYPING_STOP for each channel
+                    for channel_id in typing_channels:
+                        event = Event(
+                            event_type=EventType.TYPING_STOP,
+                            data={
+                                "channel_id": str(channel_id),
+                                "user_id": str(user_id),
+                            },
+                            channel_id=channel_id,
+                        )
+                        # Dispatch to all potential viewers
+                        if target_user_ids:
+                            await dispatcher.dispatch_event(event, list(target_user_ids))
+                    logger.debug(
+                        f"Cleared typing for user {user_id} in {len(typing_channels)} channels"
+                    )
+            except Exception as e:
+                logger.debug(f"Failed to clear typing on disconnect: {e}")
 
         if not target_user_ids:
             return
@@ -135,13 +164,13 @@ async def gateway_endpoint(websocket: WebSocket) -> None:
     await websocket.accept()
 
     # Detect if this is a secure self-test connection
-    is_local = websocket.client.host in ("127.0.0.1", "::1") if websocket.client else False
+    is_local = (
+        websocket.client.host in ("127.0.0.1", "::1") if websocket.client else False
+    )
     internal_secret = api.get_internal_secret()
     provided_secret = websocket.headers.get("X-Plexichat-Internal-Secret")
     is_selftest = (
-        internal_secret is not None 
-        and provided_secret == internal_secret 
-        and is_local
+        internal_secret is not None and provided_secret == internal_secret and is_local
     )
 
     session_manager, dispatcher, auth_module, presence_module, servers_module = (
