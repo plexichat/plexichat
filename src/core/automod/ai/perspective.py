@@ -13,7 +13,11 @@ import utils.logger as logger
 
 from .base import BaseAIAdapter
 from ..models import AICheckResult, AIBackendType
-from ..exceptions import AIBackendError, AIBackendUnavailableError, AIBackendTimeoutError
+from ..exceptions import (
+    AIBackendError,
+    AIBackendUnavailableError,
+    AIBackendTimeoutError,
+)
 
 
 class PerspectiveAdapter(BaseAIAdapter):
@@ -38,32 +42,38 @@ class PerspectiveAdapter(BaseAIAdapter):
         super().__init__(config)
         self._api_key = config.get("api_key", "")
         self._threshold = config.get("threshold", 0.7)
-        self._requested_attributes = config.get("attributes", [
-            "TOXICITY",
-            "SEVERE_TOXICITY",
-            "IDENTITY_ATTACK",
-            "INSULT",
-            "PROFANITY",
-            "THREAT"
-        ])
+        self._requested_attributes = config.get(
+            "attributes",
+            [
+                "TOXICITY",
+                "SEVERE_TOXICITY",
+                "IDENTITY_ATTACK",
+                "INSULT",
+                "PROFANITY",
+                "THREAT",
+            ],
+        )
         self._language = config.get("language", "en")
 
-    def check_content(self, content: str, context: Optional[Dict[str, Any]] = None) -> AICheckResult:
+    def check_content(
+        self, content: str, context: Optional[Dict[str, Any]] = None
+    ) -> AICheckResult:
         """Check content using Perspective API."""
         if not self.is_available():
             raise AIBackendUnavailableError(
-                "Perspective API key not configured",
-                backend="perspective"
+                "Perspective API key not configured", backend="perspective"
             )
 
         try:
             attributes = {attr: {} for attr in self._requested_attributes}
 
-            request_data = json.dumps({
-                "comment": {"text": content},
-                "languages": [self._language],
-                "requestedAttributes": attributes
-            }).encode("utf-8")
+            request_data = json.dumps(
+                {
+                    "comment": {"text": content},
+                    "languages": [self._language],
+                    "requestedAttributes": attributes,
+                }
+            ).encode("utf-8")
 
             url = f"{self.API_URL}?key={self._api_key}"
 
@@ -71,7 +81,7 @@ class PerspectiveAdapter(BaseAIAdapter):
                 url,
                 data=request_data,
                 headers={"Content-Type": "application/json"},
-                method="POST"
+                method="POST",
             )
 
             with urlopen(request, timeout=self._timeout) as response:
@@ -84,24 +94,21 @@ class PerspectiveAdapter(BaseAIAdapter):
             raise AIBackendError(
                 f"Perspective API error: {e.reason}",
                 backend="perspective",
-                status_code=e.code
+                status_code=e.code,
             )
         except URLError as e:
             if "timed out" in str(e.reason).lower():
                 raise AIBackendTimeoutError(
-                    "Perspective API request timed out",
-                    backend="perspective"
+                    "Perspective API request timed out", backend="perspective"
                 )
             logger.error(f"Perspective API URL error: {e.reason}")
             raise AIBackendError(
-                f"Perspective API connection error: {e.reason}",
-                backend="perspective"
+                f"Perspective API connection error: {e.reason}", backend="perspective"
             )
         except json.JSONDecodeError as e:
             logger.error(f"Perspective API response parse error: {e}")
             raise AIBackendError(
-                "Failed to parse Perspective API response",
-                backend="perspective"
+                "Failed to parse Perspective API response", backend="perspective"
             )
 
     def _parse_response(self, response: Dict[str, Any]) -> AICheckResult:
@@ -123,7 +130,7 @@ class PerspectiveAdapter(BaseAIAdapter):
             categories=categories,
             scores=scores,
             backend=self.backend_type or AIBackendType.PERSPECTIVE,
-            raw_response=response
+            raw_response=response,
         )
 
     def is_available(self) -> bool:

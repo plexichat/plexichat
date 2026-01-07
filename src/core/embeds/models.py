@@ -10,6 +10,7 @@ from src.core.base import SnowflakeID
 
 class EmbedType(Enum):
     """Type of embed."""
+
     RICH = "rich"
     IMAGE = "image"
     VIDEO = "video"
@@ -21,6 +22,7 @@ class EmbedType(Enum):
 @dataclass
 class EmbedFooter:
     """Embed footer section."""
+
     text: str
     icon_url: Optional[str] = None
     proxy_icon_url: Optional[str] = None
@@ -29,6 +31,7 @@ class EmbedFooter:
 @dataclass
 class EmbedImage:
     """Embed image section."""
+
     url: str
     proxy_url: Optional[str] = None
     width: Optional[int] = None
@@ -38,6 +41,7 @@ class EmbedImage:
 @dataclass
 class EmbedThumbnail:
     """Embed thumbnail section."""
+
     url: str
     proxy_url: Optional[str] = None
     width: Optional[int] = None
@@ -47,6 +51,7 @@ class EmbedThumbnail:
 @dataclass
 class EmbedAuthor:
     """Embed author section."""
+
     name: str
     url: Optional[str] = None
     icon_url: Optional[str] = None
@@ -56,6 +61,7 @@ class EmbedAuthor:
 @dataclass
 class EmbedProvider:
     """Embed provider section (for URL previews)."""
+
     name: Optional[str] = None
     url: Optional[str] = None
 
@@ -63,6 +69,7 @@ class EmbedProvider:
 @dataclass
 class EmbedField:
     """Embed field (name/value pair)."""
+
     name: str
     value: str
     inline: bool = False
@@ -71,6 +78,7 @@ class EmbedField:
 @dataclass
 class Embed:
     """Represents a rich embed."""
+
     id: SnowflakeID
     embed_type: EmbedType = EmbedType.RICH
     title: Optional[str] = None
@@ -93,6 +101,7 @@ class Embed:
 @dataclass
 class MessageEmbed:
     """Association between a message and an embed."""
+
     id: SnowflakeID
     message_id: SnowflakeID
     embed_id: SnowflakeID

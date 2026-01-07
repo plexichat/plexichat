@@ -13,6 +13,7 @@ from .types import EventType
 @dataclass
 class Event:
     """Base event class."""
+
     event_type: EventType
     data: Dict[str, Any]
     timestamp: int = field(default_factory=lambda: int(time.time() * 1000))
@@ -31,6 +32,7 @@ class Event:
 @dataclass
 class ReadyEvent(Event):
     """Ready event sent after successful identify."""
+
     session_id: str = ""
     user: Optional[Dict[str, Any]] = None
     guilds: List[Dict[str, Any]] = field(default_factory=list)
@@ -50,6 +52,7 @@ class ReadyEvent(Event):
 @dataclass
 class MessageEvent(Event):
     """Message-related events."""
+
     message_id: SnowflakeID = 0
     content: Optional[str] = None
     author: Optional[Dict[str, Any]] = None
@@ -63,6 +66,7 @@ class MessageEvent(Event):
 @dataclass
 class PresenceEvent(Event):
     """Presence update event."""
+
     status: str = "offline"
     activities: List[Dict[str, Any]] = field(default_factory=list)
     client_status: Optional[Dict[str, str]] = None
@@ -74,6 +78,7 @@ class PresenceEvent(Event):
 @dataclass
 class TypingEvent(Event):
     """Typing start event."""
+
     def __post_init__(self):
         self.event_type = EventType.TYPING_START
 
@@ -81,6 +86,7 @@ class TypingEvent(Event):
 @dataclass
 class ChannelEvent(Event):
     """Channel-related events."""
+
     name: Optional[str] = None
     channel_type: int = 0
     position: int = 0
@@ -92,6 +98,7 @@ class ChannelEvent(Event):
 @dataclass
 class GuildEvent(Event):
     """Guild/server-related events."""
+
     name: Optional[str] = None
     icon: Optional[str] = None
     owner_id: Optional[SnowflakeID] = None
@@ -103,6 +110,7 @@ class GuildEvent(Event):
 @dataclass
 class GuildMemberEvent(Event):
     """Guild member events."""
+
     member_user_id: int = 0
     nick: Optional[str] = None
     roles: List[int] = field(default_factory=list)
@@ -112,6 +120,7 @@ class GuildMemberEvent(Event):
 @dataclass
 class VoiceStateEvent(Event):
     """Voice state update event."""
+
     voice_channel_id: Optional[int] = None
     self_mute: bool = False
     self_deaf: bool = False
@@ -125,6 +134,7 @@ class VoiceStateEvent(Event):
 @dataclass
 class ReactionEvent(Event):
     """Reaction events."""
+
     message_id: int = 0
     emoji: Optional[Dict[str, Any]] = None
     member: Optional[Dict[str, Any]] = None

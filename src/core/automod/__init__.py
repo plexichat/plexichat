@@ -133,7 +133,9 @@ def setup(db, servers_module=None, messaging_module=None, notifications_module=N
 
     from .manager import AutoModManager
 
-    _manager = AutoModManager(db, servers_module, messaging_module, notifications_module)
+    _manager = AutoModManager(
+        db, servers_module, messaging_module, notifications_module
+    )
     _setup_complete = True
 
 
@@ -152,7 +154,7 @@ def check_message(
     user_id: int,
     content: str,
     message_id: Optional[int] = None,
-    context: Optional[Dict[str, Any]] = None
+    context: Optional[Dict[str, Any]] = None,
 ) -> CheckResult:
     """Check a message against all enabled rules."""
     return _get_manager().check_message(
@@ -172,7 +174,7 @@ def process_violation(
     message_id: Optional[int],
     match: RuleMatch,
     actions: List[RuleAction],
-    context: Optional[Dict[str, Any]] = None
+    context: Optional[Dict[str, Any]] = None,
 ) -> Violation:
     """Process a violation and execute actions."""
     return _get_manager().process_violation(
@@ -190,12 +192,20 @@ def create_rule(
     exempt_roles: Optional[List[int]] = None,
     exempt_channels: Optional[List[int]] = None,
     priority: int = 0,
-    check_all: bool = False
+    check_all: bool = False,
 ) -> Rule:
     """Create a new automod rule."""
     return _get_manager().create_rule(
-        user_id, server_id, name, rule_type, rule_config, actions,
-        exempt_roles, exempt_channels, priority, check_all
+        user_id,
+        server_id,
+        name,
+        rule_type,
+        rule_config,
+        actions,
+        exempt_roles,
+        exempt_channels,
+        priority,
+        check_all,
     )
 
 
@@ -213,12 +223,19 @@ def update_rule(
     exempt_roles: Optional[List[int]] = None,
     exempt_channels: Optional[List[int]] = None,
     priority: Optional[int] = None,
-    check_all: Optional[bool] = None
+    check_all: Optional[bool] = None,
 ) -> Rule:
     """Update an existing rule."""
     return _get_manager().update_rule(
-        user_id, rule_id, name, rule_config, actions,
-        exempt_roles, exempt_channels, priority, check_all
+        user_id,
+        rule_id,
+        name,
+        rule_config,
+        actions,
+        exempt_roles,
+        exempt_channels,
+        priority,
+        check_all,
     )
 
 
@@ -242,10 +259,12 @@ def add_exemption(
     server_id: int,
     target_type: str,
     target_id: int,
-    rule_id: Optional[int] = None
+    rule_id: Optional[int] = None,
 ) -> Exemption:
     """Add an exemption from automod rules."""
-    return _get_manager().add_exemption(user_id, server_id, target_type, target_id, rule_id)
+    return _get_manager().add_exemption(
+        user_id, server_id, target_type, target_id, rule_id
+    )
 
 
 def remove_exemption(user_id: int, exemption_id: int) -> bool:
@@ -257,7 +276,7 @@ def get_violations(
     server_id: int,
     user_id: Optional[int] = None,
     limit: int = 50,
-    before_id: Optional[int] = None
+    before_id: Optional[int] = None,
 ) -> List[Violation]:
     """Get violations for a server."""
     return _get_manager().get_violations(server_id, user_id, limit, before_id)
@@ -277,7 +296,7 @@ def get_audit_log(
     server_id: int,
     limit: int = 50,
     before_id: Optional[int] = None,
-    action_type: Optional[ActionType] = None
+    action_type: Optional[ActionType] = None,
 ) -> List[AuditEntry]:
     """Get automod audit log entries."""
     return _get_manager().get_audit_log(server_id, limit, before_id, action_type)
@@ -290,11 +309,17 @@ def trigger_action(
     action_type: ActionType,
     reason: str,
     duration_seconds: Optional[int] = None,
-    context: Optional[Dict[str, Any]] = None
+    context: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """Manually trigger an automod action."""
     return _get_manager().trigger_action(
-        user_id, server_id, target_user_id, action_type, reason, duration_seconds, context
+        user_id,
+        server_id,
+        target_user_id,
+        action_type,
+        reason,
+        duration_seconds,
+        context,
     )
 
 
@@ -302,16 +327,16 @@ def scan_messages_bulk(
     server_id: int,
     channel_id: int,
     message_ids: List[int],
-    context: Optional[Dict[str, Any]] = None
+    context: Optional[Dict[str, Any]] = None,
 ) -> BulkScanResult:
     """Scan multiple messages for violations."""
-    return _get_manager().scan_messages_bulk(server_id, channel_id, message_ids, context)
+    return _get_manager().scan_messages_bulk(
+        server_id, channel_id, message_ids, context
+    )
 
 
 def check_ai(
-    content: str,
-    backend: str = "openai",
-    context: Optional[Dict[str, Any]] = None
+    content: str, backend: str = "openai", context: Optional[Dict[str, Any]] = None
 ) -> AICheckResult:
     """Check content using AI moderation backend."""
     return _get_manager().check_ai(content, backend, context)

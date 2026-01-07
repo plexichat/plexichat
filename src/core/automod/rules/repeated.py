@@ -31,7 +31,7 @@ class RepeatedCharsRule(BaseRule):
         content: str,
         user_id: int,
         channel_id: int,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> RuleMatch:
         """Check for excessive repeated characters."""
         matches = self._pattern.findall(content)
@@ -67,9 +67,9 @@ class RepeatedCharsRule(BaseRule):
                 "repeated_chars": violations,
                 "occurrence_count": len(violations),
                 "max_allowed": self._max_repeats,
-                "examples": examples
+                "examples": examples,
             },
-            severity=ViolationSeverity.LOW
+            severity=ViolationSeverity.LOW,
         )
 
     @classmethod

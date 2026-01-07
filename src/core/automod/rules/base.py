@@ -18,7 +18,7 @@ class BaseRule(ABC):
     def __init__(self, rule: Rule):
         """
         Initialize the rule.
-        
+
         Args:
             rule: Rule configuration from database
         """
@@ -31,17 +31,17 @@ class BaseRule(ABC):
         content: str,
         user_id: int,
         channel_id: int,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> RuleMatch:
         """
         Check content against this rule.
-        
+
         Args:
             content: Message content to check
             user_id: ID of user who sent the message
             channel_id: ID of channel where message was sent
             context: Additional context (message history, etc.)
-            
+
         Returns:
             RuleMatch with results
         """
@@ -51,10 +51,10 @@ class BaseRule(ABC):
     def validate_config(cls, config: Dict[str, Any]) -> tuple:
         """
         Validate rule configuration.
-        
+
         Args:
             config: Configuration dictionary
-            
+
         Returns:
             Tuple of (valid: bool, issues: list)
         """
@@ -65,7 +65,7 @@ class BaseRule(ABC):
         matched: bool,
         matched_content: Optional[str] = None,
         details: Optional[Dict[str, Any]] = None,
-        severity: ViolationSeverity = ViolationSeverity.MEDIUM
+        severity: ViolationSeverity = ViolationSeverity.MEDIUM,
     ) -> RuleMatch:
         """Helper to create a RuleMatch."""
         return RuleMatch(
@@ -74,7 +74,7 @@ class BaseRule(ABC):
             matched=matched,
             matched_content=matched_content,
             match_details=details or {},
-            severity=severity
+            severity=severity,
         )
 
     def _no_match(self) -> RuleMatch:

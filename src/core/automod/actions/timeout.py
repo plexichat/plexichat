@@ -24,7 +24,7 @@ class TimeoutUserAction(BaseAction):
         self,
         action: RuleAction,
         violation: Violation,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """Timeout the user."""
         duration = action.duration_seconds or self.DEFAULT_DURATION
@@ -43,7 +43,7 @@ class TimeoutUserAction(BaseAction):
                 """UPDATE srv_members 
                    SET timeout_until = ?, timeout_reason = ?
                    WHERE server_id = ? AND user_id = ?""",
-                (timeout_until, reason, violation.server_id, violation.user_id)
+                (timeout_until, reason, violation.server_id, violation.user_id),
             )
 
             logger.debug(
@@ -60,7 +60,7 @@ class TimeoutUserAction(BaseAction):
         self,
         action: RuleAction,
         violation: Violation,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> tuple:
         """Check if user can be timed out."""
         if not violation.server_id:
@@ -68,15 +68,14 @@ class TimeoutUserAction(BaseAction):
 
         member = self._db.fetch_one(
             "SELECT * FROM srv_members WHERE server_id = ? AND user_id = ?",
-            (violation.server_id, violation.user_id)
+            (violation.server_id, violation.user_id),
         )
 
         if not member:
             return False, "User is not a member of the server"
 
         server = self._db.fetch_one(
-            "SELECT owner_id FROM srv_servers WHERE id = ?",
-            (violation.server_id,)
+            "SELECT owner_id FROM srv_servers WHERE id = ?", (violation.server_id,)
         )
 
         if server and server["owner_id"] == violation.user_id:

@@ -13,7 +13,11 @@ import utils.logger as logger
 
 from .base import BaseAIAdapter
 from ..models import AICheckResult, AIBackendType
-from ..exceptions import AIBackendError, AIBackendUnavailableError, AIBackendTimeoutError
+from ..exceptions import (
+    AIBackendError,
+    AIBackendUnavailableError,
+    AIBackendTimeoutError,
+)
 
 
 class OpenAIAdapter(BaseAIAdapter):
@@ -44,28 +48,28 @@ class OpenAIAdapter(BaseAIAdapter):
         self._model = config.get("model", "text-moderation-latest")
         self._threshold = config.get("threshold", 0.5)
 
-    def check_content(self, content: str, context: Optional[Dict[str, Any]] = None) -> AICheckResult:
+    def check_content(
+        self, content: str, context: Optional[Dict[str, Any]] = None
+    ) -> AICheckResult:
         """Check content using OpenAI Moderation API."""
         if not self.is_available():
             raise AIBackendUnavailableError(
-                "OpenAI API key not configured",
-                backend="openai"
+                "OpenAI API key not configured", backend="openai"
             )
 
         try:
-            request_data = json.dumps({
-                "input": content,
-                "model": self._model
-            }).encode("utf-8")
+            request_data = json.dumps({"input": content, "model": self._model}).encode(
+                "utf-8"
+            )
 
             request = Request(
                 self._api_url,
                 data=request_data,
                 headers={
                     "Authorization": f"Bearer {self._api_key}",
-                    "Content-Type": "application/json"
+                    "Content-Type": "application/json",
                 },
-                method="POST"
+                method="POST",
             )
 
             with urlopen(request, timeout=self._timeout) as response:
@@ -76,26 +80,21 @@ class OpenAIAdapter(BaseAIAdapter):
         except HTTPError as e:
             logger.error(f"OpenAI API HTTP error: {e.code} - {e.reason}")
             raise AIBackendError(
-                f"OpenAI API error: {e.reason}",
-                backend="openai",
-                status_code=e.code
+                f"OpenAI API error: {e.reason}", backend="openai", status_code=e.code
             )
         except URLError as e:
             if "timed out" in str(e.reason).lower():
                 raise AIBackendTimeoutError(
-                    "OpenAI API request timed out",
-                    backend="openai"
+                    "OpenAI API request timed out", backend="openai"
                 )
             logger.error(f"OpenAI API URL error: {e.reason}")
             raise AIBackendError(
-                f"OpenAI API connection error: {e.reason}",
-                backend="openai"
+                f"OpenAI API connection error: {e.reason}", backend="openai"
             )
         except json.JSONDecodeError as e:
             logger.error(f"OpenAI API response parse error: {e}")
             raise AIBackendError(
-                "Failed to parse OpenAI API response",
-                backend="openai"
+                "Failed to parse OpenAI API response", backend="openai"
             )
 
     def _parse_response(self, response: Dict[str, Any]) -> AICheckResult:
@@ -107,18 +106,13 @@ class OpenAIAdapter(BaseAIAdapter):
         flagged = results.get("flagged", False)
 
         flagged_categories = {
-            cat: flagged_val
-            for cat, flagged_val in categories.items()
+            cat: flagged_val for cat, flagged_val in categories.items()
         }
 
-        category_scores = {
-            cat: score
-            for cat, score in scores.items()
-        }
+        category_scores = {cat: score for cat, score in scores.items()}
 
         above_threshold = any(
-            score >= self._threshold
-            for score in category_scores.values()
+            score >= self._threshold for score in category_scores.values()
         )
 
         return AICheckResult(
@@ -126,7 +120,7 @@ class OpenAIAdapter(BaseAIAdapter):
             categories=flagged_categories,
             scores=category_scores,
             backend=self.backend_type or AIBackendType.OPENAI,
-            raw_response=response
+            raw_response=response,
         )
 
     def is_available(self) -> bool:

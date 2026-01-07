@@ -7,11 +7,13 @@ from typing import Optional
 
 class EmbedError(Exception):
     """Base exception for all embed errors."""
+
     pass
 
 
 class EmbedNotFoundError(EmbedError):
     """Embed does not exist."""
+
     pass
 
 
@@ -68,6 +70,7 @@ class InvalidColorError(EmbedError):
 
 class MessageNotFoundError(EmbedError):
     """Message does not exist or is not accessible."""
+
     pass
 
 

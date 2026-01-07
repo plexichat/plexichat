@@ -21,11 +21,13 @@ class DeleteMessageAction(BaseAction):
         self,
         action: RuleAction,
         violation: Violation,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """Delete the message."""
         if not violation.message_id:
-            logger.warning(f"Cannot delete message: no message_id in violation {violation.id}")
+            logger.warning(
+                f"Cannot delete message: no message_id in violation {violation.id}"
+            )
             return False
 
         if not self._messaging:
@@ -37,15 +39,16 @@ class DeleteMessageAction(BaseAction):
             if not bot_user_id:
                 self._db.execute(
                     "UPDATE msg_messages SET deleted = 1, deleted_at = ? WHERE id = ?",
-                    (violation.created_at, violation.message_id)
+                    (violation.created_at, violation.message_id),
                 )
             else:
                 self._messaging.delete_message(
-                    user_id=bot_user_id,
-                    message_id=violation.message_id
+                    user_id=bot_user_id, message_id=violation.message_id
                 )
 
-            logger.debug(f"Deleted message {violation.message_id} for violation {violation.id}")
+            logger.debug(
+                f"Deleted message {violation.message_id} for violation {violation.id}"
+            )
             return True
 
         except Exception as e:
@@ -56,7 +59,7 @@ class DeleteMessageAction(BaseAction):
         self,
         action: RuleAction,
         violation: Violation,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> tuple:
         """Check if message can be deleted."""
         if not violation.message_id:

@@ -4,7 +4,6 @@ AutoMod manager - Core business logic for auto-moderation.
 Handles rule evaluation, action execution, and integration with other modules.
 """
 
-import time
 import json
 from typing import Optional, List, Dict, Any
 
@@ -12,7 +11,6 @@ import utils.config as config
 import utils.logger as logger
 import utils.validator as validator
 from src.core.base import BaseManager, SnowflakeID
-from src.utils.encryption import generate_snowflake_id
 
 from .models import (
     Rule,
@@ -80,15 +78,11 @@ class AutoModManager(BaseManager):
     }
 
     def __init__(
-        self,
-        db,
-        servers_module=None,
-        messaging_module=None,
-        notifications_module=None
+        self, db, servers_module=None, messaging_module=None, notifications_module=None
     ):
         """
         Initialize the AutoMod manager.
-        
+
         Args:
             db: Database instance
             servers_module: Servers module for kicks/bans
@@ -129,7 +123,9 @@ class AutoModManager(BaseManager):
             self._ai_adapters["openai"] = OpenAIAdapter(ai_config["openai"])
 
         if ai_config.get("perspective", {}).get("api_key"):
-            self._ai_adapters["perspective"] = PerspectiveAdapter(ai_config["perspective"])
+            self._ai_adapters["perspective"] = PerspectiveAdapter(
+                ai_config["perspective"]
+            )
 
         if ai_config.get("custom", {}).get("endpoint_url"):
             self._ai_adapters["custom"] = CustomAdapter(ai_config["custom"])
@@ -141,11 +137,11 @@ class AutoModManager(BaseManager):
         user_id: SnowflakeID,
         content: str,
         message_id: Optional[SnowflakeID] = None,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> CheckResult:
         """
         Check a message against all enabled rules.
-        
+
         Args:
             server_id: Server where message was sent
             channel_id: Channel where message was sent
@@ -153,7 +149,7 @@ class AutoModManager(BaseManager):
             content: Message content
             message_id: Optional message ID
             context: Additional context
-            
+
         Returns:
             CheckResult with violations and actions
         """
@@ -192,12 +188,19 @@ class AutoModManager(BaseManager):
         if not violations:
             return CheckResult(passed=True, violations=[], actions_to_take=[])
 
-        should_delete = any(a.action_type == ActionType.DELETE_MESSAGE for a in actions_to_take)
-        should_timeout = any(a.action_type == ActionType.TIMEOUT_USER for a in actions_to_take)
+        should_delete = any(
+            a.action_type == ActionType.DELETE_MESSAGE for a in actions_to_take
+        )
+        should_timeout = any(
+            a.action_type == ActionType.TIMEOUT_USER for a in actions_to_take
+        )
         timeout_duration = None
 
         for action in actions_to_take:
-            if action.action_type == ActionType.TIMEOUT_USER and action.duration_seconds:
+            if (
+                action.action_type == ActionType.TIMEOUT_USER
+                and action.duration_seconds
+            ):
                 timeout_duration = action.duration_seconds
                 break
 
@@ -207,7 +210,7 @@ class AutoModManager(BaseManager):
             actions_to_take=actions_to_take,
             should_delete=should_delete,
             should_timeout=should_timeout,
-            timeout_duration=timeout_duration
+            timeout_duration=timeout_duration,
         )
 
     def _evaluate_rule(
@@ -216,17 +219,13 @@ class AutoModManager(BaseManager):
         content: str,
         user_id: SnowflakeID,
         channel_id: SnowflakeID,
-        context: Dict[str, Any]
+        context: Dict[str, Any],
     ) -> RuleMatch:
         """Evaluate a single rule against content."""
         rule_class = self.RULE_CLASSES.get(rule.rule_type)
 
         if not rule_class:
-            return RuleMatch(
-                rule_id=rule.id,
-                rule_type=rule.rule_type,
-                matched=False
-            )
+            return RuleMatch(rule_id=rule.id, rule_type=rule.rule_type, matched=False)
 
         rule_instance = rule_class(rule)
         return rule_instance.check(content, user_id, channel_id, context)
@@ -239,11 +238,11 @@ class AutoModManager(BaseManager):
         message_id: Optional[SnowflakeID],
         match: RuleMatch,
         actions: List[RuleAction],
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> Violation:
         """
         Process a violation and execute actions.
-        
+
         Args:
             server_id: Server ID
             channel_id: Channel ID
@@ -252,7 +251,7 @@ class AutoModManager(BaseManager):
             match: Rule match result
             actions: Actions to execute
             context: Additional context
-            
+
         Returns:
             Created Violation record
         """
@@ -279,9 +278,9 @@ class AutoModManager(BaseManager):
                     matched_content=match.matched_content or "",
                     actions_taken=[],
                     severity=match.severity,
-                    created_at=now
+                    created_at=now,
                 ),
-                context
+                context,
             )
 
             if success:
@@ -304,8 +303,8 @@ class AutoModManager(BaseManager):
                 json.dumps([a.value for a in actions_taken]),
                 match.severity.value,
                 json.dumps(match.match_details),
-                now
-            )
+                now,
+            ),
         )
 
         self._update_reputation(user_id, server_id, match.severity)
@@ -322,14 +321,14 @@ class AutoModManager(BaseManager):
             actions_taken=actions_taken,
             severity=match.severity,
             created_at=now,
-            metadata=match.match_details
+            metadata=match.match_details,
         )
 
     def _execute_action(
         self,
         action: RuleAction,
         violation: Violation,
-        context: Optional[Dict[str, Any]]
+        context: Optional[Dict[str, Any]],
     ) -> bool:
         """Execute a single action."""
         action_class = self.ACTION_CLASSES.get(action.action_type)
@@ -339,10 +338,7 @@ class AutoModManager(BaseManager):
             return False
 
         executor = action_class(
-            self._db,
-            self._servers,
-            self._messaging,
-            self._notifications
+            self._db, self._servers, self._messaging, self._notifications
         )
 
         can_execute, reason = executor.can_execute(action, violation, context)
@@ -363,11 +359,11 @@ class AutoModManager(BaseManager):
         exempt_roles: Optional[List[SnowflakeID]] = None,
         exempt_channels: Optional[List[SnowflakeID]] = None,
         priority: int = 0,
-        check_all: bool = False
+        check_all: bool = False,
     ) -> Rule:
         """
         Create a new automod rule.
-        
+
         Args:
             user_id: User creating the rule
             server_id: Server for the rule
@@ -379,7 +375,7 @@ class AutoModManager(BaseManager):
             exempt_channels: Channels exempt from this rule
             priority: Rule priority (higher = checked first)
             check_all: Whether to continue checking after match
-            
+
         Returns:
             Created Rule
         """
@@ -397,27 +393,31 @@ class AutoModManager(BaseManager):
             except ValueError:
                 raise RuleValidationError(f"Invalid action type: {action_type_str}")
 
-            parsed_actions.append(RuleAction(
-                action_type=action_type,
-                duration_seconds=action_data.get("duration_seconds"),
-                reason=action_data.get("reason"),
-                notify_user=action_data.get("notify_user", True),
-                metadata=action_data.get("metadata", {})
-            ))
+            parsed_actions.append(
+                RuleAction(
+                    action_type=action_type,
+                    duration_seconds=action_data.get("duration_seconds"),
+                    reason=action_data.get("reason"),
+                    notify_user=action_data.get("notify_user", True),
+                    metadata=action_data.get("metadata", {}),
+                )
+            )
 
         now = self._get_timestamp()
         rule_id = self._generate_id()
 
-        actions_json = json.dumps([
-            {
-                "action_type": a.action_type.value,
-                "duration_seconds": a.duration_seconds,
-                "reason": a.reason,
-                "notify_user": a.notify_user,
-                "metadata": a.metadata
-            }
-            for a in parsed_actions
-        ])
+        actions_json = json.dumps(
+            [
+                {
+                    "action_type": a.action_type.value,
+                    "duration_seconds": a.duration_seconds,
+                    "reason": a.reason,
+                    "notify_user": a.notify_user,
+                    "metadata": a.metadata,
+                }
+                for a in parsed_actions
+            ]
+        )
 
         self._db.execute(
             """INSERT INTO automod_rules 
@@ -438,8 +438,8 @@ class AutoModManager(BaseManager):
                 1 if check_all else 0,
                 now,
                 now,
-                user_id
-            )
+                user_id,
+            ),
         )
 
         logger.debug(f"Created automod rule {rule_id} for server {server_id}")
@@ -450,10 +450,7 @@ class AutoModManager(BaseManager):
 
     def get_rule(self, rule_id: SnowflakeID) -> Optional[Rule]:
         """Get a rule by ID."""
-        row = self._db.fetch_one(
-            "SELECT * FROM automod_rules WHERE id = ?",
-            (rule_id,)
-        )
+        row = self._db.fetch_one("SELECT * FROM automod_rules WHERE id = ?", (rule_id,))
 
         if not row:
             return None
@@ -470,7 +467,7 @@ class AutoModManager(BaseManager):
         exempt_roles: Optional[List[SnowflakeID]] = None,
         exempt_channels: Optional[List[SnowflakeID]] = None,
         priority: Optional[int] = None,
-        check_all: Optional[bool] = None
+        check_all: Optional[bool] = None,
     ) -> Rule:
         """Update an existing rule."""
         rule = self.get_rule(rule_id)
@@ -496,18 +493,22 @@ class AutoModManager(BaseManager):
         if actions is not None:
             parsed_actions = []
             for action_data in actions:
-                action_type_str = action_data.get("action_type", action_data.get("type"))
+                action_type_str = action_data.get(
+                    "action_type", action_data.get("type")
+                )
                 try:
                     action_type = ActionType(action_type_str)
                 except ValueError:
                     raise RuleValidationError(f"Invalid action type: {action_type_str}")
-                parsed_actions.append({
-                    "action_type": action_type.value,
-                    "duration_seconds": action_data.get("duration_seconds"),
-                    "reason": action_data.get("reason"),
-                    "notify_user": action_data.get("notify_user", True),
-                    "metadata": action_data.get("metadata", {})
-                })
+                parsed_actions.append(
+                    {
+                        "action_type": action_type.value,
+                        "duration_seconds": action_data.get("duration_seconds"),
+                        "reason": action_data.get("reason"),
+                        "notify_user": action_data.get("notify_user", True),
+                        "metadata": action_data.get("metadata", {}),
+                    }
+                )
             updates.append("actions = ?")
             params.append(json.dumps(parsed_actions))
 
@@ -534,7 +535,7 @@ class AutoModManager(BaseManager):
 
             self._db.execute(
                 f"UPDATE automod_rules SET {', '.join(updates)} WHERE id = ?",
-                tuple(params)
+                tuple(params),
             )
 
         result = self.get_rule(rule_id)
@@ -558,7 +559,9 @@ class AutoModManager(BaseManager):
         result = self._get_server_rules(server_id, enabled_only=False)
         return result
 
-    def _get_server_rules(self, server_id: SnowflakeID, enabled_only: bool = False) -> List[Rule]:
+    def _get_server_rules(
+        self, server_id: SnowflakeID, enabled_only: bool = False
+    ) -> List[Rule]:
         """Internal method to get server rules."""
         query = "SELECT * FROM automod_rules WHERE server_id = ?"
         params = [server_id]
@@ -571,7 +574,9 @@ class AutoModManager(BaseManager):
         rows = self._db.fetch_all(query, tuple(params))
         return [self._row_to_rule(row) for row in rows]
 
-    def set_rule_enabled(self, user_id: SnowflakeID, rule_id: SnowflakeID, enabled: bool) -> Rule:
+    def set_rule_enabled(
+        self, user_id: SnowflakeID, rule_id: SnowflakeID, enabled: bool
+    ) -> Rule:
         """Enable or disable a rule."""
         rule = self.get_rule(rule_id)
         if not rule:
@@ -579,7 +584,7 @@ class AutoModManager(BaseManager):
 
         self._db.execute(
             "UPDATE automod_rules SET enabled = ?, updated_at = ? WHERE id = ?",
-            (1 if enabled else 0, self._get_timestamp(), rule_id)
+            (1 if enabled else 0, self._get_timestamp(), rule_id),
         )
 
         result = self.get_rule(rule_id)
@@ -592,18 +597,18 @@ class AutoModManager(BaseManager):
         server_id: SnowflakeID,
         target_type: str,
         target_id: SnowflakeID,
-        rule_id: Optional[SnowflakeID] = None
+        rule_id: Optional[SnowflakeID] = None,
     ) -> Exemption:
         """
         Add an exemption from automod rules.
-        
+
         Args:
             user_id: User adding the exemption
             server_id: Server ID
             target_type: "role" or "channel"
             target_id: Role or channel ID
             rule_id: Specific rule to exempt from (None = all rules)
-            
+
         Returns:
             Created Exemption
         """
@@ -613,7 +618,7 @@ class AutoModManager(BaseManager):
         existing = self._db.fetch_one(
             """SELECT id FROM automod_exemptions 
                WHERE server_id = ? AND target_type = ? AND target_id = ? AND rule_id IS ?""",
-            (server_id, target_type, target_id, rule_id)
+            (server_id, target_type, target_id, rule_id),
         )
 
         if existing:
@@ -626,7 +631,7 @@ class AutoModManager(BaseManager):
             """INSERT INTO automod_exemptions 
                (id, server_id, rule_id, target_type, target_id, created_at, created_by)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (exemption_id, server_id, rule_id, target_type, target_id, now, user_id)
+            (exemption_id, server_id, rule_id, target_type, target_id, now, user_id),
         )
 
         return Exemption(
@@ -636,14 +641,13 @@ class AutoModManager(BaseManager):
             target_type=target_type,
             target_id=target_id,
             created_at=now,
-            created_by=user_id
+            created_by=user_id,
         )
 
     def remove_exemption(self, user_id: SnowflakeID, exemption_id: SnowflakeID) -> bool:
         """Remove an exemption."""
         existing = self._db.fetch_one(
-            "SELECT id FROM automod_exemptions WHERE id = ?",
-            (exemption_id,)
+            "SELECT id FROM automod_exemptions WHERE id = ?", (exemption_id,)
         )
 
         if not existing:
@@ -652,11 +656,12 @@ class AutoModManager(BaseManager):
         self._db.execute("DELETE FROM automod_exemptions WHERE id = ?", (exemption_id,))
         return True
 
-    def _is_exempt(self, server_id: SnowflakeID, user_id: SnowflakeID, channel_id: SnowflakeID) -> bool:
+    def _is_exempt(
+        self, server_id: SnowflakeID, user_id: SnowflakeID, channel_id: SnowflakeID
+    ) -> bool:
         """Check if user/channel is globally exempt."""
         server = self._db.fetch_one(
-            "SELECT owner_id FROM srv_servers WHERE id = ?",
-            (server_id,)
+            "SELECT owner_id FROM srv_servers WHERE id = ?", (server_id,)
         )
         if server and server["owner_id"] == user_id:
             return True
@@ -665,7 +670,7 @@ class AutoModManager(BaseManager):
             """SELECT role_id FROM srv_member_roles 
                JOIN srv_members ON srv_member_roles.member_id = srv_members.id
                WHERE srv_members.server_id = ? AND srv_members.user_id = ?""",
-            (server_id, user_id)
+            (server_id, user_id),
         )
         role_ids = [r["role_id"] for r in user_roles]
 
@@ -674,7 +679,7 @@ class AutoModManager(BaseManager):
             admin_role = self._db.fetch_one(
                 f"""SELECT id FROM srv_roles 
                     WHERE id IN ({placeholders}) AND permissions LIKE '%"administrator": true%'""",
-                tuple(role_ids)
+                tuple(role_ids),
             )
             if admin_role:
                 return True
@@ -682,7 +687,7 @@ class AutoModManager(BaseManager):
         channel_exempt = self._db.fetch_one(
             """SELECT id FROM automod_exemptions 
                WHERE server_id = ? AND target_type = 'channel' AND target_id = ? AND rule_id IS NULL""",
-            (server_id, channel_id)
+            (server_id, channel_id),
         )
         if channel_exempt:
             return True
@@ -692,14 +697,16 @@ class AutoModManager(BaseManager):
             role_exempt = self._db.fetch_one(
                 f"""SELECT id FROM automod_exemptions 
                     WHERE server_id = ? AND target_type = 'role' AND target_id IN ({placeholders}) AND rule_id IS NULL""",
-                (server_id, *role_ids)
+                (server_id, *role_ids),
             )
             if role_exempt:
                 return True
 
         return False
 
-    def _is_exempt_from_rule(self, rule: Rule, user_id: SnowflakeID, channel_id: SnowflakeID) -> bool:
+    def _is_exempt_from_rule(
+        self, rule: Rule, user_id: SnowflakeID, channel_id: SnowflakeID
+    ) -> bool:
         """Check if user/channel is exempt from a specific rule."""
         if channel_id in rule.exempt_channels:
             return True
@@ -708,7 +715,7 @@ class AutoModManager(BaseManager):
             """SELECT role_id FROM srv_member_roles 
                JOIN srv_members ON srv_member_roles.member_id = srv_members.id
                WHERE srv_members.server_id = ? AND srv_members.user_id = ?""",
-            (rule.server_id, user_id)
+            (rule.server_id, user_id),
         )
         user_role_ids = {r["role_id"] for r in user_roles}
 
@@ -718,7 +725,7 @@ class AutoModManager(BaseManager):
         channel_exempt = self._db.fetch_one(
             """SELECT id FROM automod_exemptions 
                WHERE server_id = ? AND target_type = 'channel' AND target_id = ? AND rule_id = ?""",
-            (rule.server_id, channel_id, rule.id)
+            (rule.server_id, channel_id, rule.id),
         )
         if channel_exempt:
             return True
@@ -728,7 +735,7 @@ class AutoModManager(BaseManager):
             role_exempt = self._db.fetch_one(
                 f"""SELECT id FROM automod_exemptions 
                     WHERE server_id = ? AND target_type = 'role' AND target_id IN ({placeholders}) AND rule_id = ?""",
-                (rule.server_id, *user_role_ids, rule.id)
+                (rule.server_id, *user_role_ids, rule.id),
             )
             if role_exempt:
                 return True
@@ -740,7 +747,7 @@ class AutoModManager(BaseManager):
         server_id: SnowflakeID,
         user_id: Optional[SnowflakeID] = None,
         limit: int = 50,
-        before_id: Optional[SnowflakeID] = None
+        before_id: Optional[SnowflakeID] = None,
     ) -> List[Violation]:
         """Get violations for a server."""
         query = "SELECT * FROM automod_violations WHERE server_id = ?"
@@ -760,11 +767,13 @@ class AutoModManager(BaseManager):
         rows = self._db.fetch_all(query, tuple(params))
         return [self._row_to_violation(row) for row in rows]
 
-    def get_user_reputation(self, user_id: SnowflakeID, server_id: SnowflakeID) -> UserReputation:
+    def get_user_reputation(
+        self, user_id: SnowflakeID, server_id: SnowflakeID
+    ) -> UserReputation:
         """Get user's reputation score for a server."""
         row = self._db.fetch_one(
             "SELECT * FROM automod_reputation WHERE user_id = ? AND server_id = ?",
-            (user_id, server_id)
+            (user_id, server_id),
         )
 
         if not row:
@@ -777,12 +786,14 @@ class AutoModManager(BaseManager):
                 last_violation_at=None,
                 last_decay_at=now,
                 created_at=now,
-                updated_at=now
+                updated_at=now,
             )
 
         return self._row_to_reputation(row)
 
-    def _update_reputation(self, user_id: SnowflakeID, server_id: SnowflakeID, severity: ViolationSeverity):
+    def _update_reputation(
+        self, user_id: SnowflakeID, server_id: SnowflakeID, severity: ViolationSeverity
+    ):
         """Update user reputation after a violation."""
         penalty_map = {
             ViolationSeverity.LOW: 5,
@@ -796,7 +807,7 @@ class AutoModManager(BaseManager):
 
         existing = self._db.fetch_one(
             "SELECT * FROM automod_reputation WHERE user_id = ? AND server_id = ?",
-            (user_id, server_id)
+            (user_id, server_id),
         )
 
         if existing:
@@ -806,7 +817,7 @@ class AutoModManager(BaseManager):
                    SET score = ?, violation_count = violation_count + 1, 
                        last_violation_at = ?, updated_at = ?
                    WHERE user_id = ? AND server_id = ?""",
-                (new_score, now, now, user_id, server_id)
+                (new_score, now, now, user_id, server_id),
             )
         else:
             self._db.execute(
@@ -814,16 +825,16 @@ class AutoModManager(BaseManager):
                    (user_id, server_id, score, violation_count, last_violation_at, 
                     last_decay_at, created_at, updated_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (user_id, server_id, 100 - penalty, 1, now, now, now, now)
+                (user_id, server_id, 100 - penalty, 1, now, now, now, now),
             )
 
     def decay_reputation(self, server_id: Optional[SnowflakeID] = None) -> int:
         """
         Apply reputation decay to restore scores over time.
-        
+
         Args:
             server_id: Optional server to decay (None = all servers)
-            
+
         Returns:
             Number of users updated
         """
@@ -855,7 +866,7 @@ class AutoModManager(BaseManager):
         server_id: SnowflakeID,
         limit: int = 50,
         before_id: Optional[SnowflakeID] = None,
-        action_type: Optional[ActionType] = None
+        action_type: Optional[ActionType] = None,
     ) -> List[AuditEntry]:
         """Get automod audit log entries."""
         query = "SELECT * FROM automod_audit WHERE server_id = ?"
@@ -883,11 +894,11 @@ class AutoModManager(BaseManager):
         action_type: ActionType,
         reason: str,
         duration_seconds: Optional[int] = None,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """
         Manually trigger an automod action.
-        
+
         Args:
             user_id: Moderator triggering the action
             server_id: Server ID
@@ -896,14 +907,12 @@ class AutoModManager(BaseManager):
             reason: Reason for action
             duration_seconds: Duration for timeout
             context: Additional context
-            
+
         Returns:
             True if action was executed
         """
         action = RuleAction(
-            action_type=action_type,
-            duration_seconds=duration_seconds,
-            reason=reason
+            action_type=action_type, duration_seconds=duration_seconds, reason=reason
         )
 
         now = self._get_timestamp()
@@ -918,7 +927,7 @@ class AutoModManager(BaseManager):
             matched_content="Manual action",
             actions_taken=[],
             severity=ViolationSeverity.MEDIUM,
-            created_at=now
+            created_at=now,
         )
 
         if action_type == ActionType.LOG_ONLY:
@@ -941,8 +950,8 @@ class AutoModManager(BaseManager):
                     None,
                     reason,
                     json.dumps({"manual": True}),
-                    now
-                )
+                    now,
+                ),
             )
 
         return success
@@ -952,17 +961,17 @@ class AutoModManager(BaseManager):
         server_id: SnowflakeID,
         channel_id: SnowflakeID,
         message_ids: List[SnowflakeID],
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> BulkScanResult:
         """
         Scan multiple messages for violations (raid detection).
-        
+
         Args:
             server_id: Server ID
             channel_id: Channel ID
             message_ids: List of message IDs to scan
             context: Additional context
-            
+
         Returns:
             BulkScanResult with scan results
         """
@@ -973,8 +982,7 @@ class AutoModManager(BaseManager):
 
         for message_id in message_ids:
             msg = self._db.fetch_one(
-                "SELECT * FROM msg_messages WHERE id = ? AND deleted = 0",
-                (message_id,)
+                "SELECT * FROM msg_messages WHERE id = ? AND deleted = 0", (message_id,)
             )
 
             if not msg:
@@ -989,7 +997,7 @@ class AutoModManager(BaseManager):
                 user_id=user_id,
                 content=content,
                 message_id=message_id,
-                context=context
+                context=context,
             )
 
             if not result.passed:
@@ -1003,17 +1011,19 @@ class AutoModManager(BaseManager):
             violations_found=len(messages_flagged),
             messages_flagged=messages_flagged,
             user_violations=user_violations,
-            scan_duration_ms=end_time - start_time
+            scan_duration_ms=end_time - start_time,
         )
 
-    def check_user(self, user_id: SnowflakeID, server_id: SnowflakeID) -> Dict[str, Any]:
+    def check_user(
+        self, user_id: SnowflakeID, server_id: SnowflakeID
+    ) -> Dict[str, Any]:
         """
         Get user's automod status for a server.
-        
+
         Args:
             user_id: User ID
             server_id: Server ID
-            
+
         Returns:
             Dict with reputation, violation count, etc.
         """
@@ -1022,7 +1032,7 @@ class AutoModManager(BaseManager):
         recent_violations = self._db.fetch_one(
             """SELECT COUNT(*) as count FROM automod_violations 
                WHERE user_id = ? AND server_id = ? AND created_at > ?""",
-            (user_id, server_id, self._get_timestamp() - 86400000)
+            (user_id, server_id, self._get_timestamp() - 86400000),
         )
 
         return {
@@ -1030,25 +1040,27 @@ class AutoModManager(BaseManager):
             "server_id": server_id,
             "reputation_score": reputation.score,
             "total_violations": reputation.violation_count,
-            "recent_violations_24h": recent_violations["count"] if recent_violations else 0,
+            "recent_violations_24h": recent_violations["count"]
+            if recent_violations
+            else 0,
             "last_violation_at": reputation.last_violation_at,
-            "is_exempt": self._is_exempt(server_id, user_id, 0)
+            "is_exempt": self._is_exempt(server_id, user_id, 0),
         }
 
     def check_ai(
         self,
         content: str,
         backend: str = "openai",
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> AICheckResult:
         """
         Check content using AI moderation backend.
-        
+
         Args:
             content: Content to check
             backend: AI backend to use
             context: Additional context
-            
+
         Returns:
             AICheckResult from the backend
         """
@@ -1056,9 +1068,9 @@ class AutoModManager(BaseManager):
 
         if not adapter:
             from .exceptions import AIBackendUnavailableError
+
             raise AIBackendUnavailableError(
-                f"AI backend '{backend}' not configured",
-                backend=backend
+                f"AI backend '{backend}' not configured", backend=backend
             )
 
         return adapter.check_content(content, context)
@@ -1072,7 +1084,7 @@ class AutoModManager(BaseManager):
                 duration_seconds=a.get("duration_seconds"),
                 reason=a.get("reason"),
                 notify_user=a.get("notify_user", True),
-                metadata=a.get("metadata", {})
+                metadata=a.get("metadata", {}),
             )
             for a in actions_data
         ]
@@ -1091,7 +1103,7 @@ class AutoModManager(BaseManager):
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             created_by=row["created_by"],
-            check_all=bool(row["check_all"])
+            check_all=bool(row["check_all"]),
         )
 
     def _row_to_violation(self, row) -> Violation:
@@ -1108,7 +1120,7 @@ class AutoModManager(BaseManager):
             actions_taken=[ActionType(a) for a in json.loads(row["actions_taken"])],
             severity=ViolationSeverity(row["severity"]),
             created_at=row["created_at"],
-            metadata=json.loads(row["metadata"]) if row["metadata"] else {}
+            metadata=json.loads(row["metadata"]) if row["metadata"] else {},
         )
 
     def _row_to_reputation(self, row) -> UserReputation:
@@ -1121,7 +1133,7 @@ class AutoModManager(BaseManager):
             last_violation_at=row["last_violation_at"],
             last_decay_at=row["last_decay_at"],
             created_at=row["created_at"],
-            updated_at=row["updated_at"]
+            updated_at=row["updated_at"],
         )
 
     def _row_to_audit_entry(self, row) -> AuditEntry:
@@ -1135,5 +1147,5 @@ class AutoModManager(BaseManager):
             rule_id=row["rule_id"],
             reason=row["reason"],
             metadata=json.loads(row["metadata"]) if row["metadata"] else {},
-            created_at=row["created_at"]
+            created_at=row["created_at"],
         )

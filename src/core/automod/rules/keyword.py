@@ -31,7 +31,7 @@ class KeywordRule(BaseRule):
         content: str,
         user_id: int,
         channel_id: int,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> RuleMatch:
         """Check content for blocked keywords."""
         if not self._keywords:
@@ -62,16 +62,15 @@ class KeywordRule(BaseRule):
         return self._create_match(
             matched=True,
             matched_content=", ".join(matched_keywords),
-            details={
-                "keywords": matched_keywords,
-                "count": len(matched_keywords)
-            },
-            severity=highest_severity
+            details={"keywords": matched_keywords, "count": len(matched_keywords)},
+            severity=highest_severity,
         )
 
     def _contains_whole_word(self, text: str, word: str) -> bool:
         """Check if text contains word as a whole word."""
-        word_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
+        word_chars = set(
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
+        )
 
         start = 0
         while True:
@@ -96,7 +95,7 @@ class KeywordRule(BaseRule):
             "low": ViolationSeverity.LOW,
             "medium": ViolationSeverity.MEDIUM,
             "high": ViolationSeverity.HIGH,
-            "critical": ViolationSeverity.CRITICAL
+            "critical": ViolationSeverity.CRITICAL,
         }
         return mapping.get(sev_str.lower(), ViolationSeverity.MEDIUM)
 
@@ -106,7 +105,7 @@ class KeywordRule(BaseRule):
             ViolationSeverity.LOW: 1,
             ViolationSeverity.MEDIUM: 2,
             ViolationSeverity.HIGH: 3,
-            ViolationSeverity.CRITICAL: 4
+            ViolationSeverity.CRITICAL: 4,
         }
         return ranks.get(sev, 2)
 
@@ -123,7 +122,9 @@ class KeywordRule(BaseRule):
         elif not all(isinstance(k, str) for k in keywords):
             issues.append("all keywords must be strings")
 
-        if "case_sensitive" in config and not isinstance(config["case_sensitive"], bool):
+        if "case_sensitive" in config and not isinstance(
+            config["case_sensitive"], bool
+        ):
             issues.append("case_sensitive must be a boolean")
 
         if "whole_word" in config and not isinstance(config["whole_word"], bool):

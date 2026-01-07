@@ -42,7 +42,7 @@ class MassEmojiRule(BaseRule):
         content: str,
         user_id: int,
         channel_id: int,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> RuleMatch:
         """Check for excessive emoji usage."""
         custom_count = 0
@@ -62,7 +62,9 @@ class MassEmojiRule(BaseRule):
             return self._no_match()
 
         content_without_emoji = self.CUSTOM_EMOJI_PATTERN.sub("", content)
-        content_without_emoji = self.UNICODE_EMOJI_PATTERN.sub("", content_without_emoji)
+        content_without_emoji = self.UNICODE_EMOJI_PATTERN.sub(
+            "", content_without_emoji
+        )
         text_length = len(content_without_emoji.strip())
 
         total_length = text_length + total_emoji
@@ -77,7 +79,9 @@ class MassEmojiRule(BaseRule):
         if total_length > 0:
             emoji_percentage = (total_emoji / total_length) * 100
             if emoji_percentage > self._max_percentage:
-                violations.append(f"{emoji_percentage:.1f}% emoji (max {self._max_percentage}%)")
+                violations.append(
+                    f"{emoji_percentage:.1f}% emoji (max {self._max_percentage}%)"
+                )
 
         if not violations:
             return self._no_match()
@@ -90,9 +94,9 @@ class MassEmojiRule(BaseRule):
                 "unicode_emoji": unicode_count,
                 "total_emoji": total_emoji,
                 "text_length": text_length,
-                "violations": violations
+                "violations": violations,
             },
-            severity=ViolationSeverity.LOW
+            severity=ViolationSeverity.LOW,
         )
 
     @classmethod

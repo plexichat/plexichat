@@ -12,6 +12,7 @@ from src.core.base import SnowflakeID
 
 class RuleType(Enum):
     """Types of automod rules."""
+
     KEYWORD = "keyword"
     REGEX = "regex"
     MENTION_SPAM = "mention_spam"
@@ -26,6 +27,7 @@ class RuleType(Enum):
 
 class ActionType(Enum):
     """Types of actions that can be taken."""
+
     DELETE_MESSAGE = "delete_message"
     TIMEOUT_USER = "timeout_user"
     KICK_USER = "kick_user"
@@ -36,6 +38,7 @@ class ActionType(Enum):
 
 class AIBackendType(Enum):
     """Supported AI moderation backends."""
+
     OPENAI = "openai"
     PERSPECTIVE = "perspective"
     CUSTOM = "custom"
@@ -43,6 +46,7 @@ class AIBackendType(Enum):
 
 class ViolationSeverity(Enum):
     """Severity levels for violations."""
+
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
@@ -52,6 +56,7 @@ class ViolationSeverity(Enum):
 @dataclass
 class RuleAction:
     """Action to take when a rule is triggered."""
+
     action_type: ActionType
     duration_seconds: Optional[int] = None
     reason: Optional[str] = None
@@ -62,6 +67,7 @@ class RuleAction:
 @dataclass
 class Rule:
     """Automod rule definition."""
+
     id: SnowflakeID
     server_id: SnowflakeID
     name: str
@@ -81,6 +87,7 @@ class Rule:
 @dataclass
 class RuleMatch:
     """Result of a rule check."""
+
     rule_id: SnowflakeID
     rule_type: RuleType
     matched: bool
@@ -92,6 +99,7 @@ class RuleMatch:
 @dataclass
 class Violation:
     """Record of a rule violation."""
+
     id: SnowflakeID
     server_id: SnowflakeID
     channel_id: SnowflakeID
@@ -109,6 +117,7 @@ class Violation:
 @dataclass
 class AuditEntry:
     """Audit log entry for automod actions."""
+
     id: SnowflakeID
     server_id: SnowflakeID
     action_type: ActionType
@@ -123,6 +132,7 @@ class AuditEntry:
 @dataclass
 class UserReputation:
     """User reputation score for a server."""
+
     user_id: SnowflakeID
     server_id: SnowflakeID
     score: float
@@ -136,6 +146,7 @@ class UserReputation:
 @dataclass
 class Exemption:
     """Exemption from automod rules."""
+
     id: SnowflakeID
     server_id: SnowflakeID
     rule_id: Optional[SnowflakeID]
@@ -148,6 +159,7 @@ class Exemption:
 @dataclass
 class CheckResult:
     """Result of checking a message against all rules."""
+
     passed: bool
     violations: List[RuleMatch]
     actions_to_take: List[RuleAction]
@@ -159,6 +171,7 @@ class CheckResult:
 @dataclass
 class AICheckResult:
     """Result from AI moderation backend."""
+
     flagged: bool
     categories: Dict[str, bool]
     scores: Dict[str, float]
@@ -169,6 +182,7 @@ class AICheckResult:
 @dataclass
 class BulkScanResult:
     """Result of bulk message scanning."""
+
     total_scanned: int
     violations_found: int
     messages_flagged: List[SnowflakeID]

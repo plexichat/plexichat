@@ -15,10 +15,12 @@ class BaseAction(ABC):
 
     action_type: Optional[ActionType] = None
 
-    def __init__(self, db, servers_module=None, messaging_module=None, notifications_module=None):
+    def __init__(
+        self, db, servers_module=None, messaging_module=None, notifications_module=None
+    ):
         """
         Initialize the action executor.
-        
+
         Args:
             db: Database instance
             servers_module: Servers module for kicks/bans
@@ -35,16 +37,16 @@ class BaseAction(ABC):
         self,
         action: RuleAction,
         violation: Violation,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """
         Execute the action.
-        
+
         Args:
             action: Action configuration
             violation: Violation that triggered this action
             context: Additional context
-            
+
         Returns:
             True if action was executed successfully
         """
@@ -54,16 +56,16 @@ class BaseAction(ABC):
         self,
         action: RuleAction,
         violation: Violation,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> tuple:
         """
         Check if action can be executed.
-        
+
         Args:
             action: Action configuration
             violation: Violation that triggered this action
             context: Additional context
-            
+
         Returns:
             Tuple of (can_execute: bool, reason: str or None)
         """

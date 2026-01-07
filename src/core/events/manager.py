@@ -102,8 +102,6 @@ class EventManager:
             except Exception as e:
                 logger.error(f"Event subscriber error: {e}")
 
-        logger.debug(
-            f"Dispatched {event.event_type.value} to {len(recipients)} users"
-        )
+        logger.debug(f"Dispatched {event.event_type.value} to {len(recipients)} users")
 
         return len(recipients)

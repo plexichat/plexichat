@@ -13,7 +13,11 @@ import utils.logger as logger
 
 from .base import BaseAIAdapter
 from ..models import AICheckResult, AIBackendType
-from ..exceptions import AIBackendError, AIBackendUnavailableError, AIBackendTimeoutError
+from ..exceptions import (
+    AIBackendError,
+    AIBackendUnavailableError,
+    AIBackendTimeoutError,
+)
 
 
 class CustomAdapter(BaseAIAdapter):
@@ -31,12 +35,13 @@ class CustomAdapter(BaseAIAdapter):
         self._request_format = config.get("request_format", "default")
         self._headers = config.get("headers", {})
 
-    def check_content(self, content: str, context: Optional[Dict[str, Any]] = None) -> AICheckResult:
+    def check_content(
+        self, content: str, context: Optional[Dict[str, Any]] = None
+    ) -> AICheckResult:
         """Check content using custom endpoint."""
         if not self.is_available():
             raise AIBackendUnavailableError(
-                "Custom endpoint URL not configured",
-                backend="custom"
+                "Custom endpoint URL not configured", backend="custom"
             )
 
         try:
@@ -47,7 +52,7 @@ class CustomAdapter(BaseAIAdapter):
                 self._endpoint_url,
                 data=json.dumps(request_data).encode("utf-8"),
                 headers=headers,
-                method="POST"
+                method="POST",
             )
 
             with urlopen(request, timeout=self._timeout) as response:
@@ -58,39 +63,33 @@ class CustomAdapter(BaseAIAdapter):
         except HTTPError as e:
             logger.error(f"Custom API HTTP error: {e.code} - {e.reason}")
             raise AIBackendError(
-                f"Custom API error: {e.reason}",
-                backend="custom",
-                status_code=e.code
+                f"Custom API error: {e.reason}", backend="custom", status_code=e.code
             )
         except URLError as e:
             if "timed out" in str(e.reason).lower():
                 raise AIBackendTimeoutError(
-                    "Custom API request timed out",
-                    backend="custom"
+                    "Custom API request timed out", backend="custom"
                 )
             logger.error(f"Custom API URL error: {e.reason}")
             raise AIBackendError(
-                f"Custom API connection error: {e.reason}",
-                backend="custom"
+                f"Custom API connection error: {e.reason}", backend="custom"
             )
         except json.JSONDecodeError as e:
             logger.error(f"Custom API response parse error: {e}")
             raise AIBackendError(
-                "Failed to parse custom API response",
-                backend="custom"
+                "Failed to parse custom API response", backend="custom"
             )
 
-    def _build_request(self, content: str, context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    def _build_request(
+        self, content: str, context: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
         """Build request payload based on configured format."""
         if self._request_format == "openai":
             return {"input": content}
         elif self._request_format == "perspective":
             return {"comment": {"text": content}}
         else:
-            return {
-                "content": content,
-                "context": context or {}
-            }
+            return {"content": content, "context": context or {}}
 
     def _build_headers(self) -> Dict[str, str]:
         """Build request headers."""
@@ -98,7 +97,11 @@ class CustomAdapter(BaseAIAdapter):
         headers.update(self._headers)
 
         if self._api_key:
-            auth_value = f"{self._auth_prefix} {self._api_key}" if self._auth_prefix else self._api_key
+            auth_value = (
+                f"{self._auth_prefix} {self._api_key}"
+                if self._auth_prefix
+                else self._api_key
+            )
             headers[self._auth_header] = auth_value
 
         return headers
@@ -130,7 +133,7 @@ class CustomAdapter(BaseAIAdapter):
             categories=categories,
             scores=scores,
             backend=self.backend_type or AIBackendType.CUSTOM,
-            raw_response=response
+            raw_response=response,
         )
 
     def is_available(self) -> bool:

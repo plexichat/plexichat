@@ -18,6 +18,7 @@ class CapsPercentageRule(BaseRule):
     def __init__(self, rule: Rule):
         super().__init__(rule)
         import utils.config as config
+
         self._max_percentage: float = self.config.get(
             "max_percentage", config.get("automod.rules.caps.max_percentage", 70.0)
         )
@@ -33,7 +34,7 @@ class CapsPercentageRule(BaseRule):
         content: str,
         user_id: int,
         channel_id: int,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> RuleMatch:
         """Check for excessive caps."""
         if self._ignore_commands and content.startswith(("/", "!", ".")):
@@ -61,9 +62,9 @@ class CapsPercentageRule(BaseRule):
                 "caps_percentage": round(caps_percentage, 1),
                 "threshold": self._max_percentage,
                 "letter_count": len(letters),
-                "uppercase_count": uppercase_count
+                "uppercase_count": uppercase_count,
             },
-            severity=severity
+            severity=severity,
         )
 
     @classmethod
@@ -79,7 +80,9 @@ class CapsPercentageRule(BaseRule):
         if not isinstance(min_len, int) or min_len < 1:
             issues.append("min_length must be a positive integer")
 
-        if "ignore_commands" in config and not isinstance(config["ignore_commands"], bool):
+        if "ignore_commands" in config and not isinstance(
+            config["ignore_commands"], bool
+        ):
             issues.append("ignore_commands must be a boolean")
 
         return len(issues) == 0, issues

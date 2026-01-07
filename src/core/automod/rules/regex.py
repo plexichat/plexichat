@@ -31,7 +31,9 @@ class RegexRule(BaseRule):
 
             try:
                 compiled = re.compile(pattern_str, flags)
-                severity = self._parse_severity(pattern_config.get("severity", "medium"))
+                severity = self._parse_severity(
+                    pattern_config.get("severity", "medium")
+                )
                 name = pattern_config.get("name", pattern_str[:30])
                 self._compiled_patterns.append((compiled, severity, name))
             except re.error:
@@ -42,7 +44,7 @@ class RegexRule(BaseRule):
         content: str,
         user_id: int,
         channel_id: int,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> RuleMatch:
         """Check content against regex patterns."""
         if not self._compiled_patterns:
@@ -54,13 +56,17 @@ class RegexRule(BaseRule):
         for compiled, severity, name in self._compiled_patterns:
             match = compiled.search(content)
             if match:
-                matches.append({
-                    "name": name,
-                    "matched": match.group(),
-                    "start": match.start(),
-                    "end": match.end()
-                })
-                if self._severity_rank(severity) > self._severity_rank(highest_severity):
+                matches.append(
+                    {
+                        "name": name,
+                        "matched": match.group(),
+                        "start": match.start(),
+                        "end": match.end(),
+                    }
+                )
+                if self._severity_rank(severity) > self._severity_rank(
+                    highest_severity
+                ):
                     highest_severity = severity
 
         if not matches:
@@ -71,11 +77,8 @@ class RegexRule(BaseRule):
         return self._create_match(
             matched=True,
             matched_content=", ".join(matched_texts[:5]),
-            details={
-                "matches": matches,
-                "count": len(matches)
-            },
-            severity=highest_severity
+            details={"matches": matches, "count": len(matches)},
+            severity=highest_severity,
         )
 
     def _parse_severity(self, sev_str: str) -> ViolationSeverity:
@@ -84,7 +87,7 @@ class RegexRule(BaseRule):
             "low": ViolationSeverity.LOW,
             "medium": ViolationSeverity.MEDIUM,
             "high": ViolationSeverity.HIGH,
-            "critical": ViolationSeverity.CRITICAL
+            "critical": ViolationSeverity.CRITICAL,
         }
         return mapping.get(sev_str.lower(), ViolationSeverity.MEDIUM)
 
@@ -94,7 +97,7 @@ class RegexRule(BaseRule):
             ViolationSeverity.LOW: 1,
             ViolationSeverity.MEDIUM: 2,
             ViolationSeverity.HIGH: 3,
-            ViolationSeverity.CRITICAL: 4
+            ViolationSeverity.CRITICAL: 4,
         }
         return ranks.get(sev, 2)
 

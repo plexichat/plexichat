@@ -89,7 +89,12 @@ _manager = None
 _setup_complete = False
 
 
-def setup(db: Any, messaging_module: Optional[Any] = None, servers_module: Optional[Any] = None, media_proxy: Optional[Any] = None) -> None:
+def setup(
+    db: Any,
+    messaging_module: Optional[Any] = None,
+    servers_module: Optional[Any] = None,
+    media_proxy: Optional[Any] = None,
+) -> None:
     """
     Initialize the embeds module.
 
@@ -132,7 +137,7 @@ def create_embed(
     author: Optional[Dict[str, Any]] = None,
     fields: Optional[List[Dict[str, Any]]] = None,
     provider: Optional[Dict[str, Any]] = None,
-    embed_type: EmbedType = EmbedType.RICH
+    embed_type: EmbedType = EmbedType.RICH,
 ) -> Embed:
     """Create a new embed."""
     return _get_manager().create_embed(
@@ -148,7 +153,7 @@ def create_embed(
         author=author,
         fields=fields,
         provider=provider,
-        embed_type=embed_type
+        embed_type=embed_type,
     )
 
 
@@ -169,7 +174,7 @@ def update_embed(
     image: Optional[Dict[str, Any]] = None,
     thumbnail: Optional[Dict[str, Any]] = None,
     author: Optional[Dict[str, Any]] = None,
-    fields: Optional[List[Dict[str, Any]]] = None
+    fields: Optional[List[Dict[str, Any]]] = None,
 ) -> Embed:
     """Update an existing embed."""
     return _get_manager().update_embed(
@@ -184,7 +189,7 @@ def update_embed(
         image=image,
         thumbnail=thumbnail,
         author=author,
-        fields=fields
+        fields=fields,
     )
 
 
@@ -194,13 +199,12 @@ def delete_embed(user_id: int, embed_id: int) -> bool:
 
 
 def attach_embed_to_message(
-    user_id: int,
-    message_id: int,
-    embed_id: int,
-    position: Optional[int] = None
+    user_id: int, message_id: int, embed_id: int, position: Optional[int] = None
 ) -> bool:
     """Attach an embed to a message."""
-    return _get_manager().attach_embed_to_message(user_id, message_id, embed_id, position)
+    return _get_manager().attach_embed_to_message(
+        user_id, message_id, embed_id, position
+    )
 
 
 def remove_embed_from_message(user_id: int, message_id: int, embed_id: int) -> bool:
@@ -227,9 +231,7 @@ def unsuppress_embeds(user_id: int, message_id: int) -> bool:
 
 
 def create_url_preview(
-    user_id: int,
-    url: str,
-    message_id: Optional[int] = None
+    user_id: int, url: str, message_id: Optional[int] = None
 ) -> Embed:
     """Create a URL preview embed from OpenGraph/Twitter Card metadata."""
     return _get_manager().create_url_preview(user_id, url, message_id)

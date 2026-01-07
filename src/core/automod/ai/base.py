@@ -18,7 +18,7 @@ class BaseAIAdapter(ABC):
     def __init__(self, config: Dict[str, Any]):
         """
         Initialize the AI adapter.
-        
+
         Args:
             config: Backend-specific configuration
         """
@@ -26,14 +26,16 @@ class BaseAIAdapter(ABC):
         self._timeout = config.get("timeout_seconds", 10)
 
     @abstractmethod
-    def check_content(self, content: str, context: Optional[Dict[str, Any]] = None) -> AICheckResult:
+    def check_content(
+        self, content: str, context: Optional[Dict[str, Any]] = None
+    ) -> AICheckResult:
         """
         Check content using the AI backend.
-        
+
         Args:
             content: Text content to check
             context: Additional context (user info, etc.)
-            
+
         Returns:
             AICheckResult with moderation results
         """
@@ -43,7 +45,7 @@ class BaseAIAdapter(ABC):
     def is_available(self) -> bool:
         """
         Check if the backend is properly configured and available.
-        
+
         Returns:
             True if backend can be used
         """
@@ -52,7 +54,7 @@ class BaseAIAdapter(ABC):
     def get_categories(self) -> Dict[str, str]:
         """
         Get supported moderation categories.
-        
+
         Returns:
             Dict mapping category ID to description
         """

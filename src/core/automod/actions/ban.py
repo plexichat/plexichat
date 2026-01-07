@@ -23,7 +23,7 @@ class BanUserAction(BaseAction):
         self,
         action: RuleAction,
         violation: Violation,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """Ban the user."""
         if not self._servers:
@@ -41,16 +41,16 @@ class BanUserAction(BaseAction):
                     server_id=violation.server_id,
                     member_user_id=violation.user_id,
                     reason=reason,
-                    delete_message_days=delete_message_days
+                    delete_message_days=delete_message_days,
                 )
             else:
                 self._db.execute(
                     "DELETE FROM srv_members WHERE server_id = ? AND user_id = ?",
-                    (violation.server_id, violation.user_id)
+                    (violation.server_id, violation.user_id),
                 )
                 self._db.execute(
                     "DELETE FROM srv_member_roles WHERE server_id = ? AND user_id = ?",
-                    (violation.server_id, violation.user_id)
+                    (violation.server_id, violation.user_id),
                 )
 
                 now = int(time.time() * 1000)
@@ -58,7 +58,7 @@ class BanUserAction(BaseAction):
                 self._db.execute(
                     """INSERT INTO srv_bans (id, server_id, user_id, banned_by, reason, created_at)
                        VALUES (?, ?, ?, ?, ?, ?)""",
-                    (ban_id, violation.server_id, violation.user_id, 0, reason, now)
+                    (ban_id, violation.server_id, violation.user_id, 0, reason, now),
                 )
 
             logger.debug(
@@ -75,7 +75,7 @@ class BanUserAction(BaseAction):
         self,
         action: RuleAction,
         violation: Violation,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> tuple:
         """Check if user can be banned."""
         if not violation.server_id:
@@ -83,15 +83,14 @@ class BanUserAction(BaseAction):
 
         existing_ban = self._db.fetch_one(
             "SELECT 1 FROM srv_bans WHERE server_id = ? AND user_id = ?",
-            (violation.server_id, violation.user_id)
+            (violation.server_id, violation.user_id),
         )
 
         if existing_ban:
             return False, "User is already banned"
 
         server = self._db.fetch_one(
-            "SELECT owner_id FROM srv_servers WHERE id = ?",
-            (violation.server_id,)
+            "SELECT owner_id FROM srv_servers WHERE id = ?", (violation.server_id,)
         )
 
         if server and server["owner_id"] == violation.user_id:

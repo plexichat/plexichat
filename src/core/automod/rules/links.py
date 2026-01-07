@@ -22,7 +22,9 @@ class InviteLinkRule(BaseRule):
     def __init__(self, rule: Rule):
         super().__init__(rule)
         self._block_all: bool = self.config.get("block_all", True)
-        self._allowed_codes: Set[str] = set(c.lower() for c in self.config.get("allowed_codes", []))
+        self._allowed_codes: Set[str] = set(
+            c.lower() for c in self.config.get("allowed_codes", [])
+        )
         self._code_length: int = self.config.get("code_length", 8)
 
         custom_pattern = self.config.get("pattern")
@@ -39,7 +41,7 @@ class InviteLinkRule(BaseRule):
         content: str,
         user_id: int,
         channel_id: int,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> RuleMatch:
         """Check for invite codes."""
         context = context or {}
@@ -70,11 +72,8 @@ class InviteLinkRule(BaseRule):
         return self._create_match(
             matched=True,
             matched_content=", ".join(blocked_invites),
-            details={
-                "invite_codes": blocked_invites,
-                "count": len(blocked_invites)
-            },
-            severity=ViolationSeverity.MEDIUM
+            details={"invite_codes": blocked_invites, "count": len(blocked_invites)},
+            severity=ViolationSeverity.MEDIUM,
         )
 
     @classmethod
@@ -111,15 +110,18 @@ class ExternalLinkRule(BaseRule):
     rule_type = RuleType.EXTERNAL_LINKS
 
     URL_PATTERN = re.compile(
-        r"https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+[^\s]*",
-        re.IGNORECASE
+        r"https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+[^\s]*", re.IGNORECASE
     )
 
     def __init__(self, rule: Rule):
         super().__init__(rule)
         self._mode: str = self.config.get("mode", "blacklist")
-        self._whitelist: Set[str] = set(d.lower() for d in self.config.get("whitelist", []))
-        self._blacklist: Set[str] = set(d.lower() for d in self.config.get("blacklist", []))
+        self._whitelist: Set[str] = set(
+            d.lower() for d in self.config.get("whitelist", [])
+        )
+        self._blacklist: Set[str] = set(
+            d.lower() for d in self.config.get("blacklist", [])
+        )
         self._block_all: bool = self.config.get("block_all", False)
 
     def check(
@@ -127,7 +129,7 @@ class ExternalLinkRule(BaseRule):
         content: str,
         user_id: int,
         channel_id: int,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> RuleMatch:
         """Check for external links."""
         urls = self.URL_PATTERN.findall(content)
@@ -167,9 +169,9 @@ class ExternalLinkRule(BaseRule):
                 "blocked_urls": blocked_urls,
                 "blocked_domains": blocked_domains,
                 "count": len(blocked_urls),
-                "mode": self._mode
+                "mode": self._mode,
             },
-            severity=ViolationSeverity.MEDIUM
+            severity=ViolationSeverity.MEDIUM,
         )
 
     def _extract_domain(self, url: str) -> Optional[str]:

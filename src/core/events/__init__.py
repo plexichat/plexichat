@@ -122,9 +122,7 @@ def setup(
 def _get_manager():
     """Get the manager instance, raising if not setup."""
     if not _setup_complete or _manager is None:
-        raise RuntimeError(
-            "Events module not initialized. Call events.setup() first."
-        )
+        raise RuntimeError("Events module not initialized. Call events.setup() first.")
     return _manager
 
 
@@ -188,6 +186,7 @@ def get_required_intent(event_type: EventType) -> Optional[GatewayIntent]:
         Required intent or None if no intent required
     """
     from .router import get_required_intent as _get_intent
+
     return _get_intent(event_type)
 
 
@@ -203,6 +202,7 @@ def filter_by_intents(event: Event, intents: int) -> bool:
         True if event should be sent to user
     """
     from .router import filter_by_intents as _filter
+
     return _filter(event, intents)
 
 

@@ -167,19 +167,13 @@ class EventRouter:
         effective_channel_id = channel_id or event.channel_id
 
         if effective_server_id and self._servers:
-            recipients.update(
-                self._get_server_member_ids(effective_server_id)
-            )
+            recipients.update(self._get_server_member_ids(effective_server_id))
         elif effective_channel_id and self._messaging:
-            recipients.update(
-                self._get_dm_participant_ids(effective_channel_id)
-            )
+            recipients.update(self._get_dm_participant_ids(effective_channel_id))
 
         if event.event_type == EventType.PRESENCE_UPDATE:
             if event.user_id and self._relationships:
-                recipients.update(
-                    self._get_presence_recipients(event.user_id)
-                )
+                recipients.update(self._get_presence_recipients(event.user_id))
 
         return [uid for uid in recipients if uid not in exclude_set]
 
@@ -219,7 +213,7 @@ class EventRouter:
         if self._servers:
             try:
                 server_ids = self._servers.get_user_server_ids(user_id)
-                for sid in (server_ids or []):
+                for sid in server_ids or []:
                     member_ids = self._get_server_member_ids(sid)
                     recipients.update(member_ids)
             except Exception:

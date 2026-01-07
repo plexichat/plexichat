@@ -21,7 +21,7 @@ class KickUserAction(BaseAction):
         self,
         action: RuleAction,
         violation: Violation,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """Kick the user."""
         if not self._servers:
@@ -37,16 +37,16 @@ class KickUserAction(BaseAction):
                     user_id=bot_user_id,
                     server_id=violation.server_id,
                     member_user_id=violation.user_id,
-                    reason=reason
+                    reason=reason,
                 )
             else:
                 self._db.execute(
                     "DELETE FROM srv_members WHERE server_id = ? AND user_id = ?",
-                    (violation.server_id, violation.user_id)
+                    (violation.server_id, violation.user_id),
                 )
                 self._db.execute(
                     "DELETE FROM srv_member_roles WHERE server_id = ? AND user_id = ?",
-                    (violation.server_id, violation.user_id)
+                    (violation.server_id, violation.user_id),
                 )
 
             logger.debug(
@@ -63,7 +63,7 @@ class KickUserAction(BaseAction):
         self,
         action: RuleAction,
         violation: Violation,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> tuple:
         """Check if user can be kicked."""
         if not violation.server_id:
@@ -71,15 +71,14 @@ class KickUserAction(BaseAction):
 
         member = self._db.fetch_one(
             "SELECT * FROM srv_members WHERE server_id = ? AND user_id = ?",
-            (violation.server_id, violation.user_id)
+            (violation.server_id, violation.user_id),
         )
 
         if not member:
             return False, "User is not a member of the server"
 
         server = self._db.fetch_one(
-            "SELECT owner_id FROM srv_servers WHERE id = ?",
-            (violation.server_id,)
+            "SELECT owner_id FROM srv_servers WHERE id = ?", (violation.server_id,)
         )
 
         if server and server["owner_id"] == violation.user_id:

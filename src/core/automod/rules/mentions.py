@@ -33,7 +33,7 @@ class MentionSpamRule(BaseRule):
         content: str,
         user_id: int,
         channel_id: int,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> RuleMatch:
         """Check for mention spam."""
         user_mentions = self.USER_MENTION_PATTERN.findall(content)
@@ -53,15 +53,21 @@ class MentionSpamRule(BaseRule):
         highest_severity = ViolationSeverity.LOW
 
         if user_count > self._max_user_mentions:
-            violations.append(f"{user_count} user mentions (max {self._max_user_mentions})")
+            violations.append(
+                f"{user_count} user mentions (max {self._max_user_mentions})"
+            )
             highest_severity = ViolationSeverity.MEDIUM
 
         if role_count > self._max_role_mentions:
-            violations.append(f"{role_count} role mentions (max {self._max_role_mentions})")
+            violations.append(
+                f"{role_count} role mentions (max {self._max_role_mentions})"
+            )
             highest_severity = ViolationSeverity.MEDIUM
 
         if total_count > self._max_total_mentions:
-            violations.append(f"{total_count} total mentions (max {self._max_total_mentions})")
+            violations.append(
+                f"{total_count} total mentions (max {self._max_total_mentions})"
+            )
             highest_severity = ViolationSeverity.HIGH
 
         if self._block_everyone and everyone_count > 0:
@@ -79,9 +85,9 @@ class MentionSpamRule(BaseRule):
                 "role_mentions": role_count,
                 "everyone_mentions": everyone_count,
                 "total_mentions": total_count,
-                "violations": violations
+                "violations": violations,
             },
-            severity=highest_severity
+            severity=highest_severity,
         )
 
     @classmethod
@@ -95,10 +101,14 @@ class MentionSpamRule(BaseRule):
                 if not isinstance(value, int) or value < 0:
                     issues.append(f"{field} must be a non-negative integer")
 
-        if "block_everyone" in config and not isinstance(config["block_everyone"], bool):
+        if "block_everyone" in config and not isinstance(
+            config["block_everyone"], bool
+        ):
             issues.append("block_everyone must be a boolean")
 
-        if "count_unique_only" in config and not isinstance(config["count_unique_only"], bool):
+        if "count_unique_only" in config and not isinstance(
+            config["count_unique_only"], bool
+        ):
             issues.append("count_unique_only must be a boolean")
 
         return len(issues) == 0, issues

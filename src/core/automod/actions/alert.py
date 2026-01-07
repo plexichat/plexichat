@@ -25,7 +25,7 @@ class AlertModeratorsAction(BaseAction):
         self,
         action: RuleAction,
         violation: Violation,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """Send alert to moderators."""
         try:
@@ -57,8 +57,7 @@ class AlertModeratorsAction(BaseAction):
     def _get_moderator_ids(self, server_id: int) -> List[int]:
         """Get IDs of users with moderation permissions."""
         server = self._db.fetch_one(
-            "SELECT owner_id FROM srv_servers WHERE id = ?",
-            (server_id,)
+            "SELECT owner_id FROM srv_servers WHERE id = ?", (server_id,)
         )
 
         mod_ids = set()
@@ -72,7 +71,7 @@ class AlertModeratorsAction(BaseAction):
                    permissions LIKE '%"members.kick": true%' OR
                    permissions LIKE '%"members.ban": true%'
                )""",
-            (server_id,)
+            (server_id,),
         )
 
         role_ids = [r["id"] for r in mod_roles]
@@ -82,7 +81,7 @@ class AlertModeratorsAction(BaseAction):
             members = self._db.fetch_all(
                 f"""SELECT DISTINCT user_id FROM srv_member_roles 
                     WHERE server_id = ? AND role_id IN ({placeholders})""",
-                (server_id, *role_ids)
+                (server_id, *role_ids),
             )
             for m in members:
                 mod_ids.add(m["user_id"])
@@ -94,8 +93,7 @@ class AlertModeratorsAction(BaseAction):
         automod_config = config.get("automod", {})
 
         server_config = self._db.fetch_one(
-            "SELECT config FROM automod_rules WHERE server_id = ? LIMIT 1",
-            (server_id,)
+            "SELECT config FROM automod_rules WHERE server_id = ? LIMIT 1", (server_id,)
         )
 
         if server_config:
@@ -109,10 +107,7 @@ class AlertModeratorsAction(BaseAction):
         return automod_config.get("default_alert_channel_id")
 
     def _send_channel_alert(
-        self,
-        channel_id: int,
-        violation: Violation,
-        context: Optional[Dict[str, Any]]
+        self, channel_id: int, violation: Violation, context: Optional[Dict[str, Any]]
     ):
         """Send alert message to channel."""
         content = self._format_alert_message(violation)
@@ -122,13 +117,13 @@ class AlertModeratorsAction(BaseAction):
             if bot_user_id and self._messaging:
                 conv = self._db.fetch_one(
                     "SELECT conversation_id FROM srv_channels WHERE id = ?",
-                    (channel_id,)
+                    (channel_id,),
                 )
                 if conv:
                     self._messaging.send_message(
                         user_id=bot_user_id,
                         conversation_id=conv["conversation_id"],
-                        content=content
+                        content=content,
                     )
         except Exception as e:
             logger.warning(f"Failed to send channel alert: {e}")
@@ -137,7 +132,7 @@ class AlertModeratorsAction(BaseAction):
         self,
         moderator_ids: List[int],
         violation: Violation,
-        context: Optional[Dict[str, Any]]
+        context: Optional[Dict[str, Any]],
     ):
         """Send notifications to moderators."""
         pass
@@ -170,6 +165,6 @@ class AlertModeratorsAction(BaseAction):
                 violation.rule_id,
                 f"Alert sent to {len(moderator_ids)} moderators",
                 json.dumps({"moderator_ids": moderator_ids}),
-                now
-            )
+                now,
+            ),
         )

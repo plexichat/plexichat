@@ -29,7 +29,7 @@ class MessageSpamRule(BaseRule):
         content: str,
         user_id: int,
         channel_id: int,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> RuleMatch:
         """Check for message spam."""
         context = context or {}
@@ -45,9 +45,7 @@ class MessageSpamRule(BaseRule):
         return self._no_match()
 
     def _check_rate_spam(
-        self,
-        user_id: int,
-        context: Dict[str, Any]
+        self, user_id: int, context: Dict[str, Any]
     ) -> Optional[RuleMatch]:
         """Check if user is sending messages too fast."""
         recent_messages = context.get("recent_messages", [])
@@ -58,7 +56,8 @@ class MessageSpamRule(BaseRule):
         window_start = now - (self._window_seconds * 1000)
 
         messages_in_window = [
-            m for m in recent_messages
+            m
+            for m in recent_messages
             if m.get("user_id") == user_id and m.get("created_at", 0) >= window_start
         ]
 
@@ -70,18 +69,15 @@ class MessageSpamRule(BaseRule):
                     "type": "rate_spam",
                     "message_count": len(messages_in_window),
                     "window_seconds": self._window_seconds,
-                    "threshold": self._max_messages
+                    "threshold": self._max_messages,
                 },
-                severity=ViolationSeverity.MEDIUM
+                severity=ViolationSeverity.MEDIUM,
             )
 
         return None
 
     def _check_duplicate_spam(
-        self,
-        content: str,
-        user_id: int,
-        context: Dict[str, Any]
+        self, content: str, user_id: int, context: Dict[str, Any]
     ) -> Optional[RuleMatch]:
         """Check for duplicate message content."""
         recent_messages = context.get("recent_messages", [])
@@ -104,7 +100,10 @@ class MessageSpamRule(BaseRule):
 
             if msg_content == content_lower:
                 duplicate_count += 1
-            elif self._calculate_similarity(content_lower, msg_content) >= self._similarity_threshold:
+            elif (
+                self._calculate_similarity(content_lower, msg_content)
+                >= self._similarity_threshold
+            ):
                 duplicate_count += 1
 
         if duplicate_count >= self._duplicate_threshold:
@@ -114,9 +113,9 @@ class MessageSpamRule(BaseRule):
                 details={
                     "type": "duplicate_spam",
                     "duplicate_count": duplicate_count,
-                    "threshold": self._duplicate_threshold
+                    "threshold": self._duplicate_threshold,
                 },
-                severity=ViolationSeverity.MEDIUM
+                severity=ViolationSeverity.MEDIUM,
             )
 
         return None

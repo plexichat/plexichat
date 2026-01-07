@@ -7,6 +7,7 @@ from enum import Enum, IntFlag
 
 class EventType(Enum):
     """Gateway event types."""
+
     READY = "READY"
     RESUMED = "RESUMED"
 
@@ -21,6 +22,7 @@ class EventType(Enum):
 
     PRESENCE_UPDATE = "PRESENCE_UPDATE"
     TYPING_START = "TYPING_START"
+    TYPING_STOP = "TYPING_STOP"
     USER_UPDATE = "USER_UPDATE"
 
     CHANNEL_CREATE = "CHANNEL_CREATE"
@@ -61,6 +63,7 @@ class EventType(Enum):
 
 class GatewayIntent(IntFlag):
     """Gateway intents for filtering events."""
+
     GUILDS = 1 << 0
     GUILD_MEMBERS = 1 << 1
     GUILD_BANS = 1 << 2
@@ -82,41 +85,41 @@ class GatewayIntent(IntFlag):
     def all_intents(cls) -> int:
         """Get all intents combined."""
         return (
-            cls.GUILDS |
-            cls.GUILD_MEMBERS |
-            cls.GUILD_BANS |
-            cls.GUILD_EMOJIS |
-            cls.GUILD_INTEGRATIONS |
-            cls.GUILD_WEBHOOKS |
-            cls.GUILD_INVITES |
-            cls.GUILD_VOICE_STATES |
-            cls.GUILD_PRESENCES |
-            cls.GUILD_MESSAGES |
-            cls.GUILD_MESSAGE_REACTIONS |
-            cls.GUILD_MESSAGE_TYPING |
-            cls.DIRECT_MESSAGES |
-            cls.DIRECT_MESSAGE_REACTIONS |
-            cls.DIRECT_MESSAGE_TYPING |
-            cls.MESSAGE_CONTENT
+            cls.GUILDS
+            | cls.GUILD_MEMBERS
+            | cls.GUILD_BANS
+            | cls.GUILD_EMOJIS
+            | cls.GUILD_INTEGRATIONS
+            | cls.GUILD_WEBHOOKS
+            | cls.GUILD_INVITES
+            | cls.GUILD_VOICE_STATES
+            | cls.GUILD_PRESENCES
+            | cls.GUILD_MESSAGES
+            | cls.GUILD_MESSAGE_REACTIONS
+            | cls.GUILD_MESSAGE_TYPING
+            | cls.DIRECT_MESSAGES
+            | cls.DIRECT_MESSAGE_REACTIONS
+            | cls.DIRECT_MESSAGE_TYPING
+            | cls.MESSAGE_CONTENT
         )
 
     @classmethod
     def default_intents(cls) -> int:
         """Get default intents (non-privileged)."""
         return (
-            cls.GUILDS |
-            cls.GUILD_BANS |
-            cls.GUILD_EMOJIS |
-            cls.GUILD_INTEGRATIONS |
-            cls.GUILD_WEBHOOKS |
-            cls.GUILD_INVITES |
-            cls.GUILD_VOICE_STATES |
-            cls.GUILD_MESSAGES |
-            cls.GUILD_MESSAGE_REACTIONS |
-            cls.GUILD_MESSAGE_TYPING |
-            cls.DIRECT_MESSAGES |
-            cls.DIRECT_MESSAGE_REACTIONS |
-            cls.DIRECT_MESSAGE_TYPING
+            cls.GUILDS
+            | cls.GUILD_BANS
+            | cls.GUILD_EMOJIS
+            | cls.GUILD_INTEGRATIONS
+            | cls.GUILD_WEBHOOKS
+            | cls.GUILD_INVITES
+            | cls.GUILD_VOICE_STATES
+            | cls.GUILD_MESSAGES
+            | cls.GUILD_MESSAGE_REACTIONS
+            | cls.GUILD_MESSAGE_TYPING
+            | cls.DIRECT_MESSAGES
+            | cls.DIRECT_MESSAGE_REACTIONS
+            | cls.DIRECT_MESSAGE_TYPING
         )
 
     @classmethod
