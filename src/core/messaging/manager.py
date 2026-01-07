@@ -1,23 +1,15 @@
 """
-Messaging manager - Core business logic for messaging operations.
+Messaging manager - Facade for messaging operations.
 
-Handles all messaging operations with proper validation, permission checks,
-and database interactions.
+This is the refactored manager that coordinates specialized services
+while maintaining backward compatibility with the existing API.
 """
 
-import json
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Any, Dict, List, Optional
 
 import utils.config as config
 import utils.logger as logger
-from ..base import BaseManager, SnowflakeID
-from src.utils.encryption import (
-    encrypt_data,
-    decrypt_data,
-    encrypt_message,
-    decrypt_message,
-    is_message_encrypted,
-)
+from src.core.base import BaseManager, SnowflakeID
 
 from .models import (
     Message,
@@ -28,48 +20,43 @@ from .models import (
     ContentFilter,
     UserMessageSettings,
     ConversationType,
-    MessageType,
     MessageStatusType,
     ParticipantRole,
-    FilterAction,
 )
 from .exceptions import (
-    MessagingError,
     ConversationNotFoundError,
     ConversationAccessDeniedError,
-    MessageNotFoundError,
-    MessageAccessDeniedError,
     ParticipantNotFoundError,
-    ParticipantExistsError,
     ParticipantLimitError,
-    InvalidContentError,
-    ContentTooLongError,
-    AttachmentTooLargeError,
-    AttachmentLimitError,
-    AttachmentError,
-    RateLimitError,
-    InvalidRecipientError,
     ConversationTypeError,
-    PinLimitError,
-    MessageNotPinnedError,
-    AttachmentNotFoundError,
-    MessagingError,
-    AttachmentError,
-    RateLimitError,
     InvalidRecipientError,
 )
 from .schema import create_tables
-from .content import validate_content
-from src.core.database.collections import CappedDict
-
+from .services import (
+    ConversationService,
+    MessageService,
+    ParticipantService,
+    MessageStatusService,
+    AttachmentService,
+    PinService,
+    UserSettingsService,
+    ContentFilterService,
+)
+from .events import MessagingEventBus, get_event_bus
 
 from . import exceptions as _exc
 from . import models as _models
 
-class MessagingManager(BaseManager):
-    """Core messaging manager handling all operations."""
 
-    # Re-expose exceptions for easy access in tests
+class MessagingManager(BaseManager):
+    """
+    Core messaging manager - Facade coordinating specialized services.
+
+    This manager provides a unified API for all messaging operations while
+    delegating to specialized services for actual business logic.
+    """
+
+    # Re-expose exceptions for easy access
     MessagingError = _exc.MessagingError
     ConversationNotFoundError = _exc.ConversationNotFoundError
     ConversationAccessDeniedError = _exc.ConversationAccessDeniedError
@@ -90,7 +77,7 @@ class MessagingManager(BaseManager):
     MessageNotPinnedError = _exc.MessageNotPinnedError
     AttachmentNotFoundError = _exc.AttachmentNotFoundError
 
-    # Re-expose models/enums for easy access in tests
+    # Re-expose models/enums for easy access
     ConversationType = _models.ConversationType
     MessageType = _models.MessageType
     MessageStatusType = _models.MessageStatusType
@@ -106,226 +93,66 @@ class MessagingManager(BaseManager):
             auth_module: Optional auth module for permission checks
         """
         super().__init__(db, auth_module)
-        self._config = self._load_config()
-
-        # Cache size limit from config
-        max_cache = config.get("redis.cache_max_items", 1000)
-
-        # In-memory caches with TTL (reduces DB queries significantly)
-        self._user_settings_cache = CappedDict(max_size=max_cache)
-        self._user_filter_cache = CappedDict(max_size=max_cache)
-        self._participant_cache = CappedDict(max_size=max_cache)
-        self._cache_ttl = 60.0  # 60 second cache TTL
+        self._config = config.get("messaging", {})
 
         # Create tables
         create_tables(db)
 
-        logger.info("Messaging module initialized")
+        # Initialize services
+        self._participant_svc = ParticipantService(db)
+        self._user_settings_svc = UserSettingsService(db)
+        self._content_filter_svc = ContentFilterService(db)
 
-    def _cache_get(
-        self,
-        cache: Dict[Any, Tuple[Any, float]],
-        key: Any,
-        default: Optional[Any] = None,
-    ) -> Optional[Any]:
-        """Get value from cache if not expired."""
-        if key in cache:
-            value, expires = cache[key]
-            if (self._get_timestamp() / 1000.0) < expires:
-                return value
-            del cache[key]
-        return default
+        self._conversation_svc = ConversationService(
+            db,
+            self._participant_svc,
+            self._user_settings_svc,
+            self._content_filter_svc,
+        )
 
-    def _cache_set(
-        self,
-        cache: Dict[Any, Tuple[Any, float]],
-        key: Any,
-        value: Any,
-    ) -> None:
-        """Set value in cache with TTL."""
-        cache[key] = (value, (self._get_timestamp() / 1000.0) + self._cache_ttl)
+        self._message_svc = MessageService(
+            db,
+            self._participant_svc,
+            self._user_settings_svc,
+            self._content_filter_svc,
+        )
 
-    def _cache_invalidate(self, cache: Dict[Any, Tuple[Any, float]], key: Any) -> None:
-        """Invalidate a cache entry."""
-        cache.pop(key, None)
+        self._message_status_svc = MessageStatusService(
+            db,
+            self._participant_svc,
+            self._user_settings_svc,
+        )
 
-    def _load_config(self) -> Dict[str, Any]:
-        """Load messaging configuration from global config."""
-        return config.get("messaging", {})
+        self._attachment_svc = AttachmentService(
+            db,
+            self._participant_svc,
+            self._user_settings_svc,
+        )
 
-    def _check_permission(self, user_id: SnowflakeID, permission: str) -> bool:
-        """Check if user has a permission via auth module."""
-        if not self._auth:
-            return True  # No auth module, allow all
+        self._pin_svc = PinService(db, self._participant_svc)
 
-        # This would integrate with auth.has_permission
-        # For now, return True - actual integration depends on token context
-        return True
+        # Event bus for reliable event delivery
+        self._event_bus = get_event_bus()
+
+        logger.info("Messaging module initialized (refactored)")
+
+    # === Event Bus Access ===
+
+    @property
+    def event_bus(self) -> MessagingEventBus:
+        """Get the event bus for subscribing to messaging events."""
+        return self._event_bus
 
     # === Conversations ===
 
     def create_dm(
-        self, user_id: SnowflakeID, recipient_id: SnowflakeID, auto_create: Optional[bool] = None
+        self,
+        user_id: SnowflakeID,
+        recipient_id: SnowflakeID,
+        auto_create: Optional[bool] = None,
     ) -> Conversation:
         """Create or get existing DM conversation."""
-        if user_id == recipient_id:
-            raise InvalidRecipientError("Cannot create DM with yourself")
-
-        # Validate recipient exists
-        recipient_exists = self._db.fetch_one(
-            "SELECT 1 FROM auth_users WHERE id = ?", (recipient_id,)
-        )
-        if not recipient_exists:
-            raise InvalidRecipientError("Recipient does not exist")
-
-        # Check recipient's DM settings FIRST - applies to both new and existing DMs
-        recipient_settings = self.get_user_message_settings(recipient_id)
-        if recipient_settings.allow_dms_from == "none":
-            raise ConversationAccessDeniedError("Recipient does not accept DMs")
-
-        # Check if DM already exists
-        existing = self._get_existing_dm(user_id, recipient_id)
-        if existing:
-            return existing
-
-        # Check auto-create setting
-        should_create = (
-            auto_create
-            if auto_create is not None
-            else self._config.get("dm_auto_create", True)
-        )
-
-        if not should_create:
-            raise ConversationNotFoundError(
-                "DM does not exist and auto-create is disabled"
-            )
-
-        # Create new DM
-        now = self._get_timestamp()
-        conv_id = self._generate_id()
-
-        self._db.execute(
-            """INSERT INTO msg_conversations 
-               (id, conversation_type, created_at, updated_at, max_participants, encrypted)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (
-                conv_id,
-                ConversationType.DM.value,
-                now,
-                now,
-                2,
-                1 if self._config.get("encrypt_messages") else 0,
-            ),
-        )
-
-        # Add participants
-        for uid in [user_id, recipient_id]:
-            part_id = self._generate_id()
-            self._db.execute(
-                """INSERT INTO msg_participants 
-                   (id, conversation_id, user_id, role, joined_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (part_id, conv_id, uid, ParticipantRole.MEMBER.value, now),
-            )
-
-        # Add to DM lookup (store with smaller ID first for consistency)
-        user1, user2 = min(user_id, recipient_id), max(user_id, recipient_id)
-        lookup_id = self._generate_id()
-        self._db.execute(
-            """INSERT INTO msg_dm_lookup (id, user1_id, user2_id, conversation_id)
-               VALUES (?, ?, ?, ?)""",
-            (lookup_id, user1, user2, conv_id),
-        )
-
-        logger.debug(
-            f"Created DM conversation {conv_id} between {user_id} and {recipient_id}"
-        )
-
-        conversation = self.get_conversation(conv_id, user_id)
-        if conversation is None:
-            raise ConversationNotFoundError(
-                f"Failed to retrieve created conversation {conv_id}"
-            )
-        return conversation
-
-    def _get_existing_dm(
-        self, user_id: SnowflakeID, recipient_id: SnowflakeID
-    ) -> Optional[Conversation]:
-        """Get existing DM between two users."""
-        user1, user2 = min(user_id, recipient_id), max(user_id, recipient_id)
-
-        row = self._db.fetch_one(
-            """SELECT conversation_id FROM msg_dm_lookup 
-               WHERE user1_id = ? AND user2_id = ?""",
-            (user1, user2),
-        )
-
-        if row:
-            return self.get_conversation(row["conversation_id"], user_id)
-        return None
-
-    def get_or_create_notes(self, user_id: SnowflakeID) -> Conversation:
-        """
-        Get or create a personal notes conversation for a user.
-
-        Personal notes are single-participant conversations where the user
-        can store private notes that sync across devices.
-
-        Args:
-            user_id: ID of the user
-
-        Returns:
-            The notes Conversation
-        """
-        # Check if notes conversation already exists
-        existing = self._db.fetch_one(
-            """SELECT c.id FROM msg_conversations c
-               INNER JOIN msg_participants p ON c.id = p.conversation_id
-               WHERE c.conversation_type = ? AND p.user_id = ? AND c.deleted = 0""",
-            (ConversationType.NOTES.value, user_id),
-        )
-
-        if existing:
-            conv = self.get_conversation(existing["id"], user_id)
-            if conv:
-                return conv
-
-        # Create new notes conversation
-        now = self._get_timestamp()
-        conv_id = self._generate_id()
-
-        self._db.execute(
-            """INSERT INTO msg_conversations 
-               (id, conversation_type, name, created_at, updated_at, max_participants, encrypted)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (
-                conv_id,
-                ConversationType.NOTES.value,
-                "Personal Notes",
-                now,
-                now,
-                1,
-                1 if self._config.get("encrypt_messages") else 0,
-            ),
-        )
-
-        # Add user as sole participant
-        part_id = self._generate_id()
-        self._db.execute(
-            """INSERT INTO msg_participants 
-               (id, conversation_id, user_id, role, joined_at)
-               VALUES (?, ?, ?, ?, ?)""",
-            (part_id, conv_id, user_id, ParticipantRole.OWNER.value, now),
-        )
-
-        logger.debug(f"Created notes conversation {conv_id} for user {user_id}")
-
-        conversation = self.get_conversation(conv_id, user_id)
-        if conversation is None:
-            raise ConversationNotFoundError(
-                f"Failed to retrieve created notes conversation {conv_id}"
-            )
-        return conversation
+        return self._conversation_svc.create_dm(user_id, recipient_id, auto_create)
 
     def create_group(
         self,
@@ -335,187 +162,45 @@ class MessagingManager(BaseManager):
         max_participants: Optional[int] = None,
     ) -> Conversation:
         """Create a group conversation."""
-        # Validate name
-        if not name or not name.strip():
-            raise InvalidContentError("Group name cannot be empty")
-
-        name = name.strip()
-        if len(name) > 100:
-            raise InvalidContentError("Group name cannot exceed 100 characters")
-
-        # Validate content
-        content_result = validate_content(name)
-        if not content_result.valid:
-            raise InvalidContentError("Invalid group name", content_result.issues)
-
-        max_parts = (
-            max_participants
-            if max_participants is not None
-            else self._config.get("max_group_participants", 100)
+        conv = self._conversation_svc.create_group(
+            owner_id, name, participant_ids, max_participants
         )
-
-        # Check participant count - must have at least 1 (owner)
-        participants = list(set([owner_id] + (participant_ids or [])))
-        if max_parts < 1:
-            raise ParticipantLimitError(
-                "Group must allow at least 1 participant", max_parts, len(participants)
-            )
-        if len(participants) > max_parts:
-            raise ParticipantLimitError(
-                f"Cannot create group with more than {max_parts} participants",
-                max_parts,
-                len(participants),
-            )
-
-        # Validate all participants exist
-        for uid in participants:
-            user_exists = self._db.fetch_one(
-                "SELECT 1 FROM auth_users WHERE id = ?", (uid,)
-            )
-            if not user_exists:
-                raise InvalidRecipientError(f"User {uid} does not exist")
-
-        now = self._get_timestamp()
-        conv_id = self._generate_id()
-
-        self._db.execute(
-            """INSERT INTO msg_conversations 
-               (id, conversation_type, name, owner_id, max_participants, created_at, updated_at, encrypted)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                conv_id,
-                ConversationType.GROUP.value,
-                content_result.sanitized_content,
-                owner_id,
-                max_parts,
-                now,
-                now,
-                1 if self._config.get("encrypt_messages") else 0,
-            ),
-        )
-
-        # Add participants
-        for i, uid in enumerate(participants):
-            part_id = self._generate_id()
-            role = (
-                ParticipantRole.OWNER.value
-                if uid == owner_id
-                else ParticipantRole.MEMBER.value
-            )
-            self._db.execute(
-                """INSERT INTO msg_participants 
-                   (id, conversation_id, user_id, role, joined_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (part_id, conv_id, uid, role, now),
-            )
 
         # Send system message
         self.send_system_message(
-            conv_id,
+            conv.id,
             f'Group "{name}" created',
             "group_created",
             {"creator_id": owner_id},
         )
 
-        logger.debug(
-            f"Created group conversation {conv_id} with {len(participants)} participants"
-        )
+        return conv
 
-        conversation = self.get_conversation(conv_id, owner_id)
-        if conversation is None:
-            raise ConversationNotFoundError(
-                f"Failed to retrieve created conversation {conv_id}"
-            )
-        return conversation
+    def get_or_create_notes(self, user_id: SnowflakeID) -> Conversation:
+        """Get or create a personal notes conversation for a user."""
+        return self._conversation_svc.get_or_create_notes(user_id)
 
     def create_server_channel_conversation(
         self, server_id: SnowflakeID, channel_id: SnowflakeID
     ) -> Conversation:
         """Create a conversation for a server channel."""
-        now = self._get_timestamp()
-        conv_id = self._generate_id()
-
-        self._db.execute(
-            """INSERT INTO msg_conversations 
-               (id, conversation_type, created_at, updated_at, encrypted, metadata)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (
-                conv_id,
-                ConversationType.GROUP.value,
-                now,
-                now,
-                1 if self._config.get("encrypt_messages") else 0,
-                json.dumps({"server_id": server_id, "channel_id": channel_id}),
-            ),
-        )
-
-        logger.debug(
-            f"Created server channel conversation {conv_id} for channel {channel_id}"
-        )
-
-        return Conversation(
-            id=conv_id,
-            conversation_type=ConversationType.GROUP,
-            created_at=now,
-            updated_at=now,
-            encrypted=self._config.get("encrypt_messages", False),
+        return self._conversation_svc.create_server_channel_conversation(
+            server_id, channel_id
         )
 
     def create_thread_conversation(
         self, server_id: SnowflakeID, channel_id: SnowflakeID, name: str
     ) -> Conversation:
         """Create a conversation for a thread."""
-        now = self._get_timestamp()
-        conv_id = self._generate_id()
-
-        self._db.execute(
-            """INSERT INTO msg_conversations 
-               (id, conversation_type, name, created_at, updated_at, encrypted, metadata)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (
-                conv_id,
-                ConversationType.THREAD.value,
-                name,
-                now,
-                now,
-                1 if self._config.get("encrypt_messages") else 0,
-                json.dumps({"server_id": server_id, "channel_id": channel_id}),
-            ),
-        )
-
-        logger.debug(
-            f"Created thread conversation {conv_id} for thread '{name}'"
-        )
-
-        return Conversation(
-            id=conv_id,
-            conversation_type=ConversationType.THREAD,
-            name=name,
-            created_at=now,
-            updated_at=now,
-            encrypted=self._config.get("encrypt_messages", False),
+        return self._conversation_svc.create_thread_conversation(
+            server_id, channel_id, name
         )
 
     def get_conversation(
         self, conversation_id: SnowflakeID, user_id: SnowflakeID
     ) -> Optional[Conversation]:
         """Get a conversation by ID if user has access."""
-        # Check access
-        if not self._is_participant(conversation_id, user_id):
-            return None
-
-        row = self._db.fetch_one(
-            """SELECT c.*, 
-                      (SELECT COUNT(*) FROM msg_participants WHERE conversation_id = c.id) as participant_count
-               FROM msg_conversations c
-               WHERE c.id = ? AND c.deleted = 0""",
-            (conversation_id,),
-        )
-
-        if not row:
-            return None
-
-        return self._row_to_conversation(row)
+        return self._conversation_svc.get_conversation(conversation_id, user_id)
 
     def get_conversations(
         self,
@@ -525,30 +210,9 @@ class MessagingManager(BaseManager):
         conversation_type: Optional[ConversationType] = None,
     ) -> List[Conversation]:
         """Get user's conversations with pagination."""
-        limit = min(limit, 100)  # Cap at 100
-
-        query = """
-            SELECT c.*, 
-                   (SELECT COUNT(*) FROM msg_participants WHERE conversation_id = c.id) as participant_count
-            FROM msg_conversations c
-            INNER JOIN msg_participants p ON c.id = p.conversation_id
-            WHERE p.user_id = ? AND c.deleted = 0
-        """
-        params: List[Any] = [user_id]
-
-        if conversation_type:
-            query += " AND c.conversation_type = ?"
-            params.append(conversation_type.value)
-
-        if before_id:
-            query += " AND c.id < ?"
-            params.append(before_id)
-
-        query += " ORDER BY COALESCE(c.last_message_at, c.created_at) DESC LIMIT ?"
-        params.append(limit)
-
-        rows = self._db.fetch_all(query, tuple(params))
-        return [self._row_to_conversation(row) for row in rows]
+        return self._conversation_svc.get_conversations(
+            user_id, limit, before_id, conversation_type
+        )
 
     def update_conversation(
         self,
@@ -558,149 +222,32 @@ class MessagingManager(BaseManager):
         max_participants: Optional[int] = None,
     ) -> Conversation:
         """Update conversation settings."""
-        conv = self.get_conversation(conversation_id, user_id)
-        if not conv:
-            raise ConversationNotFoundError("Conversation not found")
+        return self._conversation_svc.update_conversation(
+            user_id, conversation_id, name, max_participants
+        )
 
-        if conv.conversation_type == ConversationType.DM:
-            raise ConversationTypeError("Cannot update DM settings")
-
-        # Check permission (owner or admin)
-        participant = self._get_participant(conversation_id, user_id)
-        assert participant is not None  # Checked by _is_participant above
-        if participant.role not in [ParticipantRole.OWNER, ParticipantRole.ADMIN]:
-            raise ConversationAccessDeniedError(
-                "Only owner or admin can update conversation"
-            )
-
-        updates = []
-        params = []
-
-        if name is not None:
-            name = name.strip()
-            if not name:
-                raise InvalidContentError("Group name cannot be empty")
-            content_result = validate_content(name)
-            if not content_result.valid:
-                raise InvalidContentError("Invalid group name", content_result.issues)
-            updates.append("name = ?")
-            params.append(content_result.sanitized_content)
-
-        if max_participants is not None:
-            if max_participants < conv.participant_count:
-                raise ParticipantLimitError(
-                    "Cannot set max below current participant count",
-                    max_participants,
-                    conv.participant_count,
-                )
-            updates.append("max_participants = ?")
-            params.append(max_participants)
-
-        if updates:
-            updates.append("updated_at = ?")
-            params.append(self._get_timestamp())
-            params.append(conversation_id)
-
-            self._db.execute(
-                f"UPDATE msg_conversations SET {', '.join(updates)} WHERE id = ?",
-                tuple(params),
-            )
-
-        conversation = self.get_conversation(conversation_id, user_id)
-        if conversation is None:
-            raise ConversationNotFoundError(
-                f"Failed to retrieve updated conversation {conversation_id}"
-            )
-        return conversation
-
-    def delete_conversation(self, user_id: SnowflakeID, conversation_id: SnowflakeID) -> bool:
+    def delete_conversation(
+        self, user_id: SnowflakeID, conversation_id: SnowflakeID
+    ) -> bool:
         """Delete a conversation (soft delete)."""
-        conv = self.get_conversation(conversation_id, user_id)
-        if not conv:
-            raise ConversationNotFoundError("Conversation not found")
+        return self._conversation_svc.delete_conversation(user_id, conversation_id)
 
-        # For DMs, either party can delete
-        # For groups, only owner can delete
-        if conv.conversation_type == ConversationType.GROUP:
-            if conv.owner_id != user_id:
-                raise ConversationAccessDeniedError("Only owner can delete group")
-
-        now = self._get_timestamp()
-        self._db.execute(
-            "UPDATE msg_conversations SET deleted = 1, deleted_at = ? WHERE id = ?",
-            (now, conversation_id),
-        )
-
-        # For DMs, also remove the lookup entry so a new DM can be created
-        if conv.conversation_type == ConversationType.DM:
-            self._db.execute(
-                "DELETE FROM msg_dm_lookup WHERE conversation_id = ?",
-                (conversation_id,),
-            )
-
-        logger.debug(f"Deleted conversation {conversation_id}")
-        return True
-
-    def leave_conversation(self, user_id: SnowflakeID, conversation_id: SnowflakeID) -> bool:
+    def leave_conversation(
+        self, user_id: SnowflakeID, conversation_id: SnowflakeID
+    ) -> bool:
         """Leave a conversation."""
-        conv = self.get_conversation(conversation_id, user_id)
-        if not conv:
-            raise ConversationNotFoundError("Conversation not found")
+        result = self._conversation_svc.leave_conversation(user_id, conversation_id)
 
-        if conv.conversation_type == ConversationType.DM:
-            # For DMs, leaving is same as deleting
-            return self.delete_conversation(user_id, conversation_id)
-
-        # For groups, remove participant
-        participant = self._get_participant(conversation_id, user_id)
-        assert participant is not None  # Checked by _is_participant above
-
-        # If owner is leaving, transfer ownership or delete
-        if participant.role == ParticipantRole.OWNER:
-            # Find another admin or member to transfer to
-            new_owner = self._db.fetch_one(
-                """SELECT user_id FROM msg_participants 
-                   WHERE conversation_id = ? AND user_id != ? 
-                   ORDER BY CASE role WHEN 'admin' THEN 0 ELSE 1 END, joined_at
-                   LIMIT 1""",
-                (conversation_id, user_id),
+        if result:
+            # Send system message
+            self.send_system_message(
+                conversation_id,
+                "A user left the conversation",
+                "user_left",
+                {"user_id": user_id},
             )
 
-            if new_owner:
-                self._db.execute(
-                    "UPDATE msg_participants SET role = ? WHERE conversation_id = ? AND user_id = ?",
-                    (
-                        ParticipantRole.OWNER.value,
-                        conversation_id,
-                        new_owner["user_id"],
-                    ),
-                )
-                self._db.execute(
-                    "UPDATE msg_conversations SET owner_id = ? WHERE id = ?",
-                    (new_owner["user_id"], conversation_id),
-                )
-            else:
-                # No one left, delete the conversation
-                return self.delete_conversation(user_id, conversation_id)
-
-        # Remove participant
-        self._db.execute(
-            "DELETE FROM msg_participants WHERE conversation_id = ? AND user_id = ?",
-            (conversation_id, user_id),
-        )
-
-        # Invalidate participant cache
-        self._cache_invalidate(self._participant_cache, (conversation_id, user_id))
-
-        # Send system message
-        self.send_system_message(
-            conversation_id,
-            "A user left the conversation",
-            "user_left",
-            {"user_id": user_id},
-        )
-
-        return True
+        return result
 
     # === Participants ===
 
@@ -720,22 +267,15 @@ class MessagingManager(BaseManager):
             raise ConversationTypeError("Cannot add participants to DM")
 
         # Check permission
-        actor = self._get_participant(conversation_id, user_id)
-        assert actor is not None  # Checked by get_conversation above
-        if actor.role not in [ParticipantRole.OWNER, ParticipantRole.ADMIN]:
-            raise ConversationAccessDeniedError(
-                "Only owner or admin can add participants"
-            )
-
-        # Check if already participant
-        if self._is_participant(conversation_id, participant_id):
-            raise ParticipantExistsError("User is already a participant")
+        self._participant_svc.require_permission(
+            conversation_id,
+            user_id,
+            [ParticipantRole.OWNER, ParticipantRole.ADMIN],
+            "Only owner or admin can add participants",
+        )
 
         # Validate participant exists
-        user_exists = self._db.fetch_one(
-            "SELECT 1 FROM auth_users WHERE id = ?", (participant_id,)
-        )
-        if not user_exists:
+        if not self._user_settings_svc.user_exists(participant_id):
             raise InvalidRecipientError(f"User {participant_id} does not exist")
 
         # Check participant limit
@@ -750,14 +290,8 @@ class MessagingManager(BaseManager):
         if role == ParticipantRole.OWNER:
             raise ConversationAccessDeniedError("Cannot add participant as owner")
 
-        now = self._get_timestamp()
-        part_id = self._generate_id()
-
-        self._db.execute(
-            """INSERT INTO msg_participants 
-               (id, conversation_id, user_id, role, joined_at)
-               VALUES (?, ?, ?, ?, ?)""",
-            (part_id, conversation_id, participant_id, role.value, now),
+        participant = self._participant_svc.add_participant(
+            conversation_id, participant_id, role
         )
 
         # Send system message
@@ -768,12 +302,13 @@ class MessagingManager(BaseManager):
             {"user_id": participant_id, "added_by": user_id},
         )
 
-        result = self._get_participant(conversation_id, participant_id)
-        assert result is not None  # Should exist since we just added it
-        return result
+        return participant
 
     def remove_participant(
-        self, user_id: SnowflakeID, conversation_id: SnowflakeID, participant_id: SnowflakeID
+        self,
+        user_id: SnowflakeID,
+        conversation_id: SnowflakeID,
+        participant_id: SnowflakeID,
     ) -> bool:
         """Remove a participant from a group conversation."""
         conv = self.get_conversation(conversation_id, user_id)
@@ -783,16 +318,15 @@ class MessagingManager(BaseManager):
         if conv.conversation_type == ConversationType.DM:
             raise ConversationTypeError("Cannot remove participants from DM")
 
-        # Check permission
-        actor = self._get_participant(conversation_id, user_id)
-        assert actor is not None  # Checked by get_conversation above
-        target = self._get_participant(conversation_id, participant_id)
+        actor = self._participant_svc.get_participant(conversation_id, user_id)
+        if not actor:
+            raise ConversationAccessDeniedError("Not a participant in this conversation")
 
+        target = self._participant_svc.get_participant(conversation_id, participant_id)
         if not target:
             raise ParticipantNotFoundError("Participant not found")
 
-        # Owner can remove anyone except themselves
-        # Admin can remove members only
+        # Permission checks
         if actor.role == ParticipantRole.OWNER:
             if participant_id == user_id:
                 raise ConversationAccessDeniedError(
@@ -808,13 +342,7 @@ class MessagingManager(BaseManager):
                 "Only owner or admin can remove participants"
             )
 
-        self._db.execute(
-            "DELETE FROM msg_participants WHERE conversation_id = ? AND user_id = ?",
-            (conversation_id, participant_id),
-        )
-
-        # Invalidate participant cache
-        self._cache_invalidate(self._participant_cache, (conversation_id, participant_id))
+        self._participant_svc.remove_participant(conversation_id, participant_id)
 
         # Send system message
         self.send_system_message(
@@ -841,10 +369,11 @@ class MessagingManager(BaseManager):
         if conv.conversation_type == ConversationType.DM:
             raise ConversationTypeError("Cannot change roles in DM")
 
-        actor = self._get_participant(conversation_id, user_id)
-        assert actor is not None  # Checked by get_conversation above
-        target = self._get_participant(conversation_id, participant_id)
+        actor = self._participant_svc.get_participant(conversation_id, user_id)
+        if not actor:
+            raise ConversationAccessDeniedError("Not a participant in this conversation")
 
+        target = self._participant_svc.get_participant(conversation_id, participant_id)
         if not target:
             raise ParticipantNotFoundError("Participant not found")
 
@@ -852,51 +381,30 @@ class MessagingManager(BaseManager):
         if actor.role != ParticipantRole.OWNER:
             raise ConversationAccessDeniedError("Only owner can change roles")
 
-        # Cannot change own role
         if user_id == participant_id:
             raise ConversationAccessDeniedError("Cannot change own role")
 
-        # Cannot make someone else owner (use transfer ownership instead)
         if role == ParticipantRole.OWNER:
             raise ConversationAccessDeniedError(
                 "Cannot assign owner role, use transfer ownership"
             )
 
-        self._db.execute(
-            "UPDATE msg_participants SET role = ? WHERE conversation_id = ? AND user_id = ?",
-            (role.value, conversation_id, participant_id),
-        )
+        return self._participant_svc.update_role(conversation_id, participant_id, role)
 
-        result = self._get_participant(conversation_id, participant_id)
-        assert result is not None  # Should exist since we just updated it
-        return result
-
-    def get_participants(self, user_id: SnowflakeID, conversation_id: SnowflakeID) -> List[Participant]:
+    def get_participants(
+        self, user_id: SnowflakeID, conversation_id: SnowflakeID
+    ) -> List[Participant]:
         """Get all participants in a conversation."""
-        if not self._is_participant(conversation_id, user_id):
+        if not self._participant_svc.is_participant(conversation_id, user_id):
             raise ConversationAccessDeniedError(
                 "Not a participant in this conversation"
             )
 
-        rows = self._db.fetch_all(
-            "SELECT * FROM msg_participants WHERE conversation_id = ? ORDER BY joined_at",
-            (conversation_id,),
-        )
-
-        return [self._row_to_participant(row) for row in rows]
+        return self._participant_svc.get_all_participants(conversation_id)
 
     def get_participant_ids(self, conversation_id: SnowflakeID) -> List[SnowflakeID]:
-        """
-        Get all participant user IDs in a conversation (internal use).
-        
-        This bypasses permission checks and should only be used by core system 
-        components like the event router.
-        """
-        rows = self._db.fetch_all(
-            "SELECT user_id FROM msg_participants WHERE conversation_id = ?",
-            (conversation_id,),
-        )
-        return [row["user_id"] for row in rows]
+        """Get all participant user IDs (internal use for event routing)."""
+        return self._participant_svc.get_participant_ids(conversation_id)
 
     def mute_conversation(
         self,
@@ -906,82 +414,13 @@ class MessagingManager(BaseManager):
         until: Optional[int] = None,
     ) -> bool:
         """Mute or unmute a conversation for a user."""
-        if not self._is_participant(conversation_id, user_id):
+        if not self._participant_svc.is_participant(conversation_id, user_id):
             raise ConversationAccessDeniedError(
                 "Not a participant in this conversation"
             )
 
-        self._db.execute(
-            "UPDATE msg_participants SET muted = ?, muted_until = ? WHERE conversation_id = ? AND user_id = ?",
-            (1 if muted else 0, until, conversation_id, user_id),
-        )
-
+        self._participant_svc.update_mute(conversation_id, user_id, muted, until)
         return True
-
-    def _is_participant(self, conversation_id: SnowflakeID, user_id: SnowflakeID) -> bool:
-        """Check if user is a participant in conversation (cached)."""
-        cache_key = (conversation_id, user_id)
-
-        # Check cache first
-        cached = self._cache_get(self._participant_cache, cache_key)
-        if cached is not None:
-            return cached
-
-        # Optimized single query: check direct participant OR server membership
-        # This combines both checks into one database round-trip
-        row = self._db.fetch_one(
-            """SELECT 
-                CASE 
-                    WHEN EXISTS (SELECT 1 FROM msg_participants WHERE conversation_id = ? AND user_id = ?) THEN 1
-                    ELSE 0
-                END as is_direct_participant,
-                c.metadata
-            FROM msg_conversations c WHERE c.id = ?""",
-            (conversation_id, user_id, conversation_id),
-        )
-
-        if not row:
-            self._cache_set(self._participant_cache, cache_key, False)
-            return False
-
-        # Check direct participant first (most common case)
-        is_direct = (
-            row["is_direct_participant"] if hasattr(row, "__getitem__") else None
-        )
-        if is_direct == 1:
-            self._cache_set(self._participant_cache, cache_key, True)
-            return True
-
-        # Check server membership if this is a server channel
-        metadata = row["metadata"] if hasattr(row, "__getitem__") else None
-        if metadata:
-            try:
-                if isinstance(metadata, str):
-                    metadata = json.loads(metadata)
-                server_id = metadata.get("server_id")
-                if server_id:
-                    member_row = self._db.fetch_one(
-                        "SELECT 1 FROM srv_members WHERE server_id = ? AND user_id = ?",
-                        (int(server_id), user_id),
-                    )
-                    if member_row:
-                        self._cache_set(self._participant_cache, cache_key, True)
-                        return True
-            except (json.JSONDecodeError, TypeError, ValueError):
-                pass  # Invalid metadata, not a server channel
-
-        self._cache_set(self._participant_cache, cache_key, False)
-        return False
-
-    def _get_participant(
-        self, conversation_id: SnowflakeID, user_id: SnowflakeID
-    ) -> Optional[Participant]:
-        """Get participant record."""
-        row = self._db.fetch_one(
-            "SELECT * FROM msg_participants WHERE conversation_id = ? AND user_id = ?",
-            (conversation_id, user_id),
-        )
-        return self._row_to_participant(row) if row else None
 
     # === Messages ===
 
@@ -997,278 +436,44 @@ class MessagingManager(BaseManager):
         webhook_id: Optional[SnowflakeID] = None,
     ) -> Message:
         """Send a message to a conversation."""
-        # Check access
-        if not self._is_participant(conversation_id, user_id):
-            raise ConversationAccessDeniedError(
-                "Not a participant in this conversation"
-            )
-
-        # Get user settings for limits
-        user_settings = self.get_user_message_settings(user_id)
-        max_length = user_settings.max_message_length or self._config.get(
-            "max_message_length", 4000
+        msg = self._message_svc.send_message(
+            user_id,
+            conversation_id,
+            content,
+            message_type,
+            reply_to_id,
+            attachments,
+            embeds,
+            webhook_id,
         )
 
-        # Validate content
-        user_filter = self.get_user_filter_settings(user_id)
-        content_result = validate_content(content, user_filter, max_length)
-
-        if not content_result.valid:
-            if any(
-                "exceeds maximum length" in issue for issue in content_result.issues
-            ):
-                raise ContentTooLongError(
-                    f"Message exceeds maximum length of {max_length}",
-                    max_length,
-                    len(content),
-                )
-            raise InvalidContentError("Invalid message content", content_result.issues)
-
-        # Validate reply_to if provided
-        if reply_to_id:
-            reply_msg = self._db.fetch_one(
-                "SELECT conversation_id FROM msg_messages WHERE id = ? AND deleted = 0",
-                (reply_to_id,),
-            )
-            if not reply_msg or reply_msg["conversation_id"] != conversation_id:
-                raise MessageNotFoundError(
-                    "Reply target message not found in this conversation"
-                )
-
-        # Validate attachments
-        if attachments:
-            max_attachments = (
-                user_settings.max_attachments_per_message
-                or self._config.get("max_attachments_per_message", 10)
-            )
-            if len(attachments) > max_attachments:
-                raise AttachmentLimitError(
-                    f"Cannot attach more than {max_attachments} files",
-                    max_attachments,
-                    len(attachments),
-                )
-
-        now = self._get_timestamp()
-        msg_id = self._generate_id()
-
-        # Encrypt content if enabled (using new message encryption)
-        final_content = content_result.sanitized_content
-        encrypted_content = None
-
-        # Check if message encryption is enabled
-        if self._config.get("encrypt_messages", True):
-            # Encrypt the content - the encrypted string includes a prefix marker
-            encrypted_content = encrypt_message(final_content, msg_id)
-            # Store encrypted content in the main content field (transparent encryption)
-            final_content = encrypted_content
-            encrypted_content = None  # No longer need separate field
-
-        # Build metadata
-        metadata = {}
-        if content_result.has_spoilers:
-            metadata["has_spoilers"] = True
-        if content_result.has_nsfw:
-            metadata["has_nsfw"] = True
-        if content_result.filtered_words:
-            metadata["filtered"] = True
-        if embeds:
-            metadata["embeds"] = embeds
-
-        # Use transaction for all DB writes to reduce round-trips
-        try:
-            self._db.begin_transaction()
-
-            self._db.execute(
-                """INSERT INTO msg_messages 
-                   (id, conversation_id, author_id, content, content_encrypted, message_type, 
-                    created_at, updated_at, reply_to_id, metadata, webhook_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    msg_id,
-                    conversation_id,
-                    user_id,
-                    final_content,
-                    encrypted_content,
-                    message_type.value,
-                    now,
-                    now,
-                    reply_to_id,
-                    json.dumps(metadata) if metadata else None,
-                    webhook_id,
-                ),
-                auto_commit=False,
-            )
-
-            # Update conversation
-            self._db.execute(
-                "UPDATE msg_conversations SET last_message_id = ?, last_message_at = ?, updated_at = ? WHERE id = ?",
-                (msg_id, now, now, conversation_id),
-                auto_commit=False,
-            )
-
-            # Add attachments
-            if attachments:
-                for att_data in attachments:
-                    self._add_attachment_no_commit(
-                        user_id,
-                        msg_id,
-                        att_data.get("filename", "file"),
-                        att_data.get("content_type", "application/octet-stream"),
-                        att_data.get("size", 0),
-                        att_data.get("url", ""),
-                        att_data.get("metadata"),
-                    )
-
-            # Create initial status (sent)
-            status_id = self._generate_id()
-            self._db.execute(
-                """INSERT INTO msg_message_status (id, message_id, user_id, status, timestamp)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (status_id, msg_id, user_id, MessageStatusType.SENT.value, now),
-                auto_commit=False,
-            )
-
-            self._db.commit()
-        except Exception:
-            self._db.rollback()
-            raise
-
-        logger.debug(f"Message {msg_id} sent to conversation {conversation_id}")
-
-        # Build Message object directly instead of re-fetching from DB
-        # This avoids redundant _is_participant check and DB query
-        attachment_list = []
-        if attachments:
-            for att_data in attachments:
-                attachment_list.append(
-                    Attachment(
-                        id=self._generate_id(),  # Approximate - actual ID from add_attachment
-                        message_id=msg_id,
-                        filename=att_data.get("filename", "file"),
-                        content_type=att_data.get(
-                            "content_type", "application/octet-stream"
-                        ),
-                        size=att_data.get("size", 0),
-                        url=att_data.get("url", ""),
-                        created_at=now,
-                    )
-                )
-
-        # Return the original sanitized content (not "[encrypted]") so the sender sees their message
-        # The encrypted_content field contains the actual encrypted data for storage
-        return Message(
-            id=msg_id,
-            conversation_id=conversation_id,
-            author_id=user_id,
-            content=content_result.sanitized_content,  # Return original content, not "[encrypted]"
-            content_encrypted=encrypted_content,
-            message_type=message_type,
-            created_at=now,
-            updated_at=now,
-            reply_to_id=reply_to_id,
-            edited=False,
-            deleted=False,
-            pinned=False,
-            metadata=metadata if metadata else None,
-            attachments=attachment_list,
+        # Update conversation's last message
+        self._conversation_svc.update_last_message(
+            conversation_id, msg.id, msg.created_at
         )
 
-    def edit_message(self, user_id: SnowflakeID, message_id: SnowflakeID, content: str) -> Message:
+        # Create initial status
+        self._message_status_svc.create_initial_status(msg.id, user_id)
+
+        return msg
+
+    def edit_message(
+        self, user_id: SnowflakeID, message_id: SnowflakeID, content: str
+    ) -> Message:
         """Edit a message (own messages only)."""
-        msg = self._get_message_raw(message_id)
-        if not msg:
-            raise MessageNotFoundError("Message not found")
-
-        if msg["deleted"]:
-            raise MessageNotFoundError("Message not found")
-
-        # Must be participant in conversation to edit
-        if not self._is_participant(msg["conversation_id"], user_id):
-            raise MessageNotFoundError("Message not found")
-
-        if msg["author_id"] != user_id:
-            raise MessageAccessDeniedError("Can only edit own messages")
-
-        # Validate content
-        user_settings = self.get_user_message_settings(user_id)
-        max_length = user_settings.max_message_length or self._config.get(
-            "max_message_length", 4000
-        )
-        user_filter = self.get_user_filter_settings(user_id)
-
-        content_result = validate_content(content, user_filter, max_length)
-        if not content_result.valid:
-            raise InvalidContentError("Invalid message content", content_result.issues)
-
-        now = self._get_timestamp()
-        final_content = content_result.sanitized_content
-
-        # Encrypt content if enabled
-        if self._config.get("encrypt_messages", True):
-            final_content = encrypt_message(final_content, message_id)
-
-        self._db.execute(
-            """UPDATE msg_messages 
-               SET content = ?, content_encrypted = NULL, updated_at = ?, edited = 1
-               WHERE id = ?""",
-            (final_content, now, message_id),
-        )
-
-        result = self.get_message(user_id, message_id)
-        assert result is not None  # Should exist since we just updated it
-        return result
+        return self._message_svc.edit_message(user_id, message_id, content)
 
     def delete_message(
         self, user_id: SnowflakeID, message_id: SnowflakeID, hard_delete: bool = False
     ) -> bool:
         """Delete a message."""
-        msg = self._get_message_raw(message_id)
-        if not msg:
-            raise MessageNotFoundError("Message not found")
+        return self._message_svc.delete_message(user_id, message_id, hard_delete)
 
-        # Check permission - own message or admin in conversation
-        can_delete = msg["author_id"] == user_id
-
-        if not can_delete:
-            participant = self._get_participant(msg["conversation_id"], user_id)
-            if participant and participant.role in [
-                ParticipantRole.OWNER,
-                ParticipantRole.ADMIN,
-            ]:
-                can_delete = True
-
-        if not can_delete:
-            raise MessageAccessDeniedError("Cannot delete this message")
-
-        now = self._get_timestamp()
-
-        if hard_delete:
-            # Hard delete - actually remove from database
-            self._db.execute("DELETE FROM msg_messages WHERE id = ?", (message_id,))
-        else:
-            # Soft delete
-            self._db.execute(
-                "UPDATE msg_messages SET deleted = 1, deleted_at = ?, content = '[deleted]' WHERE id = ?",
-                (now, message_id),
-            )
-
-        return True
-
-    def get_message(self, user_id: SnowflakeID, message_id: SnowflakeID) -> Optional[Message]:
+    def get_message(
+        self, user_id: SnowflakeID, message_id: SnowflakeID
+    ) -> Optional[Message]:
         """Get a single message by ID."""
-        msg = self._get_message_raw(message_id)
-        if not msg:
-            return None
-
-        # Deleted messages are not accessible via API
-        if msg["deleted"]:
-            return None
-
-        # Check access
-        if not self._is_participant(msg["conversation_id"], user_id):
-            return None
-
-        return self._row_to_message(msg)
+        return self._message_svc.get_message(user_id, message_id)
 
     def get_messages(
         self,
@@ -1279,41 +484,18 @@ class MessagingManager(BaseManager):
         after_id: Optional[SnowflakeID] = None,
     ) -> List[Message]:
         """Get messages from a conversation with cursor pagination."""
-        if not self._is_participant(conversation_id, user_id):
-            raise ConversationAccessDeniedError(
-                "Not a participant in this conversation"
+        messages = self._message_svc.get_messages(
+            user_id, conversation_id, limit, before_id, after_id
+        )
+
+        # Enrich with status info
+        if messages:
+            message_ids = [m.id for m in messages]
+            status_map = self._message_status_svc.get_batch_status_info(
+                user_id, message_ids
             )
 
-        limit = min(limit, 100)
-
-        query = "SELECT * FROM msg_messages WHERE conversation_id = ? AND deleted = 0"
-        params = [conversation_id]
-
-        if before_id:
-            query += " AND id < ?"
-            params.append(before_id)
-            query += " ORDER BY id DESC"
-        elif after_id:
-            query += " AND id > ?"
-            params.append(after_id)
-            query += " ORDER BY id ASC"
-        else:
-            query += " ORDER BY id DESC"
-
-        query += " LIMIT ?"
-        params.append(limit)
-
-        rows = self._db.fetch_all(query, tuple(params))
-
-        messages = [self._row_to_message(row) for row in rows]
-
-        if messages:
-            message_ids = [msg.id for msg in messages]
-            attachments_map = self._get_attachments_batch(message_ids)
-            status_map = self._get_message_statuses_batch(user_id, message_ids)
-
             for msg in messages:
-                msg.attachments = attachments_map.get(msg.id, [])
                 stats = status_map.get(msg.id, {})
                 msg.status = stats.get("status", MessageStatusType.SENT)
                 msg.delivery_count = stats.get("delivery_count", 0)
@@ -1330,55 +512,19 @@ class MessagingManager(BaseManager):
         before_id: Optional[SnowflakeID] = None,
         after_id: Optional[SnowflakeID] = None,
     ) -> List[Message]:
-        """
-        Search for messages in a conversation using database search.
-        
-        Args:
-            user_id: ID of the user searching
-            conversation_id: ID of the conversation
-            query: Search query string
-            limit: Maximum number of results
-            before_id: Cursor for pagination (messages before this ID)
-            after_id: Cursor for pagination (messages after this ID)
-            
-        Returns:
-            List of matching Message objects
-        """
-        if not self._is_participant(conversation_id, user_id):
-            raise ConversationAccessDeniedError(
-                "Not a participant in this conversation"
+        """Search for messages in a conversation."""
+        messages = self._message_svc.search_messages(
+            user_id, conversation_id, query, limit, before_id, after_id
+        )
+
+        # Enrich with status info
+        if messages:
+            message_ids = [m.id for m in messages]
+            status_map = self._message_status_svc.get_batch_status_info(
+                user_id, message_ids
             )
 
-        limit = min(limit, 100)
-        
-        # Base query
-        sql_query = "SELECT * FROM msg_messages WHERE conversation_id = ? AND deleted = 0 AND content LIKE ?"
-        params = [conversation_id, f"%{query}%"]
-
-        if before_id:
-            sql_query += " AND id < ?"
-            params.append(before_id)
-            sql_query += " ORDER BY id DESC"
-        elif after_id:
-            sql_query += " AND id > ?"
-            params.append(after_id)
-            sql_query += " ORDER BY id ASC"
-        else:
-            sql_query += " ORDER BY id DESC"
-
-        sql_query += " LIMIT ?"
-        params.append(limit)
-
-        rows = self._db.fetch_all(sql_query, tuple(params))
-        messages = [self._row_to_message(row) for row in rows]
-
-        if messages:
-            message_ids = [msg.id for msg in messages]
-            attachments_map = self._get_attachments_batch(message_ids)
-            status_map = self._get_message_statuses_batch(user_id, message_ids)
-
             for msg in messages:
-                msg.attachments = attachments_map.get(msg.id, [])
                 stats = status_map.get(msg.id, {})
                 msg.status = stats.get("status", MessageStatusType.SENT)
                 msg.delivery_count = stats.get("delivery_count", 0)
@@ -1386,211 +532,32 @@ class MessagingManager(BaseManager):
 
         return messages
 
-    def _get_attachments_batch(
-        self, message_ids: List[SnowflakeID]
-    ) -> Dict[SnowflakeID, List[Attachment]]:
-        """Batch load attachments for multiple messages (avoids N+1 queries)."""
-        if not message_ids:
-            return {}
-
-        placeholders = ",".join("?" * len(message_ids))
-        rows = self._db.fetch_all(
-            f"SELECT * FROM msg_attachments WHERE message_id IN ({placeholders}) AND deleted = 0",
-            tuple(message_ids),
+    def send_system_message(
+        self,
+        conversation_id: SnowflakeID,
+        content: str,
+        event_type: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Message:
+        """Send a system message."""
+        msg = self._message_svc.send_system_message(
+            conversation_id, content, event_type, metadata
         )
 
-        result: Dict[SnowflakeID, List[Attachment]] = {mid: [] for mid in message_ids}
-        for row in rows:
-            att = self._row_to_attachment(row)
-            result[att.message_id].append(att)
-
-        return result
-
-    def _get_message_statuses_batch(
-        self, user_id: SnowflakeID, message_ids: List[SnowflakeID]
-    ) -> Dict[SnowflakeID, Dict[str, Any]]:
-        """Batch load message statuses and counts (avoids N+1 queries)."""
-        if not message_ids:
-            return {}
-
-        placeholders = ",".join("?" * len(message_ids))
-
-        # Get status for the current user
-        status_rows = self._db.fetch_all(
-            f"SELECT message_id, status FROM msg_message_status WHERE user_id = ? AND message_id IN ({placeholders})",
-            (user_id,) + tuple(message_ids),
-        )
-        status_map = {
-            row["message_id"]: MessageStatusType(row["status"]) for row in status_rows
-        }
-
-        # Get aggregate counts for all users
-        count_rows = self._db.fetch_all(
-            f"""SELECT message_id, 
-                       COUNT(CASE WHEN status IN ('delivered', 'read') THEN 1 END) as delivery_count,
-                       COUNT(CASE WHEN status = 'read' THEN 1 END) as read_count
-                FROM msg_message_status 
-                WHERE message_id IN ({placeholders})
-                GROUP BY message_id""",
-            tuple(message_ids),
-        )
-        counts_map = {
-            row["message_id"]: {
-                "delivery_count": row["delivery_count"],
-                "read_count": row["read_count"],
-            }
-            for row in count_rows
-        }
-
-        result = {}
-        for mid in message_ids:
-            stats = counts_map.get(mid, {"delivery_count": 0, "read_count": 0})
-            result[mid] = {
-                "status": status_map.get(mid, MessageStatusType.SENT),
-                "delivery_count": stats["delivery_count"],
-                "read_count": stats["read_count"],
-            }
-
-        return result
-
-    def pin_message(self, user_id: SnowflakeID, message_id: SnowflakeID) -> bool:
-        """Pin a message in its conversation."""
-        msg = self._get_message_raw(message_id)
-        if not msg:
-            raise MessageNotFoundError("Message not found")
-
-        # Cannot pin deleted messages
-        if msg["deleted"]:
-            raise MessageNotFoundError("Message not found")
-
-        if not self._is_participant(msg["conversation_id"], user_id):
-            raise ConversationAccessDeniedError(
-                "Not a participant in this conversation"
-            )
-
-        # Check if already pinned
-        existing = self._db.fetch_one(
-            "SELECT 1 FROM msg_pinned WHERE message_id = ?", (message_id,)
-        )
-        if existing:
-            return True  # Already pinned
-
-        # Check pin limit
-        max_pins = self._config.get("max_pinned_messages", 50)
-        pin_count = self._db.fetch_one(
-            "SELECT COUNT(*) as count FROM msg_pinned WHERE conversation_id = ?",
-            (msg["conversation_id"],)
-        )
-        if pin_count and pin_count["count"] >= max_pins:
-            raise PinLimitError(
-                f"Cannot pin more than {max_pins} messages",
-                max_pins,
-                pin_count["count"]
-            )
-
-        now = self._get_timestamp()
-        pin_id = self._generate_id()
-
-        self._db.execute(
-            """INSERT INTO msg_pinned (id, conversation_id, message_id, pinned_by, pinned_at)
-               VALUES (?, ?, ?, ?, ?)""",
-            (pin_id, msg["conversation_id"], message_id, user_id, now),
+        # Update conversation's last message
+        self._conversation_svc.update_last_message(
+            conversation_id, msg.id, msg.created_at
         )
 
-        return True
-
-    def unpin_message(self, user_id: SnowflakeID, message_id: SnowflakeID) -> bool:
-        """Unpin a message."""
-        msg = self._get_message_raw(message_id)
-        if not msg:
-            raise MessageNotFoundError("Message not found")
-
-        if not self._is_participant(msg["conversation_id"], user_id):
-            raise ConversationAccessDeniedError(
-                "Not a participant in this conversation"
-            )
-
-        # Check if pinned
-        existing = self._db.fetch_one(
-            "SELECT 1 FROM msg_pinned WHERE message_id = ?", (message_id,)
-        )
-        if not existing:
-            raise MessageNotPinnedError("Message is not pinned")
-
-        self._db.execute("DELETE FROM msg_pinned WHERE message_id = ?", (message_id,))
-        return True
-
-    def get_pinned_messages(self, user_id: SnowflakeID, conversation_id: SnowflakeID) -> List[Message]:
-        """Get all pinned messages in a conversation."""
-        if not self._is_participant(conversation_id, user_id):
-            raise ConversationAccessDeniedError(
-                "Not a participant in this conversation"
-            )
-
-        rows = self._db.fetch_all(
-            """SELECT m.* FROM msg_messages m
-               INNER JOIN msg_pinned p ON m.id = p.message_id
-               WHERE p.conversation_id = ? AND m.deleted = 0
-               ORDER BY p.pinned_at DESC""",
-            (conversation_id,),
-        )
-
-        return [self._row_to_message(row) for row in rows]
-
-    def _get_message_raw(self, message_id: SnowflakeID) -> Optional[Dict[str, Any]]:
-        """Get raw message row from database."""
-        return self._db.fetch_one(
-            "SELECT * FROM msg_messages WHERE id = ?", (message_id,)
-        )
+        return msg
 
     # === Message Status ===
 
-    def mark_delivered(self, user_id: SnowflakeID, message_ids: List[SnowflakeID]) -> int:
+    def mark_delivered(
+        self, user_id: SnowflakeID, message_ids: List[SnowflakeID]
+    ) -> int:
         """Mark messages as delivered."""
-        count = 0
-        now = self._get_timestamp()
-
-        for msg_id in message_ids:
-            msg = self._get_message_raw(msg_id)
-            if not msg or msg["author_id"] == user_id:
-                continue
-
-            if not self._is_participant(msg["conversation_id"], user_id):
-                continue
-
-            # Check if already has status
-            existing = self._db.fetch_one(
-                "SELECT status FROM msg_message_status WHERE message_id = ? AND user_id = ?",
-                (msg_id, user_id),
-            )
-
-            if existing and existing["status"] in [
-                MessageStatusType.DELIVERED.value,
-                MessageStatusType.READ.value,
-            ]:
-                continue
-
-            if existing:
-                self._db.execute(
-                    "UPDATE msg_message_status SET status = ?, timestamp = ? WHERE message_id = ? AND user_id = ?",
-                    (MessageStatusType.DELIVERED.value, now, msg_id, user_id),
-                )
-            else:
-                status_id = self._generate_id()
-                self._db.execute(
-                    """INSERT INTO msg_message_status (id, message_id, user_id, status, timestamp)
-                       VALUES (?, ?, ?, ?, ?)""",
-                    (
-                        status_id,
-                        msg_id,
-                        user_id,
-                        MessageStatusType.DELIVERED.value,
-                        now,
-                    ),
-                )
-            count += 1
-
-        return count
+        return self._message_status_svc.mark_delivered(user_id, message_ids)
 
     def mark_read(
         self,
@@ -1598,190 +565,44 @@ class MessagingManager(BaseManager):
         conversation_id: SnowflakeID,
         up_to_message_id: Optional[SnowflakeID] = None,
     ) -> int:
-        """Mark messages as read (optimized batch operation)."""
-        if not self._is_participant(conversation_id, user_id):
-            raise ConversationAccessDeniedError(
-                "Not a participant in this conversation"
-            )
-
-        now = self._get_timestamp()
-
-        # Build the message filter for marking as read
-        # Must not be the author and must not already have a 'read' status
-        msg_filter = "conversation_id = ? AND author_id != ? AND deleted = 0"
-        params: List[SnowflakeID] = [conversation_id, user_id]
-
-        if up_to_message_id:
-            msg_filter += " AND id <= ?"
-            params.append(up_to_message_id)
-
-        # Get count of messages that will be marked as read (not already read)
-        count_row = self._db.fetch_one(
-            f"""SELECT COUNT(*) as cnt FROM msg_messages m
-                WHERE {msg_filter}
-                AND NOT EXISTS (
-                    SELECT 1 FROM msg_message_status s 
-                    WHERE s.message_id = m.id AND s.user_id = ? AND s.status = ?
-                )""",
-            tuple(params) + (user_id, MessageStatusType.READ.value),
+        """Mark messages as read."""
+        return self._message_status_svc.mark_read(
+            user_id, conversation_id, up_to_message_id
         )
-        count = count_row["cnt"] if count_row else 0
-
-        # Only update public read statuses if user has read receipts enabled
-        user_settings = self.get_user_message_settings(user_id)
-        if user_settings.read_receipts_enabled:
-            # Batch update existing statuses that aren't already READ
-            self._db.execute(
-                f"""UPDATE msg_message_status 
-                    SET status = ?, timestamp = ?
-                    WHERE user_id = ? AND status != ?
-                    AND message_id IN (SELECT id FROM msg_messages WHERE {msg_filter})""",
-                (
-                    MessageStatusType.READ.value,
-                    now,
-                    user_id,
-                    MessageStatusType.READ.value,
-                )
-                + tuple(params),
-            )
-
-            # Batch insert new statuses for messages without any status for this user
-            self._db.execute(
-                f"""INSERT OR IGNORE INTO msg_message_status (id, message_id, user_id, status, timestamp)
-                    SELECT 
-                        abs(random()) % 9223372036854775807,
-                        m.id,
-                        ?,
-                        ?,
-                        ?
-                    FROM msg_messages m
-                    WHERE m.{msg_filter}
-                    AND NOT EXISTS (
-                        SELECT 1 FROM msg_message_status s 
-                        WHERE s.message_id = m.id AND s.user_id = ?
-                    )""",
-                (user_id, MessageStatusType.READ.value, now)
-                + tuple(params)
-                + (user_id,),
-            )
-
-        # Update participant's last read (essential for unread counts regardless of privacy)
-        last_msg_id = up_to_message_id
-        if not last_msg_id:
-            last_row = self._db.fetch_one(
-                "SELECT MAX(id) as max_id FROM msg_messages WHERE conversation_id = ? AND deleted = 0",
-                (conversation_id,),
-            )
-            last_msg_id = last_row["max_id"] if last_row else None
-
-        if last_msg_id:
-            self._db.execute(
-                "UPDATE msg_participants SET last_read_message_id = ?, last_read_at = ? WHERE conversation_id = ? AND user_id = ?",
-                (last_msg_id, now, conversation_id, user_id),
-            )
-
-        return count
 
     def get_unread_count(
         self, user_id: SnowflakeID, conversation_id: Optional[SnowflakeID] = None
     ) -> Dict[SnowflakeID, int]:
-        """Get unread message counts (optimized batch query)."""
-        result = {}
+        """Get unread message counts."""
+        return self._message_status_svc.get_unread_count(user_id, conversation_id)
 
-        if conversation_id:
-            if not self._is_participant(conversation_id, user_id):
-                return result
-            # Single conversation - use optimized single query
-            row = self._db.fetch_one(
-                """SELECT 
-                    p.conversation_id,
-                    COALESCE(
-                        (SELECT COUNT(*) FROM msg_messages m 
-                         WHERE m.conversation_id = p.conversation_id 
-                         AND m.author_id != ? 
-                         AND m.deleted = 0
-                         AND (p.last_read_message_id IS NULL OR m.id > p.last_read_message_id)
-                        ), 0
-                    ) as unread_count
-                FROM msg_participants p
-                WHERE p.conversation_id = ? AND p.user_id = ?""",
-                (user_id, conversation_id, user_id),
-            )
-            if row:
-                result[row["conversation_id"]] = row["unread_count"]
-            return result
-
-        # Batch query for all conversations (fixes N+1)
-        rows = self._db.fetch_all(
-            """SELECT 
-                p.conversation_id,
-                COALESCE(
-                    (SELECT COUNT(*) FROM msg_messages m 
-                     WHERE m.conversation_id = p.conversation_id 
-                     AND m.author_id != ? 
-                     AND m.deleted = 0
-                     AND (p.last_read_message_id IS NULL OR m.id > p.last_read_message_id)
-                    ), 0
-                ) as unread_count
-            FROM msg_participants p
-            WHERE p.user_id = ?""",
-            (user_id, user_id),
-        )
-
-        for row in rows:
-            result[row["conversation_id"]] = row["unread_count"]
-
-        return result
-
-    def get_message_status(self, user_id: SnowflakeID, message_id: SnowflakeID) -> List[MessageStatus]:
+    def get_message_status(
+        self, user_id: SnowflakeID, message_id: SnowflakeID
+    ) -> List[MessageStatus]:
         """Get delivery/read status for a message."""
-        msg = self._get_message_raw(message_id)
-        if not msg:
-            raise MessageNotFoundError("Message not found")
+        return self._message_status_svc.get_message_status(user_id, message_id)
 
-        # Only sender can see status
-        if msg["author_id"] != user_id:
-            raise MessageAccessDeniedError("Only sender can view message status")
+    # === Pins ===
 
-        rows = self._db.fetch_all(
-            "SELECT * FROM msg_message_status WHERE message_id = ? ORDER BY timestamp",
-            (message_id,),
-        )
+    def pin_message(self, user_id: SnowflakeID, message_id: SnowflakeID) -> bool:
+        """Pin a message in its conversation."""
+        return self._pin_svc.pin_message(user_id, message_id)
 
-        return [self._row_to_message_status(row) for row in rows]
+    def unpin_message(self, user_id: SnowflakeID, message_id: SnowflakeID) -> bool:
+        """Unpin a message."""
+        return self._pin_svc.unpin_message(user_id, message_id)
+
+    def get_pinned_messages(
+        self, user_id: SnowflakeID, conversation_id: SnowflakeID
+    ) -> List[Message]:
+        """Get all pinned messages in a conversation."""
+        return self._pin_svc.get_pinned_messages(user_id, conversation_id)
 
     # === Content Filtering ===
 
     def get_user_filter_settings(self, user_id: SnowflakeID) -> ContentFilter:
-        """Get user's content filter settings (cached)."""
-        # Check cache first
-        cached = self._cache_get(self._user_filter_cache, user_id)
-        if cached is not None:
-            return cached
-
-        row = self._db.fetch_one(
-            "SELECT * FROM msg_content_filters WHERE user_id = ?", (user_id,)
-        )
-
-        if row:
-            result = ContentFilter(
-                user_id=user_id,
-                profanity_filter=bool(row["profanity_filter"]),
-                nsfw_filter=bool(row["nsfw_filter"]),
-                spoiler_click_to_reveal=bool(row["spoiler_click_to_reveal"]),
-                custom_blocked_words=json.loads(row["custom_blocked_words"])
-                if row["custom_blocked_words"]
-                else [],
-                filter_action=FilterAction(row["filter_action"])
-                if row["filter_action"]
-                else FilterAction.CENSOR,
-            )
-        else:
-            # Return defaults
-            result = ContentFilter(user_id=user_id)
-
-        self._cache_set(self._user_filter_cache, user_id, result)
-        return result
+        """Get user's content filter settings."""
+        return self._content_filter_svc.get_filter_settings(user_id)
 
     def update_user_filter_settings(
         self,
@@ -1792,93 +613,19 @@ class MessagingManager(BaseManager):
         custom_blocked_words: Optional[List[str]] = None,
     ) -> ContentFilter:
         """Update user's content filter settings."""
-        current = self.get_user_filter_settings(user_id)
-
-        # Check if record exists
-        existing = self._db.fetch_one(
-            "SELECT 1 FROM msg_content_filters WHERE user_id = ?", (user_id,)
+        return self._content_filter_svc.update_filter_settings(
+            user_id,
+            profanity_filter,
+            nsfw_filter,
+            spoiler_click_to_reveal,
+            custom_blocked_words,
         )
-
-        new_profanity = (
-            profanity_filter
-            if profanity_filter is not None
-            else current.profanity_filter
-        )
-        new_nsfw = nsfw_filter if nsfw_filter is not None else current.nsfw_filter
-        new_spoiler = (
-            spoiler_click_to_reveal
-            if spoiler_click_to_reveal is not None
-            else current.spoiler_click_to_reveal
-        )
-        new_words = (
-            custom_blocked_words
-            if custom_blocked_words is not None
-            else current.custom_blocked_words
-        )
-
-        if existing:
-            self._db.execute(
-                """UPDATE msg_content_filters 
-                   SET profanity_filter = ?, nsfw_filter = ?, spoiler_click_to_reveal = ?, custom_blocked_words = ?
-                   WHERE user_id = ?""",
-                (
-                    1 if new_profanity else 0,
-                    1 if new_nsfw else 0,
-                    1 if new_spoiler else 0,
-                    json.dumps(new_words),
-                    user_id,
-                ),
-            )
-        else:
-            self._db.execute(
-                """INSERT INTO msg_content_filters 
-                   (user_id, profanity_filter, nsfw_filter, spoiler_click_to_reveal, custom_blocked_words)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (
-                    user_id,
-                    1 if new_profanity else 0,
-                    1 if new_nsfw else 0,
-                    1 if new_spoiler else 0,
-                    json.dumps(new_words),
-                ),
-            )
-
-        # Invalidate cache before returning fresh data
-        if user_id in self._user_filter_cache:
-            del self._user_filter_cache[user_id]
-
-        return self.get_user_filter_settings(user_id)
 
     # === User Message Settings ===
 
     def get_user_message_settings(self, user_id: SnowflakeID) -> UserMessageSettings:
-        """Get user's message settings (cached)."""
-        # Check cache first
-        cached = self._cache_get(self._user_settings_cache, user_id)
-        if cached is not None:
-            return cached
-
-        row = self._db.fetch_one(
-            "SELECT * FROM msg_user_settings WHERE user_id = ?", (user_id,)
-        )
-
-        if row:
-            result = UserMessageSettings(
-                user_id=user_id,
-                allow_dms_from=row["allow_dms_from"] or "everyone",
-                auto_create_dms=bool(row["auto_create_dms"]),
-                max_message_length=row["max_message_length"],
-                max_attachment_size=row["max_attachment_size"],
-                max_attachments_per_message=row["max_attachments_per_message"],
-                read_receipts_enabled=bool(row["read_receipts_enabled"]),
-                typing_indicators_enabled=bool(row["typing_indicators_enabled"]),
-            )
-        else:
-            # Return defaults
-            result = UserMessageSettings(user_id=user_id)
-
-        self._cache_set(self._user_settings_cache, user_id, result)
-        return result
+        """Get user's message settings."""
+        return self._user_settings_svc.get_message_settings(user_id)
 
     def update_user_message_settings(
         self,
@@ -1892,86 +639,16 @@ class MessagingManager(BaseManager):
         typing_indicators_enabled: Optional[bool] = None,
     ) -> UserMessageSettings:
         """Update user's message settings."""
-        current = self.get_user_message_settings(user_id)
-
-        existing = self._db.fetch_one(
-            "SELECT 1 FROM msg_user_settings WHERE user_id = ?", (user_id,)
+        return self._user_settings_svc.update_message_settings(
+            user_id,
+            allow_dms_from,
+            auto_create_dms,
+            max_message_length,
+            max_attachment_size,
+            max_attachments_per_message,
+            read_receipts_enabled,
+            typing_indicators_enabled,
         )
-
-        new_dms = (
-            allow_dms_from if allow_dms_from is not None else current.allow_dms_from
-        )
-        new_auto = (
-            auto_create_dms if auto_create_dms is not None else current.auto_create_dms
-        )
-        new_length = (
-            max_message_length
-            if max_message_length is not None
-            else current.max_message_length
-        )
-        new_att_size = (
-            max_attachment_size
-            if max_attachment_size is not None
-            else current.max_attachment_size
-        )
-        new_att_count = (
-            max_attachments_per_message
-            if max_attachments_per_message is not None
-            else current.max_attachments_per_message
-        )
-        new_read_receipts = (
-            read_receipts_enabled
-            if read_receipts_enabled is not None
-            else current.read_receipts_enabled
-        )
-        new_typing = (
-            typing_indicators_enabled
-            if typing_indicators_enabled is not None
-            else current.typing_indicators_enabled
-        )
-
-        if existing:
-            self._db.execute(
-                """UPDATE msg_user_settings 
-                   SET allow_dms_from = ?, auto_create_dms = ?, max_message_length = ?,
-                       max_attachment_size = ?, max_attachments_per_message = ?,
-                       read_receipts_enabled = ?, typing_indicators_enabled = ?
-                   WHERE user_id = ?""",
-                (
-                    new_dms,
-                    1 if new_auto else 0,
-                    new_length,
-                    new_att_size,
-                    new_att_count,
-                    1 if new_read_receipts else 0,
-                    1 if new_typing else 0,
-                    user_id,
-                ),
-            )
-        else:
-            self._db.execute(
-                """INSERT INTO msg_user_settings 
-                   (user_id, allow_dms_from, auto_create_dms, max_message_length, 
-                    max_attachment_size, max_attachments_per_message, 
-                    read_receipts_enabled, typing_indicators_enabled)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    user_id,
-                    new_dms,
-                    1 if new_auto else 0,
-                    new_length,
-                    new_att_size,
-                    new_att_count,
-                    1 if new_read_receipts else 0,
-                    1 if new_typing else 0,
-                ),
-            )
-
-        # Invalidate cache before returning fresh data
-        if user_id in self._user_settings_cache:
-            del self._user_settings_cache[user_id]
-
-        return self.get_user_message_settings(user_id)
 
     # === Attachments ===
 
@@ -1986,307 +663,36 @@ class MessagingManager(BaseManager):
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Attachment:
         """Add an attachment to a message."""
-        msg = self._get_message_raw(message_id)
-        if not msg:
-            raise MessageNotFoundError("Message not found")
-
-        if msg["author_id"] != user_id:
-            raise MessageAccessDeniedError("Can only add attachments to own messages")
-
-        # Check size limit
-        user_settings = self.get_user_message_settings(user_id)
-        max_size = user_settings.max_attachment_size or self._config.get(
-            "max_attachment_size", 10485760
+        return self._attachment_svc.add_attachment(
+            user_id, message_id, filename, content_type, size, url, metadata
         )
 
-        if size > max_size:
-            raise AttachmentTooLargeError(
-                f"Attachment exceeds maximum size of {max_size} bytes", max_size, size
-            )
-
-        # Check attachment count
-        existing_count = self._db.fetch_one(
-            "SELECT COUNT(*) as cnt FROM msg_attachments WHERE message_id = ? AND deleted = 0",
-            (message_id,),
-        )
-        max_count = user_settings.max_attachments_per_message or self._config.get(
-            "max_attachments_per_message", 10
-        )
-
-        if existing_count and existing_count["cnt"] >= max_count:
-            raise AttachmentLimitError(
-                f"Message already has maximum attachments ({max_count})",
-                max_count,
-                existing_count["cnt"],
-            )
-
-        now = self._get_timestamp()
-        att_id = self._generate_id()
-
-        # Encrypt URL if enabled
-        encrypted_url = None
-        if self._config.get("encrypt_attachments"):
-            encrypted_url = encrypt_data(url)
-            url = "[encrypted]"
-
-        self._db.execute(
-            """INSERT INTO msg_attachments 
-               (id, message_id, filename, content_type, size, url, url_encrypted, created_at, metadata)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                att_id,
-                message_id,
-                filename,
-                content_type,
-                size,
-                url,
-                encrypted_url,
-                now,
-                json.dumps(metadata) if metadata else None,
-            ),
-        )
-
-        result = self._get_attachment(att_id)
-        assert result is not None  # Should exist since we just created it
-        return result
-
-    def _add_attachment_no_commit(
-        self,
-        user_id: SnowflakeID,
-        message_id: SnowflakeID,
-        filename: str,
-        content_type: str,
-        size: int,
-        url: str,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> SnowflakeID:
-        """Add an attachment without committing (for use in transactions)."""
-        now = self._get_timestamp()
-        att_id = self._generate_id()
-
-        # Encrypt URL if enabled
-        encrypted_url = None
-        if self._config.get("encrypt_attachments"):
-            encrypted_url = encrypt_data(url)
-            url = "[encrypted]"
-
-        self._db.execute(
-            """INSERT INTO msg_attachments 
-               (id, message_id, filename, content_type, size, url, url_encrypted, created_at, metadata)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                att_id,
-                message_id,
-                filename,
-                content_type,
-                size,
-                url,
-                encrypted_url,
-                now,
-                json.dumps(metadata) if metadata else None,
-            ),
-            auto_commit=False,
-        )
-        return att_id
-
-    def get_attachments(self, user_id: SnowflakeID, message_id: SnowflakeID) -> List[Attachment]:
+    def get_attachments(
+        self, user_id: SnowflakeID, message_id: SnowflakeID
+    ) -> List[Attachment]:
         """Get attachments for a message."""
-        msg = self._get_message_raw(message_id)
-        if not msg:
-            return []
+        return self._attachment_svc.get_attachments(user_id, message_id)
 
-        if not self._is_participant(msg["conversation_id"], user_id):
-            return []
-
-        rows = self._db.fetch_all(
-            "SELECT * FROM msg_attachments WHERE message_id = ? AND deleted = 0",
-            (message_id,),
-        )
-
-        return [self._row_to_attachment(row) for row in rows]
-
-    def delete_attachment(self, user_id: SnowflakeID, attachment_id: SnowflakeID) -> bool:
+    def delete_attachment(
+        self, user_id: SnowflakeID, attachment_id: SnowflakeID
+    ) -> bool:
         """Delete an attachment."""
-        att = self._get_attachment(attachment_id)
-        if not att:
-            raise AttachmentNotFoundError("Attachment not found")
+        return self._attachment_svc.delete_attachment(user_id, attachment_id)
 
-        msg = self._get_message_raw(att.message_id)
-        if not msg or msg["author_id"] != user_id:
-            raise MessageAccessDeniedError("Can only delete own attachments")
+    # === Internal helpers for backward compatibility ===
 
-        self._db.execute(
-            "UPDATE msg_attachments SET deleted = 1 WHERE id = ?", (attachment_id,)
-        )
+    def _is_participant(
+        self, conversation_id: SnowflakeID, user_id: SnowflakeID
+    ) -> bool:
+        """Check if user is a participant (for backward compatibility)."""
+        return self._participant_svc.is_participant(conversation_id, user_id)
 
-        return True
+    def _get_participant(
+        self, conversation_id: SnowflakeID, user_id: SnowflakeID
+    ) -> Optional[Participant]:
+        """Get participant record (for backward compatibility)."""
+        return self._participant_svc.get_participant(conversation_id, user_id)
 
-    def _get_attachment(self, attachment_id: SnowflakeID) -> Optional[Attachment]:
-        """Get attachment by ID."""
-        row = self._db.fetch_one(
-            "SELECT * FROM msg_attachments WHERE id = ? AND deleted = 0",
-            (attachment_id,),
-        )
-        return self._row_to_attachment(row) if row else None
-
-    # === System Messages ===
-
-    def send_system_message(
-        self,
-        conversation_id: SnowflakeID,
-        content: str,
-        event_type: str,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Message:
-        """Send a system message."""
-        now = self._get_timestamp()
-        msg_id = self._generate_id()
-
-        full_metadata = {"event_type": event_type}
-        if metadata:
-            full_metadata.update(metadata)
-
-        self._db.execute(
-            """INSERT INTO msg_messages 
-               (id, conversation_id, author_id, content, message_type, created_at, updated_at, metadata)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                msg_id,
-                conversation_id,
-                0,
-                content,
-                MessageType.SYSTEM.value,
-                now,
-                now,
-                json.dumps(full_metadata),
-            ),
-        )
-
-        # Update conversation
-        self._db.execute(
-            "UPDATE msg_conversations SET last_message_id = ?, last_message_at = ?, updated_at = ? WHERE id = ?",
-            (msg_id, now, now, conversation_id),
-        )
-
-        row = self._db.fetch_one("SELECT * FROM msg_messages WHERE id = ?", (msg_id,))
-        return self._row_to_message(row)
-
-    # === Row Converters ===
-
-    def _row_to_conversation(self, row: Dict[str, Any]) -> Conversation:
-        """Convert database row to Conversation model."""
-        # Handle both dict and sqlite3.Row
-        participant_count = 0
-        try:
-            participant_count = row["participant_count"]
-        except (KeyError, IndexError):
-            pass
-
-        return Conversation(
-            id=row["id"],
-            conversation_type=ConversationType(row["conversation_type"]),
-            name=row["name"],
-            owner_id=row["owner_id"],
-            max_participants=row["max_participants"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-            last_message_id=row["last_message_id"],
-            last_message_at=row["last_message_at"],
-            encrypted=bool(row["encrypted"]),
-            deleted=bool(row["deleted"]),
-            deleted_at=row["deleted_at"],
-            participant_count=participant_count,
-            metadata=json.loads(row["metadata"]) if row["metadata"] else None,
-        )
-
-    def _row_to_participant(self, row: Dict[str, Any]) -> Participant:
-        """Convert database row to Participant model."""
-        return Participant(
-            id=row["id"],
-            conversation_id=row["conversation_id"],
-            user_id=row["user_id"],
-            role=ParticipantRole(row["role"]),
-            joined_at=row["joined_at"],
-            last_read_message_id=row["last_read_message_id"],
-            last_read_at=row["last_read_at"],
-            muted=bool(row["muted"]),
-            muted_until=row["muted_until"],
-            permissions=json.loads(row["permissions"]) if row["permissions"] else None,
-            nickname=row["nickname"],
-        )
-
-    def _row_to_message(self, row: Dict[str, Any]) -> Message:
-        """Convert database row to Message model."""
-        content = row["content"]
-
-        # Decrypt if encrypted (new format with ENC: prefix)
-        if is_message_encrypted(content):
-            try:
-                content = decrypt_message(content, row["id"])
-            except Exception:
-                content = "[decryption failed]"
-        # Legacy: decrypt from content_encrypted field
-        elif row.get("content_encrypted") and content == "[encrypted]":
-            try:
-                content = decrypt_data(row["content_encrypted"])
-            except Exception:
-                content = "[decryption failed]"
-
-        # Get pin status
-        pin_row = self._db.fetch_one(
-            "SELECT pinned_by, pinned_at FROM msg_pinned WHERE message_id = ?",
-            (row["id"],),
-        )
-
-        return Message(
-            id=row["id"],
-            conversation_id=row["conversation_id"],
-            author_id=row["author_id"],
-            content=content,
-            content_encrypted=row.get("content_encrypted"),
-            message_type=MessageType(row.get("message_type", "text")),
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-            edited=bool(row.get("edited", False)),
-            deleted=bool(row.get("deleted", False)),
-            deleted_at=row.get("deleted_at"),
-            reply_to_id=row.get("reply_to_id"),
-            pinned=pin_row is not None,
-            pinned_at=pin_row["pinned_at"] if pin_row else None,
-            pinned_by=pin_row["pinned_by"] if pin_row else None,
-            metadata=json.loads(row["metadata"]) if row.get("metadata") else None,
-        )
-
-    def _row_to_message_status(self, row: Dict[str, Any]) -> MessageStatus:
-        """Convert database row to MessageStatus model."""
-        return MessageStatus(
-            id=row["id"],
-            message_id=row["message_id"],
-            user_id=row["user_id"],
-            status=MessageStatusType(row["status"]),
-            timestamp=row["timestamp"],
-        )
-
-    def _row_to_attachment(self, row: Dict[str, Any]) -> Attachment:
-        """Convert database row to Attachment model."""
-        url = row["url"]
-
-        # Decrypt if encrypted
-        if row["url_encrypted"] and url == "[encrypted]":
-            try:
-                url = decrypt_data(row["url_encrypted"])
-            except Exception:
-                url = "[decryption failed]"
-
-        return Attachment(
-            id=row["id"],
-            message_id=row["message_id"],
-            filename=row["filename"],
-            content_type=row["content_type"],
-            size=row["size"],
-            url=url,
-            url_encrypted=row["url_encrypted"],
-            created_at=row["created_at"],
-            metadata=json.loads(row["metadata"]) if row["metadata"] else None,
-            deleted=bool(row["deleted"]),
-        )
+    def _get_message_raw(self, message_id: SnowflakeID) -> Optional[Dict[str, Any]]:
+        """Get raw message row (for backward compatibility)."""
+        return self._message_svc.get_message_raw(message_id)

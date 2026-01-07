@@ -199,7 +199,7 @@ def _run_migrations(db) -> None:
         # Check if column exists first
         db_type = getattr(db, "db_type", getattr(db, "type", "sqlite"))
         column_exists = False
-        
+
         if db_type == "postgres":
             result = db.fetch_one(
                 """SELECT column_name FROM information_schema.columns 
@@ -210,7 +210,7 @@ def _run_migrations(db) -> None:
             # SQLite
             rows = db.fetch_all("PRAGMA table_info(msg_messages)")
             column_exists = any(row["name"] == "webhook_id" for row in rows)
-            
+
         if not column_exists:
             db.execute("ALTER TABLE msg_messages ADD COLUMN webhook_id INTEGER")
             db.execute(

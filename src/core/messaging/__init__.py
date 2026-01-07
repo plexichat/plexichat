@@ -61,6 +61,13 @@ from .models import (
     ParticipantRole,
     FilterAction,
 )
+from .events import (
+    MessagingEventBus,
+    MessagingEvent,
+    MessagingEventType,
+    EventResult,
+    get_event_bus,
+)
 
 # Module state
 _manager = None
@@ -89,6 +96,11 @@ def _get_manager():
         raise RuntimeError("Messaging not initialized. Call messaging.setup(db) first.")
     assert _manager is not None
     return _manager
+
+
+def get_manager():
+    """Get the messaging manager (public API)."""
+    return _get_manager()
 
 
 # === Conversations ===
@@ -155,7 +167,9 @@ def create_server_channel_conversation(server_id: int, channel_id: int) -> Conve
     return _get_manager().create_server_channel_conversation(server_id, channel_id)
 
 
-def create_thread_conversation(server_id: int, channel_id: int, name: str) -> Conversation:
+def create_thread_conversation(
+    server_id: int, channel_id: int, name: str
+) -> Conversation:
     """
     Create a conversation for a thread.
 
@@ -526,6 +540,7 @@ def send_system_message(
 __all__ = [
     # Setup
     "setup",
+    "get_manager",
     # Exceptions
     "MessagingError",
     "ConversationNotFoundError",
@@ -555,6 +570,12 @@ __all__ = [
     "MessageStatusType",
     "ParticipantRole",
     "FilterAction",
+    # Events
+    "MessagingEventBus",
+    "MessagingEvent",
+    "MessagingEventType",
+    "EventResult",
+    "get_event_bus",
     # Conversations
     "create_dm",
     "create_group",
