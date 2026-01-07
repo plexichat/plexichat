@@ -22,18 +22,36 @@ ROUTE_PATTERNS = [
     (re.compile(r"^/api/v\d+/servers/\d+$"), "{method} /servers/{id}"),
     (re.compile(r"^/api/v\d+/servers/\d+/channels$"), "GET /servers/{id}/channels"),
     (re.compile(r"^/api/v\d+/channels/\d+$"), "{method} /channels/{id}"),
-    (re.compile(r"^/api/v\d+/channels/(\d+)/messages$"), "{method} /channels/{id}/messages"),
-    (re.compile(r"^/api/v\d+/channels/(\d+)/messages/\d+$"), "{method} /channels/{id}/messages/{msg_id}"),
-    (re.compile(r"^/api/v\d+/channels/(\d+)/messages/\d+/reactions/[^/]+$"), "{method} /channels/{id}/messages/{msg_id}/reactions/{emoji}"),
-    (re.compile(r"^/api/v\d+/channels/(\d+)/messages/\d+/reactions$"), "GET /channels/{id}/messages/{msg_id}/reactions"),
+    (
+        re.compile(r"^/api/v\d+/channels/(\d+)/messages$"),
+        "{method} /channels/{id}/messages",
+    ),
+    (
+        re.compile(r"^/api/v\d+/channels/(\d+)/messages/\d+$"),
+        "{method} /channels/{id}/messages/{msg_id}",
+    ),
+    (
+        re.compile(r"^/api/v\d+/channels/(\d+)/messages/\d+/reactions/[^/]+$"),
+        "{method} /channels/{id}/messages/{msg_id}/reactions/{emoji}",
+    ),
+    (
+        re.compile(r"^/api/v\d+/channels/(\d+)/messages/\d+/reactions$"),
+        "GET /channels/{id}/messages/{msg_id}/reactions",
+    ),
     (re.compile(r"^/api/v\d+/relationships/@me$"), "GET /relationships/@me"),
     (re.compile(r"^/api/v\d+/relationships$"), "POST /relationships"),
-    (re.compile(r"^/api/v\d+/relationships/\d+/accept$"), "PUT /relationships/{id}/accept"),
+    (
+        re.compile(r"^/api/v\d+/relationships/\d+/accept$"),
+        "PUT /relationships/{id}/accept",
+    ),
     (re.compile(r"^/api/v\d+/relationships/\d+$"), "DELETE /relationships/{id}"),
     (re.compile(r"^/api/v\d+/relationships/block$"), "POST /relationships/block"),
     (re.compile(r"^/api/v\d+/webhooks$"), "POST /webhooks"),
     (re.compile(r"^/api/v\d+/webhooks/(\d+)$"), "{method} /webhooks/{id}"),
     (re.compile(r"^/api/v\d+/webhooks/(\d+)/[^/]+$"), "POST /webhooks/{id}/{token}"),
+    (re.compile(r"^/api/v\d+/media/upload$"), "POST /media/upload"),
+    (re.compile(r"^/api/v\d+/feedback$"), "POST /feedback"),
+    (re.compile(r"^/api/v\d+/telemetry/response-times$"), "POST /telemetry"),
 ]
 
 
@@ -84,7 +102,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         """
         super().__init__(app)
         self._get_user_info = get_user_info or self._default_get_user_info
-        self._exclude_paths = set(exclude_paths or ["/", "/health", "/docs", "/redoc", "/openapi.json"])
+        self._exclude_paths = set(
+            exclude_paths or ["/", "/health", "/docs", "/redoc", "/openapi.json"]
+        )
         self._include_headers_on_success = include_headers_on_success
         self._exclude_patterns = [
             re.compile(r"^/api/v\d+/health$"),
@@ -108,14 +128,16 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             user_info["user_id"] = getattr(user, "user_id", None)
             user_info["is_bot"] = getattr(user, "token_type", "") == "bot"
             permissions = getattr(user, "permissions", {})
-            user_info["is_admin"] = permissions.get("admin.*", False) or permissions.get("*", False)
-        
+            user_info["is_admin"] = permissions.get(
+                "admin.*", False
+            ) or permissions.get("*", False)
+
         # Bypass rate limits for secure self-tests or internal requests
         is_selftest = getattr(request.state, "is_selftest", False)
         internal_header = request.headers.get("X-Internal-Request")
         if internal_header == "true" or is_selftest:
             user_info["is_internal"] = True
-            
+
         return user_info
 
     def _should_exclude(self, path: str) -> bool:
@@ -130,6 +152,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         """Process request through rate limiting."""
         from src.core import ratelimit
+
         if not ratelimit.is_setup():
             return await call_next(request)
         path = request.url.path
@@ -185,7 +208,9 @@ class RateLimitMiddlewareASGI:
         """Initialize ASGI rate limit middleware."""
         self.app = app
         self._get_user_info = get_user_info
-        self._exclude_paths = set(exclude_paths or ["/", "/health", "/docs", "/redoc", "/openapi.json"])
+        self._exclude_paths = set(
+            exclude_paths or ["/", "/health", "/docs", "/redoc", "/openapi.json"]
+        )
         self._include_headers_on_success = include_headers_on_success
         self._exclude_patterns = [
             re.compile(r"^/api/v\d+/health$"),
@@ -210,6 +235,7 @@ class RateLimitMiddlewareASGI:
             return
 
         from src.core import ratelimit
+
         if not ratelimit.is_setup():
             await self.app(scope, receive, send)
             return
@@ -252,7 +278,9 @@ class RateLimitMiddlewareASGI:
                 user_info["user_id"] = getattr(user, "user_id", None)
                 user_info["is_bot"] = getattr(user, "token_type", "") == "bot"
                 permissions = getattr(user, "permissions", {})
-                user_info["is_admin"] = permissions.get("admin.*", False) or permissions.get("*", False)
+                user_info["is_admin"] = permissions.get(
+                    "admin.*", False
+                ) or permissions.get("*", False)
 
         # Bypass rate limits for secure self-tests
         if getattr(request.state, "is_selftest", False):

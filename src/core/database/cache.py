@@ -545,6 +545,7 @@ def get_bulk_presence(user_ids: List[int]) -> Dict[int, Dict[str, Any]]:
 # Global dictionary for in-memory rate limiting when Redis is unavailable
 _mem_rate_limits: Dict[str, List[float]] = {}
 
+
 def check_rate_limit(key: str, limit: int, window_seconds: int) -> Tuple[bool, int]:
     """
     Check if a rate limit has been exceeded.
@@ -562,13 +563,23 @@ def check_rate_limit(key: str, limit: int, window_seconds: int) -> Tuple[bool, i
         # Fallback to in-memory cache if Redis is unavailable (important for tests)
         global _mem_rate_limits
         full_key = f"ratelimit:{key}"
-        
+
         # Simple sliding window implementation in memory
         now = time.time()
+
+        # Cleanup memory leak: If dictionary gets too large, purge all expired keys
+        if len(_mem_rate_limits) > 5000:
+            logger.debug("Cleaning up in-memory rate limit cache")
+            # Create a copy of keys to iterate while deleting
+            for k in list(_mem_rate_limits.keys()):
+                # If the newest timestamp is older than max window (approx), delete
+                if _mem_rate_limits[k] and _mem_rate_limits[k][-1] < now - 3600:
+                    del _mem_rate_limits[k]
+
         timestamps = _mem_rate_limits.get(full_key, [])
         # Filter out old timestamps
         timestamps = [ts for ts in timestamps if ts > now - window_seconds]
-        
+
         if len(timestamps) < limit:
             timestamps.append(now)
             _mem_rate_limits[full_key] = timestamps

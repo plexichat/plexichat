@@ -617,8 +617,10 @@ class RedisClient:
             raise RedisOperationError(f"UNSUBSCRIBE failed: {e}")
 
     # ==================== Lock Operations ====================
-    
-    def acquire_lock(self, key: str, timeout: float = 10.0, lock_timeout: int = 30000) -> bool:
+
+    def acquire_lock(
+        self, key: str, timeout: float = 10.0, lock_timeout: int = 30000
+    ) -> Optional[str]:
         """
         Acquire a distributed lock.
 
@@ -628,44 +630,56 @@ class RedisClient:
             lock_timeout: How long the lock is valid for in milliseconds.
 
         Returns:
-            True if lock acquired, False otherwise.
+            The lock value (token) if acquired, None otherwise.
         """
         self._ensure_connected()
         client = self._client
         assert client is not None
         full_key = self._prefixed_key(f"lock:{self._sanitize_key(key)}")
-        
+
+        # Unique value to identify the lock owner
+        import secrets
+
+        lock_token = secrets.token_hex(16)
+
         start_time = time.time()
         while time.time() - start_time < timeout:
-            # Generate a unique value for the lock to ensure only the owner can release it
-            # In a real system, we'd use a UUID or similar, but for now just True is okay
-            # if we don't have a specific value tracker. But wait, release_lock needs it.
-            # Let's use a simple timestamp + random or just something unique-ish.
-            lock_value = str(time.time())
-            if client.set(full_key, lock_value, nx=True, px=lock_timeout):
-                # We could store the lock_value to verify on release, 
-                # but RedisClient doesn't have a per-thread state here.
-                # For simplicity, we just use a basic lock.
-                return True
-            time.sleep(0.01) # Wait a bit before retrying
-        return False
+            if client.set(full_key, lock_token, nx=True, px=lock_timeout):
+                return lock_token
+            time.sleep(0.05)  # Wait a bit before retrying
+        return None
 
-    def release_lock(self, key: str) -> None:
+    def release_lock(self, key: str, token: str) -> bool:
         """
-        Release a distributed lock.
+        Release a distributed lock safely using a Lua script.
 
         Args:
             key: Lock key.
+            token: The token returned by acquire_lock.
+
+        Returns:
+            True if the lock was released, False if token mismatch or key missing.
         """
         self._ensure_connected()
-        client = self._client
-        assert client is not None
-        full_key = self._prefixed_key(f"lock:{self._sanitize_key(key)}")
-        
+
+        # Lua script to ensure only the owner can release the lock
+        script = """
+        if redis.call("get", KEYS[1]) == ARGV[1] then
+            return redis.call("del", KEYS[1])
+        else
+            return 0
+        end
+        """
+
         try:
-            client.delete(full_key)
+            self._prefixed_key(f"lock:{self._sanitize_key(key)}")
+            # We use the raw client directly to avoid re-prefixing in eval_lua if we are not careful
+            # But eval_lua in this class also prefixes. Let's be consistent.
+            result = self.eval_lua(script, [f"lock:{key}"], [token])
+            return bool(result)
         except Exception as e:
             logger.error(f"Failed to release lock for {key}: {e}")
+            return False
 
     # ==================== Utility Operations ====================
 
@@ -735,7 +749,7 @@ class RedisClient:
 
     def keys(self, pattern: str = "*") -> List[str]:
         """
-        Get keys matching a pattern.
+        Get keys matching a pattern using non-blocking SCAN.
 
         Args:
             pattern: Glob-style pattern (e.g., "user:*").
@@ -749,15 +763,42 @@ class RedisClient:
         full_pattern = self._prefixed_key(pattern)
 
         try:
-            keys = cast(List[str], client.keys(full_pattern))
+            keys = []
+            for k in client.scan_iter(match=full_pattern, count=100):
+                keys.append(k)
+
             # Remove prefix from returned keys
             prefix_len = len(self.key_prefix)
             return [
                 k[prefix_len:] if k.startswith(self.key_prefix) else k for k in keys
             ]
         except Exception as e:
-            logger.error(f"Redis KEYS failed for {pattern}: {e}")
-            raise RedisOperationError(f"KEYS failed: {e}")
+            logger.error(f"Redis KEYS (SCAN) failed for {pattern}: {e}")
+            raise RedisOperationError(f"SCAN failed: {e}")
+
+    def eval_lua(self, script: str, keys: List[str] = [], args: List[Any] = []) -> Any:
+        """
+        Execute a Lua script.
+
+        Args:
+            script: Lua script content.
+            keys: List of keys for the script.
+            args: List of arguments for the script.
+
+        Returns:
+            Script execution result.
+        """
+        self._ensure_connected()
+        client = self._client
+        assert client is not None
+
+        prefixed_keys = [self._prefixed_key(k) for k in keys]
+
+        try:
+            return client.eval(script, len(keys), *prefixed_keys, *args)
+        except Exception as e:
+            logger.error(f"Redis EVAL failed: {e}")
+            raise RedisOperationError(f"EVAL failed: {e}")
 
     def close(self) -> None:
         """Close the Redis connection."""

@@ -10,9 +10,6 @@ import utils.config as app_config
 from .models import RateLimitConfig, BucketType, RateLimitAlgorithm
 
 
-
-
-
 def _build_global_limit() -> RateLimitConfig:
     """Build global rate limit from config."""
     return RateLimitConfig(
@@ -79,15 +76,16 @@ def get_webhook_multiplier() -> float:
 def get_user_multiplier(user_id: int) -> float:
     """
     Get rate limit multiplier for a specific user based on their tier.
-    
+
     Args:
         user_id: User ID to get multiplier for
-        
+
     Returns:
         Multiplier value (e.g., 1.0 for standard, 2.0 for alpha)
     """
     try:
         from src.core import features
+
         if features.is_setup():
             return features.get_rate_limit_multiplier(user_id)
     except Exception:
@@ -309,6 +307,37 @@ DEFAULT_ROUTE_LIMITS: Dict[str, RateLimitConfig] = {
         algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
         scope=BucketType.IP,
     ),
+    "POST /media/upload": RateLimitConfig(
+        requests=10,
+        window_seconds=60.0,
+        burst=2,
+        algorithm=RateLimitAlgorithm.TOKEN_BUCKET,
+        scope=BucketType.USER,
+        hourly_limit=100,
+    ),
+    "POST /feedback": RateLimitConfig(
+        requests=5,
+        window_seconds=3600.0,
+        burst=0,
+        algorithm=RateLimitAlgorithm.FIXED_WINDOW,
+        scope=BucketType.USER,
+        daily_limit=20,
+    ),
+    "POST /telemetry": RateLimitConfig(
+        requests=2,
+        window_seconds=60.0,
+        burst=1,
+        algorithm=RateLimitAlgorithm.FIXED_WINDOW,
+        scope=BucketType.IP,
+        hourly_limit=10,
+    ),
+    "THUMBNAIL_GEN": RateLimitConfig(
+        requests=60,
+        window_seconds=60.0,
+        burst=10,
+        algorithm=RateLimitAlgorithm.TOKEN_BUCKET,
+        scope=BucketType.USER,
+    ),
 }
 
 
@@ -364,8 +393,7 @@ def is_bot_higher_limit_route(route: str) -> bool:
 
 
 def merge_route_configs(
-    base: Dict[str, RateLimitConfig],
-    overrides: Dict[str, RateLimitConfig]
+    base: Dict[str, RateLimitConfig], overrides: Dict[str, RateLimitConfig]
 ) -> Dict[str, RateLimitConfig]:
     """
     Merge route configurations with overrides.

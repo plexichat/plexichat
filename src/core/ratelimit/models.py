@@ -10,6 +10,7 @@ import time
 
 class BucketType(Enum):
     """Types of rate limit buckets."""
+
     GLOBAL = "global"
     USER = "user"
     IP = "ip"
@@ -21,6 +22,7 @@ class BucketType(Enum):
 
 class RateLimitAlgorithm(Enum):
     """Rate limiting algorithms."""
+
     SLIDING_WINDOW = "sliding_window"
     TOKEN_BUCKET = "token_bucket"
     FIXED_WINDOW = "fixed_window"
@@ -30,6 +32,7 @@ class RateLimitAlgorithm(Enum):
 @dataclass
 class RateLimitConfig:
     """Configuration for a rate limit bucket."""
+
     requests: int
     window_seconds: float
     burst: int = 0
@@ -52,8 +55,12 @@ class RateLimitConfig:
             window_seconds=self.window_seconds,
             burst=int(self.burst * multiplier),
             algorithm=self.algorithm,
-            hourly_limit=int(self.hourly_limit * multiplier) if self.hourly_limit else None,
-            daily_limit=int(self.daily_limit * multiplier) if self.daily_limit else None,
+            hourly_limit=int(self.hourly_limit * multiplier)
+            if self.hourly_limit
+            else None,
+            daily_limit=int(self.daily_limit * multiplier)
+            if self.daily_limit
+            else None,
             scope=self.scope,
             include_in_global=self.include_in_global,
             retry_after_precision=self.retry_after_precision,
@@ -63,6 +70,7 @@ class RateLimitConfig:
 @dataclass
 class RateLimitBucket:
     """State of a rate limit bucket."""
+
     key: str
     bucket_type: BucketType
     config: RateLimitConfig
@@ -84,6 +92,7 @@ class RateLimitBucket:
 @dataclass
 class RateLimitHeaders:
     """Rate limit response headers."""
+
     limit: int
     remaining: int
     reset: float
@@ -113,6 +122,7 @@ class RateLimitHeaders:
 @dataclass
 class RateLimitResult:
     """Result of a rate limit check."""
+
     allowed: bool
     headers: RateLimitHeaders
     bucket_key: str
@@ -140,6 +150,7 @@ class RateLimitResult:
 @dataclass
 class TokenBucketState:
     """State for token bucket algorithm."""
+
     tokens: float
     last_refill: float
     capacity: int
@@ -164,6 +175,7 @@ class TokenBucketState:
 @dataclass
 class SlidingWindowState:
     """State for sliding window algorithm."""
+
     timestamps: list
     window_seconds: float
     limit: int
@@ -189,6 +201,7 @@ class SlidingWindowState:
 @dataclass
 class FixedWindowState:
     """State for fixed window algorithm."""
+
     window_start: float
     window_seconds: float
     count: int
@@ -212,6 +225,7 @@ class FixedWindowState:
 @dataclass
 class LeakyBucketState:
     """State for leaky bucket algorithm."""
+
     water_level: float
     last_leak: float
     capacity: int

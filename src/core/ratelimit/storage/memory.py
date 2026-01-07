@@ -50,8 +50,8 @@ class MemoryStorage(RateLimitStorage):
             if len(self._buckets) > self._max_buckets:
                 oldest_keys = sorted(
                     self._buckets.keys(),
-                    key=lambda k: self._buckets[k].get("last_update", 0)
-                )[:len(self._buckets) - self._max_buckets]
+                    key=lambda k: self._buckets[k].get("last_update", 0),
+                )[: len(self._buckets) - self._max_buckets]
                 for key in oldest_keys:
                     self._buckets.pop(key, None)
                     self._ttls.pop(key, None)
@@ -75,7 +75,9 @@ class MemoryStorage(RateLimitStorage):
                     return None
             return self._buckets.get(key)
 
-    def set_bucket(self, key: str, state: Dict[str, Any], ttl: Optional[float] = None) -> None:
+    def set_bucket(
+        self, key: str, state: Dict[str, Any], ttl: Optional[float] = None
+    ) -> None:
         """Set bucket state."""
         with self._global_lock:
             self._buckets[key] = state
@@ -127,13 +129,7 @@ class MemoryStorage(RateLimitStorage):
                 self._buckets[key] = bucket
             return new_value
 
-    def get_and_set(
-        self,
-        key: str,
-        field: str,
-        value: Any,
-        default: Any = None
-    ) -> Any:
+    def get_and_set(self, key: str, field: str, value: Any, default: Any = None) -> Any:
         """Atomically get current value and set new value."""
         lock = self._get_lock(key)
         with lock:
@@ -144,7 +140,9 @@ class MemoryStorage(RateLimitStorage):
                 self._buckets[key] = bucket
             return previous
 
-    def add_to_list(self, key: str, field: str, value: Any, max_size: int = 1000) -> int:
+    def add_to_list(
+        self, key: str, field: str, value: Any, max_size: int = 1000
+    ) -> int:
         """Add value to a list field, maintaining max size."""
         lock = self._get_lock(key)
         with lock:
@@ -175,18 +173,54 @@ class MemoryStorage(RateLimitStorage):
                 self._buckets[key] = bucket
             return original_len - len(lst)
 
-    def acquire_lock(self, key: str, timeout: float = 1.0) -> bool:
+    def acquire_lock(self, key: str, timeout: float = 1.0) -> Optional[str]:
         """Acquire a lock for atomic operations."""
         lock = self._get_lock(f"lock:{key}")
-        return lock.acquire(timeout=timeout)
+        if lock.acquire(timeout=timeout):
+            return "locked"
+        return None
 
-    def release_lock(self, key: str) -> None:
+    def release_lock(self, key: str, token: Optional[str] = None) -> None:
         """Release a lock."""
         lock = self._get_lock(f"lock:{key}")
         try:
             lock.release()
         except RuntimeError:
             pass
+
+    def eval_token_bucket(
+        self, key: str, capacity: int, refill_rate: float, cost: int, ttl: int = 86400
+    ) -> tuple:
+        """Atomically evaluate a token bucket."""
+        lock = self._get_lock(key)
+        with lock:
+            now = time.monotonic()
+            bucket = self.get_bucket(key) or {
+                "tokens": float(capacity),
+                "last_update": now,
+            }
+
+            tokens = bucket.get("tokens", float(capacity))
+            last_update = bucket.get("last_update", now)
+
+            # Refill
+            elapsed = now - last_update
+            tokens = min(float(capacity), tokens + elapsed * refill_rate)
+
+            if tokens >= cost:
+                tokens -= cost
+                allowed = True
+            else:
+                allowed = False
+
+            bucket["tokens"] = tokens
+            bucket["last_update"] = now
+            self.set_bucket(key, bucket, ttl=ttl)
+
+            remaining = int(tokens)
+            reset_after = (cost - tokens) / refill_rate if not allowed else 0.0
+
+            return allowed, remaining, max(0.0, reset_after)
 
     def get_stats(self) -> Dict[str, Any]:
         """Get storage statistics."""

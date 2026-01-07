@@ -23,7 +23,9 @@ class RateLimitStorage(ABC):
         pass
 
     @abstractmethod
-    def set_bucket(self, key: str, state: Dict[str, Any], ttl: Optional[float] = None) -> None:
+    def set_bucket(
+        self, key: str, state: Dict[str, Any], ttl: Optional[float] = None
+    ) -> None:
         """
         Set bucket state.
 
@@ -94,13 +96,7 @@ class RateLimitStorage(ABC):
         pass
 
     @abstractmethod
-    def get_and_set(
-        self,
-        key: str,
-        field: str,
-        value: Any,
-        default: Any = None
-    ) -> Any:
+    def get_and_set(self, key: str, field: str, value: Any, default: Any = None) -> Any:
         """
         Atomically get current value and set new value.
 
@@ -116,7 +112,9 @@ class RateLimitStorage(ABC):
         pass
 
     @abstractmethod
-    def add_to_list(self, key: str, field: str, value: Any, max_size: int = 1000) -> int:
+    def add_to_list(
+        self, key: str, field: str, value: Any, max_size: int = 1000
+    ) -> int:
         """
         Add value to a list field, maintaining max size.
 
@@ -147,7 +145,7 @@ class RateLimitStorage(ABC):
         pass
 
     @abstractmethod
-    def acquire_lock(self, key: str, timeout: float = 1.0) -> bool:
+    def acquire_lock(self, key: str, timeout: float = 1.0) -> Optional[str]:
         """
         Acquire a lock for atomic operations.
 
@@ -156,17 +154,37 @@ class RateLimitStorage(ABC):
             timeout: Lock timeout in seconds.
 
         Returns:
-            True if lock acquired, False otherwise.
+            Lock token if acquired, None otherwise.
         """
         pass
 
     @abstractmethod
-    def release_lock(self, key: str) -> None:
+    def release_lock(self, key: str, token: Optional[str] = None) -> None:
         """
         Release a lock.
 
         Args:
             key: Lock key.
+            token: Lock token from acquire_lock.
+        """
+        pass
+
+    @abstractmethod
+    def eval_token_bucket(
+        self, key: str, capacity: int, refill_rate: float, cost: int, ttl: int = 86400
+    ) -> tuple:
+        """
+        Atomically evaluate a token bucket.
+
+        Args:
+            key: Bucket key.
+            capacity: Maximum tokens in bucket.
+            refill_rate: Tokens to refill per second.
+            cost: Tokens to consume.
+            ttl: Bucket TTL in seconds.
+
+        Returns:
+            Tuple of (allowed: bool, remaining: int, reset_after: float).
         """
         pass
 

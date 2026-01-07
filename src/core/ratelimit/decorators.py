@@ -65,6 +65,7 @@ def rate_limit(
         @functools.wraps(func)
         async def wrapper(*args, **kwargs):
             from src.core import ratelimit
+
             if not ratelimit.is_setup():
                 return await func(*args, **kwargs)
             request = None
@@ -84,7 +85,9 @@ def rate_limit(
                 user_id = getattr(user, "user_id", None)
                 is_bot = getattr(user, "token_type", "") == "bot"
                 permissions = getattr(user, "permissions", {})
-                is_admin = permissions.get("admin.*", False) or permissions.get("*", False)
+                is_admin = permissions.get("admin.*", False) or permissions.get(
+                    "*", False
+                )
             resource_id = None
             if per_resource:
                 resource_id = kwargs.get(resource_param)
@@ -120,7 +123,9 @@ def rate_limit(
                     headers=headers,
                 )
             return await func(*args, **kwargs)
+
         return wrapper
+
     return decorator
 
 
@@ -146,10 +151,12 @@ def custom_rate_limit(
         async def custom_endpoint(request: Request):
             ...
     """
+
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         async def wrapper(*args, **kwargs):
             from src.core import ratelimit
+
             if not ratelimit.is_setup():
                 return await func(*args, **kwargs)
             request = None
@@ -169,7 +176,9 @@ def custom_rate_limit(
                 user_id = getattr(user, "user_id", None)
                 is_bot = getattr(user, "token_type", "") == "bot"
                 permissions = getattr(user, "permissions", {})
-                is_admin = permissions.get("admin.*", False) or permissions.get("*", False)
+                is_admin = permissions.get("admin.*", False) or permissions.get(
+                    "*", False
+                )
             resource_id = None
             if get_resource_id:
                 resource_id = get_resource_id(request, kwargs)
@@ -199,7 +208,9 @@ def custom_rate_limit(
                     headers=headers,
                 )
             return await func(*args, **kwargs)
+
         return wrapper
+
     return decorator
 
 

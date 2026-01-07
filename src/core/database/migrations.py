@@ -119,7 +119,9 @@ def _migrate_srv_members_updated_at(db: Any) -> None:
             # Add column with default value of joined_at for existing rows
             db.execute("ALTER TABLE srv_members ADD COLUMN updated_at BIGINT")
             # Backfill existing rows: set updated_at = joined_at
-            db.execute("UPDATE srv_members SET updated_at = joined_at WHERE updated_at IS NULL")
+            db.execute(
+                "UPDATE srv_members SET updated_at = joined_at WHERE updated_at IS NULL"
+            )
             logger.info("Migration: updated_at added to srv_members successfully")
     except Exception as e:
         logger.error(f"Migration failed (srv_members_updated_at): {e}")
@@ -128,12 +130,21 @@ def _migrate_srv_members_updated_at(db: Any) -> None:
 def _column_exists(db: Any, table_name: str, column_name: str) -> bool:
     """Check if a column exists in a table (cross-database)."""
     db_type = getattr(db, "type", "sqlite")
-    if db_type == "postgres":
-        row = db.fetch_one(
-            "SELECT 1 FROM information_schema.columns WHERE table_name = ? AND column_name = ?",
-            (table_name, column_name),
-        )
-        return row is not None
-    else:
-        rows = db.fetch_all(f"PRAGMA table_info({table_name})")
-        return any(row["name"] == column_name for row in rows)
+
+    # Use a direct cursor to avoid calling db.execute/fetch which might trigger recursion
+    conn = db._get_conn()
+    cursor = conn.cursor()
+
+    try:
+        if db_type == "postgres":
+            cursor.execute(
+                "SELECT 1 FROM information_schema.columns WHERE table_name = %s AND column_name = %s",
+                (table_name, column_name),
+            )
+            return cursor.fetchone() is not None
+        else:
+            cursor.execute(f"PRAGMA table_info({table_name})")
+            rows = cursor.fetchall()
+            return any(row["name"] == column_name for row in rows)
+    finally:
+        cursor.close()

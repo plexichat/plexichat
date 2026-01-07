@@ -38,7 +38,9 @@ class RedisStorage(RateLimitStorage):
         except RedisOperationError:
             return None
 
-    def set_bucket(self, key: str, state: Dict[str, Any], ttl: Optional[float] = None) -> None:
+    def set_bucket(
+        self, key: str, state: Dict[str, Any], ttl: Optional[float] = None
+    ) -> None:
         """Set bucket state."""
         client = get_client()
         if not client or not is_available():
@@ -90,14 +92,14 @@ class RedisStorage(RateLimitStorage):
         try:
             keys = client.keys(f"{full_prefix}*")
             if keys:
-                # RedisClient.keys returns keys WITHOUT its own prefix, 
+                # RedisClient.keys returns keys WITHOUT its own prefix,
                 # but client.delete expects the keys as passed to it (which it will prefix).
                 # Actually, RedisClient.keys implementation:
                 # return [k[prefix_len:] if k.startswith(self.key_prefix) else k for k in keys]
                 # So the keys are relative to the RedisClient prefix.
-                # client.delete prefixes them again. 
+                # client.delete prefixes them again.
                 # This is a bit recursive with my _get_key.
-                
+
                 return client.delete(*keys)
             return 0
         except RedisOperationError:
@@ -114,7 +116,8 @@ class RedisStorage(RateLimitStorage):
             return 0
 
         full_key = self._get_key(key)
-        if client.acquire_lock(full_key):
+        token = client.acquire_lock(full_key)
+        if token:
             try:
                 bucket = cast(Dict[str, Any], client.get_json(full_key) or {})
                 current = bucket.get(field, 0)
@@ -125,23 +128,19 @@ class RedisStorage(RateLimitStorage):
             except RedisOperationError:
                 return 0
             finally:
-                client.release_lock(full_key)
+                if token:  # Re-check for type narrowing
+                    client.release_lock(full_key, token)
         return 0
 
-    def get_and_set(
-        self,
-        key: str,
-        field: str,
-        value: Any,
-        default: Any = None
-    ) -> Any:
+    def get_and_set(self, key: str, field: str, value: Any, default: Any = None) -> Any:
         """Atomically get current value and set new value."""
         client = get_client()
         if not client or not is_available():
             return default
 
         full_key = self._get_key(key)
-        if client.acquire_lock(full_key):
+        token = client.acquire_lock(full_key)
+        if token:
             try:
                 bucket = cast(Dict[str, Any], client.get_json(full_key) or {})
                 previous = bucket.get(field, default)
@@ -151,17 +150,21 @@ class RedisStorage(RateLimitStorage):
             except RedisOperationError:
                 return default
             finally:
-                client.release_lock(full_key)
+                if token:  # Re-check for type narrowing
+                    client.release_lock(full_key, token)
         return default
 
-    def add_to_list(self, key: str, field: str, value: Any, max_size: int = 1000) -> int:
+    def add_to_list(
+        self, key: str, field: str, value: Any, max_size: int = 1000
+    ) -> int:
         """Add value to a list field, maintaining max size."""
         client = get_client()
         if not client or not is_available():
             return 0
 
         full_key = self._get_key(key)
-        if client.acquire_lock(full_key):
+        token = client.acquire_lock(full_key)
+        if token:
             try:
                 bucket = cast(Dict[str, Any], client.get_json(full_key) or {})
                 lst = bucket.get(field, [])
@@ -176,7 +179,8 @@ class RedisStorage(RateLimitStorage):
             except RedisOperationError:
                 return 0
             finally:
-                client.release_lock(full_key)
+                if token:  # Re-check for type narrowing
+                    client.release_lock(full_key, token)
         return 0
 
     def trim_list(self, key: str, field: str, min_value: Any) -> int:
@@ -186,7 +190,8 @@ class RedisStorage(RateLimitStorage):
             return 0
 
         full_key = self._get_key(key)
-        if client.acquire_lock(full_key):
+        token = client.acquire_lock(full_key)
+        if token:
             try:
                 bucket = cast(Dict[str, Any], client.get_json(full_key) or {})
                 lst = bucket.get(field, [])
@@ -200,19 +205,94 @@ class RedisStorage(RateLimitStorage):
             except RedisOperationError:
                 return 0
             finally:
-                client.release_lock(full_key)
+                if token:  # Re-check for type narrowing
+                    client.release_lock(full_key, token)
         return 0
 
-    def acquire_lock(self, key: str, timeout: float = 1.0) -> bool:
+    def acquire_lock(self, key: str, timeout: float = 1.0) -> Optional[str]:
         """Acquire a lock for atomic operations."""
         client = get_client()
         if not client or not is_available():
-            return False
+            return None
         return client.acquire_lock(f"extlock:{key}", timeout=timeout)
 
-    def release_lock(self, key: str) -> None:
+    def release_lock(self, key: str, token: Optional[str] = None) -> None:
         """Release a lock."""
         client = get_client()
-        if not client or not is_available():
+        if not client or not is_available() or token is None:
             return
-        client.release_lock(f"extlock:{key}")
+        client.release_lock(f"extlock:{key}", token)
+
+    def eval_token_bucket(
+        self, key: str, capacity: int, refill_rate: float, cost: int, ttl: int = 86400
+    ) -> tuple:
+        """Atomically evaluate a token bucket using Lua."""
+        client = get_client()
+        if not client or not is_available():
+            # Fallback if Redis fails - fail closed or open?
+            # Usually rate limiting fails open to avoid blocking traffic,
+            # but for safety let's return a default "allowed"
+            return True, capacity, 0.0
+
+        script = """
+        local key = KEYS[1]
+        local capacity = tonumber(ARGV[1])
+        local refill_rate = tonumber(ARGV[2])
+        local cost = tonumber(ARGV[3])
+        local ttl = tonumber(ARGV[4])
+        local now = tonumber(ARGV[5])
+
+        local bucket = redis.call('GET', key)
+        local tokens
+        local last_update
+
+        if bucket then
+            local data = cjson.decode(bucket)
+            tokens = tonumber(data.tokens)
+            last_update = tonumber(data.last_update)
+        else
+            tokens = capacity
+            last_update = now
+        end
+
+        local elapsed = math.max(0, now - last_update)
+        tokens = math.min(capacity, tokens + (elapsed * refill_rate))
+
+        local allowed = false
+        if tokens >= cost then
+            tokens = tokens - cost
+            allowed = true
+        end
+
+        local res = {
+            tokens = tokens,
+            last_update = now
+        }
+        
+        redis.call('SET', key, cjson.encode(res), 'EX', ttl)
+        
+        local reset_after = 0
+        if not allowed then
+            reset_after = (cost - tokens) / refill_rate
+        end
+        
+        return {tostring(allowed), tostring(math.floor(tokens)), tostring(reset_after)}
+        """
+
+        full_key = self._get_key(key)
+        try:
+            # We use time.time() here because monotonic() isn't shared across machines
+            # and Redis Lua scripts don't have access to non-deterministic TIME unless using specialized commands
+            now = time.time()
+            result = client.eval_lua(
+                script, keys=[full_key], args=[capacity, refill_rate, cost, ttl, now]
+            )
+
+            allowed = result[0] == "true"
+            remaining = int(float(result[1]))
+            reset_after = float(result[2])
+
+            return allowed, remaining, reset_after
+        except Exception:
+            # Log error and fail open
+            return True, capacity, 0.0

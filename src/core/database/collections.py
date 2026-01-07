@@ -3,12 +3,12 @@ Cache utilities - Provides specialized collection types for caching.
 """
 
 from collections import OrderedDict
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 
 class CappedDict(OrderedDict):
     """
-    A dictionary with a maximum size, evicting the oldest items (LRU-ish) 
+    A dictionary with a maximum size, evicting the oldest items (LRU-ish)
     when the limit is reached.
     """
 

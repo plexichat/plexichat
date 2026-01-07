@@ -116,7 +116,9 @@ def setup(
 def _ensure_setup() -> None:
     """Ensure module is set up before use."""
     if not _setup_complete:
-        raise RuntimeError("Rate limit module not initialized. Call ratelimit.setup() first.")
+        raise RuntimeError(
+            "Rate limit module not initialized. Call ratelimit.setup() first."
+        )
 
 
 def get_manager() -> RateLimitManager:
