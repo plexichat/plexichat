@@ -841,12 +841,12 @@ class PlexiChatServer:
                 result = init_func()
                 elapsed = (time.perf_counter() - start) * 1000
                 startup_times[name] = elapsed
-                logger.info(f"  └─ {name} initialized in {elapsed:.1f}ms")
+                logger.info(f"  -> {name} initialized in {elapsed:.1f}ms")
                 return result
             except Exception as e:
                 elapsed = (time.perf_counter() - start) * 1000
                 startup_times[name] = elapsed
-                logger.error(f"  └─ {name} FAILED after {elapsed:.1f}ms: {e}")
+                logger.error(f"  -> {name} FAILED after {elapsed:.1f}ms: {e}")
                 raise
         
         timed_init("auth", lambda: auth.setup(self.db))
@@ -1155,7 +1155,7 @@ class PlexiChatServer:
             enable_rate_limiting=enable_rate_limiting, enable_docs=enable_docs
         )
         elapsed = (time.perf_counter() - start) * 1000
-        logger.info(f"  └─ API initialized in {elapsed:.1f}ms")
+        logger.info(f"  -> API initialized in {elapsed:.1f}ms")
         return self.app
 
     async def notify_clients_shutdown(self, message: str = "Server shutting down"):
