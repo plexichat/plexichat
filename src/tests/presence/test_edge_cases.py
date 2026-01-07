@@ -270,7 +270,7 @@ class TestEmptyQueries:
         user = auth.register(
             username=f"norelmods_{unique_id}",
             email=f"norelmods_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         # This should work even if no friends

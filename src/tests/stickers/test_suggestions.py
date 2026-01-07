@@ -18,13 +18,11 @@ class TestStickerSuggestions:
             name="happy",
             format=StickerFormat.PNG,
             url="https://cdn.example.com/stickers/happy.png",
-            size=100000
+            size=100000,
         )
 
         suggestions = stickers.get_sticker_suggestions(
-            user_id=owner.id,
-            content="I am so happy today!",
-            server_id=server.id
+            user_id=owner.id, content="I am so happy today!", server_id=server.id
         )
 
         names = [s.sticker.name for s in suggestions]
@@ -41,13 +39,11 @@ class TestStickerSuggestions:
             format=StickerFormat.PNG,
             url="https://cdn.example.com/stickers/cute_cat.png",
             size=100000,
-            tags=["cute", "adorable", "cat"]
+            tags=["cute", "adorable", "cat"],
         )
 
         suggestions = stickers.get_sticker_suggestions(
-            user_id=owner.id,
-            content="That is so cute!",
-            server_id=server.id
+            user_id=owner.id, content="That is so cute!", server_id=server.id
         )
 
         names = [s.sticker.name for s in suggestions]
@@ -64,13 +60,11 @@ class TestStickerSuggestions:
             format=StickerFormat.PNG,
             url="https://cdn.example.com/stickers/thumbs.png",
             size=100000,
-            related_emoji="thumbsup"
+            related_emoji="thumbsup",
         )
 
         suggestions = stickers.get_sticker_suggestions(
-            user_id=owner.id,
-            content="Great job! thumbsup",
-            server_id=server.id
+            user_id=owner.id, content="Great job! thumbsup", server_id=server.id
         )
 
         names = [s.sticker.name for s in suggestions]
@@ -81,9 +75,7 @@ class TestStickerSuggestions:
         owner, server, pack, stickers, servers = server_with_pack
 
         suggestions = stickers.get_sticker_suggestions(
-            user_id=owner.id,
-            content="",
-            server_id=server.id
+            user_id=owner.id, content="", server_id=server.id
         )
 
         assert len(suggestions) == 0
@@ -99,13 +91,13 @@ class TestStickerSuggestions:
             format=StickerFormat.PNG,
             url="https://cdn.example.com/stickers/specific.png",
             size=100000,
-            tags=["specific", "unique"]
+            tags=["specific", "unique"],
         )
 
         suggestions = stickers.get_sticker_suggestions(
             user_id=owner.id,
             content="completely unrelated content xyz",
-            server_id=server.id
+            server_id=server.id,
         )
 
         names = [s.sticker.name for s in suggestions]
@@ -123,14 +115,11 @@ class TestStickerSuggestions:
                 format=StickerFormat.PNG,
                 url=f"https://cdn.example.com/stickers/test_{i}.png",
                 size=100000,
-                tags=["test"]
+                tags=["test"],
             )
 
         suggestions = stickers.get_sticker_suggestions(
-            user_id=owner.id,
-            content="test",
-            server_id=server.id,
-            limit=5
+            user_id=owner.id, content="test", server_id=server.id, limit=5
         )
 
         assert len(suggestions) <= 5
@@ -145,7 +134,7 @@ class TestStickerSuggestions:
             name="exact_match",
             format=StickerFormat.PNG,
             url="https://cdn.example.com/stickers/exact.png",
-            size=100000
+            size=100000,
         )
 
         stickers.add_sticker(
@@ -155,13 +144,11 @@ class TestStickerSuggestions:
             format=StickerFormat.PNG,
             url="https://cdn.example.com/stickers/partial.png",
             size=100000,
-            tags=["exact"]
+            tags=["exact"],
         )
 
         suggestions = stickers.get_sticker_suggestions(
-            user_id=owner.id,
-            content="exact_match is what I want",
-            server_id=server.id
+            user_id=owner.id, content="exact_match is what I want", server_id=server.id
         )
 
         if len(suggestions) >= 2:

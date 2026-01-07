@@ -3,13 +3,21 @@ Tests for unread and mention counts.
 """
 
 
-
 class TestGetUnreadCount:
     """Tests for getting unread counts."""
 
     def test_initial_unread_count_zero(self, fresh_users):
         """Test initial unread count is zero."""
-        user1, user2, auth, messaging, servers, relationships, presence, notifications = fresh_users
+        (
+            user1,
+            user2,
+            auth,
+            messaging,
+            servers,
+            relationships,
+            presence,
+            notifications,
+        ) = fresh_users
 
         unread = notifications.get_unread_count(user1.id)
 
@@ -27,7 +35,7 @@ class TestGetUnreadCount:
             author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
-            content=content
+            content=content,
         )
 
         unread = notifications.get_unread_count(user2.id)
@@ -36,9 +44,13 @@ class TestGetUnreadCount:
 
     def test_unread_count_per_server(self, users_with_server):
         """Test unread count filtered by server."""
-        owner, member1, member2, server, channel, servers, messaging, notifications = users_with_server
+        owner, member1, member2, server, channel, servers, messaging, notifications = (
+            users_with_server
+        )
 
-        group = messaging.create_group(owner.id, "Server Group", [member1.id, member2.id])
+        group = messaging.create_group(
+            owner.id, "Server Group", [member1.id, member2.id]
+        )
 
         content = f"<@{member1.id}>"
         msg = messaging.send_message(owner.id, group.id, content)
@@ -48,7 +60,7 @@ class TestGetUnreadCount:
             message_id=msg.id,
             conversation_id=group.id,
             content=content,
-            server_id=server.id
+            server_id=server.id,
         )
 
         unread = notifications.get_unread_count(member1.id, server_id=server.id)
@@ -62,7 +74,9 @@ class TestGetUnreadCounts:
 
     def test_get_all_unread_counts(self, group_conversation):
         """Test getting all unread counts per conversation."""
-        owner, member1, member2, group, messaging, notifications, relationships = group_conversation
+        owner, member1, member2, group, messaging, notifications, relationships = (
+            group_conversation
+        )
 
         content = f"<@{member1.id}>"
         msg = messaging.send_message(owner.id, group.id, content)
@@ -71,7 +85,7 @@ class TestGetUnreadCounts:
             author_id=owner.id,
             message_id=msg.id,
             conversation_id=group.id,
-            content=content
+            content=content,
         )
 
         counts = notifications.get_unread_counts(member1.id)
@@ -81,7 +95,16 @@ class TestGetUnreadCounts:
 
     def test_empty_unread_counts(self, fresh_users):
         """Test empty unread counts for new user."""
-        user1, user2, auth, messaging, servers, relationships, presence, notifications = fresh_users
+        (
+            user1,
+            user2,
+            auth,
+            messaging,
+            servers,
+            relationships,
+            presence,
+            notifications,
+        ) = fresh_users
 
         counts = notifications.get_unread_counts(user1.id)
 
@@ -93,7 +116,16 @@ class TestGetMentionCount:
 
     def test_mention_count_zero_initially(self, fresh_users):
         """Test mention count is zero initially."""
-        user1, user2, auth, messaging, servers, relationships, presence, notifications = fresh_users
+        (
+            user1,
+            user2,
+            auth,
+            messaging,
+            servers,
+            relationships,
+            presence,
+            notifications,
+        ) = fresh_users
 
         count = notifications.get_mention_count(user1.id)
 
@@ -110,7 +142,7 @@ class TestGetMentionCount:
             author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
-            content=content
+            content=content,
         )
 
         count = notifications.get_mention_count(user2.id)
@@ -119,9 +151,13 @@ class TestGetMentionCount:
 
     def test_mention_count_per_server(self, users_with_server):
         """Test mention count filtered by server."""
-        owner, member1, member2, server, channel, servers, messaging, notifications = users_with_server
+        owner, member1, member2, server, channel, servers, messaging, notifications = (
+            users_with_server
+        )
 
-        group = messaging.create_group(owner.id, "Server Group", [member1.id, member2.id])
+        group = messaging.create_group(
+            owner.id, "Server Group", [member1.id, member2.id]
+        )
 
         content = f"<@{member1.id}>"
         msg = messaging.send_message(owner.id, group.id, content)
@@ -131,7 +167,7 @@ class TestGetMentionCount:
             message_id=msg.id,
             conversation_id=group.id,
             content=content,
-            server_id=server.id
+            server_id=server.id,
         )
 
         count = notifications.get_mention_count(member1.id, server_id=server.id)
@@ -153,7 +189,7 @@ class TestMarkRead:
             author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
-            content=content
+            content=content,
         )
 
         assert len(notifs) == 1
@@ -167,7 +203,9 @@ class TestMarkRead:
 
     def test_mark_all_read(self, group_conversation):
         """Test marking all notifications as read."""
-        owner, member1, member2, group, messaging, notifications, relationships = group_conversation
+        owner, member1, member2, group, messaging, notifications, relationships = (
+            group_conversation
+        )
 
         for i in range(3):
             content = f"<@{member1.id}> message {i}"
@@ -176,7 +214,7 @@ class TestMarkRead:
                 author_id=owner.id,
                 message_id=msg.id,
                 conversation_id=group.id,
-                content=content
+                content=content,
             )
 
         count = notifications.mark_all_read(member1.id)
@@ -188,9 +226,13 @@ class TestMarkRead:
 
     def test_mark_channel_read(self, users_with_server):
         """Test marking channel notifications as read."""
-        owner, member1, member2, server, channel, servers, messaging, notifications = users_with_server
+        owner, member1, member2, server, channel, servers, messaging, notifications = (
+            users_with_server
+        )
 
-        group = messaging.create_group(owner.id, "Server Group", [member1.id, member2.id])
+        group = messaging.create_group(
+            owner.id, "Server Group", [member1.id, member2.id]
+        )
 
         content = f"<@{member1.id}>"
         msg = messaging.send_message(owner.id, group.id, content)
@@ -201,7 +243,7 @@ class TestMarkRead:
             conversation_id=group.id,
             content=content,
             server_id=server.id,
-            channel_id=channel.id
+            channel_id=channel.id,
         )
 
         count = notifications.mark_channel_read(member1.id, channel.id)
@@ -210,9 +252,13 @@ class TestMarkRead:
 
     def test_mark_server_read(self, users_with_server):
         """Test marking server notifications as read."""
-        owner, member1, member2, server, channel, servers, messaging, notifications = users_with_server
+        owner, member1, member2, server, channel, servers, messaging, notifications = (
+            users_with_server
+        )
 
-        group = messaging.create_group(owner.id, "Server Group", [member1.id, member2.id])
+        group = messaging.create_group(
+            owner.id, "Server Group", [member1.id, member2.id]
+        )
 
         content = f"<@{member1.id}>"
         msg = messaging.send_message(owner.id, group.id, content)
@@ -222,7 +268,7 @@ class TestMarkRead:
             message_id=msg.id,
             conversation_id=group.id,
             content=content,
-            server_id=server.id
+            server_id=server.id,
         )
 
         count = notifications.mark_server_read(member1.id, server.id)

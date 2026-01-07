@@ -16,8 +16,11 @@ class TestAddParticipant:
         # Create a new user to add
         from src.core import auth
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
-        new_user = auth.register(f"new_{unique_id}", f"new_{unique_id}@example.com", "TestPass123!")
+        new_user = auth.register(
+            f"new_{unique_id}", f"new_{unique_id}@example.com", "TestPass123!"
+        )
 
         participant = messaging.add_participant(user1.id, group.id, new_user.id)
 
@@ -30,13 +33,18 @@ class TestAddParticipant:
         group, user1, user2, user3, messaging = group_conversation
 
         # Make user2 admin
-        messaging.update_participant_role(user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN)
+        messaging.update_participant_role(
+            user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN
+        )
 
         # Create new user
         from src.core import auth
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
-        new_user = auth.register(f"new_{unique_id}", f"new_{unique_id}@example.com", "TestPass123!")
+        new_user = auth.register(
+            f"new_{unique_id}", f"new_{unique_id}@example.com", "TestPass123!"
+        )
 
         participant = messaging.add_participant(user2.id, group.id, new_user.id)
 
@@ -48,8 +56,11 @@ class TestAddParticipant:
 
         from src.core import auth
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
-        new_user = auth.register(f"new_{unique_id}", f"new_{unique_id}@example.com", "TestPass123!")
+        new_user = auth.register(
+            f"new_{unique_id}", f"new_{unique_id}@example.com", "TestPass123!"
+        )
 
         with pytest.raises(messaging.ConversationAccessDeniedError):
             messaging.add_participant(user2.id, group.id, new_user.id)
@@ -78,7 +89,7 @@ class TestAddParticipant:
             owner_id=user1.id,
             name="Tiny Group",
             participant_ids=[user2.id],
-            max_participants=2
+            max_participants=2,
         )
 
         with pytest.raises(messaging.ParticipantLimitError):
@@ -90,11 +101,16 @@ class TestAddParticipant:
 
         from src.core import auth
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
-        new_user = auth.register(f"new_{unique_id}", f"new_{unique_id}@example.com", "TestPass123!")
+        new_user = auth.register(
+            f"new_{unique_id}", f"new_{unique_id}@example.com", "TestPass123!"
+        )
 
         with pytest.raises(messaging.ConversationAccessDeniedError):
-            messaging.add_participant(user1.id, group.id, new_user.id, messaging.ParticipantRole.OWNER)
+            messaging.add_participant(
+                user1.id, group.id, new_user.id, messaging.ParticipantRole.OWNER
+            )
 
     def test_add_participant_sends_system_message(self, group_conversation, users):
         """Test adding participant sends system message."""
@@ -102,13 +118,18 @@ class TestAddParticipant:
 
         from src.core import auth
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
-        new_user = auth.register(f"new_{unique_id}", f"new_{unique_id}@example.com", "TestPass123!")
+        new_user = auth.register(
+            f"new_{unique_id}", f"new_{unique_id}@example.com", "TestPass123!"
+        )
 
         messaging.add_participant(user1.id, group.id, new_user.id)
 
         messages = messaging.get_messages(user1.id, group.id)
-        system_msgs = [m for m in messages if m.message_type == messaging.MessageType.SYSTEM]
+        system_msgs = [
+            m for m in messages if m.message_type == messaging.MessageType.SYSTEM
+        ]
 
         assert any("added" in m.content.lower() for m in system_msgs)
 
@@ -133,7 +154,9 @@ class TestRemoveParticipant:
         group, user1, user2, user3, messaging = group_conversation
 
         # Make user2 admin
-        messaging.update_participant_role(user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN)
+        messaging.update_participant_role(
+            user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN
+        )
 
         result = messaging.remove_participant(user2.id, group.id, user3.id)
 
@@ -143,7 +166,9 @@ class TestRemoveParticipant:
         """Test admin cannot remove owner."""
         group, user1, user2, user3, messaging = group_conversation
 
-        messaging.update_participant_role(user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN)
+        messaging.update_participant_role(
+            user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN
+        )
 
         with pytest.raises(messaging.ConversationAccessDeniedError):
             messaging.remove_participant(user2.id, group.id, user1.id)
@@ -152,8 +177,12 @@ class TestRemoveParticipant:
         """Test admin cannot remove other admin."""
         group, user1, user2, user3, messaging = group_conversation
 
-        messaging.update_participant_role(user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN)
-        messaging.update_participant_role(user1.id, group.id, user3.id, messaging.ParticipantRole.ADMIN)
+        messaging.update_participant_role(
+            user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN
+        )
+        messaging.update_participant_role(
+            user1.id, group.id, user3.id, messaging.ParticipantRole.ADMIN
+        )
 
         with pytest.raises(messaging.ConversationAccessDeniedError):
             messaging.remove_participant(user2.id, group.id, user3.id)
@@ -178,8 +207,11 @@ class TestRemoveParticipant:
 
         from src.core import auth
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
-        new_user = auth.register(f"new_{unique_id}", f"new_{unique_id}@example.com", "TestPass123!")
+        new_user = auth.register(
+            f"new_{unique_id}", f"new_{unique_id}@example.com", "TestPass123!"
+        )
 
         with pytest.raises(messaging.ParticipantNotFoundError):
             messaging.remove_participant(user1.id, group.id, new_user.id)
@@ -198,7 +230,9 @@ class TestRemoveParticipant:
         messaging.remove_participant(user1.id, group.id, user2.id)
 
         messages = messaging.get_messages(user1.id, group.id)
-        system_msgs = [m for m in messages if m.message_type == messaging.MessageType.SYSTEM]
+        system_msgs = [
+            m for m in messages if m.message_type == messaging.MessageType.SYSTEM
+        ]
 
         assert any("removed" in m.content.lower() for m in system_msgs)
 
@@ -220,7 +254,9 @@ class TestUpdateParticipantRole:
         """Test owner can demote admin to member."""
         group, user1, user2, user3, messaging = group_conversation
 
-        messaging.update_participant_role(user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN)
+        messaging.update_participant_role(
+            user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN
+        )
 
         participant = messaging.update_participant_role(
             user1.id, group.id, user2.id, messaging.ParticipantRole.MEMBER
@@ -232,31 +268,41 @@ class TestUpdateParticipantRole:
         """Test admin cannot change roles."""
         group, user1, user2, user3, messaging = group_conversation
 
-        messaging.update_participant_role(user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN)
+        messaging.update_participant_role(
+            user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN
+        )
 
         with pytest.raises(messaging.ConversationAccessDeniedError):
-            messaging.update_participant_role(user2.id, group.id, user3.id, messaging.ParticipantRole.ADMIN)
+            messaging.update_participant_role(
+                user2.id, group.id, user3.id, messaging.ParticipantRole.ADMIN
+            )
 
     def test_cannot_assign_owner_role(self, group_conversation):
         """Test cannot assign owner role."""
         group, user1, user2, user3, messaging = group_conversation
 
         with pytest.raises(messaging.ConversationAccessDeniedError):
-            messaging.update_participant_role(user1.id, group.id, user2.id, messaging.ParticipantRole.OWNER)
+            messaging.update_participant_role(
+                user1.id, group.id, user2.id, messaging.ParticipantRole.OWNER
+            )
 
     def test_cannot_change_own_role(self, group_conversation):
         """Test owner cannot change own role."""
         group, user1, user2, user3, messaging = group_conversation
 
         with pytest.raises(messaging.ConversationAccessDeniedError):
-            messaging.update_participant_role(user1.id, group.id, user1.id, messaging.ParticipantRole.ADMIN)
+            messaging.update_participant_role(
+                user1.id, group.id, user1.id, messaging.ParticipantRole.ADMIN
+            )
 
     def test_change_role_in_dm_fails(self, dm_conversation):
         """Test changing role in DM fails."""
         dm, user1, user2, messaging = dm_conversation
 
         with pytest.raises(messaging.ConversationTypeError):
-            messaging.update_participant_role(user1.id, dm.id, user2.id, messaging.ParticipantRole.ADMIN)
+            messaging.update_participant_role(
+                user1.id, dm.id, user2.id, messaging.ParticipantRole.ADMIN
+            )
 
 
 class TestGetParticipants:
@@ -276,8 +322,11 @@ class TestGetParticipants:
 
         from src.core import auth
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
-        outsider = auth.register(f"out_{unique_id}", f"out_{unique_id}@example.com", "TestPass123!")
+        outsider = auth.register(
+            f"out_{unique_id}", f"out_{unique_id}@example.com", "TestPass123!"
+        )
 
         with pytest.raises(messaging.ConversationAccessDeniedError):
             messaging.get_participants(outsider.id, group.id)
@@ -320,6 +369,7 @@ class TestMuteConversation:
         dm, user1, user2, messaging = dm_conversation
 
         import time
+
         until = int(time.time() * 1000) + 3600000  # 1 hour from now
 
         result = messaging.mute_conversation(user1.id, dm.id, muted=True, until=until)

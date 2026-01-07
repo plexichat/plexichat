@@ -110,7 +110,9 @@ class TestDMSettings:
         dm, user1, user2, messaging = dm_conversation
 
         with pytest.raises(messaging.ConversationTypeError):
-            messaging.update_participant_role(user1.id, dm.id, user2.id, messaging.ParticipantRole.ADMIN)
+            messaging.update_participant_role(
+                user1.id, dm.id, user2.id, messaging.ParticipantRole.ADMIN
+            )
 
 
 class TestDMMessaging:

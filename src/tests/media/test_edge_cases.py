@@ -21,7 +21,9 @@ class TestFilenameEdgeCases:
 
         assert result.file_id is not None
 
-    def test_filename_with_special_characters(self, media_module, user_pool, sample_image_bytes):
+    def test_filename_with_special_characters(
+        self, media_module, user_pool, sample_image_bytes
+    ):
         """Test uploading file with special characters."""
         user = user_pool.get_user()
 
@@ -59,7 +61,9 @@ class TestFilenameEdgeCases:
 
         assert result.file_id is not None
 
-    def test_filename_without_extension(self, media_module, user_pool, sample_image_bytes):
+    def test_filename_without_extension(
+        self, media_module, user_pool, sample_image_bytes
+    ):
         """Test uploading file without extension."""
         user = user_pool.get_user()
 
@@ -77,7 +81,9 @@ class TestFilenameEdgeCases:
 class TestContentTypeEdgeCases:
     """Tests for content type edge cases."""
 
-    def test_content_type_with_charset(self, media_module, user_pool, sample_text_bytes):
+    def test_content_type_with_charset(
+        self, media_module, user_pool, sample_text_bytes
+    ):
         """Test content type with charset parameter."""
         user = user_pool.get_user()
 
@@ -139,7 +145,9 @@ class TestFileSizeEdgeCases:
     def test_file_at_size_limit(self, media_module, user_pool, monkeypatch):
         """Test uploading file exactly at size limit."""
         # Use smaller limit for testing to avoid MemoryError
-        monkeypatch.setitem(media_module._get_manager()._config["size_limits"], "document", 1024)
+        monkeypatch.setitem(
+            media_module._get_manager()._config["size_limits"], "document", 1024
+        )
         user = user_pool.get_user()
 
         data = b"x" * 1024
@@ -156,7 +164,9 @@ class TestFileSizeEdgeCases:
     def test_file_one_byte_over_limit(self, media_module, user_pool, monkeypatch):
         """Test uploading file one byte over limit."""
         # Use smaller limit for testing to avoid MemoryError
-        monkeypatch.setitem(media_module._get_manager()._config["size_limits"], "document", 1024)
+        monkeypatch.setitem(
+            media_module._get_manager()._config["size_limits"], "document", 1024
+        )
         user = user_pool.get_user()
 
         # Smaller data for testing
@@ -175,7 +185,9 @@ class TestFileSizeEdgeCases:
 class TestSigningEdgeCases:
     """Tests for URL signing edge cases."""
 
-    def test_sign_url_with_query_params(self, media_module, user_pool, sample_image_bytes):
+    def test_sign_url_with_query_params(
+        self, media_module, user_pool, sample_image_bytes
+    ):
         """Test signing URL that already has query parameters."""
         user = user_pool.get_user()
 
@@ -216,7 +228,9 @@ class TestThumbnailEdgeCases:
         url = media_module.create_thumbnail(999999999, size=64)
         assert url is None
 
-    def test_create_thumbnail_for_non_image(self, media_module, user_pool, sample_text_bytes):
+    def test_create_thumbnail_for_non_image(
+        self, media_module, user_pool, sample_text_bytes
+    ):
         """Test creating thumbnail for non-image file."""
         user = user_pool.get_user()
 
@@ -283,7 +297,9 @@ class TestVideoMetadataEdgeCases:
         metadata = media_module.get_video_metadata(999999999)
         assert metadata is None
 
-    def test_video_metadata_for_non_video(self, media_module, user_pool, sample_image_bytes):
+    def test_video_metadata_for_non_video(
+        self, media_module, user_pool, sample_image_bytes
+    ):
         """Test getting video metadata for non-video file."""
         user = user_pool.get_user()
 
@@ -301,7 +317,9 @@ class TestVideoMetadataEdgeCases:
 class TestDeleteEdgeCases:
     """Tests for file deletion edge cases."""
 
-    def test_delete_already_deleted_file(self, media_module, user_pool, sample_image_bytes):
+    def test_delete_already_deleted_file(
+        self, media_module, user_pool, sample_image_bytes
+    ):
         """Test deleting already deleted file."""
         user = user_pool.get_user()
 
@@ -316,7 +334,9 @@ class TestDeleteEdgeCases:
         deleted = media_module.delete_file(user.id, result.file_id)
         assert deleted is False
 
-    def test_get_data_for_deleted_file(self, media_module, user_pool, sample_image_bytes):
+    def test_get_data_for_deleted_file(
+        self, media_module, user_pool, sample_image_bytes
+    ):
         """Test getting data for deleted file."""
         user = user_pool.get_user()
 
@@ -341,7 +361,9 @@ class TestScannerEdgeCases:
         with pytest.raises(media_module.MediaError):
             media_module.scan_file(999999999)
 
-    def test_scan_with_disabled_scanner(self, media_module, user_pool, sample_image_bytes):
+    def test_scan_with_disabled_scanner(
+        self, media_module, user_pool, sample_image_bytes
+    ):
         """Test scanning with disabled scanner."""
         user = user_pool.get_user()
 

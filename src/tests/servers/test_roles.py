@@ -16,7 +16,7 @@ class TestCreateRole:
             user_id=owner.id,
             server_id=server.id,
             name="Moderator",
-            permissions={"messages.manage": True}
+            permissions={"messages.manage": True},
         )
 
         assert role is not None
@@ -28,10 +28,7 @@ class TestCreateRole:
         server, owner, servers = fresh_server
 
         role = servers.create_role(
-            user_id=owner.id,
-            server_id=server.id,
-            name="VIP",
-            color="#FFD700"
+            user_id=owner.id, server_id=server.id, name="VIP", color="#FFD700"
         )
 
         assert role.color == "#FFD700"
@@ -41,10 +38,7 @@ class TestCreateRole:
         server, owner, servers = fresh_server
 
         role = servers.create_role(
-            user_id=owner.id,
-            server_id=server.id,
-            name="Staff",
-            hoist=True
+            user_id=owner.id, server_id=server.id, name="Staff", hoist=True
         )
 
         assert role.hoist is True
@@ -54,10 +48,7 @@ class TestCreateRole:
         server, owner, servers = fresh_server
 
         role = servers.create_role(
-            user_id=owner.id,
-            server_id=server.id,
-            name="Helpers",
-            mentionable=True
+            user_id=owner.id, server_id=server.id, name="Helpers", mentionable=True
         )
 
         assert role.mentionable is True
@@ -67,11 +58,7 @@ class TestCreateRole:
         server, owner, servers = fresh_server
 
         with pytest.raises(servers.InvalidRoleNameError):
-            servers.create_role(
-                user_id=owner.id,
-                server_id=server.id,
-                name=""
-            )
+            servers.create_role(user_id=owner.id, server_id=server.id, name="")
 
     def test_create_role_by_non_admin_fails(self, server_with_members):
         """Test that non-admin cannot create role."""
@@ -79,9 +66,7 @@ class TestCreateRole:
 
         with pytest.raises(servers.PermissionDeniedError):
             servers.create_role(
-                user_id=member_user.id,
-                server_id=server.id,
-                name="Hacked Role"
+                user_id=member_user.id, server_id=server.id, name="Hacked Role"
             )
 
 
@@ -146,9 +131,7 @@ class TestUpdateRole:
         server, owner, _, _, _, admin_role, servers = server_with_members
 
         updated = servers.update_role(
-            user_id=owner.id,
-            role_id=admin_role.id,
-            name="Super Admin"
+            user_id=owner.id, role_id=admin_role.id, name="Super Admin"
         )
 
         assert updated.name == "Super Admin"
@@ -158,9 +141,7 @@ class TestUpdateRole:
         server, owner, _, _, _, admin_role, servers = server_with_members
 
         updated = servers.update_role(
-            user_id=owner.id,
-            role_id=admin_role.id,
-            permissions={"administrator": True}
+            user_id=owner.id, role_id=admin_role.id, permissions={"administrator": True}
         )
 
         assert updated.permissions.get("administrator") is True
@@ -170,9 +151,7 @@ class TestUpdateRole:
         server, owner, _, _, _, admin_role, servers = server_with_members
 
         updated = servers.update_role(
-            user_id=owner.id,
-            role_id=admin_role.id,
-            color="#00FF00"
+            user_id=owner.id, role_id=admin_role.id, color="#00FF00"
         )
 
         assert updated.color == "#00FF00"
@@ -186,9 +165,7 @@ class TestUpdateRole:
 
         with pytest.raises(servers.DefaultRoleError):
             servers.update_role(
-                user_id=owner.id,
-                role_id=default_role.id,
-                name="Not Everyone"
+                user_id=owner.id, role_id=default_role.id, name="Not Everyone"
             )
 
     def test_update_default_role_permissions_succeeds(self, fresh_server):
@@ -201,7 +178,7 @@ class TestUpdateRole:
         updated = servers.update_role(
             user_id=owner.id,
             role_id=default_role.id,
-            permissions={"messages.send": False}
+            permissions={"messages.send": False},
         )
 
         assert updated.permissions.get("messages.send") is False
@@ -215,9 +192,7 @@ class TestDeleteRole:
         server, owner, servers = fresh_server
 
         role = servers.create_role(
-            user_id=owner.id,
-            server_id=server.id,
-            name="Temporary"
+            user_id=owner.id, server_id=server.id, name="Temporary"
         )
 
         result = servers.delete_role(owner.id, role.id)
@@ -262,23 +237,19 @@ class TestRoleHierarchy:
         servers.update_role(
             user_id=owner.id,
             role_id=admin_role.id,
-            permissions={**admin_role.permissions, "roles.manage": True}
+            permissions={**admin_role.permissions, "roles.manage": True},
         )
 
         # Create a role above admin
         higher_role = servers.create_role(
-            user_id=owner.id,
-            server_id=server.id,
-            name="Higher Role"
+            user_id=owner.id, server_id=server.id, name="Higher Role"
         )
         servers.move_role(owner.id, higher_role.id, position=admin_role.position + 1)
 
         # Admin should not be able to modify higher role
         with pytest.raises(servers.RoleHierarchyError):
             servers.update_role(
-                user_id=admin_user.id,
-                role_id=higher_role.id,
-                name="Hacked"
+                user_id=admin_user.id, role_id=higher_role.id, name="Hacked"
             )
 
     def test_owner_can_modify_any_role(self, server_with_members):
@@ -287,17 +258,13 @@ class TestRoleHierarchy:
 
         # Create highest role
         highest = servers.create_role(
-            user_id=owner.id,
-            server_id=server.id,
-            name="Highest"
+            user_id=owner.id, server_id=server.id, name="Highest"
         )
         servers.move_role(owner.id, highest.id, position=100)
 
         # Owner can still modify it
         updated = servers.update_role(
-            user_id=owner.id,
-            role_id=highest.id,
-            name="Still Highest"
+            user_id=owner.id, role_id=highest.id, name="Still Highest"
         )
 
         assert updated.name == "Still Highest"
@@ -311,9 +278,7 @@ class TestMoveRole:
         server, owner, servers = fresh_server
 
         role = servers.create_role(
-            user_id=owner.id,
-            server_id=server.id,
-            name="Movable"
+            user_id=owner.id, server_id=server.id, name="Movable"
         )
 
         updated = servers.move_role(owner.id, role.id, position=5)

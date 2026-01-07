@@ -10,7 +10,16 @@ class TestGetNotificationSettings:
 
     def test_get_default_settings(self, fresh_users):
         """Test getting default settings for user without custom settings."""
-        user1, user2, auth, messaging, servers, relationships, presence, notifications = fresh_users
+        (
+            user1,
+            user2,
+            auth,
+            messaging,
+            servers,
+            relationships,
+            presence,
+            notifications,
+        ) = fresh_users
 
         settings = notifications.get_notification_settings(user1.id)
 
@@ -24,12 +33,14 @@ class TestGetNotificationSettings:
 
     def test_get_server_specific_settings(self, users_with_server):
         """Test getting server-specific settings."""
-        owner, member1, member2, server, channel, servers, messaging, notifications = users_with_server
+        owner, member1, member2, server, channel, servers, messaging, notifications = (
+            users_with_server
+        )
 
         notifications.update_notification_settings(
             user_id=member1.id,
             server_id=server.id,
-            level=NotificationLevel.ONLY_MENTIONS
+            level=NotificationLevel.ONLY_MENTIONS,
         )
 
         settings = notifications.get_notification_settings(member1.id, server.id)
@@ -43,14 +54,23 @@ class TestUpdateNotificationSettings:
 
     def test_update_global_settings(self, fresh_users):
         """Test updating global notification settings."""
-        user1, user2, auth, messaging, servers, relationships, presence, notifications = fresh_users
+        (
+            user1,
+            user2,
+            auth,
+            messaging,
+            servers,
+            relationships,
+            presence,
+            notifications,
+        ) = fresh_users
 
         settings = notifications.update_notification_settings(
             user_id=user1.id,
             level=NotificationLevel.ONLY_MENTIONS,
             dm_notifications=False,
             suppress_everyone=True,
-            mobile_push=False
+            mobile_push=False,
         )
 
         assert settings.level == NotificationLevel.ONLY_MENTIONS
@@ -60,13 +80,15 @@ class TestUpdateNotificationSettings:
 
     def test_update_server_settings(self, users_with_server):
         """Test updating server-specific settings."""
-        owner, member1, member2, server, channel, servers, messaging, notifications = users_with_server
+        owner, member1, member2, server, channel, servers, messaging, notifications = (
+            users_with_server
+        )
 
         settings = notifications.update_notification_settings(
             user_id=member1.id,
             server_id=server.id,
             level=NotificationLevel.NOTHING,
-            suppress_roles=True
+            suppress_roles=True,
         )
 
         assert settings.server_id == server.id
@@ -75,16 +97,23 @@ class TestUpdateNotificationSettings:
 
     def test_update_settings_twice(self, fresh_users):
         """Test updating settings multiple times."""
-        user1, user2, auth, messaging, servers, relationships, presence, notifications = fresh_users
+        (
+            user1,
+            user2,
+            auth,
+            messaging,
+            servers,
+            relationships,
+            presence,
+            notifications,
+        ) = fresh_users
 
         notifications.update_notification_settings(
-            user_id=user1.id,
-            level=NotificationLevel.ONLY_MENTIONS
+            user_id=user1.id, level=NotificationLevel.ONLY_MENTIONS
         )
 
         settings = notifications.update_notification_settings(
-            user_id=user1.id,
-            level=NotificationLevel.NOTHING
+            user_id=user1.id, level=NotificationLevel.NOTHING
         )
 
         assert settings.level == NotificationLevel.NOTHING
@@ -95,15 +124,17 @@ class TestSuppressEveryone:
 
     def test_suppress_everyone_blocks_notification(self, users_with_server):
         """Test suppress_everyone prevents @everyone notifications."""
-        owner, member1, member2, server, channel, servers, messaging, notifications = users_with_server
-
-        notifications.update_notification_settings(
-            user_id=member1.id,
-            server_id=server.id,
-            suppress_everyone=True
+        owner, member1, member2, server, channel, servers, messaging, notifications = (
+            users_with_server
         )
 
-        group = messaging.create_group(owner.id, "Server Group", [member1.id, member2.id])
+        notifications.update_notification_settings(
+            user_id=member1.id, server_id=server.id, suppress_everyone=True
+        )
+
+        group = messaging.create_group(
+            owner.id, "Server Group", [member1.id, member2.id]
+        )
 
         content = "@everyone check this"
         msg = messaging.send_message(owner.id, group.id, content)
@@ -113,7 +144,7 @@ class TestSuppressEveryone:
             message_id=msg.id,
             conversation_id=group.id,
             content=content,
-            server_id=server.id
+            server_id=server.id,
         )
 
         notified_users = {n.user_id for n in notifs}
@@ -122,15 +153,17 @@ class TestSuppressEveryone:
 
     def test_suppress_everyone_allows_direct_mention(self, users_with_server):
         """Test suppress_everyone still allows direct @user mentions."""
-        owner, member1, member2, server, channel, servers, messaging, notifications = users_with_server
-
-        notifications.update_notification_settings(
-            user_id=member1.id,
-            server_id=server.id,
-            suppress_everyone=True
+        owner, member1, member2, server, channel, servers, messaging, notifications = (
+            users_with_server
         )
 
-        group = messaging.create_group(owner.id, "Server Group", [member1.id, member2.id])
+        notifications.update_notification_settings(
+            user_id=member1.id, server_id=server.id, suppress_everyone=True
+        )
+
+        group = messaging.create_group(
+            owner.id, "Server Group", [member1.id, member2.id]
+        )
 
         content = f"<@{member1.id}> check this"
         msg = messaging.send_message(owner.id, group.id, content)
@@ -140,7 +173,7 @@ class TestSuppressEveryone:
             message_id=msg.id,
             conversation_id=group.id,
             content=content,
-            server_id=server.id
+            server_id=server.id,
         )
 
         notified_users = {n.user_id for n in notifs}
@@ -152,15 +185,25 @@ class TestSuppressRoles:
 
     def test_suppress_roles_blocks_notification(self, users_with_role):
         """Test suppress_roles prevents @role notifications."""
-        owner, member1, member2, server, channel, role, servers, messaging, notifications = users_with_role
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            channel,
+            role,
+            servers,
+            messaging,
+            notifications,
+        ) = users_with_role
 
         notifications.update_notification_settings(
-            user_id=member1.id,
-            server_id=server.id,
-            suppress_roles=True
+            user_id=member1.id, server_id=server.id, suppress_roles=True
         )
 
-        group = messaging.create_group(owner.id, "Server Group", [member1.id, member2.id])
+        group = messaging.create_group(
+            owner.id, "Server Group", [member1.id, member2.id]
+        )
 
         content = f"<@&{role.id}> check this"
         msg = messaging.send_message(owner.id, group.id, content)
@@ -170,7 +213,7 @@ class TestSuppressRoles:
             message_id=msg.id,
             conversation_id=group.id,
             content=content,
-            server_id=server.id
+            server_id=server.id,
         )
 
         notified_users = {n.user_id for n in notifs}
@@ -182,15 +225,17 @@ class TestNotificationLevelNothing:
 
     def test_nothing_level_blocks_all(self, users_with_server):
         """Test NOTHING level blocks all notifications."""
-        owner, member1, member2, server, channel, servers, messaging, notifications = users_with_server
-
-        notifications.update_notification_settings(
-            user_id=member1.id,
-            server_id=server.id,
-            level=NotificationLevel.NOTHING
+        owner, member1, member2, server, channel, servers, messaging, notifications = (
+            users_with_server
         )
 
-        group = messaging.create_group(owner.id, "Server Group", [member1.id, member2.id])
+        notifications.update_notification_settings(
+            user_id=member1.id, server_id=server.id, level=NotificationLevel.NOTHING
+        )
+
+        group = messaging.create_group(
+            owner.id, "Server Group", [member1.id, member2.id]
+        )
 
         content = f"<@{member1.id}> @everyone check this"
         msg = messaging.send_message(owner.id, group.id, content)
@@ -200,7 +245,7 @@ class TestNotificationLevelNothing:
             message_id=msg.id,
             conversation_id=group.id,
             content=content,
-            server_id=server.id
+            server_id=server.id,
         )
 
         notified_users = {n.user_id for n in notifs}

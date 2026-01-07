@@ -172,7 +172,8 @@ class TestLocalStorage:
 def boto3_available():
     """Check if boto3 is available."""
     try:
-        import boto3  # type: ignore[reportMissingImports]
+        import boto3  # noqa: F401
+
         return True
     except ImportError:
         return False

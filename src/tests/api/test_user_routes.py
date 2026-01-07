@@ -44,19 +44,18 @@ class TestUpdateCurrentUser:
         auth.register(
             username=f"updateuser_{unique_id}",
             email=f"updateuser_{unique_id}@example.com",
-            password="SecurePass123!"
+            password="SecurePass123!",
         )
 
         result = auth.login(
-            username=f"updateuser_{unique_id}",
-            password="SecurePass123!"
+            username=f"updateuser_{unique_id}", password="SecurePass123!"
         )
 
         new_username = f"updated_{unique_id}"
         response = test_client.patch(
             "/api/v1/users/@me",
             headers={"Authorization": f"Bearer {result.token}"},
-            json={"username": new_username}
+            json={"username": new_username},
         )
 
         assert response.status_code == 200
@@ -65,10 +64,7 @@ class TestUpdateCurrentUser:
 
     def test_update_without_auth(self, test_client):
         """Test updating user without authentication."""
-        response = test_client.patch(
-            "/api/v1/users/@me",
-            json={"username": "newname"}
-        )
+        response = test_client.patch("/api/v1/users/@me", json={"username": "newname"})
 
         assert response.status_code == 401
 
@@ -80,10 +76,7 @@ class TestGetUser:
         """Test getting user by ID."""
         user_id = str(test_user["user"].id)
 
-        response = test_client.get(
-            f"/api/v1/users/{user_id}",
-            headers=auth_headers
-        )
+        response = test_client.get(f"/api/v1/users/{user_id}", headers=auth_headers)
 
         assert response.status_code == 200
         data = response.json()
@@ -94,10 +87,7 @@ class TestGetUser:
         """Test that public user response excludes private fields."""
         user_id = str(test_user["user"].id)
 
-        response = test_client.get(
-            f"/api/v1/users/{user_id}",
-            headers=auth_headers
-        )
+        response = test_client.get(f"/api/v1/users/{user_id}", headers=auth_headers)
 
         assert response.status_code == 200
         data = response.json()
@@ -106,18 +96,14 @@ class TestGetUser:
     def test_get_nonexistent_user(self, test_client, auth_headers):
         """Test getting nonexistent user."""
         response = test_client.get(
-            "/api/v1/users/999999999999999999",
-            headers=auth_headers
+            "/api/v1/users/999999999999999999", headers=auth_headers
         )
 
         assert response.status_code == 404
 
     def test_get_user_invalid_id(self, test_client, auth_headers):
         """Test getting user with invalid ID."""
-        response = test_client.get(
-            "/api/v1/users/invalid_id",
-            headers=auth_headers
-        )
+        response = test_client.get("/api/v1/users/invalid_id", headers=auth_headers)
 
         assert response.status_code == 400
 

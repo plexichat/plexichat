@@ -21,7 +21,7 @@ class TestPrivateThreadCreation:
             user_id=owner.id,
             channel_id=channel.id,
             name="Private Thread",
-            thread_type=ThreadType.PRIVATE
+            thread_type=ThreadType.PRIVATE,
         )
 
         assert thread.thread_type == ThreadType.PRIVATE
@@ -34,7 +34,7 @@ class TestPrivateThreadCreation:
             user_id=owner.id,
             channel_id=channel.id,
             name="Private Creator Test",
-            thread_type=ThreadType.PRIVATE
+            thread_type=ThreadType.PRIVATE,
         )
 
         members = threads.get_thread_members(owner.id, thread.id)
@@ -53,7 +53,7 @@ class TestPrivateThreadVisibility:
             user_id=owner.id,
             channel_id=channel.id,
             name="Hidden Thread",
-            thread_type=ThreadType.PRIVATE
+            thread_type=ThreadType.PRIVATE,
         )
 
         result = threads.get_thread(member1.id, thread.id)
@@ -67,7 +67,7 @@ class TestPrivateThreadVisibility:
             user_id=owner.id,
             channel_id=channel.id,
             name="Visible Thread",
-            thread_type=ThreadType.PRIVATE
+            thread_type=ThreadType.PRIVATE,
         )
 
         threads.add_member(owner.id, thread.id, member1.id)
@@ -76,21 +76,21 @@ class TestPrivateThreadVisibility:
         assert result is not None
         assert result.id == thread.id
 
-    def test_private_thread_not_in_active_threads_for_non_member(self, server_with_channel):
+    def test_private_thread_not_in_active_threads_for_non_member(
+        self, server_with_channel
+    ):
         """Test that private thread not in active threads for non-member."""
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         public_thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Public Thread"
+            user_id=owner.id, channel_id=channel.id, name="Public Thread"
         )
 
         private_thread = threads.create_thread(
             user_id=owner.id,
             channel_id=channel.id,
             name="Private Thread",
-            thread_type=ThreadType.PRIVATE
+            thread_type=ThreadType.PRIVATE,
         )
 
         active = threads.get_active_threads(member1.id, channel.id)
@@ -111,7 +111,7 @@ class TestPrivateThreadMembership:
             user_id=owner.id,
             channel_id=channel.id,
             name="No Join Thread",
-            thread_type=ThreadType.PRIVATE
+            thread_type=ThreadType.PRIVATE,
         )
 
         with pytest.raises(ThreadAccessDeniedError):
@@ -125,13 +125,15 @@ class TestPrivateThreadMembership:
             user_id=owner.id,
             channel_id=channel.id,
             name="Add Member Thread",
-            thread_type=ThreadType.PRIVATE
+            thread_type=ThreadType.PRIVATE,
         )
 
         member = threads.add_member(owner.id, thread.id, member1.id)
         assert member.user_id == member1.id
 
-    def test_member_cannot_add_to_private_thread_without_permission(self, server_with_channel):
+    def test_member_cannot_add_to_private_thread_without_permission(
+        self, server_with_channel
+    ):
         """Test that regular member cannot add others to private thread."""
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
@@ -139,7 +141,7 @@ class TestPrivateThreadMembership:
             user_id=owner.id,
             channel_id=channel.id,
             name="No Add Thread",
-            thread_type=ThreadType.PRIVATE
+            thread_type=ThreadType.PRIVATE,
         )
 
         threads.add_member(owner.id, thread.id, member1.id)
@@ -155,7 +157,7 @@ class TestPrivateThreadMembership:
             user_id=owner.id,
             channel_id=channel.id,
             name="Leave Thread",
-            thread_type=ThreadType.PRIVATE
+            thread_type=ThreadType.PRIVATE,
         )
 
         threads.add_member(owner.id, thread.id, member1.id)
@@ -175,7 +177,7 @@ class TestPrivateThreadMessages:
             user_id=owner.id,
             channel_id=channel.id,
             name="Secret Messages",
-            thread_type=ThreadType.PRIVATE
+            thread_type=ThreadType.PRIVATE,
         )
 
         threads.send_message(owner.id, thread.id, "Secret message")
@@ -191,7 +193,7 @@ class TestPrivateThreadMessages:
             user_id=owner.id,
             channel_id=channel.id,
             name="Member Messages",
-            thread_type=ThreadType.PRIVATE
+            thread_type=ThreadType.PRIVATE,
         )
 
         threads.add_member(owner.id, thread.id, member1.id)
@@ -208,7 +210,7 @@ class TestPrivateThreadMessages:
             user_id=owner.id,
             channel_id=channel.id,
             name="No Send Thread",
-            thread_type=ThreadType.PRIVATE
+            thread_type=ThreadType.PRIVATE,
         )
 
         with pytest.raises(ThreadAccessDeniedError):
@@ -222,7 +224,7 @@ class TestPrivateThreadMessages:
             user_id=owner.id,
             channel_id=channel.id,
             name="Send Thread",
-            thread_type=ThreadType.PRIVATE
+            thread_type=ThreadType.PRIVATE,
         )
 
         threads.add_member(owner.id, thread.id, member1.id)

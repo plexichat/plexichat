@@ -16,7 +16,7 @@ class TestCreateChannel:
             user_id=owner.id,
             server_id=server.id,
             name="test-channel",
-            channel_type=servers.ChannelType.TEXT
+            channel_type=servers.ChannelType.TEXT,
         )
 
         assert channel is not None
@@ -31,7 +31,7 @@ class TestCreateChannel:
             user_id=owner.id,
             server_id=server.id,
             name="announcements",
-            topic="Important announcements"
+            topic="Important announcements",
         )
 
         assert channel.topic == "Important announcements"
@@ -44,7 +44,7 @@ class TestCreateChannel:
             user_id=owner.id,
             server_id=server.id,
             name="new-channel",
-            category_id=category.id
+            category_id=category.id,
         )
 
         assert channel.category_id == category.id
@@ -54,10 +54,7 @@ class TestCreateChannel:
         server, owner, servers = fresh_server
 
         channel = servers.create_channel(
-            user_id=owner.id,
-            server_id=server.id,
-            name="nsfw-channel",
-            nsfw=True
+            user_id=owner.id, server_id=server.id, name="nsfw-channel", nsfw=True
         )
 
         assert channel.nsfw is True
@@ -70,7 +67,7 @@ class TestCreateChannel:
             user_id=owner.id,
             server_id=server.id,
             name="slow-channel",
-            slowmode_seconds=30
+            slowmode_seconds=30,
         )
 
         assert channel.slowmode_seconds == 30
@@ -80,9 +77,7 @@ class TestCreateChannel:
         server, owner, servers = fresh_server
 
         channel = servers.create_channel(
-            user_id=owner.id,
-            server_id=server.id,
-            name="My Channel Name"
+            user_id=owner.id, server_id=server.id, name="My Channel Name"
         )
 
         assert channel.name == "my-channel-name"
@@ -92,11 +87,7 @@ class TestCreateChannel:
         server, owner, servers = fresh_server
 
         with pytest.raises(servers.InvalidChannelNameError):
-            servers.create_channel(
-                user_id=owner.id,
-                server_id=server.id,
-                name=""
-            )
+            servers.create_channel(user_id=owner.id, server_id=server.id, name="")
 
     def test_create_channel_by_non_admin_fails(self, server_with_members):
         """Test that non-admin cannot create channel."""
@@ -104,9 +95,7 @@ class TestCreateChannel:
 
         with pytest.raises(servers.PermissionDeniedError):
             servers.create_channel(
-                user_id=member_user.id,
-                server_id=server.id,
-                name="hacked-channel"
+                user_id=member_user.id, server_id=server.id, name="hacked-channel"
             )
 
 
@@ -118,9 +107,7 @@ class TestCreateCategory:
         server, owner, servers = fresh_server
 
         category = servers.create_category(
-            user_id=owner.id,
-            server_id=server.id,
-            name="Text Channels"
+            user_id=owner.id, server_id=server.id, name="Text Channels"
         )
 
         assert category is not None
@@ -131,11 +118,7 @@ class TestCreateCategory:
         server, owner, servers = fresh_server
 
         with pytest.raises(servers.InvalidChannelNameError):
-            servers.create_category(
-                user_id=owner.id,
-                server_id=server.id,
-                name=""
-            )
+            servers.create_category(user_id=owner.id, server_id=server.id, name="")
 
 
 class TestGetChannel:
@@ -172,7 +155,9 @@ class TestGetChannels:
 
     def test_get_channels_returns_server_channels(self, server_with_channels):
         """Test getting all channels in server."""
-        server, owner, _, _, _, general, announcements, private, _, servers = server_with_channels
+        server, owner, _, _, _, general, announcements, private, _, servers = (
+            server_with_channels
+        )
 
         channels = servers.get_channels(owner.id, server.id)
 
@@ -187,8 +172,7 @@ class TestGetChannels:
         server, owner, _, _, _, _, _, _, _, servers = server_with_channels
 
         text_channels = servers.get_channels(
-            owner.id, server.id,
-            channel_type=servers.ChannelType.TEXT
+            owner.id, server.id, channel_type=servers.ChannelType.TEXT
         )
 
         assert all(c.channel_type == servers.ChannelType.TEXT for c in text_channels)
@@ -211,9 +195,7 @@ class TestUpdateChannel:
         server, owner, _, _, _, general, _, _, _, servers = server_with_channels
 
         updated = servers.update_channel(
-            user_id=owner.id,
-            channel_id=general.id,
-            name="main"
+            user_id=owner.id, channel_id=general.id, name="main"
         )
 
         assert updated.name == "main"
@@ -223,9 +205,7 @@ class TestUpdateChannel:
         server, owner, _, _, _, general, _, _, _, servers = server_with_channels
 
         updated = servers.update_channel(
-            user_id=owner.id,
-            channel_id=general.id,
-            topic="Welcome to the server!"
+            user_id=owner.id, channel_id=general.id, topic="Welcome to the server!"
         )
 
         assert updated.topic == "Welcome to the server!"
@@ -235,9 +215,7 @@ class TestUpdateChannel:
         server, owner, _, _, _, general, _, _, _, servers = server_with_channels
 
         updated = servers.update_channel(
-            user_id=owner.id,
-            channel_id=general.id,
-            nsfw=True
+            user_id=owner.id, channel_id=general.id, nsfw=True
         )
 
         assert updated.nsfw is True
@@ -248,9 +226,7 @@ class TestUpdateChannel:
 
         with pytest.raises(servers.PermissionDeniedError):
             servers.update_channel(
-                user_id=member_user.id,
-                channel_id=general.id,
-                name="hacked"
+                user_id=member_user.id, channel_id=general.id, name="hacked"
             )
 
 

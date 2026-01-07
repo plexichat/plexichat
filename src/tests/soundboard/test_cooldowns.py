@@ -18,7 +18,7 @@ class TestSoundCooldowns:
         owner = auth.register(
             username=f"cd_owner_{unique_id}",
             email=f"cd_owner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"Cooldown Server {unique_id}")
@@ -27,7 +27,7 @@ class TestSoundCooldowns:
             user_id=owner.id,
             server_id=server.id,
             name="voice-test",
-            channel_type=servers.ChannelType.VOICE
+            channel_type=servers.ChannelType.VOICE,
         )
 
         sound = soundboard.upload_sound(
@@ -37,7 +37,7 @@ class TestSoundCooldowns:
             format=SoundFormat.MP3,
             url="https://cdn.example.com/sounds/cooldown.mp3",
             size=100000,
-            duration_seconds=2.0
+            duration_seconds=2.0,
         )
 
         soundboard.play_sound(owner.id, sound.id, voice_channel.id)
@@ -55,7 +55,7 @@ class TestSoundCooldowns:
         owner = auth.register(
             username=f"ind_cd_owner_{unique_id}",
             email=f"ind_cd_owner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"Ind CD Server {unique_id}")
@@ -64,7 +64,7 @@ class TestSoundCooldowns:
             user_id=owner.id,
             server_id=server.id,
             name="voice-ind",
-            channel_type=servers.ChannelType.VOICE
+            channel_type=servers.ChannelType.VOICE,
         )
 
         sound1 = soundboard.upload_sound(
@@ -74,7 +74,7 @@ class TestSoundCooldowns:
             format=SoundFormat.MP3,
             url="https://cdn.example.com/sounds/one.mp3",
             size=100000,
-            duration_seconds=2.0
+            duration_seconds=2.0,
         )
 
         sound2 = soundboard.upload_sound(
@@ -84,7 +84,7 @@ class TestSoundCooldowns:
             format=SoundFormat.MP3,
             url="https://cdn.example.com/sounds/two.mp3",
             size=100000,
-            duration_seconds=2.0
+            duration_seconds=2.0,
         )
 
         soundboard.play_sound(owner.id, sound1.id, voice_channel.id)
@@ -100,12 +100,12 @@ class TestSoundCooldowns:
         owner = auth.register(
             username=f"user_cd_owner_{unique_id}",
             email=f"user_cd_owner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         member = auth.register(
             username=f"user_cd_member_{unique_id}",
             email=f"user_cd_member_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"User CD Server {unique_id}")
@@ -115,7 +115,7 @@ class TestSoundCooldowns:
             user_id=owner.id,
             server_id=server.id,
             name="voice-users",
-            channel_type=servers.ChannelType.VOICE
+            channel_type=servers.ChannelType.VOICE,
         )
 
         sound = soundboard.upload_sound(
@@ -125,7 +125,7 @@ class TestSoundCooldowns:
             format=SoundFormat.MP3,
             url="https://cdn.example.com/sounds/shared.mp3",
             size=100000,
-            duration_seconds=2.0
+            duration_seconds=2.0,
         )
 
         soundboard.play_sound(owner.id, sound.id, voice_channel.id)

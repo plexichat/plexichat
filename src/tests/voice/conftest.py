@@ -11,7 +11,14 @@ import uuid
 @pytest.fixture
 def db_and_modules(modules):
     """Legacy fixture for backward compatibility."""
-    return modules._db, modules.auth, modules.servers, modules.relationships, modules.presence, modules.voice
+    return (
+        modules._db,
+        modules.auth,
+        modules.servers,
+        modules.relationships,
+        modules.presence,
+        modules.voice,
+    )
 
 
 @pytest.fixture
@@ -32,13 +39,13 @@ def fresh_users(modules):
     user1 = modules.auth.register(
         username=f"fresh1_{unique_id}",
         email=f"fresh1_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     user2 = modules.auth.register(
         username=f"fresh2_{unique_id}",
         email=f"fresh2_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     return user1, user2, modules.voice
@@ -52,19 +59,19 @@ def server_with_voice(modules):
     owner = modules.auth.register(
         username=f"owner_{unique_id}",
         email=f"owner_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     member1 = modules.auth.register(
         username=f"member1_{unique_id}",
         email=f"member1_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     member2 = modules.auth.register(
         username=f"member2_{unique_id}",
         email=f"member2_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     server = modules.servers.create_server(owner.id, f"Voice Test Server {unique_id}")
@@ -72,16 +79,29 @@ def server_with_voice(modules):
     modules.servers.add_member(server.id, member2.id)
 
     voice_channel = modules.servers.create_channel(
-        owner.id, server.id, "voice-chat",
-        channel_type=modules.servers.ChannelType.VOICE
+        owner.id,
+        server.id,
+        "voice-chat",
+        channel_type=modules.servers.ChannelType.VOICE,
     )
 
     stage_channel = modules.servers.create_channel(
-        owner.id, server.id, "stage-talk",
-        channel_type=modules.servers.ChannelType.STAGE
+        owner.id,
+        server.id,
+        "stage-talk",
+        channel_type=modules.servers.ChannelType.STAGE,
     )
 
-    return owner, member1, member2, server, voice_channel, stage_channel, modules.servers, modules.voice
+    return (
+        owner,
+        member1,
+        member2,
+        server,
+        voice_channel,
+        stage_channel,
+        modules.servers,
+        modules.voice,
+    )
 
 
 @pytest.fixture
@@ -92,19 +112,19 @@ def server_with_moderator(modules):
     owner = modules.auth.register(
         username=f"modowner_{unique_id}",
         email=f"modowner_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     moderator = modules.auth.register(
         username=f"mod_{unique_id}",
         email=f"mod_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     member = modules.auth.register(
         username=f"modmember_{unique_id}",
         email=f"modmember_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     server = modules.servers.create_server(owner.id, f"Mod Test Server {unique_id}")
@@ -112,23 +132,32 @@ def server_with_moderator(modules):
     modules.servers.add_member(server.id, member.id)
 
     mod_role = modules.servers.create_role(
-        owner.id, server.id, "Moderator",
+        owner.id,
+        server.id,
+        "Moderator",
         permissions={
             "voice.mute_members": True,
             "voice.deafen_members": True,
             "voice.move_members": True,
-        }
+        },
     )
     modules.servers.assign_role(owner.id, server.id, moderator.id, mod_role.id)
 
     voice_channel = modules.servers.create_channel(
-        owner.id, server.id, "mod-voice",
-        channel_type=modules.servers.ChannelType.VOICE
+        owner.id, server.id, "mod-voice", channel_type=modules.servers.ChannelType.VOICE
     )
 
     stage_channel = modules.servers.create_channel(
-        owner.id, server.id, "mod-stage",
-        channel_type=modules.servers.ChannelType.STAGE
+        owner.id, server.id, "mod-stage", channel_type=modules.servers.ChannelType.STAGE
     )
 
-    return owner, moderator, member, server, voice_channel, stage_channel, modules.servers, modules.voice
+    return (
+        owner,
+        moderator,
+        member,
+        server,
+        voice_channel,
+        stage_channel,
+        modules.servers,
+        modules.voice,
+    )

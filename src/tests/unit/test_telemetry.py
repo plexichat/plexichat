@@ -24,12 +24,14 @@ class TestTelemetryModule:
     def telemetry_module(self, mock_db):
         """Setup telemetry module with mock db."""
         from src.core import telemetry
+
         telemetry.setup(mock_db)
         return telemetry
 
     def test_setup_creates_tables(self, mock_db):
         """Test that setup creates the required tables."""
         from src.core import telemetry
+
         telemetry.setup(mock_db)
 
         # Should have called execute for table creation and indexes
@@ -50,47 +52,51 @@ class TestTelemetryModule:
                 "method": "GET",
                 "response_time_ms": 45.2,
                 "status_code": 200,
-                "timestamp": int(time.time() * 1000)
+                "timestamp": int(time.time() * 1000),
             },
             {
                 "endpoint": "/api/v1/messages",
                 "method": "POST",
                 "response_time_ms": 120.5,
                 "status_code": 201,
-                "timestamp": int(time.time() * 1000)
-            }
+                "timestamp": int(time.time() * 1000),
+            },
         ]
 
         accepted = telemetry_module.submit_response_times(entries, "test_client")
         assert accepted == 2
 
-    def test_submit_response_times_invalid_entries_skipped(self, telemetry_module, mock_db):
+    def test_submit_response_times_invalid_entries_skipped(
+        self, telemetry_module, mock_db
+    ):
         """Test that invalid entries are skipped."""
         entries = [
             {
                 "endpoint": "",  # Invalid: empty endpoint
                 "method": "GET",
                 "response_time_ms": 45.2,
-                "status_code": 200
+                "status_code": 200,
             },
             {
                 "endpoint": "/api/v1/test",
                 "method": "GET",
                 "response_time_ms": -10,  # Invalid: negative time
-                "status_code": 200
+                "status_code": 200,
             },
             {
                 "endpoint": "/api/v1/valid",
                 "method": "GET",
                 "response_time_ms": 50,
-                "status_code": 200
-            }
+                "status_code": 200,
+            },
         ]
 
         accepted = telemetry_module.submit_response_times(entries)
         assert accepted == 1  # Only the valid entry
 
-    def test_submit_response_times_timestamp_validation(self, telemetry_module, mock_db):
+    def test_submit_response_times_timestamp_validation(
+        self, telemetry_module, mock_db
+    ):
         """Test that timestamps too far in past/future are corrected."""
         now = int(time.time() * 1000)
         entries = [
@@ -99,7 +105,7 @@ class TestTelemetryModule:
                 "method": "GET",
                 "response_time_ms": 50,
                 "status_code": 200,
-                "timestamp": now - 7200000  # 2 hours ago (outside 1 hour window)
+                "timestamp": now - 7200000,  # 2 hours ago (outside 1 hour window)
             }
         ]
 
@@ -122,7 +128,7 @@ class TestTelemetryModule:
                 {"response_time_ms": 10, "status_code": 200},
                 {"response_time_ms": 20, "status_code": 200},
                 {"response_time_ms": 30, "status_code": 500},
-            ]
+            ],
         ]
 
         stats = telemetry_module.get_endpoint_stats(hours=24)
@@ -134,16 +140,14 @@ class TestTelemetryModule:
         assert stats[0].avg_response_time_ms == 20.0
         assert stats[0].min_response_time_ms == 10
         assert stats[0].max_response_time_ms == 30
-        assert stats[0].error_rate == pytest.approx(1/3)
+        assert stats[0].error_rate == pytest.approx(1 / 3)
 
     def test_get_response_time_history_empty(self, telemetry_module, mock_db):
         """Test getting history when no data exists."""
         mock_db.fetch_all.return_value = []
 
         history = telemetry_module.get_response_time_history(
-            endpoint="/api/v1/test",
-            method="GET",
-            hours=24
+            endpoint="/api/v1/test", method="GET", hours=24
         )
         assert history == []
 
@@ -159,10 +163,7 @@ class TestTelemetryModule:
         ]
 
         history = telemetry_module.get_response_time_history(
-            endpoint="/api/v1/test",
-            method="GET",
-            hours=1,
-            bucket_minutes=5
+            endpoint="/api/v1/test", method="GET", hours=1, bucket_minutes=5
         )
 
         assert len(history) >= 1
@@ -190,7 +191,7 @@ class TestResponseTimeEntry:
             method="GET",
             response_time_ms=45.2,
             status_code=200,
-            timestamp=1704067200000
+            timestamp=1704067200000,
         )
 
         assert entry.id == 1
@@ -218,7 +219,7 @@ class TestEndpointStats:
             p95_response_time_ms=150.0,
             p99_response_time_ms=180.0,
             error_rate=0.05,
-            last_updated=1704067200000
+            last_updated=1704067200000,
         )
 
         assert stats.count == 100

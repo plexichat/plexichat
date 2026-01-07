@@ -66,7 +66,9 @@ class TestEventDispatch:
     """Tests for event dispatch to connections."""
 
     @pytest.mark.asyncio
-    async def test_dispatch_event_to_users(self, dispatcher, session_manager, mock_websocket):
+    async def test_dispatch_event_to_users(
+        self, dispatcher, session_manager, mock_websocket
+    ):
         """Test dispatching event to users."""
         conn = Connection(
             websocket=mock_websocket,
@@ -74,7 +76,9 @@ class TestEventDispatch:
             heartbeat_interval_ms=45000,
         )
         session_manager.add_connection(conn)
-        session_manager.create_session(conn, user_id=12345, intents=GatewayIntent.all_intents())
+        session_manager.create_session(
+            conn, user_id=12345, intents=GatewayIntent.all_intents()
+        )
 
         event = events.create_message_create(
             message_id=1, channel_id=2, author_id=3, content="test", server_id=4
@@ -84,7 +88,9 @@ class TestEventDispatch:
         assert count == 1
 
     @pytest.mark.asyncio
-    async def test_dispatch_event_filters_by_intents(self, dispatcher, session_manager, mock_websocket):
+    async def test_dispatch_event_filters_by_intents(
+        self, dispatcher, session_manager, mock_websocket
+    ):
         """Test event dispatch filters by intents."""
         conn = Connection(
             websocket=mock_websocket,
@@ -92,7 +98,9 @@ class TestEventDispatch:
             heartbeat_interval_ms=45000,
         )
         session_manager.add_connection(conn)
-        session_manager.create_session(conn, user_id=12345, intents=GatewayIntent.GUILDS)
+        session_manager.create_session(
+            conn, user_id=12345, intents=GatewayIntent.GUILDS
+        )
 
         event = events.create_guild_member_add(server_id=1, user_id=2)
 
@@ -100,7 +108,9 @@ class TestEventDispatch:
         assert count == 0
 
     @pytest.mark.asyncio
-    async def test_dispatch_event_to_multiple_users(self, dispatcher, session_manager, mock_websocket):
+    async def test_dispatch_event_to_multiple_users(
+        self, dispatcher, session_manager, mock_websocket
+    ):
         """Test dispatching event to multiple users."""
         for user_id in [111, 222, 333]:
             conn = Connection(
@@ -109,7 +119,9 @@ class TestEventDispatch:
                 heartbeat_interval_ms=45000,
             )
             session_manager.add_connection(conn)
-            session_manager.create_session(conn, user_id=user_id, intents=GatewayIntent.all_intents())
+            session_manager.create_session(
+                conn, user_id=user_id, intents=GatewayIntent.all_intents()
+            )
 
         event = events.create_message_create(
             message_id=1, channel_id=2, author_id=3, content="test", server_id=4
@@ -136,16 +148,22 @@ class TestEventDispatch:
             message_id=1, channel_id=2, author_id=3, content="test", server_id=4
         )
 
-        result = await dispatcher.dispatch_to_connection(authenticated_connection, event)
+        result = await dispatcher.dispatch_to_connection(
+            authenticated_connection, event
+        )
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_dispatch_to_connection_filtered(self, dispatcher, authenticated_connection):
+    async def test_dispatch_to_connection_filtered(
+        self, dispatcher, authenticated_connection
+    ):
         """Test dispatch to connection filtered by intents."""
         authenticated_connection.intents = GatewayIntent.GUILDS
         event = events.create_guild_member_add(server_id=1, user_id=2)
 
-        result = await dispatcher.dispatch_to_connection(authenticated_connection, event)
+        result = await dispatcher.dispatch_to_connection(
+            authenticated_connection, event
+        )
         assert result is False
 
 
@@ -153,7 +171,9 @@ class TestDispatchRaw:
     """Tests for raw gateway message dispatch."""
 
     @pytest.mark.asyncio
-    async def test_dispatch_raw_dispatch_opcode(self, dispatcher, authenticated_connection):
+    async def test_dispatch_raw_dispatch_opcode(
+        self, dispatcher, authenticated_connection
+    ):
         """Test dispatching raw DISPATCH opcode."""
         result = await dispatcher.dispatch_raw(
             authenticated_connection,
@@ -169,7 +189,9 @@ class TestDispatchRaw:
         assert "s" in call_args
 
     @pytest.mark.asyncio
-    async def test_dispatch_raw_increments_sequence(self, dispatcher, authenticated_connection):
+    async def test_dispatch_raw_increments_sequence(
+        self, dispatcher, authenticated_connection
+    ):
         """Test dispatch raw increments sequence."""
         initial_seq = authenticated_connection.sequence
 
@@ -183,7 +205,9 @@ class TestDispatchRaw:
         assert authenticated_connection.sequence == initial_seq + 1
 
     @pytest.mark.asyncio
-    async def test_dispatch_raw_records_event(self, dispatcher, session_manager, authenticated_connection):
+    async def test_dispatch_raw_records_event(
+        self, dispatcher, session_manager, authenticated_connection
+    ):
         """Test dispatch raw records event for replay."""
         await dispatcher.dispatch_raw(
             authenticated_connection,
@@ -209,7 +233,9 @@ class TestEventCallback:
             heartbeat_interval_ms=45000,
         )
         session_manager.add_connection(conn)
-        session_manager.create_session(conn, user_id=12345, intents=GatewayIntent.all_intents())
+        session_manager.create_session(
+            conn, user_id=12345, intents=GatewayIntent.all_intents()
+        )
 
         event = events.create_message_create(
             message_id=1, channel_id=2, author_id=3, content="test", server_id=4
@@ -222,7 +248,9 @@ class TestReplayEvents:
     """Tests for event replay."""
 
     @pytest.mark.asyncio
-    async def test_replay_events(self, dispatcher, session_manager, authenticated_connection):
+    async def test_replay_events(
+        self, dispatcher, session_manager, authenticated_connection
+    ):
         """Test replaying events after resume."""
         for i in range(5):
             await dispatcher.dispatch_raw(

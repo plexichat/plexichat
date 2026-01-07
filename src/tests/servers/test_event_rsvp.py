@@ -12,7 +12,9 @@ class TestEventRSVP:
 
     def test_rsvp_interested(self, server_with_members):
         """Test marking interested in an event."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
         event = servers.create_scheduled_event(
@@ -24,7 +26,9 @@ class TestEventRSVP:
             location="Test Location",
         )
 
-        rsvp = servers.rsvp_event(member_user.id, event.id, servers.RSVPStatus.INTERESTED)
+        rsvp = servers.rsvp_event(
+            member_user.id, event.id, servers.RSVPStatus.INTERESTED
+        )
 
         assert rsvp is not None
         assert rsvp.user_id == member_user.id
@@ -32,7 +36,9 @@ class TestEventRSVP:
 
     def test_rsvp_going(self, server_with_members):
         """Test marking going to an event."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
         event = servers.create_scheduled_event(
@@ -51,7 +57,9 @@ class TestEventRSVP:
 
     def test_change_rsvp_status(self, server_with_members):
         """Test changing RSVP status."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
         event = servers.create_scheduled_event(
@@ -70,7 +78,9 @@ class TestEventRSVP:
 
     def test_remove_rsvp(self, server_with_members):
         """Test removing RSVP."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
         event = servers.create_scheduled_event(
@@ -89,7 +99,9 @@ class TestEventRSVP:
 
     def test_get_event_rsvps(self, server_with_members):
         """Test getting all RSVPs for an event."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
         event = servers.create_scheduled_event(
@@ -110,7 +122,9 @@ class TestEventRSVP:
 
     def test_get_rsvps_by_status(self, server_with_members):
         """Test filtering RSVPs by status."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
         event = servers.create_scheduled_event(
@@ -134,7 +148,9 @@ class TestEventRSVP:
 
     def test_rsvp_updates_counts(self, server_with_members):
         """Test that RSVP updates event counts."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
         event = servers.create_scheduled_event(
@@ -155,7 +171,9 @@ class TestEventRSVP:
 
     def test_rsvp_count_updates_on_change(self, server_with_members):
         """Test that counts update when RSVP status changes."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
         event = servers.create_scheduled_event(

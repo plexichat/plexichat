@@ -10,7 +10,9 @@ import pytest
 class TestApplicationInstallation:
     """Tests for installing applications on servers."""
 
-    def test_install_application(self, modules, test_application, test_server, user_pool):
+    def test_install_application(
+        self, modules, test_application, test_server, user_pool
+    ):
         """Test installing an application on a server."""
         app, owner = test_application
         server, server_owner = test_server
@@ -31,7 +33,9 @@ class TestApplicationInstallation:
         assert installation.permissions == "8"
         assert "bot" in installation.scopes
 
-    def test_install_application_default_values(self, modules, test_application, test_server, user_pool):
+    def test_install_application_default_values(
+        self, modules, test_application, test_server, user_pool
+    ):
         """Test installing with default values."""
         app, owner = test_application
         server, server_owner = test_server
@@ -46,7 +50,9 @@ class TestApplicationInstallation:
         assert installation.permissions == "0"
         assert installation.scopes == []
 
-    def test_install_duplicate_fails(self, modules, test_application, test_server, user_pool):
+    def test_install_duplicate_fails(
+        self, modules, test_application, test_server, user_pool
+    ):
         """Test that installing twice fails."""
         app, owner = test_application
         server, server_owner = test_server
@@ -83,7 +89,9 @@ class TestApplicationInstallation:
 class TestApplicationUninstallation:
     """Tests for uninstalling applications."""
 
-    def test_uninstall_application(self, modules, test_application, test_server, user_pool):
+    def test_uninstall_application(
+        self, modules, test_application, test_server, user_pool
+    ):
         """Test uninstalling an application."""
         app, owner = test_application
         server, server_owner = test_server
@@ -109,7 +117,9 @@ class TestApplicationUninstallation:
         )
         assert len(installations) == 0
 
-    def test_uninstall_not_installed(self, modules, test_application, test_server, user_pool):
+    def test_uninstall_not_installed(
+        self, modules, test_application, test_server, user_pool
+    ):
         """Test uninstalling when not installed."""
         app, owner = test_application
         server, server_owner = test_server
@@ -128,7 +138,9 @@ class TestApplicationUninstallation:
 class TestInstallationRetrieval:
     """Tests for retrieving installations."""
 
-    def test_get_installations_by_application(self, modules, test_application, user_pool):
+    def test_get_installations_by_application(
+        self, modules, test_application, user_pool
+    ):
         """Test getting installations by application."""
         app, owner = test_application
 
@@ -142,7 +154,9 @@ class TestInstallationRetrieval:
 
         assert len(installations) >= 2
 
-    def test_get_installations_by_server(self, modules, test_server, app_factory, user_pool):
+    def test_get_installations_by_server(
+        self, modules, test_server, app_factory, user_pool
+    ):
         """Test getting installations by server."""
         server, server_owner = test_server
         installer = user_pool.get_user()
@@ -157,7 +171,9 @@ class TestInstallationRetrieval:
 
         assert len(installations) >= 2
 
-    def test_get_specific_installation(self, modules, test_application, test_server, user_pool):
+    def test_get_specific_installation(
+        self, modules, test_application, test_server, user_pool
+    ):
         """Test getting specific installation."""
         app, owner = test_application
         server, server_owner = test_server

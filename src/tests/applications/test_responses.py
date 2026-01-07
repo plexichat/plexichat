@@ -23,7 +23,10 @@ class TestMessageResponse:
         """Test creating basic message response."""
         response = create_message_response(content="Hello!")
 
-        assert response.response_type == InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE
+        assert (
+            response.response_type
+            == InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE
+        )
         assert response.content == "Hello!"
         assert response.flags == 0
 
@@ -94,7 +97,10 @@ class TestDeferredResponse:
         """Test creating deferred response."""
         response = create_deferred_response()
 
-        assert response.response_type == InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
+        assert (
+            response.response_type
+            == InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
+        )
         assert response.flags == 0
 
     def test_create_deferred_ephemeral(self):
@@ -130,7 +136,13 @@ class TestUpdateResponse:
                 {
                     "type": 1,
                     "components": [
-                        {"type": 2, "style": 2, "label": "Disabled", "custom_id": "btn", "disabled": True},
+                        {
+                            "type": 2,
+                            "style": 2,
+                            "label": "Disabled",
+                            "custom_id": "btn",
+                            "disabled": True,
+                        },
                     ],
                 },
             ],
@@ -186,7 +198,10 @@ class TestAutocompleteResponse:
             ],
         )
 
-        assert response.response_type == InteractionResponseType.APPLICATION_COMMAND_AUTOCOMPLETE_RESULT
+        assert (
+            response.response_type
+            == InteractionResponseType.APPLICATION_COMMAND_AUTOCOMPLETE_RESULT
+        )
         assert response.choices is not None
         assert len(response.choices) == 2
 

@@ -24,7 +24,7 @@ class TestAddMember:
         server, owner, servers = fresh_server
         _, _, _, outsider, _, _, _ = base_users
 
-        member = servers.add_member(server.id, outsider.id)
+        servers.add_member(server.id, outsider.id)
 
         roles = servers.get_member_roles(server.id, outsider.id)
         assert any(r.is_default for r in roles)
@@ -118,7 +118,7 @@ class TestUpdateMember:
             user_id=member_user.id,
             server_id=server.id,
             member_user_id=member_user.id,
-            nickname="Cool Nick"
+            nickname="Cool Nick",
         )
 
         assert updated.nickname == "Cool Nick"
@@ -131,7 +131,7 @@ class TestUpdateMember:
             user_id=owner.id,
             server_id=server.id,
             member_user_id=member_user.id,
-            nickname="Assigned Nick"
+            nickname="Assigned Nick",
         )
 
         assert updated.nickname == "Assigned Nick"
@@ -141,7 +141,15 @@ class TestUpdateMember:
         server, _, _, member_user, _, _, servers = server_with_members
 
         # Create another member
-        _, _, _, outsider, auth, _, _ = server_with_members[6]._get_manager()._auth, None, None, None, None, None, None
+        _, _, _, _outsider, _auth, _, _ = (
+            server_with_members[6]._get_manager()._auth,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
         # This test needs a fresh user - skip for now as fixture doesn't provide one easily
 
 
@@ -182,8 +190,7 @@ class TestKickMember:
         server, owner, _, member_user, _, _, servers = server_with_members
 
         result = servers.kick_member(
-            owner.id, server.id, member_user.id,
-            reason="Rule violation"
+            owner.id, server.id, member_user.id, reason="Rule violation"
         )
 
         assert result is True
@@ -204,14 +211,16 @@ class TestKickMember:
 
     def test_kick_higher_role_fails(self, server_with_members):
         """Test that kicking higher role fails."""
-        server, owner, admin_user, member_user, _, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, _, admin_role, servers = (
+            server_with_members
+        )
 
         # Create a lower role for member with kick permission
         lower_role = servers.create_role(
             user_id=owner.id,
             server_id=server.id,
             name="Lower",
-            permissions={"members.kick": True}
+            permissions={"members.kick": True},
         )
         # Move it below admin role
         servers.move_role(owner.id, lower_role.id, position=admin_role.position - 1)
@@ -240,8 +249,7 @@ class TestBanMember:
         server, owner, _, member_user, _, _, servers = server_with_members
 
         ban = servers.ban_member(
-            owner.id, server.id, member_user.id,
-            reason="Repeated violations"
+            owner.id, server.id, member_user.id, reason="Repeated violations"
         )
 
         assert ban.reason == "Repeated violations"
@@ -328,19 +336,21 @@ class TestRoleAssignment:
 
     def test_assign_higher_role_fails(self, server_with_members):
         """Test that assigning higher role fails."""
-        server, owner, admin_user, member_user, _, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, _, admin_role, servers = (
+            server_with_members
+        )
 
         # Create a role above admin
         higher_role = servers.create_role(
-            user_id=owner.id,
-            server_id=server.id,
-            name="Higher"
+            user_id=owner.id, server_id=server.id, name="Higher"
         )
         servers.move_role(owner.id, higher_role.id, position=admin_role.position + 1)
 
         # Admin should not be able to assign higher role
         with pytest.raises(servers.RoleHierarchyError):
-            servers.assign_role(admin_user.id, server.id, member_user.id, higher_role.id)
+            servers.assign_role(
+                admin_user.id, server.id, member_user.id, higher_role.id
+            )
 
 
 class TestRemoveRole:

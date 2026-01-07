@@ -18,7 +18,7 @@ class TestUsernameOverride:
             token=setup["token"],
             content="Custom username message",
             username="Custom Bot Name",
-            wait=True
+            wait=True,
         )
 
         assert result.username == "Custom Bot Name"
@@ -31,7 +31,7 @@ class TestUsernameOverride:
             webhook_id=setup["webhook"].id,
             token=setup["token"],
             content="Default username message",
-            wait=True
+            wait=True,
         )
 
         assert result.username == setup["webhook"].name
@@ -45,7 +45,7 @@ class TestUsernameOverride:
             token=setup["token"],
             content="Max length username",
             username="x" * 80,
-            wait=True
+            wait=True,
         )
 
         assert len(result.username) == 80
@@ -60,7 +60,7 @@ class TestUsernameOverride:
                 webhook_id=setup["webhook"].id,
                 token=setup["token"],
                 content="Too long username",
-                username="x" * 81
+                username="x" * 81,
             )
 
         assert "username_too_long" in exc_info.value.issues
@@ -74,7 +74,7 @@ class TestUsernameOverride:
             token=setup["token"],
             content="Sanitized username",
             username="Test <script>alert(1)</script> Bot",
-            wait=True
+            wait=True,
         )
 
         assert "<script>" not in result.username
@@ -88,7 +88,7 @@ class TestUsernameOverride:
             token=setup["token"],
             content="Trimmed username",
             username="  Trimmed Name  ",
-            wait=True
+            wait=True,
         )
 
         assert result.username == "Trimmed Name"
@@ -102,7 +102,7 @@ class TestUsernameOverride:
             token=setup["token"],
             content="Empty username",
             username="",
-            wait=True
+            wait=True,
         )
 
         assert result.username == setup["webhook"].name
@@ -121,7 +121,7 @@ class TestAvatarOverride:
             token=setup["token"],
             content="Custom avatar message",
             avatar_url=custom_avatar,
-            wait=True
+            wait=True,
         )
 
         assert result.avatar_url == custom_avatar
@@ -136,14 +136,14 @@ class TestAvatarOverride:
             user_id=setup["owner"].id,
             channel_id=setup["channel"].id,
             name=f"Avatar Default {unique_id}",
-            avatar_url=webhook_avatar
+            avatar_url=webhook_avatar,
         )
 
         result = setup["webhooks"].execute_webhook(
             webhook_id=webhook.id,
             token=webhook.token,
             content="Default avatar message",
-            wait=True
+            wait=True,
         )
 
         assert result.avatar_url == webhook_avatar
@@ -156,7 +156,7 @@ class TestAvatarOverride:
             webhook_id=setup["webhook"].id,
             token=setup["token"],
             content="No avatar message",
-            wait=True
+            wait=True,
         )
 
         assert result.avatar_url == setup["webhook"].avatar_url
@@ -170,7 +170,7 @@ class TestAvatarOverride:
             token=setup["token"],
             content="HTTP avatar",
             avatar_url="http://example.com/avatar.png",
-            wait=True
+            wait=True,
         )
 
         assert result.avatar_url == "http://example.com/avatar.png"
@@ -184,7 +184,7 @@ class TestAvatarOverride:
             token=setup["token"],
             content="HTTPS avatar",
             avatar_url="https://example.com/avatar.png",
-            wait=True
+            wait=True,
         )
 
         assert result.avatar_url == "https://example.com/avatar.png"
@@ -199,7 +199,7 @@ class TestAvatarOverride:
                 webhook_id=setup["webhook"].id,
                 token=setup["token"],
                 content="Invalid avatar",
-                avatar_url="javascript:alert(1)"
+                avatar_url="javascript:alert(1)",
             )
 
     def test_avatar_override_data_uri(self, webhook_with_token):
@@ -212,7 +212,7 @@ class TestAvatarOverride:
                 webhook_id=setup["webhook"].id,
                 token=setup["token"],
                 content="Data URI avatar",
-                avatar_url="data:image/png;base64,abc123"
+                avatar_url="data:image/png;base64,abc123",
             )
 
 
@@ -229,7 +229,7 @@ class TestCombinedOverrides:
             content="Both overrides",
             username="Custom Name",
             avatar_url="https://example.com/custom.png",
-            wait=True
+            wait=True,
         )
 
         assert result.username == "Custom Name"
@@ -244,7 +244,7 @@ class TestCombinedOverrides:
             token=setup["token"],
             content="Message 1",
             username="Bot One",
-            wait=True
+            wait=True,
         )
 
         result2 = setup["webhooks"].execute_webhook(
@@ -252,7 +252,7 @@ class TestCombinedOverrides:
             token=setup["token"],
             content="Message 2",
             username="Bot Two",
-            wait=True
+            wait=True,
         )
 
         assert result1.username == "Bot One"
@@ -268,12 +268,9 @@ class TestCombinedOverrides:
             token=setup["token"],
             content="Override test",
             username="Temporary Name",
-            wait=True
+            wait=True,
         )
 
-        webhook = setup["webhooks"].get_webhook(
-            setup["webhook"].id,
-            setup["owner"].id
-        )
+        webhook = setup["webhooks"].get_webhook(setup["webhook"].id, setup["owner"].id)
 
         assert webhook.name == original_name

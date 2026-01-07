@@ -19,14 +19,18 @@ class TestRouteExtraction:
 
     def test_extract_login_route(self):
         """Test extracting login route."""
-        route, resource_id, webhook_id = extract_route_info("/api/v1/auth/login", "POST")
+        route, resource_id, webhook_id = extract_route_info(
+            "/api/v1/auth/login", "POST"
+        )
         assert route == "POST /auth/login"
         assert resource_id is None
         assert webhook_id is None
 
     def test_extract_messages_route(self):
         """Test extracting messages route with channel ID."""
-        route, resource_id, webhook_id = extract_route_info("/api/v1/channels/12345/messages", "POST")
+        route, resource_id, webhook_id = extract_route_info(
+            "/api/v1/channels/12345/messages", "POST"
+        )
         assert route == "POST /channels/{id}/messages"
         assert resource_id == 12345
         assert webhook_id is None
@@ -34,8 +38,7 @@ class TestRouteExtraction:
     def test_extract_reactions_route(self):
         """Test extracting reactions route."""
         route, resource_id, webhook_id = extract_route_info(
-            "/api/v1/channels/12345/messages/67890/reactions/thumbsup",
-            "PUT"
+            "/api/v1/channels/12345/messages/67890/reactions/thumbsup", "PUT"
         )
         assert route == "PUT /channels/{id}/messages/{msg_id}/reactions/{emoji}"
         assert resource_id == 12345
@@ -43,8 +46,7 @@ class TestRouteExtraction:
     def test_extract_webhook_route(self):
         """Test extracting webhook execution route."""
         route, resource_id, webhook_id = extract_route_info(
-            "/api/v1/webhooks/11111/token123",
-            "POST"
+            "/api/v1/webhooks/11111/token123", "POST"
         )
         assert route == "POST /webhooks/{id}/{token}"
         assert webhook_id == 11111
@@ -56,12 +58,16 @@ class TestRouteExtraction:
 
     def test_extract_user_me_patch(self):
         """Test extracting user @me PATCH route."""
-        route, resource_id, webhook_id = extract_route_info("/api/v1/users/@me", "PATCH")
+        route, resource_id, webhook_id = extract_route_info(
+            "/api/v1/users/@me", "PATCH"
+        )
         assert route == "PATCH /users/@me"
 
     def test_extract_unknown_route(self):
         """Test extracting unknown route."""
-        route, resource_id, webhook_id = extract_route_info("/api/v1/unknown/path", "GET")
+        route, resource_id, webhook_id = extract_route_info(
+            "/api/v1/unknown/path", "GET"
+        )
         assert route == "GET /api/v1/unknown/path"
 
 
@@ -182,6 +188,7 @@ class TestMiddlewareWithAuth:
                 user_id = 12345
                 token_type = "user"
                 permissions = {}
+
             request.state.user = MockUser()
             return await call_next(request)
 
@@ -236,6 +243,7 @@ class TestMiddlewareBypass:
                 user_id = 12345
                 token_type = "user"
                 permissions = {"admin.*": request.headers.get("X-Admin") == "true"}
+
             request.state.user = MockUser()
             return await call_next(request)
 
@@ -252,13 +260,17 @@ class TestMiddlewareBypass:
         client = TestClient(app_with_bypass)
         for i in range(10):
             response = client.get("/api/v1/test", headers={"X-Admin": "true"})
-            assert response.status_code == 200, f"Request {i+1} failed with {response.status_code}"
+            assert response.status_code == 200, (
+                f"Request {i + 1} failed with {response.status_code}"
+            )
 
     def test_internal_request_bypasses(self, app_with_bypass):
         """Test internal requests bypass rate limiting."""
         client = TestClient(app_with_bypass)
         for i in range(10):
-            response = client.get("/api/v1/test", headers={"X-Internal-Request": "true"})
+            response = client.get(
+                "/api/v1/test", headers={"X-Internal-Request": "true"}
+            )
             assert response.status_code == 200
 
     def test_normal_user_rate_limited(self, app_with_bypass):

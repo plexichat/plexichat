@@ -16,10 +16,7 @@ class TestCreateWebhook:
         response = test_client.post(
             "/api/v1/webhooks",
             headers=auth_headers,
-            json={
-                "channel_id": channel_id,
-                "name": f"Test Webhook {unique_id}"
-            }
+            json={"channel_id": channel_id, "name": f"Test Webhook {unique_id}"},
         )
 
         assert response.status_code == 200
@@ -41,8 +38,8 @@ class TestCreateWebhook:
             json={
                 "channel_id": channel_id,
                 "name": f"Avatar Webhook {unique_id}",
-                "avatar_url": "https://example.com/avatar.png"
-            }
+                "avatar_url": "https://example.com/avatar.png",
+            },
         )
 
         assert response.status_code == 200
@@ -56,8 +53,8 @@ class TestCreateWebhook:
             headers=auth_headers,
             json={
                 "channel_id": "999999999999999999",
-                "name": "Invalid Channel Webhook"
-            }
+                "name": "Invalid Channel Webhook",
+            },
         )
 
         assert response.status_code == 404
@@ -68,10 +65,7 @@ class TestCreateWebhook:
 
         response = test_client.post(
             "/api/v1/webhooks",
-            json={
-                "channel_id": channel_id,
-                "name": "Unauthorized Webhook"
-            }
+            json={"channel_id": channel_id, "name": "Unauthorized Webhook"},
         )
 
         assert response.status_code == 401
@@ -80,7 +74,9 @@ class TestCreateWebhook:
 class TestGetWebhook:
     """Tests for GET /webhooks/{webhook_id} endpoint."""
 
-    def test_get_webhook_success(self, test_client, auth_headers, test_server, db_and_modules, test_user):
+    def test_get_webhook_success(
+        self, test_client, auth_headers, test_server, db_and_modules, test_user
+    ):
         """Test getting a webhook."""
         webhooks = db_and_modules["webhooks"]
         channel_id = test_server["channel"].id
@@ -89,12 +85,11 @@ class TestGetWebhook:
         webhook = webhooks.create_webhook(
             user_id=test_user["user"].id,
             channel_id=channel_id,
-            name=f"Get Test {unique_id}"
+            name=f"Get Test {unique_id}",
         )
 
         response = test_client.get(
-            f"/api/v1/webhooks/{webhook.id}",
-            headers=auth_headers
+            f"/api/v1/webhooks/{webhook.id}", headers=auth_headers
         )
 
         assert response.status_code == 200
@@ -105,8 +100,7 @@ class TestGetWebhook:
     def test_get_nonexistent_webhook(self, test_client, auth_headers):
         """Test getting nonexistent webhook."""
         response = test_client.get(
-            "/api/v1/webhooks/999999999999999999",
-            headers=auth_headers
+            "/api/v1/webhooks/999999999999999999", headers=auth_headers
         )
 
         assert response.status_code == 404
@@ -123,18 +117,14 @@ class TestDeleteWebhook:
         create_response = test_client.post(
             "/api/v1/webhooks",
             headers=auth_headers,
-            json={
-                "channel_id": channel_id,
-                "name": f"Delete Test {unique_id}"
-            }
+            json={"channel_id": channel_id, "name": f"Delete Test {unique_id}"},
         )
 
         assert create_response.status_code == 200
         webhook_id = create_response.json()["id"]
 
         response = test_client.delete(
-            f"/api/v1/webhooks/{webhook_id}",
-            headers=auth_headers
+            f"/api/v1/webhooks/{webhook_id}", headers=auth_headers
         )
 
         assert response.status_code == 200
@@ -153,10 +143,7 @@ class TestExecuteWebhook:
         create_response = test_client.post(
             "/api/v1/webhooks",
             headers=auth_headers,
-            json={
-                "channel_id": channel_id,
-                "name": f"Execute Test {unique_id}"
-            }
+            json={"channel_id": channel_id, "name": f"Execute Test {unique_id}"},
         )
 
         assert create_response.status_code == 200
@@ -168,12 +155,14 @@ class TestExecuteWebhook:
 
         response = test_client.post(
             f"/api/v1/webhooks/{webhook_id}/{token_secret}",
-            json={"content": "Hello from webhook!"}
+            json={"content": "Hello from webhook!"},
         )
 
         assert response.status_code == 200 or response.status_code == 204
 
-    def test_execute_webhook_invalid_token(self, test_client, auth_headers, test_server):
+    def test_execute_webhook_invalid_token(
+        self, test_client, auth_headers, test_server
+    ):
         """Test executing webhook with invalid token."""
         channel_id = str(test_server["channel"].id)
         unique_id = uuid.uuid4().hex[:8]
@@ -181,10 +170,7 @@ class TestExecuteWebhook:
         create_response = test_client.post(
             "/api/v1/webhooks",
             headers=auth_headers,
-            json={
-                "channel_id": channel_id,
-                "name": f"Invalid Token Test {unique_id}"
-            }
+            json={"channel_id": channel_id, "name": f"Invalid Token Test {unique_id}"},
         )
 
         assert create_response.status_code == 200
@@ -192,12 +178,14 @@ class TestExecuteWebhook:
 
         response = test_client.post(
             f"/api/v1/webhooks/{webhook_id}/invalid_token",
-            json={"content": "Should fail"}
+            json={"content": "Should fail"},
         )
 
         assert response.status_code == 401
 
-    def test_execute_webhook_empty_content(self, test_client, auth_headers, test_server):
+    def test_execute_webhook_empty_content(
+        self, test_client, auth_headers, test_server
+    ):
         """Test executing webhook with empty content."""
         channel_id = str(test_server["channel"].id)
         unique_id = uuid.uuid4().hex[:8]
@@ -205,10 +193,7 @@ class TestExecuteWebhook:
         create_response = test_client.post(
             "/api/v1/webhooks",
             headers=auth_headers,
-            json={
-                "channel_id": channel_id,
-                "name": f"Empty Content Test {unique_id}"
-            }
+            json={"channel_id": channel_id, "name": f"Empty Content Test {unique_id}"},
         )
 
         assert create_response.status_code == 200
@@ -217,8 +202,7 @@ class TestExecuteWebhook:
         token = webhook_data["token"].split(".")[-1]
 
         response = test_client.post(
-            f"/api/v1/webhooks/{webhook_id}/{token}",
-            json={"content": ""}
+            f"/api/v1/webhooks/{webhook_id}/{token}", json={"content": ""}
         )
 
         assert response.status_code == 400
@@ -235,10 +219,7 @@ class TestWebhookFields:
         response = test_client.post(
             "/api/v1/webhooks",
             headers=auth_headers,
-            json={
-                "channel_id": channel_id,
-                "name": f"Server ID Test {unique_id}"
-            }
+            json={"channel_id": channel_id, "name": f"Server ID Test {unique_id}"},
         )
 
         assert response.status_code == 200
@@ -254,10 +235,7 @@ class TestWebhookFields:
         response = test_client.post(
             "/api/v1/webhooks",
             headers=auth_headers,
-            json={
-                "channel_id": channel_id,
-                "name": f"Created At Test {unique_id}"
-            }
+            json={"channel_id": channel_id, "name": f"Created At Test {unique_id}"},
         )
 
         assert response.status_code == 200
@@ -273,10 +251,7 @@ class TestWebhookFields:
         response = test_client.post(
             "/api/v1/webhooks",
             headers=auth_headers,
-            json={
-                "channel_id": channel_id,
-                "name": f"URL Format Test {unique_id}"
-            }
+            json={"channel_id": channel_id, "name": f"URL Format Test {unique_id}"},
         )
 
         assert response.status_code == 200

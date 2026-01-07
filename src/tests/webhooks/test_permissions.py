@@ -17,7 +17,7 @@ class TestWebhookPermissions:
         webhook = setup["webhooks"].create_webhook(
             user_id=setup["owner"].id,
             channel_id=setup["channel"].id,
-            name=f"Owner Webhook {unique_id}"
+            name=f"Owner Webhook {unique_id}",
         )
 
         assert webhook is not None
@@ -31,7 +31,7 @@ class TestWebhookPermissions:
             setup["webhooks"].create_webhook(
                 user_id=setup["non_member"].id,
                 channel_id=setup["channel"].id,
-                name="Non-member Webhook"
+                name="Non-member Webhook",
             )
 
         assert exc_info.value.permission == "webhooks.manage"
@@ -43,8 +43,7 @@ class TestWebhookPermissions:
 
         with pytest.raises(PermissionDeniedError):
             setup["webhooks"].get_channel_webhooks(
-                user_id=setup["non_member"].id,
-                channel_id=setup["channel"].id
+                user_id=setup["non_member"].id, channel_id=setup["channel"].id
             )
 
     def test_non_member_cannot_view_server_webhooks(self, webhook_with_token):
@@ -54,8 +53,7 @@ class TestWebhookPermissions:
 
         with pytest.raises(PermissionDeniedError):
             setup["webhooks"].get_server_webhooks(
-                user_id=setup["non_member"].id,
-                server_id=setup["server"].id
+                user_id=setup["non_member"].id, server_id=setup["server"].id
             )
 
     def test_non_member_cannot_update_webhook(self, webhook_with_token):
@@ -67,7 +65,7 @@ class TestWebhookPermissions:
             setup["webhooks"].update_webhook(
                 user_id=setup["non_member"].id,
                 webhook_id=setup["webhook"].id,
-                name="Unauthorized Update"
+                name="Unauthorized Update",
             )
 
     def test_non_member_cannot_delete_webhook(self, webhook_with_token):
@@ -77,8 +75,7 @@ class TestWebhookPermissions:
 
         with pytest.raises(PermissionDeniedError):
             setup["webhooks"].delete_webhook(
-                user_id=setup["non_member"].id,
-                webhook_id=setup["webhook"].id
+                user_id=setup["non_member"].id, webhook_id=setup["webhook"].id
             )
 
     def test_non_member_cannot_regenerate_token(self, webhook_with_token):
@@ -88,8 +85,7 @@ class TestWebhookPermissions:
 
         with pytest.raises(PermissionDeniedError):
             setup["webhooks"].regenerate_token(
-                user_id=setup["non_member"].id,
-                webhook_id=setup["webhook"].id
+                user_id=setup["non_member"].id, webhook_id=setup["webhook"].id
             )
 
     def test_anyone_with_token_can_execute(self, webhook_with_token):
@@ -100,7 +96,7 @@ class TestWebhookPermissions:
             webhook_id=setup["webhook"].id,
             token=setup["token"],
             content="Executed by anyone with token",
-            wait=True
+            wait=True,
         )
 
         assert result is not None
@@ -113,7 +109,7 @@ class TestWebhookPermissions:
             webhook_id=setup["webhook"].id,
             token=setup["token"],
             content="External execution",
-            wait=True
+            wait=True,
         )
 
         assert result is not None
@@ -127,7 +123,7 @@ class TestWebhookPermissions:
             setup["webhooks"].execute_webhook(
                 webhook_id=setup["webhook"].id,
                 token="invalid_token",
-                content="Should fail"
+                content="Should fail",
             )
 
 
@@ -141,8 +137,7 @@ class TestWebhookAccessDenied:
 
         with pytest.raises(WebhookAccessDeniedError):
             setup["webhooks"].get_webhook(
-                webhook_id=setup["webhook"].id,
-                user_id=setup["non_member"].id
+                webhook_id=setup["webhook"].id, user_id=setup["non_member"].id
             )
 
     def test_get_webhook_without_user_id(self, webhook_with_token):
@@ -150,8 +145,7 @@ class TestWebhookAccessDenied:
         setup = webhook_with_token
 
         webhook = setup["webhooks"].get_webhook(
-            webhook_id=setup["webhook"].id,
-            user_id=None
+            webhook_id=setup["webhook"].id, user_id=None
         )
 
         assert webhook is not None
@@ -169,7 +163,7 @@ class TestPermissionErrorDetails:
             setup["webhooks"].create_webhook(
                 user_id=setup["non_member"].id,
                 channel_id=setup["channel"].id,
-                name="Test"
+                name="Test",
             )
 
         assert exc_info.value.permission == "webhooks.manage"
@@ -183,7 +177,7 @@ class TestPermissionErrorDetails:
             setup["webhooks"].create_webhook(
                 user_id=setup["non_member"].id,
                 channel_id=setup["channel"].id,
-                name="Test"
+                name="Test",
             )
 
         assert "permission" in str(exc_info.value).lower()

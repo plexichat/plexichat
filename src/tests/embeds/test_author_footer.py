@@ -13,18 +13,17 @@ class TestEmbedAuthor:
         """Test creating embed with author name only."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"auth1_{unique_id}",
             email=f"auth1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
-            user_id=user.id,
-            title="Author Test",
-            author={"name": "John Doe"}
+            user_id=user.id, title="Author Test", author={"name": "John Doe"}
         )
 
         assert embed.author is not None
@@ -36,21 +35,19 @@ class TestEmbedAuthor:
         """Test creating embed with author name and URL."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"auth2_{unique_id}",
             email=f"auth2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
             user_id=user.id,
             title="Author URL Test",
-            author={
-                "name": "Jane Doe",
-                "url": "https://jane.example.com"
-            }
+            author={"name": "Jane Doe", "url": "https://jane.example.com"},
         )
 
         assert embed.author.name == "Jane Doe"
@@ -60,21 +57,19 @@ class TestEmbedAuthor:
         """Test creating embed with author icon."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"auth3_{unique_id}",
             email=f"auth3_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
             user_id=user.id,
             title="Author Icon Test",
-            author={
-                "name": "Bob Smith",
-                "icon_url": "https://example.com/avatar.png"
-            }
+            author={"name": "Bob Smith", "icon_url": "https://example.com/avatar.png"},
         )
 
         assert embed.author.icon_url == "https://example.com/avatar.png"
@@ -83,12 +78,13 @@ class TestEmbedAuthor:
         """Test creating embed with all author fields."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"auth4_{unique_id}",
             email=f"auth4_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
@@ -97,8 +93,8 @@ class TestEmbedAuthor:
             author={
                 "name": "Alice Johnson",
                 "url": "https://alice.example.com",
-                "icon_url": "https://alice.example.com/avatar.png"
-            }
+                "icon_url": "https://alice.example.com/avatar.png",
+            },
         )
 
         assert embed.author.name == "Alice Johnson"
@@ -109,20 +105,19 @@ class TestEmbedAuthor:
         """Test author name at max length (256 chars)."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"auth5_{unique_id}",
             email=f"auth5_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         name = "a" * 256
 
         embed = embeds.create_embed(
-            user_id=user.id,
-            title="Long Author Name",
-            author={"name": name}
+            user_id=user.id, title="Long Author Name", author={"name": name}
         )
 
         assert len(embed.author.name) == 256
@@ -131,59 +126,60 @@ class TestEmbedAuthor:
         """Test author name exceeding max length fails."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"auth6_{unique_id}",
             email=f"auth6_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         name = "a" * 257
 
         with pytest.raises(EmbedValidationError):
             embeds.create_embed(
-                user_id=user.id,
-                title="Too Long Author",
-                author={"name": name}
+                user_id=user.id, title="Too Long Author", author={"name": name}
             )
 
     def test_author_url_validation(self, db_and_modules):
         """Test author URL must be valid."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"auth7_{unique_id}",
             email=f"auth7_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         with pytest.raises(EmbedValidationError):
             embeds.create_embed(
                 user_id=user.id,
                 title="Invalid Author URL",
-                author={"name": "Test", "url": "not-a-url"}
+                author={"name": "Test", "url": "not-a-url"},
             )
 
     def test_author_icon_url_validation(self, db_and_modules):
         """Test author icon URL must be valid."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"auth8_{unique_id}",
             email=f"auth8_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         with pytest.raises(EmbedValidationError):
             embeds.create_embed(
                 user_id=user.id,
                 title="Invalid Author Icon",
-                author={"name": "Test", "icon_url": "javascript:alert('xss')"}
+                author={"name": "Test", "icon_url": "javascript:alert('xss')"},
             )
 
 
@@ -194,18 +190,17 @@ class TestEmbedFooter:
         """Test creating embed with footer text only."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"foot1_{unique_id}",
             email=f"foot1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
-            user_id=user.id,
-            title="Footer Test",
-            footer={"text": "Footer text here"}
+            user_id=user.id, title="Footer Test", footer={"text": "Footer text here"}
         )
 
         assert embed.footer is not None
@@ -216,12 +211,13 @@ class TestEmbedFooter:
         """Test creating embed with footer text and icon."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"foot2_{unique_id}",
             email=f"foot2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
@@ -229,8 +225,8 @@ class TestEmbedFooter:
             title="Footer Icon Test",
             footer={
                 "text": "Footer with icon",
-                "icon_url": "https://example.com/icon.png"
-            }
+                "icon_url": "https://example.com/icon.png",
+            },
         )
 
         assert embed.footer.text == "Footer with icon"
@@ -240,20 +236,19 @@ class TestEmbedFooter:
         """Test footer text at max length (2048 chars)."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"foot3_{unique_id}",
             email=f"foot3_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         text = "a" * 2048
 
         embed = embeds.create_embed(
-            user_id=user.id,
-            title="Long Footer",
-            footer={"text": text}
+            user_id=user.id, title="Long Footer", footer={"text": text}
         )
 
         assert len(embed.footer.text) == 2048
@@ -262,40 +257,40 @@ class TestEmbedFooter:
         """Test footer text exceeding max length fails."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"foot4_{unique_id}",
             email=f"foot4_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         text = "a" * 2049
 
         with pytest.raises(EmbedValidationError):
             embeds.create_embed(
-                user_id=user.id,
-                title="Too Long Footer",
-                footer={"text": text}
+                user_id=user.id, title="Too Long Footer", footer={"text": text}
             )
 
     def test_footer_icon_url_validation(self, db_and_modules):
         """Test footer icon URL must be valid."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"foot5_{unique_id}",
             email=f"foot5_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         with pytest.raises(EmbedValidationError):
             embeds.create_embed(
                 user_id=user.id,
                 title="Invalid Footer Icon",
-                footer={"text": "Test", "icon_url": "data:image/png;base64,abc"}
+                footer={"text": "Test", "icon_url": "data:image/png;base64,abc"},
             )
 
 
@@ -306,19 +301,20 @@ class TestAuthorAndFooterTogether:
         """Test embed with both author and footer."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"both1_{unique_id}",
             email=f"both1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
             user_id=user.id,
             title="Author and Footer",
             author={"name": "Author Name", "url": "https://author.com"},
-            footer={"text": "Footer text", "icon_url": "https://example.com/icon.png"}
+            footer={"text": "Footer text", "icon_url": "https://example.com/icon.png"},
         )
 
         assert embed.author is not None
@@ -330,18 +326,17 @@ class TestAuthorAndFooterTogether:
         """Test embed with author but no footer."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"both2_{unique_id}",
             email=f"both2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
-            user_id=user.id,
-            title="Author Only",
-            author={"name": "Author"}
+            user_id=user.id, title="Author Only", author={"name": "Author"}
         )
 
         assert embed.author is not None
@@ -351,18 +346,17 @@ class TestAuthorAndFooterTogether:
         """Test embed with footer but no author."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"both3_{unique_id}",
             email=f"both3_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
-            user_id=user.id,
-            title="Footer Only",
-            footer={"text": "Footer"}
+            user_id=user.id, title="Footer Only", footer={"text": "Footer"}
         )
 
         assert embed.author is None
@@ -376,12 +370,13 @@ class TestAuthorFooterCharacterCount:
         """Test author name counts toward total character limit."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"cnt1_{unique_id}",
             email=f"cnt1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         # Create embed near limit with author name
@@ -390,10 +385,7 @@ class TestAuthorFooterCharacterCount:
         author_name = "c" * 256  # 256 + 4096 + 256 = 4608
 
         embed = embeds.create_embed(
-            user_id=user.id,
-            title=title,
-            description=desc,
-            author={"name": author_name}
+            user_id=user.id, title=title, description=desc, author={"name": author_name}
         )
 
         assert embed is not None
@@ -402,12 +394,13 @@ class TestAuthorFooterCharacterCount:
         """Test footer text counts toward total character limit."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"cnt2_{unique_id}",
             email=f"cnt2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         # Create embed near limit with footer
@@ -416,10 +409,7 @@ class TestAuthorFooterCharacterCount:
         footer_text = "c" * 1648  # 256 + 4096 + 1648 = 6000
 
         embed = embeds.create_embed(
-            user_id=user.id,
-            title=title,
-            description=desc,
-            footer={"text": footer_text}
+            user_id=user.id, title=title, description=desc, footer={"text": footer_text}
         )
 
         assert embed is not None
@@ -428,12 +418,13 @@ class TestAuthorFooterCharacterCount:
         """Test author and footer together can exceed total limit."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"cnt3_{unique_id}",
             email=f"cnt3_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         # Create embed that exceeds limit
@@ -448,5 +439,5 @@ class TestAuthorFooterCharacterCount:
                 title=title,
                 description=desc,
                 author={"name": author_name},
-                footer={"text": footer_text}
+                footer={"text": footer_text},
             )

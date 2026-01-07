@@ -16,11 +16,7 @@ class TestSetActivity:
         """Test setting playing activity."""
         user1, user2, presence = fresh_users
 
-        result = presence.set_activity(
-            user1.id,
-            ActivityType.PLAYING,
-            "Minecraft"
-        )
+        result = presence.set_activity(user1.id, ActivityType.PLAYING, "Minecraft")
 
         assert result.activity is not None
         assert result.activity.activity_type == ActivityType.PLAYING
@@ -34,7 +30,7 @@ class TestSetActivity:
             user1.id,
             ActivityType.STREAMING,
             "Live Coding",
-            url="https://twitch.tv/example"
+            url="https://twitch.tv/example",
         )
 
         assert result.activity.activity_type == ActivityType.STREAMING
@@ -49,7 +45,7 @@ class TestSetActivity:
             ActivityType.LISTENING,
             "Spotify",
             details="Song Title",
-            state="by Artist"
+            state="by Artist",
         )
 
         assert result.activity.activity_type == ActivityType.LISTENING
@@ -60,11 +56,7 @@ class TestSetActivity:
         """Test setting watching activity."""
         user1, user2, presence = fresh_users
 
-        result = presence.set_activity(
-            user1.id,
-            ActivityType.WATCHING,
-            "YouTube"
-        )
+        result = presence.set_activity(user1.id, ActivityType.WATCHING, "YouTube")
 
         assert result.activity.activity_type == ActivityType.WATCHING
 
@@ -72,11 +64,7 @@ class TestSetActivity:
         """Test setting competing activity."""
         user1, user2, presence = fresh_users
 
-        result = presence.set_activity(
-            user1.id,
-            ActivityType.COMPETING,
-            "Tournament"
-        )
+        result = presence.set_activity(user1.id, ActivityType.COMPETING, "Tournament")
 
         assert result.activity.activity_type == ActivityType.COMPETING
 
@@ -84,11 +72,7 @@ class TestSetActivity:
         """Test setting custom activity."""
         user1, user2, presence = fresh_users
 
-        result = presence.set_activity(
-            user1.id,
-            ActivityType.CUSTOM,
-            "Custom Activity"
-        )
+        result = presence.set_activity(user1.id, ActivityType.CUSTOM, "Custom Activity")
 
         assert result.activity.activity_type == ActivityType.CUSTOM
 
@@ -96,13 +80,11 @@ class TestSetActivity:
         """Test setting activity with timestamps."""
         user1, user2, presence = fresh_users
         import time
+
         start = int(time.time() * 1000)
 
         result = presence.set_activity(
-            user1.id,
-            ActivityType.PLAYING,
-            "Game",
-            timestamps={"start": start}
+            user1.id, ActivityType.PLAYING, "Game", timestamps={"start": start}
         )
 
         assert result.activity.start_timestamp == start
@@ -111,6 +93,7 @@ class TestSetActivity:
         """Test setting activity with end timestamp."""
         user1, user2, presence = fresh_users
         import time
+
         start = int(time.time() * 1000)
         end = start + 3600000
 
@@ -118,7 +101,7 @@ class TestSetActivity:
             user1.id,
             ActivityType.PLAYING,
             "Game",
-            timestamps={"start": start, "end": end}
+            timestamps={"start": start, "end": end},
         )
 
         assert result.activity.start_timestamp == start
@@ -136,8 +119,8 @@ class TestSetActivity:
                 "large_image": "game_logo",
                 "large_text": "Game Name",
                 "small_image": "rank_icon",
-                "small_text": "Diamond Rank"
-            }
+                "small_text": "Diamond Rank",
+            },
         )
 
         assert result.activity.large_image == "game_logo"

@@ -66,22 +66,23 @@ class TestAddReaction:
         """Test non-participant cannot add reaction."""
         db, auth, messaging, servers, relationships, reactions = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user1 = auth.register(
             username=f"np1_{unique_id}",
             email=f"np1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"np2_{unique_id}",
             email=f"np2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         outsider = auth.register(
             username=f"np3_{unique_id}",
             email=f"np3_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user1.id, user2.id)
@@ -155,13 +156,17 @@ class TestToggleReaction:
         reactions.add_reaction(user2.id, msg.id, "multi")
 
         msg_reactions = reactions.get_reactions(user1.id, msg.id)
-        multi_reaction = next((r for r in msg_reactions.reactions if r.emoji == "multi"), None)
+        multi_reaction = next(
+            (r for r in msg_reactions.reactions if r.emoji == "multi"), None
+        )
         assert multi_reaction is not None
         assert multi_reaction.count == 2
 
         reactions.remove_reaction(user1.id, msg.id, "multi")
 
         msg_reactions = reactions.get_reactions(user2.id, msg.id)
-        multi_reaction = next((r for r in msg_reactions.reactions if r.emoji == "multi"), None)
+        multi_reaction = next(
+            (r for r in msg_reactions.reactions if r.emoji == "multi"), None
+        )
         assert multi_reaction is not None
         assert multi_reaction.count == 1

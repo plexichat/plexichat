@@ -22,6 +22,7 @@ class TestMediaModuleSetup:
         }
 
         from src.core import media
+
         media._manager = None
         media._setup_complete = False
 
@@ -45,7 +46,9 @@ class TestMediaModuleSetup:
 class TestFullUploadWorkflow:
     """Tests for complete upload workflows."""
 
-    def test_upload_retrieve_delete_workflow(self, media_module, user_pool, sample_image_bytes):
+    def test_upload_retrieve_delete_workflow(
+        self, media_module, user_pool, sample_image_bytes
+    ):
         """Test complete upload, retrieve, delete workflow."""
         user = user_pool.get_user()
 
@@ -71,7 +74,9 @@ class TestFullUploadWorkflow:
         file = media_module.get_file(result.file_id)
         assert file is None
 
-    def test_upload_with_thumbnails_workflow(self, media_module, user_pool, sample_image_bytes):
+    def test_upload_with_thumbnails_workflow(
+        self, media_module, user_pool, sample_image_bytes
+    ):
         """Test upload with thumbnail generation workflow."""
         user = user_pool.get_user()
 
@@ -84,7 +89,8 @@ class TestFullUploadWorkflow:
         thumbnails = media_module.get_thumbnails(result.file_id)
 
         try:
-            from PIL import Image
+            from PIL import Image  # noqa: F401
+
             assert len(thumbnails) > 0
 
             custom_url = media_module.create_thumbnail(result.file_id, size=100)
@@ -92,7 +98,9 @@ class TestFullUploadWorkflow:
         except ImportError:
             pass
 
-    def test_upload_and_sign_workflow(self, media_module, user_pool, sample_image_bytes):
+    def test_upload_and_sign_workflow(
+        self, media_module, user_pool, sample_image_bytes
+    ):
         """Test upload and URL signing workflow."""
         user = user_pool.get_user()
 
@@ -116,7 +124,9 @@ class TestFullUploadWorkflow:
 class TestMessagingIntegration:
     """Tests for integration with messaging module."""
 
-    def test_upload_attachment_format(self, media_module, user_pool, sample_image_bytes):
+    def test_upload_attachment_format(
+        self, media_module, user_pool, sample_image_bytes
+    ):
         """Test that upload_attachment returns correct format."""
         user = user_pool.get_user()
 
@@ -137,7 +147,9 @@ class TestMessagingIntegration:
         assert attachment.size == len(sample_image_bytes)
         assert attachment.url is not None
 
-    def test_attachment_can_be_used_with_messaging(self, media_module, modules, user_pool, sample_image_bytes):
+    def test_attachment_can_be_used_with_messaging(
+        self, media_module, modules, user_pool, sample_image_bytes
+    ):
         """Test that attachment data can be used with messaging module."""
         user1 = user_pool.get_user()
         user2 = user_pool.get_user()
@@ -154,13 +166,15 @@ class TestMessagingIntegration:
             user_id=user1.id,
             conversation_id=dm.id,
             content="Check out this image!",
-            attachments=[{
-                "filename": attachment.filename,
-                "content_type": attachment.content_type,
-                "size": attachment.size,
-                "url": attachment.url,
-                "metadata": attachment.metadata,
-            }],
+            attachments=[
+                {
+                    "filename": attachment.filename,
+                    "content_type": attachment.content_type,
+                    "size": attachment.size,
+                    "url": attachment.url,
+                    "metadata": attachment.metadata,
+                }
+            ],
         )
 
         assert msg is not None
@@ -174,7 +188,14 @@ class TestMessagingIntegration:
 class TestMultipleFileTypes:
     """Tests for handling multiple file types."""
 
-    def test_upload_different_image_formats(self, media_module, user_pool, sample_image_bytes, sample_png_bytes, sample_gif_bytes):
+    def test_upload_different_image_formats(
+        self,
+        media_module,
+        user_pool,
+        sample_image_bytes,
+        sample_png_bytes,
+        sample_gif_bytes,
+    ):
         """Test uploading different image formats."""
         user = user_pool.get_user()
 
@@ -202,7 +223,9 @@ class TestMultipleFileTypes:
         )
         assert gif_result.content_type == "image/gif"
 
-    def test_upload_document_types(self, media_module, user_pool, sample_text_bytes, sample_pdf_bytes):
+    def test_upload_document_types(
+        self, media_module, user_pool, sample_text_bytes, sample_pdf_bytes
+    ):
         """Test uploading document types."""
         user = user_pool.get_user()
 
@@ -243,7 +266,9 @@ class TestConcurrentUploads:
         file_ids = [r.file_id for r in results]
         assert len(set(file_ids)) == 5
 
-    def test_same_user_multiple_uploads(self, media_module, user_pool, sample_image_bytes):
+    def test_same_user_multiple_uploads(
+        self, media_module, user_pool, sample_image_bytes
+    ):
         """Test same user uploading multiple files."""
         user = user_pool.get_user()
         results = []

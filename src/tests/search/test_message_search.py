@@ -54,11 +54,7 @@ class TestMessageSearchFilters:
         """Test search within specific conversation."""
         user1, user2, dm, messages, search = users_with_dm
 
-        results = search.search_messages(
-            user1.id,
-            "hello",
-            conversation_id=dm.id
-        )
+        results = search.search_messages(user1.id, "hello", conversation_id=dm.id)
 
         for result in results:
             assert result.conversation_id == dm.id
@@ -95,28 +91,32 @@ class TestMessageSearchPermissions:
         user1 = auth.register(
             username=f"perm_user1_{unique_id}",
             email=f"perm_user1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"perm_user2_{unique_id}",
             email=f"perm_user2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user3 = auth.register(
             username=f"perm_user3_{unique_id}",
             email=f"perm_user3_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm12 = messaging.create_dm(user1.id, user2.id)
         msg = messaging.send_message(user1.id, dm12.id, f"secret message {unique_id}")
 
-        search.index_message(msg.id, msg.content, {
-            "author_id": user1.id,
-            "conversation_id": dm12.id,
-        })
+        search.index_message(
+            msg.id,
+            msg.content,
+            {
+                "author_id": user1.id,
+                "conversation_id": dm12.id,
+            },
+        )
 
-        results_user1 = search.search_messages(user1.id, unique_id)
+        search.search_messages(user1.id, unique_id)
         results_user3 = search.search_messages(user3.id, unique_id)
 
         assert len(results_user3) == 0
@@ -135,21 +135,25 @@ class TestMessageSearchIndexing:
         user = auth.register(
             username=f"idx_user_{unique_id}",
             email=f"idx_user_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"idx_user2_{unique_id}",
             email=f"idx_user2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user.id, user2.id)
         msg = messaging.send_message(user.id, dm.id, f"indextest {unique_id}")
 
-        search.index_message(msg.id, msg.content, {
-            "author_id": user.id,
-            "conversation_id": dm.id,
-        })
+        search.index_message(
+            msg.id,
+            msg.content,
+            {
+                "author_id": user.id,
+                "conversation_id": dm.id,
+            },
+        )
 
         results = search.search_messages(user.id, f"indextest {unique_id}")
 
@@ -164,21 +168,25 @@ class TestMessageSearchIndexing:
         user = auth.register(
             username=f"rm_user_{unique_id}",
             email=f"rm_user_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"rm_user2_{unique_id}",
             email=f"rm_user2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user.id, user2.id)
         msg = messaging.send_message(user.id, dm.id, f"removetest {unique_id}")
 
-        search.index_message(msg.id, msg.content, {
-            "author_id": user.id,
-            "conversation_id": dm.id,
-        })
+        search.index_message(
+            msg.id,
+            msg.content,
+            {
+                "author_id": user.id,
+                "conversation_id": dm.id,
+            },
+        )
 
         search.remove_from_index(msg.id)
 

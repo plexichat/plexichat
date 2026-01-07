@@ -84,7 +84,9 @@ class TestEmojiLimits:
 class TestCreateEmoji:
     """Tests for emoji creation."""
 
-    def test_create_emoji_success(self, reactions_manager, mock_db, mock_servers, mock_media):
+    def test_create_emoji_success(
+        self, reactions_manager, mock_db, mock_servers, mock_media
+    ):
         """Test successful emoji creation."""
         mock_servers.has_permission.return_value = True
         mock_db.fetch_one.side_effect = [
@@ -102,11 +104,10 @@ class TestCreateEmoji:
                 "created_by": 1,
                 "available": 1,
                 "created_at": 1704067200000,
-            }
+            },
         ]
         mock_media.upload_file.return_value = MagicMock(
-            url="/media/test.png",
-            metadata={"width": 64, "height": 64}
+            url="/media/test.png", metadata={"width": 64, "height": 64}
         )
 
         emoji = reactions_manager.create_custom_emoji(
@@ -114,7 +115,7 @@ class TestCreateEmoji:
             server_id=1,
             name="test",
             image_data=b"PNG_DATA",
-            content_type="image/png"
+            content_type="image/png",
         )
 
         assert emoji.name == "test"
@@ -130,7 +131,7 @@ class TestCreateEmoji:
                 server_id=1,
                 name="test",
                 image_data=b"PNG_DATA",
-                content_type="image/png"
+                content_type="image/png",
             )
 
     def test_create_emoji_file_too_large(self, reactions_manager, mock_servers):
@@ -145,7 +146,7 @@ class TestCreateEmoji:
                 server_id=1,
                 name="test",
                 image_data=large_data,
-                content_type="image/png"
+                content_type="image/png",
             )
 
     def test_create_emoji_invalid_format(self, reactions_manager, mock_servers):
@@ -158,7 +159,7 @@ class TestCreateEmoji:
                 server_id=1,
                 name="test",
                 image_data=b"DATA",
-                content_type="image/bmp"
+                content_type="image/bmp",
             )
 
     def test_create_emoji_name_exists(self, reactions_manager, mock_db, mock_servers):
@@ -175,7 +176,7 @@ class TestCreateEmoji:
                 server_id=1,
                 name="existing",
                 image_data=b"PNG_DATA",
-                content_type="image/png"
+                content_type="image/png",
             )
 
 
@@ -212,13 +213,11 @@ class TestUpdateEmoji:
                 "created_by": 1,
                 "available": 1,
                 "created_at": 1704067200000,
-            }
+            },
         ]
 
         emoji = reactions_manager.update_custom_emoji(
-            user_id=1,
-            emoji_id=123,
-            name="new_name"
+            user_id=1, emoji_id=123, name="new_name"
         )
 
         assert emoji.name == "new_name"
@@ -229,9 +228,7 @@ class TestUpdateEmoji:
 
         with pytest.raises(CustomEmojiNotFoundError):
             reactions_manager.update_custom_emoji(
-                user_id=1,
-                emoji_id=999,
-                name="new_name"
+                user_id=1, emoji_id=999, name="new_name"
             )
 
 
@@ -346,8 +343,7 @@ def mock_media():
     """Create mock media module."""
     media = MagicMock()
     media.upload_file.return_value = MagicMock(
-        url="/media/test.png",
-        metadata={"width": 64, "height": 64}
+        url="/media/test.png", metadata={"width": 64, "height": 64}
     )
     return media
 
@@ -357,11 +353,9 @@ def reactions_manager(mock_db, mock_servers, mock_media):
     """Create reactions manager with mocks."""
     from src.core.reactions.manager import ReactionManager
 
-    with patch.object(ReactionManager, '_migrate_emoji_table'):
+    with patch.object(ReactionManager, "_migrate_emoji_table"):
         manager = ReactionManager(
-            db=mock_db,
-            servers_module=mock_servers,
-            media_module=mock_media
+            db=mock_db, servers_module=mock_servers, media_module=mock_media
         )
 
     return manager

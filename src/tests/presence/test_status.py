@@ -225,6 +225,7 @@ class TestCustomStatus:
         """Test setting custom status with expiration."""
         user1, user2, presence = fresh_users
         import time
+
         expires_at = int(time.time() * 1000) + 3600000  # 1 hour from now
 
         result = presence.set_custom_status(user1.id, "BRB", expires_at=expires_at)

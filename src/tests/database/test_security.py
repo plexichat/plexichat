@@ -1,7 +1,7 @@
 """
 Database security tests.
 
-Tests cover query parameterization, transaction isolation, SQL injection 
+Tests cover query parameterization, transaction isolation, SQL injection
 prevention, permission checks, and connection pooling under load.
 """
 
@@ -61,12 +61,7 @@ def db_config(setup_module):
             except OSError:
                 pass
 
-    default_config = {
-        "database": {
-            "type": "sqlite",
-            "path": db_path
-        }
-    }
+    default_config = {"database": {"type": "sqlite", "path": db_path}}
     config.setup(config_path=config_path, default_config=default_config)
 
     yield config_path
@@ -88,12 +83,16 @@ class TestQueryParameterization:
     def test_parameterized_insert(self, db_config):
         db = Database()
         db.connect()
-        db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, email TEXT)")
+        db.execute(
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, email TEXT)"
+        )
 
         username = "alice'; DROP TABLE users; --"
         email = "alice@test.com"
 
-        db.execute("INSERT INTO users (username, email) VALUES (?, ?)", (username, email))
+        db.execute(
+            "INSERT INTO users (username, email) VALUES (?, ?)", (username, email)
+        )
 
         result = db.fetch_one("SELECT username FROM users WHERE email = ?", (email,))
         assert result is not None
@@ -109,7 +108,9 @@ class TestQueryParameterization:
         db.execute("INSERT INTO users (username) VALUES (?)", ("bob",))
 
         malicious_input = "alice' OR '1'='1"
-        result = db.fetch_one("SELECT * FROM users WHERE username = ?", (malicious_input,))
+        result = db.fetch_one(
+            "SELECT * FROM users WHERE username = ?", (malicious_input,)
+        )
 
         assert result is None
         db.close()
@@ -230,7 +231,10 @@ class TestTransactionIsolation:
         db.execute("INSERT INTO accounts (balance) VALUES (?)", (1000,))
 
         db.begin_transaction()
-        db.execute("UPDATE accounts SET balance = balance - 500 WHERE id = 1", auto_commit=False)
+        db.execute(
+            "UPDATE accounts SET balance = balance - 500 WHERE id = 1",
+            auto_commit=False,
+        )
 
         result = db.fetch_one("SELECT balance FROM accounts WHERE id = 1")
         assert result["balance"] == 500
@@ -306,7 +310,9 @@ class TestTransactionIsolation:
         db.execute("INSERT INTO test (value) VALUES (?)", (10,), auto_commit=False)
 
         try:
-            db.execute("INSERT INTO test (value) VALUES (?)", (None,), auto_commit=False)
+            db.execute(
+                "INSERT INTO test (value) VALUES (?)", (None,), auto_commit=False
+            )
         except Exception:
             pass
 
@@ -322,7 +328,9 @@ class TestTransactionIsolation:
         db.execute("CREATE TABLE log (id INTEGER PRIMARY KEY, action TEXT)")
 
         db.begin_transaction()
-        db.execute("INSERT INTO log (action) VALUES (?)", ("action1",), auto_commit=False)
+        db.execute(
+            "INSERT INTO log (action) VALUES (?)", ("action1",), auto_commit=False
+        )
 
         assert db._in_transaction is True
 
@@ -351,7 +359,7 @@ class TestTransactionIsolation:
                 db.execute(
                     "UPDATE shared SET data = ? WHERE id = 1",
                     (f"worker_{worker_id}",),
-                    auto_commit=False
+                    auto_commit=False,
                 )
                 db.commit()
                 results.append(worker_id)
@@ -373,9 +381,15 @@ class TestSQLInjectionPrevention:
     def test_union_based_injection(self, db_config):
         db = Database()
         db.connect()
-        db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, password TEXT)")
-        db.execute("INSERT INTO users (username, password) VALUES (?, ?)", ("alice", "secret1"))
-        db.execute("INSERT INTO users (username, password) VALUES (?, ?)", ("bob", "secret2"))
+        db.execute(
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, password TEXT)"
+        )
+        db.execute(
+            "INSERT INTO users (username, password) VALUES (?, ?)", ("alice", "secret1")
+        )
+        db.execute(
+            "INSERT INTO users (username, password) VALUES (?, ?)", ("bob", "secret2")
+        )
 
         injection = "alice' UNION SELECT id, username, password FROM users--"
         result = db.fetch_one("SELECT * FROM users WHERE username = ?", (injection,))
@@ -400,7 +414,9 @@ class TestSQLInjectionPrevention:
         db.connect()
         db.execute("CREATE TABLE data (id INTEGER PRIMARY KEY, info TEXT)")
 
-        injection = "1'; SELECT CASE WHEN (1=1) THEN (SELECT 1 UNION SELECT 2) ELSE 1 END--"
+        injection = (
+            "1'; SELECT CASE WHEN (1=1) THEN (SELECT 1 UNION SELECT 2) ELSE 1 END--"
+        )
         start = time.time()
         try:
             db.execute("SELECT * FROM data WHERE id = ?", (injection,))
@@ -484,7 +500,9 @@ class TestConnectionPooling:
         for i in range(10):
             db = Database()
             db.connect()
-            db.execute("CREATE TABLE IF NOT EXISTS test (id INTEGER PRIMARY KEY, val TEXT)")
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS test (id INTEGER PRIMARY KEY, val TEXT)"
+            )
             db.execute("INSERT INTO test (val) VALUES (?)", (f"val_{i}",))
             connections.append(db)
 
@@ -500,7 +518,9 @@ class TestConnectionPooling:
     def test_concurrent_connections(self, db_config):
         db_setup = Database()
         db_setup.connect()
-        db_setup.execute("CREATE TABLE concurrent_test (id INTEGER PRIMARY KEY, thread_id INTEGER)")
+        db_setup.execute(
+            "CREATE TABLE concurrent_test (id INTEGER PRIMARY KEY, thread_id INTEGER)"
+        )
         db_setup.close()
 
         def worker(thread_id):
@@ -508,7 +528,10 @@ class TestConnectionPooling:
             db.connect()
             try:
                 for i in range(10):
-                    db.execute("INSERT INTO concurrent_test (thread_id) VALUES (?)", (thread_id,))
+                    db.execute(
+                        "INSERT INTO concurrent_test (thread_id) VALUES (?)",
+                        (thread_id,),
+                    )
             finally:
                 db.close()
 
@@ -527,7 +550,9 @@ class TestConnectionPooling:
     def test_connection_pool_under_load(self, db_config):
         db_setup = Database()
         db_setup.connect()
-        db_setup.execute("CREATE TABLE load_test (id INTEGER PRIMARY KEY, value INTEGER)")
+        db_setup.execute(
+            "CREATE TABLE load_test (id INTEGER PRIMARY KEY, value INTEGER)"
+        )
         db_setup.close()
 
         results = []
@@ -537,7 +562,10 @@ class TestConnectionPooling:
             db.connect()
             try:
                 for i in range(20):
-                    db.execute("INSERT INTO load_test (value) VALUES (?)", (worker_id * 100 + i,))
+                    db.execute(
+                        "INSERT INTO load_test (value) VALUES (?)",
+                        (worker_id * 100 + i,),
+                    )
                     time.sleep(0.001)
                 results.append(worker_id)
             finally:
@@ -581,8 +609,14 @@ class TestConnectionPooling:
                 db = Database()
                 db.connect()
                 for i in range(10):
-                    db.execute("INSERT INTO thread_safe (data) VALUES (?)", (f"w{worker_id}_i{i}",))
-                    db.fetch_all("SELECT * FROM thread_safe WHERE data LIKE ?", (f"w{worker_id}%",))
+                    db.execute(
+                        "INSERT INTO thread_safe (data) VALUES (?)",
+                        (f"w{worker_id}_i{i}",),
+                    )
+                    db.fetch_all(
+                        "SELECT * FROM thread_safe WHERE data LIKE ?",
+                        (f"w{worker_id}%",),
+                    )
                 db.close()
             except Exception as e:
                 errors.append(str(e))
@@ -615,12 +649,9 @@ class TestPostgreSQLConnectionPooling:
                     "port": 5432,
                     "user": "postgres",
                     "password": "password",
-                    "dbname": "test_security"
+                    "dbname": "test_security",
                 },
-                "connection_pool": {
-                    "min_connections": 2,
-                    "max_connections": 10
-                }
+                "connection_pool": {"min_connections": 2, "max_connections": 10},
             }
         }
         config.setup(config_path=config_path, default_config=pg_config)
@@ -669,14 +700,19 @@ class TestPostgreSQLConnectionPooling:
         try:
             db_setup = Database()
             db_setup.connect()
-            db_setup.execute("CREATE TABLE IF NOT EXISTS pg_pool_test (id SERIAL PRIMARY KEY, data TEXT)")
+            db_setup.execute(
+                "CREATE TABLE IF NOT EXISTS pg_pool_test (id SERIAL PRIMARY KEY, data TEXT)"
+            )
             db_setup.close()
 
             def pg_worker(worker_id):
                 db = Database()
                 db.connect()
                 try:
-                    db.execute("INSERT INTO pg_pool_test (data) VALUES (?)", (f"worker_{worker_id}",))
+                    db.execute(
+                        "INSERT INTO pg_pool_test (data) VALUES (?)",
+                        (f"worker_{worker_id}",),
+                    )
                 finally:
                     db.close()
 
@@ -732,10 +768,14 @@ class TestPermissionChecks:
 
         db.execute("INSERT INTO parents (id, name) VALUES (?, ?)", (1, "Parent 1"))
 
-        db.execute("INSERT INTO children (parent_id, name) VALUES (?, ?)", (1, "Child 1"))
+        db.execute(
+            "INSERT INTO children (parent_id, name) VALUES (?, ?)", (1, "Child 1")
+        )
 
         with pytest.raises(sqlite3.IntegrityError):
-            db.execute("INSERT INTO children (parent_id, name) VALUES (?, ?)", (999, "Orphan"))
+            db.execute(
+                "INSERT INTO children (parent_id, name) VALUES (?, ?)", (999, "Orphan")
+            )
 
         db.close()
 
@@ -754,7 +794,9 @@ class TestPermissionChecks:
     def test_not_null_constraint_enforcement(self, db_config):
         db = Database()
         db.connect()
-        db.execute("CREATE TABLE required (id INTEGER PRIMARY KEY, value TEXT NOT NULL)")
+        db.execute(
+            "CREATE TABLE required (id INTEGER PRIMARY KEY, value TEXT NOT NULL)"
+        )
 
         with pytest.raises(sqlite3.IntegrityError):
             db.execute("INSERT INTO required (value) VALUES (?)", (None,))
@@ -843,7 +885,9 @@ class TestDatabaseSecurity:
     """Additional security tests for database operations."""
 
     def test_prevent_path_traversal_in_table_names(self, db_config):
-        pytest.skip("SQLite allows arbitrary table names in quotes; this does not constitute path traversal")
+        pytest.skip(
+            "SQLite allows arbitrary table names in quotes; this does not constitute path traversal"
+        )
         db = Database()
         db.connect()
 
@@ -931,7 +975,9 @@ class TestDatabaseSecurity:
         db2.connect()
 
         db1.begin_transaction()
-        db1.execute("INSERT INTO state_test (data) VALUES (?)", ("from_db1",), auto_commit=False)
+        db1.execute(
+            "INSERT INTO state_test (data) VALUES (?)", ("from_db1",), auto_commit=False
+        )
 
         assert db1._in_transaction is True
         assert db2._in_transaction is False
@@ -947,7 +993,9 @@ class TestDatabaseSecurity:
         db.execute("INSERT INTO search (content) VALUES (?)", ("test data",))
 
         malicious_pattern = "%'; DROP TABLE search; --"
-        results = db.fetch_all("SELECT * FROM search WHERE content LIKE ?", (malicious_pattern,))
+        results = db.fetch_all(
+            "SELECT * FROM search WHERE content LIKE ?", (malicious_pattern,)
+        )
 
         assert len(results) == 0
         assert db.table_exists("search")

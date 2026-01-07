@@ -57,7 +57,9 @@ class TestICECandidateParser:
 
     def test_parse_tcp_candidate(self):
         """Test parsing a TCP candidate."""
-        candidate = "candidate:4 1 tcp 1518280447 192.168.1.100 9 typ host tcptype active"
+        candidate = (
+            "candidate:4 1 tcp 1518280447 192.168.1.100 9 typ host tcptype active"
+        )
 
         parser = ICECandidateParser()
         parsed = parser.parse(candidate)
@@ -76,7 +78,9 @@ class TestICECandidateParser:
 
     def test_parse_candidate_with_generation(self):
         """Test parsing candidate with generation."""
-        candidate = "candidate:1 1 udp 2130706431 192.168.1.100 54321 typ host generation 0"
+        candidate = (
+            "candidate:1 1 udp 2130706431 192.168.1.100 54321 typ host generation 0"
+        )
 
         parser = ICECandidateParser()
         parsed = parser.parse(candidate)
@@ -85,7 +89,9 @@ class TestICECandidateParser:
 
     def test_parse_candidate_with_ufrag(self):
         """Test parsing candidate with ufrag."""
-        candidate = "candidate:1 1 udp 2130706431 192.168.1.100 54321 typ host ufrag abc123"
+        candidate = (
+            "candidate:1 1 udp 2130706431 192.168.1.100 54321 typ host ufrag abc123"
+        )
 
         parser = ICECandidateParser()
         parsed = parser.parse(candidate)
@@ -111,7 +117,9 @@ class TestICECandidateParser:
         candidate_str = "candidate:1 1 udp 2130706431 192.168.1.100 54321 typ host"
 
         parser = ICECandidateParser()
-        candidate = parser.to_candidate(candidate_str, sdp_mid="audio", sdp_mline_index=0)
+        candidate = parser.to_candidate(
+            candidate_str, sdp_mid="audio", sdp_mline_index=0
+        )
 
         assert isinstance(candidate, ICECandidate)
         assert candidate.candidate == candidate_str
@@ -213,8 +221,13 @@ class TestICECandidateManager:
         """Test getting candidates for a session."""
         manager = ICECandidateManager()
 
-        manager.add_candidate("session1", "candidate:1 1 udp 2130706431 192.168.1.100 54321 typ host")
-        manager.add_candidate("session1", "candidate:2 1 udp 1694498815 203.0.113.50 12345 typ srflx raddr 192.168.1.100 rport 54321")
+        manager.add_candidate(
+            "session1", "candidate:1 1 udp 2130706431 192.168.1.100 54321 typ host"
+        )
+        manager.add_candidate(
+            "session1",
+            "candidate:2 1 udp 1694498815 203.0.113.50 12345 typ srflx raddr 192.168.1.100 rport 54321",
+        )
 
         candidates = manager.get_candidates("session1")
 
@@ -224,7 +237,9 @@ class TestICECandidateManager:
         """Test clearing candidates for a session."""
         manager = ICECandidateManager()
 
-        manager.add_candidate("session1", "candidate:1 1 udp 2130706431 192.168.1.100 54321 typ host")
+        manager.add_candidate(
+            "session1", "candidate:1 1 udp 2130706431 192.168.1.100 54321 typ host"
+        )
         manager.clear_candidates("session1")
 
         candidates = manager.get_candidates("session1")
@@ -234,8 +249,13 @@ class TestICECandidateManager:
         """Test that best candidate prefers relay for NAT traversal."""
         manager = ICECandidateManager()
 
-        manager.add_candidate("session1", "candidate:1 1 udp 2130706431 192.168.1.100 54321 typ host")
-        manager.add_candidate("session1", "candidate:2 1 udp 100 198.51.100.10 3478 typ relay raddr 192.168.1.100 rport 54321")
+        manager.add_candidate(
+            "session1", "candidate:1 1 udp 2130706431 192.168.1.100 54321 typ host"
+        )
+        manager.add_candidate(
+            "session1",
+            "candidate:2 1 udp 100 198.51.100.10 3478 typ relay raddr 192.168.1.100 rport 54321",
+        )
 
         best = manager.get_best_candidate("session1")
 

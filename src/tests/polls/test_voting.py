@@ -44,12 +44,12 @@ class TestVoting:
         user1 = auth.register(
             username=f"double_vote1_{unique_id}",
             email=f"double_vote1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"double_vote2_{unique_id}",
             email=f"double_vote2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user1.id, user2.id)
@@ -59,7 +59,7 @@ class TestVoting:
             user_id=user1.id,
             message_id=msg.id,
             question="Double vote?",
-            options=["A", "B"]
+            options=["A", "B"],
         )
 
         polls.vote(user2.id, poll.id, [poll.options[0].id])
@@ -75,12 +75,12 @@ class TestVoting:
         user1 = auth.register(
             username=f"multi_vote1_{unique_id}",
             email=f"multi_vote1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"multi_vote2_{unique_id}",
             email=f"multi_vote2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user1.id, user2.id)
@@ -91,7 +91,7 @@ class TestVoting:
             message_id=msg.id,
             question="Select multiple",
             options=["A", "B", "C"],
-            allow_multiple_choice=True
+            allow_multiple_choice=True,
         )
 
         option_ids = [poll.options[0].id, poll.options[2].id]
@@ -109,12 +109,12 @@ class TestVoting:
         user1 = auth.register(
             username=f"single_vote1_{unique_id}",
             email=f"single_vote1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"single_vote2_{unique_id}",
             email=f"single_vote2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user1.id, user2.id)
@@ -125,7 +125,7 @@ class TestVoting:
             message_id=msg.id,
             question="Single choice only",
             options=["A", "B", "C"],
-            allow_multiple_choice=False
+            allow_multiple_choice=False,
         )
 
         with pytest.raises(MultipleVoteNotAllowedError):

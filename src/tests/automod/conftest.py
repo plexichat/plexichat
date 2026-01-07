@@ -18,7 +18,7 @@ def automod_module(modules):
         modules._db,
         modules.servers,
         modules.messaging,
-        getattr(modules, 'notifications', None)
+        getattr(modules, "notifications", None),
     )
     return automod
 
@@ -28,15 +28,14 @@ def test_server_for_automod(modules, user_pool):
     """Create a test server for automod tests."""
     owner = user_pool.get_user()
     server = modules.servers.create_server(
-        owner_id=owner.id,
-        name=f"AutoMod Test Server {uuid.uuid4().hex[:6]}"
+        owner_id=owner.id, name=f"AutoMod Test Server {uuid.uuid4().hex[:6]}"
     )
 
     channel = modules.servers.create_channel(
         user_id=owner.id,
         server_id=server.id,
         name="general",
-        channel_type=modules.servers.ChannelType.TEXT
+        channel_type=modules.servers.ChannelType.TEXT,
     )
 
     return server, channel, owner
@@ -57,12 +56,9 @@ def keyword_rule(automod_module, test_server_for_automod, user_pool, modules):
         rule_config={
             "keywords": ["badword", "spam", "scam"],
             "case_sensitive": False,
-            "whole_word": True
+            "whole_word": True,
         },
-        actions=[
-            {"action_type": "delete_message"},
-            {"action_type": "log_only"}
-        ]
+        actions=[{"action_type": "delete_message"}, {"action_type": "log_only"}],
     )
 
     return rule, server, channel, victim
@@ -83,13 +79,17 @@ def regex_rule(automod_module, test_server_for_automod, user_pool, modules):
         rule_config={
             "patterns": [
                 {"pattern": r"\b\d{16}\b", "name": "credit_card", "severity": "high"},
-                {"pattern": r"free\s+money", "name": "scam_phrase", "severity": "medium"}
+                {
+                    "pattern": r"free\s+money",
+                    "name": "scam_phrase",
+                    "severity": "medium",
+                },
             ]
         },
         actions=[
             {"action_type": "delete_message"},
-            {"action_type": "alert_moderators"}
-        ]
+            {"action_type": "alert_moderators"},
+        ],
     )
 
     return rule, server, channel, victim
@@ -111,11 +111,9 @@ def spam_rule(automod_module, test_server_for_automod, user_pool, modules):
             "max_messages": 3,
             "window_seconds": 5,
             "duplicate_threshold": 2,
-            "duplicate_window_seconds": 30
+            "duplicate_window_seconds": 30,
         },
-        actions=[
-            {"action_type": "timeout_user", "duration_seconds": 60}
-        ]
+        actions=[{"action_type": "timeout_user", "duration_seconds": 60}],
     )
 
     return rule, server, channel, victim
@@ -137,11 +135,9 @@ def mention_rule(automod_module, test_server_for_automod, user_pool, modules):
             "max_user_mentions": 3,
             "max_role_mentions": 2,
             "max_total_mentions": 5,
-            "block_everyone": True
+            "block_everyone": True,
         },
-        actions=[
-            {"action_type": "delete_message"}
-        ]
+        actions=[{"action_type": "delete_message"}],
     )
 
     return rule, server, channel, victim

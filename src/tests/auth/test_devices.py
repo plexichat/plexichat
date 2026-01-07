@@ -17,7 +17,7 @@ class TestDevices:
         auth.login(
             username,
             "TestPass123!",
-            device_info={"fingerprint": fp, "name": "Test Device", "type": "desktop"}
+            device_info={"fingerprint": fp, "name": "Test Device", "type": "desktop"},
         )
 
         devices = auth.get_devices(user.id)
@@ -39,8 +39,12 @@ class TestDevices:
         """Test different fingerprint creates new device."""
         user, auth, username = registered_user
 
-        auth.login(username, "TestPass123!", device_info={"fingerprint": f"dev1_{user.id}"})
-        auth.login(username, "TestPass123!", device_info={"fingerprint": f"dev2_{user.id}"})
+        auth.login(
+            username, "TestPass123!", device_info={"fingerprint": f"dev1_{user.id}"}
+        )
+        auth.login(
+            username, "TestPass123!", device_info={"fingerprint": f"dev2_{user.id}"}
+        )
 
         devices = auth.get_devices(user.id)
         assert len(devices) >= 2
@@ -49,8 +53,12 @@ class TestDevices:
         """Test getting user devices."""
         user, auth, username = registered_user
 
-        auth.login(username, "TestPass123!", device_info={"fingerprint": f"fp1_{user.id}"})
-        auth.login(username, "TestPass123!", device_info={"fingerprint": f"fp2_{user.id}"})
+        auth.login(
+            username, "TestPass123!", device_info={"fingerprint": f"fp1_{user.id}"}
+        )
+        auth.login(
+            username, "TestPass123!", device_info={"fingerprint": f"fp2_{user.id}"}
+        )
 
         devices = auth.get_devices(user.id)
         assert len(devices) >= 2
@@ -60,7 +68,11 @@ class TestDevices:
         user, auth, username = registered_user
 
         fp = f"rename_fp_{user.id}"
-        auth.login(username, "TestPass123!", device_info={"fingerprint": fp, "name": "Old Name"})
+        auth.login(
+            username,
+            "TestPass123!",
+            device_info={"fingerprint": fp, "name": "Old Name"},
+        )
 
         devices = auth.get_devices(user.id)
         device = next(d for d in devices if d.fingerprint == fp)
@@ -72,13 +84,15 @@ class TestDevices:
         """Test user cannot rename another user's device."""
         db, auth = db_and_auth
         unique_id = uuid.uuid4().hex[:16]
-        
+
         username1 = f"dev1_{unique_id}"
         username2 = f"dev2_{unique_id}"
         user1 = auth.register(username1, f"{username1}@example.com", "TestPass123!")
         user2 = auth.register(username2, f"{username2}@example.com", "TestPass123!")
 
-        auth.login(username1, "TestPass123!", device_info={"fingerprint": "user1_device"})
+        auth.login(
+            username1, "TestPass123!", device_info={"fingerprint": "user1_device"}
+        )
 
         devices = auth.get_devices(user1.id)
         device = devices[0]
@@ -110,7 +124,9 @@ class TestDevices:
 
         user = auth.register(username, f"{username}@example.com", "TestPass123!")
 
-        result = auth.login(username, "TestPass123!", device_info={"fingerprint": "session_device"})
+        result = auth.login(
+            username, "TestPass123!", device_info={"fingerprint": "session_device"}
+        )
         token = result.token
 
         devices = auth.get_devices(user.id)
@@ -126,7 +142,9 @@ class TestDevices:
         user, auth, username = registered_user
 
         fp = f"type_fp_{user.id}"
-        auth.login(username, "TestPass123!", device_info={"fingerprint": fp, "type": "mobile"})
+        auth.login(
+            username, "TestPass123!", device_info={"fingerprint": fp, "type": "mobile"}
+        )
 
         devices = auth.get_devices(user.id)
         device = next(d for d in devices if d.fingerprint == fp)

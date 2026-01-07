@@ -22,7 +22,7 @@ class TestPlaySound:
         owner = auth.register(
             username=f"play_owner_{unique_id}",
             email=f"play_owner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"Play Server {unique_id}")
@@ -31,7 +31,7 @@ class TestPlaySound:
             user_id=owner.id,
             server_id=server.id,
             name="voice-play",
-            channel_type=servers.ChannelType.VOICE
+            channel_type=servers.ChannelType.VOICE,
         )
 
         sound = soundboard.upload_sound(
@@ -41,7 +41,7 @@ class TestPlaySound:
             format=SoundFormat.MP3,
             url="https://cdn.example.com/sounds/play.mp3",
             size=100000,
-            duration_seconds=2.0
+            duration_seconds=2.0,
         )
 
         playback = soundboard.play_sound(owner.id, sound.id, voice_channel.id)
@@ -60,7 +60,7 @@ class TestPlaySound:
         owner = auth.register(
             username=f"usage_owner_{unique_id}",
             email=f"usage_owner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"Usage Server {unique_id}")
@@ -69,7 +69,7 @@ class TestPlaySound:
             user_id=owner.id,
             server_id=server.id,
             name="voice-usage",
-            channel_type=servers.ChannelType.VOICE
+            channel_type=servers.ChannelType.VOICE,
         )
 
         sound = soundboard.upload_sound(
@@ -79,7 +79,7 @@ class TestPlaySound:
             format=SoundFormat.MP3,
             url="https://cdn.example.com/sounds/usage.mp3",
             size=100000,
-            duration_seconds=2.0
+            duration_seconds=2.0,
         )
 
         initial = soundboard.get_sound(sound.id, owner.id)
@@ -98,7 +98,7 @@ class TestPlaySound:
         owner = auth.register(
             username=f"nonex_owner_{unique_id}",
             email=f"nonex_owner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"Nonex Server {unique_id}")
@@ -107,7 +107,7 @@ class TestPlaySound:
             user_id=owner.id,
             server_id=server.id,
             name="voice-nonex",
-            channel_type=servers.ChannelType.VOICE
+            channel_type=servers.ChannelType.VOICE,
         )
 
         with pytest.raises(SoundNotFoundError):
@@ -121,7 +121,7 @@ class TestPlaySound:
         owner = auth.register(
             username=f"text_owner_{unique_id}",
             email=f"text_owner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"Text Server {unique_id}")
@@ -130,7 +130,7 @@ class TestPlaySound:
             user_id=owner.id,
             server_id=server.id,
             name="text-channel",
-            channel_type=servers.ChannelType.TEXT
+            channel_type=servers.ChannelType.TEXT,
         )
 
         sound = soundboard.upload_sound(
@@ -140,7 +140,7 @@ class TestPlaySound:
             format=SoundFormat.MP3,
             url="https://cdn.example.com/sounds/text.mp3",
             size=100000,
-            duration_seconds=2.0
+            duration_seconds=2.0,
         )
 
         with pytest.raises(ChannelNotFoundError):
@@ -154,7 +154,7 @@ class TestPlaySound:
         owner = auth.register(
             username=f"no_chan_owner_{unique_id}",
             email=f"no_chan_owner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"No Chan Server {unique_id}")
@@ -166,7 +166,7 @@ class TestPlaySound:
             format=SoundFormat.MP3,
             url="https://cdn.example.com/sounds/nochan.mp3",
             size=100000,
-            duration_seconds=2.0
+            duration_seconds=2.0,
         )
 
         with pytest.raises(ChannelNotFoundError):

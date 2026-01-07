@@ -28,126 +28,140 @@ class TestStatusCodeMapping:
 
     def test_not_found_error_maps_to_404(self):
         """Test NotFoundError maps to 404."""
+
         class NotFoundError(Exception):
             pass
-        
+
         exc = NotFoundError("Resource not found")
         status = get_status_code_for_exception(exc)
         assert status == 404
 
     def test_access_denied_error_maps_to_403(self):
         """Test AccessDeniedError maps to 403."""
+
         class AccessDeniedError(Exception):
             pass
-        
+
         exc = AccessDeniedError("Access denied")
         status = get_status_code_for_exception(exc)
         assert status == 403
 
     def test_permission_denied_error_maps_to_403(self):
         """Test PermissionDeniedError maps to 403."""
+
         class PermissionDeniedError(Exception):
             pass
-        
+
         exc = PermissionDeniedError("Permission denied")
         status = get_status_code_for_exception(exc)
         assert status == 403
 
     def test_invalid_credentials_error_maps_to_401(self):
         """Test InvalidCredentialsError maps to 401."""
+
         class InvalidCredentialsError(Exception):
             pass
-        
+
         exc = InvalidCredentialsError("Invalid credentials")
         status = get_status_code_for_exception(exc)
         assert status == 401
 
     def test_token_expired_error_maps_to_401(self):
         """Test TokenExpiredError maps to 401."""
+
         class TokenExpiredError(Exception):
             pass
-        
+
         exc = TokenExpiredError("Token expired")
         status = get_status_code_for_exception(exc)
         assert status == 401
 
     def test_user_exists_error_maps_to_409(self):
         """Test UserExistsError maps to 409."""
+
         class UserExistsError(Exception):
             pass
-        
+
         exc = UserExistsError("User already exists")
         status = get_status_code_for_exception(exc)
         assert status == 409
 
     def test_already_exists_error_maps_to_409(self):
         """Test AlreadyExistsError maps to 409."""
+
         class AlreadyExistsError(Exception):
             pass
-        
+
         exc = AlreadyExistsError("Already exists")
         status = get_status_code_for_exception(exc)
         assert status == 409
 
     def test_validation_error_maps_to_400(self):
         """Test ValidationError maps to 400."""
+
         class ValidationError(Exception):
             pass
-        
+
         exc = ValidationError("Validation failed")
         status = get_status_code_for_exception(exc)
         assert status == 400
 
     def test_invalid_error_maps_to_400(self):
         """Test InvalidError maps to 400."""
+
         class InvalidError(Exception):
             pass
-        
+
         exc = InvalidError("Invalid input")
         status = get_status_code_for_exception(exc)
         assert status == 400
 
     def test_limit_error_maps_to_400(self):
         """Test LimitError maps to 400."""
+
         class LimitError(Exception):
             pass
-        
+
         exc = LimitError("Limit exceeded")
         status = get_status_code_for_exception(exc)
         assert status == 400
 
     def test_blocked_error_maps_to_403(self):
         """Test BlockedError maps to 403."""
+
         class BlockedError(Exception):
             pass
-        
+
         exc = BlockedError("User blocked")
         status = get_status_code_for_exception(exc)
         assert status == 403
 
     def test_locked_error_maps_to_423(self):
         """Test LockedError maps to 423."""
+
         class LockedError(Exception):
             pass
-        
+
         exc = LockedError("Resource locked")
         status = get_status_code_for_exception(exc)
         assert status == 423
 
     def test_archived_error_maps_to_410(self):
         """Test ArchivedError maps to 410."""
+
         class ArchivedError(Exception):
             pass
-        
+
         exc = ArchivedError("Resource archived")
         status = get_status_code_for_exception(exc)
         assert status == 410
 
     def test_account_locked_error_maps_to_403(self):
         """Test AccountLockedError maps to 403."""
+
         class AccountLockedError(Exception):
             pass
-        
+
         exc = AccountLockedError("Account locked")
         status = get_status_code_for_exception(exc)
         assert status == 403
@@ -160,9 +174,10 @@ class TestStatusCodeMapping:
 
     def test_custom_error_without_pattern_maps_to_500(self):
         """Test custom error without matching pattern maps to 500."""
+
         class CustomWeirdError(Exception):
             pass
-        
+
         exc = CustomWeirdError("Something went wrong")
         status = get_status_code_for_exception(exc)
         assert status == 500
@@ -217,7 +232,7 @@ class TestExceptionHandlers:
         async def http_exception_dict_endpoint():
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Custom error"}}
+                detail={"error": {"code": 400, "message": "Custom error"}},
             )
 
         @app.get("/general-exception")
@@ -243,7 +258,7 @@ class TestExceptionHandlers:
             class TestModel(BaseModel):
                 name: str = Field(min_length=1)
                 age: int = Field(gt=0)
-            
+
             TestModel(**data)
             return {"success": True}
 
@@ -375,7 +390,7 @@ class TestSecurityAndInformationLeakage:
         response = client.get("/internal-error")
         assert response.status_code == 500
         data = response.json()
-        
+
         response_str = str(data).lower()
         assert "secret" not in response_str
         assert "api_key" not in response_str
@@ -387,7 +402,7 @@ class TestSecurityAndInformationLeakage:
         response = client.get("/file-path-error")
         assert response.status_code == 500
         data = response.json()
-        
+
         response_str = str(data).lower()
         assert ".secrets" not in response_str
         assert "/home/" not in response_str
@@ -398,7 +413,7 @@ class TestSecurityAndInformationLeakage:
         response = client.get("/stack-trace-error")
         assert response.status_code == 500
         data = response.json()
-        
+
         response_str = str(data).lower()
         assert "traceback" not in response_str
         assert "stack" not in response_str
@@ -435,7 +450,7 @@ class TestErrorMappingCompleteness:
     def test_error_mappings_have_valid_codes(self):
         """Test all error mappings have valid HTTP status codes."""
         valid_codes = {400, 401, 403, 404, 409, 410, 423, 429, 500}
-        
+
         for pattern, code in ERROR_MAPPINGS.items():
             assert isinstance(code, int)
             assert code in valid_codes
@@ -470,20 +485,15 @@ class TestValidationErrors:
     def test_invalid_field_value(self, validation_app):
         """Test validation error for invalid field value."""
         client = TestClient(validation_app, raise_server_exceptions=False)
-        response = client.post("/users", json={
-            "username": "ab",
-            "email": "test@example.com",
-            "age": 25
-        })
+        response = client.post(
+            "/users", json={"username": "ab", "email": "test@example.com", "age": 25}
+        )
         assert response.status_code in [400, 422]
 
     def test_multiple_validation_errors(self, validation_app):
         """Test multiple validation errors."""
         client = TestClient(validation_app, raise_server_exceptions=False)
-        response = client.post("/users", json={
-            "username": "ab",
-            "age": -5
-        })
+        response = client.post("/users", json={"username": "ab", "age": -5})
         assert response.status_code in [400, 422]
 
 

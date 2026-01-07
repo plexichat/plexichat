@@ -21,9 +21,30 @@ class TestMessageRanking:
     def test_ranking_by_score(self):
         """Test results are sorted by score."""
         results = [
-            MessageSearchResult(id=1, message_id=1, content="low", score=1.0, author_id=1, conversation_id=1),
-            MessageSearchResult(id=2, message_id=2, content="high", score=5.0, author_id=1, conversation_id=1),
-            MessageSearchResult(id=3, message_id=3, content="medium", score=3.0, author_id=1, conversation_id=1),
+            MessageSearchResult(
+                id=1,
+                message_id=1,
+                content="low",
+                score=1.0,
+                author_id=1,
+                conversation_id=1,
+            ),
+            MessageSearchResult(
+                id=2,
+                message_id=2,
+                content="high",
+                score=5.0,
+                author_id=1,
+                conversation_id=1,
+            ),
+            MessageSearchResult(
+                id=3,
+                message_id=3,
+                content="medium",
+                score=3.0,
+                author_id=1,
+                conversation_id=1,
+            ),
         ]
 
         parsed = ParsedQuery(raw_query="test", search_terms=["test"])
@@ -36,14 +57,26 @@ class TestMessageRanking:
     def test_exact_phrase_boost(self):
         """Test exact phrase match boosts score."""
         results = [
-            MessageSearchResult(id=1, message_id=1, content="hello world", score=1.0, author_id=1, conversation_id=1),
-            MessageSearchResult(id=2, message_id=2, content="hello there", score=1.0, author_id=1, conversation_id=1),
+            MessageSearchResult(
+                id=1,
+                message_id=1,
+                content="hello world",
+                score=1.0,
+                author_id=1,
+                conversation_id=1,
+            ),
+            MessageSearchResult(
+                id=2,
+                message_id=2,
+                content="hello there",
+                score=1.0,
+                author_id=1,
+                conversation_id=1,
+            ),
         ]
 
         parsed = ParsedQuery(
-            raw_query='"hello world"',
-            search_terms=[],
-            exact_phrases=["hello world"]
+            raw_query='"hello world"', search_terms=[], exact_phrases=["hello world"]
         )
 
         engine = RankingEngine()
@@ -61,8 +94,24 @@ class TestMessageRanking:
         new_ts = int(now.timestamp() * 1000)
 
         results = [
-            MessageSearchResult(id=1, message_id=1, content="old", score=1.0, author_id=1, conversation_id=1, created_at=old_ts),
-            MessageSearchResult(id=2, message_id=2, content="new", score=1.0, author_id=1, conversation_id=1, created_at=new_ts),
+            MessageSearchResult(
+                id=1,
+                message_id=1,
+                content="old",
+                score=1.0,
+                author_id=1,
+                conversation_id=1,
+                created_at=old_ts,
+            ),
+            MessageSearchResult(
+                id=2,
+                message_id=2,
+                content="new",
+                score=1.0,
+                author_id=1,
+                conversation_id=1,
+                created_at=new_ts,
+            ),
         ]
 
         parsed = ParsedQuery(raw_query="test", search_terms=["test"])
@@ -78,8 +127,24 @@ class TestMessageRanking:
     def test_pinned_boost(self):
         """Test pinned messages get boosted."""
         results = [
-            MessageSearchResult(id=1, message_id=1, content="pinned", score=1.0, author_id=1, conversation_id=1, is_pinned=True),
-            MessageSearchResult(id=2, message_id=2, content="not pinned", score=1.0, author_id=1, conversation_id=1, is_pinned=False),
+            MessageSearchResult(
+                id=1,
+                message_id=1,
+                content="pinned",
+                score=1.0,
+                author_id=1,
+                conversation_id=1,
+                is_pinned=True,
+            ),
+            MessageSearchResult(
+                id=2,
+                message_id=2,
+                content="not pinned",
+                score=1.0,
+                author_id=1,
+                conversation_id=1,
+                is_pinned=False,
+            ),
         ]
 
         parsed = ParsedQuery(raw_query="test", search_terms=["test"])
@@ -134,8 +199,12 @@ class TestUserRanking:
     def test_display_name_match(self):
         """Test display name matching."""
         results = [
-            UserSearchResult(id=1, user_id=1, username="user1", display_name="Alice", score=1.0),
-            UserSearchResult(id=2, user_id=2, username="user2", display_name="Bob", score=1.0),
+            UserSearchResult(
+                id=1, user_id=1, username="user1", display_name="Alice", score=1.0
+            ),
+            UserSearchResult(
+                id=2, user_id=2, username="user2", display_name="Bob", score=1.0
+            ),
         ]
 
         engine = RankingEngine()
@@ -149,8 +218,12 @@ class TestUserRanking:
     def test_mutual_servers_boost(self):
         """Test mutual servers boost score."""
         results = [
-            UserSearchResult(id=1, user_id=1, username="alice", score=1.0, mutual_servers=5),
-            UserSearchResult(id=2, user_id=2, username="alice2", score=1.0, mutual_servers=0),
+            UserSearchResult(
+                id=1, user_id=1, username="alice", score=1.0, mutual_servers=5
+            ),
+            UserSearchResult(
+                id=2, user_id=2, username="alice2", score=1.0, mutual_servers=0
+            ),
         ]
 
         engine = RankingEngine()
@@ -164,8 +237,12 @@ class TestUserRanking:
     def test_mutual_friends_boost(self):
         """Test mutual friends boost score."""
         results = [
-            UserSearchResult(id=1, user_id=1, username="alice", score=1.0, mutual_friends=3),
-            UserSearchResult(id=2, user_id=2, username="alice2", score=1.0, mutual_friends=0),
+            UserSearchResult(
+                id=1, user_id=1, username="alice", score=1.0, mutual_friends=3
+            ),
+            UserSearchResult(
+                id=2, user_id=2, username="alice2", score=1.0, mutual_friends=0
+            ),
         ]
 
         engine = RankingEngine()
@@ -197,8 +274,12 @@ class TestServerRanking:
     def test_member_count_boost(self):
         """Test higher member count boosts score."""
         results = [
-            ServerSearchResult(id=1, server_id=1, name="Small Gaming", score=1.0, member_count=10),
-            ServerSearchResult(id=2, server_id=2, name="Big Gaming", score=1.0, member_count=10000),
+            ServerSearchResult(
+                id=1, server_id=1, name="Small Gaming", score=1.0, member_count=10
+            ),
+            ServerSearchResult(
+                id=2, server_id=2, name="Big Gaming", score=1.0, member_count=10000
+            ),
         ]
 
         engine = RankingEngine()
@@ -212,8 +293,12 @@ class TestServerRanking:
     def test_verified_boost(self):
         """Test verified servers get boosted."""
         results = [
-            ServerSearchResult(id=1, server_id=1, name="Gaming 1", score=1.0, is_verified=True),
-            ServerSearchResult(id=2, server_id=2, name="Gaming 2", score=1.0, is_verified=False),
+            ServerSearchResult(
+                id=1, server_id=1, name="Gaming 1", score=1.0, is_verified=True
+            ),
+            ServerSearchResult(
+                id=2, server_id=2, name="Gaming 2", score=1.0, is_verified=False
+            ),
         ]
 
         engine = RankingEngine()
@@ -227,8 +312,16 @@ class TestServerRanking:
     def test_tag_match_boost(self):
         """Test tag matches boost score."""
         results = [
-            ServerSearchResult(id=1, server_id=1, name="Server 1", score=1.0, tags=["minecraft", "survival"]),
-            ServerSearchResult(id=2, server_id=2, name="Server 2", score=1.0, tags=["other"]),
+            ServerSearchResult(
+                id=1,
+                server_id=1,
+                name="Server 1",
+                score=1.0,
+                tags=["minecraft", "survival"],
+            ),
+            ServerSearchResult(
+                id=2, server_id=2, name="Server 2", score=1.0, tags=["other"]
+            ),
         ]
 
         engine = RankingEngine()
@@ -247,8 +340,24 @@ class TestRankingWeights:
     def test_custom_weights(self):
         """Test custom ranking weights."""
         results = [
-            MessageSearchResult(id=1, message_id=1, content="pinned", score=1.0, author_id=1, conversation_id=1, is_pinned=True),
-            MessageSearchResult(id=2, message_id=2, content="not pinned", score=1.0, author_id=1, conversation_id=1, is_pinned=False),
+            MessageSearchResult(
+                id=1,
+                message_id=1,
+                content="pinned",
+                score=1.0,
+                author_id=1,
+                conversation_id=1,
+                is_pinned=True,
+            ),
+            MessageSearchResult(
+                id=2,
+                message_id=2,
+                content="not pinned",
+                score=1.0,
+                author_id=1,
+                conversation_id=1,
+                is_pinned=False,
+            ),
         ]
 
         parsed = ParsedQuery(raw_query="test", search_terms=["test"])
@@ -270,7 +379,14 @@ class TestRankResultsConvenience:
     def test_rank_message_results(self):
         """Test ranking message results via convenience function."""
         results = [
-            MessageSearchResult(id=1, message_id=1, content="test", score=1.0, author_id=1, conversation_id=1),
+            MessageSearchResult(
+                id=1,
+                message_id=1,
+                content="test",
+                score=1.0,
+                author_id=1,
+                conversation_id=1,
+            ),
         ]
 
         parsed = ParsedQuery(raw_query="test", search_terms=["test"])

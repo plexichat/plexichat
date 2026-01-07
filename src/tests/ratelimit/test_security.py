@@ -72,7 +72,7 @@ class TestBypassAttempts:
                 route="GET /test",
                 is_internal=True,
             )
-            assert result.allowed, f"Internal bypass allowed request {i+1}"
+            assert result.allowed, f"Internal bypass allowed request {i + 1}"
 
     def test_user_id_spoofing_attempt(self, memory_storage):
         """Test that changing user_id doesn't reset rate limits inappropriately."""
@@ -166,6 +166,7 @@ class TestBypassAttempts:
 
     def test_bypass_check_override_attempt(self, memory_storage, test_user_id):
         """Test that bypass check can't be overridden mid-flight."""
+
         def strict_bypass(user_id, is_admin, is_internal):
             return False
 
@@ -423,7 +424,7 @@ class TestBucketManipulation:
         )
         for i in range(100):
             result = manager.check_rate_limit(user_id=test_user_id, route="GET /test")
-            assert result.allowed, f"Request {i+1} should be allowed"
+            assert result.allowed, f"Request {i + 1} should be allowed"
         result = manager.check_rate_limit(user_id=test_user_id, route="GET /test")
         assert not result.allowed
 
@@ -518,7 +519,7 @@ class TestHeaderSpoofing:
                 "X-RateLimit-Remaining": "999999",
                 "X-RateLimit-Limit": "999999",
                 "X-RateLimit-Reset": "999999999999",
-            }
+            },
         )
         assert response.status_code == 200
         response = client.get("/api/v1/test")
@@ -530,14 +531,16 @@ class TestHeaderSpoofing:
         """Test that X-Forwarded-For doesn't bypass rate limits."""
         client = TestClient(app_with_headers)
         for i in range(5):
-            client.get(
-                "/api/v1/test",
-                headers={"X-Forwarded-For": f"192.168.1.{i}"}
-            )
-        assert any(r.status_code == 429 for r in [
             client.get("/api/v1/test", headers={"X-Forwarded-For": f"192.168.1.{i}"})
-            for i in range(3)
-        ])
+        assert any(
+            r.status_code == 429
+            for r in [
+                client.get(
+                    "/api/v1/test", headers={"X-Forwarded-For": f"192.168.1.{i}"}
+                )
+                for i in range(3)
+            ]
+        )
 
     def test_cannot_spoof_internal_header(self):
         """Test that X-Internal-Request requires proper handling."""
@@ -565,10 +568,7 @@ class TestHeaderSpoofing:
 
         client = TestClient(app)
         for _ in range(10):
-            client.get(
-                "/api/v1/test",
-                headers={"X-Internal-Request": "true"}
-            )
+            client.get("/api/v1/test", headers={"X-Internal-Request": "true"})
         ratelimit._manager = None
         ratelimit._setup_complete = False
 
@@ -761,7 +761,7 @@ class TestWebSocketRateLimiting:
         """Test WebSocket events are rate limited."""
         for i in range(120):
             allowed = connection.check_rate_limit(120)
-            assert allowed, f"Event {i+1} should be allowed"
+            assert allowed, f"Event {i + 1} should be allowed"
         assert not connection.check_rate_limit(120)
 
     def test_websocket_rate_limit_resets(self, connection):

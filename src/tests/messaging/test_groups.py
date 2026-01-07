@@ -61,7 +61,9 @@ class TestGroupCreation:
         group = messaging.create_group(user1.id, "New Group")
 
         messages = messaging.get_messages(user1.id, group.id)
-        system_msgs = [m for m in messages if m.message_type == messaging.MessageType.SYSTEM]
+        system_msgs = [
+            m for m in messages if m.message_type == messaging.MessageType.SYSTEM
+        ]
 
         assert len(system_msgs) >= 1
         assert "created" in system_msgs[0].content.lower()
@@ -76,8 +78,11 @@ class TestGroupParticipants:
 
         from src.core import auth
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
-        new_user = auth.register(f"new_{unique_id}", f"new_{unique_id}@example.com", "TestPass123!")
+        new_user = auth.register(
+            f"new_{unique_id}", f"new_{unique_id}@example.com", "TestPass123!"
+        )
 
         participant = messaging.add_participant(user1.id, group.id, new_user.id)
 
@@ -90,8 +95,11 @@ class TestGroupParticipants:
 
         from src.core import auth
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
-        new_user = auth.register(f"new_{unique_id}", f"new_{unique_id}@example.com", "TestPass123!")
+        new_user = auth.register(
+            f"new_{unique_id}", f"new_{unique_id}@example.com", "TestPass123!"
+        )
 
         participant = messaging.add_participant(
             user1.id, group.id, new_user.id, messaging.ParticipantRole.ADMIN
@@ -116,9 +124,7 @@ class TestGroupParticipants:
         user1, user2, user3, messaging = users
 
         group = messaging.create_group(
-            user1.id, "Tiny Group",
-            participant_ids=[user2.id],
-            max_participants=2
+            user1.id, "Tiny Group", participant_ids=[user2.id], max_participants=2
         )
 
         with pytest.raises(messaging.ParticipantLimitError):
@@ -142,7 +148,9 @@ class TestGroupRoles:
         """Test demoting admin to member."""
         group, user1, user2, user3, messaging = group_conversation
 
-        messaging.update_participant_role(user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN)
+        messaging.update_participant_role(
+            user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN
+        )
 
         participant = messaging.update_participant_role(
             user1.id, group.id, user2.id, messaging.ParticipantRole.MEMBER
@@ -154,12 +162,17 @@ class TestGroupRoles:
         """Test admin can add members."""
         group, user1, user2, user3, messaging = group_conversation
 
-        messaging.update_participant_role(user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN)
+        messaging.update_participant_role(
+            user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN
+        )
 
         from src.core import auth
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
-        new_user = auth.register(f"new_{unique_id}", f"new_{unique_id}@example.com", "TestPass123!")
+        new_user = auth.register(
+            f"new_{unique_id}", f"new_{unique_id}@example.com", "TestPass123!"
+        )
 
         participant = messaging.add_participant(user2.id, group.id, new_user.id)
 
@@ -169,7 +182,9 @@ class TestGroupRoles:
         """Test admin can remove members."""
         group, user1, user2, user3, messaging = group_conversation
 
-        messaging.update_participant_role(user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN)
+        messaging.update_participant_role(
+            user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN
+        )
 
         result = messaging.remove_participant(user2.id, group.id, user3.id)
 
@@ -181,8 +196,11 @@ class TestGroupRoles:
 
         from src.core import auth
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
-        new_user = auth.register(f"new_{unique_id}", f"new_{unique_id}@example.com", "TestPass123!")
+        new_user = auth.register(
+            f"new_{unique_id}", f"new_{unique_id}@example.com", "TestPass123!"
+        )
 
         with pytest.raises(messaging.ConversationAccessDeniedError):
             messaging.add_participant(user2.id, group.id, new_user.id)
@@ -218,7 +236,9 @@ class TestGroupOwnership:
         group, user1, user2, user3, messaging = group_conversation
 
         # Make user2 admin first
-        messaging.update_participant_role(user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN)
+        messaging.update_participant_role(
+            user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN
+        )
 
         messaging.leave_conversation(user1.id, group.id)
 
@@ -260,9 +280,13 @@ class TestGroupSettings:
         """Test admin can update group settings."""
         group, user1, user2, user3, messaging = group_conversation
 
-        messaging.update_participant_role(user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN)
+        messaging.update_participant_role(
+            user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN
+        )
 
-        updated = messaging.update_conversation(user2.id, group.id, name="Admin Updated")
+        updated = messaging.update_conversation(
+            user2.id, group.id, name="Admin Updated"
+        )
 
         assert updated.name == "Admin Updated"
 
@@ -310,8 +334,11 @@ class TestGroupMessaging:
 
         from src.core import auth
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
-        outsider = auth.register(f"out_{unique_id}", f"out_{unique_id}@example.com", "TestPass123!")
+        outsider = auth.register(
+            f"out_{unique_id}", f"out_{unique_id}@example.com", "TestPass123!"
+        )
 
         with pytest.raises(messaging.ConversationAccessDeniedError):
             messaging.send_message(outsider.id, group.id, "Hello")
@@ -322,8 +349,11 @@ class TestGroupMessaging:
 
         from src.core import auth
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
-        outsider = auth.register(f"out_{unique_id}", f"out_{unique_id}@example.com", "TestPass123!")
+        outsider = auth.register(
+            f"out_{unique_id}", f"out_{unique_id}@example.com", "TestPass123!"
+        )
 
         with pytest.raises(messaging.ConversationAccessDeniedError):
             messaging.get_messages(outsider.id, group.id)
@@ -342,7 +372,9 @@ class TestGroupMessaging:
         """Test admin can delete member messages."""
         group, user1, user2, user3, messaging = group_conversation
 
-        messaging.update_participant_role(user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN)
+        messaging.update_participant_role(
+            user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN
+        )
 
         msg = messaging.send_message(user3.id, group.id, "Member message")
 

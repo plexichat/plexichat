@@ -22,7 +22,7 @@ class TestCreatePoll:
             user_id=user1.id,
             message_id=msg.id,
             question="What is your favorite color?",
-            options=["Red", "Blue", "Green"]
+            options=["Red", "Blue", "Green"],
         )
 
         assert poll is not None
@@ -43,7 +43,7 @@ class TestCreatePoll:
             message_id=new_msg.id,
             question="Time-limited poll?",
             options=["Yes", "No"],
-            duration_hours=24
+            duration_hours=24,
         )
 
         assert poll.ends_at is not None
@@ -60,7 +60,7 @@ class TestCreatePoll:
             message_id=new_msg.id,
             question="Select all that apply",
             options=["A", "B", "C"],
-            allow_multiple_choice=True
+            allow_multiple_choice=True,
         )
 
         assert poll.allow_multiple_choice is True
@@ -76,7 +76,7 @@ class TestCreatePoll:
             message_id=new_msg.id,
             question="Secret poll?",
             options=["Yes", "No"],
-            results_visibility=PollResultsVisibility.AFTER_END
+            results_visibility=PollResultsVisibility.AFTER_END,
         )
 
         assert poll.results_visibility == PollResultsVisibility.AFTER_END
@@ -92,7 +92,7 @@ class TestCreatePoll:
                 user_id=user1.id,
                 message_id=new_msg.id,
                 question="",
-                options=["Yes", "No"]
+                options=["Yes", "No"],
             )
 
     def test_create_poll_too_few_options_fails(self, dm_with_message):
@@ -106,7 +106,7 @@ class TestCreatePoll:
                 user_id=user1.id,
                 message_id=new_msg.id,
                 question="Only one option?",
-                options=["Only"]
+                options=["Only"],
             )
 
         assert exc_info.value.min_options == 2
@@ -122,7 +122,7 @@ class TestCreatePoll:
                 user_id=user1.id,
                 message_id=new_msg.id,
                 question="Too many options?",
-                options=[f"Option {i}" for i in range(15)]
+                options=[f"Option {i}" for i in range(15)],
             )
 
         assert exc_info.value.max_options == 10
@@ -139,7 +139,7 @@ class TestCreatePoll:
                 message_id=new_msg.id,
                 question="Invalid duration?",
                 options=["Yes", "No"],
-                duration_hours=1000
+                duration_hours=1000,
             )
 
 

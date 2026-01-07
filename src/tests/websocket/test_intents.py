@@ -133,7 +133,9 @@ class TestEventFiltering:
     def test_filter_typing_event_with_typing_intent(self):
         """Test typing event passes with GUILD_MESSAGE_TYPING intent."""
         event = events.create_typing_start(user_id=1, channel_id=2, server_id=3)
-        assert filter_event_by_intents(event, GatewayIntent.GUILD_MESSAGE_TYPING) is True
+        assert (
+            filter_event_by_intents(event, GatewayIntent.GUILD_MESSAGE_TYPING) is True
+        )
 
     def test_filter_typing_event_without_typing_intent(self):
         """Test typing event fails without GUILD_MESSAGE_TYPING intent."""
@@ -146,7 +148,10 @@ class TestMessageContentIntent:
 
     def test_should_include_content_dm(self):
         """Test DM message content with DIRECT_MESSAGES intent."""
-        assert should_include_message_content(GatewayIntent.DIRECT_MESSAGES, is_dm=True) is True
+        assert (
+            should_include_message_content(GatewayIntent.DIRECT_MESSAGES, is_dm=True)
+            is True
+        )
 
     def test_should_not_include_content_dm_without_intent(self):
         """Test DM message content without DIRECT_MESSAGES intent."""
@@ -154,11 +159,17 @@ class TestMessageContentIntent:
 
     def test_should_include_content_guild(self):
         """Test guild message content with MESSAGE_CONTENT intent."""
-        assert should_include_message_content(GatewayIntent.MESSAGE_CONTENT, is_dm=False) is True
+        assert (
+            should_include_message_content(GatewayIntent.MESSAGE_CONTENT, is_dm=False)
+            is True
+        )
 
     def test_should_not_include_content_guild_without_intent(self):
         """Test guild message content without MESSAGE_CONTENT intent."""
-        assert should_include_message_content(GatewayIntent.GUILD_MESSAGES, is_dm=False) is False
+        assert (
+            should_include_message_content(GatewayIntent.GUILD_MESSAGES, is_dm=False)
+            is False
+        )
 
 
 class TestDefaultIntents:

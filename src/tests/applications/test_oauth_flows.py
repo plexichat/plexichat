@@ -66,7 +66,9 @@ class TestOAuth2Scopes:
 
     def test_validate_invalid_scopes(self, modules):
         """Test validating invalid scopes."""
-        valid, issues = modules.applications.validate_scopes(["identify", "invalid_scope"])
+        valid, issues = modules.applications.validate_scopes(
+            ["identify", "invalid_scope"]
+        )
 
         assert valid is False
         assert len(issues) > 0
@@ -88,7 +90,9 @@ class TestOAuth2Scopes:
 
     def test_scopes_to_string(self, modules):
         """Test converting scopes to string."""
-        scope_str = modules.applications.scopes_to_string(["guilds", "identify", "email"])
+        scope_str = modules.applications.scopes_to_string(
+            ["guilds", "identify", "email"]
+        )
 
         assert "identify" in scope_str
         assert "guilds" in scope_str

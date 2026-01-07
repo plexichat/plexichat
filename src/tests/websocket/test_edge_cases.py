@@ -38,6 +38,7 @@ class TestOpcodes:
     def test_unknown_opcode_handling(self, opcode_handler, connection):
         """Test unknown opcode returns error."""
         import asyncio
+
         result = asyncio.get_event_loop().run_until_complete(
             opcode_handler.handle(connection, 99, None)
         )
@@ -72,7 +73,10 @@ class TestCloseCodes:
     def test_get_close_message(self):
         """Test get_close_message function."""
         assert get_close_message(GatewayCloseCode.UNKNOWN_ERROR) == "Unknown error"
-        assert get_close_message(GatewayCloseCode.AUTHENTICATION_FAILED) == "Authentication failed"
+        assert (
+            get_close_message(GatewayCloseCode.AUTHENTICATION_FAILED)
+            == "Authentication failed"
+        )
         assert get_close_message(GatewayCloseCode.RATE_LIMITED) == "Rate limited"
         assert get_close_message(9999) == "Unknown close code"
 
@@ -209,6 +213,7 @@ class TestSessionEdgeCases:
     def test_session_update_activity(self, session_manager, connection):
         """Test session activity update."""
         import time
+
         session_manager.add_connection(connection)
         session = session_manager.create_session(connection, user_id=12345, intents=513)
 
@@ -248,7 +253,9 @@ class TestHandlerEdgeCases:
         assert close_code == GatewayCloseCode.NOT_AUTHENTICATED
 
     @pytest.mark.asyncio
-    async def test_voice_state_update_not_authenticated(self, opcode_handler, connection):
+    async def test_voice_state_update_not_authenticated(
+        self, opcode_handler, connection
+    ):
         """Test voice state update when not authenticated."""
         payload = {"channel_id": "123"}
         response_op, response_data, close_code = await opcode_handler.handle(
@@ -260,7 +267,9 @@ class TestHandlerEdgeCases:
         assert close_code == GatewayCloseCode.NOT_AUTHENTICATED
 
     @pytest.mark.asyncio
-    async def test_request_guild_members_not_authenticated(self, opcode_handler, connection):
+    async def test_request_guild_members_not_authenticated(
+        self, opcode_handler, connection
+    ):
         """Test request guild members when not authenticated."""
         payload = {"guild_id": "123"}
         response_op, response_data, close_code = await opcode_handler.handle(
@@ -272,7 +281,9 @@ class TestHandlerEdgeCases:
         assert close_code == GatewayCloseCode.NOT_AUTHENTICATED
 
     @pytest.mark.asyncio
-    async def test_presence_update_authenticated(self, opcode_handler, authenticated_connection, sample_presence_update_payload):
+    async def test_presence_update_authenticated(
+        self, opcode_handler, authenticated_connection, sample_presence_update_payload
+    ):
         """Test presence update when authenticated."""
         response_op, response_data, close_code = await opcode_handler.handle(
             authenticated_connection,

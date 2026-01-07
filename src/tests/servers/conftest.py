@@ -38,9 +38,7 @@ def server_with_members(modules, user_pool):
 
     unique_id = uuid.uuid4().hex[:6]
     server = modules.servers.create_server(
-        owner_id=owner.id,
-        name=f"Test Server {unique_id}",
-        description="A test server"
+        owner_id=owner.id, name=f"Test Server {unique_id}", description="A test server"
     )
 
     # Add admin and member
@@ -61,7 +59,7 @@ def server_with_members(modules, user_pool):
             "messages.manage": True,
         },
         color="#FF0000",
-        hoist=True
+        hoist=True,
     )
 
     modules.servers.assign_role(owner.id, server.id, admin_user.id, admin_role.id)
@@ -78,7 +76,7 @@ def fresh_server(modules, user_pool):
     server = modules.servers.create_server(
         owner_id=owner.id,
         name=f"Fresh Server {unique_id}",
-        description="A fresh test server"
+        description="A fresh test server",
     )
 
     return server, owner, modules.servers
@@ -87,13 +85,13 @@ def fresh_server(modules, user_pool):
 @pytest.fixture
 def server_with_channels(server_with_members):
     """Create a server with multiple channels."""
-    server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+    server, owner, admin_user, member_user, outsider, admin_role, servers = (
+        server_with_members
+    )
 
     # Create category
     category = servers.create_category(
-        user_id=owner.id,
-        server_id=server.id,
-        name="Text Channels"
+        user_id=owner.id, server_id=server.id, name="Text Channels"
     )
 
     # Create channels
@@ -103,14 +101,22 @@ def server_with_channels(server_with_members):
         user_id=owner.id,
         server_id=server.id,
         name="announcements",
-        category_id=category.id
+        category_id=category.id,
     )
 
     private = servers.create_channel(
-        user_id=owner.id,
-        server_id=server.id,
-        name="private",
-        category_id=category.id
+        user_id=owner.id, server_id=server.id, name="private", category_id=category.id
     )
 
-    return server, owner, admin_user, member_user, outsider, general, announcements, private, category, servers
+    return (
+        server,
+        owner,
+        admin_user,
+        member_user,
+        outsider,
+        general,
+        announcements,
+        private,
+        category,
+        servers,
+    )

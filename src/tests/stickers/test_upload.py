@@ -26,7 +26,7 @@ class TestAddSticker:
             url="https://cdn.example.com/stickers/happy_cat.png",
             size=100000,
             tags=["happy", "cat"],
-            related_emoji="smile"
+            related_emoji="smile",
         )
 
         assert sticker is not None
@@ -46,7 +46,7 @@ class TestAddSticker:
             name="animated_cat",
             format=StickerFormat.APNG,
             url="https://cdn.example.com/stickers/animated.apng",
-            size=200000
+            size=200000,
         )
 
         assert sticker.format == StickerFormat.APNG
@@ -61,7 +61,7 @@ class TestAddSticker:
             name="lottie_anim",
             format=StickerFormat.LOTTIE,
             url="https://cdn.example.com/stickers/anim.json",
-            size=50000
+            size=50000,
         )
 
         assert sticker.format == StickerFormat.LOTTIE
@@ -77,7 +77,7 @@ class TestAddSticker:
                 name="invalid name with spaces",
                 format=StickerFormat.PNG,
                 url="https://cdn.example.com/stickers/test.png",
-                size=100000
+                size=100000,
             )
 
     def test_add_sticker_empty_name_fails(self, server_with_pack):
@@ -91,7 +91,7 @@ class TestAddSticker:
                 name="",
                 format=StickerFormat.PNG,
                 url="https://cdn.example.com/stickers/test.png",
-                size=100000
+                size=100000,
             )
 
     def test_add_sticker_too_large_fails(self, server_with_pack):
@@ -105,7 +105,7 @@ class TestAddSticker:
                 name="huge_sticker",
                 format=StickerFormat.PNG,
                 url="https://cdn.example.com/stickers/huge.png",
-                size=10000000
+                size=10000000,
             )
 
         assert exc_info.value.max_size == 524288
@@ -124,7 +124,7 @@ class TestGetSticker:
             name="get_test",
             format=StickerFormat.PNG,
             url="https://cdn.example.com/stickers/get_test.png",
-            size=100000
+            size=100000,
         )
 
         retrieved = stickers.get_sticker(created.id)
@@ -150,7 +150,7 @@ class TestGetSticker:
             name="pack_sticker_1",
             format=StickerFormat.PNG,
             url="https://cdn.example.com/stickers/1.png",
-            size=100000
+            size=100000,
         )
         stickers.add_sticker(
             user_id=owner.id,
@@ -158,7 +158,7 @@ class TestGetSticker:
             name="pack_sticker_2",
             format=StickerFormat.PNG,
             url="https://cdn.example.com/stickers/2.png",
-            size=100000
+            size=100000,
         )
 
         pack_stickers = stickers.get_pack_stickers(owner.id, pack.id)
@@ -182,7 +182,7 @@ class TestRemoveSticker:
             name="to_remove",
             format=StickerFormat.PNG,
             url="https://cdn.example.com/stickers/remove.png",
-            size=100000
+            size=100000,
         )
 
         result = stickers.remove_sticker(owner.id, sticker.id)

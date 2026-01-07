@@ -20,7 +20,7 @@ class TestAddAttachment:
             filename="test.pdf",
             content_type="application/pdf",
             size=1024,
-            url="https://storage.example.com/test.pdf"
+            url="https://storage.example.com/test.pdf",
         )
 
         assert att is not None
@@ -41,7 +41,7 @@ class TestAddAttachment:
             content_type="image/png",
             size=2048,
             url="https://storage.example.com/image.png",
-            metadata={"width": 800, "height": 600}
+            metadata={"width": 800, "height": 600},
         )
 
         assert att.metadata is not None
@@ -60,7 +60,7 @@ class TestAddAttachment:
                 filename="test.pdf",
                 content_type="application/pdf",
                 size=1024,
-                url="https://storage.example.com/test.pdf"
+                url="https://storage.example.com/test.pdf",
             )
 
     def test_add_attachment_too_large_fails(self, dm_conversation):
@@ -76,7 +76,7 @@ class TestAddAttachment:
                 filename="huge.zip",
                 content_type="application/zip",
                 size=100000000,  # 100MB, exceeds 10MB default
-                url="https://storage.example.com/huge.zip"
+                url="https://storage.example.com/huge.zip",
             )
 
         assert exc_info.value.max_size == 10485760
@@ -95,7 +95,7 @@ class TestAddAttachment:
                 filename=f"file{i}.txt",
                 content_type="text/plain",
                 size=100,
-                url=f"https://storage.example.com/file{i}.txt"
+                url=f"https://storage.example.com/file{i}.txt",
             )
 
         # 11th should fail
@@ -106,7 +106,7 @@ class TestAddAttachment:
                 filename="file10.txt",
                 content_type="text/plain",
                 size=100,
-                url="https://storage.example.com/file10.txt"
+                url="https://storage.example.com/file10.txt",
             )
 
     def test_add_attachment_to_nonexistent_message_fails(self, dm_conversation):
@@ -120,7 +120,7 @@ class TestAddAttachment:
                 filename="test.pdf",
                 content_type="application/pdf",
                 size=1024,
-                url="https://storage.example.com/test.pdf"
+                url="https://storage.example.com/test.pdf",
             )
 
 
@@ -140,15 +140,15 @@ class TestSendMessageWithAttachments:
                     "filename": "doc.pdf",
                     "content_type": "application/pdf",
                     "size": 1024,
-                    "url": "https://storage.example.com/doc.pdf"
+                    "url": "https://storage.example.com/doc.pdf",
                 },
                 {
                     "filename": "image.png",
                     "content_type": "image/png",
                     "size": 2048,
-                    "url": "https://storage.example.com/image.png"
-                }
-            ]
+                    "url": "https://storage.example.com/image.png",
+                },
+            ],
         )
 
         attachments = messaging.get_attachments(user1.id, msg.id)
@@ -164,7 +164,7 @@ class TestSendMessageWithAttachments:
                 "filename": f"file{i}.txt",
                 "content_type": "text/plain",
                 "size": 100,
-                "url": f"https://storage.example.com/file{i}.txt"
+                "url": f"https://storage.example.com/file{i}.txt",
             }
             for i in range(15)  # Exceeds default limit of 10
         ]
@@ -174,7 +174,7 @@ class TestSendMessageWithAttachments:
                 user_id=user1.id,
                 conversation_id=dm.id,
                 content="Too many files",
-                attachments=attachments
+                attachments=attachments,
             )
 
 
@@ -187,8 +187,12 @@ class TestGetAttachments:
 
         msg = messaging.send_message(user1.id, dm.id, "File")
         messaging.add_attachment(
-            user1.id, msg.id, "test.pdf", "application/pdf", 1024,
-            "https://storage.example.com/test.pdf"
+            user1.id,
+            msg.id,
+            "test.pdf",
+            "application/pdf",
+            1024,
+            "https://storage.example.com/test.pdf",
         )
 
         attachments = messaging.get_attachments(user2.id, msg.id)
@@ -202,8 +206,12 @@ class TestGetAttachments:
 
         msg = messaging.send_message(user1.id, dm.id, "File")
         messaging.add_attachment(
-            user1.id, msg.id, "test.pdf", "application/pdf", 1024,
-            "https://storage.example.com/test.pdf"
+            user1.id,
+            msg.id,
+            "test.pdf",
+            "application/pdf",
+            1024,
+            "https://storage.example.com/test.pdf",
         )
 
         attachments = messaging.get_attachments(user3.id, msg.id)
@@ -216,12 +224,20 @@ class TestGetAttachments:
 
         msg = messaging.send_message(user1.id, dm.id, "Files")
         att1 = messaging.add_attachment(
-            user1.id, msg.id, "keep.pdf", "application/pdf", 1024,
-            "https://storage.example.com/keep.pdf"
+            user1.id,
+            msg.id,
+            "keep.pdf",
+            "application/pdf",
+            1024,
+            "https://storage.example.com/keep.pdf",
         )
         att2 = messaging.add_attachment(
-            user1.id, msg.id, "delete.pdf", "application/pdf", 1024,
-            "https://storage.example.com/delete.pdf"
+            user1.id,
+            msg.id,
+            "delete.pdf",
+            "application/pdf",
+            1024,
+            "https://storage.example.com/delete.pdf",
         )
 
         messaging.delete_attachment(user1.id, att2.id)
@@ -250,8 +266,12 @@ class TestDeleteAttachment:
 
         msg = messaging.send_message(user1.id, dm.id, "File")
         att = messaging.add_attachment(
-            user1.id, msg.id, "test.pdf", "application/pdf", 1024,
-            "https://storage.example.com/test.pdf"
+            user1.id,
+            msg.id,
+            "test.pdf",
+            "application/pdf",
+            1024,
+            "https://storage.example.com/test.pdf",
         )
 
         result = messaging.delete_attachment(user1.id, att.id)
@@ -264,8 +284,12 @@ class TestDeleteAttachment:
 
         msg = messaging.send_message(user1.id, dm.id, "File")
         att = messaging.add_attachment(
-            user1.id, msg.id, "test.pdf", "application/pdf", 1024,
-            "https://storage.example.com/test.pdf"
+            user1.id,
+            msg.id,
+            "test.pdf",
+            "application/pdf",
+            1024,
+            "https://storage.example.com/test.pdf",
         )
 
         with pytest.raises(messaging.MessageAccessDeniedError):
@@ -288,8 +312,12 @@ class TestAttachmentWithMessages:
 
         msg = messaging.send_message(user1.id, dm.id, "With attachment")
         messaging.add_attachment(
-            user1.id, msg.id, "test.pdf", "application/pdf", 1024,
-            "https://storage.example.com/test.pdf"
+            user1.id,
+            msg.id,
+            "test.pdf",
+            "application/pdf",
+            1024,
+            "https://storage.example.com/test.pdf",
         )
 
         messages = messaging.get_messages(user1.id, dm.id)
@@ -304,8 +332,12 @@ class TestAttachmentWithMessages:
 
         msg = messaging.send_message(user1.id, dm.id, "With attachment")
         messaging.add_attachment(
-            user1.id, msg.id, "test.pdf", "application/pdf", 1024,
-            "https://storage.example.com/test.pdf"
+            user1.id,
+            msg.id,
+            "test.pdf",
+            "application/pdf",
+            1024,
+            "https://storage.example.com/test.pdf",
         )
 
         # Note: get_message doesn't auto-load attachments, need to call get_attachments
@@ -328,8 +360,12 @@ class TestUserAttachmentLimits:
 
         # Should succeed with 15MB file (exceeds default 10MB but within custom 20MB)
         att = messaging.add_attachment(
-            user1.id, msg.id, "big.zip", "application/zip", 15728640,
-            "https://storage.example.com/big.zip"
+            user1.id,
+            msg.id,
+            "big.zip",
+            "application/zip",
+            15728640,
+            "https://storage.example.com/big.zip",
         )
 
         assert att is not None
@@ -346,13 +382,21 @@ class TestUserAttachmentLimits:
         # Add 5 attachments
         for i in range(5):
             messaging.add_attachment(
-                user1.id, msg.id, f"file{i}.txt", "text/plain", 100,
-                f"https://storage.example.com/file{i}.txt"
+                user1.id,
+                msg.id,
+                f"file{i}.txt",
+                "text/plain",
+                100,
+                f"https://storage.example.com/file{i}.txt",
             )
 
         # 6th should fail
         with pytest.raises(messaging.AttachmentLimitError):
             messaging.add_attachment(
-                user1.id, msg.id, "file5.txt", "text/plain", 100,
-                "https://storage.example.com/file5.txt"
+                user1.id,
+                msg.id,
+                "file5.txt",
+                "text/plain",
+                100,
+                "https://storage.example.com/file5.txt",
             )

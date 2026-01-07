@@ -22,12 +22,14 @@ class TestMessagingIntegration:
         """Test reacting to group message."""
         owner, member1, member2, group, msg, messaging, reactions = group_with_message
 
-        r1 = reactions.add_reaction(owner.id, msg.id, "group_react")
-        r2 = reactions.add_reaction(member1.id, msg.id, "group_react")
-        r3 = reactions.add_reaction(member2.id, msg.id, "group_react")
+        reactions.add_reaction(owner.id, msg.id, "group_react")
+        reactions.add_reaction(member1.id, msg.id, "group_react")
+        reactions.add_reaction(member2.id, msg.id, "group_react")
 
         msg_reactions = reactions.get_reactions(owner.id, msg.id)
-        group_react = next((r for r in msg_reactions.reactions if r.emoji == "group_react"), None)
+        group_react = next(
+            (r for r in msg_reactions.reactions if r.emoji == "group_react"), None
+        )
 
         assert group_react is not None
         assert group_react.count == 3
@@ -36,17 +38,18 @@ class TestMessagingIntegration:
         """Test cannot react to deleted message."""
         db, auth, messaging, servers, relationships, reactions = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user1 = auth.register(
             username=f"del1_{unique_id}",
             email=f"del1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"del2_{unique_id}",
             email=f"del2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user1.id, user2.id)
@@ -64,10 +67,13 @@ class TestMessagingIntegration:
         reactions.add_reaction(user1.id, msg.id, "persist")
 
         from src.core import messaging
+
         messaging.edit_message(user1.id, msg.id, "Edited content")
 
         msg_reactions = reactions.get_reactions(user1.id, msg.id)
-        persist = next((r for r in msg_reactions.reactions if r.emoji == "persist"), None)
+        persist = next(
+            (r for r in msg_reactions.reactions if r.emoji == "persist"), None
+        )
 
         assert persist is not None
         assert persist.count == 1
@@ -96,25 +102,28 @@ class TestServerIntegration:
         """Test non-group member cannot react to message."""
         db, auth, messaging, servers_mod, relationships, reactions = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         owner = auth.register(
             username=f"srv_owner_{unique_id}",
             email=f"srv_owner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         member = auth.register(
             username=f"srv_member_{unique_id}",
             email=f"srv_member_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         outsider = auth.register(
             username=f"outsider_{unique_id}",
             email=f"outsider_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
-        group = messaging.create_group(owner.id, f"Private Group {unique_id}", [member.id])
+        group = messaging.create_group(
+            owner.id, f"Private Group {unique_id}", [member.id]
+        )
         msg = messaging.send_message(owner.id, group.id, "Private message")
 
         with pytest.raises(MessageNotFoundError):
@@ -126,7 +135,9 @@ class TestServerIntegration:
 
         # Provide dummy image data and content type
         dummy_image = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;"
-        emoji = reactions.create_custom_emoji(owner.id, server.id, "server_emoji", dummy_image, "image/gif")
+        emoji = reactions.create_custom_emoji(
+            owner.id, server.id, "server_emoji", dummy_image, "image/gif"
+        )
 
         assert emoji is not None
         assert emoji.server_id == server.id
@@ -139,25 +150,28 @@ class TestRelationshipsIntegration:
         """Test blocked user's reactions are hidden from blocker."""
         db, auth, messaging, servers, relationships, reactions = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user1 = auth.register(
             username=f"block1_{unique_id}",
             email=f"block1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"block2_{unique_id}",
             email=f"block2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user3 = auth.register(
             username=f"block3_{unique_id}",
             email=f"block3_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
-        group = messaging.create_group(user1.id, f"Block Test {unique_id}", [user2.id, user3.id])
+        group = messaging.create_group(
+            user1.id, f"Block Test {unique_id}", [user2.id, user3.id]
+        )
         msg = messaging.send_message(user1.id, group.id, "Block test message")
 
         reactions.add_reaction(user1.id, msg.id, "block_test")
@@ -167,7 +181,9 @@ class TestRelationshipsIntegration:
         relationships.block_user(user1.id, user2.id)
 
         msg_reactions = reactions.get_reactions(user1.id, msg.id)
-        block_test = next((r for r in msg_reactions.reactions if r.emoji == "block_test"), None)
+        block_test = next(
+            (r for r in msg_reactions.reactions if r.emoji == "block_test"), None
+        )
 
         assert block_test is not None
         assert block_test.count == 2
@@ -176,25 +192,28 @@ class TestRelationshipsIntegration:
         """Test reactions from user who blocked you are hidden."""
         db, auth, messaging, servers, relationships, reactions = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user1 = auth.register(
             username=f"blockedby1_{unique_id}",
             email=f"blockedby1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"blockedby2_{unique_id}",
             email=f"blockedby2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user3 = auth.register(
             username=f"blockedby3_{unique_id}",
             email=f"blockedby3_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
-        group = messaging.create_group(user1.id, f"Blocked By Test {unique_id}", [user2.id, user3.id])
+        group = messaging.create_group(
+            user1.id, f"Blocked By Test {unique_id}", [user2.id, user3.id]
+        )
         msg = messaging.send_message(user1.id, group.id, "Blocked by test")
 
         reactions.add_reaction(user1.id, msg.id, "blockedby_test")
@@ -204,7 +223,9 @@ class TestRelationshipsIntegration:
         relationships.block_user(user2.id, user1.id)
 
         msg_reactions = reactions.get_reactions(user1.id, msg.id)
-        blockedby_test = next((r for r in msg_reactions.reactions if r.emoji == "blockedby_test"), None)
+        blockedby_test = next(
+            (r for r in msg_reactions.reactions if r.emoji == "blockedby_test"), None
+        )
 
         assert blockedby_test is not None
         assert blockedby_test.count == 2
@@ -213,25 +234,28 @@ class TestRelationshipsIntegration:
         """Test blocked users are hidden from reaction user list."""
         db, auth, messaging, servers, relationships, reactions = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user1 = auth.register(
             username=f"list1_{unique_id}",
             email=f"list1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"list2_{unique_id}",
             email=f"list2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user3 = auth.register(
             username=f"list3_{unique_id}",
             email=f"list3_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
-        group = messaging.create_group(user1.id, f"List Test {unique_id}", [user2.id, user3.id])
+        group = messaging.create_group(
+            user1.id, f"List Test {unique_id}", [user2.id, user3.id]
+        )
         msg = messaging.send_message(user1.id, group.id, "List test")
 
         reactions.add_reaction(user1.id, msg.id, "list_test")
@@ -255,7 +279,9 @@ class TestRelationshipsIntegration:
         reactions.add_reaction(user2.id, msg.id, "no_block")
 
         msg_reactions = reactions.get_reactions(user1.id, msg.id)
-        no_block = next((r for r in msg_reactions.reactions if r.emoji == "no_block"), None)
+        no_block = next(
+            (r for r in msg_reactions.reactions if r.emoji == "no_block"), None
+        )
 
         assert no_block is not None
         assert no_block.count == 2

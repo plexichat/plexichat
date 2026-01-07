@@ -40,7 +40,16 @@ class TestVoiceServerInfo:
 
     def test_get_voice_server_info(self, server_with_voice, signaling_setup):
         """Test getting voice server info."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         info = get_voice_server_info(member1.id, voice_channel.id)
 
@@ -54,20 +63,42 @@ class TestVoiceServerInfo:
 
     def test_voice_server_info_includes_stun(self, server_with_voice, signaling_setup):
         """Test that STUN servers are included."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         info = get_voice_server_info(member1.id, voice_channel.id)
 
-        stun_servers = [s for s in info.ice_servers if any("stun:" in u for u in s.urls)]
+        stun_servers = [
+            s for s in info.ice_servers if any("stun:" in u for u in s.urls)
+        ]
         assert len(stun_servers) > 0
 
     def test_voice_server_info_includes_turn(self, server_with_voice, signaling_setup):
         """Test that TURN servers are included with credentials."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         info = get_voice_server_info(member1.id, voice_channel.id)
 
-        turn_servers = [s for s in info.ice_servers if any("turn:" in u for u in s.urls)]
+        turn_servers = [
+            s for s in info.ice_servers if any("turn:" in u for u in s.urls)
+        ]
         assert len(turn_servers) > 0
 
         turn_server = turn_servers[0]
@@ -80,7 +111,16 @@ class TestVoiceConnection:
 
     def test_create_voice_connection(self, server_with_voice, signaling_setup):
         """Test creating a voice connection."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         info = create_voice_connection(member1.id, voice_channel.id)
 
@@ -91,9 +131,20 @@ class TestVoiceConnection:
         # Cleanup
         disconnect_voice(member1.id)
 
-    def test_create_duplicate_connection_fails(self, server_with_voice, signaling_setup):
+    def test_create_duplicate_connection_fails(
+        self, server_with_voice, signaling_setup
+    ):
         """Test that creating duplicate connection raises error."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         create_voice_connection(member2.id, voice_channel.id)
 
@@ -105,7 +156,16 @@ class TestVoiceConnection:
 
     def test_disconnect_voice(self, server_with_voice, signaling_setup):
         """Test disconnecting from voice."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         create_voice_connection(owner.id, voice_channel.id)
 
@@ -118,9 +178,20 @@ class TestVoiceConnection:
 
         disconnect_voice(owner.id)
 
-    def test_disconnect_nonexistent_connection(self, server_with_voice, signaling_setup):
+    def test_disconnect_nonexistent_connection(
+        self, server_with_voice, signaling_setup
+    ):
         """Test disconnecting when not connected."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         result = disconnect_voice(999999)
         assert result is False
@@ -131,7 +202,16 @@ class TestTURNCredentials:
 
     def test_get_turn_credentials(self, server_with_voice, signaling_setup):
         """Test getting TURN credentials."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         creds = get_turn_credentials(member1.id)
 
@@ -144,7 +224,16 @@ class TestTURNCredentials:
 
     def test_turn_credentials_unique_per_user(self, server_with_voice, signaling_setup):
         """Test that TURN credentials are unique per user."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         creds1 = get_turn_credentials(member1.id)
         creds2 = get_turn_credentials(member2.id)
@@ -158,7 +247,16 @@ class TestConnectionQuality:
 
     def test_get_connection_quality(self, server_with_voice, signaling_setup):
         """Test getting connection quality."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         create_voice_connection(member1.id, voice_channel.id)
 
@@ -174,7 +272,16 @@ class TestConnectionQuality:
 
     def test_get_quality_not_connected_fails(self, server_with_voice, signaling_setup):
         """Test getting quality when not connected raises error."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         with pytest.raises(NotConnectedError):
             get_connection_quality(999999, voice_channel.id)

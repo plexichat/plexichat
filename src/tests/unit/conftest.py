@@ -11,4 +11,5 @@ import pytest
 def test_config():
     """Get test configuration without database setup."""
     from src.tests.fixtures.config import get_test_config
+
     return get_test_config()

@@ -13,17 +13,18 @@ class TestMaxReactionsLimit:
         """Test that max reactions limit is enforced."""
         db, auth, messaging, servers, relationships, reactions = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user1 = auth.register(
             username=f"limit1_{unique_id}",
             email=f"limit1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"limit2_{unique_id}",
             email=f"limit2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user1.id, user2.id)
@@ -42,17 +43,18 @@ class TestMaxReactionsLimit:
         """Test that same emoji by different users does not count toward limit."""
         db, auth, messaging, servers, relationships, reactions = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user1 = auth.register(
             username=f"same1_{unique_id}",
             email=f"same1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"same2_{unique_id}",
             email=f"same2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user1.id, user2.id)
@@ -68,17 +70,18 @@ class TestMaxReactionsLimit:
         """Test that adding to existing emoji is allowed even at limit."""
         db, auth, messaging, servers, relationships, reactions = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user1 = auth.register(
             username=f"exist1_{unique_id}",
             email=f"exist1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"exist2_{unique_id}",
             email=f"exist2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user1.id, user2.id)
@@ -94,17 +97,18 @@ class TestMaxReactionsLimit:
         """Test removing a reaction allows adding new one at limit."""
         db, auth, messaging, servers, relationships, reactions = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user1 = auth.register(
             username=f"remove1_{unique_id}",
             email=f"remove1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"remove2_{unique_id}",
             email=f"remove2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user1.id, user2.id)
@@ -126,6 +130,7 @@ class TestPaginationLimits:
         """Test max users per reaction page is enforced."""
         db, auth, messaging, servers, relationships, reactions = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         users_list = []
@@ -133,7 +138,7 @@ class TestPaginationLimits:
             user = auth.register(
                 username=f"page_lim{i}_{unique_id}",
                 email=f"page_lim{i}_{unique_id}@example.com",
-                password="TestPass123!"
+                password="TestPass123!",
             )
             users_list.append(user)
 
@@ -144,8 +149,7 @@ class TestPaginationLimits:
         reactions.add_reaction(users_list[1].id, msg.id, "page_limit")
 
         users = reactions.get_reaction_users(
-            users_list[0].id, msg.id, "page_limit",
-            limit=1000
+            users_list[0].id, msg.id, "page_limit", limit=1000
         )
 
         assert len(users) <= 100
@@ -154,17 +158,18 @@ class TestPaginationLimits:
         """Test pagination cursor returns correct results."""
         db, auth, messaging, servers, relationships, reactions = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user1 = auth.register(
             username=f"cursor1_{unique_id}",
             email=f"cursor1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"cursor2_{unique_id}",
             email=f"cursor2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user1.id, user2.id)
@@ -178,8 +183,7 @@ class TestPaginationLimits:
 
         first_user = all_users[0]
         remaining = reactions.get_reaction_users(
-            user1.id, msg.id, "cursor_test",
-            after_user_id=first_user.user_id
+            user1.id, msg.id, "cursor_test", after_user_id=first_user.user_id
         )
 
         assert len(remaining) == 1
@@ -205,17 +209,18 @@ class TestConfigurableLimits:
         """Test ReactionLimitError contains useful information."""
         db, auth, messaging, servers, relationships, reactions = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user1 = auth.register(
             username=f"info1_{unique_id}",
             email=f"info1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"info2_{unique_id}",
             email=f"info2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user1.id, user2.id)

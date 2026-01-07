@@ -2,7 +2,6 @@
 Tests for admin bypass and internal requests.
 """
 
-
 from src.core.ratelimit.models import RateLimitConfig, RateLimitAlgorithm
 from src.core.ratelimit.manager import RateLimitManager
 from src.core import ratelimit
@@ -30,7 +29,7 @@ class TestAdminBypass:
                 route="GET /test",
                 is_admin=True,
             )
-            assert result.allowed, f"Admin request {i+1} should be allowed"
+            assert result.allowed, f"Admin request {i + 1} should be allowed"
 
     def test_non_admin_rate_limited(self, memory_storage, test_user_id):
         """Test non-admin users are rate limited."""
@@ -81,7 +80,7 @@ class TestInternalBypass:
                 route="GET /test",
                 is_internal=True,
             )
-            assert result.allowed, f"Internal request {i+1} should be allowed"
+            assert result.allowed, f"Internal request {i + 1} should be allowed"
 
     def test_external_requests_rate_limited(self, memory_storage, test_user_id):
         """Test external requests are rate limited."""
@@ -115,6 +114,7 @@ class TestCustomBypassCheck:
 
     def test_custom_bypass_allows(self, memory_storage, test_user_id):
         """Test custom bypass function can allow requests."""
+
         def custom_bypass(user_id, is_admin, is_internal):
             return user_id == test_user_id
 
@@ -139,6 +139,7 @@ class TestCustomBypassCheck:
 
     def test_custom_bypass_blocks(self, memory_storage, test_user_id):
         """Test custom bypass function can block requests."""
+
         def custom_bypass(user_id, is_admin, is_internal):
             return False
 

@@ -62,37 +62,35 @@ def invalid_tokens():
 @pytest.fixture
 def create_user_with_token(modules):
     """Factory fixture to create users with authentication tokens."""
+
     def _create():
         unique_id = uuid.uuid4().hex[:16]
         username = f"sectest_{unique_id}"
         email = f"{username}@test.example.com"
         password = "SecurePass123!"
-        
-        user = modules.auth.register(
-            username=username,
-            email=email,
-            password=password
-        )
-        
+
+        user = modules.auth.register(username=username, email=email, password=password)
+
         result = modules.auth.login(username, password)
-        
+
         return {
             "user": user,
             "username": username,
             "password": password,
             "token": result.token,
         }
+
     return _create
 
 
 @pytest.fixture
 def create_server_with_owner(modules, create_user_with_token):
     """Factory fixture to create server with owner."""
+
     def _create():
         owner = create_user_with_token()
         server = modules.servers.create_server(
-            owner_id=owner["user"].id,
-            name=f"Test Server {uuid.uuid4().hex[:6]}"
+            owner_id=owner["user"].id, name=f"Test Server {uuid.uuid4().hex[:6]}"
         )
         channels = modules.servers.get_channels(owner["user"].id, server.id)
         return {
@@ -100,4 +98,5 @@ def create_server_with_owner(modules, create_user_with_token):
             "owner": owner,
             "channel": channels[0] if channels else None,
         }
+
     return _create

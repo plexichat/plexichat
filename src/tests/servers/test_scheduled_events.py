@@ -12,7 +12,18 @@ class TestScheduledEventCreation:
 
     def test_create_voice_event(self, server_with_channels):
         """Test creating a voice channel event."""
-        server, owner, admin_user, member_user, outsider, general, announcements, private, category, servers = server_with_channels
+        (
+            server,
+            owner,
+            admin_user,
+            member_user,
+            outsider,
+            general,
+            announcements,
+            private,
+            category,
+            servers,
+        ) = server_with_channels
 
         voice_channel = servers.create_channel(
             user_id=owner.id,
@@ -41,7 +52,9 @@ class TestScheduledEventCreation:
 
     def test_create_external_event(self, server_with_members):
         """Test creating an external location event."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
 
@@ -63,7 +76,18 @@ class TestScheduledEventCreation:
 
     def test_create_event_with_end_time(self, server_with_channels):
         """Test creating an event with end time."""
-        server, owner, admin_user, member_user, outsider, general, announcements, private, category, servers = server_with_channels
+        (
+            server,
+            owner,
+            admin_user,
+            member_user,
+            outsider,
+            general,
+            announcements,
+            private,
+            category,
+            servers,
+        ) = server_with_channels
 
         voice_channel = servers.create_channel(
             user_id=owner.id,
@@ -90,7 +114,9 @@ class TestScheduledEventCreation:
 
     def test_create_event_requires_permission(self, server_with_members):
         """Test that creating events requires permission."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
 
@@ -106,7 +132,9 @@ class TestScheduledEventCreation:
 
     def test_create_event_past_time_fails(self, server_with_members):
         """Test that creating events in the past fails."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         past_time = int(time.time() * 1000) - 3600000
 
@@ -122,7 +150,9 @@ class TestScheduledEventCreation:
 
     def test_create_external_event_requires_location(self, server_with_members):
         """Test that external events require a location."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
 
@@ -142,7 +172,9 @@ class TestScheduledEventRetrieval:
 
     def test_get_event_by_id(self, server_with_members):
         """Test getting an event by ID."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
         event = servers.create_scheduled_event(
@@ -161,7 +193,9 @@ class TestScheduledEventRetrieval:
 
     def test_get_events_for_server(self, server_with_members):
         """Test getting all events for a server."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
 
@@ -180,7 +214,9 @@ class TestScheduledEventRetrieval:
 
     def test_get_events_by_status(self, server_with_members):
         """Test filtering events by status."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
         servers.create_scheduled_event(
@@ -199,7 +235,9 @@ class TestScheduledEventRetrieval:
 
     def test_member_can_view_events(self, server_with_members):
         """Test that members can view events."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
         event = servers.create_scheduled_event(
@@ -221,7 +259,9 @@ class TestScheduledEventUpdate:
 
     def test_update_event_name(self, server_with_members):
         """Test updating event name."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
         event = servers.create_scheduled_event(
@@ -243,7 +283,9 @@ class TestScheduledEventUpdate:
 
     def test_update_event_status(self, server_with_members):
         """Test updating event status."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
         event = servers.create_scheduled_event(
@@ -270,7 +312,9 @@ class TestScheduledEventDeletion:
 
     def test_delete_event(self, server_with_members):
         """Test deleting an event."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
         event = servers.create_scheduled_event(
@@ -290,7 +334,9 @@ class TestScheduledEventDeletion:
 
     def test_delete_event_requires_permission(self, server_with_members):
         """Test that deleting events requires permission."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
         event = servers.create_scheduled_event(

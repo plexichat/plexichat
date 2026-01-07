@@ -13,7 +13,7 @@ common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
 if common_utils_path not in sys.path:
     sys.path.insert(0, common_utils_path)
 
-import utils.logger as logger
+import utils.logger as logger  # noqa: E402
 
 # Setup logger for tests
 try:
@@ -21,8 +21,8 @@ try:
 except Exception:
     pass
 
-from src.core.voice.signaling.sfu.mediasoup import MediasoupAdapter
-from src.core.voice.signaling.sfu.base import (
+from src.core.voice.signaling.sfu.mediasoup import MediasoupAdapter  # noqa: E402
+from src.core.voice.signaling.sfu.base import (  # noqa: E402
     TransportDirection,
     MediaKind,
     SFUTransport,
@@ -30,7 +30,7 @@ from src.core.voice.signaling.sfu.base import (
     SFUConsumer,
     RoomInfo,
 )
-from src.core.voice.signaling.exceptions import SFUConnectionError
+from src.core.voice.signaling.exceptions import SFUConnectionError  # noqa: E402
 
 
 @pytest.fixture
@@ -43,7 +43,9 @@ def mock_aiohttp_session():
     mock_response.text = AsyncMock(return_value="")
 
     mock_session = MagicMock()
-    mock_session.request = MagicMock(return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_response)))
+    mock_session.request = MagicMock(
+        return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_response))
+    )
     mock_session.close = AsyncMock()
 
     return mock_session, mock_response
@@ -56,10 +58,12 @@ class TestMediasoupAdapter:
     async def test_create_room(self, mock_aiohttp_session):
         """Test creating a room."""
         mock_session, mock_response = mock_aiohttp_session
-        mock_response.json = AsyncMock(return_value={
-            "peers": [],
-            "producers": [],
-        })
+        mock_response.json = AsyncMock(
+            return_value={
+                "peers": [],
+                "producers": [],
+            }
+        )
 
         with patch("aiohttp.ClientSession", return_value=mock_session):
             adapter = MediasoupAdapter(api_url="http://localhost:3000")
@@ -88,11 +92,13 @@ class TestMediasoupAdapter:
     async def test_join_room(self, mock_aiohttp_session):
         """Test joining a room."""
         mock_session, mock_response = mock_aiohttp_session
-        mock_response.json = AsyncMock(return_value={
-            "routerRtpCapabilities": {"codecs": []},
-            "peers": ["peer_1"],
-            "producers": [],
-        })
+        mock_response.json = AsyncMock(
+            return_value={
+                "routerRtpCapabilities": {"codecs": []},
+                "peers": ["peer_1"],
+                "producers": [],
+            }
+        )
 
         with patch("aiohttp.ClientSession", return_value=mock_session):
             adapter = MediasoupAdapter(api_url="http://localhost:3000")
@@ -121,12 +127,14 @@ class TestMediasoupAdapter:
     async def test_create_transport(self, mock_aiohttp_session):
         """Test creating a transport."""
         mock_session, mock_response = mock_aiohttp_session
-        mock_response.json = AsyncMock(return_value={
-            "id": "transport_789",
-            "iceParameters": {"usernameFragment": "abc", "password": "xyz"},
-            "iceCandidates": [],
-            "dtlsParameters": {"fingerprints": []},
-        })
+        mock_response.json = AsyncMock(
+            return_value={
+                "id": "transport_789",
+                "iceParameters": {"usernameFragment": "abc", "password": "xyz"},
+                "iceCandidates": [],
+                "dtlsParameters": {"fingerprints": []},
+            }
+        )
 
         with patch("aiohttp.ClientSession", return_value=mock_session):
             adapter = MediasoupAdapter(api_url="http://localhost:3000")
@@ -163,10 +171,12 @@ class TestMediasoupAdapter:
     async def test_produce(self, mock_aiohttp_session):
         """Test creating a producer."""
         mock_session, mock_response = mock_aiohttp_session
-        mock_response.json = AsyncMock(return_value={
-            "id": "producer_abc",
-            "paused": False,
-        })
+        mock_response.json = AsyncMock(
+            return_value={
+                "id": "producer_abc",
+                "paused": False,
+            }
+        )
 
         with patch("aiohttp.ClientSession", return_value=mock_session):
             adapter = MediasoupAdapter(api_url="http://localhost:3000")
@@ -189,12 +199,14 @@ class TestMediasoupAdapter:
     async def test_consume(self, mock_aiohttp_session):
         """Test creating a consumer."""
         mock_session, mock_response = mock_aiohttp_session
-        mock_response.json = AsyncMock(return_value={
-            "id": "consumer_xyz",
-            "kind": "audio",
-            "rtpParameters": {},
-            "paused": False,
-        })
+        mock_response.json = AsyncMock(
+            return_value={
+                "id": "consumer_xyz",
+                "kind": "audio",
+                "rtpParameters": {},
+                "paused": False,
+            }
+        )
 
         with patch("aiohttp.ClientSession", return_value=mock_session):
             adapter = MediasoupAdapter(api_url="http://localhost:3000")
@@ -222,7 +234,9 @@ class TestMediasoupAdapter:
             adapter = MediasoupAdapter(api_url="http://localhost:3000")
             adapter._session = mock_session
 
-            result = await adapter.pause_producer("room_123", "peer_456", "producer_abc")
+            result = await adapter.pause_producer(
+                "room_123", "peer_456", "producer_abc"
+            )
 
             assert result is True
 
@@ -235,7 +249,9 @@ class TestMediasoupAdapter:
             adapter = MediasoupAdapter(api_url="http://localhost:3000")
             adapter._session = mock_session
 
-            result = await adapter.resume_producer("room_123", "peer_456", "producer_abc")
+            result = await adapter.resume_producer(
+                "room_123", "peer_456", "producer_abc"
+            )
 
             assert result is True
 
@@ -248,7 +264,9 @@ class TestMediasoupAdapter:
             adapter = MediasoupAdapter(api_url="http://localhost:3000")
             adapter._session = mock_session
 
-            result = await adapter.close_producer("room_123", "peer_456", "producer_abc")
+            result = await adapter.close_producer(
+                "room_123", "peer_456", "producer_abc"
+            )
 
             assert result is True
 
@@ -256,10 +274,12 @@ class TestMediasoupAdapter:
     async def test_get_room_info(self, mock_aiohttp_session):
         """Test getting room info."""
         mock_session, mock_response = mock_aiohttp_session
-        mock_response.json = AsyncMock(return_value={
-            "peers": ["peer_1", "peer_2"],
-            "producers": ["producer_1"],
-        })
+        mock_response.json = AsyncMock(
+            return_value={
+                "peers": ["peer_1", "peer_2"],
+                "producers": ["producer_1"],
+            }
+        )
 
         with patch("aiohttp.ClientSession", return_value=mock_session):
             adapter = MediasoupAdapter(api_url="http://localhost:3000")
@@ -308,8 +328,11 @@ class TestMediasoupAdapter:
             adapter._session = mock_session
 
             result = await adapter.set_preferred_layers(
-                "room_123", "peer_456", "consumer_xyz",
-                spatial_layer=2, temporal_layer=2
+                "room_123",
+                "peer_456",
+                "consumer_xyz",
+                spatial_layer=2,
+                temporal_layer=2,
             )
 
             assert result is True

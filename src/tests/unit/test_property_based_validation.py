@@ -14,6 +14,7 @@ import re
 try:
     from hypothesis import given, strategies as st, assume, settings, example
     from hypothesis.strategies import composite
+
     HAS_HYPOTHESIS = True
 except ImportError:
     HAS_HYPOTHESIS = False
@@ -24,7 +25,11 @@ from src.core.messaging.content import validate_content
 from src.core.webhooks.manager import WebhookManager
 from src.core.servers.manager import ServerManager
 from src.core.webhooks.exceptions import WebhookNameError
-from src.core.servers.exceptions import InvalidServerNameError, InvalidChannelNameError, InvalidRoleNameError
+from src.core.servers.exceptions import (
+    InvalidServerNameError,
+    InvalidChannelNameError,
+    InvalidRoleNameError,
+)
 from unittest.mock import MagicMock
 
 # Reusable mock managers for validation testing (initialized lazily)
@@ -32,11 +37,13 @@ _MOCK_DB = MagicMock()
 _WEBHOOK_MANAGER_INSTANCE = None
 _SERVER_MANAGER_INSTANCE = None
 
+
 def _get_webhook_manager():
     global _WEBHOOK_MANAGER_INSTANCE
     if _WEBHOOK_MANAGER_INSTANCE is None:
         _WEBHOOK_MANAGER_INSTANCE = WebhookManager(_MOCK_DB)
     return _WEBHOOK_MANAGER_INSTANCE
+
 
 def _get_server_manager():
     global _SERVER_MANAGER_INSTANCE
@@ -50,45 +57,54 @@ def _get_server_manager():
 def email_addresses(draw, valid_only=False):
     """Generate email addresses for testing."""
     if valid_only:
-        username = draw(st.text(
-            min_size=1, max_size=64,
-            alphabet=st.characters(min_codepoint=97, max_codepoint=122)
-        ))
-        domain = draw(st.sampled_from(['gmail', 'yahoo', 'test', 'example']))
-        tld = draw(st.sampled_from(['com', 'org', 'net', 'edu', 'io']))
+        username = draw(
+            st.text(
+                min_size=1,
+                max_size=64,
+                alphabet=st.characters(min_codepoint=97, max_codepoint=122),
+            )
+        )
+        domain = draw(st.sampled_from(["gmail", "yahoo", "test", "example"]))
+        tld = draw(st.sampled_from(["com", "org", "net", "edu", "io"]))
         return f"{username}@{domain}.{tld}"
     else:
         # Include invalid emails
-        return draw(st.one_of(
-            st.text(min_size=0, max_size=100),  # Random text
-            st.builds(lambda x, y: f"{x}@{y}", st.text(), st.text()),  # Missing TLD
-            st.just("invalid"),
-            st.just("@example.com"),
-            st.just("user@"),
-            st.just("user@.com"),
-        ))
+        return draw(
+            st.one_of(
+                st.text(min_size=0, max_size=100),  # Random text
+                st.builds(lambda x, y: f"{x}@{y}", st.text(), st.text()),  # Missing TLD
+                st.just("invalid"),
+                st.just("@example.com"),
+                st.just("user@"),
+                st.just("user@.com"),
+            )
+        )
 
 
 @composite
 def usernames(draw, valid_only=False):
     """Generate usernames for testing."""
     if valid_only:
-        return draw(st.text(
-            min_size=3, max_size=32,
-            alphabet=st.characters(
-                whitelist_categories=('Ll', 'Lu', 'Nd'),
-                whitelist_characters='_'
-            )
-        ).filter(lambda x: x and x[0].isalpha()))
+        return draw(
+            st.text(
+                min_size=3,
+                max_size=32,
+                alphabet=st.characters(
+                    whitelist_categories=("Ll", "Lu", "Nd"), whitelist_characters="_"
+                ),
+            ).filter(lambda x: x and x[0].isalpha())
+        )
     else:
-        return draw(st.one_of(
-            st.text(min_size=0, max_size=100),  # Any text
-            st.just(""),
-            st.just("a"),
-            st.just("ab"),
-            st.just("a" * 100),
-            st.text(alphabet=st.sampled_from('!@#$%^&*()')),
-        ))
+        return draw(
+            st.one_of(
+                st.text(min_size=0, max_size=100),  # Any text
+                st.just(""),
+                st.just("a"),
+                st.just("ab"),
+                st.just("a" * 100),
+                st.text(alphabet=st.sampled_from("!@#$%^&*()")),
+            )
+        )
 
 
 @composite
@@ -96,46 +112,61 @@ def passwords(draw, valid_only=False):
     """Generate passwords for testing."""
     if valid_only:
         # Build a valid password
-        lowercase = draw(st.text(min_size=1, max_size=5, alphabet=string.ascii_lowercase))
-        uppercase = draw(st.text(min_size=1, max_size=5, alphabet=string.ascii_uppercase))
+        lowercase = draw(
+            st.text(min_size=1, max_size=5, alphabet=string.ascii_lowercase)
+        )
+        uppercase = draw(
+            st.text(min_size=1, max_size=5, alphabet=string.ascii_uppercase)
+        )
         digits = draw(st.text(min_size=1, max_size=5, alphabet=string.digits))
-        special = draw(st.text(min_size=1, max_size=5, alphabet='!@#$%^&*'))
-        padding = draw(st.text(min_size=0, max_size=10, alphabet=string.ascii_letters + string.digits))
-        
+        special = draw(st.text(min_size=1, max_size=5, alphabet="!@#$%^&*"))
+        padding = draw(
+            st.text(
+                min_size=0, max_size=10, alphabet=string.ascii_letters + string.digits
+            )
+        )
+
         # Combine and shuffle
         chars = list(lowercase + uppercase + digits + special + padding)
         draw(st.randoms()).shuffle(chars)
-        return ''.join(chars)
+        return "".join(chars)
     else:
-        return draw(st.one_of(
-            st.text(min_size=0, max_size=200),
-            st.just(""),
-            st.just("short"),
-            st.just("a" * 200),
-            st.just("NoDigits!"),
-            st.just("nouppercaseordigits123"),
-        ))
+        return draw(
+            st.one_of(
+                st.text(min_size=0, max_size=200),
+                st.just(""),
+                st.just("short"),
+                st.just("a" * 200),
+                st.just("NoDigits!"),
+                st.just("nouppercaseordigits123"),
+            )
+        )
 
 
 @composite
 def message_content(draw, max_length=4000):
     """Generate message content with various characteristics."""
-    return draw(st.one_of(
-        st.text(min_size=0, max_size=max_length * 2),  # May exceed limit
-        st.text(alphabet=st.characters(blacklist_categories=['Cs'])),  # Valid Unicode
-        st.text(alphabet=st.characters(whitelist_categories=['Zs', 'Cc'])),  # Whitespace/control
-        st.just(""),
-        st.just(" " * 100),
-        st.just("\n" * 100),
-        st.just("a" * 10000),  # Way over limit
-    ))
-
-
+    return draw(
+        st.one_of(
+            st.text(min_size=0, max_size=max_length * 2),  # May exceed limit
+            st.text(
+                alphabet=st.characters(blacklist_categories=["Cs"])
+            ),  # Valid Unicode
+            st.text(
+                alphabet=st.characters(whitelist_categories=["Zs", "Cc"])
+            ),  # Whitespace/control
+            st.just(""),
+            st.just(" " * 100),
+            st.just("\n" * 100),
+            st.just("a" * 10000),  # Way over limit
+        )
+    )
 
 
 # =============================================================================
 # AuthManager Validation Tests
 # =============================================================================
+
 
 @pytest.mark.unit
 class TestAuthManagerPropertyBased:
@@ -146,19 +177,19 @@ class TestAuthManagerPropertyBased:
     def test_username_validation_comprehensive(self, username):
         """Test username validation with comprehensive inputs."""
         valid, issues = validate_username(username)
-        
+
         # Check consistency
         assert isinstance(valid, bool)
         assert isinstance(issues, list)
-        
+
         # If invalid, should have issues
         if not valid:
             assert len(issues) > 0
-        
+
         # Check specific conditions
         if len(username) < 3:
             assert not valid or "at least" in str(issues).lower()
-        
+
         if len(username) > 32:
             assert not valid or "at most" in str(issues).lower()
 
@@ -170,18 +201,40 @@ class TestAuthManagerPropertyBased:
         """Valid usernames should be accepted."""
         assume(3 <= len(username) <= 32)
         assume(username[0].isalpha() and username.isascii())
-        assume(all((c.isalnum() and c.isascii()) or c == '_' for c in username))
-        
-        valid, issues = validate_username(username)
-        assert valid or username.lower() in {'admin', 'administrator', 'system', 'bot', 'api', 'root', 'null', 'undefined'}
+        assume(all((c.isalnum() and c.isascii()) or c == "_" for c in username))
 
-    @given(st.sampled_from(['admin', 'administrator', 'system', 'bot', 'api', 'root', 'null', 'undefined']))
+        valid, issues = validate_username(username)
+        assert valid or username.lower() in {
+            "admin",
+            "administrator",
+            "system",
+            "bot",
+            "api",
+            "root",
+            "null",
+            "undefined",
+        }
+
+    @given(
+        st.sampled_from(
+            [
+                "admin",
+                "administrator",
+                "system",
+                "bot",
+                "api",
+                "root",
+                "null",
+                "undefined",
+            ]
+        )
+    )
     @settings(max_examples=50)
     def test_reserved_usernames_rejected(self, username):
         """Reserved usernames should be rejected."""
         valid, issues = validate_username(username)
         assert not valid
-        assert any('reserved' in issue.lower() for issue in issues)
+        assert any("reserved" in issue.lower() for issue in issues)
 
     @given(email_addresses(valid_only=False))
     @settings(max_examples=200, deadline=None)
@@ -189,9 +242,13 @@ class TestAuthManagerPropertyBased:
         """Test email validation with comprehensive inputs."""
         result = validate_email(email)
         assert isinstance(result, bool)
-        
+
         # Check basic structure requirements
-        if '@' not in email or '.' not in email.split('@')[-1] if '@' in email else False:
+        if (
+            "@" not in email or "." not in email.split("@")[-1]
+            if "@" in email
+            else False
+        ):
             assert not result
 
     @given(email_addresses(valid_only=True))
@@ -204,7 +261,7 @@ class TestAuthManagerPropertyBased:
         # Note: May fail if TLD not in list, but valid structure should parse
         assert isinstance(result, bool)
 
-    @given(st.text(min_size=1, max_size=20).filter(lambda x: '@' not in x))
+    @given(st.text(min_size=1, max_size=20).filter(lambda x: "@" not in x))
     @settings(max_examples=50)
     def test_emails_without_at_rejected(self, text):
         """Emails without @ should be rejected."""
@@ -216,24 +273,28 @@ class TestAuthManagerPropertyBased:
     def test_password_validation_comprehensive(self, password):
         """Test password validation with comprehensive inputs."""
         result = validate_password(password)
-        
-        assert hasattr(result, 'valid')
-        assert hasattr(result, 'score')
-        assert hasattr(result, 'issues')
+
+        assert hasattr(result, "valid")
+        assert hasattr(result, "score")
+        assert hasattr(result, "issues")
         assert isinstance(result.valid, bool)
         assert isinstance(result.score, int)
         assert isinstance(result.issues, list)
-        
+
         # If invalid, should have issues
         if not result.valid:
             assert len(result.issues) > 0
-        
+
         # Check length constraints
         if len(password) < 12:
-            assert not result.valid or any('at least' in issue.lower() for issue in result.issues)
-        
+            assert not result.valid or any(
+                "at least" in issue.lower() for issue in result.issues
+            )
+
         if len(password) > 128:
-            assert not result.valid or any('at most' in issue.lower() for issue in result.issues)
+            assert not result.valid or any(
+                "at most" in issue.lower() for issue in result.issues
+            )
 
     @given(passwords(valid_only=True))
     @settings(max_examples=100, deadline=None)
@@ -245,7 +306,7 @@ class TestAuthManagerPropertyBased:
         assume(any(c.islower() for c in password))
         assume(any(c.isdigit() for c in password))
         assume(any(not c.isalnum() for c in password))
-        
+
         result = validate_password(password)
         assert result.valid
 
@@ -255,7 +316,7 @@ class TestAuthManagerPropertyBased:
         """Passwords shorter than 12 chars should be rejected."""
         result = validate_password(password)
         assert not result.valid
-        assert any('at least' in issue.lower() for issue in result.issues)
+        assert any("at least" in issue.lower() for issue in result.issues)
 
     @given(st.text(min_size=129, max_size=200))
     @settings(max_examples=50)
@@ -263,12 +324,13 @@ class TestAuthManagerPropertyBased:
         """Passwords longer than 128 chars should be rejected."""
         result = validate_password(password)
         assert not result.valid
-        assert any('at most' in issue.lower() for issue in result.issues)
+        assert any("at most" in issue.lower() for issue in result.issues)
 
 
 # =============================================================================
 # MessagingManager Validation Tests
 # =============================================================================
+
 
 @pytest.mark.unit
 class TestMessagingManagerPropertyBased:
@@ -279,42 +341,60 @@ class TestMessagingManagerPropertyBased:
     def test_message_content_validation(self, content):
         """Test message content validation with various inputs."""
         result = validate_content(content, max_length=4000)
-        
-        assert hasattr(result, 'valid')
-        assert hasattr(result, 'sanitized_content')
-        assert hasattr(result, 'issues')
+
+        assert hasattr(result, "valid")
+        assert hasattr(result, "sanitized_content")
+        assert hasattr(result, "issues")
         assert isinstance(result.valid, bool)
-        
+
         # Empty content should be invalid
         if not content or not content.strip():
             assert not result.valid
-            assert any('empty' in issue.lower() for issue in result.issues)
-        
+            assert any("empty" in issue.lower() for issue in result.issues)
+
         # Over-length content should be invalid
         if len(content) > 4000:
             assert not result.valid
-            assert any('length' in issue.lower() or 'exceeds' in issue.lower() for issue in result.issues)
+            assert any(
+                "length" in issue.lower() or "exceeds" in issue.lower()
+                for issue in result.issues
+            )
 
-    @given(st.text(min_size=1, max_size=4000, alphabet=st.characters(blacklist_categories=['Cs'])))
+    @given(
+        st.text(
+            min_size=1,
+            max_size=4000,
+            alphabet=st.characters(blacklist_categories=["Cs"]),
+        )
+    )
     @settings(max_examples=100, deadline=None)
     @example("Hello, world!")
     @example("Test message with émojis 🎉")
     def test_valid_message_content_accepted(self, content):
         """Valid message content should be accepted."""
         assume(content.strip())  # Not empty after stripping
-        
-        result = validate_content(content, max_length=4000)
-        assert result.valid or len(result.issues) > 0  # May have warnings but should process
 
-    @given(st.text(min_size=4001, max_size=10000, alphabet=string.ascii_letters + string.digits))
+        result = validate_content(content, max_length=4000)
+        assert (
+            result.valid or len(result.issues) > 0
+        )  # May have warnings but should process
+
+    @given(
+        st.text(
+            min_size=4001, max_size=10000, alphabet=string.ascii_letters + string.digits
+        )
+    )
     @settings(max_examples=50)
     def test_overlength_messages_rejected(self, content):
         """Messages exceeding max length should be rejected."""
         result = validate_content(content, max_length=4000)
         assert not result.valid
-        assert any('exceeds' in issue.lower() or 'length' in issue.lower() for issue in result.issues)
+        assert any(
+            "exceeds" in issue.lower() or "length" in issue.lower()
+            for issue in result.issues
+        )
 
-    @given(st.text(alphabet=st.characters(whitelist_categories=['Zs', 'Cc'])))
+    @given(st.text(alphabet=st.characters(whitelist_categories=["Zs", "Cc"])))
     @settings(max_examples=50)
     def test_whitespace_only_messages_rejected(self, content):
         """Whitespace-only messages should be rejected."""
@@ -322,21 +402,27 @@ class TestMessagingManagerPropertyBased:
         if not content.strip():
             assert not result.valid
 
-    @given(st.text(alphabet=st.characters() | st.sampled_from(['|', 'n', 's', 'f', 'w']), min_size=1, max_size=100).filter(lambda x: '||' in x or 'nsfw' in x.lower()))
+    @given(
+        st.text(
+            alphabet=st.characters() | st.sampled_from(["|", "n", "s", "f", "w"]),
+            min_size=1,
+            max_size=100,
+        ).filter(lambda x: "||" in x or "nsfw" in x.lower())
+    )
     @settings(max_examples=50)
     def test_spoiler_and_nsfw_detection(self, content):
         """Test spoiler and NSFW content detection."""
         result = validate_content(content, max_length=4000)
-        
-        if '||' in content:
+
+        if "||" in content:
             # May detect spoilers (depending on exact format)
             pass
-        
-        if 'nsfw' in content.lower():
+
+        if "nsfw" in content.lower():
             # Should potentially flag NSFW
             assert isinstance(result.has_nsfw, bool)
 
-    @given(st.text(min_size=1, max_size=200, alphabet='<>'))
+    @given(st.text(min_size=1, max_size=200, alphabet="<>"))
     @settings(max_examples=50)
     def test_html_tag_handling(self, content):
         """Test handling of HTML-like content."""
@@ -344,7 +430,11 @@ class TestMessagingManagerPropertyBased:
         # Should sanitize or handle HTML tags
         assert isinstance(result.sanitized_content, str)
 
-    @given(st.sampled_from(['javascript:', '<script']), st.text(max_size=50), st.text(max_size=50))
+    @given(
+        st.sampled_from(["javascript:", "<script"]),
+        st.text(max_size=50),
+        st.text(max_size=50),
+    )
     @settings(max_examples=30)
     def test_xss_attempt_sanitization(self, pattern, prefix, suffix):
         """Test XSS attempt sanitization."""
@@ -359,6 +449,7 @@ class TestMessagingManagerPropertyBased:
 # =============================================================================
 # ServersManager Validation Tests
 # =============================================================================
+
 
 @pytest.mark.unit
 class TestServersManagerPropertyBased:
@@ -413,7 +504,14 @@ class TestServersManagerPropertyBased:
         except InvalidChannelNameError:
             assert not name or not name.strip()
 
-    @given(st.text(min_size=1, max_size=100, alphabet=st.characters(min_codepoint=97, max_codepoint=122) | st.sampled_from(['-'])))
+    @given(
+        st.text(
+            min_size=1,
+            max_size=100,
+            alphabet=st.characters(min_codepoint=97, max_codepoint=122)
+            | st.sampled_from(["-"]),
+        )
+    )
     @settings(max_examples=100, deadline=None)
     @example("general")
     @example("my-channel")
@@ -449,6 +547,7 @@ class TestServersManagerPropertyBased:
 # WebhookManager Validation Tests
 # =============================================================================
 
+
 @pytest.mark.unit
 class TestWebhookManagerPropertyBased:
     """Property-based tests for WebhookManager validation."""
@@ -460,19 +559,23 @@ class TestWebhookManagerPropertyBased:
         try:
             sanitized = _get_webhook_manager()._validate_name(name)
             assert 0 < len(sanitized) <= 80
-            assert sanitized == name.strip() or any(c in name for c in '<>')
+            assert sanitized == name.strip() or any(c in name for c in "<>")
         except WebhookNameError:
             stripped = name.strip()
             # It's valid to raise WebhookNameError if:
             # 1. The original name was empty/whitespace
             # 2. The name exceeded maximum length
             # 3. The name became empty after HTML/script sanitization
-            sanitized_via_re = re.sub(r'<[^>]*>', '', stripped)
-            sanitized_via_re = re.sub(r'javascript:', '', sanitized_via_re, flags=re.IGNORECASE).strip()
-            
+            sanitized_via_re = re.sub(r"<[^>]*>", "", stripped)
+            sanitized_via_re = re.sub(
+                r"javascript:", "", sanitized_via_re, flags=re.IGNORECASE
+            ).strip()
+
             assert not stripped or len(stripped) > 80 or not sanitized_via_re
 
-    @given(st.text(min_size=1, max_size=80).filter(lambda x: x.strip() and '<' not in x))
+    @given(
+        st.text(min_size=1, max_size=80).filter(lambda x: x.strip() and "<" not in x)
+    )
     @settings(max_examples=100, deadline=None)
     @example("My Webhook")
     @example("GitHub Bot")
@@ -480,7 +583,7 @@ class TestWebhookManagerPropertyBased:
         """Valid webhook names should be accepted."""
         stripped = name.strip()
         assume(0 < len(stripped) <= 80)
-        assume('<' not in name)
+        assume("<" not in name)
         assert len(stripped) > 0
 
     @given(st.text(min_size=81, max_size=200))
@@ -492,13 +595,17 @@ class TestWebhookManagerPropertyBased:
         with pytest.raises(WebhookNameError):
             _get_webhook_manager()._validate_name(name)
 
-    @given(st.sampled_from(['<script', 'javascript:']), st.text(max_size=20), st.text(max_size=20))
+    @given(
+        st.sampled_from(["<script", "javascript:"]),
+        st.text(max_size=20),
+        st.text(max_size=20),
+    )
     @settings(max_examples=30)
     def test_webhook_name_xss_rejection(self, pattern, prefix, suffix):
         """Webhook names with XSS attempts should be sanitized/rejected."""
         name = prefix + pattern + suffix
         # Should contain dangerous patterns
-        assert '<script' in name.lower() or 'javascript:' in name.lower()
+        assert "<script" in name.lower() or "javascript:" in name.lower()
 
     @given(st.text(min_size=0, max_size=300))
     @settings(max_examples=100, deadline=None)
@@ -507,7 +614,7 @@ class TestWebhookManagerPropertyBased:
         # Valid URLs should start with http:// or https://
         # Invalid schemes should be rejected
         if url.strip():
-            if url.startswith(('http://', 'https://')):
+            if url.startswith(("http://", "https://")):
                 pass  # Potentially valid
             else:
                 pass  # Invalid scheme
@@ -519,11 +626,14 @@ class TestWebhookManagerPropertyBased:
 # Unicode and Special Character Tests
 # =============================================================================
 
+
 @pytest.mark.unit
 class TestUnicodeHandling:
     """Property-based tests for Unicode edge cases."""
 
-    @given(st.text(alphabet=st.characters(min_codepoint=0x1F600, max_codepoint=0x1F64F)))
+    @given(
+        st.text(alphabet=st.characters(min_codepoint=0x1F600, max_codepoint=0x1F64F))
+    )
     @settings(max_examples=100, deadline=None)
     def test_emoji_handling_in_messages(self, content):
         """Test emoji handling in message content."""
@@ -548,7 +658,7 @@ class TestUnicodeHandling:
             result = validate_content(content, max_length=4000)
             assert isinstance(result.sanitized_content, str)
 
-    @given(st.text(alphabet=st.characters(whitelist_categories=['Cc'])))
+    @given(st.text(alphabet=st.characters(whitelist_categories=["Cc"])))
     @settings(max_examples=50)
     def test_control_character_handling(self, content):
         """Test control character handling."""
@@ -569,6 +679,7 @@ class TestUnicodeHandling:
 # Boundary Condition Tests
 # =============================================================================
 
+
 @pytest.mark.unit
 class TestBoundaryConditions:
     """Property-based tests for boundary conditions."""
@@ -579,7 +690,7 @@ class TestBoundaryConditions:
         """Test message length at various boundaries."""
         content = "a" * length
         result = validate_content(content, max_length=4000)
-        
+
         if length == 0:
             assert not result.valid
         elif 0 < length <= 4000:
@@ -594,7 +705,7 @@ class TestBoundaryConditions:
         # Build a password that meets complexity requirements
         password = "Aa1!" + "a" * max(0, length - 4)
         result = validate_password(password)
-        
+
         if length < 12:
             assert not result.valid
         elif 12 <= length <= 128:
@@ -609,11 +720,11 @@ class TestBoundaryConditions:
         """Test username length at various boundaries."""
         username = "a" * length
         valid, issues = validate_username(username)
-        
+
         if length < 3:
             assert not valid
         elif 3 <= length <= 32:
-            assert valid or 'reserved' in str(issues)  # May be reserved
+            assert valid or "reserved" in str(issues)  # May be reserved
         else:
             assert not valid
 
@@ -622,7 +733,7 @@ class TestBoundaryConditions:
     def test_server_name_length_boundaries(self, length):
         """Test server name length at various boundaries."""
         is_valid = 2 <= length <= 100
-        
+
         if length < 2:
             assert not is_valid
         elif 2 <= length <= 100:
@@ -635,11 +746,16 @@ class TestBoundaryConditions:
 # Security and Injection Tests
 # =============================================================================
 
+
 @pytest.mark.unit
 class TestSecurityPatterns:
     """Property-based tests for security vulnerabilities."""
 
-    @given(st.sampled_from(['<script', 'javascript:', 'onerror=', 'onclick=']), st.text(max_size=30), st.text(max_size=30))
+    @given(
+        st.sampled_from(["<script", "javascript:", "onerror=", "onclick="]),
+        st.text(max_size=30),
+        st.text(max_size=30),
+    )
     @settings(max_examples=50)
     def test_xss_pattern_sanitization(self, pattern, prefix, suffix):
         """Test XSS pattern sanitization."""
@@ -648,7 +764,11 @@ class TestSecurityPatterns:
         # Should sanitize or flag XSS attempts
         assert isinstance(result.sanitized_content, str)
 
-    @given(st.sampled_from(['SELECT', 'DROP', 'INSERT', 'UPDATE', 'DELETE']), st.text(max_size=50), st.text(max_size=50))
+    @given(
+        st.sampled_from(["SELECT", "DROP", "INSERT", "UPDATE", "DELETE"]),
+        st.text(max_size=50),
+        st.text(max_size=50),
+    )
     @settings(max_examples=50)
     def test_sql_injection_pattern_sanitization(self, pattern, prefix, suffix):
         """Test SQL injection pattern sanitization."""
@@ -657,7 +777,7 @@ class TestSecurityPatterns:
         # Should handle SQL-like content safely
         assert isinstance(result.sanitized_content, str)
 
-    @given(st.text(min_size=1, max_size=200, alphabet='\'";--'))
+    @given(st.text(min_size=1, max_size=200, alphabet="'\";--"))
     @settings(max_examples=50)
     def test_special_sql_characters(self, content):
         """Test handling of SQL special characters."""
@@ -665,7 +785,11 @@ class TestSecurityPatterns:
         # Should not crash on SQL special chars
         assert isinstance(result.sanitized_content, str)
 
-    @given(st.sampled_from(['..', '~', '../', '..\\']), st.text(max_size=30), st.text(max_size=30))
+    @given(
+        st.sampled_from(["..", "~", "../", "..\\"]),
+        st.text(max_size=30),
+        st.text(max_size=30),
+    )
     @settings(max_examples=30)
     def test_path_traversal_patterns(self, pattern, prefix, suffix):
         """Test path traversal pattern handling."""

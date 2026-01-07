@@ -202,108 +202,124 @@ class TestCommandOptionValidation:
 
     def test_validate_valid_option(self, modules):
         """Test validating a valid option."""
-        valid, issues = modules.applications.validate_option({
-            "name": "test",
-            "description": "Test option",
-            "type": CommandOptionType.STRING,
-        })
+        valid, issues = modules.applications.validate_option(
+            {
+                "name": "test",
+                "description": "Test option",
+                "type": CommandOptionType.STRING,
+            }
+        )
 
         assert valid is True
         assert len(issues) == 0
 
     def test_validate_option_missing_name(self, modules):
         """Test validating option without name."""
-        valid, issues = modules.applications.validate_option({
-            "description": "Test option",
-            "type": CommandOptionType.STRING,
-        })
+        valid, issues = modules.applications.validate_option(
+            {
+                "description": "Test option",
+                "type": CommandOptionType.STRING,
+            }
+        )
 
         assert valid is False
         assert any("name" in issue.lower() for issue in issues)
 
     def test_validate_option_missing_description(self, modules):
         """Test validating option without description."""
-        valid, issues = modules.applications.validate_option({
-            "name": "test",
-            "type": CommandOptionType.STRING,
-        })
+        valid, issues = modules.applications.validate_option(
+            {
+                "name": "test",
+                "type": CommandOptionType.STRING,
+            }
+        )
 
         assert valid is False
         assert any("description" in issue.lower() for issue in issues)
 
     def test_validate_option_invalid_name(self, modules):
         """Test validating option with invalid name."""
-        valid, issues = modules.applications.validate_option({
-            "name": "Invalid Name!",
-            "description": "Test option",
-            "type": CommandOptionType.STRING,
-        })
+        valid, issues = modules.applications.validate_option(
+            {
+                "name": "Invalid Name!",
+                "description": "Test option",
+                "type": CommandOptionType.STRING,
+            }
+        )
 
         assert valid is False
 
     def test_validate_option_name_too_long(self, modules):
         """Test validating option with name too long."""
-        valid, issues = modules.applications.validate_option({
-            "name": "a" * 50,
-            "description": "Test option",
-            "type": CommandOptionType.STRING,
-        })
+        valid, issues = modules.applications.validate_option(
+            {
+                "name": "a" * 50,
+                "description": "Test option",
+                "type": CommandOptionType.STRING,
+            }
+        )
 
         assert valid is False
 
     def test_validate_options_list(self, modules):
         """Test validating list of options."""
-        valid, issues = modules.applications.validate_options([
-            {
-                "name": "opt1",
-                "description": "Option 1",
-                "type": CommandOptionType.STRING,
-                "required": True,
-            },
-            {
-                "name": "opt2",
-                "description": "Option 2",
-                "type": CommandOptionType.INTEGER,
-                "required": False,
-            },
-        ])
+        valid, issues = modules.applications.validate_options(
+            [
+                {
+                    "name": "opt1",
+                    "description": "Option 1",
+                    "type": CommandOptionType.STRING,
+                    "required": True,
+                },
+                {
+                    "name": "opt2",
+                    "description": "Option 2",
+                    "type": CommandOptionType.INTEGER,
+                    "required": False,
+                },
+            ]
+        )
 
         assert valid is True
 
     def test_validate_options_duplicate_names(self, modules):
         """Test validating options with duplicate names."""
-        valid, issues = modules.applications.validate_options([
-            {
-                "name": "same",
-                "description": "Option 1",
-                "type": CommandOptionType.STRING,
-            },
-            {
-                "name": "same",
-                "description": "Option 2",
-                "type": CommandOptionType.INTEGER,
-            },
-        ])
+        valid, issues = modules.applications.validate_options(
+            [
+                {
+                    "name": "same",
+                    "description": "Option 1",
+                    "type": CommandOptionType.STRING,
+                },
+                {
+                    "name": "same",
+                    "description": "Option 2",
+                    "type": CommandOptionType.INTEGER,
+                },
+            ]
+        )
 
         assert valid is False
         assert any("duplicate" in issue.lower() for issue in issues)
 
     def test_validate_options_required_order(self, modules):
         """Test that required options must come before optional."""
-        valid, issues = modules.applications.validate_options([
-            {
-                "name": "optional",
-                "description": "Optional first",
-                "type": CommandOptionType.STRING,
-                "required": False,
-            },
-            {
-                "name": "required",
-                "description": "Required after optional",
-                "type": CommandOptionType.STRING,
-                "required": True,
-            },
-        ])
+        valid, issues = modules.applications.validate_options(
+            [
+                {
+                    "name": "optional",
+                    "description": "Optional first",
+                    "type": CommandOptionType.STRING,
+                    "required": False,
+                },
+                {
+                    "name": "required",
+                    "description": "Required after optional",
+                    "type": CommandOptionType.STRING,
+                    "required": True,
+                },
+            ]
+        )
 
         assert valid is False
 
@@ -315,10 +331,12 @@ class TestCommandValidation:
 
     def test_validate_valid_command(self, modules):
         """Test validating a valid command."""
-        valid, issues = modules.applications.validate_command({
-            "name": "test",
-            "description": "Test command",
-        })
+        valid, issues = modules.applications.validate_command(
+            {
+                "name": "test",
+                "description": "Test command",
+            }
+        )
 
         assert valid is True
 

@@ -47,7 +47,11 @@ class TestTwoFactorAuth:
         db, auth = db_and_auth
         unique_id = uuid.uuid4().hex[:8]
 
-        user = auth.register(f"confirm2fa_{unique_id}", f"confirm2fa_{unique_id}@example.com", "TestPass123!")
+        user = auth.register(
+            f"confirm2fa_{unique_id}",
+            f"confirm2fa_{unique_id}@example.com",
+            "TestPass123!",
+        )
         setup = auth.setup_2fa(user.id)
 
         totp = pyotp.TOTP(setup.secret)
@@ -64,7 +68,11 @@ class TestTwoFactorAuth:
         db, auth = db_and_auth
         unique_id = uuid.uuid4().hex[:8]
 
-        user = auth.register(f"invalid2fa_{unique_id}", f"invalid2fa_{unique_id}@example.com", "TestPass123!")
+        user = auth.register(
+            f"invalid2fa_{unique_id}",
+            f"invalid2fa_{unique_id}@example.com",
+            "TestPass123!",
+        )
         auth.setup_2fa(user.id)
 
         with pytest.raises(TwoFactorInvalidError):

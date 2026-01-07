@@ -242,11 +242,15 @@ class TestQueryParserComplex:
         assert result.exact_phrases == ["exact phrase"]
         assert "hello" in result.search_terms
 
-        from_filter = next(f for f in result.filters if f.filter_type == FilterType.FROM_USER)
+        from_filter = next(
+            f for f in result.filters if f.filter_type == FilterType.FROM_USER
+        )
         assert from_filter.value == "alice"
         assert not from_filter.negated
 
-        has_filter = next(f for f in result.filters if f.filter_type == FilterType.HAS_ATTACHMENT)
+        has_filter = next(
+            f for f in result.filters if f.filter_type == FilterType.HAS_ATTACHMENT
+        )
         assert has_filter.negated
 
     def test_has_filters_property(self):

@@ -15,9 +15,7 @@ class TestCanViewThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Public View Test"
+            user_id=owner.id, channel_id=channel.id, name="Public View Test"
         )
 
         assert threads.can_view_thread(owner.id, thread.id) is True
@@ -32,7 +30,7 @@ class TestCanViewThread:
             user_id=owner.id,
             channel_id=channel.id,
             name="Private View Test",
-            thread_type=ThreadType.PRIVATE
+            thread_type=ThreadType.PRIVATE,
         )
 
         assert threads.can_view_thread(owner.id, thread.id) is True
@@ -56,9 +54,7 @@ class TestCanSendInThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Public Send Test"
+            user_id=owner.id, channel_id=channel.id, name="Public Send Test"
         )
 
         assert threads.can_send_in_thread(owner.id, thread.id) is True
@@ -69,9 +65,7 @@ class TestCanSendInThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Locked Send Test"
+            user_id=owner.id, channel_id=channel.id, name="Locked Send Test"
         )
 
         threads.lock_thread(owner.id, thread.id)
@@ -87,7 +81,7 @@ class TestCanSendInThread:
             user_id=owner.id,
             channel_id=channel.id,
             name="Private Send Test",
-            thread_type=ThreadType.PRIVATE
+            thread_type=ThreadType.PRIVATE,
         )
 
         assert threads.can_send_in_thread(member1.id, thread.id) is False
@@ -107,9 +101,7 @@ class TestCanManageThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=member1.id,
-            channel_id=channel.id,
-            name="Owner Manage Test"
+            user_id=member1.id, channel_id=channel.id, name="Owner Manage Test"
         )
 
         assert threads.can_manage_thread(member1.id, thread.id) is True
@@ -119,21 +111,19 @@ class TestCanManageThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Non Owner Manage Test"
+            user_id=owner.id, channel_id=channel.id, name="Non Owner Manage Test"
         )
 
         assert threads.can_manage_thread(member1.id, thread.id) is False
 
     def test_moderator_can_manage_thread(self, server_with_moderator):
         """Test that moderator with permission can manage thread."""
-        owner, moderator, member, server, channel, servers, threads = server_with_moderator
+        owner, moderator, member, server, channel, servers, threads = (
+            server_with_moderator
+        )
 
         thread = threads.create_thread(
-            user_id=member.id,
-            channel_id=channel.id,
-            name="Moderator Manage Test"
+            user_id=member.id, channel_id=channel.id, name="Moderator Manage Test"
         )
 
         assert threads.can_manage_thread(moderator.id, thread.id) is True
@@ -150,12 +140,12 @@ class TestModeratorPermissions:
 
     def test_moderator_can_archive_any_thread(self, server_with_moderator):
         """Test that moderator can archive any thread."""
-        owner, moderator, member, server, channel, servers, threads = server_with_moderator
+        owner, moderator, member, server, channel, servers, threads = (
+            server_with_moderator
+        )
 
         thread = threads.create_thread(
-            user_id=member.id,
-            channel_id=channel.id,
-            name="Mod Archive Test"
+            user_id=member.id, channel_id=channel.id, name="Mod Archive Test"
         )
 
         archived = threads.archive_thread(moderator.id, thread.id)
@@ -163,12 +153,12 @@ class TestModeratorPermissions:
 
     def test_moderator_can_lock_any_thread(self, server_with_moderator):
         """Test that moderator can lock any thread."""
-        owner, moderator, member, server, channel, servers, threads = server_with_moderator
+        owner, moderator, member, server, channel, servers, threads = (
+            server_with_moderator
+        )
 
         thread = threads.create_thread(
-            user_id=member.id,
-            channel_id=channel.id,
-            name="Mod Lock Test"
+            user_id=member.id, channel_id=channel.id, name="Mod Lock Test"
         )
 
         locked = threads.lock_thread(moderator.id, thread.id)
@@ -176,12 +166,12 @@ class TestModeratorPermissions:
 
     def test_moderator_can_delete_any_thread(self, server_with_moderator):
         """Test that moderator can delete any thread."""
-        owner, moderator, member, server, channel, servers, threads = server_with_moderator
+        owner, moderator, member, server, channel, servers, threads = (
+            server_with_moderator
+        )
 
         thread = threads.create_thread(
-            user_id=member.id,
-            channel_id=channel.id,
-            name="Mod Delete Test"
+            user_id=member.id, channel_id=channel.id, name="Mod Delete Test"
         )
 
         result = threads.delete_thread(moderator.id, thread.id)
@@ -189,12 +179,12 @@ class TestModeratorPermissions:
 
     def test_moderator_can_update_any_thread(self, server_with_moderator):
         """Test that moderator can update any thread."""
-        owner, moderator, member, server, channel, servers, threads = server_with_moderator
+        owner, moderator, member, server, channel, servers, threads = (
+            server_with_moderator
+        )
 
         thread = threads.create_thread(
-            user_id=member.id,
-            channel_id=channel.id,
-            name="Mod Update Test"
+            user_id=member.id, channel_id=channel.id, name="Mod Update Test"
         )
 
         updated = threads.update_thread(moderator.id, thread.id, name="Updated Name")

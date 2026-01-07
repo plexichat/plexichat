@@ -11,6 +11,7 @@ import uuid
 def _init_embeds(modules):
     """Reliably initialize the embeds module."""
     from src.core import embeds
+
     embeds._manager = None
     embeds._setup_complete = False
     embeds.setup(modules._db, modules.messaging, modules.servers)
@@ -46,13 +47,13 @@ def fresh_users_with_dm(modules):
     user1 = modules.auth.register(
         username=f"fresh1_{unique_id}",
         email=f"fresh1_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     user2 = modules.auth.register(
         username=f"fresh2_{unique_id}",
         email=f"fresh2_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     dm = modules.messaging.create_dm(user1.id, user2.id)
@@ -70,20 +71,24 @@ def users_with_server(modules):
     owner = modules.auth.register(
         username=f"owner_{unique_id}",
         email=f"owner_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     member = modules.auth.register(
         username=f"member_{unique_id}",
         email=f"member_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     server = modules.servers.create_server(owner.id, f"Test Server {unique_id}")
     modules.servers.add_member(server.id, member.id)
 
-    group = modules.messaging.create_group(owner.id, f"Server Group {unique_id}", [member.id])
-    msg = modules.messaging.send_message(owner.id, group.id, "Server message for embeds")
+    group = modules.messaging.create_group(
+        owner.id, f"Server Group {unique_id}", [member.id]
+    )
+    msg = modules.messaging.send_message(
+        owner.id, group.id, "Server message for embeds"
+    )
 
     return owner, member, server, group, msg, modules.servers, embeds, modules.messaging
 
@@ -97,16 +102,18 @@ def group_with_message(modules):
     owner = modules.auth.register(
         username=f"grp_owner_{unique_id}",
         email=f"grp_owner_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     member1 = modules.auth.register(
         username=f"grp_mem1_{unique_id}",
         email=f"grp_mem1_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
-    group = modules.messaging.create_group(owner.id, f"Test Group {unique_id}", [member1.id])
+    group = modules.messaging.create_group(
+        owner.id, f"Test Group {unique_id}", [member1.id]
+    )
     msg = modules.messaging.send_message(owner.id, group.id, "Group message for embeds")
 
     return owner, member1, group, msg, modules.messaging, embeds

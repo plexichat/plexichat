@@ -21,12 +21,12 @@ class TestClosePoll:
         user1 = auth.register(
             username=f"close_user1_{unique_id}",
             email=f"close_user1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"close_user2_{unique_id}",
             email=f"close_user2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user1.id, user2.id)
@@ -37,7 +37,7 @@ class TestClosePoll:
             message_id=msg.id,
             question="Close early?",
             options=["Yes", "No"],
-            duration_hours=24
+            duration_hours=24,
         )
 
         closed = polls.close_poll(user1.id, poll.id)
@@ -53,12 +53,12 @@ class TestClosePoll:
         user1 = auth.register(
             username=f"perm_user1_{unique_id}",
             email=f"perm_user1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"perm_user2_{unique_id}",
             email=f"perm_user2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user1.id, user2.id)
@@ -68,7 +68,7 @@ class TestClosePoll:
             user_id=user1.id,
             message_id=msg.id,
             question="Permission test?",
-            options=["Yes", "No"]
+            options=["Yes", "No"],
         )
 
         with pytest.raises(PermissionDeniedError):
@@ -82,12 +82,12 @@ class TestClosePoll:
         user1 = auth.register(
             username=f"ended_user1_{unique_id}",
             email=f"ended_user1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"ended_user2_{unique_id}",
             email=f"ended_user2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user1.id, user2.id)
@@ -97,7 +97,7 @@ class TestClosePoll:
             user_id=user1.id,
             message_id=msg.id,
             question="Already ended?",
-            options=["Yes", "No"]
+            options=["Yes", "No"],
         )
 
         polls.close_poll(user1.id, poll.id)
@@ -113,12 +113,12 @@ class TestClosePoll:
         user1 = auth.register(
             username=f"vote_closed1_{unique_id}",
             email=f"vote_closed1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"vote_closed2_{unique_id}",
             email=f"vote_closed2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user1.id, user2.id)
@@ -128,7 +128,7 @@ class TestClosePoll:
             user_id=user1.id,
             message_id=msg.id,
             question="Vote after close?",
-            options=["Yes", "No"]
+            options=["Yes", "No"],
         )
 
         polls.close_poll(user1.id, poll.id)
@@ -148,12 +148,12 @@ class TestDeletePoll:
         user1 = auth.register(
             username=f"del_user1_{unique_id}",
             email=f"del_user1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"del_user2_{unique_id}",
             email=f"del_user2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user1.id, user2.id)
@@ -163,7 +163,7 @@ class TestDeletePoll:
             user_id=user1.id,
             message_id=msg.id,
             question="Delete me?",
-            options=["Yes", "No"]
+            options=["Yes", "No"],
         )
 
         result = polls.delete_poll(user1.id, poll.id)
@@ -180,12 +180,12 @@ class TestDeletePoll:
         user1 = auth.register(
             username=f"del_perm1_{unique_id}",
             email=f"del_perm1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"del_perm2_{unique_id}",
             email=f"del_perm2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user1.id, user2.id)
@@ -195,7 +195,7 @@ class TestDeletePoll:
             user_id=user1.id,
             message_id=msg.id,
             question="Delete permission?",
-            options=["Yes", "No"]
+            options=["Yes", "No"],
         )
 
         with pytest.raises(PermissionDeniedError):

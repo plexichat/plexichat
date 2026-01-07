@@ -19,9 +19,7 @@ class TestLockThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Lock Test"
+            user_id=owner.id, channel_id=channel.id, name="Lock Test"
         )
 
         locked = threads.lock_thread(owner.id, thread.id)
@@ -33,9 +31,7 @@ class TestLockThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=member1.id,
-            channel_id=channel.id,
-            name="Owner Lock Test"
+            user_id=member1.id, channel_id=channel.id, name="Owner Lock Test"
         )
 
         locked = threads.lock_thread(member1.id, thread.id)
@@ -53,9 +49,7 @@ class TestLockThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Permission Lock Test"
+            user_id=owner.id, channel_id=channel.id, name="Permission Lock Test"
         )
 
         threads.join_thread(member1.id, thread.id)
@@ -68,9 +62,7 @@ class TestLockThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Locked Messages Test"
+            user_id=owner.id, channel_id=channel.id, name="Locked Messages Test"
         )
 
         threads.join_thread(member1.id, thread.id)
@@ -84,9 +76,7 @@ class TestLockThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Owner Locked Send Test"
+            user_id=owner.id, channel_id=channel.id, name="Owner Locked Send Test"
         )
 
         threads.lock_thread(owner.id, thread.id)
@@ -103,9 +93,7 @@ class TestUnlockThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Unlock Test"
+            user_id=owner.id, channel_id=channel.id, name="Unlock Test"
         )
 
         threads.lock_thread(owner.id, thread.id)
@@ -118,9 +106,7 @@ class TestUnlockThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Already Unlocked Test"
+            user_id=owner.id, channel_id=channel.id, name="Already Unlocked Test"
         )
 
         unlocked = threads.unlock_thread(owner.id, thread.id)
@@ -138,9 +124,7 @@ class TestUnlockThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Permission Unlock Test"
+            user_id=owner.id, channel_id=channel.id, name="Permission Unlock Test"
         )
 
         threads.lock_thread(owner.id, thread.id)
@@ -154,9 +138,7 @@ class TestUnlockThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Unlocked Messages Test"
+            user_id=owner.id, channel_id=channel.id, name="Unlocked Messages Test"
         )
 
         threads.join_thread(member1.id, thread.id)
@@ -175,9 +157,7 @@ class TestLockAndArchive:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Lock Archived Test"
+            user_id=owner.id, channel_id=channel.id, name="Lock Archived Test"
         )
 
         threads.archive_thread(owner.id, thread.id)
@@ -191,9 +171,7 @@ class TestLockAndArchive:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Archive Locked Test"
+            user_id=owner.id, channel_id=channel.id, name="Archive Locked Test"
         )
 
         threads.lock_thread(owner.id, thread.id)

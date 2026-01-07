@@ -18,15 +18,13 @@ class TestSoundPermissions:
         owner = auth.register(
             username=f"perm_owner_{unique_id}",
             email=f"perm_owner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"Perm Server {unique_id}")
 
         role = servers.create_role(
-            user_id=owner.id,
-            server_id=server.id,
-            name="Test Role"
+            user_id=owner.id, server_id=server.id, name="Test Role"
         )
 
         sound = soundboard.upload_sound(
@@ -36,14 +34,11 @@ class TestSoundPermissions:
             format=SoundFormat.MP3,
             url="https://cdn.example.com/sounds/perm.mp3",
             size=100000,
-            duration_seconds=2.0
+            duration_seconds=2.0,
         )
 
         perm = soundboard.set_sound_permissions(
-            user_id=owner.id,
-            sound_id=sound.id,
-            role_id=role.id,
-            can_use=True
+            user_id=owner.id, sound_id=sound.id, role_id=role.id, can_use=True
         )
 
         assert perm is not None
@@ -59,15 +54,13 @@ class TestSoundPermissions:
         owner = auth.register(
             username=f"deny_owner_{unique_id}",
             email=f"deny_owner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"Deny Server {unique_id}")
 
         role = servers.create_role(
-            user_id=owner.id,
-            server_id=server.id,
-            name="Denied Role"
+            user_id=owner.id, server_id=server.id, name="Denied Role"
         )
 
         sound = soundboard.upload_sound(
@@ -77,14 +70,11 @@ class TestSoundPermissions:
             format=SoundFormat.MP3,
             url="https://cdn.example.com/sounds/deny.mp3",
             size=100000,
-            duration_seconds=2.0
+            duration_seconds=2.0,
         )
 
         perm = soundboard.set_sound_permissions(
-            user_id=owner.id,
-            sound_id=sound.id,
-            role_id=role.id,
-            can_use=False
+            user_id=owner.id, sound_id=sound.id, role_id=role.id, can_use=False
         )
 
         assert perm.can_use is False
@@ -97,15 +87,13 @@ class TestSoundPermissions:
         owner = auth.register(
             username=f"update_owner_{unique_id}",
             email=f"update_owner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"Update Server {unique_id}")
 
         role = servers.create_role(
-            user_id=owner.id,
-            server_id=server.id,
-            name="Update Role"
+            user_id=owner.id, server_id=server.id, name="Update Role"
         )
 
         sound = soundboard.upload_sound(
@@ -115,21 +103,15 @@ class TestSoundPermissions:
             format=SoundFormat.MP3,
             url="https://cdn.example.com/sounds/update.mp3",
             size=100000,
-            duration_seconds=2.0
+            duration_seconds=2.0,
         )
 
         soundboard.set_sound_permissions(
-            user_id=owner.id,
-            sound_id=sound.id,
-            role_id=role.id,
-            can_use=True
+            user_id=owner.id, sound_id=sound.id, role_id=role.id, can_use=True
         )
 
         updated = soundboard.set_sound_permissions(
-            user_id=owner.id,
-            sound_id=sound.id,
-            role_id=role.id,
-            can_use=False
+            user_id=owner.id, sound_id=sound.id, role_id=role.id, can_use=False
         )
 
         assert updated.can_use is False
@@ -142,21 +124,19 @@ class TestSoundPermissions:
         owner = auth.register(
             username=f"no_perm_owner_{unique_id}",
             email=f"no_perm_owner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         member = auth.register(
             username=f"no_perm_member_{unique_id}",
             email=f"no_perm_member_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"No Perm Server {unique_id}")
         servers.add_member(server.id, member.id)
 
         role = servers.create_role(
-            user_id=owner.id,
-            server_id=server.id,
-            name="No Perm Role"
+            user_id=owner.id, server_id=server.id, name="No Perm Role"
         )
 
         sound = soundboard.upload_sound(
@@ -166,13 +146,10 @@ class TestSoundPermissions:
             format=SoundFormat.MP3,
             url="https://cdn.example.com/sounds/noperm.mp3",
             size=100000,
-            duration_seconds=2.0
+            duration_seconds=2.0,
         )
 
         with pytest.raises(PermissionDeniedError):
             soundboard.set_sound_permissions(
-                user_id=member.id,
-                sound_id=sound.id,
-                role_id=role.id,
-                can_use=True
+                user_id=member.id, sound_id=sound.id, role_id=role.id, can_use=True
             )

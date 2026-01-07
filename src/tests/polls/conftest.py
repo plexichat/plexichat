@@ -28,7 +28,7 @@ def poll_with_options(dm_with_message):
         user_id=user1.id,
         message_id=msg.id,
         question="What is your favorite color?",
-        options=["Red", "Blue", "Green", "Yellow"]
+        options=["Red", "Blue", "Green", "Yellow"],
     )
 
     return user1, user2, poll, polls, messaging

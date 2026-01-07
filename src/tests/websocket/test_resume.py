@@ -11,7 +11,14 @@ class TestResumeHandler:
     """Tests for RESUME opcode handling."""
 
     @pytest.mark.asyncio
-    async def test_resume_success(self, opcode_handler, session_manager, mock_websocket, mock_auth_module, sample_identify_payload):
+    async def test_resume_success(
+        self,
+        opcode_handler,
+        session_manager,
+        mock_websocket,
+        mock_auth_module,
+        sample_identify_payload,
+    ):
         """Test successful resume."""
         conn1 = Connection(
             websocket=mock_websocket,
@@ -19,7 +26,9 @@ class TestResumeHandler:
             heartbeat_interval_ms=45000,
         )
         session_manager.add_connection(conn1)
-        await opcode_handler.handle(conn1, GatewayOpcode.IDENTIFY, sample_identify_payload)
+        await opcode_handler.handle(
+            conn1, GatewayOpcode.IDENTIFY, sample_identify_payload
+        )
         session_id = conn1.session_id
         seq = conn1.sequence
 
@@ -66,7 +75,14 @@ class TestResumeHandler:
         assert response_data["d"] is False
 
     @pytest.mark.asyncio
-    async def test_resume_invalid_token(self, opcode_handler, session_manager, mock_websocket, mock_auth_module, sample_identify_payload):
+    async def test_resume_invalid_token(
+        self,
+        opcode_handler,
+        session_manager,
+        mock_websocket,
+        mock_auth_module,
+        sample_identify_payload,
+    ):
         """Test resume with invalid token."""
         conn1 = Connection(
             websocket=mock_websocket,
@@ -74,7 +90,9 @@ class TestResumeHandler:
             heartbeat_interval_ms=45000,
         )
         session_manager.add_connection(conn1)
-        await opcode_handler.handle(conn1, GatewayOpcode.IDENTIFY, sample_identify_payload)
+        await opcode_handler.handle(
+            conn1, GatewayOpcode.IDENTIFY, sample_identify_payload
+        )
         session_id = conn1.session_id
 
         mock_auth_module.verify_token.side_effect = Exception("Invalid token")
@@ -217,7 +235,7 @@ class TestSessionTimeout:
     def test_session_not_removed_if_active(self, session_manager, connection):
         """Test active sessions are not removed."""
         session_manager.add_connection(connection)
-        session = session_manager.create_session(connection, user_id=12345, intents=513)
+        session_manager.create_session(connection, user_id=12345, intents=513)
 
         removed = session_manager.cleanup_stale_sessions()
         assert removed == 0

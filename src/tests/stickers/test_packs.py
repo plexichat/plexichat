@@ -23,7 +23,7 @@ class TestCreatePack:
             user_id=owner.id,
             name="My Pack",
             description="A test pack",
-            server_id=server.id
+            server_id=server.id,
         )
 
         assert pack is not None
@@ -38,9 +38,7 @@ class TestCreatePack:
         owner, server, stickers, servers = server_with_owner
 
         pack = stickers.create_pack(
-            user_id=owner.id,
-            name="No Desc Pack",
-            server_id=server.id
+            user_id=owner.id, name="No Desc Pack", server_id=server.id
         )
 
         assert pack is not None
@@ -51,22 +49,14 @@ class TestCreatePack:
         owner, server, stickers, servers = server_with_owner
 
         with pytest.raises(InvalidPackNameError):
-            stickers.create_pack(
-                user_id=owner.id,
-                name="",
-                server_id=server.id
-            )
+            stickers.create_pack(user_id=owner.id, name="", server_id=server.id)
 
     def test_create_pack_whitespace_name_fails(self, server_with_owner):
         """Test creating pack with whitespace name fails."""
         owner, server, stickers, servers = server_with_owner
 
         with pytest.raises(InvalidPackNameError):
-            stickers.create_pack(
-                user_id=owner.id,
-                name="   ",
-                server_id=server.id
-            )
+            stickers.create_pack(user_id=owner.id, name="   ", server_id=server.id)
 
 
 class TestGetPack:
@@ -111,14 +101,12 @@ class TestDeletePack:
         owner = auth.register(
             username=f"del_owner_{unique_id}",
             email=f"del_owner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         server = servers.create_server(owner.id, f"Del Server {unique_id}")
 
         pack = stickers.create_pack(
-            user_id=owner.id,
-            name="To Delete",
-            server_id=server.id
+            user_id=owner.id, name="To Delete", server_id=server.id
         )
 
         result = stickers.delete_pack(owner.id, pack.id)
@@ -142,21 +130,19 @@ class TestDeletePack:
         owner = auth.register(
             username=f"perm_owner_{unique_id}",
             email=f"perm_owner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         other = auth.register(
             username=f"perm_other_{unique_id}",
             email=f"perm_other_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"Perm Server {unique_id}")
         servers.add_member(server.id, other.id)
 
         pack = stickers.create_pack(
-            user_id=owner.id,
-            name="Protected Pack",
-            server_id=server.id
+            user_id=owner.id, name="Protected Pack", server_id=server.id
         )
 
         with pytest.raises(PermissionDeniedError):

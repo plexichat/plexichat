@@ -31,6 +31,7 @@ class TestAuthenticationMiddleware:
     def app_with_auth_middleware(self, api_module):
         """Create test app with authentication middleware."""
         from src.api.middleware.error_handling import setup_exception_handlers
+
         app = FastAPI()
         app.add_middleware(AuthenticationMiddleware)
         setup_exception_handlers(app)
@@ -52,7 +53,9 @@ class TestAuthenticationMiddleware:
         data = response.json()
         assert data["authenticated"] is False
 
-    def test_valid_bearer_token(self, app_with_auth_middleware, modules, test_user_with_token):
+    def test_valid_bearer_token(
+        self, app_with_auth_middleware, modules, test_user_with_token
+    ):
         """Test request with valid Bearer token."""
         user, token = test_user_with_token
         client = TestClient(app_with_auth_middleware)
@@ -69,7 +72,7 @@ class TestAuthenticationMiddleware:
         bot = modules.auth.create_bot(
             owner_id=user.id,
             username=f"testbot_{unique_id}",
-            display_name=f"Test Bot {unique_id}"
+            display_name=f"Test Bot {unique_id}",
         )
 
         client = TestClient(app_with_auth_middleware)
@@ -81,7 +84,9 @@ class TestAuthenticationMiddleware:
     def test_invalid_token(self, app_with_auth_middleware):
         """Test request with invalid token sets user to None."""
         client = TestClient(app_with_auth_middleware)
-        response = client.get("/test", headers={"Authorization": "Bearer invalid_token_123"})
+        response = client.get(
+            "/test", headers={"Authorization": "Bearer invalid_token_123"}
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["authenticated"] is False
@@ -116,7 +121,7 @@ class TestAuthenticationMiddleware:
         user = modules.auth.register(
             username=f"testuser_{unique_id}",
             email=f"testuser_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         login_result = modules.auth.login(f"testuser_{unique_id}", "TestPass123!")
         token = login_result.token
@@ -137,11 +142,13 @@ class TestAuthenticationMiddleware:
         data = response.json()
         assert data["authenticated"] is False
 
-    def test_bearer_scheme_strict_case(self, app_with_auth_middleware, modules, test_user_with_token):
+    def test_bearer_scheme_strict_case(
+        self, app_with_auth_middleware, modules, test_user_with_token
+    ):
         """Test that Bearer scheme is case sensitive (strict)."""
         user, token = test_user_with_token
         client = TestClient(app_with_auth_middleware)
-        
+
         # Valid case
         response = client.get("/test", headers={"Authorization": f"Bearer {token}"})
         assert response.status_code == 200
@@ -149,19 +156,24 @@ class TestAuthenticationMiddleware:
 
         # Invalid cases
         for scheme in ["bearer", "BEARER", "bEaReR"]:
-            response = client.get("/test", headers={"Authorization": f"{scheme} {token}"})
+            response = client.get(
+                "/test", headers={"Authorization": f"{scheme} {token}"}
+            )
             assert response.status_code == 200
             assert response.json()["authenticated"] is False
 
     def test_auth_module_not_available(self, app_with_auth_middleware):
         """Test handling when auth module is not available."""
         import src.api as api
+
         original_auth = api._auth
         api._auth = None
 
         try:
             client = TestClient(app_with_auth_middleware)
-            response = client.get("/test", headers={"Authorization": "Bearer some_token"})
+            response = client.get(
+                "/test", headers={"Authorization": "Bearer some_token"}
+            )
             assert response.status_code == 200
             data = response.json()
             assert data["authenticated"] is False
@@ -171,7 +183,7 @@ class TestAuthenticationMiddleware:
     def test_extract_token_method(self):
         """Test the internal _extract_token method."""
         middleware = AuthenticationMiddleware(None)
-        
+
         assert middleware._extract_token("Bearer token123") == "token123"
         assert middleware._extract_token("Bot token456") == "token456"
         # Invalid cases
@@ -189,6 +201,7 @@ class TestGetCurrentUserDependency:
     def app_with_current_user(self, api_module):
         """Create test app using get_current_user dependency."""
         from src.api.middleware.error_handling import setup_exception_handlers
+
         app = FastAPI()
         app.add_middleware(AuthenticationMiddleware)
         setup_exception_handlers(app)
@@ -199,11 +212,15 @@ class TestGetCurrentUserDependency:
 
         return app
 
-    def test_authenticated_request(self, app_with_current_user, modules, test_user_with_token):
+    def test_authenticated_request(
+        self, app_with_current_user, modules, test_user_with_token
+    ):
         """Test authenticated request to protected endpoint."""
         user, token = test_user_with_token
         client = TestClient(app_with_current_user)
-        response = client.get("/protected", headers={"Authorization": f"Bearer {token}"})
+        response = client.get(
+            "/protected", headers={"Authorization": f"Bearer {token}"}
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["user_id"] == user.id
@@ -221,7 +238,9 @@ class TestGetCurrentUserDependency:
     def test_invalid_token_returns_401(self, app_with_current_user):
         """Test invalid token returns 401."""
         client = TestClient(app_with_current_user)
-        response = client.get("/protected", headers={"Authorization": "Bearer invalid_token"})
+        response = client.get(
+            "/protected", headers={"Authorization": "Bearer invalid_token"}
+        )
         assert response.status_code == 401
         data = response.json()
         assert "error" in data
@@ -234,14 +253,16 @@ class TestGetCurrentUserDependency:
         user = modules.auth.register(
             username=f"testuser_{unique_id}",
             email=f"testuser_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         login_result = modules.auth.login(f"testuser_{unique_id}", "TestPass123!")
-        
+
         modules.auth.revoke_session(user.id, login_result.session.id)
 
         client = TestClient(app_with_current_user)
-        response = client.get("/protected", headers={"Authorization": f"Bearer {login_result.token}"})
+        response = client.get(
+            "/protected", headers={"Authorization": f"Bearer {login_result.token}"}
+        )
         assert response.status_code == 401
         data = response.json()
         assert "error" in data
@@ -250,12 +271,15 @@ class TestGetCurrentUserDependency:
     def test_auth_module_not_available(self, app_with_current_user):
         """Test error when auth module is not available."""
         import src.api as api
+
         original_auth = api._auth
         api._auth = None
 
         try:
             client = TestClient(app_with_current_user)
-            response = client.get("/protected", headers={"Authorization": "Bearer token"})
+            response = client.get(
+                "/protected", headers={"Authorization": "Bearer token"}
+            )
             assert response.status_code == 500
             data = response.json()
             assert "error" in data
@@ -263,14 +287,18 @@ class TestGetCurrentUserDependency:
         finally:
             api._auth = original_auth
 
-    def test_uses_cached_user_from_middleware(self, app_with_current_user, modules, test_user_with_token):
+    def test_uses_cached_user_from_middleware(
+        self, app_with_current_user, modules, test_user_with_token
+    ):
         """Test that dependency uses user cached by middleware."""
         user, token = test_user_with_token
         app = app_with_current_user
         app.add_middleware(AuthenticationMiddleware)
 
         client = TestClient(app)
-        response = client.get("/protected", headers={"Authorization": f"Bearer {token}"})
+        response = client.get(
+            "/protected", headers={"Authorization": f"Bearer {token}"}
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["user_id"] == user.id
@@ -283,19 +311,24 @@ class TestGetOptionalUserDependency:
     def app_with_optional_user(self, api_module):
         """Create test app with get_optional_user dependency."""
         from src.api.middleware.error_handling import setup_exception_handlers
+
         app = FastAPI()
         app.add_middleware(AuthenticationMiddleware)
         setup_exception_handlers(app)
 
         @app.get("/optional")
-        async def optional_endpoint(user: Optional[TokenInfo] = Depends(get_optional_user)):
+        async def optional_endpoint(
+            user: Optional[TokenInfo] = Depends(get_optional_user),
+        ):
             if user:
                 return {"authenticated": True, "user_id": user.user_id}
             return {"authenticated": False}
 
         return app
 
-    def test_authenticated_request(self, app_with_optional_user, modules, test_user_with_token):
+    def test_authenticated_request(
+        self, app_with_optional_user, modules, test_user_with_token
+    ):
         """Test authenticated request returns user info."""
         user, token = test_user_with_token
         client = TestClient(app_with_optional_user)
@@ -316,7 +349,9 @@ class TestGetOptionalUserDependency:
     def test_invalid_token_returns_none(self, app_with_optional_user):
         """Test invalid token returns None instead of error."""
         client = TestClient(app_with_optional_user)
-        response = client.get("/optional", headers={"Authorization": "Bearer invalid_token"})
+        response = client.get(
+            "/optional", headers={"Authorization": "Bearer invalid_token"}
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["authenticated"] is False
@@ -324,12 +359,15 @@ class TestGetOptionalUserDependency:
     def test_auth_module_not_available(self, app_with_optional_user):
         """Test returns None when auth module is not available."""
         import src.api as api
+
         original_auth = api._auth
         api._auth = None
 
         try:
             client = TestClient(app_with_optional_user)
-            response = client.get("/optional", headers={"Authorization": "Bearer token"})
+            response = client.get(
+                "/optional", headers={"Authorization": "Bearer token"}
+            )
             assert response.status_code == 200
             data = response.json()
             assert data["authenticated"] is False
@@ -344,6 +382,7 @@ class TestSecurityScenarios:
     def security_app(self, api_module):
         """Create test app with sensitive endpoint for security tests."""
         from src.api.middleware.error_handling import setup_exception_handlers
+
         app = FastAPI()
         app.add_middleware(AuthenticationMiddleware)
         setup_exception_handlers(app)
@@ -360,22 +399,26 @@ class TestSecurityScenarios:
     def test_token_reuse_after_logout(self, security_app, modules, user_pool):
         """Test that token cannot be reused after logout."""
         unique_id = uuid.uuid4().hex[:8]
-        user = modules.auth.register(
+        modules.auth.register(
             username=f"testuser_{unique_id}",
             email=f"testuser_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         login_result = modules.auth.login(f"testuser_{unique_id}", "TestPass123!")
         token = login_result.token
 
         client = TestClient(security_app)
-        response = client.get("/sensitive", headers={"Authorization": f"Bearer {token}"})
+        response = client.get(
+            "/sensitive", headers={"Authorization": f"Bearer {token}"}
+        )
         assert response.status_code == 200
 
         # Logout the session
         modules.auth.logout(login_result.token)
 
-        response = client.get("/sensitive", headers={"Authorization": f"Bearer {token}"})
+        response = client.get(
+            "/sensitive", headers={"Authorization": f"Bearer {token}"}
+        )
         assert response.status_code == 200
         data = response.json()
         assert "error" in data
@@ -387,11 +430,13 @@ class TestSecurityScenarios:
             "' OR '1'='1",
             "1'; DROP TABLE users--",
             "admin'--",
-            "' UNION SELECT * FROM users--"
+            "' UNION SELECT * FROM users--",
         ]
 
         for token in malicious_tokens:
-            response = client.get("/sensitive", headers={"Authorization": f"Bearer {token}"})
+            response = client.get(
+                "/sensitive", headers={"Authorization": f"Bearer {token}"}
+            )
             assert response.status_code == 200
             data = response.json()
             assert "error" in data
@@ -402,11 +447,13 @@ class TestSecurityScenarios:
         xss_tokens = [
             "<script>alert('xss')</script>",
             "javascript:alert('xss')",
-            "<img src=x onerror=alert('xss')>"
+            "<img src=x onerror=alert('xss')>",
         ]
 
         for token in xss_tokens:
-            response = client.get("/sensitive", headers={"Authorization": f"Bearer {token}"})
+            response = client.get(
+                "/sensitive", headers={"Authorization": f"Bearer {token}"}
+            )
             assert response.status_code == 200
             data = response.json()
             assert "error" in data
@@ -415,7 +462,9 @@ class TestSecurityScenarios:
         """Test handling of extremely long tokens."""
         client = TestClient(security_app)
         long_token = "a" * 100000
-        response = client.get("/sensitive", headers={"Authorization": f"Bearer {long_token}"})
+        response = client.get(
+            "/sensitive", headers={"Authorization": f"Bearer {long_token}"}
+        )
         assert response.status_code == 200
 
     def test_special_characters_in_token(self, security_app):
@@ -425,11 +474,13 @@ class TestSecurityScenarios:
             "token\x00null",
             "token\nline",
             "token\ttab",
-            "token\rcarriage"
+            "token\rcarriage",
         ]
 
         for token in special_tokens:
-            response = client.get("/sensitive", headers={"Authorization": f"Bearer {token}"})
+            response = client.get(
+                "/sensitive", headers={"Authorization": f"Bearer {token}"}
+            )
             assert response.status_code == 200
 
 
@@ -461,12 +512,14 @@ class TestConcurrency:
         user = modules.auth.register(
             username=f"testuser_{unique_id}",
             email=f"testuser_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         login_result = modules.auth.login(f"testuser_{unique_id}", "TestPass123!")
         token = login_result.token
 
-        async with AsyncClient(transport=ASGITransport(app=concurrent_app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=concurrent_app), base_url="http://test"
+        ) as client:
             tasks = [
                 client.get("/concurrent", headers={"Authorization": f"Bearer {token}"})
                 for _ in range(50)
@@ -488,19 +541,31 @@ class TestConcurrency:
         user = modules.auth.register(
             username=f"testuser_{unique_id}",
             email=f"testuser_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         login_result = modules.auth.login(f"testuser_{unique_id}", "TestPass123!")
         valid_token = login_result.token
 
-        async with AsyncClient(transport=ASGITransport(app=concurrent_app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=concurrent_app), base_url="http://test"
+        ) as client:
             tasks = []
             for i in range(50):
                 if i % 2 == 0:
-                    tasks.append(client.get("/concurrent", headers={"Authorization": f"Bearer {valid_token}"}))
+                    tasks.append(
+                        client.get(
+                            "/concurrent",
+                            headers={"Authorization": f"Bearer {valid_token}"},
+                        )
+                    )
                 else:
-                    tasks.append(client.get("/concurrent", headers={"Authorization": f"Bearer invalid_{i}"}))
-            
+                    tasks.append(
+                        client.get(
+                            "/concurrent",
+                            headers={"Authorization": f"Bearer invalid_{i}"},
+                        )
+                    )
+
             responses = await asyncio.gather(*tasks)
 
         valid_count = 0
@@ -533,7 +598,7 @@ class TestIPAddressAndUserAgent:
             user = getattr(request.state, "user", None)
             return {
                 "authenticated": user is not None,
-                "ip": request.client.host if request.client else None
+                "ip": request.client.host if request.client else None,
             }
 
         return app
@@ -554,8 +619,8 @@ class TestIPAddressAndUserAgent:
             "/track",
             headers={
                 "Authorization": f"Bearer {token}",
-                "User-Agent": "TestClient/1.0"
-            }
+                "User-Agent": "TestClient/1.0",
+            },
         )
         assert response.status_code == 200
         data = response.json()

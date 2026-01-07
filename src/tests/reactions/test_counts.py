@@ -3,7 +3,6 @@ Tests for reaction counts and user lists.
 """
 
 
-
 class TestReactionCounts:
     """Tests for reaction count aggregation."""
 
@@ -40,13 +39,17 @@ class TestReactionCounts:
 
         msg_reactions = reactions.get_reactions(user1.id, msg.id)
 
-        popular = next((r for r in msg_reactions.reactions if r.emoji == "popular"), None)
+        popular = next(
+            (r for r in msg_reactions.reactions if r.emoji == "popular"), None
+        )
         assert popular is not None
         assert popular.count == 2
         assert popular.me is True
 
         msg_reactions_u2 = reactions.get_reactions(user2.id, msg.id)
-        popular_u2 = next((r for r in msg_reactions_u2.reactions if r.emoji == "popular"), None)
+        popular_u2 = next(
+            (r for r in msg_reactions_u2.reactions if r.emoji == "popular"), None
+        )
         assert popular_u2 is not None
         assert popular_u2.me is True
 
@@ -63,8 +66,12 @@ class TestReactionCounts:
         assert len(msg_reactions.reactions) == 2
         assert msg_reactions.total_count == 3
 
-        emoji_a = next((r for r in msg_reactions.reactions if r.emoji == "emoji_a"), None)
-        emoji_b = next((r for r in msg_reactions.reactions if r.emoji == "emoji_b"), None)
+        emoji_a = next(
+            (r for r in msg_reactions.reactions if r.emoji == "emoji_a"), None
+        )
+        emoji_b = next(
+            (r for r in msg_reactions.reactions if r.emoji == "emoji_b"), None
+        )
 
         assert emoji_a is not None
         assert emoji_b is not None
@@ -138,6 +145,7 @@ class TestReactionUsers:
         """Test pagination of reaction users."""
         db, auth, messaging, servers, relationships, reactions = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         users_list = []
@@ -145,7 +153,7 @@ class TestReactionUsers:
             user = auth.register(
                 username=f"page_user{i}_{unique_id}",
                 email=f"page_user{i}_{unique_id}@example.com",
-                password="TestPass123!"
+                password="TestPass123!",
             )
             users_list.append(user)
 
@@ -155,12 +163,17 @@ class TestReactionUsers:
         for user in users_list[:2]:
             reactions.add_reaction(user.id, msg.id, "paginate")
 
-        page1 = reactions.get_reaction_users(users_list[0].id, msg.id, "paginate", limit=1)
+        page1 = reactions.get_reaction_users(
+            users_list[0].id, msg.id, "paginate", limit=1
+        )
         assert len(page1) == 1
 
         page2 = reactions.get_reaction_users(
-            users_list[0].id, msg.id, "paginate",
-            limit=1, after_user_id=page1[0].user_id
+            users_list[0].id,
+            msg.id,
+            "paginate",
+            limit=1,
+            after_user_id=page1[0].user_id,
         )
         assert len(page2) == 1
         assert page2[0].user_id != page1[0].user_id

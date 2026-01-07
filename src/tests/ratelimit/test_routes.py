@@ -2,7 +2,6 @@
 Tests for per-route limit configuration.
 """
 
-
 from src.core.ratelimit.models import RateLimitConfig, RateLimitAlgorithm, BucketType
 from src.core.ratelimit.manager import RateLimitManager
 from src.core.ratelimit.config import (
@@ -49,7 +48,9 @@ class TestDefaultRouteConfigs:
 
     def test_reactions_route_config(self):
         """Test reactions route has fast limits."""
-        config = get_route_config("PUT /channels/{id}/messages/{msg_id}/reactions/{emoji}")
+        config = get_route_config(
+            "PUT /channels/{id}/messages/{msg_id}/reactions/{emoji}"
+        )
         assert config is not None
         assert config.requests == 1
         assert config.window_seconds == 0.25
@@ -86,7 +87,9 @@ class TestBotHigherLimitRoutes:
 
     def test_reactions_is_bot_higher(self):
         """Test reactions route has higher bot limits."""
-        assert is_bot_higher_limit_route("PUT /channels/{id}/messages/{msg_id}/reactions/{emoji}")
+        assert is_bot_higher_limit_route(
+            "PUT /channels/{id}/messages/{msg_id}/reactions/{emoji}"
+        )
 
     def test_login_is_not_bot_higher(self):
         """Test login route does not have higher bot limits."""
@@ -290,7 +293,7 @@ class TestBotMultiplier:
                 route="POST /channels/{id}/messages",
                 is_bot=True,
             )
-            assert result.allowed, f"Bot request {i+1} should be allowed"
+            assert result.allowed, f"Bot request {i + 1} should be allowed"
         result = manager.check_rate_limit(
             user_id=test_user_id,
             route="POST /channels/{id}/messages",
@@ -351,7 +354,7 @@ class TestWebhookMultiplier:
                 webhook_id=test_webhook_id,
                 is_webhook=True,
             )
-            assert result.allowed, f"Webhook request {i+1} should be allowed"
+            assert result.allowed, f"Webhook request {i + 1} should be allowed"
         result = manager.check_rate_limit(
             route="POST /webhooks/{id}/{token}",
             webhook_id=test_webhook_id,

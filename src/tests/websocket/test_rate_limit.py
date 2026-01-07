@@ -94,7 +94,9 @@ class TestDispatcherRateLimit:
     """Tests for dispatcher rate limiting."""
 
     @pytest.mark.asyncio
-    async def test_dispatch_respects_rate_limit(self, dispatcher, session_manager, mock_websocket):
+    async def test_dispatch_respects_rate_limit(
+        self, dispatcher, session_manager, mock_websocket
+    ):
         """Test dispatch respects connection rate limit."""
         from src.core.events.types import GatewayIntent
         from src.core import events
@@ -105,7 +107,9 @@ class TestDispatcherRateLimit:
             heartbeat_interval_ms=45000,
         )
         session_manager.add_connection(conn)
-        session_manager.create_session(conn, user_id=12345, intents=GatewayIntent.all_intents())
+        session_manager.create_session(
+            conn, user_id=12345, intents=GatewayIntent.all_intents()
+        )
 
         for _ in range(120):
             conn.check_rate_limit(120)
@@ -118,7 +122,9 @@ class TestDispatcherRateLimit:
         assert count == 0
 
     @pytest.mark.asyncio
-    async def test_dispatch_allows_under_rate_limit(self, dispatcher, session_manager, mock_websocket):
+    async def test_dispatch_allows_under_rate_limit(
+        self, dispatcher, session_manager, mock_websocket
+    ):
         """Test dispatch allows under rate limit."""
         from src.core.events.types import GatewayIntent
         from src.core import events
@@ -129,7 +135,9 @@ class TestDispatcherRateLimit:
             heartbeat_interval_ms=45000,
         )
         session_manager.add_connection(conn)
-        session_manager.create_session(conn, user_id=12345, intents=GatewayIntent.all_intents())
+        session_manager.create_session(
+            conn, user_id=12345, intents=GatewayIntent.all_intents()
+        )
 
         event = events.create_message_create(
             message_id=1, channel_id=2, author_id=3, content="test", server_id=4

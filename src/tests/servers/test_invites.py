@@ -12,10 +12,7 @@ class TestCreateInvite:
         """Test creating an invite."""
         server, owner, _, _, _, general, _, _, _, servers = server_with_channels
 
-        invite = servers.create_invite(
-            user_id=owner.id,
-            channel_id=general.id
-        )
+        invite = servers.create_invite(user_id=owner.id, channel_id=general.id)
 
         assert invite is not None
         assert invite.code is not None
@@ -30,7 +27,7 @@ class TestCreateInvite:
         invite = servers.create_invite(
             user_id=owner.id,
             channel_id=general.id,
-            max_age=3600  # 1 hour
+            max_age=3600,  # 1 hour
         )
 
         assert invite.max_age == 3600
@@ -41,9 +38,7 @@ class TestCreateInvite:
         server, owner, _, _, _, general, _, _, _, servers = server_with_channels
 
         invite = servers.create_invite(
-            user_id=owner.id,
-            channel_id=general.id,
-            max_uses=10
+            user_id=owner.id, channel_id=general.id, max_uses=10
         )
 
         assert invite.max_uses == 10
@@ -55,7 +50,7 @@ class TestCreateInvite:
         invite = servers.create_invite(
             user_id=owner.id,
             channel_id=general.id,
-            max_age=0  # Never expires
+            max_age=0,  # Never expires
         )
 
         assert invite.expires_at is None
@@ -65,16 +60,16 @@ class TestCreateInvite:
         server, owner, _, _, _, general, _, _, _, servers = server_with_channels
 
         invite = servers.create_invite(
-            user_id=owner.id,
-            channel_id=general.id,
-            temporary=True
+            user_id=owner.id, channel_id=general.id, temporary=True
         )
 
         assert invite.temporary is True
 
     def test_create_invite_without_permission_fails(self, server_with_channels):
         """Test that creating invite without permission fails."""
-        server, owner, _, member_user, _, general, _, _, _, servers = server_with_channels
+        server, owner, _, member_user, _, general, _, _, _, servers = (
+            server_with_channels
+        )
 
         # Remove invite permission from default role but keep channel view
         roles = servers.get_roles(owner.id, server.id)
@@ -87,15 +82,12 @@ class TestCreateInvite:
                 "invites.create": False,
                 "channels.view": True,
                 "messages.send": True,
-                "messages.read": True
-            }
+                "messages.read": True,
+            },
         )
 
         with pytest.raises(servers.PermissionDeniedError):
-            servers.create_invite(
-                user_id=member_user.id,
-                channel_id=general.id
-            )
+            servers.create_invite(user_id=member_user.id, channel_id=general.id)
 
 
 class TestGetInvite:
@@ -137,7 +129,9 @@ class TestGetInvites:
 
     def test_get_invites_returns_server_invites(self, server_with_channels):
         """Test getting all invites for a server."""
-        server, owner, _, _, _, general, announcements, _, _, servers = server_with_channels
+        server, owner, _, _, _, general, announcements, _, _, servers = (
+            server_with_channels
+        )
 
         invite1 = servers.create_invite(owner.id, general.id)
         invite2 = servers.create_invite(owner.id, announcements.id)
@@ -202,11 +196,12 @@ class TestUseInvite:
 
         # Create another user to try
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
         another_user = auth.register(
             username=f"another_{unique_id}",
             email=f"another_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         # Second use should fail
@@ -215,7 +210,9 @@ class TestUseInvite:
 
     def test_use_invite_already_member(self, server_with_channels):
         """Test using invite when already member."""
-        server, owner, _, member_user, _, general, _, _, _, servers = server_with_channels
+        server, owner, _, member_user, _, general, _, _, _, servers = (
+            server_with_channels
+        )
 
         invite = servers.create_invite(owner.id, general.id)
 
@@ -239,17 +236,19 @@ class TestDeleteInvite:
 
     def test_delete_others_invite_with_permission(self, server_with_channels):
         """Test deleting others' invite with manage permission."""
-        server, owner, admin_user, _, _, general, _, _, _, servers = server_with_channels
+        server, owner, admin_user, _, _, general, _, _, _, servers = (
+            server_with_channels
+        )
 
         # Give admin invites.manage permission
-        roles = servers.get_roles(owner.id, server.id)
+        servers.get_roles(owner.id, server.id)
         admin_roles = servers.get_member_roles(server.id, admin_user.id)
         admin_role = [r for r in admin_roles if not r.is_default][0]
 
         servers.update_role(
             user_id=owner.id,
             role_id=admin_role.id,
-            permissions={**admin_role.permissions, "invites.manage": True}
+            permissions={**admin_role.permissions, "invites.manage": True},
         )
 
         invite = servers.create_invite(owner.id, general.id)

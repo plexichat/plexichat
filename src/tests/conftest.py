@@ -17,7 +17,7 @@ Usage:
     # For tests that can reuse users (most tests):
     def test_something(modules, user_factory):
         user = user_factory.create()  # Gets user from pool
-        
+
     # For tests that need fresh users (registration, password change, etc.):
     def test_registration(modules):
         user = modules.auth.register(...)  # Creates new user with real hashing
@@ -31,7 +31,7 @@ import uuid
 from src.utils import encryption
 
 # Load custom pytest plugins
-pytest_plugins = ['src.tests.pytest_plugins']
+pytest_plugins = ["src.tests.pytest_plugins"]
 
 # Ensure src is in path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
@@ -43,19 +43,27 @@ for path in [project_root, src_path, utils_path, common_utils_path]:
     if path not in sys.path:
         sys.path.insert(0, path)
 
-from unittest.mock import Mock
-from src.tests.fixtures.config import TEST_PASSWORD
-from src.tests.fixtures.database import DatabaseManager
-from src.tests.fixtures.modules import ModuleRegistry
-from src.tests.fixtures.factories import UserFactory, ServerFactory, ConversationFactory
-from hypothesis import settings, HealthCheck
+from unittest.mock import Mock  # noqa: E402
+from src.tests.fixtures.config import TEST_PASSWORD  # noqa: E402
+from src.tests.fixtures.database import DatabaseManager  # noqa: E402
+from src.tests.fixtures.modules import ModuleRegistry  # noqa: E402
+from src.tests.fixtures.factories import (  # noqa: E402
+    UserFactory,
+    ServerFactory,
+    ConversationFactory,
+)
+from hypothesis import settings, HealthCheck  # noqa: E402
 
 # Register a global profile for CI/Tests
-settings.register_profile("ci", suppress_health_check=[
-    HealthCheck.filter_too_much,
-    HealthCheck.data_too_large,
-    HealthCheck.too_slow
-], deadline=None)
+settings.register_profile(
+    "ci",
+    suppress_health_check=[
+        HealthCheck.filter_too_much,
+        HealthCheck.data_too_large,
+        HealthCheck.too_slow,
+    ],
+    deadline=None,
+)
 settings.load_profile("ci")
 
 
@@ -64,18 +72,18 @@ def setup_config():
     """Initialize global configuration for tests."""
     import utils.config as config
     import utils.version as version
-    from src.core import ratelimit
+
     config_dir = "temp_test_config"
     os.makedirs(config_dir, exist_ok=True)
     config_path = os.path.join(config_dir, "config.yaml")
-    
+
     # Force clean config for each session
     if os.path.exists(config_path):
         try:
             os.remove(config_path)
         except OSError:
             pass
-            
+
     # Minimal default config for tests
     default_config = {
         "authentication": {
@@ -93,10 +101,7 @@ def setup_config():
                 "extend_on_activity": True,
                 "extend_threshold_hours": 24,
             },
-            "totp": {
-                "backup_code_count": 10,
-                "issuer": "TestApp"
-            },
+            "totp": {"backup_code_count": 10, "issuer": "TestApp"},
             "security": {
                 "max_failed_attempts": 100,
                 "lockout_duration_minutes": 1,
@@ -108,21 +113,15 @@ def setup_config():
                 "require_lowercase": True,
                 "require_digit": True,
                 "require_special": True,
-            }
+            },
         },
         "messaging": {
             "max_message_length": 4000,
             "max_attachments": 10,
-            "max_attachments_per_message": 10
+            "max_attachments_per_message": 10,
         },
-        "media": {
-            "compression": {
-                "enabled": False
-            }
-        },
-        "applications": {
-            "max_applications_per_user": 1000
-        },
+        "media": {"compression": {"enabled": False}},
+        "applications": {"max_applications_per_user": 1000},
         "ratelimit": {
             "enabled": True,
             "global": {"limit": 100, "window": 60},
@@ -132,31 +131,32 @@ def setup_config():
         "api": {
             "cors_origins": ["http://testserver", "http://localhost:3000"],
             "allow_wildcard_cors": True,
-            "cors_allow_headers": ["Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin", "X-Custom-Header"],
+            "cors_allow_headers": [
+                "Authorization",
+                "Content-Type",
+                "X-Requested-With",
+                "Accept",
+                "Origin",
+                "X-Custom-Header",
+            ],
         },
-        "version": {
-            "current": "r.1.0-1",
-            "min_client": "a.1.0-1"
-        },
-        "servers": {
-            "templates": {
-                "max_templates_per_user": 1000
-            }
-        }
+        "version": {"current": "r.1.0-1", "min_client": "a.1.0-1"},
+        "servers": {"templates": {"max_templates_per_user": 1000}},
     }
-    
+
     config.setup(config_path=config_path, default_config=default_config)
     version.setup(current_version="r.1.0-1", min_supported_version="a.1.0-1")
-    
+
     # Initialize logger for tests
     import utils.logger as logger
+
     log_dir = "temp_test_logs"
     os.makedirs(log_dir, exist_ok=True)
     try:
         logger.setup(log_dir=log_dir, level="DEBUG", zip_logs=False)
     except Exception:
         pass
-        
+
     yield
     # Cleanup
     if os.path.exists(config_path):
@@ -171,27 +171,28 @@ def setup_config():
 # Session-Scoped Fixtures (initialized once per test run)
 # =============================================================================
 
+
 @pytest.fixture(scope="session")
 def db_manager():
     """
     Create and manage the test database for the entire session.
-    
+
     This is the key optimization - ONE database for all tests.
     """
     # Use xdist worker ID to ensure unique snowflake IDs across parallel workers
-    worker_id = os.environ.get('PYTEST_XDIST_WORKER')
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER")
     worker_num = 1
-    if worker_id and worker_id.startswith('gw'):
+    if worker_id and worker_id.startswith("gw"):
         try:
             worker_num = int(worker_id[2:]) + 1
         except ValueError:
             worker_num = 1
-            
+
     encryption.setup(
         worker_id=worker_num,
-        argon2_time_cost=1, 
-        argon2_memory_cost=8192, 
-        argon2_parallelism=1
+        argon2_time_cost=1,
+        argon2_memory_cost=8192,
+        argon2_parallelism=1,
     )
     manager = DatabaseManager(test_dir="temp/test_session")
     manager.setup()
@@ -211,7 +212,7 @@ def session_db(db_manager):
 def modules(session_db):
     """
     Get the module registry (session-scoped).
-    
+
     Modules are lazy-loaded on first access.
     """
     return ModuleRegistry(session_db)
@@ -221,10 +222,10 @@ def modules(session_db):
 def session_users(modules):
     """
     Pre-create a pool of users at session start.
-    
+
     This takes ~5-10 seconds with real Argon2 hashing, but then
     ALL tests can reuse these users without any hashing overhead.
-    
+
     Returns a list of (user, username, password) tuples.
     """
     users = []
@@ -236,11 +237,7 @@ def session_users(modules):
         email = f"{username}@test.example.com"
         password = TEST_PASSWORD
 
-        user = modules.auth.register(
-            username=username,
-            email=email,
-            password=password
-        )
+        user = modules.auth.register(username=username, email=email, password=password)
         users.append((user, username, password))
 
     print(f"[Setup] Created {len(users)} users in pool")
@@ -250,6 +247,7 @@ def session_users(modules):
 # =============================================================================
 # User Pool Management
 # =============================================================================
+
 
 class UserPool:
     """Manages a pool of pre-created users for test reuse."""
@@ -298,7 +296,7 @@ class UserPool:
 def user_pool(modules, session_users):
     """
     Get a user pool for the current test.
-    
+
     Pool is reset at the start of each test so tests get fresh users.
     """
     pool = UserPool(session_users, modules.auth)
@@ -308,6 +306,7 @@ def user_pool(modules, session_users):
 # =============================================================================
 # Factory Fixtures
 # =============================================================================
+
 
 @pytest.fixture
 def user_factory(modules, session_users):
@@ -326,12 +325,15 @@ def server_factory(modules, user_factory):
 @pytest.fixture
 def conversation_factory(modules, user_factory):
     """Get a conversation factory for creating test conversations."""
-    return ConversationFactory(messaging_module=modules.messaging, user_factory=user_factory)
+    return ConversationFactory(
+        messaging_module=modules.messaging, user_factory=user_factory
+    )
 
 
 # =============================================================================
 # Convenience Fixtures
 # =============================================================================
+
 
 @pytest.fixture
 def test_user(user_pool):
@@ -361,6 +363,7 @@ def three_users(user_pool):
 # Legacy Compatibility Fixtures
 # =============================================================================
 
+
 @pytest.fixture
 def db_and_auth(modules):
     """Legacy fixture - returns (db, auth) tuple."""
@@ -384,7 +387,7 @@ def db_and_modules(modules):
 def registered_user(user_pool, modules):
     """
     Legacy fixture - returns (user, auth, username) tuple.
-    
+
     Uses pool user for speed. For tests that need truly fresh users
     (like testing registration), use modules.auth.register() directly.
     """
@@ -396,7 +399,7 @@ def registered_user(user_pool, modules):
 def logged_in_user(user_pool, modules):
     """
     Legacy fixture - returns (user, token, auth, username) tuple.
-    
+
     Uses pool user for speed.
     """
     user, username, password = user_pool.get_user_with_credentials()
@@ -408,13 +411,13 @@ def logged_in_user(user_pool, modules):
 # Server/Messaging Fixtures
 # =============================================================================
 
+
 @pytest.fixture
 def test_server(modules, user_pool):
     """Create a test server with owner from pool."""
     owner = user_pool.get_user()
     server = modules.servers.create_server(
-        owner_id=owner.id,
-        name=f"Test Server {uuid.uuid4().hex[:6]}"
+        owner_id=owner.id, name=f"Test Server {uuid.uuid4().hex[:6]}"
     )
     return server, owner
 
@@ -427,8 +430,7 @@ def test_server_with_members(modules, user_pool):
     member2 = user_pool.get_user()
 
     server = modules.servers.create_server(
-        owner_id=owner.id,
-        name=f"Test Server {uuid.uuid4().hex[:6]}"
+        owner_id=owner.id, name=f"Test Server {uuid.uuid4().hex[:6]}"
     )
 
     modules.servers.add_member(server.id, member1.id)
@@ -441,6 +443,7 @@ def test_server_with_members(modules, user_pool):
 # Comprehensive Test Fixtures (for manager tests)
 # =============================================================================
 
+
 @pytest.fixture
 def test_db():
     """Create a fresh in-memory database for each test."""
@@ -449,32 +452,41 @@ def test_db():
     from src.core.auth.schema import create_tables as create_auth_tables
     from src.core.messaging.schema import create_tables as create_messaging_tables
     from src.core.servers.schema import create_tables as create_server_tables
-    from src.core.relationships.schema import create_tables as create_relationship_tables
+    from src.core.relationships.schema import (
+        create_tables as create_relationship_tables,
+    )
     from src.core.reactions.schema import create_tables as create_reaction_tables
     from src.core.media.schema import create_tables as create_media_tables
     from src.core.presence.schema import create_tables as create_presence_tables
     from src.core.webhooks.schema import create_tables as create_webhook_tables
     from src.core.threads.schema import create_tables as create_thread_tables
-    from src.core.notifications.schema import create_tables as create_notification_tables
+    from src.core.notifications.schema import (
+        create_tables as create_notification_tables,
+    )
     from src.core.polls.schema import create_tables as create_polls_tables
-    
+
     # Save current config to restore later
     old_db_conf = config.get("database", None)
     config.set("database", {"type": "sqlite", "path": ":memory:"})
-    
+
     db = Database()
     db.connect()
-    
+
     # Critical: Create auth tables first because other modules have foreign keys to them
     # Use unique worker_id for parallel tests
-    worker_id = os.environ.get('PYTEST_XDIST_WORKER')
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER")
     worker_num = 1
-    if worker_id and worker_id.startswith('gw'):
+    if worker_id and worker_id.startswith("gw"):
         try:
             worker_num = int(worker_id[2:]) + 1
         except ValueError:
             worker_num = 1
-    encryption.setup(worker_id=worker_num, argon2_time_cost=1, argon2_memory_cost=8192, argon2_parallelism=1)
+    encryption.setup(
+        worker_id=worker_num,
+        argon2_time_cost=1,
+        argon2_memory_cost=8192,
+        argon2_parallelism=1,
+    )
 
     create_auth_tables(db)
     create_messaging_tables(db)
@@ -487,22 +499,31 @@ def test_db():
     create_thread_tables(db)
     create_notification_tables(db)
     create_polls_tables(db)
-    
+
     # Insert system user (ID 0) for system messages
     db.execute(
         "INSERT INTO auth_users (id, account_type, username, email, password_hash, permissions, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (0, "system", "system", "system@localhost", "!", "{}", 0, 0)
+        (0, "system", "system", "system@localhost", "!", "{}", 0, 0),
     )
-    
+
     # Insert default users for tests that assume fixed IDs (like manager tests)
     for i in range(1, 11):
         db.execute(
             "INSERT INTO auth_users (id, account_type, username, email, password_hash, permissions, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (i, "user", f"testuser{i}", f"fixture_user{i}@example.com", "fake_hash", "{}", 0, 0)
+            (
+                i,
+                "user",
+                f"testuser{i}",
+                f"fixture_user{i}@example.com",
+                "fake_hash",
+                "{}",
+                0,
+                0,
+            ),
         )
-    
+
     yield db
-    
+
     # Restore config
     if old_db_conf:
         config.set("database", old_db_conf)
@@ -513,6 +534,7 @@ def test_db():
 def auth_manager(test_db):
     """AuthManager fixture."""
     from src.core.auth.manager import AuthManager
+
     return AuthManager(test_db)
 
 
@@ -528,6 +550,7 @@ def email_sender():
 def messaging_manager(test_db):
     """MessagingManager fixture."""
     from src.core.messaging.manager import MessagingManager
+
     return MessagingManager(test_db)
 
 
@@ -535,6 +558,7 @@ def messaging_manager(test_db):
 def server_manager(test_db):
     """ServerManager fixture."""
     from src.core.servers.manager import ServerManager
+
     return ServerManager(test_db)
 
 
@@ -542,6 +566,7 @@ def server_manager(test_db):
 def presence_manager(test_db):
     """PresenceManager fixture."""
     from src.core.presence.manager import PresenceManager
+
     return PresenceManager(test_db)
 
 
@@ -549,6 +574,7 @@ def presence_manager(test_db):
 def rel_manager(test_db):
     """RelationshipManager fixture."""
     from src.core.relationships.manager import RelationshipManager
+
     return RelationshipManager(test_db)
 
 
@@ -556,6 +582,7 @@ def rel_manager(test_db):
 def reaction_manager(test_db):
     """ReactionManager fixture."""
     from src.core.reactions.manager import ReactionManager
+
     return ReactionManager(test_db)
 
 
@@ -563,6 +590,7 @@ def reaction_manager(test_db):
 def webhook_manager(test_db):
     """WebhookManager fixture."""
     from src.core.webhooks.manager import WebhookManager
+
     return WebhookManager(test_db)
 
 
@@ -570,6 +598,7 @@ def webhook_manager(test_db):
 def thread_manager(test_db):
     """ThreadManager fixture."""
     from src.core.threads.manager import ThreadManager
+
     return ThreadManager(test_db)
 
 
@@ -577,6 +606,7 @@ def thread_manager(test_db):
 def notification_manager(test_db):
     """NotificationManager fixture."""
     from src.core.notifications.manager import NotificationManager
+
     return NotificationManager(test_db)
 
 
@@ -584,6 +614,7 @@ def notification_manager(test_db):
 def media_manager(test_db):
     """MediaManager fixture."""
     from src.core.media.manager import MediaManager
+
     return MediaManager(test_db)
 
 
@@ -591,6 +622,7 @@ def media_manager(test_db):
 def search_manager(test_db):
     """SearchManager fixture."""
     from src.core.search.manager import SearchManager
+
     return SearchManager(test_db)
 
 
@@ -598,6 +630,7 @@ def search_manager(test_db):
 def app_manager(test_db):
     """ApplicationManager fixture."""
     from src.core.applications.manager import ApplicationManager
+
     return ApplicationManager(test_db)
 
 
@@ -605,6 +638,7 @@ def app_manager(test_db):
 def sticker_manager(test_db):
     """StickerManager fixture."""
     from src.core.stickers.manager import StickerManager
+
     return StickerManager(test_db)
 
 
@@ -612,6 +646,7 @@ def sticker_manager(test_db):
 def poll_manager(test_db):
     """PollManager fixture."""
     from src.core.polls.manager import PollManager
+
     return PollManager(test_db)
 
 
@@ -619,6 +654,7 @@ def poll_manager(test_db):
 def soundboard_manager(test_db):
     """SoundboardManager fixture."""
     from src.core.soundboard.manager import SoundboardManager
+
     return SoundboardManager(test_db)
 
 
@@ -641,7 +677,7 @@ def test_group(modules, user_pool):
     group = modules.messaging.create_group(
         owner_id=owner.id,
         name=f"Test Group {uuid.uuid4().hex[:6]}",
-        participant_ids=[member1.id, member2.id]
+        participant_ids=[member1.id, member2.id],
     )
     return group, owner, [member1, member2]
 
@@ -649,6 +685,7 @@ def test_group(modules, user_pool):
 # =============================================================================
 # API Testing Fixtures
 # =============================================================================
+
 
 @pytest.fixture(scope="session")
 def api_module(modules):
@@ -689,12 +726,17 @@ def auth_headers(test_user_with_token):
 # Test Configuration
 # =============================================================================
 
+
 def pytest_configure(config):
     """Register custom markers."""
     config.addinivalue_line("markers", "unit: Fast unit tests, no database required")
     config.addinivalue_line("markers", "integration: Tests requiring full module setup")
-    config.addinivalue_line("markers", "slow: Intentionally slow tests (rate limiting, timeouts)")
-    config.addinivalue_line("markers", "security: Security-critical test that must not fail")
+    config.addinivalue_line(
+        "markers", "slow: Intentionally slow tests (rate limiting, timeouts)"
+    )
+    config.addinivalue_line(
+        "markers", "security: Security-critical test that must not fail"
+    )
     config.addinivalue_line("markers", "auth: Authentication module tests")
     config.addinivalue_line("markers", "messaging: Messaging module tests")
     config.addinivalue_line("markers", "servers: Server module tests")
@@ -727,11 +769,11 @@ def pytest_collection_modifyitems(config, items):
         # Add markers based on test file path
         # Normalize path to use forward slashes for cross-platform compatibility
         item_path = str(item.fspath).replace(os.sep, "/")
-        
+
         # Security tests (mark as critical)
         if "/security/" in item_path or "test_security" in item.name.lower():
             item.add_marker(pytest.mark.security)
-        
+
         if "/auth/" in item_path:
             item.add_marker(pytest.mark.auth)
             item.add_marker(pytest.mark.integration)

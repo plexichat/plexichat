@@ -10,7 +10,9 @@ class TestUserMentionParsing:
 
     def test_parse_single_user_mention(self, db_and_modules):
         """Test parsing a single user mention."""
-        db, auth, messaging, servers, relationships, presence, notifications = db_and_modules
+        db, auth, messaging, servers, relationships, presence, notifications = (
+            db_and_modules
+        )
 
         content = "Hello <@123456789>"
         mentions = notifications.parse_mentions(content)
@@ -22,7 +24,9 @@ class TestUserMentionParsing:
 
     def test_parse_multiple_user_mentions(self, db_and_modules):
         """Test parsing multiple user mentions."""
-        db, auth, messaging, servers, relationships, presence, notifications = db_and_modules
+        db, auth, messaging, servers, relationships, presence, notifications = (
+            db_and_modules
+        )
 
         content = "Hey <@111> and <@222> check this out"
         mentions = notifications.parse_mentions(content)
@@ -33,7 +37,9 @@ class TestUserMentionParsing:
 
     def test_parse_user_mention_positions(self, db_and_modules):
         """Test mention positions are correct."""
-        db, auth, messaging, servers, relationships, presence, notifications = db_and_modules
+        db, auth, messaging, servers, relationships, presence, notifications = (
+            db_and_modules
+        )
 
         content = "Hello <@123>"
         mentions = notifications.parse_mentions(content)
@@ -43,7 +49,9 @@ class TestUserMentionParsing:
 
     def test_parse_no_mentions(self, db_and_modules):
         """Test parsing content with no mentions."""
-        db, auth, messaging, servers, relationships, presence, notifications = db_and_modules
+        db, auth, messaging, servers, relationships, presence, notifications = (
+            db_and_modules
+        )
 
         content = "Hello world, no mentions here"
         mentions = notifications.parse_mentions(content)
@@ -52,7 +60,9 @@ class TestUserMentionParsing:
 
     def test_parse_empty_content(self, db_and_modules):
         """Test parsing empty content."""
-        db, auth, messaging, servers, relationships, presence, notifications = db_and_modules
+        db, auth, messaging, servers, relationships, presence, notifications = (
+            db_and_modules
+        )
 
         mentions = notifications.parse_mentions("")
         assert len(mentions) == 0
@@ -66,7 +76,16 @@ class TestUserMentionValidation:
 
     def test_validate_existing_user(self, fresh_users):
         """Test validating mention of existing user."""
-        user1, user2, auth, messaging, servers, relationships, presence, notifications = fresh_users
+        (
+            user1,
+            user2,
+            auth,
+            messaging,
+            servers,
+            relationships,
+            presence,
+            notifications,
+        ) = fresh_users
 
         content = f"Hey <@{user2.id}>"
         mentions = notifications.parse_mentions(content)
@@ -77,7 +96,16 @@ class TestUserMentionValidation:
 
     def test_validate_nonexistent_user(self, fresh_users):
         """Test validating mention of nonexistent user."""
-        user1, user2, auth, messaging, servers, relationships, presence, notifications = fresh_users
+        (
+            user1,
+            user2,
+            auth,
+            messaging,
+            servers,
+            relationships,
+            presence,
+            notifications,
+        ) = fresh_users
 
         content = "<@999999999999>"
         mentions = notifications.parse_mentions(content)
@@ -102,7 +130,7 @@ class TestUserMentionNotifications:
             author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
-            content=content
+            content=content,
         )
 
         assert len(notifs) == 1
@@ -121,7 +149,7 @@ class TestUserMentionNotifications:
             author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
-            content=content
+            content=content,
         )
 
         assert len(notifs) == 0
@@ -137,7 +165,7 @@ class TestUserMentionNotifications:
             author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
-            content=content
+            content=content,
         )
 
         assert len(notifs) == 1
@@ -154,7 +182,7 @@ class TestUserMentionNotifications:
             author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
-            content=content
+            content=content,
         )
 
         assert len(notifs) == 1
@@ -162,7 +190,9 @@ class TestUserMentionNotifications:
 
     def test_mention_multiple_users(self, group_conversation):
         """Test notifications for multiple mentioned users."""
-        owner, member1, member2, group, messaging, notifications, relationships = group_conversation
+        owner, member1, member2, group, messaging, notifications, relationships = (
+            group_conversation
+        )
 
         content = f"Hey <@{member1.id}> and <@{member2.id}>"
         msg = messaging.send_message(owner.id, group.id, content)
@@ -171,7 +201,7 @@ class TestUserMentionNotifications:
             author_id=owner.id,
             message_id=msg.id,
             conversation_id=group.id,
-            content=content
+            content=content,
         )
 
         assert len(notifs) == 2

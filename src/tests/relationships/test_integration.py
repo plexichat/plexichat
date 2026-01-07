@@ -61,12 +61,12 @@ class TestServersIntegration:
         user1 = auth.register(
             username=f"multi1_{unique_id}",
             email=f"multi1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"multi2_{unique_id}",
             email=f"multi2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         # Create multiple servers
@@ -198,7 +198,7 @@ class TestConcurrentRelationships:
         main_user = auth.register(
             username=f"main_{unique_id}",
             email=f"main_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         # Create multiple users who send requests
@@ -206,7 +206,7 @@ class TestConcurrentRelationships:
             sender = auth.register(
                 username=f"sender_{unique_id}_{i}",
                 email=f"sender_{unique_id}_{i}@example.com",
-                password="TestPass123!"
+                password="TestPass123!",
             )
             relationships.send_friend_request(sender.id, main_user.id)
 
@@ -224,7 +224,7 @@ class TestConcurrentRelationships:
         main_user = auth.register(
             username=f"mainmix_{unique_id}",
             email=f"mainmix_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         # Create friends
@@ -232,7 +232,7 @@ class TestConcurrentRelationships:
             friend = auth.register(
                 username=f"friendmix_{unique_id}_{i}",
                 email=f"friendmix_{unique_id}_{i}@example.com",
-                password="TestPass123!"
+                password="TestPass123!",
             )
             request = relationships.send_friend_request(main_user.id, friend.id)
             relationships.accept_friend_request(friend.id, request.id)
@@ -242,7 +242,7 @@ class TestConcurrentRelationships:
             blocked = auth.register(
                 username=f"blockedmix_{unique_id}_{i}",
                 email=f"blockedmix_{unique_id}_{i}@example.com",
-                password="TestPass123!"
+                password="TestPass123!",
             )
             relationships.block_user(main_user.id, blocked.id)
 

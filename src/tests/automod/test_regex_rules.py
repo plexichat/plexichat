@@ -21,7 +21,7 @@ class TestRegexRule:
             server_id=server.id,
             channel_id=channel.id,
             user_id=owner.id,
-            content="Get free money now!"
+            content="Get free money now!",
         )
 
         assert not result.passed
@@ -35,7 +35,7 @@ class TestRegexRule:
             server_id=server.id,
             channel_id=channel.id,
             user_id=owner.id,
-            content="My card is 1234567890123456"
+            content="My card is 1234567890123456",
         )
 
         assert not result.passed
@@ -48,7 +48,7 @@ class TestRegexRule:
             server_id=server.id,
             channel_id=channel.id,
             user_id=owner.id,
-            content="This is a normal message"
+            content="This is a normal message",
         )
 
         assert result.passed
@@ -61,7 +61,7 @@ class TestRegexRule:
             server_id=server.id,
             channel_id=channel.id,
             user_id=owner.id,
-            content="Get FREE MONEY now!"
+            content="Get FREE MONEY now!",
         )
 
         assert not result.passed
@@ -73,11 +73,9 @@ class TestRegexRuleValidation:
 
     def test_valid_config(self):
         """Test valid configuration passes."""
-        valid, issues = RegexRule.validate_config({
-            "patterns": [
-                {"pattern": r"\btest\b", "name": "test_pattern"}
-            ]
-        })
+        valid, issues = RegexRule.validate_config(
+            {"patterns": [{"pattern": r"\btest\b", "name": "test_pattern"}]}
+        )
 
         assert valid
         assert len(issues) == 0
@@ -91,21 +89,17 @@ class TestRegexRuleValidation:
 
     def test_invalid_regex(self):
         """Test invalid regex fails validation."""
-        valid, issues = RegexRule.validate_config({
-            "patterns": [
-                {"pattern": r"[invalid(regex", "name": "bad"}
-            ]
-        })
+        valid, issues = RegexRule.validate_config(
+            {"patterns": [{"pattern": r"[invalid(regex", "name": "bad"}]}
+        )
 
         assert not valid
         assert any("invalid regex" in issue for issue in issues)
 
     def test_missing_pattern_field(self):
         """Test pattern without pattern field fails."""
-        valid, issues = RegexRule.validate_config({
-            "patterns": [
-                {"name": "no_pattern"}
-            ]
-        })
+        valid, issues = RegexRule.validate_config(
+            {"patterns": [{"name": "no_pattern"}]}
+        )
 
         assert not valid

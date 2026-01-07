@@ -11,7 +11,13 @@ import uuid
 @pytest.fixture
 def db_and_modules(modules):
     """Legacy fixture for backward compatibility."""
-    return modules._db, modules.auth, modules.servers, modules.relationships, modules.presence
+    return (
+        modules._db,
+        modules.auth,
+        modules.servers,
+        modules.relationships,
+        modules.presence,
+    )
 
 
 @pytest.fixture
@@ -32,13 +38,13 @@ def fresh_users(modules):
     user1 = modules.auth.register(
         username=f"fresh1_{unique_id}",
         email=f"fresh1_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     user2 = modules.auth.register(
         username=f"fresh2_{unique_id}",
         email=f"fresh2_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     return user1, user2, modules.presence
@@ -52,13 +58,13 @@ def friends_pair(modules):
     user1 = modules.auth.register(
         username=f"friend1_{unique_id}",
         email=f"friend1_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     user2 = modules.auth.register(
         username=f"friend2_{unique_id}",
         email=f"friend2_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     # Make them friends
@@ -76,13 +82,13 @@ def blocked_pair(modules):
     blocker = modules.auth.register(
         username=f"blocker_{unique_id}",
         email=f"blocker_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     blocked = modules.auth.register(
         username=f"blocked_{unique_id}",
         email=f"blocked_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     # Block the user
@@ -99,19 +105,19 @@ def users_with_server(modules):
     user1 = modules.auth.register(
         username=f"srv1_{unique_id}",
         email=f"srv1_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     user2 = modules.auth.register(
         username=f"srv2_{unique_id}",
         email=f"srv2_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     user3 = modules.auth.register(
         username=f"srv3_{unique_id}",
         email=f"srv3_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     # Create server and add members

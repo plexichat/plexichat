@@ -103,7 +103,7 @@ class TestProxyWithMockedRequests:
         mock_response.iter_content.return_value = [b"fake image data"]
         mock_response.raise_for_status.return_value = None
 
-        mock_get = mocker.patch("requests.get", return_value=mock_response)
+        mocker.patch("requests.get", return_value=mock_response)
 
         storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
         proxy = ExternalProxy(storage_backend=storage, db=modules._db)
@@ -114,7 +114,9 @@ class TestProxyWithMockedRequests:
         assert result.content_type == "image/jpeg"
         assert proxy.is_cached("https://example.com/image.jpg") is True
 
-    def test_fetch_returns_cached_on_second_call(self, temp_upload_dir, modules, mocker):
+    def test_fetch_returns_cached_on_second_call(
+        self, temp_upload_dir, modules, mocker
+    ):
         """Test that second fetch returns cached content."""
         from src.core.media.security.proxy import ExternalProxy
         from src.core.media.storage.local import LocalStorage
@@ -154,7 +156,9 @@ class TestProxyWithMockedRequests:
 
         assert mock_get.call_count == 2
 
-    def test_fetch_rejects_disallowed_content_type(self, temp_upload_dir, modules, mocker):
+    def test_fetch_rejects_disallowed_content_type(
+        self, temp_upload_dir, modules, mocker
+    ):
         """Test that disallowed content types are rejected."""
         from src.core.media.security.proxy import ExternalProxy
         from src.core.media.storage.local import LocalStorage

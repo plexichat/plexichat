@@ -82,12 +82,13 @@ class TestAttachEmbedToMessage:
         """Test attaching embed to nonexistent message fails."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"att1_{unique_id}",
             email=f"att1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(user_id=user.id, title="Test")
@@ -173,12 +174,13 @@ class TestRemoveEmbedFromMessage:
         """Test removing embed from nonexistent message fails."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"rem1_{unique_id}",
             email=f"rem1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         with pytest.raises(MessageNotFoundError):
@@ -195,7 +197,7 @@ class TestUpdateEmbedOnMessage:
         embed = embeds.create_embed(user_id=user1.id, title="Original")
         embeds.attach_embed_to_message(user1.id, msg.id, embed.id)
 
-        updated = embeds.update_embed(user1.id, embed.id, title="Updated")
+        embeds.update_embed(user1.id, embed.id, title="Updated")
 
         message_embeds = embeds.get_message_embeds(user1.id, msg.id)
         assert message_embeds[0].title == "Updated"
@@ -207,14 +209,12 @@ class TestUpdateEmbedOnMessage:
         embed = embeds.create_embed(
             user_id=user1.id,
             title="Fields Test",
-            fields=[{"name": "Old", "value": "Old Value"}]
+            fields=[{"name": "Old", "value": "Old Value"}],
         )
         embeds.attach_embed_to_message(user1.id, msg.id, embed.id)
 
-        updated = embeds.update_embed(
-            user1.id,
-            embed.id,
-            fields=[{"name": "New", "value": "New Value"}]
+        embeds.update_embed(
+            user1.id, embed.id, fields=[{"name": "New", "value": "New Value"}]
         )
 
         message_embeds = embeds.get_message_embeds(user1.id, msg.id)
@@ -317,12 +317,13 @@ class TestDeleteEmbed:
         """Test deleting an embed."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"del1_{unique_id}",
             email=f"del1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(user_id=user.id, title="Delete Me")
@@ -347,17 +348,18 @@ class TestDeleteEmbed:
         """Test non-owner cannot delete embed."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user1 = auth.register(
             username=f"del2_{unique_id}",
             email=f"del2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"del3_{unique_id}",
             email=f"del3_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(user_id=user1.id, title="Not Yours")
@@ -369,12 +371,13 @@ class TestDeleteEmbed:
         """Test deleting nonexistent embed fails."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"del4_{unique_id}",
             email=f"del4_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         with pytest.raises(EmbedNotFoundError):

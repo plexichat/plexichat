@@ -10,7 +10,9 @@ class TestEveryoneParsing:
 
     def test_parse_everyone_mention(self, db_and_modules):
         """Test parsing @everyone mention."""
-        db, auth, messaging, servers, relationships, presence, notifications = db_and_modules
+        db, auth, messaging, servers, relationships, presence, notifications = (
+            db_and_modules
+        )
 
         content = "Hey @everyone check this out"
         mentions = notifications.parse_mentions(content)
@@ -22,7 +24,9 @@ class TestEveryoneParsing:
 
     def test_parse_everyone_position(self, db_and_modules):
         """Test @everyone position is correct."""
-        db, auth, messaging, servers, relationships, presence, notifications = db_and_modules
+        db, auth, messaging, servers, relationships, presence, notifications = (
+            db_and_modules
+        )
 
         content = "Hey @everyone"
         mentions = notifications.parse_mentions(content)
@@ -36,7 +40,9 @@ class TestHereParsing:
 
     def test_parse_here_mention(self, db_and_modules):
         """Test parsing @here mention."""
-        db, auth, messaging, servers, relationships, presence, notifications = db_and_modules
+        db, auth, messaging, servers, relationships, presence, notifications = (
+            db_and_modules
+        )
 
         content = "Hey @here check this out"
         mentions = notifications.parse_mentions(content)
@@ -48,7 +54,9 @@ class TestHereParsing:
 
     def test_parse_both_everyone_and_here(self, db_and_modules):
         """Test parsing both @everyone and @here."""
-        db, auth, messaging, servers, relationships, presence, notifications = db_and_modules
+        db, auth, messaging, servers, relationships, presence, notifications = (
+            db_and_modules
+        )
 
         content = "@everyone and @here"
         mentions = notifications.parse_mentions(content)
@@ -76,11 +84,15 @@ class TestEveryoneValidation:
 
     def test_everyone_valid_with_permission(self, users_with_server):
         """Test @everyone is valid with permission in server."""
-        owner, member1, member2, server, channel, servers, messaging, notifications = users_with_server
+        owner, member1, member2, server, channel, servers, messaging, notifications = (
+            users_with_server
+        )
 
         content = "@everyone"
         mentions = notifications.parse_mentions(content)
-        validated = notifications.validate_mentions(owner.id, mentions, server.id, channel.id)
+        validated = notifications.validate_mentions(
+            owner.id, mentions, server.id, channel.id
+        )
 
         assert len(validated) == 1
         assert validated[0].valid is True
@@ -102,9 +114,13 @@ class TestEveryoneNotifications:
 
     def test_everyone_notifies_all_members(self, users_with_server):
         """Test @everyone notifies all server members."""
-        owner, member1, member2, server, channel, servers, messaging, notifications = users_with_server
+        owner, member1, member2, server, channel, servers, messaging, notifications = (
+            users_with_server
+        )
 
-        group = messaging.create_group(owner.id, "Server Group", [member1.id, member2.id])
+        group = messaging.create_group(
+            owner.id, "Server Group", [member1.id, member2.id]
+        )
 
         content = "@everyone check this out"
         msg = messaging.send_message(owner.id, group.id, content)
@@ -114,7 +130,7 @@ class TestEveryoneNotifications:
             message_id=msg.id,
             conversation_id=group.id,
             content=content,
-            server_id=server.id
+            server_id=server.id,
         )
 
         notified_users = {n.user_id for n in notifs}
@@ -127,9 +143,13 @@ class TestEveryoneNotifications:
 
     def test_everyone_does_not_notify_sender(self, users_with_server):
         """Test @everyone doesn't notify the sender."""
-        owner, member1, member2, server, channel, servers, messaging, notifications = users_with_server
+        owner, member1, member2, server, channel, servers, messaging, notifications = (
+            users_with_server
+        )
 
-        group = messaging.create_group(owner.id, "Server Group", [member1.id, member2.id])
+        group = messaging.create_group(
+            owner.id, "Server Group", [member1.id, member2.id]
+        )
 
         content = "@everyone"
         msg = messaging.send_message(owner.id, group.id, content)
@@ -139,7 +159,7 @@ class TestEveryoneNotifications:
             message_id=msg.id,
             conversation_id=group.id,
             content=content,
-            server_id=server.id
+            server_id=server.id,
         )
 
         notified_users = {n.user_id for n in notifs}
@@ -151,9 +171,13 @@ class TestHereNotifications:
 
     def test_here_notifies_online_members(self, users_with_server):
         """Test @here notifies online members."""
-        owner, member1, member2, server, channel, servers, messaging, notifications = users_with_server
+        owner, member1, member2, server, channel, servers, messaging, notifications = (
+            users_with_server
+        )
 
-        group = messaging.create_group(owner.id, "Server Group", [member1.id, member2.id])
+        group = messaging.create_group(
+            owner.id, "Server Group", [member1.id, member2.id]
+        )
 
         content = "@here check this out"
         msg = messaging.send_message(owner.id, group.id, content)
@@ -163,7 +187,7 @@ class TestHereNotifications:
             message_id=msg.id,
             conversation_id=group.id,
             content=content,
-            server_id=server.id
+            server_id=server.id,
         )
 
         for notif in notifs:
@@ -171,9 +195,13 @@ class TestHereNotifications:
 
     def test_here_does_not_notify_sender(self, users_with_server):
         """Test @here doesn't notify the sender."""
-        owner, member1, member2, server, channel, servers, messaging, notifications = users_with_server
+        owner, member1, member2, server, channel, servers, messaging, notifications = (
+            users_with_server
+        )
 
-        group = messaging.create_group(owner.id, "Server Group", [member1.id, member2.id])
+        group = messaging.create_group(
+            owner.id, "Server Group", [member1.id, member2.id]
+        )
 
         content = "@here"
         msg = messaging.send_message(owner.id, group.id, content)
@@ -183,7 +211,7 @@ class TestHereNotifications:
             message_id=msg.id,
             conversation_id=group.id,
             content=content,
-            server_id=server.id
+            server_id=server.id,
         )
 
         notified_users = {n.user_id for n in notifs}

@@ -3,7 +3,6 @@ Pagination tests for messaging module.
 """
 
 
-
 class TestMessagePagination:
     """Test message pagination."""
 
@@ -110,7 +109,9 @@ class TestMessagePagination:
             messaging.send_message(user1.id, dm.id, f"Message {i}")
 
         page1 = messaging.get_messages(user1.id, dm.id, limit=10)
-        page2 = messaging.get_messages(user1.id, dm.id, before_id=page1[-1].id, limit=10)
+        page2 = messaging.get_messages(
+            user1.id, dm.id, before_id=page1[-1].id, limit=10
+        )
 
         page1_ids = set(m.id for m in page1)
         page2_ids = set(m.id for m in page2)
@@ -133,7 +134,9 @@ class TestMessagePagination:
                 all_ids.add(m.id)
 
             # Get next page
-            page = messaging.get_messages(user1.id, dm.id, before_id=page[-1].id, limit=10)
+            page = messaging.get_messages(
+                user1.id, dm.id, before_id=page[-1].id, limit=10
+            )
 
         assert len(all_ids) == 25
 
@@ -149,7 +152,9 @@ class TestMessagePagination:
         all_msgs = messaging.get_messages(user1.id, dm.id, limit=10)
 
         # Try to get more before the oldest
-        older = messaging.get_messages(user1.id, dm.id, before_id=all_msgs[-1].id, limit=10)
+        older = messaging.get_messages(
+            user1.id, dm.id, before_id=all_msgs[-1].id, limit=10
+        )
 
         # Should be empty (fresh DM has no prior messages)
         assert len(older) == 0
@@ -164,7 +169,7 @@ class TestConversationPagination:
 
         # Create conversations
         dm1 = messaging.create_dm(user1.id, user2.id)
-        dm2 = messaging.create_dm(user1.id, user3.id)
+        messaging.create_dm(user1.id, user3.id)
 
         # Send message to dm1 (makes it more recent)
         messaging.send_message(user1.id, dm1.id, "Recent message")
@@ -214,8 +219,12 @@ class TestConversationPagination:
         dm = messaging.create_dm(user1.id, user2.id)
         group = messaging.create_group(user1.id, "Test Group")
 
-        dms = messaging.get_conversations(user1.id, conversation_type=messaging.ConversationType.DM)
-        groups = messaging.get_conversations(user1.id, conversation_type=messaging.ConversationType.GROUP)
+        dms = messaging.get_conversations(
+            user1.id, conversation_type=messaging.ConversationType.DM
+        )
+        groups = messaging.get_conversations(
+            user1.id, conversation_type=messaging.ConversationType.GROUP
+        )
 
         dm_ids = [c.id for c in dms]
         group_ids = [c.id for c in groups]

@@ -4,7 +4,7 @@ Tests for Meilisearch indexer client code.
 Uses a mock HTTP client that returns responses matching Meilisearch's actual API.
 This tests that our client code correctly:
 - Builds request bodies
-- Parses responses  
+- Parses responses
 - Handles the Meilisearch API contract
 """
 
@@ -20,7 +20,7 @@ for path in [project_root, src_path, common_utils_path]:
     if path not in sys.path:
         sys.path.insert(0, path)
 
-import utils.logger as logger
+import utils.logger as logger  # noqa: E402
 
 try:
     os.makedirs("temp_ms_test/logs", exist_ok=True)
@@ -28,8 +28,8 @@ try:
 except Exception:
     pass
 
-from src.core.search.indexer.meilisearch import MeilisearchIndexer
-from src.core.search.models import IndexedMessage
+from src.core.search.indexer.meilisearch import MeilisearchIndexer  # noqa: E402
+from src.core.search.models import IndexedMessage  # noqa: E402
 
 
 class MeilisearchMock:
@@ -78,7 +78,7 @@ class MeilisearchMock:
             return {
                 "numberOfDocuments": len(self.indexed_docs[index_type]),
                 "isIndexing": False,
-                "fieldDistribution": {}
+                "fieldDistribution": {},
             }
 
         return {}
@@ -114,12 +114,12 @@ class MeilisearchMock:
         offset = body.get("offset", 0) if body else 0
 
         return {
-            "hits": hits[offset:offset + limit],
+            "hits": hits[offset : offset + limit],
             "offset": offset,
             "limit": limit,
             "estimatedTotalHits": len(hits),
             "processingTimeMs": 1,
-            "query": query
+            "query": query,
         }
 
     def _matches_filter(self, doc, filter_str):
@@ -153,7 +153,11 @@ class TestMeilisearchClientRequests:
         )
         indexer.index_message(message)
 
-        doc_request = next(r for r in mock.requests if "/documents" in r["path"] and r["method"] == "POST")
+        doc_request = next(
+            r
+            for r in mock.requests
+            if "/documents" in r["path"] and r["method"] == "POST"
+        )
         doc = doc_request["body"][0]
 
         assert doc["message_id"] == "12345"
@@ -302,7 +306,9 @@ class TestMeilisearchIndexOperations:
         indexer.initialize()
 
         messages = [
-            IndexedMessage(message_id=i, content=f"message {i}", author_id=1, conversation_id=1)
+            IndexedMessage(
+                message_id=i, content=f"message {i}", author_id=1, conversation_id=1
+            )
             for i in range(5)
         ]
 
@@ -320,8 +326,12 @@ class TestMeilisearchIndexOperations:
         indexer.remove_message(12345)
 
         delete_request = next(
-            (r for r in mock.requests if r["method"] == "DELETE" and "/documents/" in r["path"]),
-            None
+            (
+                r
+                for r in mock.requests
+                if r["method"] == "DELETE" and "/documents/" in r["path"]
+            ),
+            None,
         )
         assert delete_request is not None
         assert "12345" in delete_request["path"]

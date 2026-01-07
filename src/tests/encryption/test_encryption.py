@@ -22,7 +22,7 @@ for path in [project_root, src_path, encryption_path, common_utils_path]:
     if path not in sys.path:
         sys.path.insert(0, path)
 
-from src.utils.encryption import (
+from src.utils.encryption import (  # noqa: E402
     hash_password,
     verify_password,
     encrypt_data,
@@ -32,22 +32,23 @@ from src.utils.encryption import (
     verify_signature,
     generate_snowflake_id,
     parse_snowflake_id,
-    setup
+    setup,
 )
-from src.utils.encryption.core import (
+from src.utils.encryption.core import (  # noqa: E402
     EncryptionManager,
     SnowflakeGenerator,
     MessageEncryptor,
-    Keyring
+    Keyring,
 )
-from src.core.auth.tokens import (
+from src.core.auth.tokens import (  # noqa: E402
     generate_token_secret,
     hash_token,
     verify_token_hash,
     create_session_token,
     create_bot_token,
-    parse_token
+    parse_token,
 )
+
 
 @pytest.fixture(scope="module")
 def setup_encryption():
@@ -55,10 +56,12 @@ def setup_encryption():
     setup(worker_id=1, datacenter_id=1)
     yield
 
+
 @pytest.fixture
 def temp_keyring_path(tmp_path):
     """Create a temporary keyring path for testing."""
     return tmp_path / "test_keyring.json"
+
 
 @pytest.fixture
 def fresh_keyring(temp_keyring_path):
@@ -142,14 +145,14 @@ class TestPasswordHashingTimingAttacks:
         """Test that correct password verification has consistent timing."""
         password = "correct_password_123"
         hash_str = hash_password(password)
-        
+
         timings = []
         for _ in range(10):
             start = time.perf_counter()
             verify_password(password, hash_str)
             end = time.perf_counter()
             timings.append(end - start)
-        
+
         avg = sum(timings) / len(timings)
         for t in timings:
             assert abs(t - avg) < avg * 0.8
@@ -159,14 +162,14 @@ class TestPasswordHashingTimingAttacks:
         password = "correct_password_123"
         wrong_password = "wrong_password_123"
         hash_str = hash_password(password)
-        
+
         timings = []
         for _ in range(10):
             start = time.perf_counter()
             verify_password(wrong_password, hash_str)
             end = time.perf_counter()
             timings.append(end - start)
-        
+
         avg = sum(timings) / len(timings)
         for t in timings:
             assert abs(t - avg) < avg * 1.0
@@ -176,24 +179,24 @@ class TestPasswordHashingTimingAttacks:
         password = "test_password_timing"
         wrong_password = "wrong_password_timing"
         hash_str = hash_password(password)
-        
+
         correct_timings = []
         incorrect_timings = []
-        
+
         for _ in range(5):
             start = time.perf_counter()
             verify_password(password, hash_str)
             end = time.perf_counter()
             correct_timings.append(end - start)
-            
+
             start = time.perf_counter()
             verify_password(wrong_password, hash_str)
             end = time.perf_counter()
             incorrect_timings.append(end - start)
-        
+
         avg_correct = sum(correct_timings) / len(correct_timings)
         avg_incorrect = sum(incorrect_timings) / len(incorrect_timings)
-        
+
         assert abs(avg_correct - avg_incorrect) < max(avg_correct, avg_incorrect) * 0.3
 
 
@@ -326,7 +329,7 @@ class TestAESGCMCompliance:
         """Test that each encryption uses a unique nonce."""
         data = "test data"
         encrypted_list = [encrypt_data(data) for _ in range(100)]
-        
+
         nonces = set()
         for encrypted in encrypted_list:
             if encrypted.startswith("ENC:"):
@@ -352,18 +355,18 @@ class TestAESGCMCompliance:
         """Test that authentication tag prevents tampering."""
         data = "sensitive data"
         encrypted = encrypt_data(data)
-        
+
         if encrypted.startswith("ENC:"):
             prefix_parts = encrypted.split(":", 2)
             prefix = ":".join(prefix_parts[:2]) + ":"
             encrypted = prefix_parts[2]
         else:
             prefix = ""
-        
+
         combined = base64.b64decode(encrypted)
         tampered = combined[:-1] + bytes([combined[-1] ^ 0xFF])
-        tampered_encrypted = prefix + base64.b64encode(tampered).decode('utf-8')
-        
+        tampered_encrypted = prefix + base64.b64encode(tampered).decode("utf-8")
+
         with pytest.raises(ValueError):
             decrypt_data(tampered_encrypted)
 
@@ -377,18 +380,18 @@ class TestAESGCMCompliance:
         """Test that modified ciphertext fails decryption."""
         data = "important data"
         encrypted = encrypt_data(data)
-        
+
         if encrypted.startswith("ENC:"):
             parts = encrypted.split(":", 2)
             prefix = ":".join(parts[:2]) + ":"
             encrypted = parts[2]
         else:
             prefix = ""
-        
+
         combined = bytearray(base64.b64decode(encrypted))
         combined[13] ^= 0x01
-        tampered_encrypted = prefix + base64.b64encode(bytes(combined)).decode('utf-8')
-        
+        tampered_encrypted = prefix + base64.b64encode(bytes(combined)).decode("utf-8")
+
         with pytest.raises(ValueError):
             decrypt_data(tampered_encrypted)
 
@@ -489,17 +492,17 @@ class TestSnowflakeIDs:
         """Test parsing a Snowflake ID."""
         snowflake_id = generate_snowflake_id()
         parsed = parse_snowflake_id(snowflake_id)
-        assert 'timestamp' in parsed
-        assert 'datacenter_id' in parsed
-        assert 'worker_id' in parsed
-        assert 'sequence' in parsed
+        assert "timestamp" in parsed
+        assert "datacenter_id" in parsed
+        assert "worker_id" in parsed
+        assert "sequence" in parsed
 
     def test_parse_snowflake_correct_worker(self, setup_encryption):
         """Test that parsed worker ID matches."""
         snowflake_id = generate_snowflake_id()
         parsed = parse_snowflake_id(snowflake_id)
-        assert parsed['worker_id'] == 1
-        assert parsed['datacenter_id'] == 1
+        assert parsed["worker_id"] == 1
+        assert parsed["datacenter_id"] == 1
 
     def test_snowflake_generator_bounds(self):
         """Test Snowflake generator with boundary values."""
@@ -534,7 +537,7 @@ class TestSnowflakeIDs:
         parsed1 = parse_snowflake_id(id1)
         parsed2 = parse_snowflake_id(id2)
 
-        assert parsed2['timestamp'] >= parsed1['timestamp']
+        assert parsed2["timestamp"] >= parsed1["timestamp"]
 
     def test_snowflake_sequence_overflow(self):
         """Test sequence overflow handling."""
@@ -567,7 +570,9 @@ class TestSnowflakeIDs:
     def test_snowflake_custom_epoch(self):
         """Test Snowflake generation with custom epoch."""
         custom_epoch = int(time.time() * 1000) - 1000000
-        gen = SnowflakeGenerator(worker_id=1, datacenter_id=1, epoch_timestamp=custom_epoch)
+        gen = SnowflakeGenerator(
+            worker_id=1, datacenter_id=1, epoch_timestamp=custom_epoch
+        )
         snowflake_id = gen.generate()
         assert snowflake_id > 0
 
@@ -591,7 +596,7 @@ class TestKeyRotation:
         """Test key rotation creates new version."""
         fresh_keyring.get_key()
         initial_version = fresh_keyring.current_version
-        
+
         new_version = fresh_keyring.rotate()
         assert new_version == initial_version + 1
         assert fresh_keyring.current_version == new_version
@@ -600,12 +605,12 @@ class TestKeyRotation:
     def test_keyring_multiple_rotations(self, fresh_keyring):
         """Test multiple key rotations."""
         fresh_keyring.get_key()
-        
+
         versions = []
         for _ in range(5):
             version = fresh_keyring.rotate()
             versions.append(version)
-        
+
         assert versions == [2, 3, 4, 5, 6]
         assert len(fresh_keyring.keys) == 6
 
@@ -616,7 +621,7 @@ class TestKeyRotation:
         keyring1.rotate()
         version1 = keyring1.current_version
         keys1 = dict(keyring1.keys)
-        
+
         keyring2 = Keyring(temp_keyring_path)
         assert keyring2.current_version == version1
         assert keyring2.keys == keys1
@@ -626,9 +631,9 @@ class TestKeyRotation:
         _, key_v1 = fresh_keyring.get_key()
         fresh_keyring.rotate()
         _, key_v2 = fresh_keyring.get_key()
-        
+
         assert key_v1 != key_v2
-        
+
         _, retrieved_key_v1 = fresh_keyring.get_key(version=1)
         assert retrieved_key_v1 == key_v1
 
@@ -637,17 +642,17 @@ class TestKeyRotation:
         keyring = Keyring(temp_keyring_path)
         manager = EncryptionManager()
         manager.keyring = keyring
-        
+
         data = "sensitive data"
         encrypted_v1 = manager.encrypt_data(data)
-        
+
         keyring.rotate()
-        
+
         encrypted_v2 = manager.encrypt_data(data)
-        
+
         decrypted_v1 = manager.decrypt_data(encrypted_v1)
         decrypted_v2 = manager.decrypt_data(encrypted_v2)
-        
+
         assert decrypted_v1 == data
         assert decrypted_v2 == data
 
@@ -656,10 +661,10 @@ class TestKeyRotation:
         keyring = Keyring(temp_keyring_path)
         manager = EncryptionManager()
         manager.keyring = keyring
-        
+
         data = "test"
         encrypted = manager.encrypt_data(data)
-        
+
         assert encrypted.startswith("ENC:")
         parts = encrypted.split(":", 2)
         assert len(parts) == 3
@@ -670,7 +675,7 @@ class TestKeyRotation:
         fresh_keyring.get_key()
         initial_time = fresh_keyring.rotated_at
         assert initial_time > 0
-        
+
         # Sleep for at least 1 second since rotated_at uses int(time.time())
         time.sleep(1.1)
         fresh_keyring.rotate()
@@ -686,7 +691,7 @@ class TestMessageEncryption:
         encryptor = MessageEncryptor()
         content = "Hello, this is a message!"
         encrypted = encryptor.encrypt_message(content)
-        
+
         assert encrypted != content
         assert encrypted.startswith("ENC:")
         assert encryptor.is_encrypted(encrypted)
@@ -697,7 +702,7 @@ class TestMessageEncryption:
         content = "Hello, this is a message!"
         encrypted = encryptor.encrypt_message(content)
         decrypted = encryptor.decrypt_message(encrypted)
-        
+
         assert decrypted == content
 
     def test_message_encryption_with_message_id(self):
@@ -705,10 +710,10 @@ class TestMessageEncryption:
         encryptor = MessageEncryptor()
         content = "Secret message"
         message_id = 12345678901234567890
-        
+
         encrypted = encryptor.encrypt_message(content, message_id)
         decrypted = encryptor.decrypt_message(encrypted, message_id)
-        
+
         assert decrypted == content
 
     def test_message_decryption_wrong_message_id(self):
@@ -717,9 +722,9 @@ class TestMessageEncryption:
         content = "Secret message"
         message_id = 12345678901234567890
         wrong_id = 98765432109876543210
-        
+
         encrypted = encryptor.encrypt_message(content, message_id)
-        
+
         with pytest.raises(ValueError):
             encryptor.decrypt_message(encrypted, wrong_id)
 
@@ -727,7 +732,7 @@ class TestMessageEncryption:
         """Test that legacy plaintext messages are returned unchanged."""
         encryptor = MessageEncryptor()
         plaintext = "This is plaintext"
-        
+
         decrypted = encryptor.decrypt_message(plaintext)
         assert decrypted == plaintext
         assert not encryptor.is_encrypted(plaintext)
@@ -767,10 +772,10 @@ class TestMessageEncryption:
         """Test that same message encrypts to different ciphertexts."""
         encryptor = MessageEncryptor()
         content = "Same message"
-        
+
         encrypted1 = encryptor.encrypt_message(content)
         encrypted2 = encryptor.encrypt_message(content)
-        
+
         assert encrypted1 != encrypted2
         assert encryptor.decrypt_message(encrypted1) == content
         assert encryptor.decrypt_message(encrypted2) == content
@@ -804,11 +809,11 @@ class TestSecureTokenGeneration:
         """Test that token secrets have high entropy."""
         secret = generate_token_secret(32)
         decoded = base64.urlsafe_b64decode(secret + "==")
-        
+
         byte_counts = {}
         for byte in decoded:
             byte_counts[byte] = byte_counts.get(byte, 0) + 1
-        
+
         assert len(byte_counts) > 20
 
     def test_hash_token_consistency(self):
@@ -850,7 +855,7 @@ class TestSecureTokenGeneration:
         """Test creating session token."""
         session_id = 1234567890
         token, token_hash = create_session_token(session_id)
-        
+
         assert token.startswith(str(session_id) + ".")
         assert len(token_hash) == 64
 
@@ -858,7 +863,7 @@ class TestSecureTokenGeneration:
         """Test creating bot token."""
         bot_id = 9876543210
         token, token_hash = create_bot_token(bot_id)
-        
+
         assert token.startswith(f"bot.{bot_id}.")
         assert len(token_hash) == 64
 
@@ -866,7 +871,7 @@ class TestSecureTokenGeneration:
         """Test parsing session token."""
         session_id = 1234567890
         token, _ = create_session_token(session_id)
-        
+
         parsed = parse_token(token)
         assert parsed is not None
         assert parsed["token_type"] == "session"
@@ -876,7 +881,7 @@ class TestSecureTokenGeneration:
         """Test parsing bot token."""
         bot_id = 9876543210
         token, _ = create_bot_token(bot_id)
-        
+
         parsed = parse_token(token)
         assert parsed is not None
         assert parsed["token_type"] == "bot"
@@ -893,24 +898,24 @@ class TestSecureTokenGeneration:
         secret = generate_token_secret()
         correct_hash = hash_token(secret)
         wrong_secret = generate_token_secret()
-        
+
         correct_timings = []
         wrong_timings = []
-        
+
         for _ in range(100):
             start = time.perf_counter()
             verify_token_hash(secret, correct_hash)
             end = time.perf_counter()
             correct_timings.append(end - start)
-            
+
             start = time.perf_counter()
             verify_token_hash(wrong_secret, correct_hash)
             end = time.perf_counter()
             wrong_timings.append(end - start)
-        
+
         avg_correct = sum(correct_timings) / len(correct_timings)
         avg_wrong = sum(wrong_timings) / len(wrong_timings)
-        
+
         assert abs(avg_correct - avg_wrong) < max(avg_correct, avg_wrong) * 0.5
 
 
@@ -925,9 +930,7 @@ class TestEncryptionManager:
     def test_manager_custom_argon2_params(self):
         """Test EncryptionManager with custom Argon2 parameters."""
         manager = EncryptionManager(
-            argon2_time_cost=3,
-            argon2_memory_cost=131072,
-            argon2_parallelism=4
+            argon2_time_cost=3, argon2_memory_cost=131072, argon2_parallelism=4
         )
         password = "test_password"
         hash_str = manager.hash_password(password)
@@ -994,9 +997,9 @@ class TestCryptographicEdgeCases:
         gen = SnowflakeGenerator(worker_id=31, datacenter_id=31)
         snowflake_id = gen.generate()
         parsed = gen.parse(snowflake_id)
-        
-        assert parsed['worker_id'] == 31
-        assert parsed['datacenter_id'] == 31
+
+        assert parsed["worker_id"] == 31
+        assert parsed["datacenter_id"] == 31
 
     def test_signature_with_binary_data(self, setup_encryption):
         """Test signing binary data."""
@@ -1016,27 +1019,27 @@ class TestCryptographicEdgeCases:
         """Test concurrent encryption operations."""
         results = []
         lock = threading.Lock()
-        
+
         def encrypt_decrypt():
             data = f"test data {threading.current_thread().name}"
             encrypted = encrypt_data(data)
             decrypted = decrypt_data(encrypted)
             with lock:
                 results.append(decrypted == data)
-        
+
         threads = [threading.Thread(target=encrypt_decrypt) for _ in range(20)]
         for thread in threads:
             thread.start()
         for thread in threads:
             thread.join()
-        
+
         assert all(results)
 
     def test_repeated_password_hashing(self, setup_encryption):
         """Test that repeated password hashing produces unique hashes."""
         password = "test_password"
         hashes = set()
-        
+
         for _ in range(50):
             hash_str = hash_password(password)
             assert hash_str not in hashes
@@ -1045,11 +1048,11 @@ class TestCryptographicEdgeCases:
     def test_key_derivation_edge_cases(self):
         """Test key derivation with edge case inputs."""
         manager = EncryptionManager()
-        
+
         key1, salt1 = manager.derive_key("a")
         assert len(key1) == 32
         assert len(salt1) == 16
-        
+
         key2, salt2 = manager.derive_key("a" * 10000)
         assert len(key2) == 32
         assert len(salt2) == 16
@@ -1058,7 +1061,7 @@ class TestCryptographicEdgeCases:
         """Test handling of various malformed encrypted data."""
         # Empty string returns empty string (not an error)
         assert decrypt_data("") == ""
-        
+
         # These should all raise ValueError
         error_cases = [
             "a",
@@ -1069,7 +1072,7 @@ class TestCryptographicEdgeCases:
             "ENC:1:a",
             "ENC:1:!!!invalid_base64!!!",
         ]
-        
+
         for malformed in error_cases:
             with pytest.raises(ValueError):
                 decrypt_data(malformed)
@@ -1079,7 +1082,7 @@ class TestCryptographicEdgeCases:
         private_key, public_key = generate_key_pair()
         data = b"important data"
         signature = sign_data(data, private_key)
-        
+
         for i in range(len(signature)):
             tampered_sig = bytearray(signature)
             tampered_sig[i] ^= 0x01
@@ -1089,13 +1092,13 @@ class TestCryptographicEdgeCases:
         """Test that encryption output format is consistent."""
         data = "test"
         encrypted = encrypt_data(data)
-        
+
         if encrypted.startswith("ENC:"):
             parts = encrypted.split(":", 2)
             assert len(parts) == 3
             assert parts[0] == "ENC"
             assert parts[1].isdigit()
-            
+
             try:
                 base64.b64decode(parts[2])
             except Exception:

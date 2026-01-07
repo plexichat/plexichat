@@ -31,9 +31,7 @@ class TestBots:
         user, auth = fresh_user
 
         bot = auth.create_bot(
-            owner_id=user.id,
-            username=unique_name("bot"),
-            display_name="Test Bot"
+            owner_id=user.id, username=unique_name("bot"), display_name="Test Bot"
         )
 
         assert bot is not None
@@ -48,7 +46,7 @@ class TestBots:
             owner_id=user.id,
             username=unique_name("permbot"),
             display_name="Permission Bot",
-            permissions={"messages.send": True, "messages.read": True}
+            permissions={"messages.send": True, "messages.read": True},
         )
 
         assert bot.permissions.get("messages.send") is True
@@ -62,7 +60,7 @@ class TestBots:
                 owner_id=user.id,
                 username=unique_name("badbot"),
                 display_name="Bad Bot",
-                permissions={"bots.create": True}
+                permissions={"bots.create": True},
             )
 
     def test_create_bot_duplicate_username_fails(self, fresh_user):

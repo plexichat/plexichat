@@ -10,7 +10,16 @@ class TestServerMute:
 
     def test_server_mute_member(self, server_with_moderator):
         """Test server muting a member."""
-        owner, moderator, member, server, voice_channel, stage_channel, servers, voice = server_with_moderator
+        (
+            owner,
+            moderator,
+            member,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_moderator
 
         voice.join_channel(member.id, voice_channel.id)
         state = voice.server_mute(moderator.id, member.id, server.id)
@@ -19,7 +28,16 @@ class TestServerMute:
 
     def test_server_mute_by_owner(self, server_with_moderator):
         """Test server muting by owner."""
-        owner, moderator, member, server, voice_channel, stage_channel, servers, voice = server_with_moderator
+        (
+            owner,
+            moderator,
+            member,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_moderator
 
         voice.join_channel(member.id, voice_channel.id)
         state = voice.server_mute(owner.id, member.id, server.id)
@@ -28,7 +46,16 @@ class TestServerMute:
 
     def test_server_mute_without_permission(self, server_with_voice):
         """Test server mute without permission raises error."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(member2.id, voice_channel.id)
 
@@ -37,7 +64,16 @@ class TestServerMute:
 
     def test_server_mute_user_not_in_channel(self, server_with_moderator):
         """Test server mute when user not in channel raises error."""
-        owner, moderator, member, server, voice_channel, stage_channel, servers, voice = server_with_moderator
+        (
+            owner,
+            moderator,
+            member,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_moderator
 
         with pytest.raises(voice.UserNotInChannelError):
             voice.server_mute(moderator.id, member.id, server.id)
@@ -48,7 +84,16 @@ class TestServerUnmute:
 
     def test_server_unmute_member(self, server_with_moderator):
         """Test server unmuting a member."""
-        owner, moderator, member, server, voice_channel, stage_channel, servers, voice = server_with_moderator
+        (
+            owner,
+            moderator,
+            member,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_moderator
 
         voice.join_channel(member.id, voice_channel.id)
         voice.server_mute(moderator.id, member.id, server.id)
@@ -62,7 +107,16 @@ class TestServerDeaf:
 
     def test_server_deaf_member(self, server_with_moderator):
         """Test server deafening a member."""
-        owner, moderator, member, server, voice_channel, stage_channel, servers, voice = server_with_moderator
+        (
+            owner,
+            moderator,
+            member,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_moderator
 
         voice.join_channel(member.id, voice_channel.id)
         state = voice.server_deaf(moderator.id, member.id, server.id)
@@ -72,7 +126,16 @@ class TestServerDeaf:
 
     def test_server_deaf_without_permission(self, server_with_voice):
         """Test server deaf without permission raises error."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(member2.id, voice_channel.id)
 
@@ -85,7 +148,16 @@ class TestServerUndeaf:
 
     def test_server_undeaf_member(self, server_with_moderator):
         """Test server undeafening a member."""
-        owner, moderator, member, server, voice_channel, stage_channel, servers, voice = server_with_moderator
+        (
+            owner,
+            moderator,
+            member,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_moderator
 
         voice.join_channel(member.id, voice_channel.id)
         voice.server_deaf(moderator.id, member.id, server.id)
@@ -99,11 +171,19 @@ class TestMoveMember:
 
     def test_move_member_to_channel(self, server_with_moderator):
         """Test moving a member to a different channel."""
-        owner, moderator, member, server, voice_channel, stage_channel, servers, voice = server_with_moderator
+        (
+            owner,
+            moderator,
+            member,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_moderator
 
         voice_channel2 = servers.create_channel(
-            owner.id, server.id, "voice-2",
-            channel_type=servers.ChannelType.VOICE
+            owner.id, server.id, "voice-2", channel_type=servers.ChannelType.VOICE
         )
 
         voice.join_channel(member.id, voice_channel.id)
@@ -113,11 +193,19 @@ class TestMoveMember:
 
     def test_move_member_without_permission(self, server_with_voice):
         """Test moving member without permission raises error."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice_channel2 = servers.create_channel(
-            owner.id, server.id, "voice-move2",
-            channel_type=servers.ChannelType.VOICE
+            owner.id, server.id, "voice-move2", channel_type=servers.ChannelType.VOICE
         )
 
         voice.join_channel(member2.id, voice_channel.id)
@@ -127,14 +215,32 @@ class TestMoveMember:
 
     def test_move_member_not_in_channel(self, server_with_moderator):
         """Test moving member not in channel raises error."""
-        owner, moderator, member, server, voice_channel, stage_channel, servers, voice = server_with_moderator
+        (
+            owner,
+            moderator,
+            member,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_moderator
 
         with pytest.raises(voice.UserNotInChannelError):
             voice.move_member(moderator.id, member.id, voice_channel.id)
 
     def test_move_member_to_nonexistent_channel(self, server_with_moderator):
         """Test moving member to nonexistent channel raises error."""
-        owner, moderator, member, server, voice_channel, stage_channel, servers, voice = server_with_moderator
+        (
+            owner,
+            moderator,
+            member,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_moderator
 
         voice.join_channel(member.id, voice_channel.id)
 
@@ -143,11 +249,19 @@ class TestMoveMember:
 
     def test_move_member_to_text_channel(self, server_with_moderator):
         """Test moving member to text channel raises error."""
-        owner, moderator, member, server, voice_channel, stage_channel, servers, voice = server_with_moderator
+        (
+            owner,
+            moderator,
+            member,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_moderator
 
         text_channel = servers.create_channel(
-            owner.id, server.id, "text-move",
-            channel_type=servers.ChannelType.TEXT
+            owner.id, server.id, "text-move", channel_type=servers.ChannelType.TEXT
         )
 
         voice.join_channel(member.id, voice_channel.id)
@@ -161,7 +275,16 @@ class TestDisconnectMember:
 
     def test_disconnect_member(self, server_with_moderator):
         """Test disconnecting a member from voice."""
-        owner, moderator, member, server, voice_channel, stage_channel, servers, voice = server_with_moderator
+        (
+            owner,
+            moderator,
+            member,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_moderator
 
         voice.join_channel(member.id, voice_channel.id)
         result = voice.disconnect_member(moderator.id, member.id, server.id)
@@ -173,7 +296,16 @@ class TestDisconnectMember:
 
     def test_disconnect_member_without_permission(self, server_with_voice):
         """Test disconnecting member without permission raises error."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(member2.id, voice_channel.id)
 
@@ -182,14 +314,32 @@ class TestDisconnectMember:
 
     def test_disconnect_member_not_in_channel(self, server_with_moderator):
         """Test disconnecting member not in channel raises error."""
-        owner, moderator, member, server, voice_channel, stage_channel, servers, voice = server_with_moderator
+        (
+            owner,
+            moderator,
+            member,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_moderator
 
         with pytest.raises(voice.UserNotInChannelError):
             voice.disconnect_member(moderator.id, member.id, server.id)
 
     def test_disconnect_clears_speaker_request(self, server_with_moderator):
         """Test disconnecting clears speaker requests."""
-        owner, moderator, member, server, voice_channel, stage_channel, servers, voice = server_with_moderator
+        (
+            owner,
+            moderator,
+            member,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_moderator
 
         voice.join_channel(owner.id, stage_channel.id)
         voice.start_stage(owner.id, stage_channel.id, "Test Stage")

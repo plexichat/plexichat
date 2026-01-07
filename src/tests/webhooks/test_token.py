@@ -28,7 +28,7 @@ class TestTokenFormat:
             webhook = setup["webhooks"].create_webhook(
                 user_id=setup["owner"].id,
                 channel_id=setup["channel"].id,
-                name=f"Random Token {i}"
+                name=f"Random Token {i}",
             )
             secret = webhook.token.split(".")[-1]
             secrets.add(secret)
@@ -42,7 +42,7 @@ class TestTokenFormat:
 
         row = setup["db"].fetch_one(
             "SELECT token_hash FROM webhook_webhooks WHERE id = ?",
-            (setup["webhook"].id,)
+            (setup["webhook"].id,),
         )
 
         assert row is not None
@@ -61,7 +61,7 @@ class TestTokenValidation:
             webhook_id=setup["webhook"].id,
             token=setup["token"],
             content="Valid token",
-            wait=True
+            wait=True,
         )
 
         assert result is not None
@@ -75,20 +75,21 @@ class TestTokenValidation:
             setup["webhooks"].execute_webhook(
                 webhook_id=setup["webhook"].id,
                 token="webhook.123.invalid_secret",
-                content="Invalid token"
+                content="Invalid token",
             )
 
     def test_wrong_webhook_id_in_token(self, webhook_with_token):
         """Test token with wrong webhook ID."""
         setup = webhook_with_token
         from src.core.webhooks import InvalidWebhookTokenError
+
         secret = setup["token"].split(".")[-1]
 
         with pytest.raises(InvalidWebhookTokenError):
             setup["webhooks"].execute_webhook(
                 webhook_id=setup["webhook"].id,
                 token=f"webhook.999999.{secret}",
-                content="Wrong ID"
+                content="Wrong ID",
             )
 
     def test_malformed_token_rejected(self, webhook_with_token):
@@ -108,9 +109,7 @@ class TestTokenValidation:
         for token in malformed_tokens:
             with pytest.raises(InvalidWebhookTokenError):
                 setup["webhooks"].execute_webhook(
-                    webhook_id=setup["webhook"].id,
-                    token=token,
-                    content="Malformed"
+                    webhook_id=setup["webhook"].id, token=token, content="Malformed"
                 )
 
 
@@ -123,8 +122,7 @@ class TestTokenRegeneration:
         old_token = setup["token"]
 
         updated = setup["webhooks"].regenerate_token(
-            user_id=setup["owner"].id,
-            webhook_id=setup["webhook"].id
+            user_id=setup["owner"].id, webhook_id=setup["webhook"].id
         )
 
         assert updated.token is not None
@@ -135,8 +133,7 @@ class TestTokenRegeneration:
         setup = webhook_with_token
 
         updated = setup["webhooks"].regenerate_token(
-            user_id=setup["owner"].id,
-            webhook_id=setup["webhook"].id
+            user_id=setup["owner"].id, webhook_id=setup["webhook"].id
         )
 
         assert updated.token.startswith("webhook.")
@@ -149,15 +146,12 @@ class TestTokenRegeneration:
         from src.core.webhooks import InvalidWebhookTokenError
 
         setup["webhooks"].regenerate_token(
-            user_id=setup["owner"].id,
-            webhook_id=setup["webhook"].id
+            user_id=setup["owner"].id, webhook_id=setup["webhook"].id
         )
 
         with pytest.raises(InvalidWebhookTokenError):
             setup["webhooks"].execute_webhook(
-                webhook_id=setup["webhook"].id,
-                token=old_token,
-                content="Old token"
+                webhook_id=setup["webhook"].id, token=old_token, content="Old token"
             )
 
     def test_new_token_valid_after_regenerate(self, webhook_with_token):
@@ -165,15 +159,14 @@ class TestTokenRegeneration:
         setup = webhook_with_token
 
         updated = setup["webhooks"].regenerate_token(
-            user_id=setup["owner"].id,
-            webhook_id=setup["webhook"].id
+            user_id=setup["owner"].id, webhook_id=setup["webhook"].id
         )
 
         result = setup["webhooks"].execute_webhook(
             webhook_id=setup["webhook"].id,
             token=updated.token,
             content="New token works",
-            wait=True
+            wait=True,
         )
 
         assert result is not None
@@ -182,11 +175,11 @@ class TestTokenRegeneration:
         """Test that regeneration updates timestamp."""
         setup = webhook_with_token
         import time
+
         time.sleep(0.01)
 
         updated = setup["webhooks"].regenerate_token(
-            user_id=setup["owner"].id,
-            webhook_id=setup["webhook"].id
+            user_id=setup["owner"].id, webhook_id=setup["webhook"].id
         )
 
         assert updated.updated_at > setup["webhook"].created_at
@@ -198,8 +191,7 @@ class TestTokenRegeneration:
 
         with pytest.raises(WebhookNotFoundError):
             setup["webhooks"].regenerate_token(
-                user_id=setup["owner"].id,
-                webhook_id=999999999
+                user_id=setup["owner"].id, webhook_id=999999999
             )
 
     def test_regenerate_no_permission(self, webhook_with_token):
@@ -209,8 +201,7 @@ class TestTokenRegeneration:
 
         with pytest.raises(PermissionDeniedError):
             setup["webhooks"].regenerate_token(
-                user_id=setup["non_member"].id,
-                webhook_id=setup["webhook"].id
+                user_id=setup["non_member"].id, webhook_id=setup["webhook"].id
             )
 
     def test_multiple_regenerations(self, webhook_with_token):
@@ -220,8 +211,7 @@ class TestTokenRegeneration:
 
         for _ in range(5):
             updated = setup["webhooks"].regenerate_token(
-                user_id=setup["owner"].id,
-                webhook_id=setup["webhook"].id
+                user_id=setup["owner"].id, webhook_id=setup["webhook"].id
             )
             tokens.add(updated.token)
 
@@ -240,7 +230,7 @@ class TestTokenSecretOnly:
             webhook_id=setup["webhook"].id,
             token=secret,
             content="Secret only",
-            wait=True
+            wait=True,
         )
 
         assert result is not None
@@ -253,7 +243,7 @@ class TestTokenSecretOnly:
             webhook_id=setup["webhook"].id,
             token=setup["token"],
             content="Full token",
-            wait=True
+            wait=True,
         )
 
         assert result is not None

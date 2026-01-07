@@ -66,9 +66,7 @@ class TestCreateGroup:
         user1, user2, user3, messaging = users
 
         group = messaging.create_group(
-            owner_id=user1.id,
-            name="Test Group",
-            participant_ids=[user2.id]
+            owner_id=user1.id, name="Test Group", participant_ids=[user2.id]
         )
 
         assert group is not None
@@ -80,10 +78,7 @@ class TestCreateGroup:
         """Test that owner is automatically added as participant."""
         user1, user2, user3, messaging = users
 
-        group = messaging.create_group(
-            owner_id=user1.id,
-            name="Test Group"
-        )
+        group = messaging.create_group(owner_id=user1.id, name="Test Group")
 
         participants = messaging.get_participants(user1.id, group.id)
         user_ids = [p.user_id for p in participants]
@@ -95,9 +90,7 @@ class TestCreateGroup:
         user1, user2, user3, messaging = users
 
         group = messaging.create_group(
-            owner_id=user1.id,
-            name="Test Group",
-            participant_ids=[user2.id, user3.id]
+            owner_id=user1.id, name="Test Group", participant_ids=[user2.id, user3.id]
         )
 
         participants = messaging.get_participants(user1.id, group.id)
@@ -129,9 +122,7 @@ class TestCreateGroup:
         user1, user2, user3, messaging = users
 
         group = messaging.create_group(
-            owner_id=user1.id,
-            name="Small Group",
-            max_participants=5
+            owner_id=user1.id, name="Small Group", max_participants=5
         )
 
         assert group.max_participants == 5
@@ -145,17 +136,14 @@ class TestCreateGroup:
                 owner_id=user1.id,
                 name="Tiny Group",
                 participant_ids=[user2.id, user3.id],
-                max_participants=2
+                max_participants=2,
             )
 
     def test_create_group_sends_system_message(self, users):
         """Test that group creation sends system message."""
         user1, user2, user3, messaging = users
 
-        group = messaging.create_group(
-            owner_id=user1.id,
-            name="Test Group"
-        )
+        group = messaging.create_group(owner_id=user1.id, name="Test Group")
 
         messages = messaging.get_messages(user1.id, group.id)
         assert len(messages) == 1
@@ -226,8 +214,12 @@ class TestGetConversations:
         dm = messaging.create_dm(user1.id, user2.id)
         group = messaging.create_group(user1.id, "Test Group")
 
-        dms = messaging.get_conversations(user1.id, conversation_type=messaging.ConversationType.DM)
-        groups = messaging.get_conversations(user1.id, conversation_type=messaging.ConversationType.GROUP)
+        dms = messaging.get_conversations(
+            user1.id, conversation_type=messaging.ConversationType.DM
+        )
+        groups = messaging.get_conversations(
+            user1.id, conversation_type=messaging.ConversationType.GROUP
+        )
 
         dm_ids = [c.id for c in dms]
         group_ids = [c.id for c in groups]
@@ -269,9 +261,7 @@ class TestUpdateConversation:
         group, user1, user2, user3, messaging = group_conversation
 
         updated = messaging.update_conversation(
-            user_id=user1.id,
-            conversation_id=group.id,
-            name="New Name"
+            user_id=user1.id, conversation_id=group.id, name="New Name"
         )
 
         assert updated.name == "New Name"
@@ -281,9 +271,7 @@ class TestUpdateConversation:
         group, user1, user2, user3, messaging = group_conversation
 
         updated = messaging.update_conversation(
-            user_id=user1.id,
-            conversation_id=group.id,
-            max_participants=50
+            user_id=user1.id, conversation_id=group.id, max_participants=50
         )
 
         assert updated.max_participants == 50
@@ -358,7 +346,9 @@ class TestLeaveConversation:
         group, user1, user2, user3, messaging = group_conversation
 
         # Make user2 admin first
-        messaging.update_participant_role(user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN)
+        messaging.update_participant_role(
+            user1.id, group.id, user2.id, messaging.ParticipantRole.ADMIN
+        )
 
         messaging.leave_conversation(user1.id, group.id)
 
@@ -381,6 +371,8 @@ class TestLeaveConversation:
         messaging.leave_conversation(user2.id, group.id)
 
         messages = messaging.get_messages(user1.id, group.id)
-        system_msgs = [m for m in messages if m.message_type == messaging.MessageType.SYSTEM]
+        system_msgs = [
+            m for m in messages if m.message_type == messaging.MessageType.SYSTEM
+        ]
 
         assert any("left" in m.content.lower() for m in system_msgs)

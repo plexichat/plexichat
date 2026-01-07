@@ -11,7 +11,9 @@ class TestOnboardingStart:
 
     def test_start_onboarding(self, server_with_members):
         """Test starting onboarding for a user."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         progress = servers.start_onboarding(member_user.id, server.id)
 
@@ -23,7 +25,9 @@ class TestOnboardingStart:
 
     def test_start_onboarding_idempotent(self, server_with_members):
         """Test that starting onboarding twice returns existing progress."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         progress1 = servers.start_onboarding(member_user.id, server.id)
         progress2 = servers.start_onboarding(member_user.id, server.id)
@@ -32,7 +36,9 @@ class TestOnboardingStart:
 
     def test_start_onboarding_requires_membership(self, server_with_members):
         """Test that starting onboarding requires server membership."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         with pytest.raises(servers.ServerNotFoundError):
             servers.start_onboarding(outsider.id, server.id)
@@ -44,7 +50,9 @@ class TestOnboardingStepCompletion:
 
     def test_complete_onboarding_step(self, server_with_members):
         """Test completing an onboarding step."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         step = servers.create_onboarding_step(
             user_id=owner.id,
@@ -65,7 +73,9 @@ class TestOnboardingStepCompletion:
 
     def test_complete_step_idempotent(self, server_with_members):
         """Test that completing a step twice is idempotent."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         step = servers.create_onboarding_step(
             user_id=owner.id,
@@ -92,7 +102,9 @@ class TestOnboardingStepCompletion:
 
     def test_complete_select_roles_assigns_roles(self, server_with_members):
         """Test that completing select roles step assigns selected roles."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         new_role = servers.create_role(
             user_id=owner.id,
@@ -124,7 +136,9 @@ class TestOnboardingStepCompletion:
 
     def test_complete_nonexistent_step_fails(self, server_with_members):
         """Test that completing nonexistent step fails."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         servers.start_onboarding(member_user.id, server.id)
 
@@ -137,7 +151,9 @@ class TestOnboardingStepCompletion:
 
     def test_complete_step_auto_starts_onboarding(self, server_with_members):
         """Test that completing a step auto-starts onboarding if not started."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         step = servers.create_onboarding_step(
             user_id=owner.id,
@@ -162,7 +178,9 @@ class TestOnboardingCompletion:
 
     def test_onboarding_completes_when_all_required_done(self, server_with_members):
         """Test that onboarding completes when all required steps are done."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         required_step = servers.create_onboarding_step(
             user_id=owner.id,
@@ -172,7 +190,7 @@ class TestOnboardingCompletion:
             required=True,
         )
 
-        optional_step = servers.create_onboarding_step(
+        servers.create_onboarding_step(
             user_id=owner.id,
             server_id=server.id,
             step_type=servers.OnboardingStepType.CUSTOM,
@@ -193,7 +211,9 @@ class TestOnboardingCompletion:
 
     def test_onboarding_not_complete_with_missing_required(self, server_with_members):
         """Test that onboarding is not complete with missing required steps."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         required_step1 = servers.create_onboarding_step(
             user_id=owner.id,
@@ -203,7 +223,7 @@ class TestOnboardingCompletion:
             required=True,
         )
 
-        required_step2 = servers.create_onboarding_step(
+        servers.create_onboarding_step(
             user_id=owner.id,
             server_id=server.id,
             step_type=servers.OnboardingStepType.CUSTOM,
@@ -223,7 +243,9 @@ class TestOnboardingCompletion:
 
     def test_onboarding_completes_with_no_required_steps(self, server_with_members):
         """Test onboarding with only optional steps."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         optional_step = servers.create_onboarding_step(
             user_id=owner.id,
@@ -250,7 +272,9 @@ class TestOnboardingProgress:
 
     def test_get_onboarding_progress(self, server_with_members):
         """Test getting onboarding progress."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         servers.start_onboarding(member_user.id, server.id)
 
@@ -261,7 +285,9 @@ class TestOnboardingProgress:
 
     def test_get_progress_not_started(self, server_with_members):
         """Test getting progress when not started."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         progress = servers.get_onboarding_progress(member_user.id, server.id)
 
@@ -269,7 +295,9 @@ class TestOnboardingProgress:
 
     def test_progress_tracks_multiple_steps(self, server_with_members):
         """Test that progress tracks multiple completed steps."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         step1 = servers.create_onboarding_step(
             user_id=owner.id,
@@ -300,7 +328,9 @@ class TestOnboardingReset:
 
     def test_reset_onboarding_progress(self, server_with_members):
         """Test resetting onboarding progress."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         step = servers.create_onboarding_step(
             user_id=owner.id,
@@ -320,7 +350,9 @@ class TestOnboardingReset:
 
     def test_reset_nonexistent_progress(self, server_with_members):
         """Test resetting progress that doesn't exist."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         result = servers.reset_onboarding_progress(member_user.id, server.id)
         assert result is True
@@ -332,7 +364,18 @@ class TestOnboardingIntegration:
 
     def test_full_onboarding_flow(self, server_with_channels):
         """Test a complete onboarding flow."""
-        server, owner, admin_user, member_user, outsider, general, announcements, private, category, servers = server_with_channels
+        (
+            server,
+            owner,
+            admin_user,
+            member_user,
+            outsider,
+            general,
+            announcements,
+            private,
+            category,
+            servers,
+        ) = server_with_channels
 
         servers.set_welcome_screen(
             user_id=owner.id,

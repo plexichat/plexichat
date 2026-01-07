@@ -10,7 +10,16 @@ class TestSelfMute:
 
     def test_set_self_mute(self, server_with_voice):
         """Test setting self-mute."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(member1.id, voice_channel.id)
         state = voice.set_self_mute(member1.id, True)
@@ -19,7 +28,16 @@ class TestSelfMute:
 
     def test_unset_self_mute(self, server_with_voice):
         """Test unsetting self-mute."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(member1.id, voice_channel.id)
         voice.set_self_mute(member1.id, True)
@@ -29,7 +47,16 @@ class TestSelfMute:
 
     def test_self_mute_not_in_channel(self, server_with_voice):
         """Test self-mute when not in channel raises error."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         with pytest.raises(voice.UserNotInChannelError):
             voice.set_self_mute(member2.id, True)
@@ -40,7 +67,16 @@ class TestSelfDeaf:
 
     def test_set_self_deaf(self, server_with_voice):
         """Test setting self-deaf."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(member1.id, voice_channel.id)
         state = voice.set_self_deaf(member1.id, True)
@@ -50,7 +86,16 @@ class TestSelfDeaf:
 
     def test_unset_self_deaf(self, server_with_voice):
         """Test unsetting self-deaf."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(member1.id, voice_channel.id)
         voice.set_self_deaf(member1.id, True)
@@ -60,7 +105,16 @@ class TestSelfDeaf:
 
     def test_self_deaf_not_in_channel(self, server_with_voice):
         """Test self-deaf when not in channel raises error."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         with pytest.raises(voice.UserNotInChannelError):
             voice.set_self_deaf(member2.id, True)
@@ -71,7 +125,16 @@ class TestStreaming:
 
     def test_set_streaming(self, server_with_voice):
         """Test setting streaming state."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(member1.id, voice_channel.id)
         state = voice.set_streaming(member1.id, True)
@@ -80,7 +143,16 @@ class TestStreaming:
 
     def test_unset_streaming(self, server_with_voice):
         """Test unsetting streaming state."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(member1.id, voice_channel.id)
         voice.set_streaming(member1.id, True)
@@ -90,7 +162,16 @@ class TestStreaming:
 
     def test_streaming_not_in_channel(self, server_with_voice):
         """Test streaming when not in channel raises error."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         with pytest.raises(voice.UserNotInChannelError):
             voice.set_streaming(member2.id, True)
@@ -101,7 +182,16 @@ class TestVideo:
 
     def test_set_video(self, server_with_voice):
         """Test setting video state."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(member1.id, voice_channel.id)
         state = voice.set_video(member1.id, True)
@@ -110,7 +200,16 @@ class TestVideo:
 
     def test_unset_video(self, server_with_voice):
         """Test unsetting video state."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(member1.id, voice_channel.id)
         voice.set_video(member1.id, True)
@@ -120,7 +219,16 @@ class TestVideo:
 
     def test_video_not_in_channel(self, server_with_voice):
         """Test video when not in channel raises error."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         with pytest.raises(voice.UserNotInChannelError):
             voice.set_video(member2.id, True)
@@ -131,14 +239,20 @@ class TestUpdateVoiceState:
 
     def test_update_multiple_states(self, server_with_voice):
         """Test updating multiple voice state properties at once."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(member1.id, voice_channel.id)
         state = voice.update_voice_state(
-            member1.id,
-            self_mute=True,
-            streaming=True,
-            video=True
+            member1.id, self_mute=True, streaming=True, video=True
         )
 
         assert state.self_mute is True
@@ -147,7 +261,16 @@ class TestUpdateVoiceState:
 
     def test_update_self_deaf_also_mutes(self, server_with_voice):
         """Test that setting self_deaf also sets self_mute."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(member1.id, voice_channel.id)
         state = voice.update_voice_state(member1.id, self_deaf=True)
@@ -157,7 +280,16 @@ class TestUpdateVoiceState:
 
     def test_update_no_changes(self, server_with_voice):
         """Test updating with no changes returns current state."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(member1.id, voice_channel.id)
         state = voice.update_voice_state(member1.id)
@@ -167,7 +299,16 @@ class TestUpdateVoiceState:
 
     def test_update_not_in_channel(self, server_with_voice):
         """Test updating when not in channel raises error."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         with pytest.raises(voice.UserNotInChannelError):
             voice.update_voice_state(member2.id, self_mute=True)
@@ -178,7 +319,16 @@ class TestGetVoiceState:
 
     def test_get_voice_state(self, server_with_voice):
         """Test getting voice state."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(member1.id, voice_channel.id)
         state = voice.get_voice_state(member1.id)
@@ -189,7 +339,16 @@ class TestGetVoiceState:
 
     def test_get_voice_state_not_in_channel(self, server_with_voice):
         """Test getting voice state when not in channel returns None."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         state = voice.get_voice_state(member2.id)
 
@@ -201,7 +360,16 @@ class TestIsUserInVoice:
 
     def test_is_user_in_voice_true(self, server_with_voice):
         """Test is_user_in_voice returns True when in channel."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(member1.id, voice_channel.id)
         result = voice.is_user_in_voice(member1.id)
@@ -210,7 +378,16 @@ class TestIsUserInVoice:
 
     def test_is_user_in_voice_false(self, server_with_voice):
         """Test is_user_in_voice returns False when not in channel."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         result = voice.is_user_in_voice(member2.id)
 

@@ -20,9 +20,7 @@ class TestJoinThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Join Test"
+            user_id=owner.id, channel_id=channel.id, name="Join Test"
         )
 
         member = threads.join_thread(member1.id, thread.id)
@@ -36,9 +34,7 @@ class TestJoinThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Count Test"
+            user_id=owner.id, channel_id=channel.id, name="Count Test"
         )
 
         assert thread.member_count == 1
@@ -53,9 +49,7 @@ class TestJoinThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Already Member Test"
+            user_id=owner.id, channel_id=channel.id, name="Already Member Test"
         )
 
         with pytest.raises(ThreadMemberExistsError):
@@ -77,9 +71,7 @@ class TestLeaveThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Leave Test"
+            user_id=owner.id, channel_id=channel.id, name="Leave Test"
         )
 
         threads.join_thread(member1.id, thread.id)
@@ -92,9 +84,7 @@ class TestLeaveThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Leave Count Test"
+            user_id=owner.id, channel_id=channel.id, name="Leave Count Test"
         )
 
         threads.join_thread(member1.id, thread.id)
@@ -108,9 +98,7 @@ class TestLeaveThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Not Member Test"
+            user_id=owner.id, channel_id=channel.id, name="Not Member Test"
         )
 
         with pytest.raises(ThreadMemberNotFoundError):
@@ -121,9 +109,7 @@ class TestLeaveThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Owner Leave Test"
+            user_id=owner.id, channel_id=channel.id, name="Owner Leave Test"
         )
 
         result = threads.leave_thread(owner.id, thread.id)
@@ -138,9 +124,7 @@ class TestAddMember:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Add Member Test"
+            user_id=owner.id, channel_id=channel.id, name="Add Member Test"
         )
 
         member = threads.add_member(owner.id, thread.id, member1.id)
@@ -153,9 +137,7 @@ class TestAddMember:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Already Member Add Test"
+            user_id=owner.id, channel_id=channel.id, name="Already Member Add Test"
         )
 
         threads.add_member(owner.id, thread.id, member1.id)
@@ -168,9 +150,7 @@ class TestAddMember:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Non Member Add Test"
+            user_id=owner.id, channel_id=channel.id, name="Non Member Add Test"
         )
 
         with pytest.raises(ThreadAccessDeniedError):
@@ -181,9 +161,7 @@ class TestAddMember:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Member Add Public Test"
+            user_id=owner.id, channel_id=channel.id, name="Member Add Public Test"
         )
 
         threads.join_thread(member1.id, thread.id)
@@ -200,9 +178,7 @@ class TestRemoveMember:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Remove Member Test"
+            user_id=owner.id, channel_id=channel.id, name="Remove Member Test"
         )
 
         threads.add_member(owner.id, thread.id, member1.id)
@@ -215,9 +191,7 @@ class TestRemoveMember:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Remove Non Member Test"
+            user_id=owner.id, channel_id=channel.id, name="Remove Non Member Test"
         )
 
         with pytest.raises(ThreadMemberNotFoundError):
@@ -228,9 +202,7 @@ class TestRemoveMember:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Self Remove Test"
+            user_id=owner.id, channel_id=channel.id, name="Self Remove Test"
         )
 
         threads.join_thread(member1.id, thread.id)
@@ -243,9 +215,7 @@ class TestRemoveMember:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Remove Owner Test"
+            user_id=owner.id, channel_id=channel.id, name="Remove Owner Test"
         )
 
         threads.join_thread(member1.id, thread.id)
@@ -262,9 +232,7 @@ class TestGetThreadMembers:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Get Members Test"
+            user_id=owner.id, channel_id=channel.id, name="Get Members Test"
         )
 
         threads.join_thread(member1.id, thread.id)
@@ -283,9 +251,7 @@ class TestGetThreadMembers:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Pagination Test"
+            user_id=owner.id, channel_id=channel.id, name="Pagination Test"
         )
 
         threads.join_thread(member1.id, thread.id)
@@ -299,9 +265,7 @@ class TestGetThreadMembers:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Empty Thread Test"
+            user_id=owner.id, channel_id=channel.id, name="Empty Thread Test"
         )
 
         members = threads.get_thread_members(owner.id, thread.id)

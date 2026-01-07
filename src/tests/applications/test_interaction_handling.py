@@ -44,7 +44,9 @@ class TestInteractionCreation:
 
         assert interaction.interaction_type == InteractionType.MESSAGE_COMPONENT
 
-    def test_create_autocomplete_interaction(self, modules, test_application, user_pool):
+    def test_create_autocomplete_interaction(
+        self, modules, test_application, user_pool
+    ):
         """Test creating an autocomplete interaction."""
         app, owner = test_application
         user = user_pool.get_user()
@@ -53,12 +55,21 @@ class TestInteractionCreation:
             application_id=app.id,
             interaction_type=InteractionType.APPLICATION_COMMAND_AUTOCOMPLETE,
             user_id=user.id,
-            data={"name": "search", "type": 1, "options": [{"name": "query", "value": "test"}]},
+            data={
+                "name": "search",
+                "type": 1,
+                "options": [{"name": "query", "value": "test"}],
+            },
         )
 
-        assert interaction.interaction_type == InteractionType.APPLICATION_COMMAND_AUTOCOMPLETE
+        assert (
+            interaction.interaction_type
+            == InteractionType.APPLICATION_COMMAND_AUTOCOMPLETE
+        )
 
-    def test_create_modal_submit_interaction(self, modules, test_application, user_pool):
+    def test_create_modal_submit_interaction(
+        self, modules, test_application, user_pool
+    ):
         """Test creating a modal submit interaction."""
         app, owner = test_application
         user = user_pool.get_user()
@@ -70,14 +81,21 @@ class TestInteractionCreation:
             data={
                 "custom_id": "feedback_modal",
                 "components": [
-                    {"type": 1, "components": [{"type": 4, "custom_id": "text", "value": "feedback"}]}
+                    {
+                        "type": 1,
+                        "components": [
+                            {"type": 4, "custom_id": "text", "value": "feedback"}
+                        ],
+                    }
                 ],
             },
         )
 
         assert interaction.interaction_type == InteractionType.MODAL_SUBMIT
 
-    def test_create_interaction_with_server(self, modules, test_application, test_server, user_pool):
+    def test_create_interaction_with_server(
+        self, modules, test_application, test_server, user_pool
+    ):
         """Test creating interaction with server context."""
         app, owner = test_application
         server, server_owner = test_server
@@ -162,7 +180,10 @@ class TestInteractionResponses:
         )
 
         assert result is True
-        assert response.response_type == InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
+        assert (
+            response.response_type
+            == InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
+        )
 
     def test_respond_already_responded(self, modules, test_interaction):
         """Test that responding twice fails."""
@@ -242,7 +263,7 @@ class TestModalResponses:
                             "label": "Input",
                             "style": 1,
                         }
-                    ]
+                    ],
                 }
             ],
         )

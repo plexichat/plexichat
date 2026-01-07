@@ -29,17 +29,18 @@ class TestServerPermissions:
         """Test member without add_reactions permission cannot add."""
         db, auth, messaging, servers_mod, relationships, reactions = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         owner = auth.register(
             username=f"perm_owner_{unique_id}",
             email=f"perm_owner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         member = auth.register(
             username=f"perm_member_{unique_id}",
             email=f"perm_member_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers_mod.create_server(owner.id, f"Perm Server {unique_id}")
@@ -58,7 +59,7 @@ class TestServerPermissions:
             servers_mod.update_role(
                 owner.id,
                 everyone_role.id,
-                permissions={"messages.add_reactions": False}
+                permissions={"messages.add_reactions": False},
             )
 
         msg = servers_mod.send_channel_message(owner.id, channel.id, "Test message")
@@ -126,17 +127,18 @@ class TestModeratorActions:
         """Test admin with messages.manage can remove all reactions."""
         db, auth, messaging, servers_mod, relationships, reactions = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         owner = auth.register(
             username=f"admin_owner_{unique_id}",
             email=f"admin_owner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         admin = auth.register(
             username=f"admin_user_{unique_id}",
             email=f"admin_user_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers_mod.create_server(owner.id, f"Admin Server {unique_id}")
@@ -146,7 +148,7 @@ class TestModeratorActions:
             owner.id,
             server.id,
             f"Admin_{unique_id}",
-            permissions={"messages.manage": True}
+            permissions={"messages.manage": True},
         )
         servers_mod.assign_role(owner.id, server.id, admin.id, admin_role.id)
 
@@ -188,10 +190,7 @@ class TestGroupConversationPermissions:
         owner, member1, member2, group, msg, messaging, reactions = group_with_message
 
         messaging.update_participant_role(
-            owner.id,
-            group.id,
-            member1.id,
-            messaging.ParticipantRole.ADMIN
+            owner.id, group.id, member1.id, messaging.ParticipantRole.ADMIN
         )
 
         reactions.add_reaction(member2.id, msg.id, "grp_admin_mod")

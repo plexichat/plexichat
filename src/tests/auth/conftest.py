@@ -5,8 +5,6 @@ Most fixtures are inherited from the root conftest.py.
 This file only contains auth-specific fixtures if needed.
 """
 
-
-
 import pytest
 import uuid
 
@@ -18,13 +16,9 @@ def fresh_registered_user(modules):
     username = f"fresh_{unique_id}"
     email = f"{username}@example.com"
     password = "TestPass123!"
-    
-    user = modules.auth.register(
-        username=username,
-        email=email,
-        password=password
-    )
-    
+
+    user = modules.auth.register(username=username, email=email, password=password)
+
     return user, modules.auth, username
 
 

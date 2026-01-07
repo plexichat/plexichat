@@ -77,7 +77,7 @@ class TestOnlineFriends:
         main_user = auth.register(
             username=f"main_{unique_id}",
             email=f"main_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         online_friends = []
@@ -85,7 +85,7 @@ class TestOnlineFriends:
             friend = auth.register(
                 username=f"friend_{unique_id}_{i}",
                 email=f"friend_{unique_id}_{i}@example.com",
-                password="TestPass123!"
+                password="TestPass123!",
             )
             req = relationships.send_friend_request(main_user.id, friend.id)
             relationships.accept_friend_request(friend.id, req.id)
@@ -181,7 +181,7 @@ class TestBulkPresence:
             user = auth.register(
                 username=f"bulk_{unique_id}_{i}",
                 email=f"bulk_{unique_id}_{i}@example.com",
-                password="TestPass123!"
+                password="TestPass123!",
             )
             presence.set_status(user.id, UserStatus.ONLINE)
             users.append(user)
@@ -211,17 +211,17 @@ class TestBulkPresence:
         user1 = auth.register(
             username=f"mix1_{unique_id}",
             email=f"mix1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"mix2_{unique_id}",
             email=f"mix2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user3 = auth.register(
             username=f"mix3_{unique_id}",
             email=f"mix3_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         presence.set_status(user1.id, UserStatus.ONLINE)
@@ -253,6 +253,7 @@ class TestLastSeen:
 
         result1 = presence.set_status(user1.id, UserStatus.ONLINE)
         import time
+
         time.sleep(0.01)
         result2 = presence.set_status(user1.id, UserStatus.IDLE)
 
@@ -302,10 +303,7 @@ class TestPresenceWithActivity:
         presence.set_status(user1.id, UserStatus.ONLINE)
         presence.set_custom_status(user1.id, "Coding", emoji=":computer:")
         presence.set_activity(
-            user1.id,
-            presence.ActivityType.PLAYING,
-            "VS Code",
-            details="Writing tests"
+            user1.id, presence.ActivityType.PLAYING, "VS Code", details="Writing tests"
         )
 
         pres = presence.get_presence(user1.id)

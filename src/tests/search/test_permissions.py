@@ -6,7 +6,6 @@ import pytest
 import uuid
 
 
-
 @pytest.mark.search
 class TestMessageSearchPermissions:
     """Test message search permission checks."""
@@ -20,21 +19,25 @@ class TestMessageSearchPermissions:
         user1 = auth.register(
             username=f"perm1_{unique_id}",
             email=f"perm1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"perm2_{unique_id}",
             email=f"perm2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user1.id, user2.id)
         msg = messaging.send_message(user1.id, dm.id, f"searchable {unique_id}")
 
-        search.index_message(msg.id, msg.content, {
-            "author_id": user1.id,
-            "conversation_id": dm.id,
-        })
+        search.index_message(
+            msg.id,
+            msg.content,
+            {
+                "author_id": user1.id,
+                "conversation_id": dm.id,
+            },
+        )
 
         results = search.search_messages(user1.id, unique_id)
 
@@ -49,26 +52,30 @@ class TestMessageSearchPermissions:
         user1 = auth.register(
             username=f"priv1_{unique_id}",
             email=f"priv1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"priv2_{unique_id}",
             email=f"priv2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user3 = auth.register(
             username=f"priv3_{unique_id}",
             email=f"priv3_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user1.id, user2.id)
         msg = messaging.send_message(user1.id, dm.id, f"private {unique_id}")
 
-        search.index_message(msg.id, msg.content, {
-            "author_id": user1.id,
-            "conversation_id": dm.id,
-        })
+        search.index_message(
+            msg.id,
+            msg.content,
+            {
+                "author_id": user1.id,
+                "conversation_id": dm.id,
+            },
+        )
 
         results = search.search_messages(user3.id, f"private {unique_id}")
 
@@ -83,12 +90,12 @@ class TestMessageSearchPermissions:
         owner = auth.register(
             username=f"srvown_{unique_id}",
             email=f"srvown_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         member = auth.register(
             username=f"srvmem_{unique_id}",
             email=f"srvmem_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"Perm Server {unique_id}")
@@ -112,17 +119,17 @@ class TestDiscoveryPermissions:
         owner = auth.register(
             username=f"listowner_{unique_id}",
             email=f"listowner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         member = auth.register(
             username=f"listmem_{unique_id}",
             email=f"listmem_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         member2 = auth.register(
             username=f"listmem2_{unique_id}",
             email=f"listmem2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"List Perm Server {unique_id}")
@@ -130,9 +137,7 @@ class TestDiscoveryPermissions:
         servers.add_member(server.id, member2.id)
 
         listing = search.list_server(
-            user_id=owner.id,
-            server_id=server.id,
-            category="gaming"
+            user_id=owner.id, server_id=server.id, category="gaming"
         )
 
         assert listing is not None
@@ -146,28 +151,24 @@ class TestDiscoveryPermissions:
         owner = auth.register(
             username=f"bumpowner_{unique_id}",
             email=f"bumpowner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         member = auth.register(
             username=f"bumpmem_{unique_id}",
             email=f"bumpmem_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         member2 = auth.register(
             username=f"bumpmem2_{unique_id}",
             email=f"bumpmem2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"Bump Perm Server {unique_id}")
         servers.add_member(server.id, member.id)
         servers.add_member(server.id, member2.id)
 
-        search.list_server(
-            user_id=owner.id,
-            server_id=server.id,
-            category="gaming"
-        )
+        search.list_server(user_id=owner.id, server_id=server.id, category="gaming")
 
         result = search.bump_server(member.id, server.id)
 
@@ -187,28 +188,32 @@ class TestSearchAccessControl:
         user1 = auth.register(
             username=f"acc1_{unique_id}",
             email=f"acc1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"acc2_{unique_id}",
             email=f"acc2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         outsider = auth.register(
             username=f"outsider_{unique_id}",
             email=f"outsider_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user1.id, user2.id)
         msg = messaging.send_message(user1.id, dm.id, f"secret_{unique_id}")
 
-        search.index_message(msg.id, msg.content, {
-            "author_id": user1.id,
-            "conversation_id": dm.id,
-        })
+        search.index_message(
+            msg.id,
+            msg.content,
+            {
+                "author_id": user1.id,
+                "conversation_id": dm.id,
+            },
+        )
 
-        user1_results = search.search_messages(user1.id, f"secret_{unique_id}")
+        search.search_messages(user1.id, f"secret_{unique_id}")
         outsider_results = search.search_messages(outsider.id, f"secret_{unique_id}")
 
         assert len(outsider_results) == 0
@@ -222,31 +227,33 @@ class TestSearchAccessControl:
         user1 = auth.register(
             username=f"spec1_{unique_id}",
             email=f"spec1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"spec2_{unique_id}",
             email=f"spec2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         outsider = auth.register(
             username=f"specout_{unique_id}",
             email=f"specout_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user1.id, user2.id)
         msg = messaging.send_message(user1.id, dm.id, f"specific_{unique_id}")
 
-        search.index_message(msg.id, msg.content, {
-            "author_id": user1.id,
-            "conversation_id": dm.id,
-        })
+        search.index_message(
+            msg.id,
+            msg.content,
+            {
+                "author_id": user1.id,
+                "conversation_id": dm.id,
+            },
+        )
 
         outsider_results = search.search_messages(
-            outsider.id,
-            f"specific_{unique_id}",
-            conversation_id=dm.id
+            outsider.id, f"specific_{unique_id}", conversation_id=dm.id
         )
 
         assert len(outsider_results) == 0

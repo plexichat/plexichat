@@ -2,7 +2,6 @@
 Tests for rate limit bucket creation and identification.
 """
 
-
 from src.core.ratelimit.models import (
     RateLimitBucket,
     RateLimitConfig,
@@ -88,7 +87,9 @@ class TestBucketKeyGeneration:
         assert "route" in key
         assert str(test_user_id) in key
 
-    def test_resource_bucket_key(self, rate_limit_manager, test_user_id, test_channel_id):
+    def test_resource_bucket_key(
+        self, rate_limit_manager, test_user_id, test_channel_id
+    ):
         """Test resource bucket key generation."""
         key = rate_limit_manager._generate_bucket_key(
             BucketType.RESOURCE,
@@ -135,7 +136,9 @@ class TestBucketKeyGeneration:
         )
         assert key1 != key2
 
-    def test_unique_keys_for_different_resources(self, rate_limit_manager, test_user_id):
+    def test_unique_keys_for_different_resources(
+        self, rate_limit_manager, test_user_id
+    ):
         """Test different resources get different bucket keys."""
         key1 = rate_limit_manager._generate_bucket_key(
             BucketType.RESOURCE,

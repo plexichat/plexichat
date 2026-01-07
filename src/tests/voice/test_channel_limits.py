@@ -10,7 +10,16 @@ class TestUserLimit:
 
     def test_set_user_limit(self, server_with_voice):
         """Test setting user limit."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         channel = voice.set_user_limit(owner.id, voice_channel.id, 5)
 
@@ -18,7 +27,16 @@ class TestUserLimit:
 
     def test_set_user_limit_zero_unlimited(self, server_with_voice):
         """Test setting user limit to 0 means unlimited."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.set_user_limit(owner.id, voice_channel.id, 5)
         channel = voice.set_user_limit(owner.id, voice_channel.id, 0)
@@ -27,7 +45,16 @@ class TestUserLimit:
 
     def test_join_full_channel_fails(self, server_with_voice):
         """Test joining a full channel fails."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.set_user_limit(owner.id, voice_channel.id, 1)
 
@@ -41,7 +68,16 @@ class TestUserLimit:
 
     def test_moderator_can_join_full_channel(self, server_with_moderator):
         """Test moderator with move_members can join full channel."""
-        owner, moderator, member, server, voice_channel, stage_channel, servers, voice = server_with_moderator
+        (
+            owner,
+            moderator,
+            member,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_moderator
 
         voice.set_user_limit(owner.id, voice_channel.id, 1)
 
@@ -54,14 +90,32 @@ class TestUserLimit:
 
     def test_set_user_limit_without_permission(self, server_with_voice):
         """Test setting user limit without permission fails."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         with pytest.raises(voice.PermissionDeniedError):
             voice.set_user_limit(member1.id, voice_channel.id, 5)
 
     def test_set_user_limit_negative_becomes_zero(self, server_with_voice):
         """Test setting negative user limit becomes 0."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         channel = voice.set_user_limit(owner.id, voice_channel.id, -5)
 
@@ -73,7 +127,16 @@ class TestBitrate:
 
     def test_set_bitrate(self, server_with_voice):
         """Test setting bitrate."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         channel = voice.set_bitrate(owner.id, voice_channel.id, 128000)
 
@@ -81,7 +144,16 @@ class TestBitrate:
 
     def test_set_bitrate_minimum(self, server_with_voice):
         """Test setting bitrate below minimum clamps to 8000."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         channel = voice.set_bitrate(owner.id, voice_channel.id, 1000)
 
@@ -89,7 +161,16 @@ class TestBitrate:
 
     def test_set_bitrate_maximum(self, server_with_voice):
         """Test setting bitrate above maximum clamps to 384000."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         channel = voice.set_bitrate(owner.id, voice_channel.id, 500000)
 
@@ -97,7 +178,16 @@ class TestBitrate:
 
     def test_set_bitrate_without_permission(self, server_with_voice):
         """Test setting bitrate without permission fails."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         with pytest.raises(voice.PermissionDeniedError):
             voice.set_bitrate(member1.id, voice_channel.id, 128000)
@@ -108,7 +198,16 @@ class TestVoiceRegion:
 
     def test_get_voice_regions(self, server_with_voice):
         """Test getting available voice regions."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         regions = voice.get_voice_regions()
 
@@ -118,7 +217,16 @@ class TestVoiceRegion:
 
     def test_set_voice_region(self, server_with_voice):
         """Test setting voice region."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         channel = voice.set_voice_region(owner.id, voice_channel.id, "us-west")
 
@@ -126,7 +234,16 @@ class TestVoiceRegion:
 
     def test_set_voice_region_automatic(self, server_with_voice):
         """Test setting voice region to automatic (None)."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.set_voice_region(owner.id, voice_channel.id, "us-west")
         channel = voice.set_voice_region(owner.id, voice_channel.id, None)
@@ -135,14 +252,32 @@ class TestVoiceRegion:
 
     def test_set_invalid_voice_region(self, server_with_voice):
         """Test setting invalid voice region fails."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         with pytest.raises(voice.InvalidVoiceStateError):
             voice.set_voice_region(owner.id, voice_channel.id, "invalid-region")
 
     def test_set_voice_region_without_permission(self, server_with_voice):
         """Test setting voice region without permission fails."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         with pytest.raises(voice.PermissionDeniedError):
             voice.set_voice_region(member1.id, voice_channel.id, "us-west")
@@ -153,11 +288,19 @@ class TestChannelSettings:
 
     def test_set_user_limit_on_text_channel_fails(self, server_with_voice):
         """Test setting user limit on text channel fails."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         text_channel = servers.create_channel(
-            owner.id, server.id, "text-limit",
-            channel_type=servers.ChannelType.TEXT
+            owner.id, server.id, "text-limit", channel_type=servers.ChannelType.TEXT
         )
 
         with pytest.raises(voice.ChannelTypeError):
@@ -165,11 +308,19 @@ class TestChannelSettings:
 
     def test_set_bitrate_on_text_channel_fails(self, server_with_voice):
         """Test setting bitrate on text channel fails."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         text_channel = servers.create_channel(
-            owner.id, server.id, "text-bitrate",
-            channel_type=servers.ChannelType.TEXT
+            owner.id, server.id, "text-bitrate", channel_type=servers.ChannelType.TEXT
         )
 
         with pytest.raises(voice.ChannelTypeError):
@@ -177,11 +328,19 @@ class TestChannelSettings:
 
     def test_set_voice_region_on_text_channel_fails(self, server_with_voice):
         """Test setting voice region on text channel fails."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         text_channel = servers.create_channel(
-            owner.id, server.id, "text-region",
-            channel_type=servers.ChannelType.TEXT
+            owner.id, server.id, "text-region", channel_type=servers.ChannelType.TEXT
         )
 
         with pytest.raises(voice.ChannelTypeError):

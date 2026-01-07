@@ -3,7 +3,6 @@ Tests for webhook integration with messaging and embeds modules.
 """
 
 
-
 class TestMessagingIntegration:
     """Tests for webhook integration with messaging module."""
 
@@ -15,12 +14,11 @@ class TestMessagingIntegration:
             webhook_id=setup["webhook"].id,
             token=setup["token"],
             content="Stored message",
-            wait=True
+            wait=True,
         )
 
         row = setup["db"].fetch_one(
-            "SELECT * FROM webhook_messages WHERE message_id = ?",
-            (result.id,)
+            "SELECT * FROM webhook_messages WHERE message_id = ?", (result.id,)
         )
 
         assert row is not None
@@ -36,12 +34,11 @@ class TestMessagingIntegration:
             content="Tracked message",
             username="Custom Name",
             avatar_url="https://example.com/avatar.png",
-            wait=True
+            wait=True,
         )
 
         row = setup["db"].fetch_one(
-            "SELECT * FROM webhook_messages WHERE message_id = ?",
-            (result.id,)
+            "SELECT * FROM webhook_messages WHERE message_id = ?", (result.id,)
         )
 
         assert row["username_override"] == "Custom Name"
@@ -55,12 +52,11 @@ class TestMessagingIntegration:
             webhook_id=setup["webhook"].id,
             token=setup["token"],
             content="Channel recorded",
-            wait=True
+            wait=True,
         )
 
         row = setup["db"].fetch_one(
-            "SELECT * FROM webhook_messages WHERE message_id = ?",
-            (result.id,)
+            "SELECT * FROM webhook_messages WHERE message_id = ?", (result.id,)
         )
 
         assert row["channel_id"] == setup["webhook"].channel_id
@@ -75,12 +71,11 @@ class TestMessagingIntegration:
             token=setup["token"],
             content="Thread recorded",
             thread_id=thread_id,
-            wait=True
+            wait=True,
         )
 
         row = setup["db"].fetch_one(
-            "SELECT * FROM webhook_messages WHERE message_id = ?",
-            (result.id,)
+            "SELECT * FROM webhook_messages WHERE message_id = ?", (result.id,)
         )
 
         assert row["thread_id"] == thread_id
@@ -97,7 +92,7 @@ class TestEmbedIntegration:
             webhook_id=setup["webhook"].id,
             token=setup["token"],
             embeds=[{"title": "Integration Embed"}],
-            wait=True
+            wait=True,
         )
 
         assert result is not None
@@ -117,7 +112,7 @@ class TestEmbedIntegration:
             webhook_id=setup["webhook"].id,
             token=setup["token"],
             embeds=embeds,
-            wait=True
+            wait=True,
         )
 
         assert len(result.embeds) == 3
@@ -133,37 +128,30 @@ class TestWebhookMessageCleanup:
         webhook = setup["webhooks"].create_webhook(
             user_id=setup["owner"].id,
             channel_id=setup["channel"].id,
-            name="Cleanup Test"
+            name="Cleanup Test",
         )
 
         setup["webhooks"].execute_webhook(
-            webhook_id=webhook.id,
-            token=webhook.token,
-            content="Message 1",
-            wait=True
+            webhook_id=webhook.id, token=webhook.token, content="Message 1", wait=True
         )
 
         setup["webhooks"].execute_webhook(
-            webhook_id=webhook.id,
-            token=webhook.token,
-            content="Message 2",
-            wait=True
+            webhook_id=webhook.id, token=webhook.token, content="Message 2", wait=True
         )
 
         count_before = setup["db"].fetch_one(
             "SELECT COUNT(*) as count FROM webhook_messages WHERE webhook_id = ?",
-            (webhook.id,)
+            (webhook.id,),
         )
         assert count_before["count"] == 2
 
         setup["webhooks"].delete_webhook(
-            user_id=setup["owner"].id,
-            webhook_id=webhook.id
+            user_id=setup["owner"].id, webhook_id=webhook.id
         )
 
         count_after = setup["db"].fetch_one(
             "SELECT COUNT(*) as count FROM webhook_messages WHERE webhook_id = ?",
-            (webhook.id,)
+            (webhook.id,),
         )
         assert count_after["count"] == 0
 
@@ -180,7 +168,7 @@ class TestMultipleWebhooks:
             webhook = setup["webhooks"].create_webhook(
                 user_id=setup["owner"].id,
                 channel_id=setup["channel"].id,
-                name=f"Multi Webhook {i}"
+                name=f"Multi Webhook {i}",
             )
             webhooks.append(webhook)
 
@@ -189,7 +177,7 @@ class TestMultipleWebhooks:
                 webhook_id=webhook.id,
                 token=webhook.token,
                 content=f"Message from webhook {i}",
-                wait=True
+                wait=True,
             )
             assert result.webhook_id == webhook.id
 
@@ -202,33 +190,31 @@ class TestMultipleWebhooks:
             user_id=setup["owner"].id,
             server_id=setup["server"].id,
             name="second-channel",
-            channel_type=ChannelType.TEXT
+            channel_type=ChannelType.TEXT,
         )
 
         webhook1 = setup["webhooks"].create_webhook(
             user_id=setup["owner"].id,
             channel_id=setup["channel"].id,
-            name="Channel 1 Webhook"
+            name="Channel 1 Webhook",
         )
 
         webhook2 = setup["webhooks"].create_webhook(
-            user_id=setup["owner"].id,
-            channel_id=channel2.id,
-            name="Channel 2 Webhook"
+            user_id=setup["owner"].id, channel_id=channel2.id, name="Channel 2 Webhook"
         )
 
         result1 = setup["webhooks"].execute_webhook(
             webhook_id=webhook1.id,
             token=webhook1.token,
             content="Channel 1 message",
-            wait=True
+            wait=True,
         )
 
         result2 = setup["webhooks"].execute_webhook(
             webhook_id=webhook2.id,
             token=webhook2.token,
             content="Channel 2 message",
-            wait=True
+            wait=True,
         )
 
         assert result1.channel_id == setup["channel"].id
@@ -251,7 +237,7 @@ class TestWebhookTypes:
 
         row = setup["db"].fetch_one(
             "SELECT webhook_type FROM webhook_webhooks WHERE id = ?",
-            (setup["webhook"].id,)
+            (setup["webhook"].id,),
         )
 
         assert row["webhook_type"] == "incoming"

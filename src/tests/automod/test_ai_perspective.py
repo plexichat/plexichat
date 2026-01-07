@@ -38,16 +38,14 @@ class TestPerspectiveAdapter:
     def test_successful_toxicity_check(self, mock_urlopen):
         """Test successful Perspective API call."""
         mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({
-            "attributeScores": {
-                "TOXICITY": {
-                    "summaryScore": {"value": 0.9}
-                },
-                "SEVERE_TOXICITY": {
-                    "summaryScore": {"value": 0.3}
+        mock_response.read.return_value = json.dumps(
+            {
+                "attributeScores": {
+                    "TOXICITY": {"summaryScore": {"value": 0.9}},
+                    "SEVERE_TOXICITY": {"summaryScore": {"value": 0.3}},
                 }
             }
-        }).encode("utf-8")
+        ).encode("utf-8")
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_response
@@ -64,16 +62,14 @@ class TestPerspectiveAdapter:
     def test_clean_content_not_flagged(self, mock_urlopen):
         """Test clean content is not flagged."""
         mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({
-            "attributeScores": {
-                "TOXICITY": {
-                    "summaryScore": {"value": 0.1}
-                },
-                "PROFANITY": {
-                    "summaryScore": {"value": 0.05}
+        mock_response.read.return_value = json.dumps(
+            {
+                "attributeScores": {
+                    "TOXICITY": {"summaryScore": {"value": 0.1}},
+                    "PROFANITY": {"summaryScore": {"value": 0.05}},
                 }
             }
-        }).encode("utf-8")
+        ).encode("utf-8")
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_response
@@ -87,22 +83,16 @@ class TestPerspectiveAdapter:
     def test_custom_attributes(self, mock_urlopen):
         """Test custom attribute selection."""
         mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({
-            "attributeScores": {
-                "INSULT": {
-                    "summaryScore": {"value": 0.8}
-                }
-            }
-        }).encode("utf-8")
+        mock_response.read.return_value = json.dumps(
+            {"attributeScores": {"INSULT": {"summaryScore": {"value": 0.8}}}}
+        ).encode("utf-8")
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_response
 
-        adapter = PerspectiveAdapter({
-            "api_key": "test-key",
-            "attributes": ["INSULT"],
-            "threshold": 0.7
-        })
+        adapter = PerspectiveAdapter(
+            {"api_key": "test-key", "attributes": ["INSULT"], "threshold": 0.7}
+        )
         result = adapter.check_content("insulting content")
 
         assert result.flagged
@@ -110,10 +100,9 @@ class TestPerspectiveAdapter:
 
     def test_get_categories(self):
         """Test getting supported categories."""
-        adapter = PerspectiveAdapter({
-            "api_key": "test-key",
-            "attributes": ["TOXICITY", "PROFANITY"]
-        })
+        adapter = PerspectiveAdapter(
+            {"api_key": "test-key", "attributes": ["TOXICITY", "PROFANITY"]}
+        )
         categories = adapter.get_categories()
 
         assert "TOXICITY" in categories

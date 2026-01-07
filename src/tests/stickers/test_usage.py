@@ -18,21 +18,19 @@ class TestStickerUsage:
         owner = auth.register(
             username=f"usage_owner_{unique_id}",
             email=f"usage_owner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         other = auth.register(
             username=f"usage_other_{unique_id}",
             email=f"usage_other_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"Usage Server {unique_id}")
         servers.add_member(server.id, other.id)
 
         pack = stickers.create_pack(
-            user_id=owner.id,
-            name="Usage Pack",
-            server_id=server.id
+            user_id=owner.id, name="Usage Pack", server_id=server.id
         )
 
         sticker = stickers.add_sticker(
@@ -41,7 +39,7 @@ class TestStickerUsage:
             name="usage_test",
             format=StickerFormat.PNG,
             url="https://cdn.example.com/stickers/usage.png",
-            size=100000
+            size=100000,
         )
 
         dm = messaging.create_dm(owner.id, other.id)
@@ -63,21 +61,19 @@ class TestStickerUsage:
         owner = auth.register(
             username=f"count_owner_{unique_id}",
             email=f"count_owner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         other = auth.register(
             username=f"count_other_{unique_id}",
             email=f"count_other_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"Count Server {unique_id}")
         servers.add_member(server.id, other.id)
 
         pack = stickers.create_pack(
-            user_id=owner.id,
-            name="Count Pack",
-            server_id=server.id
+            user_id=owner.id, name="Count Pack", server_id=server.id
         )
 
         sticker = stickers.add_sticker(
@@ -86,7 +82,7 @@ class TestStickerUsage:
             name="count_test",
             format=StickerFormat.PNG,
             url="https://cdn.example.com/stickers/count.png",
-            size=100000
+            size=100000,
         )
 
         initial = stickers.get_sticker(sticker.id)
@@ -110,12 +106,12 @@ class TestStickerUsage:
         owner = auth.register(
             username=f"nonex_owner_{unique_id}",
             email=f"nonex_owner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         other = auth.register(
             username=f"nonex_other_{unique_id}",
             email=f"nonex_other_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(owner.id, other.id)

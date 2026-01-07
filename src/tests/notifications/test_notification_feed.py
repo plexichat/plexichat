@@ -10,7 +10,16 @@ class TestGetNotificationFeed:
 
     def test_empty_feed(self, fresh_users):
         """Test empty feed for new user."""
-        user1, user2, auth, messaging, servers, relationships, presence, notifications = fresh_users
+        (
+            user1,
+            user2,
+            auth,
+            messaging,
+            servers,
+            relationships,
+            presence,
+            notifications,
+        ) = fresh_users
 
         feed = notifications.get_notification_feed(user1.id)
 
@@ -30,7 +39,7 @@ class TestGetNotificationFeed:
             author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
-            content=content
+            content=content,
         )
 
         feed = notifications.get_notification_feed(user2.id)
@@ -41,7 +50,9 @@ class TestGetNotificationFeed:
 
     def test_feed_order(self, group_conversation):
         """Test feed is ordered by most recent first."""
-        owner, member1, member2, group, messaging, notifications, relationships = group_conversation
+        owner, member1, member2, group, messaging, notifications, relationships = (
+            group_conversation
+        )
 
         for i in range(3):
             content = f"<@{member1.id}> message {i}"
@@ -50,18 +61,22 @@ class TestGetNotificationFeed:
                 author_id=owner.id,
                 message_id=msg.id,
                 conversation_id=group.id,
-                content=content
+                content=content,
             )
 
         feed = notifications.get_notification_feed(member1.id)
 
         assert len(feed.notifications) >= 3
         for i in range(len(feed.notifications) - 1):
-            assert feed.notifications[i].created_at >= feed.notifications[i + 1].created_at
+            assert (
+                feed.notifications[i].created_at >= feed.notifications[i + 1].created_at
+            )
 
     def test_feed_pagination(self, group_conversation):
         """Test feed pagination with before_id."""
-        owner, member1, member2, group, messaging, notifications, relationships = group_conversation
+        owner, member1, member2, group, messaging, notifications, relationships = (
+            group_conversation
+        )
 
         for i in range(5):
             content = f"<@{member1.id}> message {i}"
@@ -70,7 +85,7 @@ class TestGetNotificationFeed:
                 author_id=owner.id,
                 message_id=msg.id,
                 conversation_id=group.id,
-                content=content
+                content=content,
             )
 
         feed1 = notifications.get_notification_feed(member1.id, limit=2)
@@ -79,14 +94,18 @@ class TestGetNotificationFeed:
 
         if len(feed1.notifications) > 0:
             last_id = feed1.notifications[-1].id
-            feed2 = notifications.get_notification_feed(member1.id, limit=2, before_id=last_id)
+            feed2 = notifications.get_notification_feed(
+                member1.id, limit=2, before_id=last_id
+            )
 
             for notif in feed2.notifications:
                 assert notif.id < last_id
 
     def test_feed_has_more(self, group_conversation):
         """Test feed has_more flag."""
-        owner, member1, member2, group, messaging, notifications, relationships = group_conversation
+        owner, member1, member2, group, messaging, notifications, relationships = (
+            group_conversation
+        )
 
         for i in range(5):
             content = f"<@{member1.id}> message {i}"
@@ -95,7 +114,7 @@ class TestGetNotificationFeed:
                 author_id=owner.id,
                 message_id=msg.id,
                 conversation_id=group.id,
-                content=content
+                content=content,
             )
 
         feed = notifications.get_notification_feed(member1.id, limit=2)
@@ -117,7 +136,7 @@ class TestGetNotifications:
             author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
-            content=content
+            content=content,
         )
 
         notifs = notifications.get_notifications(user2.id)
@@ -126,7 +145,9 @@ class TestGetNotifications:
 
     def test_get_unread_only(self, group_conversation):
         """Test getting only unread notifications."""
-        owner, member1, member2, group, messaging, notifications, relationships = group_conversation
+        owner, member1, member2, group, messaging, notifications, relationships = (
+            group_conversation
+        )
 
         for i in range(3):
             content = f"<@{member1.id}> message {i}"
@@ -135,7 +156,7 @@ class TestGetNotifications:
                 author_id=owner.id,
                 message_id=msg.id,
                 conversation_id=group.id,
-                content=content
+                content=content,
             )
 
         all_notifs = notifications.get_notifications(member1.id)
@@ -148,7 +169,9 @@ class TestGetNotifications:
 
     def test_get_notifications_pagination(self, group_conversation):
         """Test notifications pagination."""
-        owner, member1, member2, group, messaging, notifications, relationships = group_conversation
+        owner, member1, member2, group, messaging, notifications, relationships = (
+            group_conversation
+        )
 
         for i in range(5):
             content = f"<@{member1.id}> message {i}"
@@ -157,7 +180,7 @@ class TestGetNotifications:
                 author_id=owner.id,
                 message_id=msg.id,
                 conversation_id=group.id,
-                content=content
+                content=content,
             )
 
         page1 = notifications.get_notifications(member1.id, limit=2)
@@ -165,7 +188,9 @@ class TestGetNotifications:
         assert len(page1) == 2
 
         if len(page1) > 0:
-            page2 = notifications.get_notifications(member1.id, limit=2, before_id=page1[-1].id)
+            page2 = notifications.get_notifications(
+                member1.id, limit=2, before_id=page1[-1].id
+            )
 
             for notif in page2:
                 assert notif.id < page1[-1].id
@@ -185,7 +210,7 @@ class TestDeleteNotification:
             author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
-            content=content
+            content=content,
         )
 
         assert len(notifs) == 1
@@ -199,7 +224,16 @@ class TestDeleteNotification:
 
     def test_delete_nonexistent_notification(self, fresh_users):
         """Test deleting nonexistent notification raises error."""
-        user1, user2, auth, messaging, servers, relationships, presence, notifications = fresh_users
+        (
+            user1,
+            user2,
+            auth,
+            messaging,
+            servers,
+            relationships,
+            presence,
+            notifications,
+        ) = fresh_users
 
         from src.core.notifications import NotificationNotFoundError
 
@@ -217,7 +251,7 @@ class TestDeleteNotification:
             author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
-            content=content
+            content=content,
         )
 
         from src.core.notifications import NotificationNotFoundError

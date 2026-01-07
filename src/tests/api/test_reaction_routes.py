@@ -3,7 +3,6 @@ Tests for reaction routes.
 """
 
 
-
 class TestAddReaction:
     """Tests for PUT /channels/{channel_id}/messages/{message_id}/reactions/{emoji} endpoint."""
 
@@ -14,7 +13,7 @@ class TestAddReaction:
         send_response = test_client.post(
             f"/api/v1/channels/{channel_id}/messages",
             headers=auth_headers,
-            json={"content": "React to this!"}
+            json={"content": "React to this!"},
         )
 
         assert send_response.status_code == 200
@@ -22,20 +21,22 @@ class TestAddReaction:
 
         response = test_client.put(
             f"/api/v1/channels/{channel_id}/messages/{message_id}/reactions/thumbsup",
-            headers=auth_headers
+            headers=auth_headers,
         )
 
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
 
-    def test_add_reaction_nonexistent_message(self, test_client, auth_headers, test_server):
+    def test_add_reaction_nonexistent_message(
+        self, test_client, auth_headers, test_server
+    ):
         """Test adding reaction to nonexistent message."""
         channel_id = str(test_server["channel"].id)
 
         response = test_client.put(
             f"/api/v1/channels/{channel_id}/messages/999999999999999999/reactions/thumbsup",
-            headers=auth_headers
+            headers=auth_headers,
         )
 
         assert response.status_code == 404
@@ -54,14 +55,16 @@ class TestAddReaction:
 class TestRemoveReaction:
     """Tests for DELETE /channels/{channel_id}/messages/{message_id}/reactions/{emoji} endpoint."""
 
-    def test_remove_reaction_success(self, test_client, auth_headers, test_server, db_and_modules):
+    def test_remove_reaction_success(
+        self, test_client, auth_headers, test_server, db_and_modules
+    ):
         """Test removing a reaction from a message."""
         channel_id = str(test_server["channel"].id)
 
         send_response = test_client.post(
             f"/api/v1/channels/{channel_id}/messages",
             headers=auth_headers,
-            json={"content": "Remove reaction from this!"}
+            json={"content": "Remove reaction from this!"},
         )
 
         assert send_response.status_code == 200
@@ -69,12 +72,12 @@ class TestRemoveReaction:
 
         test_client.put(
             f"/api/v1/channels/{channel_id}/messages/{message_id}/reactions/thumbsup",
-            headers=auth_headers
+            headers=auth_headers,
         )
 
         response = test_client.delete(
             f"/api/v1/channels/{channel_id}/messages/{message_id}/reactions/thumbsup",
-            headers=auth_headers
+            headers=auth_headers,
         )
 
         assert response.status_code == 200
@@ -88,7 +91,7 @@ class TestRemoveReaction:
         send_response = test_client.post(
             f"/api/v1/channels/{channel_id}/messages",
             headers=auth_headers,
-            json={"content": "No reactions here"}
+            json={"content": "No reactions here"},
         )
 
         assert send_response.status_code == 200
@@ -96,7 +99,7 @@ class TestRemoveReaction:
 
         response = test_client.delete(
             f"/api/v1/channels/{channel_id}/messages/{message_id}/reactions/thumbsup",
-            headers=auth_headers
+            headers=auth_headers,
         )
 
         assert response.status_code == 200
@@ -112,7 +115,7 @@ class TestGetReactions:
         send_response = test_client.post(
             f"/api/v1/channels/{channel_id}/messages",
             headers=auth_headers,
-            json={"content": "Get reactions from this!"}
+            json={"content": "Get reactions from this!"},
         )
 
         assert send_response.status_code == 200
@@ -120,12 +123,12 @@ class TestGetReactions:
 
         test_client.put(
             f"/api/v1/channels/{channel_id}/messages/{message_id}/reactions/thumbsup",
-            headers=auth_headers
+            headers=auth_headers,
         )
 
         response = test_client.get(
             f"/api/v1/channels/{channel_id}/messages/{message_id}/reactions",
-            headers=auth_headers
+            headers=auth_headers,
         )
 
         assert response.status_code == 200
@@ -147,7 +150,7 @@ class TestGetReactionUsers:
         send_response = test_client.post(
             f"/api/v1/channels/{channel_id}/messages",
             headers=auth_headers,
-            json={"content": "Get reaction users!"}
+            json={"content": "Get reaction users!"},
         )
 
         assert send_response.status_code == 200
@@ -155,12 +158,12 @@ class TestGetReactionUsers:
 
         test_client.put(
             f"/api/v1/channels/{channel_id}/messages/{message_id}/reactions/heart",
-            headers=auth_headers
+            headers=auth_headers,
         )
 
         response = test_client.get(
             f"/api/v1/channels/{channel_id}/messages/{message_id}/reactions/heart",
-            headers=auth_headers
+            headers=auth_headers,
         )
 
         assert response.status_code == 200

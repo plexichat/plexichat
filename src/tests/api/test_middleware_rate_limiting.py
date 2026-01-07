@@ -145,7 +145,7 @@ class TestGetUserInfoFromRequest:
         mock_user = Mock()
         mock_user.user_id = 44444
         mock_user.token_type = "user"
-        delattr(mock_user, 'permissions')
+        delattr(mock_user, "permissions")
         mock_request.state.user = mock_user
 
         user_info = get_user_info_from_request(mock_request)
@@ -194,7 +194,7 @@ class TestCreateRateLimitMiddleware:
             middleware_class = create_rate_limit_middleware()
             app = FastAPI()
             middleware = middleware_class(app)
-            
+
             default_excludes = ["/", "/health", "/docs", "/redoc", "/openapi.json"]
             for path in default_excludes:
                 assert path in middleware._exclude_paths
@@ -213,7 +213,7 @@ class TestCreateRateLimitMiddleware:
             middleware_class = create_rate_limit_middleware(exclude_paths=["/custom"])
             app = FastAPI()
             middleware = middleware_class(app)
-            
+
             assert "/custom" in middleware._exclude_paths
             assert "/health" in middleware._exclude_paths
         finally:
@@ -265,7 +265,7 @@ class TestRateLimitEnforcement:
         client = TestClient(rate_limited_app)
         for i in range(3):
             response = client.get("/api/v1/limited")
-            assert response.status_code == 200, f"Request {i+1} failed"
+            assert response.status_code == 200, f"Request {i + 1} failed"
 
     def test_blocks_requests_over_limit(self, rate_limited_app):
         """Test blocks requests over the limit."""
@@ -354,18 +354,18 @@ class TestBypassFunctionality:
         user = modules.auth.register(
             username=f"admin_{unique_id}",
             email=f"admin_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
-        
+
         modules.auth.grant_permission(user.id, "admin.*")
-        
+
         login_result = modules.auth.login(f"admin_{unique_id}", "TestPass123!")
         headers = {"Authorization": f"Bearer {login_result.token}"}
 
         client = TestClient(bypass_app)
         for i in range(10):
             response = client.get("/api/v1/test", headers=headers)
-            assert response.status_code == 200, f"Admin request {i+1} failed"
+            assert response.status_code == 200, f"Admin request {i + 1} failed"
 
     def test_internal_request_bypasses(self, bypass_app):
         """Test internal requests bypass rate limiting."""
@@ -374,7 +374,7 @@ class TestBypassFunctionality:
 
         for i in range(10):
             response = client.get("/api/v1/test", headers=headers)
-            assert response.status_code == 200, f"Internal request {i+1} failed"
+            assert response.status_code == 200, f"Internal request {i + 1} failed"
 
     def test_normal_user_rate_limited(self, bypass_app, modules, user_pool):
         """Test normal users are rate limited."""
@@ -382,7 +382,7 @@ class TestBypassFunctionality:
         modules.auth.register(
             username=f"user_{unique_id}",
             email=f"user_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         login_result = modules.auth.login(f"user_{unique_id}", "TestPass123!")
         headers = {"Authorization": f"Bearer {login_result.token}"}
@@ -442,10 +442,10 @@ class TestIPBasedRateLimiting:
     def test_ip_based_limit_unauthenticated(self, ip_limited_app):
         """Test IP-based limiting for unauthenticated requests."""
         client = TestClient(ip_limited_app)
-        
+
         for i in range(5):
             response = client.get("/api/v1/public")
-            assert response.status_code == 200, f"Request {i+1} failed"
+            assert response.status_code == 200, f"Request {i + 1} failed"
 
         response = client.get("/api/v1/public")
         assert response.status_code == 429
@@ -489,18 +489,17 @@ class TestSecurityScenarios:
     def test_brute_force_protection(self, security_app):
         """Test rate limiting protects against brute force attacks."""
         client = TestClient(security_app)
-        
+
         for i in range(3):
-            response = client.post("/api/v1/auth/login", json={
-                "username": "attacker",
-                "password": f"attempt_{i}"
-            })
+            response = client.post(
+                "/api/v1/auth/login",
+                json={"username": "attacker", "password": f"attempt_{i}"},
+            )
             assert response.status_code == 200
 
-        response = client.post("/api/v1/auth/login", json={
-            "username": "attacker",
-            "password": "attempt_4"
-        })
+        response = client.post(
+            "/api/v1/auth/login", json={"username": "attacker", "password": "attempt_4"}
+        )
         assert response.status_code == 429
 
     def test_injection_in_headers_handled(self, security_app):
@@ -508,7 +507,7 @@ class TestSecurityScenarios:
         client = TestClient(security_app)
         malicious_headers = {
             "X-Forwarded-For": "'; DROP TABLE users--",
-            "X-Internal-Request": "<script>alert('xss')</script>"
+            "X-Internal-Request": "<script>alert('xss')</script>",
         }
 
         response = client.post("/api/v1/auth/login", headers=malicious_headers)
@@ -553,22 +552,24 @@ class TestIntegrationWithAuthentication:
         ratelimit._manager = None
         ratelimit._setup_complete = False
 
-    def test_authenticated_requests_tracked_by_user(self, integrated_app, modules, user_pool):
+    def test_authenticated_requests_tracked_by_user(
+        self, integrated_app, modules, user_pool
+    ):
         """Test authenticated requests are tracked by user ID."""
         unique_id = uuid.uuid4().hex[:8]
         modules.auth.register(
             username=f"user_{unique_id}",
             email=f"user_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         login_result = modules.auth.login(f"user_{unique_id}", "TestPass123!")
         headers = {"Authorization": f"Bearer {login_result.token}"}
 
         client = TestClient(integrated_app)
-        
+
         for i in range(5):
             response = client.get("/api/v1/user-data", headers=headers)
-            assert response.status_code == 200, f"Request {i+1} failed"
+            assert response.status_code == 200, f"Request {i + 1} failed"
 
         response = client.get("/api/v1/user-data", headers=headers)
         assert response.status_code == 429
@@ -577,16 +578,16 @@ class TestIntegrationWithAuthentication:
         """Test different users have separate rate limits."""
         unique_id1 = uuid.uuid4().hex[:8]
         unique_id2 = uuid.uuid4().hex[:8]
-        
+
         modules.auth.register(
             username=f"user1_{unique_id1}",
             email=f"user1_{unique_id1}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         modules.auth.register(
             username=f"user2_{unique_id2}",
             email=f"user2_{unique_id2}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         login1 = modules.auth.login(f"user1_{unique_id1}", "TestPass123!")
@@ -638,7 +639,7 @@ class TestEdgeCases:
     def test_no_rate_limit_config(self, edge_case_app):
         """Test endpoints without rate limit config are not limited."""
         client = TestClient(edge_case_app)
-        
+
         # Default route limit is 30, so we make fewer than that
         for i in range(25):
             response = client.get("/api/v1/test")
@@ -663,7 +664,7 @@ class TestEdgeCases:
             return {"status": "healthy"}
 
         client = TestClient(app)
-        
+
         for i in range(100):
             response = client.get("/health")
             assert response.status_code == 200

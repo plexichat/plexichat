@@ -10,7 +10,9 @@ class TestIdentifyHandler:
     """Tests for IDENTIFY opcode handling."""
 
     @pytest.mark.asyncio
-    async def test_identify_success(self, opcode_handler, connection, sample_identify_payload):
+    async def test_identify_success(
+        self, opcode_handler, connection, sample_identify_payload
+    ):
         """Test successful identify."""
         response_op, response_data, close_code = await opcode_handler.handle(
             connection,
@@ -25,7 +27,9 @@ class TestIdentifyHandler:
         assert connection.is_authenticated is True
 
     @pytest.mark.asyncio
-    async def test_identify_sets_user_id(self, opcode_handler, connection, sample_identify_payload):
+    async def test_identify_sets_user_id(
+        self, opcode_handler, connection, sample_identify_payload
+    ):
         """Test identify sets user ID."""
         await opcode_handler.handle(
             connection,
@@ -36,7 +40,9 @@ class TestIdentifyHandler:
         assert connection.user_id == 12345
 
     @pytest.mark.asyncio
-    async def test_identify_sets_session_id(self, opcode_handler, connection, sample_identify_payload):
+    async def test_identify_sets_session_id(
+        self, opcode_handler, connection, sample_identify_payload
+    ):
         """Test identify sets session ID."""
         await opcode_handler.handle(
             connection,
@@ -48,7 +54,9 @@ class TestIdentifyHandler:
         assert len(connection.session_id) > 0
 
     @pytest.mark.asyncio
-    async def test_identify_sets_intents(self, opcode_handler, connection, sample_identify_payload):
+    async def test_identify_sets_intents(
+        self, opcode_handler, connection, sample_identify_payload
+    ):
         """Test identify sets intents."""
         await opcode_handler.handle(
             connection,
@@ -59,7 +67,9 @@ class TestIdentifyHandler:
         assert connection.intents == sample_identify_payload["intents"]
 
     @pytest.mark.asyncio
-    async def test_identify_sets_state_to_ready(self, opcode_handler, connection, sample_identify_payload):
+    async def test_identify_sets_state_to_ready(
+        self, opcode_handler, connection, sample_identify_payload
+    ):
         """Test identify sets state to READY."""
         await opcode_handler.handle(
             connection,
@@ -82,7 +92,9 @@ class TestIdentifyHandler:
         assert close_code == GatewayCloseCode.AUTHENTICATION_FAILED
 
     @pytest.mark.asyncio
-    async def test_identify_with_invalid_token_fails(self, opcode_handler, connection, mock_auth_module):
+    async def test_identify_with_invalid_token_fails(
+        self, opcode_handler, connection, mock_auth_module
+    ):
         """Test identify with invalid token fails."""
         mock_auth_module.verify_token.side_effect = Exception("Invalid token")
 
@@ -96,7 +108,9 @@ class TestIdentifyHandler:
         assert close_code == GatewayCloseCode.AUTHENTICATION_FAILED
 
     @pytest.mark.asyncio
-    async def test_identify_with_invalid_intents_fails(self, opcode_handler, connection):
+    async def test_identify_with_invalid_intents_fails(
+        self, opcode_handler, connection
+    ):
         """Test identify with invalid intents fails."""
         payload = {"token": "test_token", "intents": -1}
         response_op, response_data, close_code = await opcode_handler.handle(
@@ -108,7 +122,9 @@ class TestIdentifyHandler:
         assert close_code == GatewayCloseCode.INVALID_INTENTS
 
     @pytest.mark.asyncio
-    async def test_identify_already_authenticated_fails(self, opcode_handler, authenticated_connection, sample_identify_payload):
+    async def test_identify_already_authenticated_fails(
+        self, opcode_handler, authenticated_connection, sample_identify_payload
+    ):
         """Test identify when already authenticated fails."""
         response_op, response_data, close_code = await opcode_handler.handle(
             authenticated_connection,
@@ -130,7 +146,9 @@ class TestIdentifyHandler:
         assert close_code == GatewayCloseCode.DECODE_ERROR
 
     @pytest.mark.asyncio
-    async def test_identify_stores_properties(self, opcode_handler, connection, sample_identify_payload):
+    async def test_identify_stores_properties(
+        self, opcode_handler, connection, sample_identify_payload
+    ):
         """Test identify stores client properties."""
         await opcode_handler.handle(
             connection,
@@ -141,7 +159,9 @@ class TestIdentifyHandler:
         assert connection.properties == sample_identify_payload["properties"]
 
     @pytest.mark.asyncio
-    async def test_identify_with_compression(self, opcode_handler, connection, sample_identify_payload):
+    async def test_identify_with_compression(
+        self, opcode_handler, connection, sample_identify_payload
+    ):
         """Test identify with compression enabled."""
         sample_identify_payload["compress"] = True
         await opcode_handler.handle(
@@ -153,7 +173,9 @@ class TestIdentifyHandler:
         assert connection.compress is True
 
     @pytest.mark.asyncio
-    async def test_identify_ready_payload_structure(self, opcode_handler, connection, sample_identify_payload):
+    async def test_identify_ready_payload_structure(
+        self, opcode_handler, connection, sample_identify_payload
+    ):
         """Test READY payload has correct structure."""
         response_op, response_data, close_code = await opcode_handler.handle(
             connection,
@@ -169,7 +191,9 @@ class TestIdentifyHandler:
         assert ready_data["v"] == 10
 
     @pytest.mark.asyncio
-    async def test_identify_ready_contains_user_info(self, opcode_handler, connection, sample_identify_payload):
+    async def test_identify_ready_contains_user_info(
+        self, opcode_handler, connection, sample_identify_payload
+    ):
         """Test READY payload contains user info."""
         response_op, response_data, close_code = await opcode_handler.handle(
             connection,
@@ -182,7 +206,9 @@ class TestIdentifyHandler:
         assert "username" in user
 
     @pytest.mark.asyncio
-    async def test_identify_increments_sequence(self, opcode_handler, connection, sample_identify_payload):
+    async def test_identify_increments_sequence(
+        self, opcode_handler, connection, sample_identify_payload
+    ):
         """Test identify increments sequence number."""
         assert connection.sequence == 0
         response_op, response_data, close_code = await opcode_handler.handle(
@@ -199,7 +225,9 @@ class TestIdentifyRateLimit:
     """Tests for identify rate limiting."""
 
     @pytest.mark.asyncio
-    async def test_identify_respects_max_connections(self, opcode_handler, session_manager, mock_websocket, sample_identify_payload):
+    async def test_identify_respects_max_connections(
+        self, opcode_handler, session_manager, mock_websocket, sample_identify_payload
+    ):
         """Test identify respects max connections per user."""
         from src.api.websocket.connection import Connection
 
@@ -210,7 +238,9 @@ class TestIdentifyRateLimit:
                 heartbeat_interval_ms=45000,
             )
             session_manager.add_connection(conn)
-            await opcode_handler.handle(conn, GatewayOpcode.IDENTIFY, sample_identify_payload)
+            await opcode_handler.handle(
+                conn, GatewayOpcode.IDENTIFY, sample_identify_payload
+            )
 
         new_conn = Connection(
             websocket=mock_websocket,

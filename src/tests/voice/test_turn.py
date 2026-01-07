@@ -71,9 +71,7 @@ class TestTURNCredentialGenerator:
 
         # Manually compute expected credential
         expected_digest = hmac.new(
-            secret.encode("utf-8"),
-            creds.username.encode("utf-8"),
-            hashlib.sha1
+            secret.encode("utf-8"), creds.username.encode("utf-8"), hashlib.sha1
         ).digest()
         expected_credential = base64.b64encode(expected_digest).decode("utf-8")
 
@@ -120,7 +118,7 @@ class TestTURNCredentialGenerator:
         digest = hmac.new(
             "test_secret".encode("utf-8"),
             expired_username.encode("utf-8"),
-            hashlib.sha1
+            hashlib.sha1,
         ).digest()
         expired_credential = base64.b64encode(digest).decode("utf-8")
 

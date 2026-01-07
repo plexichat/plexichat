@@ -11,7 +11,18 @@ class TestTemplateCreation:
 
     def test_create_template_from_server(self, server_with_channels):
         """Test creating a template from an existing server."""
-        server, owner, admin_user, member_user, outsider, general, announcements, private, category, servers = server_with_channels
+        (
+            server,
+            owner,
+            admin_user,
+            member_user,
+            outsider,
+            general,
+            announcements,
+            private,
+            category,
+            servers,
+        ) = server_with_channels
 
         template = servers.create_template(
             user_id=owner.id,
@@ -30,7 +41,9 @@ class TestTemplateCreation:
 
     def test_create_template_requires_permission(self, server_with_members):
         """Test that creating templates requires permission."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         with pytest.raises(servers.PermissionDeniedError):
             servers.create_template(
@@ -41,7 +54,9 @@ class TestTemplateCreation:
 
     def test_create_template_empty_name_fails(self, server_with_members):
         """Test that empty template name fails."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         with pytest.raises(servers.TemplateError):
             servers.create_template(
@@ -52,7 +67,9 @@ class TestTemplateCreation:
 
     def test_create_template_generates_unique_code(self, server_with_members):
         """Test that each template gets a unique code."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         template1 = servers.create_template(
             user_id=owner.id,
@@ -75,7 +92,9 @@ class TestTemplateRetrieval:
 
     def test_get_template_by_code(self, server_with_members):
         """Test getting a template by code."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         template = servers.create_template(
             user_id=owner.id,
@@ -90,7 +109,9 @@ class TestTemplateRetrieval:
 
     def test_get_template_by_id(self, server_with_members):
         """Test getting a template by ID."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         template = servers.create_template(
             user_id=owner.id,
@@ -104,7 +125,9 @@ class TestTemplateRetrieval:
 
     def test_get_user_templates(self, server_with_members):
         """Test getting all templates created by a user."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         for i in range(3):
             servers.create_template(
@@ -118,7 +141,9 @@ class TestTemplateRetrieval:
 
     def test_get_public_templates(self, server_with_members):
         """Test getting public templates."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         template = servers.create_template(
             user_id=owner.id,
@@ -138,7 +163,9 @@ class TestTemplateRetrieval:
 
     def test_private_template_not_visible_to_others(self, server_with_members):
         """Test that private templates are not visible to other users."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         template = servers.create_template(
             user_id=owner.id,
@@ -156,7 +183,18 @@ class TestTemplatePreview:
 
     def test_preview_template(self, server_with_channels):
         """Test previewing template data."""
-        server, owner, admin_user, member_user, outsider, general, announcements, private, category, servers = server_with_channels
+        (
+            server,
+            owner,
+            admin_user,
+            member_user,
+            outsider,
+            general,
+            announcements,
+            private,
+            category,
+            servers,
+        ) = server_with_channels
 
         template = servers.create_template(
             user_id=owner.id,
@@ -173,7 +211,18 @@ class TestTemplatePreview:
 
     def test_preview_captures_channels(self, server_with_channels):
         """Test that preview captures server channels."""
-        server, owner, admin_user, member_user, outsider, general, announcements, private, category, servers = server_with_channels
+        (
+            server,
+            owner,
+            admin_user,
+            member_user,
+            outsider,
+            general,
+            announcements,
+            private,
+            category,
+            servers,
+        ) = server_with_channels
 
         template = servers.create_template(
             user_id=owner.id,
@@ -189,7 +238,18 @@ class TestTemplatePreview:
 
     def test_preview_captures_categories(self, server_with_channels):
         """Test that preview captures server categories."""
-        server, owner, admin_user, member_user, outsider, general, announcements, private, category, servers = server_with_channels
+        (
+            server,
+            owner,
+            admin_user,
+            member_user,
+            outsider,
+            general,
+            announcements,
+            private,
+            category,
+            servers,
+        ) = server_with_channels
 
         template = servers.create_template(
             user_id=owner.id,
@@ -204,7 +264,9 @@ class TestTemplatePreview:
 
     def test_preview_nonexistent_template_fails(self, server_with_members):
         """Test that previewing nonexistent template fails."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         with pytest.raises(servers.TemplateNotFoundError):
             servers.preview_template("nonexistent_code")
@@ -216,7 +278,9 @@ class TestTemplateUpdate:
 
     def test_update_template_name(self, server_with_members):
         """Test updating template name."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         template = servers.create_template(
             user_id=owner.id,
@@ -234,7 +298,9 @@ class TestTemplateUpdate:
 
     def test_update_template_description(self, server_with_members):
         """Test updating template description."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         template = servers.create_template(
             user_id=owner.id,
@@ -252,7 +318,9 @@ class TestTemplateUpdate:
 
     def test_update_template_visibility(self, server_with_members):
         """Test updating template public visibility."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         template = servers.create_template(
             user_id=owner.id,
@@ -272,7 +340,9 @@ class TestTemplateUpdate:
 
     def test_update_template_requires_ownership(self, server_with_members):
         """Test that only creator can update template."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         template = servers.create_template(
             user_id=owner.id,
@@ -294,7 +364,9 @@ class TestTemplateDeletion:
 
     def test_delete_template(self, server_with_members):
         """Test deleting a template."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         template = servers.create_template(
             user_id=owner.id,
@@ -310,7 +382,9 @@ class TestTemplateDeletion:
 
     def test_delete_template_requires_ownership(self, server_with_members):
         """Test that only creator can delete template."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         template = servers.create_template(
             user_id=owner.id,

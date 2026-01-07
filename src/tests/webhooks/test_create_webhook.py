@@ -17,7 +17,7 @@ class TestCreateWebhook:
         webhook = setup["webhooks"].create_webhook(
             user_id=setup["owner"].id,
             channel_id=setup["channel"].id,
-            name=f"Basic Webhook {unique_id}"
+            name=f"Basic Webhook {unique_id}",
         )
 
         assert webhook is not None
@@ -39,7 +39,7 @@ class TestCreateWebhook:
             user_id=setup["owner"].id,
             channel_id=setup["channel"].id,
             name=f"Avatar Webhook {unique_id}",
-            avatar_url=avatar
+            avatar_url=avatar,
         )
 
         assert webhook.avatar_url == avatar
@@ -52,7 +52,7 @@ class TestCreateWebhook:
         webhook = setup["webhooks"].create_webhook(
             user_id=setup["owner"].id,
             channel_id=setup["channel"].id,
-            name=f"Token Format {unique_id}"
+            name=f"Token Format {unique_id}",
         )
 
         assert webhook.token.startswith("webhook.")
@@ -70,7 +70,7 @@ class TestCreateWebhook:
         webhook = setup["webhooks"].create_webhook(
             user_id=setup["owner"].id,
             channel_id=setup["channel"].id,
-            name=f"URL Test {unique_id}"
+            name=f"URL Test {unique_id}",
         )
 
         assert f"/webhooks/{webhook.id}/" in webhook.url
@@ -85,7 +85,7 @@ class TestCreateWebhook:
             webhook = setup["webhooks"].create_webhook(
                 user_id=setup["owner"].id,
                 channel_id=setup["channel"].id,
-                name=f"Unique Token {i}"
+                name=f"Unique Token {i}",
             )
             tokens.add(webhook.token)
 
@@ -98,9 +98,7 @@ class TestCreateWebhook:
 
         with pytest.raises(ChannelNotFoundError):
             setup["webhooks"].create_webhook(
-                user_id=setup["owner"].id,
-                channel_id=999999999,
-                name="Invalid Channel"
+                user_id=setup["owner"].id, channel_id=999999999, name="Invalid Channel"
             )
 
     def test_create_webhook_no_permission(self, base_server_setup):
@@ -112,7 +110,7 @@ class TestCreateWebhook:
             setup["webhooks"].create_webhook(
                 user_id=setup["non_member"].id,
                 channel_id=setup["channel"].id,
-                name="No Permission"
+                name="No Permission",
             )
 
         assert exc_info.value.permission == "webhooks.manage"
@@ -124,9 +122,7 @@ class TestCreateWebhook:
 
         with pytest.raises(WebhookNameError):
             setup["webhooks"].create_webhook(
-                user_id=setup["owner"].id,
-                channel_id=setup["channel"].id,
-                name=""
+                user_id=setup["owner"].id, channel_id=setup["channel"].id, name=""
             )
 
     def test_create_webhook_whitespace_name(self, base_server_setup):
@@ -136,9 +132,7 @@ class TestCreateWebhook:
 
         with pytest.raises(WebhookNameError):
             setup["webhooks"].create_webhook(
-                user_id=setup["owner"].id,
-                channel_id=setup["channel"].id,
-                name="   "
+                user_id=setup["owner"].id, channel_id=setup["channel"].id, name="   "
             )
 
     def test_create_webhook_name_too_long(self, base_server_setup):
@@ -148,9 +142,7 @@ class TestCreateWebhook:
 
         with pytest.raises(WebhookNameError) as exc_info:
             setup["webhooks"].create_webhook(
-                user_id=setup["owner"].id,
-                channel_id=setup["channel"].id,
-                name="x" * 81
+                user_id=setup["owner"].id, channel_id=setup["channel"].id, name="x" * 81
             )
 
         assert exc_info.value.max_length == 80
@@ -160,9 +152,7 @@ class TestCreateWebhook:
         setup = base_server_setup
 
         webhook = setup["webhooks"].create_webhook(
-            user_id=setup["owner"].id,
-            channel_id=setup["channel"].id,
-            name="x" * 80
+            user_id=setup["owner"].id, channel_id=setup["channel"].id, name="x" * 80
         )
 
         assert len(webhook.name) == 80
@@ -174,7 +164,7 @@ class TestCreateWebhook:
         webhook = setup["webhooks"].create_webhook(
             user_id=setup["owner"].id,
             channel_id=setup["channel"].id,
-            name="Test <script>alert(1)</script> Webhook"
+            name="Test <script>alert(1)</script> Webhook",
         )
 
         assert "<script>" not in webhook.name
@@ -190,7 +180,7 @@ class TestCreateWebhook:
                 user_id=setup["owner"].id,
                 channel_id=setup["channel"].id,
                 name="Invalid Avatar",
-                avatar_url="javascript:alert(1)"
+                avatar_url="javascript:alert(1)",
             )
 
     def test_create_webhook_invalid_avatar_data_uri(self, base_server_setup):
@@ -203,7 +193,7 @@ class TestCreateWebhook:
                 user_id=setup["owner"].id,
                 channel_id=setup["channel"].id,
                 name="Data URI Avatar",
-                avatar_url="data:image/png;base64,abc123"
+                avatar_url="data:image/png;base64,abc123",
             )
 
     def test_create_webhook_http_avatar(self, fresh_server):
@@ -214,7 +204,7 @@ class TestCreateWebhook:
             user_id=setup["owner"].id,
             channel_id=setup["channel"].id,
             name="HTTP Avatar Test",
-            avatar_url="http://example.com/avatar.png"
+            avatar_url="http://example.com/avatar.png",
         )
 
         assert webhook.avatar_url == "http://example.com/avatar.png"
@@ -227,7 +217,7 @@ class TestCreateWebhook:
             user_id=setup["owner"].id,
             channel_id=setup["channel"].id,
             name="HTTPS Avatar Test",
-            avatar_url="https://example.com/avatar.png"
+            avatar_url="https://example.com/avatar.png",
         )
 
         assert webhook.avatar_url == "https://example.com/avatar.png"
@@ -239,7 +229,7 @@ class TestCreateWebhook:
         webhook = setup["webhooks"].create_webhook(
             user_id=setup["owner"].id,
             channel_id=setup["channel"].id,
-            name="Timestamp Test"
+            name="Timestamp Test",
         )
 
         assert webhook.created_at > 0
@@ -252,9 +242,7 @@ class TestCreateWebhook:
         from src.core.webhooks import WebhookType
 
         webhook = setup["webhooks"].create_webhook(
-            user_id=setup["owner"].id,
-            channel_id=setup["channel"].id,
-            name="Type Test"
+            user_id=setup["owner"].id, channel_id=setup["channel"].id, name="Type Test"
         )
 
         assert webhook.webhook_type == WebhookType.INCOMING

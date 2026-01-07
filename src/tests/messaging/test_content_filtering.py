@@ -12,7 +12,9 @@ class TestContentValidation:
         """Test valid content passes validation."""
         dm, user1, user2, messaging = dm_conversation
 
-        msg = messaging.send_message(user1.id, dm.id, "Hello, this is a normal message!")
+        msg = messaging.send_message(
+            user1.id, dm.id, "Hello, this is a normal message!"
+        )
 
         assert msg is not None
         assert msg.content == "Hello, this is a normal message!"
@@ -85,7 +87,9 @@ class TestUserFilterSettings:
         """Test updating spoiler click-to-reveal setting."""
         user1, user2, user3, messaging = users
 
-        filters = messaging.update_user_filter_settings(user1.id, spoiler_click_to_reveal=False)
+        filters = messaging.update_user_filter_settings(
+            user1.id, spoiler_click_to_reveal=False
+        )
 
         assert filters.spoiler_click_to_reveal is False
 
@@ -94,8 +98,7 @@ class TestUserFilterSettings:
         user1, user2, user3, messaging = users
 
         filters = messaging.update_user_filter_settings(
-            user1.id,
-            custom_blocked_words=["spam", "advertisement"]
+            user1.id, custom_blocked_words=["spam", "advertisement"]
         )
 
         assert "spam" in filters.custom_blocked_words
@@ -109,7 +112,7 @@ class TestUserFilterSettings:
             user1.id,
             profanity_filter=True,
             nsfw_filter=True,
-            custom_blocked_words=["test"]
+            custom_blocked_words=["test"],
         )
 
         assert filters.profanity_filter is True
@@ -145,7 +148,9 @@ class TestUserMessageSettings:
         """Test updating DM permission setting."""
         user1, user2, user3, messaging = users
 
-        settings = messaging.update_user_message_settings(user1.id, allow_dms_from="friends")
+        settings = messaging.update_user_message_settings(
+            user1.id, allow_dms_from="friends"
+        )
 
         assert settings.allow_dms_from == "friends"
 
@@ -156,7 +161,9 @@ class TestUserMessageSettings:
         """Test updating auto-create DMs setting."""
         user1, user2, user3, messaging = users
 
-        settings = messaging.update_user_message_settings(user1.id, auto_create_dms=False)
+        settings = messaging.update_user_message_settings(
+            user1.id, auto_create_dms=False
+        )
 
         assert settings.auto_create_dms is False
 
@@ -167,7 +174,9 @@ class TestUserMessageSettings:
         """Test updating max message length."""
         user1, user2, user3, messaging = users
 
-        settings = messaging.update_user_message_settings(user1.id, max_message_length=8000)
+        settings = messaging.update_user_message_settings(
+            user1.id, max_message_length=8000
+        )
 
         assert settings.max_message_length == 8000
 
@@ -214,9 +223,7 @@ class TestUserMessageSettings:
         user1, user2, user3, messaging = users
 
         settings = messaging.update_user_message_settings(
-            user1.id,
-            max_attachment_size=20971520,
-            max_attachments_per_message=5
+            user1.id, max_attachment_size=20971520, max_attachments_per_message=5
         )
 
         assert settings.max_attachment_size == 20971520
@@ -317,7 +324,11 @@ class TestSpoilerDetection:
         msg = messaging.send_message(user1.id, dm.id, "The ending is ||everyone dies||")
 
         # Spoiler detection is in metadata
-        assert msg.metadata is None or msg.metadata.get("has_spoilers", False) or "||" in msg.content
+        assert (
+            msg.metadata is None
+            or msg.metadata.get("has_spoilers", False)
+            or "||" in msg.content
+        )
 
 
 class TestUnicodeContent:

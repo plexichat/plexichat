@@ -9,8 +9,9 @@ Run with: pytest src/tests/unit/test_property_based_edge_cases.py -v
 import pytest
 
 try:
-    from hypothesis import given, strategies as st, settings, HealthCheck
+    from hypothesis import given, strategies as st, settings, HealthCheck  # noqa: F401
     from hypothesis.strategies import composite
+
     HAS_HYPOTHESIS = True
 except ImportError:
     HAS_HYPOTHESIS = False
@@ -24,13 +25,14 @@ from src.core.messaging.content import validate_content
 # Edge Case Strategies
 # =============================================================================
 
+
 @composite
 def zero_width_characters(draw):
     """Generate strings with zero-width characters."""
-    zwc = ['\u200b', '\u200c', '\u200d', '\ufeff']  # Zero-width space, joiners, BOM
+    zwc = ["\u200b", "\u200c", "\u200d", "\ufeff"]  # Zero-width space, joiners, BOM
     normal_text = draw(st.text(min_size=0, max_size=50))
     zwc_text = draw(st.text(min_size=0, max_size=10, alphabet=zwc))
-    
+
     return normal_text + zwc_text
 
 
@@ -39,118 +41,147 @@ def homograph_attacks(draw):
     """Generate homograph attack strings (visual spoofing)."""
     # Cyrillic 'а' (U+0430) looks like Latin 'a' (U+0061)
     # Greek 'ο' (U+03BF) looks like Latin 'o' (U+006F)
-    return draw(st.one_of(
-        st.just("admin"),  # Normal
-        st.just("аdmin"),  # Cyrillic 'а'
-        st.just("admіn"),  # Cyrillic 'і'
-        st.just("ехample"),  # Mixed Cyrillic 'е' and 'х'
-        st.text(min_size=1, max_size=20, alphabet='аеіοАΕІΟ'),  # Confusable chars
-    ))
+    return draw(
+        st.one_of(
+            st.just("admin"),  # Normal
+            st.just("аdmin"),  # Cyrillic 'а'
+            st.just("admіn"),  # Cyrillic 'і'
+            st.just("ехample"),  # Mixed Cyrillic 'е' and 'х'
+            st.text(min_size=1, max_size=20, alphabet="аеіοАΕІΟ"),  # Confusable chars
+        )
+    )
 
 
 @composite
 def rtl_text(draw):
     """Generate right-to-left text."""
     # Hebrew, Arabic, and RTL marks
-    return draw(st.text(
-        min_size=1,
-        max_size=50,
-        alphabet=st.characters(min_codepoint=0x0590, max_codepoint=0x06FF)
-    ))
+    return draw(
+        st.text(
+            min_size=1,
+            max_size=50,
+            alphabet=st.characters(min_codepoint=0x0590, max_codepoint=0x06FF),
+        )
+    )
 
 
 @composite
 def bidi_text(draw):
     """Generate bidirectional text (mixed LTR and RTL)."""
-    ltr = draw(st.text(min_size=1, max_size=20, alphabet='abcdefghijklmnopqrstuvwxyz'))
-    rtl = draw(st.text(min_size=1, max_size=20, alphabet=st.characters(min_codepoint=0x0590, max_codepoint=0x06FF)))
-    
+    ltr = draw(st.text(min_size=1, max_size=20, alphabet="abcdefghijklmnopqrstuvwxyz"))
+    rtl = draw(
+        st.text(
+            min_size=1,
+            max_size=20,
+            alphabet=st.characters(min_codepoint=0x0590, max_codepoint=0x06FF),
+        )
+    )
+
     return ltr + rtl + ltr
 
 
 @composite
 def combining_characters(draw):
     """Generate strings with combining diacritical marks."""
-    base = draw(st.text(min_size=1, max_size=20, alphabet='aeiou'))
-    combining = draw(st.text(
-        min_size=0,
-        max_size=50,
-        alphabet=st.characters(min_codepoint=0x0300, max_codepoint=0x036F)
-    ))
-    
+    base = draw(st.text(min_size=1, max_size=20, alphabet="aeiou"))
+    combining = draw(
+        st.text(
+            min_size=0,
+            max_size=50,
+            alphabet=st.characters(min_codepoint=0x0300, max_codepoint=0x036F),
+        )
+    )
+
     # Zalgo text-like: excessive combining characters
-    return ''.join(c + combining[:5] for c in base)
+    return "".join(c + combining[:5] for c in base)
 
 
 @composite
 def normalized_vs_denormalized(draw):
     """Generate strings that differ in Unicode normalization."""
     # é can be represented as U+00E9 (composed) or U+0065 U+0301 (decomposed)
-    return draw(st.one_of(
-        st.just("café"),  # NFC (composed)
-        st.just("café"),  # NFD (decomposed) - might look the same in editor
-        st.just("Café"),
-    ))
+    return draw(
+        st.one_of(
+            st.just("café"),  # NFC (composed)
+            st.just("café"),  # NFD (decomposed) - might look the same in editor
+            st.just("Café"),
+        )
+    )
 
 
 @composite
 def sql_injection_patterns(draw):
     """Generate SQL injection attempt patterns."""
-    return draw(st.sampled_from([
-        "' OR '1'='1",
-        "'; DROP TABLE users; --",
-        "1' UNION SELECT * FROM passwords--",
-        "admin'--",
-        "' OR 1=1--",
-        "' OR 'a'='a",
-        "') OR ('1'='1",
-        "1'; DELETE FROM messages WHERE '1'='1",
-        "\\x27 OR \\x27\\x31\\x27=\\x27\\x31",
-    ]))
+    return draw(
+        st.sampled_from(
+            [
+                "' OR '1'='1",
+                "'; DROP TABLE users; --",
+                "1' UNION SELECT * FROM passwords--",
+                "admin'--",
+                "' OR 1=1--",
+                "' OR 'a'='a",
+                "') OR ('1'='1",
+                "1'; DELETE FROM messages WHERE '1'='1",
+                "\\x27 OR \\x27\\x31\\x27=\\x27\\x31",
+            ]
+        )
+    )
 
 
 @composite
 def xss_patterns(draw):
     """Generate XSS attempt patterns."""
-    return draw(st.sampled_from([
-        "<script>alert('XSS')</script>",
-        "<img src=x onerror=alert('XSS')>",
-        "<iframe src='javascript:alert(\"XSS\")'></iframe>",
-        "javascript:alert('XSS')",
-        "<body onload=alert('XSS')>",
-        "<svg/onload=alert('XSS')>",
-        "<<SCRIPT>alert('XSS');//<</SCRIPT>",
-        "<IMG SRC=\"javascript:alert('XSS');\">",
-        "<INPUT TYPE=\"IMAGE\" SRC=\"javascript:alert('XSS');\">",
-    ]))
+    return draw(
+        st.sampled_from(
+            [
+                "<script>alert('XSS')</script>",
+                "<img src=x onerror=alert('XSS')>",
+                "<iframe src='javascript:alert(\"XSS\")'></iframe>",
+                "javascript:alert('XSS')",
+                "<body onload=alert('XSS')>",
+                "<svg/onload=alert('XSS')>",
+                "<<SCRIPT>alert('XSS');//<</SCRIPT>",
+                "<IMG SRC=\"javascript:alert('XSS');\">",
+                '<INPUT TYPE="IMAGE" SRC="javascript:alert(\'XSS\');">',
+            ]
+        )
+    )
 
 
 @composite
 def path_traversal_patterns(draw):
     """Generate path traversal attempt patterns."""
-    return draw(st.sampled_from([
-        "../../../etc/passwd",
-        "..\\..\\..\\windows\\system32",
-        "....//....//....//etc/passwd",
-        "..%2F..%2F..%2Fetc%2Fpasswd",
-        "..%252F..%252F..%252Fetc%252Fpasswd",
-        "\\\\server\\share\\file",
-    ]))
+    return draw(
+        st.sampled_from(
+            [
+                "../../../etc/passwd",
+                "..\\..\\..\\windows\\system32",
+                "....//....//....//etc/passwd",
+                "..%2F..%2F..%2Fetc%2Fpasswd",
+                "..%252F..%252F..%252Fetc%252Fpasswd",
+                "\\\\server\\share\\file",
+            ]
+        )
+    )
 
 
 @composite
 def buffer_overflow_patterns(draw):
     """Generate patterns that might cause buffer overflows."""
-    return draw(st.one_of(
-        st.text(min_size=10000, max_size=20000),  # Very long strings
-        st.lists(st.integers(), min_size=10000, max_size=20000),  # Large lists
-        st.just("A" * 100000),  # Repeat character
-    ))
+    return draw(
+        st.one_of(
+            st.text(min_size=10000, max_size=20000),  # Very long strings
+            st.lists(st.integers(), min_size=10000, max_size=20000),  # Large lists
+            st.just("A" * 100000),  # Repeat character
+        )
+    )
 
 
 # =============================================================================
 # Zero-Width and Invisible Character Tests
 # =============================================================================
+
 
 @pytest.mark.unit
 class TestZeroWidthCharacters:
@@ -173,17 +204,24 @@ class TestZeroWidthCharacters:
             # Should handle without crashing
             assert isinstance(result.sanitized_content, str)
 
-    @given(st.text(alphabet=st.sampled_from(['a', 'b', '\u200b', '\ufeff']), min_size=1, max_size=50).filter(lambda x: '\u200b' in x or '\ufeff' in x))
+    @given(
+        st.text(
+            alphabet=st.sampled_from(["a", "b", "\u200b", "\ufeff"]),
+            min_size=1,
+            max_size=50,
+        ).filter(lambda x: "\u200b" in x or "\ufeff" in x)
+    )
     @settings(max_examples=50)
     def test_zero_width_space_stripping(self, text):
         """Test that zero-width spaces are handled."""
         # Text contains zero-width characters
-        assert '\u200b' in text or '\ufeff' in text
+        assert "\u200b" in text or "\ufeff" in text
 
 
 # =============================================================================
 # Homograph and Visual Spoofing Tests
 # =============================================================================
+
 
 @pytest.mark.unit
 class TestHomographAttacks:
@@ -197,7 +235,7 @@ class TestHomographAttacks:
         # Should handle visually similar characters
         assert isinstance(valid, bool)
 
-    @given(st.text(min_size=1, max_size=20, alphabet='аеіοАΕІΟ'))
+    @given(st.text(min_size=1, max_size=20, alphabet="аеіοАΕІΟ"))
     @settings(max_examples=50)
     def test_cyrillic_latin_mixing(self, text):
         """Test handling of Cyrillic characters that look like Latin."""
@@ -209,6 +247,7 @@ class TestHomographAttacks:
 # =============================================================================
 # Bidirectional Text Tests
 # =============================================================================
+
 
 @pytest.mark.unit
 class TestBidirectionalText:
@@ -230,7 +269,7 @@ class TestBidirectionalText:
             result = validate_content(content, max_length=4000)
             assert isinstance(result.sanitized_content, str)
 
-    @given(st.text(min_size=1, max_size=50, alphabet='\u202e\u202d\u200e\u200f'))
+    @given(st.text(min_size=1, max_size=50, alphabet="\u202e\u202d\u200e\u200f"))
     @settings(max_examples=50)
     def test_bidi_override_characters(self, content):
         """Test Unicode bidi override characters."""
@@ -244,6 +283,7 @@ class TestBidirectionalText:
 # Combining Character Tests
 # =============================================================================
 
+
 @pytest.mark.unit
 class TestCombiningCharacters:
     """Tests for combining diacritical marks (Zalgo text)."""
@@ -256,7 +296,14 @@ class TestCombiningCharacters:
         # Should handle without crashing
         assert isinstance(result.sanitized_content, str)
 
-    @given(st.text(alphabet=st.characters() | st.sampled_from([chr(c) for c in range(0x0300, 0x0310)]), min_size=1, max_size=20).filter(lambda x: any(0x0300 <= ord(c) <= 0x036F for c in x)))
+    @given(
+        st.text(
+            alphabet=st.characters()
+            | st.sampled_from([chr(c) for c in range(0x0300, 0x0310)]),
+            min_size=1,
+            max_size=20,
+        ).filter(lambda x: any(0x0300 <= ord(c) <= 0x036F for c in x))
+    )
     @settings(max_examples=50)
     def test_combining_marks_in_username(self, username):
         """Test combining marks in usernames."""
@@ -269,6 +316,7 @@ class TestCombiningCharacters:
 # Unicode Normalization Tests
 # =============================================================================
 
+
 @pytest.mark.unit
 class TestUnicodeNormalization:
     """Tests for Unicode normalization handling."""
@@ -278,14 +326,14 @@ class TestUnicodeNormalization:
     def test_normalization_consistency(self, text):
         """Test that normalized and denormalized forms are handled consistently."""
         import unicodedata
-        
-        nfc = unicodedata.normalize('NFC', text)
-        nfd = unicodedata.normalize('NFD', text)
-        
+
+        nfc = unicodedata.normalize("NFC", text)
+        nfd = unicodedata.normalize("NFD", text)
+
         # Both forms should be treated equivalently
         result_nfc = validate_content(nfc, max_length=4000)
         result_nfd = validate_content(nfd, max_length=4000)
-        
+
         assert isinstance(result_nfc.sanitized_content, str)
         assert isinstance(result_nfd.sanitized_content, str)
 
@@ -293,6 +341,7 @@ class TestUnicodeNormalization:
 # =============================================================================
 # SQL Injection Tests
 # =============================================================================
+
 
 @pytest.mark.unit
 class TestSQLInjectionPrevention:
@@ -318,6 +367,7 @@ class TestSQLInjectionPrevention:
 # =============================================================================
 # XSS Prevention Tests
 # =============================================================================
+
 
 @pytest.mark.unit
 class TestXSSPrevention:
@@ -347,6 +397,7 @@ class TestXSSPrevention:
 # Path Traversal Tests
 # =============================================================================
 
+
 @pytest.mark.unit
 class TestPathTraversalPrevention:
     """Tests for path traversal prevention."""
@@ -364,6 +415,7 @@ class TestPathTraversalPrevention:
 # Buffer Overflow Tests
 # =============================================================================
 
+
 @pytest.mark.unit
 class TestBufferOverflowPrevention:
     """Tests for buffer overflow prevention."""
@@ -377,7 +429,7 @@ class TestBufferOverflowPrevention:
         if len(content) > 4000:
             assert not result.valid
 
-    @given(st.text(min_size=4001, max_size=10000, alphabet='A'))
+    @given(st.text(min_size=4001, max_size=10000, alphabet="A"))
     @settings(max_examples=20)
     def test_repeated_character_messages(self, content):
         """Test messages with many repeated characters."""
@@ -390,11 +442,12 @@ class TestBufferOverflowPrevention:
 # Null Byte and Special Character Tests
 # =============================================================================
 
+
 @pytest.mark.unit
 class TestNullBytes:
     """Tests for null byte and special character handling."""
 
-    @given(st.text(min_size=1, max_size=50).filter(lambda x: '\x00' in x))
+    @given(st.text(min_size=1, max_size=50).filter(lambda x: "\x00" in x))
     @settings(max_examples=50)
     def test_null_bytes_in_content(self, content):
         """Test null bytes in content."""
@@ -415,11 +468,18 @@ class TestNullBytes:
 # Empty and Whitespace Tests
 # =============================================================================
 
+
 @pytest.mark.unit
 class TestEmptyAndWhitespace:
     """Tests for empty and whitespace-only inputs."""
 
-    @given(st.text(alphabet=st.characters(whitelist_categories=['Zs', 'Cc']), min_size=1, max_size=100))
+    @given(
+        st.text(
+            alphabet=st.characters(whitelist_categories=["Zs", "Cc"]),
+            min_size=1,
+            max_size=100,
+        )
+    )
     @settings(max_examples=100)
     def test_whitespace_only_content(self, content):
         """Test whitespace-only content."""

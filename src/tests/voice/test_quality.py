@@ -42,7 +42,16 @@ class TestConnectionQuality:
 
     def test_get_connection_quality(self, server_with_voice, signaling_setup):
         """Test getting connection quality."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         create_voice_connection(member1.id, voice_channel.id)
 
@@ -64,18 +73,38 @@ class TestConnectionQuality:
 
     def test_get_quality_not_connected(self, server_with_voice, signaling_setup):
         """Test getting quality when not connected."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         with pytest.raises(NotConnectedError):
             get_connection_quality(999999, voice_channel.id)
 
     def test_update_quality_hint_bitrate(self, server_with_voice, signaling_setup):
         """Test updating quality hint with target bitrate."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         create_voice_connection(member1.id, voice_channel.id)
 
-        result = update_quality_hint(member1.id, voice_channel.id, target_bitrate=128000)
+        result = update_quality_hint(
+            member1.id, voice_channel.id, target_bitrate=128000
+        )
 
         assert result is True
 
@@ -87,11 +116,22 @@ class TestConnectionQuality:
 
     def test_update_quality_hint_level(self, server_with_voice, signaling_setup):
         """Test updating quality hint with quality level."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         create_voice_connection(member1.id, voice_channel.id)
 
-        result = update_quality_hint(member1.id, voice_channel.id, quality_level="excellent")
+        result = update_quality_hint(
+            member1.id, voice_channel.id, quality_level="excellent"
+        )
 
         assert result is True
 
@@ -101,9 +141,20 @@ class TestConnectionQuality:
         # Cleanup
         disconnect_voice(member1.id)
 
-    def test_update_quality_hint_not_connected(self, server_with_voice, signaling_setup):
+    def test_update_quality_hint_not_connected(
+        self, server_with_voice, signaling_setup
+    ):
         """Test updating quality hint when not connected."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         result = update_quality_hint(999999, voice_channel.id, target_bitrate=64000)
 
@@ -111,7 +162,16 @@ class TestConnectionQuality:
 
     def test_quality_to_dict(self, server_with_voice, signaling_setup):
         """Test ConnectionQuality serialization."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         create_voice_connection(member1.id, voice_channel.id)
 
@@ -163,14 +223,27 @@ class TestQualityLevels:
         assert excellent["max"] > critical["max"]
         assert excellent["min"] > critical["min"]
 
-    def test_update_quality_with_invalid_level(self, server_with_voice, signaling_setup):
+    def test_update_quality_with_invalid_level(
+        self, server_with_voice, signaling_setup
+    ):
         """Test updating quality with invalid level uses default."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         create_voice_connection(member1.id, voice_channel.id)
 
         # Invalid level should not raise, just use default
-        result = update_quality_hint(member1.id, voice_channel.id, quality_level="invalid_level")
+        result = update_quality_hint(
+            member1.id, voice_channel.id, quality_level="invalid_level"
+        )
 
         assert result is True
 
@@ -186,7 +259,16 @@ class TestQualityMonitoring:
 
     def test_quality_updates_timestamp(self, server_with_voice, signaling_setup):
         """Test that quality updates include timestamp."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         create_voice_connection(member1.id, voice_channel.id)
 
@@ -203,7 +285,16 @@ class TestQualityMonitoring:
 
     def test_quality_level_affects_bitrate(self, server_with_voice, signaling_setup):
         """Test that quality level affects suggested bitrate."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         create_voice_connection(member1.id, voice_channel.id)
 

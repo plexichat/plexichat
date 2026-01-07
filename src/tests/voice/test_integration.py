@@ -10,7 +10,16 @@ class TestServerIntegration:
 
     def test_voice_channel_from_servers(self, server_with_voice):
         """Test voice channels created via servers module work."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         state = voice.join_channel(member1.id, voice_channel.id)
 
@@ -19,7 +28,16 @@ class TestServerIntegration:
 
     def test_stage_channel_from_servers(self, server_with_voice):
         """Test stage channels created via servers module work."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         state = voice.join_channel(member1.id, stage_channel.id)
 
@@ -28,11 +46,19 @@ class TestServerIntegration:
 
     def test_permission_check_uses_servers(self, server_with_voice):
         """Test permission checks use servers module."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         restricted_channel = servers.create_channel(
-            owner.id, server.id, "restricted",
-            channel_type=servers.ChannelType.VOICE
+            owner.id, server.id, "restricted", channel_type=servers.ChannelType.VOICE
         )
 
         everyone_role = None
@@ -44,9 +70,11 @@ class TestServerIntegration:
 
         if everyone_role:
             servers.set_channel_override(
-                owner.id, restricted_channel.id,
-                "role", everyone_role.id,
-                deny={"voice.connect": True}
+                owner.id,
+                restricted_channel.id,
+                "role",
+                everyone_role.id,
+                deny={"voice.connect": True},
             )
 
             with pytest.raises(voice.PermissionDeniedError):
@@ -58,7 +86,16 @@ class TestMultipleUsersInChannel:
 
     def test_multiple_users_join(self, server_with_voice):
         """Test multiple users can join the same channel."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, voice_channel.id)
         voice.join_channel(member1.id, voice_channel.id)
@@ -70,7 +107,16 @@ class TestMultipleUsersInChannel:
 
     def test_user_leave_doesnt_affect_others(self, server_with_voice):
         """Test one user leaving doesn't affect others."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, voice_channel.id)
         voice.join_channel(member1.id, voice_channel.id)
@@ -87,7 +133,16 @@ class TestVoiceStateIsolation:
 
     def test_self_mute_isolated(self, server_with_voice):
         """Test self-mute is isolated per user."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, voice_channel.id)
         voice.join_channel(member1.id, voice_channel.id)
@@ -102,7 +157,16 @@ class TestVoiceStateIsolation:
 
     def test_server_mute_isolated(self, server_with_moderator):
         """Test server mute is isolated per user."""
-        owner, moderator, member, server, voice_channel, stage_channel, servers, voice = server_with_moderator
+        (
+            owner,
+            moderator,
+            member,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_moderator
 
         voice.join_channel(moderator.id, voice_channel.id)
         voice.join_channel(member.id, voice_channel.id)
@@ -121,7 +185,16 @@ class TestStageChannelWorkflow:
 
     def test_full_stage_workflow(self, server_with_voice):
         """Test a complete stage channel workflow."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, stage_channel.id)
         stage = voice.start_stage(owner.id, stage_channel.id, "Q&A Session")
@@ -163,7 +236,16 @@ class TestChannelUserCount:
 
     def test_user_count_increases_on_join(self, server_with_voice):
         """Test user count increases when users join."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         channel = voice.get_voice_channel(voice_channel.id, owner.id)
         initial_count = channel.user_count
@@ -175,7 +257,16 @@ class TestChannelUserCount:
 
     def test_user_count_decreases_on_leave(self, server_with_voice):
         """Test user count decreases when users leave."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, voice_channel.id)
         voice.join_channel(member1.id, voice_channel.id)
@@ -197,25 +288,24 @@ class TestCrossServerIsolation:
         db, auth, servers, relationships, presence, voice = db_and_modules
 
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"crossuser_{unique_id}",
             email=f"crossuser_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server1 = servers.create_server(user.id, f"Server 1 {unique_id}")
         server2 = servers.create_server(user.id, f"Server 2 {unique_id}")
 
         voice_channel1 = servers.create_channel(
-            user.id, server1.id, "voice-1",
-            channel_type=servers.ChannelType.VOICE
+            user.id, server1.id, "voice-1", channel_type=servers.ChannelType.VOICE
         )
 
         voice_channel2 = servers.create_channel(
-            user.id, server2.id, "voice-2",
-            channel_type=servers.ChannelType.VOICE
+            user.id, server2.id, "voice-2", channel_type=servers.ChannelType.VOICE
         )
 
         voice.join_channel(user.id, voice_channel1.id)

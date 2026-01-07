@@ -10,7 +10,16 @@ class TestConnectPermission:
 
     def test_join_with_connect_permission(self, server_with_voice):
         """Test joining with connect permission succeeds."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         state = voice.join_channel(member1.id, voice_channel.id)
 
@@ -19,11 +28,22 @@ class TestConnectPermission:
 
     def test_join_without_connect_permission(self, server_with_voice):
         """Test joining without connect permission fails."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         restricted_channel = servers.create_channel(
-            owner.id, server.id, "restricted-voice",
-            channel_type=servers.ChannelType.VOICE
+            owner.id,
+            server.id,
+            "restricted-voice",
+            channel_type=servers.ChannelType.VOICE,
         )
 
         everyone_role = None
@@ -35,9 +55,11 @@ class TestConnectPermission:
 
         if everyone_role:
             servers.set_channel_override(
-                owner.id, restricted_channel.id,
-                "role", everyone_role.id,
-                deny={"voice.connect": True}
+                owner.id,
+                restricted_channel.id,
+                "role",
+                everyone_role.id,
+                deny={"voice.connect": True},
             )
 
             with pytest.raises(voice.PermissionDeniedError) as exc_info:
@@ -51,7 +73,16 @@ class TestMutePermission:
 
     def test_server_mute_with_permission(self, server_with_moderator):
         """Test server mute with permission succeeds."""
-        owner, moderator, member, server, voice_channel, stage_channel, servers, voice = server_with_moderator
+        (
+            owner,
+            moderator,
+            member,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_moderator
 
         voice.join_channel(member.id, voice_channel.id)
         state = voice.server_mute(moderator.id, member.id, server.id)
@@ -60,7 +91,16 @@ class TestMutePermission:
 
     def test_server_mute_without_permission(self, server_with_voice):
         """Test server mute without permission fails."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(member2.id, voice_channel.id)
 
@@ -75,7 +115,16 @@ class TestDeafenPermission:
 
     def test_server_deaf_with_permission(self, server_with_moderator):
         """Test server deaf with permission succeeds."""
-        owner, moderator, member, server, voice_channel, stage_channel, servers, voice = server_with_moderator
+        (
+            owner,
+            moderator,
+            member,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_moderator
 
         voice.join_channel(member.id, voice_channel.id)
         state = voice.server_deaf(moderator.id, member.id, server.id)
@@ -84,7 +133,16 @@ class TestDeafenPermission:
 
     def test_server_deaf_without_permission(self, server_with_voice):
         """Test server deaf without permission fails."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(member2.id, voice_channel.id)
 
@@ -99,11 +157,19 @@ class TestMovePermission:
 
     def test_move_member_with_permission(self, server_with_moderator):
         """Test moving member with permission succeeds."""
-        owner, moderator, member, server, voice_channel, stage_channel, servers, voice = server_with_moderator
+        (
+            owner,
+            moderator,
+            member,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_moderator
 
         voice_channel2 = servers.create_channel(
-            owner.id, server.id, "voice-perm",
-            channel_type=servers.ChannelType.VOICE
+            owner.id, server.id, "voice-perm", channel_type=servers.ChannelType.VOICE
         )
 
         voice.join_channel(member.id, voice_channel.id)
@@ -113,11 +179,19 @@ class TestMovePermission:
 
     def test_move_member_without_permission(self, server_with_voice):
         """Test moving member without permission fails."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice_channel2 = servers.create_channel(
-            owner.id, server.id, "voice-perm2",
-            channel_type=servers.ChannelType.VOICE
+            owner.id, server.id, "voice-perm2", channel_type=servers.ChannelType.VOICE
         )
 
         voice.join_channel(member2.id, voice_channel.id)
@@ -129,7 +203,16 @@ class TestMovePermission:
 
     def test_disconnect_member_with_permission(self, server_with_moderator):
         """Test disconnecting member with permission succeeds."""
-        owner, moderator, member, server, voice_channel, stage_channel, servers, voice = server_with_moderator
+        (
+            owner,
+            moderator,
+            member,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_moderator
 
         voice.join_channel(member.id, voice_channel.id)
         result = voice.disconnect_member(moderator.id, member.id, server.id)
@@ -138,7 +221,16 @@ class TestMovePermission:
 
     def test_disconnect_member_without_permission(self, server_with_voice):
         """Test disconnecting member without permission fails."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(member2.id, voice_channel.id)
 
@@ -153,7 +245,16 @@ class TestOwnerPermissions:
 
     def test_owner_can_mute(self, server_with_voice):
         """Test owner can server mute."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(member1.id, voice_channel.id)
         state = voice.server_mute(owner.id, member1.id, server.id)
@@ -162,7 +263,16 @@ class TestOwnerPermissions:
 
     def test_owner_can_deaf(self, server_with_voice):
         """Test owner can server deaf."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(member1.id, voice_channel.id)
         state = voice.server_deaf(owner.id, member1.id, server.id)
@@ -171,11 +281,19 @@ class TestOwnerPermissions:
 
     def test_owner_can_move(self, server_with_voice):
         """Test owner can move members."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice_channel2 = servers.create_channel(
-            owner.id, server.id, "voice-owner",
-            channel_type=servers.ChannelType.VOICE
+            owner.id, server.id, "voice-owner", channel_type=servers.ChannelType.VOICE
         )
 
         voice.join_channel(member1.id, voice_channel.id)
@@ -185,7 +303,16 @@ class TestOwnerPermissions:
 
     def test_owner_can_disconnect(self, server_with_voice):
         """Test owner can disconnect members."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(member1.id, voice_channel.id)
         result = voice.disconnect_member(owner.id, member1.id, server.id)

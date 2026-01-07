@@ -13,18 +13,19 @@ class TestCreateEmbedWithFields:
         """Test creating embed with single field."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"fld1_{unique_id}",
             email=f"fld1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
             user_id=user.id,
             title="Field Test",
-            fields=[{"name": "Field Name", "value": "Field Value"}]
+            fields=[{"name": "Field Name", "value": "Field Value"}],
         )
 
         assert len(embed.fields) == 1
@@ -36,18 +37,19 @@ class TestCreateEmbedWithFields:
         """Test creating embed with inline field."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"fld2_{unique_id}",
             email=f"fld2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
             user_id=user.id,
             title="Inline Field Test",
-            fields=[{"name": "Inline Field", "value": "Inline Value", "inline": True}]
+            fields=[{"name": "Inline Field", "value": "Inline Value", "inline": True}],
         )
 
         assert embed.fields[0].inline is True
@@ -56,12 +58,13 @@ class TestCreateEmbedWithFields:
         """Test creating embed with multiple fields."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"fld3_{unique_id}",
             email=f"fld3_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
@@ -70,8 +73,8 @@ class TestCreateEmbedWithFields:
             fields=[
                 {"name": "Field 1", "value": "Value 1", "inline": True},
                 {"name": "Field 2", "value": "Value 2", "inline": True},
-                {"name": "Field 3", "value": "Value 3", "inline": False}
-            ]
+                {"name": "Field 3", "value": "Value 3", "inline": False},
+            ],
         )
 
         assert len(embed.fields) == 3
@@ -83,21 +86,18 @@ class TestCreateEmbedWithFields:
         """Test creating embed with maximum 25 fields."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"fld4_{unique_id}",
             email=f"fld4_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         fields = [{"name": f"Field {i}", "value": f"Value {i}"} for i in range(25)]
 
-        embed = embeds.create_embed(
-            user_id=user.id,
-            title="Max Fields",
-            fields=fields
-        )
+        embed = embeds.create_embed(user_id=user.id, title="Max Fields", fields=fields)
 
         assert len(embed.fields) == 25
 
@@ -105,24 +105,23 @@ class TestCreateEmbedWithFields:
         """Test creating embed with more than 25 fields fails."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"fld5_{unique_id}",
             email=f"fld5_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         fields = [{"name": f"Field {i}", "value": f"Value {i}"} for i in range(26)]
 
         with pytest.raises(EmbedValidationError) as exc_info:
-            embeds.create_embed(
-                user_id=user.id,
-                title="Too Many Fields",
-                fields=fields
-            )
+            embeds.create_embed(user_id=user.id, title="Too Many Fields", fields=fields)
 
-        assert any("25" in issue or "field" in issue.lower() for issue in exc_info.value.issues)
+        assert any(
+            "25" in issue or "field" in issue.lower() for issue in exc_info.value.issues
+        )
 
 
 class TestFieldNameValidation:
@@ -132,12 +131,13 @@ class TestFieldNameValidation:
         """Test field name at max length (256 chars)."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"fld6_{unique_id}",
             email=f"fld6_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         name = "a" * 256
@@ -145,7 +145,7 @@ class TestFieldNameValidation:
         embed = embeds.create_embed(
             user_id=user.id,
             title="Long Field Name",
-            fields=[{"name": name, "value": "Value"}]
+            fields=[{"name": name, "value": "Value"}],
         )
 
         assert len(embed.fields[0].name) == 256
@@ -154,12 +154,13 @@ class TestFieldNameValidation:
         """Test field name exceeding max length fails."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"fld7_{unique_id}",
             email=f"fld7_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         name = "a" * 257
@@ -168,26 +169,27 @@ class TestFieldNameValidation:
             embeds.create_embed(
                 user_id=user.id,
                 title="Too Long Field Name",
-                fields=[{"name": name, "value": "Value"}]
+                fields=[{"name": name, "value": "Value"}],
             )
 
     def test_field_name_required(self, db_and_modules):
         """Test field name is required."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"fld8_{unique_id}",
             email=f"fld8_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         with pytest.raises(EmbedValidationError):
             embeds.create_embed(
                 user_id=user.id,
                 title="Missing Field Name",
-                fields=[{"value": "Value only"}]
+                fields=[{"value": "Value only"}],
             )
 
 
@@ -198,12 +200,13 @@ class TestFieldValueValidation:
         """Test field value at max length (1024 chars)."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"fld9_{unique_id}",
             email=f"fld9_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         value = "a" * 1024
@@ -211,7 +214,7 @@ class TestFieldValueValidation:
         embed = embeds.create_embed(
             user_id=user.id,
             title="Long Field Value",
-            fields=[{"name": "Name", "value": value}]
+            fields=[{"name": "Name", "value": value}],
         )
 
         assert len(embed.fields[0].value) == 1024
@@ -220,12 +223,13 @@ class TestFieldValueValidation:
         """Test field value exceeding max length fails."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"fld10_{unique_id}",
             email=f"fld10_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         value = "a" * 1025
@@ -234,26 +238,27 @@ class TestFieldValueValidation:
             embeds.create_embed(
                 user_id=user.id,
                 title="Too Long Field Value",
-                fields=[{"name": "Name", "value": value}]
+                fields=[{"name": "Name", "value": value}],
             )
 
     def test_field_value_required(self, db_and_modules):
         """Test field value is required."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"fld11_{unique_id}",
             email=f"fld11_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         with pytest.raises(EmbedValidationError):
             embeds.create_embed(
                 user_id=user.id,
                 title="Missing Field Value",
-                fields=[{"name": "Name only"}]
+                fields=[{"name": "Name only"}],
             )
 
 
@@ -264,12 +269,13 @@ class TestFieldOrdering:
         """Test fields maintain insertion order."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"fld12_{unique_id}",
             email=f"fld12_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
@@ -278,8 +284,8 @@ class TestFieldOrdering:
             fields=[
                 {"name": "First", "value": "1"},
                 {"name": "Second", "value": "2"},
-                {"name": "Third", "value": "3"}
-            ]
+                {"name": "Third", "value": "3"},
+            ],
         )
 
         assert embed.fields[0].name == "First"
@@ -290,12 +296,13 @@ class TestFieldOrdering:
         """Test fields maintain order after retrieval."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"fld13_{unique_id}",
             email=f"fld13_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         created = embeds.create_embed(
@@ -304,8 +311,8 @@ class TestFieldOrdering:
             fields=[
                 {"name": "A", "value": "1"},
                 {"name": "B", "value": "2"},
-                {"name": "C", "value": "3"}
-            ]
+                {"name": "C", "value": "3"},
+            ],
         )
 
         retrieved = embeds.get_embed(created.id)
@@ -322,12 +329,13 @@ class TestFieldInlineLayout:
         """Test mixed inline and non-inline fields."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"fld14_{unique_id}",
             email=f"fld14_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
@@ -337,8 +345,8 @@ class TestFieldInlineLayout:
                 {"name": "Inline 1", "value": "V1", "inline": True},
                 {"name": "Inline 2", "value": "V2", "inline": True},
                 {"name": "Full Width", "value": "V3", "inline": False},
-                {"name": "Inline 3", "value": "V4", "inline": True}
-            ]
+                {"name": "Inline 3", "value": "V4", "inline": True},
+            ],
         )
 
         assert embed.fields[0].inline is True
@@ -350,12 +358,13 @@ class TestFieldInlineLayout:
         """Test all inline fields."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"fld15_{unique_id}",
             email=f"fld15_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
@@ -364,7 +373,7 @@ class TestFieldInlineLayout:
             fields=[
                 {"name": f"Field {i}", "value": f"Value {i}", "inline": True}
                 for i in range(6)
-            ]
+            ],
         )
 
         assert all(f.inline for f in embed.fields)
@@ -373,12 +382,13 @@ class TestFieldInlineLayout:
         """Test no inline fields."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"fld16_{unique_id}",
             email=f"fld16_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
@@ -387,7 +397,7 @@ class TestFieldInlineLayout:
             fields=[
                 {"name": f"Field {i}", "value": f"Value {i}", "inline": False}
                 for i in range(3)
-            ]
+            ],
         )
 
         assert all(not f.inline for f in embed.fields)

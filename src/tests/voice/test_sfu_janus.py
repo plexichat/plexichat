@@ -13,7 +13,7 @@ common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
 if common_utils_path not in sys.path:
     sys.path.insert(0, common_utils_path)
 
-import utils.logger as logger
+import utils.logger as logger  # noqa: E402
 
 # Setup logger for tests
 try:
@@ -21,8 +21,8 @@ try:
 except Exception:
     pass
 
-from src.core.voice.signaling.sfu.janus import JanusAdapter
-from src.core.voice.signaling.sfu.base import (
+from src.core.voice.signaling.sfu.janus import JanusAdapter  # noqa: E402
+from src.core.voice.signaling.sfu.base import (  # noqa: E402
     TransportDirection,
     MediaKind,
     SFUTransport,
@@ -30,7 +30,7 @@ from src.core.voice.signaling.sfu.base import (
     SFUConsumer,
     RoomInfo,
 )
-from src.core.voice.signaling.exceptions import SFUConnectionError
+from src.core.voice.signaling.exceptions import SFUConnectionError  # noqa: E402
 
 
 @pytest.fixture
@@ -60,11 +60,16 @@ class TestJanusAdapter:
         mock_session, mock_response = mock_aiohttp_session
 
         # Mock session creation
-        mock_response.json = AsyncMock(side_effect=[
-            {"janus": "success", "data": {"id": 12345}},  # create session
-            {"janus": "success", "data": {"id": 67890}},  # attach plugin
-            {"janus": "success", "plugindata": {"data": {"videoroom": "created"}}},  # create room
-        ])
+        mock_response.json = AsyncMock(
+            side_effect=[
+                {"janus": "success", "data": {"id": 12345}},  # create session
+                {"janus": "success", "data": {"id": 67890}},  # attach plugin
+                {
+                    "janus": "success",
+                    "plugindata": {"data": {"videoroom": "created"}},
+                },  # create room
+            ]
+        )
 
         with patch("aiohttp.ClientSession", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
@@ -82,13 +87,15 @@ class TestJanusAdapter:
         mock_session, mock_response = mock_aiohttp_session
 
         # Setup existing session
-        mock_response.json = AsyncMock(side_effect=[
-            {"janus": "success", "data": {"id": 12345}},
-            {"janus": "success", "data": {"id": 67890}},
-            {"janus": "success"},
-            {"janus": "success"},  # destroy room
-            {"janus": "success"},  # destroy session
-        ])
+        mock_response.json = AsyncMock(
+            side_effect=[
+                {"janus": "success", "data": {"id": 12345}},
+                {"janus": "success", "data": {"id": 67890}},
+                {"janus": "success"},
+                {"janus": "success"},  # destroy room
+                {"janus": "success"},  # destroy session
+            ]
+        )
 
         with patch("aiohttp.ClientSession", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
@@ -107,13 +114,18 @@ class TestJanusAdapter:
         """Test joining a room."""
         mock_session, mock_response = mock_aiohttp_session
 
-        mock_response.json = AsyncMock(side_effect=[
-            {"janus": "success", "data": {"id": 12345}},  # create session
-            {"janus": "success", "data": {"id": 67890}},  # attach plugin (admin)
-            {"janus": "success"},  # create room
-            {"janus": "success", "data": {"id": 11111}},  # attach plugin (peer)
-            {"janus": "success", "plugindata": {"data": {"publishers": []}}},  # join
-        ])
+        mock_response.json = AsyncMock(
+            side_effect=[
+                {"janus": "success", "data": {"id": 12345}},  # create session
+                {"janus": "success", "data": {"id": 67890}},  # attach plugin (admin)
+                {"janus": "success"},  # create room
+                {"janus": "success", "data": {"id": 11111}},  # attach plugin (peer)
+                {
+                    "janus": "success",
+                    "plugindata": {"data": {"publishers": []}},
+                },  # join
+            ]
+        )
 
         with patch("aiohttp.ClientSession", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
@@ -130,15 +142,17 @@ class TestJanusAdapter:
         """Test leaving a room."""
         mock_session, mock_response = mock_aiohttp_session
 
-        mock_response.json = AsyncMock(side_effect=[
-            {"janus": "success", "data": {"id": 12345}},
-            {"janus": "success", "data": {"id": 67890}},
-            {"janus": "success"},
-            {"janus": "success", "data": {"id": 11111}},
-            {"janus": "success", "plugindata": {"data": {"publishers": []}}},
-            {"janus": "success"},  # leave
-            {"janus": "success"},  # detach
-        ])
+        mock_response.json = AsyncMock(
+            side_effect=[
+                {"janus": "success", "data": {"id": 12345}},
+                {"janus": "success", "data": {"id": 67890}},
+                {"janus": "success"},
+                {"janus": "success", "data": {"id": 11111}},
+                {"janus": "success", "plugindata": {"data": {"publishers": []}}},
+                {"janus": "success"},  # leave
+                {"janus": "success"},  # detach
+            ]
+        )
 
         with patch("aiohttp.ClientSession", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
@@ -172,14 +186,16 @@ class TestJanusAdapter:
         """Test creating a producer."""
         mock_session, mock_response = mock_aiohttp_session
 
-        mock_response.json = AsyncMock(side_effect=[
-            {"janus": "success", "data": {"id": 12345}},
-            {"janus": "success", "data": {"id": 67890}},
-            {"janus": "success"},
-            {"janus": "success", "data": {"id": 11111}},
-            {"janus": "success", "plugindata": {"data": {"publishers": []}}},
-            {"janus": "success"},  # configure
-        ])
+        mock_response.json = AsyncMock(
+            side_effect=[
+                {"janus": "success", "data": {"id": 12345}},
+                {"janus": "success", "data": {"id": 67890}},
+                {"janus": "success"},
+                {"janus": "success", "data": {"id": 11111}},
+                {"janus": "success", "plugindata": {"data": {"publishers": []}}},
+                {"janus": "success"},  # configure
+            ]
+        )
 
         with patch("aiohttp.ClientSession", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
@@ -205,13 +221,15 @@ class TestJanusAdapter:
         """Test creating a consumer."""
         mock_session, mock_response = mock_aiohttp_session
 
-        mock_response.json = AsyncMock(side_effect=[
-            {"janus": "success", "data": {"id": 12345}},
-            {"janus": "success", "data": {"id": 67890}},
-            {"janus": "success"},
-            {"janus": "success", "data": {"id": 22222}},  # attach for subscriber
-            {"janus": "success", "plugindata": {"data": {}}},  # join as subscriber
-        ])
+        mock_response.json = AsyncMock(
+            side_effect=[
+                {"janus": "success", "data": {"id": 12345}},
+                {"janus": "success", "data": {"id": 67890}},
+                {"janus": "success"},
+                {"janus": "success", "data": {"id": 22222}},  # attach for subscriber
+                {"janus": "success", "plugindata": {"data": {}}},  # join as subscriber
+            ]
+        )
 
         with patch("aiohttp.ClientSession", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
@@ -235,14 +253,16 @@ class TestJanusAdapter:
         """Test pausing a producer."""
         mock_session, mock_response = mock_aiohttp_session
 
-        mock_response.json = AsyncMock(side_effect=[
-            {"janus": "success", "data": {"id": 12345}},
-            {"janus": "success", "data": {"id": 67890}},
-            {"janus": "success"},
-            {"janus": "success", "data": {"id": 11111}},
-            {"janus": "success", "plugindata": {"data": {"publishers": []}}},
-            {"janus": "success"},  # configure (pause)
-        ])
+        mock_response.json = AsyncMock(
+            side_effect=[
+                {"janus": "success", "data": {"id": 12345}},
+                {"janus": "success", "data": {"id": 67890}},
+                {"janus": "success"},
+                {"janus": "success", "data": {"id": 11111}},
+                {"janus": "success", "plugindata": {"data": {"publishers": []}}},
+                {"janus": "success"},  # configure (pause)
+            ]
+        )
 
         with patch("aiohttp.ClientSession", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
@@ -251,7 +271,9 @@ class TestJanusAdapter:
             await adapter.create_room("room_123")
             await adapter.join_room("room_123", "peer_456")
 
-            result = await adapter.pause_producer("room_123", "peer_456", "producer_audio")
+            result = await adapter.pause_producer(
+                "room_123", "peer_456", "producer_audio"
+            )
 
             assert result is True
 
@@ -260,14 +282,16 @@ class TestJanusAdapter:
         """Test resuming a producer."""
         mock_session, mock_response = mock_aiohttp_session
 
-        mock_response.json = AsyncMock(side_effect=[
-            {"janus": "success", "data": {"id": 12345}},
-            {"janus": "success", "data": {"id": 67890}},
-            {"janus": "success"},
-            {"janus": "success", "data": {"id": 11111}},
-            {"janus": "success", "plugindata": {"data": {"publishers": []}}},
-            {"janus": "success"},  # configure (resume)
-        ])
+        mock_response.json = AsyncMock(
+            side_effect=[
+                {"janus": "success", "data": {"id": 12345}},
+                {"janus": "success", "data": {"id": 67890}},
+                {"janus": "success"},
+                {"janus": "success", "data": {"id": 11111}},
+                {"janus": "success", "plugindata": {"data": {"publishers": []}}},
+                {"janus": "success"},  # configure (resume)
+            ]
+        )
 
         with patch("aiohttp.ClientSession", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
@@ -276,7 +300,9 @@ class TestJanusAdapter:
             await adapter.create_room("room_123")
             await adapter.join_room("room_123", "peer_456")
 
-            result = await adapter.resume_producer("room_123", "peer_456", "producer_audio")
+            result = await adapter.resume_producer(
+                "room_123", "peer_456", "producer_audio"
+            )
 
             assert result is True
 
@@ -285,15 +311,24 @@ class TestJanusAdapter:
         """Test getting room info."""
         mock_session, mock_response = mock_aiohttp_session
 
-        mock_response.json = AsyncMock(side_effect=[
-            {"janus": "success", "data": {"id": 12345}},
-            {"janus": "success", "data": {"id": 67890}},
-            {"janus": "success"},
-            {"janus": "success", "plugindata": {"data": {"participants": [
-                {"id": 1, "display": "peer_1"},
-                {"id": 2, "display": "peer_2"},
-            ]}}},
-        ])
+        mock_response.json = AsyncMock(
+            side_effect=[
+                {"janus": "success", "data": {"id": 12345}},
+                {"janus": "success", "data": {"id": 67890}},
+                {"janus": "success"},
+                {
+                    "janus": "success",
+                    "plugindata": {
+                        "data": {
+                            "participants": [
+                                {"id": 1, "display": "peer_1"},
+                                {"id": 2, "display": "peer_2"},
+                            ]
+                        }
+                    },
+                },
+            ]
+        )
 
         with patch("aiohttp.ClientSession", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
@@ -338,10 +373,12 @@ class TestJanusAdapter:
     async def test_janus_error_raises(self, mock_aiohttp_session):
         """Test that Janus errors raise SFUConnectionError."""
         mock_session, mock_response = mock_aiohttp_session
-        mock_response.json = AsyncMock(return_value={
-            "janus": "error",
-            "error": {"code": 123, "reason": "Test error"},
-        })
+        mock_response.json = AsyncMock(
+            return_value={
+                "janus": "error",
+                "error": {"code": 123, "reason": "Test error"},
+            }
+        )
 
         with patch("aiohttp.ClientSession", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")

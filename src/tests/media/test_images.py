@@ -8,7 +8,8 @@ import pytest
 def pillow_available():
     """Check if Pillow is available."""
     try:
-        from PIL import Image
+        from PIL import Image  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -59,9 +60,7 @@ class TestImageProcessor:
         from src.core.media.processing.images import ImageProcessor
 
         processor = ImageProcessor()
-        results = processor.create_thumbnails(
-            sample_image_bytes, sizes=[64, 128, 256]
-        )
+        results = processor.create_thumbnails(sample_image_bytes, sizes=[64, 128, 256])
 
         assert 64 in results
         assert 128 in results
@@ -156,7 +155,9 @@ class TestImageProcessor:
 class TestImageProcessingIntegration:
     """Integration tests for image processing via media module."""
 
-    def test_upload_generates_thumbnails(self, media_module, user_pool, sample_image_bytes):
+    def test_upload_generates_thumbnails(
+        self, media_module, user_pool, sample_image_bytes
+    ):
         """Test that uploading an image generates thumbnails."""
         user = user_pool.get_user()
 
@@ -225,9 +226,11 @@ class TestImageProcessingIntegration:
         converted = media_module.convert_image(result.file_id, "PNG")
 
         assert len(converted) > 0
-        assert converted[:8] == b'\x89PNG\r\n\x1a\n'
+        assert converted[:8] == b"\x89PNG\r\n\x1a\n"
 
-    def test_upload_extracts_dimensions(self, media_module, user_pool, sample_image_bytes):
+    def test_upload_extracts_dimensions(
+        self, media_module, user_pool, sample_image_bytes
+    ):
         """Test that upload extracts image dimensions."""
         user = user_pool.get_user()
 

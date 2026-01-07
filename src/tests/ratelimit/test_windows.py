@@ -183,7 +183,7 @@ class TestTokenBucketRefill:
                 user_id=test_user_id,
                 route="GET /test",
             )
-            assert result.allowed, f"Request {i+1} should be allowed (burst)"
+            assert result.allowed, f"Request {i + 1} should be allowed (burst)"
         result = manager.check_rate_limit(
             user_id=test_user_id,
             route="GET /test",

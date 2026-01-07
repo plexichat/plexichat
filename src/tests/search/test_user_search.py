@@ -20,7 +20,7 @@ class TestUserSearchBasic:
         user = auth.register(
             username=f"searchable_{unique_id}",
             email=f"searchable_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         search._get_manager()._indexer.index_user(
@@ -47,7 +47,7 @@ class TestUserSearchBasic:
         user = auth.register(
             username=f"typechk_{unique_id}",
             email=f"typechk_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         search._get_manager()._indexer.index_user(
@@ -82,14 +82,16 @@ class TestUserSearchFilters:
             user = auth.register(
                 username=f"offset_{unique_id}_{i}",
                 email=f"offset_{unique_id}_{i}@example.com",
-                password="TestPass123!"
+                password="TestPass123!",
             )
             search._get_manager()._indexer.index_user(
                 IndexedUser(user_id=user.id, username=user.username)
             )
 
         all_results = search.search_users(1, f"offset_{unique_id}", limit=10)
-        offset_results = search.search_users(1, f"offset_{unique_id}", limit=10, offset=1)
+        offset_results = search.search_users(
+            1, f"offset_{unique_id}", limit=10, offset=1
+        )
 
         if len(all_results) > 1:
             assert len(offset_results) == len(all_results) - 1
@@ -111,9 +113,7 @@ class TestUserSearchInServer:
         )
 
         results = search.search_users(
-            owner.id,
-            owner.username.split("_")[0],
-            server_id=server.id
+            owner.id, owner.username.split("_")[0], server_id=server.id
         )
 
         assert isinstance(results, list)
@@ -131,14 +131,12 @@ class TestUserSearchIndexing:
         user = auth.register(
             username=f"indexuser_{unique_id}",
             email=f"indexuser_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         search._get_manager()._indexer.index_user(
             IndexedUser(
-                user_id=user.id,
-                username=user.username,
-                display_name="Index Test User"
+                user_id=user.id, username=user.username, display_name="Index Test User"
             )
         )
 
@@ -154,15 +152,13 @@ class TestUserSearchIndexing:
         user = auth.register(
             username=f"dispuser_{unique_id}",
             email=f"dispuser_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         display_name = f"DisplayName{unique_id}"
         search._get_manager()._indexer.index_user(
             IndexedUser(
-                user_id=user.id,
-                username=user.username,
-                display_name=display_name
+                user_id=user.id, username=user.username, display_name=display_name
             )
         )
 

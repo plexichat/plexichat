@@ -14,12 +14,13 @@ class TestCreateBasicEmbed:
         """Test creating embed with just title."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"emb1_{unique_id}",
             email=f"emb1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(user_id=user.id, title="Test Title")
@@ -34,17 +35,17 @@ class TestCreateBasicEmbed:
         """Test creating embed with description."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"emb2_{unique_id}",
             email=f"emb2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
-            user_id=user.id,
-            description="This is a test description"
+            user_id=user.id, description="This is a test description"
         )
 
         assert embed.description == "This is a test description"
@@ -53,18 +54,17 @@ class TestCreateBasicEmbed:
         """Test creating embed with title and description."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"emb3_{unique_id}",
             email=f"emb3_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
-            user_id=user.id,
-            title="My Title",
-            description="My Description"
+            user_id=user.id, title="My Title", description="My Description"
         )
 
         assert embed.title == "My Title"
@@ -74,18 +74,17 @@ class TestCreateBasicEmbed:
         """Test creating embed with URL."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"emb4_{unique_id}",
             email=f"emb4_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
-            user_id=user.id,
-            title="Link Title",
-            url="https://example.com"
+            user_id=user.id, title="Link Title", url="https://example.com"
         )
 
         assert embed.url == "https://example.com"
@@ -94,18 +93,17 @@ class TestCreateBasicEmbed:
         """Test creating embed with timestamp."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"emb5_{unique_id}",
             email=f"emb5_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
-            user_id=user.id,
-            title="Timed Embed",
-            timestamp="2025-01-15T12:00:00Z"
+            user_id=user.id, title="Timed Embed", timestamp="2025-01-15T12:00:00Z"
         )
 
         assert embed.timestamp == "2025-01-15T12:00:00Z"
@@ -114,18 +112,17 @@ class TestCreateBasicEmbed:
         """Test creating embed with color."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"emb6_{unique_id}",
             email=f"emb6_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
-            user_id=user.id,
-            title="Colored Embed",
-            color="#FF5733"
+            user_id=user.id, title="Colored Embed", color="#FF5733"
         )
 
         assert embed.color == "#FF5733"
@@ -134,18 +131,17 @@ class TestCreateBasicEmbed:
         """Test creating embed with color without hash prefix."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"emb7_{unique_id}",
             email=f"emb7_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
-            user_id=user.id,
-            title="Colored Embed",
-            color="00FF00"
+            user_id=user.id, title="Colored Embed", color="00FF00"
         )
 
         assert embed.color == "#00FF00"
@@ -158,18 +154,17 @@ class TestCreateEmbedWithSections:
         """Test creating embed with footer."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"emb8_{unique_id}",
             email=f"emb8_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
-            user_id=user.id,
-            title="Footer Embed",
-            footer={"text": "Footer text here"}
+            user_id=user.id, title="Footer Embed", footer={"text": "Footer text here"}
         )
 
         assert embed.footer is not None
@@ -179,12 +174,13 @@ class TestCreateEmbedWithSections:
         """Test creating embed with footer and icon."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"emb9_{unique_id}",
             email=f"emb9_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
@@ -192,8 +188,8 @@ class TestCreateEmbedWithSections:
             title="Footer Icon Embed",
             footer={
                 "text": "Footer with icon",
-                "icon_url": "https://example.com/icon.png"
-            }
+                "icon_url": "https://example.com/icon.png",
+            },
         )
 
         assert embed.footer.text == "Footer with icon"
@@ -203,18 +199,17 @@ class TestCreateEmbedWithSections:
         """Test creating embed with author."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"emb10_{unique_id}",
             email=f"emb10_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
-            user_id=user.id,
-            title="Author Embed",
-            author={"name": "John Doe"}
+            user_id=user.id, title="Author Embed", author={"name": "John Doe"}
         )
 
         assert embed.author is not None
@@ -224,12 +219,13 @@ class TestCreateEmbedWithSections:
         """Test creating embed with full author details."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"emb11_{unique_id}",
             email=f"emb11_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
@@ -238,8 +234,8 @@ class TestCreateEmbedWithSections:
             author={
                 "name": "Jane Doe",
                 "url": "https://jane.example.com",
-                "icon_url": "https://jane.example.com/avatar.png"
-            }
+                "icon_url": "https://jane.example.com/avatar.png",
+            },
         )
 
         assert embed.author.name == "Jane Doe"
@@ -250,18 +246,19 @@ class TestCreateEmbedWithSections:
         """Test creating embed with image."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"emb12_{unique_id}",
             email=f"emb12_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
             user_id=user.id,
             title="Image Embed",
-            image={"url": "https://example.com/image.png"}
+            image={"url": "https://example.com/image.png"},
         )
 
         assert embed.image is not None
@@ -271,22 +268,19 @@ class TestCreateEmbedWithSections:
         """Test creating embed with image and dimensions."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"emb13_{unique_id}",
             email=f"emb13_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
             user_id=user.id,
             title="Sized Image Embed",
-            image={
-                "url": "https://example.com/image.png",
-                "width": 800,
-                "height": 600
-            }
+            image={"url": "https://example.com/image.png", "width": 800, "height": 600},
         )
 
         assert embed.image.url == "https://example.com/image.png"
@@ -297,18 +291,19 @@ class TestCreateEmbedWithSections:
         """Test creating embed with thumbnail."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"emb14_{unique_id}",
             email=f"emb14_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
             user_id=user.id,
             title="Thumbnail Embed",
-            thumbnail={"url": "https://example.com/thumb.png"}
+            thumbnail={"url": "https://example.com/thumb.png"},
         )
 
         assert embed.thumbnail is not None
@@ -322,12 +317,13 @@ class TestCreateFullEmbed:
         """Test creating embed with all fields."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"emb15_{unique_id}",
             email=f"emb15_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
@@ -339,12 +335,20 @@ class TestCreateFullEmbed:
             color="#FF0000",
             footer={"text": "Footer", "icon_url": "https://example.com/footer.png"},
             image={"url": "https://example.com/image.png", "width": 800, "height": 600},
-            thumbnail={"url": "https://example.com/thumb.png", "width": 100, "height": 100},
-            author={"name": "Author", "url": "https://author.com", "icon_url": "https://author.com/icon.png"},
+            thumbnail={
+                "url": "https://example.com/thumb.png",
+                "width": 100,
+                "height": 100,
+            },
+            author={
+                "name": "Author",
+                "url": "https://author.com",
+                "icon_url": "https://author.com/icon.png",
+            },
             fields=[
                 {"name": "Field 1", "value": "Value 1", "inline": True},
-                {"name": "Field 2", "value": "Value 2", "inline": False}
-            ]
+                {"name": "Field 2", "value": "Value 2", "inline": False},
+            ],
         )
 
         assert embed.title == "Full Embed"
@@ -362,18 +366,19 @@ class TestCreateFullEmbed:
         """Test creating embed with provider."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"emb16_{unique_id}",
             email=f"emb16_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
             user_id=user.id,
             title="Provider Embed",
-            provider={"name": "YouTube", "url": "https://youtube.com"}
+            provider={"name": "YouTube", "url": "https://youtube.com"},
         )
 
         assert embed.provider is not None
@@ -384,12 +389,13 @@ class TestCreateFullEmbed:
         """Test embed default type is rich."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"emb17_{unique_id}",
             email=f"emb17_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(user_id=user.id, title="Default Type")
@@ -400,18 +406,17 @@ class TestCreateFullEmbed:
         """Test creating embed with custom type."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"emb18_{unique_id}",
             email=f"emb18_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
-            user_id=user.id,
-            title="Image Type",
-            embed_type=EmbedType.IMAGE
+            user_id=user.id, title="Image Type", embed_type=EmbedType.IMAGE
         )
 
         assert embed.embed_type == EmbedType.IMAGE
@@ -424,12 +429,13 @@ class TestGetEmbed:
         """Test getting embed by ID."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"emb19_{unique_id}",
             email=f"emb19_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         created = embeds.create_embed(user_id=user.id, title="Get Test")

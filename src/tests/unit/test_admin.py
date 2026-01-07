@@ -23,12 +23,14 @@ class TestAdminModule:
     def admin_module(self, mock_db):
         """Setup admin module with mock db."""
         from src.core import admin
+
         admin.setup(mock_db)
         return admin
 
     def test_setup_creates_tables(self, mock_db):
         """Test that setup creates required tables."""
         from src.core import admin
+
         admin.setup(mock_db)
 
         assert mock_db.execute.called

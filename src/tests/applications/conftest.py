@@ -9,7 +9,6 @@ import pytest
 import uuid
 
 
-
 @pytest.fixture
 def app_factory(modules, user_pool):
     """Factory for creating test applications."""

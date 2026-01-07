@@ -12,6 +12,7 @@ import pytest
 def hasher():
     """Get the real encryption manager with actual Argon2id."""
     from src.utils.encryption.core import EncryptionManager
+
     return EncryptionManager()
 
 
@@ -63,16 +64,19 @@ class TestPasswordHashing:
         with pytest.raises(ValueError):
             hasher.hash_password("")
 
-    @pytest.mark.parametrize("password", [
-        "simple",
-        "WithUpperCase",
-        "with123numbers",
-        "with!@#$%special",
-        "MixedCase123!@#",
-        "a" * 100,  # Long password
-        "émojis🔐🔑",  # Unicode
-        "spaces in password",
-    ])
+    @pytest.mark.parametrize(
+        "password",
+        [
+            "simple",
+            "WithUpperCase",
+            "with123numbers",
+            "with!@#$%special",
+            "MixedCase123!@#",
+            "a" * 100,  # Long password
+            "émojis🔐🔑",  # Unicode
+            "spaces in password",
+        ],
+    )
     def test_hash_and_verify_various_passwords(self, hasher, password):
         """Test hashing and verifying various password formats."""
         hash_str = hasher.hash_password(password)

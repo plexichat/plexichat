@@ -32,10 +32,14 @@ class TestAuthenticationBypass:
                 opcode,
                 {"test": "data"},
             )
-            assert close_code == GatewayCloseCode.NOT_AUTHENTICATED, f"Opcode {opcode} should require auth"
+            assert close_code == GatewayCloseCode.NOT_AUTHENTICATED, (
+                f"Opcode {opcode} should require auth"
+            )
 
     @pytest.mark.asyncio
-    async def test_cannot_identify_twice(self, opcode_handler, authenticated_connection, sample_identify_payload):
+    async def test_cannot_identify_twice(
+        self, opcode_handler, authenticated_connection, sample_identify_payload
+    ):
         """Test that identify cannot be called twice."""
         response_op, response_data, close_code = await opcode_handler.handle(
             authenticated_connection,
@@ -67,7 +71,9 @@ class TestAuthenticationBypass:
         assert close_code == GatewayCloseCode.AUTHENTICATION_FAILED
 
     @pytest.mark.asyncio
-    async def test_malformed_token_rejected(self, opcode_handler, connection, mock_auth_module):
+    async def test_malformed_token_rejected(
+        self, opcode_handler, connection, mock_auth_module
+    ):
         """Test that malformed token is rejected."""
         mock_auth_module.verify_token.side_effect = Exception("Invalid token format")
         payload = {"token": "malformed:::token", "intents": 513}
@@ -79,7 +85,9 @@ class TestAuthenticationBypass:
         assert close_code == GatewayCloseCode.AUTHENTICATION_FAILED
 
     @pytest.mark.asyncio
-    async def test_expired_token_rejected(self, opcode_handler, connection, mock_auth_module):
+    async def test_expired_token_rejected(
+        self, opcode_handler, connection, mock_auth_module
+    ):
         """Test that expired token is rejected."""
         mock_auth_module.verify_token.side_effect = Exception("Token expired")
         payload = {"token": "expired_token", "intents": 513}
@@ -91,7 +99,9 @@ class TestAuthenticationBypass:
         assert close_code == GatewayCloseCode.AUTHENTICATION_FAILED
 
     @pytest.mark.asyncio
-    async def test_resume_with_mismatched_user(self, opcode_handler, connection, session_manager, mock_auth_module):
+    async def test_resume_with_mismatched_user(
+        self, opcode_handler, connection, session_manager, mock_auth_module
+    ):
         """Test resume fails when user ID doesn't match session."""
         from dataclasses import dataclass
 
@@ -101,7 +111,9 @@ class TestAuthenticationBypass:
             permissions: dict
 
         session = session_manager.create_session(connection, user_id=999, intents=513)
-        mock_auth_module.verify_token.return_value = TokenInfo(user_id=12345, permissions={})
+        mock_auth_module.verify_token.return_value = TokenInfo(
+            user_id=12345, permissions={}
+        )
 
         resume_payload = {
             "token": "test_token",
@@ -169,7 +181,9 @@ class TestOpcodeManipulation:
             assert response_op == GatewayOpcode.INVALID_SESSION
 
     @pytest.mark.asyncio
-    async def test_voice_connect_with_invalid_channel_id(self, opcode_handler, authenticated_connection):
+    async def test_voice_connect_with_invalid_channel_id(
+        self, opcode_handler, authenticated_connection
+    ):
         """Test voice connect rejects invalid channel ID."""
         payloads = [
             {"channel_id": "not_a_number"},
@@ -186,7 +200,9 @@ class TestOpcodeManipulation:
             assert close_code == GatewayCloseCode.DECODE_ERROR
 
     @pytest.mark.asyncio
-    async def test_voice_sdp_offer_missing_fields(self, opcode_handler, authenticated_connection):
+    async def test_voice_sdp_offer_missing_fields(
+        self, opcode_handler, authenticated_connection
+    ):
         """Test voice SDP offer rejects missing required fields."""
         payloads = [
             {},
@@ -214,7 +230,9 @@ class TestRateLimiting:
         assert connection.check_rate_limit(120) is False
 
     @pytest.mark.asyncio
-    async def test_rate_limit_per_connection(self, dispatcher, session_manager, mock_websocket):
+    async def test_rate_limit_per_connection(
+        self, dispatcher, session_manager, mock_websocket
+    ):
         """Test rate limits are enforced per connection."""
         conn1 = Connection(
             websocket=mock_websocket,
@@ -229,8 +247,12 @@ class TestRateLimiting:
 
         session_manager.add_connection(conn1)
         session_manager.add_connection(conn2)
-        session_manager.create_session(conn1, user_id=1, intents=GatewayIntent.all_intents())
-        session_manager.create_session(conn2, user_id=2, intents=GatewayIntent.all_intents())
+        session_manager.create_session(
+            conn1, user_id=1, intents=GatewayIntent.all_intents()
+        )
+        session_manager.create_session(
+            conn2, user_id=2, intents=GatewayIntent.all_intents()
+        )
 
         for _ in range(120):
             conn1.check_rate_limit(120)
@@ -238,7 +260,9 @@ class TestRateLimiting:
         assert conn2.check_rate_limit(120) is True
 
     @pytest.mark.asyncio
-    async def test_max_connections_per_user_enforced(self, opcode_handler, session_manager, mock_websocket, sample_identify_payload):
+    async def test_max_connections_per_user_enforced(
+        self, opcode_handler, session_manager, mock_websocket, sample_identify_payload
+    ):
         """Test maximum connections per user is enforced."""
         for i in range(5):
             conn = Connection(
@@ -247,7 +271,9 @@ class TestRateLimiting:
                 heartbeat_interval_ms=45000,
             )
             session_manager.add_connection(conn)
-            await opcode_handler.handle(conn, GatewayOpcode.IDENTIFY, sample_identify_payload)
+            await opcode_handler.handle(
+                conn, GatewayOpcode.IDENTIFY, sample_identify_payload
+            )
 
         conn_overflow = Connection(
             websocket=mock_websocket,
@@ -273,7 +299,9 @@ class TestRateLimiting:
         assert connection.check_rate_limit(120) is True
 
     @pytest.mark.asyncio
-    async def test_rapid_identify_attempts_blocked(self, opcode_handler, session_manager, mock_websocket, sample_identify_payload):
+    async def test_rapid_identify_attempts_blocked(
+        self, opcode_handler, session_manager, mock_websocket, sample_identify_payload
+    ):
         """Test rapid identify attempts from same user are blocked."""
         connections = []
         for i in range(6):
@@ -372,6 +400,7 @@ class TestInvalidIntents:
     async def test_too_large_intents_rejected(self, opcode_handler, connection):
         """Test intents larger than all_intents are rejected."""
         from src.api.websocket.intents import ALL_INTENTS
+
         payload = {"token": "test_token", "intents": ALL_INTENTS + 1}
         response_op, response_data, close_code = await opcode_handler.handle(
             connection,
@@ -413,7 +442,9 @@ class TestMaliciousPayloads:
     """Tests for malicious payload handling."""
 
     @pytest.mark.asyncio
-    async def test_extremely_large_sequence_number(self, opcode_handler, connection, session_manager):
+    async def test_extremely_large_sequence_number(
+        self, opcode_handler, connection, session_manager
+    ):
         """Test extremely large sequence numbers are handled."""
         session = session_manager.create_session(connection, user_id=1, intents=513)
         resume_payload = {
@@ -429,7 +460,9 @@ class TestMaliciousPayloads:
         assert response_op in [GatewayOpcode.DISPATCH, GatewayOpcode.INVALID_SESSION]
 
     @pytest.mark.asyncio
-    async def test_negative_sequence_number(self, opcode_handler, connection, session_manager):
+    async def test_negative_sequence_number(
+        self, opcode_handler, connection, session_manager
+    ):
         """Test negative sequence numbers are handled."""
         session = session_manager.create_session(connection, user_id=1, intents=513)
         resume_payload = {
@@ -445,7 +478,9 @@ class TestMaliciousPayloads:
         assert response_op in [GatewayOpcode.DISPATCH, GatewayOpcode.INVALID_SESSION]
 
     @pytest.mark.asyncio
-    async def test_payload_with_recursive_structure(self, opcode_handler, authenticated_connection):
+    async def test_payload_with_recursive_structure(
+        self, opcode_handler, authenticated_connection
+    ):
         """Test payloads with recursive references don't crash."""
         payload = {
             "status": "online",
@@ -459,7 +494,9 @@ class TestMaliciousPayloads:
         assert close_code is None
 
     @pytest.mark.asyncio
-    async def test_payload_with_special_characters(self, opcode_handler, authenticated_connection):
+    async def test_payload_with_special_characters(
+        self, opcode_handler, authenticated_connection
+    ):
         """Test payloads with special characters are handled."""
         payload = {
             "status": "online",
@@ -474,11 +511,13 @@ class TestMaliciousPayloads:
         assert close_code is None
 
     @pytest.mark.asyncio
-    async def test_payload_with_unicode_overflow(self, opcode_handler, authenticated_connection):
+    async def test_payload_with_unicode_overflow(
+        self, opcode_handler, authenticated_connection
+    ):
         """Test payloads with unicode overflow attempts."""
         payload = {
             "status": "online",
-            "custom_status": "\U0010FFFF" * 100,
+            "custom_status": "\U0010ffff" * 100,
         }
         response_op, response_data, close_code = await opcode_handler.handle(
             authenticated_connection,
@@ -488,7 +527,9 @@ class TestMaliciousPayloads:
         assert close_code is None
 
     @pytest.mark.asyncio
-    async def test_empty_payload_handling(self, opcode_handler, authenticated_connection):
+    async def test_empty_payload_handling(
+        self, opcode_handler, authenticated_connection
+    ):
         """Test empty payloads are handled gracefully."""
         response_op, response_data, close_code = await opcode_handler.handle(
             authenticated_connection,
@@ -505,7 +546,9 @@ class TestMaliciousPayloads:
         assert close_code is None
 
     @pytest.mark.asyncio
-    async def test_payload_with_wrong_types(self, opcode_handler, authenticated_connection):
+    async def test_payload_with_wrong_types(
+        self, opcode_handler, authenticated_connection
+    ):
         """Test payloads with wrong types are handled."""
         payload = {
             "status": 12345,
@@ -524,7 +567,9 @@ class TestSessionHijacking:
     """Tests for session hijacking prevention."""
 
     @pytest.mark.asyncio
-    async def test_resume_with_wrong_token(self, opcode_handler, connection, session_manager, mock_auth_module):
+    async def test_resume_with_wrong_token(
+        self, opcode_handler, connection, session_manager, mock_auth_module
+    ):
         """Test resume fails with wrong token."""
         from dataclasses import dataclass
 
@@ -535,7 +580,9 @@ class TestSessionHijacking:
 
         session = session_manager.create_session(connection, user_id=12345, intents=513)
 
-        mock_auth_module.verify_token.return_value = TokenInfo(user_id=99999, permissions={})
+        mock_auth_module.verify_token.return_value = TokenInfo(
+            user_id=99999, permissions={}
+        )
 
         resume_payload = {
             "token": "different_token",
@@ -573,7 +620,9 @@ class TestSessionHijacking:
         assert response_op == GatewayOpcode.INVALID_SESSION
 
     @pytest.mark.asyncio
-    async def test_resume_with_expired_session(self, opcode_handler, connection, session_manager):
+    async def test_resume_with_expired_session(
+        self, opcode_handler, connection, session_manager
+    ):
         """Test resume fails with expired session."""
         session = session_manager.create_session(connection, user_id=12345, intents=513)
         session.last_activity = time.monotonic() - 70
@@ -638,7 +687,9 @@ class TestSessionHijacking:
         assert not session_manager.can_resume_session(session2.session_id, 1)
 
     @pytest.mark.asyncio
-    async def test_old_connection_disconnected_on_resume(self, session_manager, mock_websocket):
+    async def test_old_connection_disconnected_on_resume(
+        self, session_manager, mock_websocket
+    ):
         """Test old connection is disconnected when session is resumed."""
         old_conn = Connection(
             websocket=mock_websocket,
@@ -707,7 +758,9 @@ class TestCompressionSecurity:
     """Tests for compression-related security."""
 
     @pytest.mark.asyncio
-    async def test_compression_enabled_via_identify(self, opcode_handler, connection, sample_identify_payload):
+    async def test_compression_enabled_via_identify(
+        self, opcode_handler, connection, sample_identify_payload
+    ):
         """Test compression can be enabled during identify."""
         sample_identify_payload["compress"] = True
         await opcode_handler.handle(

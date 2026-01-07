@@ -2,7 +2,6 @@
 Tests for request counting and limit enforcement.
 """
 
-
 from src.core.ratelimit.models import BucketType, RateLimitConfig, RateLimitAlgorithm
 from src.core.ratelimit.manager import RateLimitManager
 from src.core import ratelimit
@@ -18,7 +17,7 @@ class TestBasicLimitEnforcement:
                 user_id=test_user_id,
                 route="GET /test",
             )
-            assert result.allowed, f"Request {i+1} should be allowed"
+            assert result.allowed, f"Request {i + 1} should be allowed"
 
     def test_blocks_requests_over_limit(self, memory_storage, test_user_id):
         """Test requests over limit are blocked."""
@@ -38,7 +37,7 @@ class TestBasicLimitEnforcement:
                 user_id=test_user_id,
                 route="GET /test",
             )
-            assert result.allowed, f"Request {i+1} should be allowed"
+            assert result.allowed, f"Request {i + 1} should be allowed"
         result = manager.check_rate_limit(
             user_id=test_user_id,
             route="GET /test",
@@ -241,7 +240,9 @@ class TestRouteLimit:
 class TestResourceLimit:
     """Tests for per-resource rate limiting."""
 
-    def test_resource_limit_enforced(self, memory_storage, test_user_id, test_channel_id):
+    def test_resource_limit_enforced(
+        self, memory_storage, test_user_id, test_channel_id
+    ):
         """Test per-resource limit is enforced."""
         route_config = RateLimitConfig(
             requests=3,
@@ -269,7 +270,9 @@ class TestResourceLimit:
         )
         assert not result.allowed
 
-    def test_different_resources_have_separate_limits(self, memory_storage, test_user_id):
+    def test_different_resources_have_separate_limits(
+        self, memory_storage, test_user_id
+    ):
         """Test different resources have separate buckets."""
         route_config = RateLimitConfig(
             requests=3,
@@ -327,7 +330,7 @@ class TestHourlyLimit:
                 user_id=test_user_id,
                 route="GET /test",
             )
-            assert result.allowed, f"Request {i+1} should be allowed"
+            assert result.allowed, f"Request {i + 1} should be allowed"
         result = manager.check_rate_limit(
             user_id=test_user_id,
             route="GET /test",
@@ -357,7 +360,7 @@ class TestDailyLimit:
                 user_id=test_user_id,
                 route="GET /test",
             )
-            assert result.allowed, f"Request {i+1} should be allowed"
+            assert result.allowed, f"Request {i + 1} should be allowed"
         result = manager.check_rate_limit(
             user_id=test_user_id,
             route="GET /test",

@@ -31,8 +31,12 @@ class TestBypassAttempts:
             server_id=server.id,
             name="Keyword Block",
             rule_type=RuleType.KEYWORD,
-            rule_config={"keywords": ["badword"], "case_sensitive": False, "whole_word": True},
-            actions=[{"action_type": "delete_message"}]
+            rule_config={
+                "keywords": ["badword"],
+                "case_sensitive": False,
+                "whole_word": True,
+            },
+            actions=[{"action_type": "delete_message"}],
         )
 
         bypass_attempts = [
@@ -47,9 +51,9 @@ class TestBypassAttempts:
                 server_id=server.id,
                 channel_id=channel.id,
                 user_id=owner.id + 1,
-                content=content
+                content=content,
             )
-            
+
     def test_zero_width_character_bypass(self, automod_module, test_server_for_automod):
         """Test detection of zero-width characters in keywords."""
         server, channel, owner = test_server_for_automod
@@ -59,15 +63,19 @@ class TestBypassAttempts:
             server_id=server.id,
             name="Keyword Block",
             rule_type=RuleType.KEYWORD,
-            rule_config={"keywords": ["badword"], "case_sensitive": False, "whole_word": True},
-            actions=[{"action_type": "delete_message"}]
+            rule_config={
+                "keywords": ["badword"],
+                "case_sensitive": False,
+                "whole_word": True,
+            },
+            actions=[{"action_type": "delete_message"}],
         )
 
         bypass_attempts = [
-            "bad\u200Bword",  # Zero-width space
-            "bad\u200Cword",  # Zero-width non-joiner
-            "bad\u200Dword",  # Zero-width joiner
-            "bad\uFEFFword",  # Zero-width no-break space
+            "bad\u200bword",  # Zero-width space
+            "bad\u200cword",  # Zero-width non-joiner
+            "bad\u200dword",  # Zero-width joiner
+            "bad\ufeffword",  # Zero-width no-break space
         ]
 
         for content in bypass_attempts:
@@ -75,7 +83,7 @@ class TestBypassAttempts:
                 server_id=server.id,
                 channel_id=channel.id,
                 user_id=owner.id + 1,
-                content=content
+                content=content,
             )
 
     def test_homoglyph_bypass_attempt(self, automod_module, test_server_for_automod):
@@ -87,16 +95,20 @@ class TestBypassAttempts:
             server_id=server.id,
             name="Keyword Block",
             rule_type=RuleType.KEYWORD,
-            rule_config={"keywords": ["admin"], "case_sensitive": False, "whole_word": False},
-            actions=[{"action_type": "delete_message"}]
+            rule_config={
+                "keywords": ["admin"],
+                "case_sensitive": False,
+                "whole_word": False,
+            },
+            actions=[{"action_type": "delete_message"}],
         )
 
         bypass_attempts = [
-            "аdmin",   # Cyrillic a
-            "αdmin",   # Greek alpha
-            "ⲁdmin",   # Coptic alpha
-            "adṁin",   # Latin m with dot above
-            "admіn",   # Cyrillic i
+            "аdmin",  # Cyrillic a
+            "αdmin",  # Greek alpha
+            "ⲁdmin",  # Coptic alpha
+            "adṁin",  # Latin m with dot above
+            "admіn",  # Cyrillic i
         ]
 
         for content in bypass_attempts:
@@ -104,7 +116,7 @@ class TestBypassAttempts:
                 server_id=server.id,
                 channel_id=channel.id,
                 user_id=owner.id + 1,
-                content=f"Check this {content} account"
+                content=f"Check this {content} account",
             )
 
     def test_whitespace_padding_bypass(self, automod_module, test_server_for_automod):
@@ -116,16 +128,20 @@ class TestBypassAttempts:
             server_id=server.id,
             name="Keyword Block",
             rule_type=RuleType.KEYWORD,
-            rule_config={"keywords": ["badword"], "case_sensitive": False, "whole_word": True},
-            actions=[{"action_type": "delete_message"}]
+            rule_config={
+                "keywords": ["badword"],
+                "case_sensitive": False,
+                "whole_word": True,
+            },
+            actions=[{"action_type": "delete_message"}],
         )
 
         bypass_attempts = [
-            "bad word",   # Regular space
-            "bad\u00A0word",   # Non-breaking space
-            "bad\u2003word",   # Em space
-            "bad\u2009word",   # Thin space
-            "bad\t word",   # Tab + space
+            "bad word",  # Regular space
+            "bad\u00a0word",  # Non-breaking space
+            "bad\u2003word",  # Em space
+            "bad\u2009word",  # Thin space
+            "bad\t word",  # Tab + space
         ]
 
         for content in bypass_attempts:
@@ -133,7 +149,7 @@ class TestBypassAttempts:
                 server_id=server.id,
                 channel_id=channel.id,
                 user_id=owner.id + 1,
-                content=content
+                content=content,
             )
 
     def test_case_alternation_bypass(self, automod_module, test_server_for_automod):
@@ -145,22 +161,26 @@ class TestBypassAttempts:
             server_id=server.id,
             name="Keyword Block",
             rule_type=RuleType.KEYWORD,
-            rule_config={"keywords": ["badword"], "case_sensitive": False, "whole_word": True},
-            actions=[{"action_type": "delete_message"}]
+            rule_config={
+                "keywords": ["badword"],
+                "case_sensitive": False,
+                "whole_word": True,
+            },
+            actions=[{"action_type": "delete_message"}],
         )
 
         result = automod_module.check_message(
             server_id=server.id,
             channel_id=channel.id,
             user_id=owner.id + 1,
-            content="BaDwOrD"
+            content="BaDwOrD",
         )
 
         assert not result.passed
 
-
-
-    def test_repeated_character_obfuscation(self, automod_module, test_server_for_automod):
+    def test_repeated_character_obfuscation(
+        self, automod_module, test_server_for_automod
+    ):
         """Test detection of repeated character obfuscation."""
         server, channel, owner = test_server_for_automod
 
@@ -169,8 +189,12 @@ class TestBypassAttempts:
             server_id=server.id,
             name="Keyword Block",
             rule_type=RuleType.KEYWORD,
-            rule_config={"keywords": ["bad"], "case_sensitive": False, "whole_word": False},
-            actions=[{"action_type": "delete_message"}]
+            rule_config={
+                "keywords": ["bad"],
+                "case_sensitive": False,
+                "whole_word": False,
+            },
+            actions=[{"action_type": "delete_message"}],
         )
 
         bypass_attempts = [
@@ -185,7 +209,7 @@ class TestBypassAttempts:
                 server_id=server.id,
                 channel_id=channel.id,
                 user_id=owner.id + 1,
-                content=content
+                content=content,
             )
 
     def test_leet_speak_bypass(self, automod_module, test_server_for_automod):
@@ -197,8 +221,12 @@ class TestBypassAttempts:
             server_id=server.id,
             name="Keyword Block",
             rule_type=RuleType.KEYWORD,
-            rule_config={"keywords": ["badword"], "case_sensitive": False, "whole_word": True},
-            actions=[{"action_type": "delete_message"}]
+            rule_config={
+                "keywords": ["badword"],
+                "case_sensitive": False,
+                "whole_word": True,
+            },
+            actions=[{"action_type": "delete_message"}],
         )
 
         bypass_attempts = [
@@ -213,7 +241,7 @@ class TestBypassAttempts:
                 server_id=server.id,
                 channel_id=channel.id,
                 user_id=owner.id + 1,
-                content=content
+                content=content,
             )
 
 
@@ -221,8 +249,12 @@ class TestBypassAttempts:
 class TestPatternManipulation:
     """Tests for pattern manipulation and edge cases."""
 
-    @pytest.mark.skip(reason="ReDoS protection not implemented in RegexRule yet; this test hangs indefinitely")
-    def test_regex_dos_catastrophic_backtracking(self, automod_module, test_server_for_automod):
+    @pytest.mark.skip(
+        reason="ReDoS protection not implemented in RegexRule yet; this test hangs indefinitely"
+    )
+    def test_regex_dos_catastrophic_backtracking(
+        self, automod_module, test_server_for_automod
+    ):
         """Test protection against regex DoS via catastrophic backtracking."""
         server, channel, owner = test_server_for_automod
 
@@ -233,10 +265,14 @@ class TestPatternManipulation:
             rule_type=RuleType.REGEX,
             rule_config={
                 "patterns": [
-                    {"pattern": r"(a+)+b", "name": "potential_dos", "severity": "medium"}
+                    {
+                        "pattern": r"(a+)+b",
+                        "name": "potential_dos",
+                        "severity": "medium",
+                    }
                 ]
             },
-            actions=[{"action_type": "delete_message"}]
+            actions=[{"action_type": "delete_message"}],
         )
 
         # Skip actual execution until protection is implemented
@@ -260,14 +296,14 @@ class TestPatternManipulation:
                     {"pattern": r"x*", "name": "empty_match", "severity": "low"}
                 ]
             },
-            actions=[{"action_type": "delete_message"}]
+            actions=[{"action_type": "delete_message"}],
         )
 
         automod_module.check_message(
             server_id=server.id,
             channel_id=channel.id,
             user_id=owner.id + 1,
-            content="normal message"
+            content="normal message",
         )
 
     def test_regex_lookahead_bypass(self, automod_module, test_server_for_automod):
@@ -281,26 +317,40 @@ class TestPatternManipulation:
             rule_type=RuleType.REGEX,
             rule_config={
                 "patterns": [
-                    {"pattern": r"(?=.*password)(?=.*\d{4})", "name": "credential", "severity": "high"}
+                    {
+                        "pattern": r"(?=.*password)(?=.*\d{4})",
+                        "name": "credential",
+                        "severity": "high",
+                    }
                 ]
             },
-            actions=[{"action_type": "delete_message"}]
+            actions=[{"action_type": "delete_message"}],
         )
 
         result = automod_module.check_message(
             server_id=server.id,
             channel_id=channel.id,
             user_id=owner.id + 1,
-            content="my password is 1234"
+            content="my password is 1234",
         )
 
         assert not result.passed
 
-    def test_keyword_regex_escape_injection(self, automod_module, test_server_for_automod):
+    def test_keyword_regex_escape_injection(
+        self, automod_module, test_server_for_automod
+    ):
         """Test keywords with regex special characters are properly escaped."""
         server, channel, owner = test_server_for_automod
 
-        special_chars = ["$$$", "(scam)", "[bad]", "test.*", "^start", "end$", "dot.com"]
+        special_chars = [
+            "$$$",
+            "(scam)",
+            "[bad]",
+            "test.*",
+            "^start",
+            "end$",
+            "dot.com",
+        ]
 
         automod_module.create_rule(
             user_id=owner.id,
@@ -310,9 +360,9 @@ class TestPatternManipulation:
             rule_config={
                 "keywords": special_chars,
                 "case_sensitive": False,
-                "whole_word": False
+                "whole_word": False,
             },
-            actions=[{"action_type": "delete_message"}]
+            actions=[{"action_type": "delete_message"}],
         )
 
         for keyword in special_chars:
@@ -320,11 +370,13 @@ class TestPatternManipulation:
                 server_id=server.id,
                 channel_id=channel.id,
                 user_id=owner.id + 1,
-                content=f"Check this {keyword} out"
+                content=f"Check this {keyword} out",
             )
             assert not result.passed
 
-    def test_invalid_regex_pattern_handling(self, automod_module, test_server_for_automod):
+    def test_invalid_regex_pattern_handling(
+        self, automod_module, test_server_for_automod
+    ):
         """Test handling of invalid regex patterns."""
         server, channel, owner = test_server_for_automod
 
@@ -336,10 +388,14 @@ class TestPatternManipulation:
                 rule_type=RuleType.REGEX,
                 rule_config={
                     "patterns": [
-                        {"pattern": r"(?P<incomplete", "name": "bad", "severity": "medium"}
+                        {
+                            "pattern": r"(?P<incomplete",
+                            "name": "bad",
+                            "severity": "medium",
+                        }
                     ]
                 },
-                actions=[{"action_type": "delete_message"}]
+                actions=[{"action_type": "delete_message"}],
             )
 
     def test_multiple_pattern_priority(self, automod_module, test_server_for_automod):
@@ -354,17 +410,21 @@ class TestPatternManipulation:
             rule_config={
                 "patterns": [
                     {"pattern": r"test", "name": "low_sev", "severity": "low"},
-                    {"pattern": r"critical", "name": "high_sev", "severity": "critical"}
+                    {
+                        "pattern": r"critical",
+                        "name": "high_sev",
+                        "severity": "critical",
+                    },
                 ]
             },
-            actions=[{"action_type": "delete_message"}]
+            actions=[{"action_type": "delete_message"}],
         )
 
         result = automod_module.check_message(
             server_id=server.id,
             channel_id=channel.id,
             user_id=owner.id + 1,
-            content="test and critical content"
+            content="test and critical content",
         )
 
         assert not result.passed
@@ -375,7 +435,9 @@ class TestPatternManipulation:
 class TestFalsePositivesNegatives:
     """Tests for false positive and false negative scenarios."""
 
-    def test_false_positive_substring_match(self, automod_module, test_server_for_automod):
+    def test_false_positive_substring_match(
+        self, automod_module, test_server_for_automod
+    ):
         """Test false positives from substring matches."""
         server, channel, owner = test_server_for_automod
 
@@ -387,9 +449,9 @@ class TestFalsePositivesNegatives:
             rule_config={
                 "keywords": ["ass"],
                 "case_sensitive": False,
-                "whole_word": True
+                "whole_word": True,
             },
-            actions=[{"action_type": "delete_message"}]
+            actions=[{"action_type": "delete_message"}],
         )
 
         legitimate_words = [
@@ -398,7 +460,7 @@ class TestFalsePositivesNegatives:
             "assistant",
             "assessment",
             "classical",
-            "grassland"
+            "grassland",
         ]
 
         for word in legitimate_words:
@@ -406,11 +468,13 @@ class TestFalsePositivesNegatives:
                 server_id=server.id,
                 channel_id=channel.id,
                 user_id=owner.id + 1,
-                content=f"I love {word} activities"
+                content=f"I love {word} activities",
             )
             assert result.passed
 
-    def test_false_negative_context_dependent(self, automod_module, test_server_for_automod):
+    def test_false_negative_context_dependent(
+        self, automod_module, test_server_for_automod
+    ):
         """Test potential false negatives in context-dependent messages."""
         server, channel, owner = test_server_for_automod
 
@@ -422,9 +486,9 @@ class TestFalsePositivesNegatives:
             rule_config={
                 "keywords": ["idiot", "stupid", "dumb"],
                 "case_sensitive": False,
-                "whole_word": True
+                "whole_word": True,
             },
-            actions=[{"action_type": "delete_message"}]
+            actions=[{"action_type": "delete_message"}],
         )
 
         indirect_insults = [
@@ -438,10 +502,12 @@ class TestFalsePositivesNegatives:
                 server_id=server.id,
                 channel_id=channel.id,
                 user_id=owner.id + 1,
-                content=content
+                content=content,
             )
 
-    def test_false_positive_technical_content(self, automod_module, test_server_for_automod):
+    def test_false_positive_technical_content(
+        self, automod_module, test_server_for_automod
+    ):
         """Test false positives with technical/programming content."""
         server, channel, owner = test_server_for_automod
 
@@ -455,13 +521,13 @@ class TestFalsePositivesNegatives:
                     {"pattern": r"https?://", "name": "link", "severity": "low"}
                 ]
             },
-            actions=[{"action_type": "delete_message"}]
+            actions=[{"action_type": "delete_message"}],
         )
 
         technical_content = [
             "Use https://example.com for testing",
             "Protocol is http://localhost:8080",
-            "API endpoint: https://api.service.com/v1/users"
+            "API endpoint: https://api.service.com/v1/users",
         ]
 
         for content in technical_content:
@@ -469,11 +535,13 @@ class TestFalsePositivesNegatives:
                 server_id=server.id,
                 channel_id=channel.id,
                 user_id=owner.id + 1,
-                content=content
+                content=content,
             )
             assert not result.passed
 
-    def test_false_negative_encoded_content(self, automod_module, test_server_for_automod):
+    def test_false_negative_encoded_content(
+        self, automod_module, test_server_for_automod
+    ):
         """Test detection of base64/hex encoded malicious content."""
         server, channel, owner = test_server_for_automod
 
@@ -485,9 +553,9 @@ class TestFalsePositivesNegatives:
             rule_config={
                 "keywords": ["badword"],
                 "case_sensitive": False,
-                "whole_word": True
+                "whole_word": True,
             },
-            actions=[{"action_type": "delete_message"}]
+            actions=[{"action_type": "delete_message"}],
         )
 
         encoded_content = [
@@ -501,10 +569,12 @@ class TestFalsePositivesNegatives:
                 server_id=server.id,
                 channel_id=channel.id,
                 user_id=owner.id + 1,
-                content=content
+                content=content,
             )
 
-    def test_false_positive_medical_scientific(self, automod_module, test_server_for_automod):
+    def test_false_positive_medical_scientific(
+        self, automod_module, test_server_for_automod
+    ):
         """Test false positives with medical/scientific terminology."""
         server, channel, owner = test_server_for_automod
 
@@ -516,15 +586,15 @@ class TestFalsePositivesNegatives:
             rule_config={
                 "keywords": ["die", "kill", "suicide"],
                 "case_sensitive": False,
-                "whole_word": True
+                "whole_word": True,
             },
-            actions=[{"action_type": "delete_message"}]
+            actions=[{"action_type": "delete_message"}],
         )
 
         scientific_content = [
             "The cell will die without nutrients",
             "This chemical can kill bacteria",
-            "Study on suicide prevention methods"
+            "Study on suicide prevention methods",
         ]
 
         for content in scientific_content:
@@ -532,7 +602,7 @@ class TestFalsePositivesNegatives:
                 server_id=server.id,
                 channel_id=channel.id,
                 user_id=owner.id + 1,
-                content=content
+                content=content,
             )
             assert not result.passed
 
@@ -542,7 +612,9 @@ class TestAIModelExploitation:
     """Tests for AI model exploitation and adversarial attacks."""
 
     @patch("src.core.automod.ai.openai.urlopen")
-    def test_ai_adversarial_prompt_injection(self, mock_urlopen, automod_module, test_server_for_automod):
+    def test_ai_adversarial_prompt_injection(
+        self, mock_urlopen, automod_module, test_server_for_automod
+    ):
         """Test AI model against adversarial prompt injection."""
         server, channel, owner = test_server_for_automod
 
@@ -561,16 +633,15 @@ class TestAIModelExploitation:
 
         for prompt in adversarial_prompts:
             try:
-                automod_module.check_ai(
-                    content=prompt,
-                    backend="openai"
-                )
+                automod_module.check_ai(content=prompt, backend="openai")
             except Exception:
                 pass
 
     @patch("src.core.automod.ai.openai.urlopen")
     @pytest.mark.skip(reason="AI backend not configured")
-    def test_ai_token_limit_exploitation(self, mock_urlopen, automod_module, test_server_for_automod):
+    def test_ai_token_limit_exploitation(
+        self, mock_urlopen, automod_module, test_server_for_automod
+    ):
         """Test AI model with extremely long input."""
         server, channel, owner = test_server_for_automod
 
@@ -583,10 +654,7 @@ class TestAIModelExploitation:
         long_content = "test " * 100000
 
         try:
-            automod_module.check_ai(
-                content=long_content,
-                backend="openai"
-            )
+            automod_module.check_ai(content=long_content, backend="openai")
         except Exception:
             pass
 
@@ -600,17 +668,14 @@ class TestAIModelExploitation:
         mock_urlopen.return_value = mock_response
 
         unicode_attacks = [
-            "\u202E" + "innocent text" + "\u202D",  # Right-to-left override
+            "\u202e" + "innocent text" + "\u202d",  # Right-to-left override
             "ﬁ" + "lter",  # Ligature
             "e\u0301",  # Combining acute accent
         ]
 
         for content in unicode_attacks:
             try:
-                automod_module.check_ai(
-                    content=content,
-                    backend="openai"
-                )
+                automod_module.check_ai(content=content, backend="openai")
             except Exception:
                 pass
 
@@ -625,10 +690,7 @@ class TestAIModelExploitation:
         mock_urlopen.return_value = mock_response
 
         with pytest.raises(AIBackendError):
-            automod_module.check_ai(
-                content="test content",
-                backend="openai"
-            )
+            automod_module.check_ai(content="test content", backend="openai")
 
     @patch("src.core.automod.ai.openai.urlopen")
     def test_ai_malformed_response_handling(self, mock_urlopen, automod_module):
@@ -640,10 +702,7 @@ class TestAIModelExploitation:
         mock_urlopen.return_value = mock_response
 
         with pytest.raises(AIBackendError):
-            automod_module.check_ai(
-                content="test content",
-                backend="openai"
-            )
+            automod_module.check_ai(content="test content", backend="openai")
 
     @patch("src.core.automod.ai.openai.urlopen")
     @pytest.mark.skip(reason="AI backend not configured")
@@ -656,10 +715,7 @@ class TestAIModelExploitation:
         mock_response.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_response
 
-        result = automod_module.check_ai(
-            content="borderline content",
-            backend="openai"
-        )
+        result = automod_module.check_ai(content="borderline content", backend="openai")
 
         assert not result.flagged
 
@@ -668,7 +724,9 @@ class TestAIModelExploitation:
 class TestRuleExemptionAbuse:
     """Tests for rule exemption system abuse and privilege escalation."""
 
-    def test_exemption_stacking_prevention(self, automod_module, test_server_for_automod, modules, user_pool):
+    def test_exemption_stacking_prevention(
+        self, automod_module, test_server_for_automod, modules, user_pool
+    ):
         """Test prevention of duplicate exemptions."""
         server, channel, owner = test_server_for_automod
         user = user_pool.get_user()
@@ -676,10 +734,7 @@ class TestRuleExemptionAbuse:
         modules.servers.add_member(server.id, user.id)
 
         role = modules.servers.create_role(
-            user_id=owner.id,
-            server_id=server.id,
-            name="Test Role",
-            permissions={}
+            user_id=owner.id, server_id=server.id, name="Test Role", permissions={}
         )
 
         automod_module.add_exemption(
@@ -687,7 +742,7 @@ class TestRuleExemptionAbuse:
             server_id=server.id,
             target_type="role",
             target_id=role.id,
-            rule_id=None
+            rule_id=None,
         )
 
         with pytest.raises(ExemptionError):
@@ -696,10 +751,12 @@ class TestRuleExemptionAbuse:
                 server_id=server.id,
                 target_type="role",
                 target_id=role.id,
-                rule_id=None
+                rule_id=None,
             )
 
-    def test_unauthorized_exemption_creation(self, automod_module, test_server_for_automod, modules, user_pool):
+    def test_unauthorized_exemption_creation(
+        self, automod_module, test_server_for_automod, modules, user_pool
+    ):
         """Test that non-moderators cannot create exemptions."""
         server, channel, owner = test_server_for_automod
         regular_user = user_pool.get_user()
@@ -707,10 +764,7 @@ class TestRuleExemptionAbuse:
         modules.servers.add_member(server.id, regular_user.id)
 
         role = modules.servers.create_role(
-            user_id=owner.id,
-            server_id=server.id,
-            name="Regular Role",
-            permissions={}
+            user_id=owner.id, server_id=server.id, name="Regular Role", permissions={}
         )
 
         try:
@@ -719,12 +773,14 @@ class TestRuleExemptionAbuse:
                 server_id=server.id,
                 target_type="role",
                 target_id=role.id,
-                rule_id=None
+                rule_id=None,
             )
         except Exception:
             pass
 
-    def test_exemption_rule_specificity(self, automod_module, test_server_for_automod, modules, user_pool):
+    def test_exemption_rule_specificity(
+        self, automod_module, test_server_for_automod, modules, user_pool
+    ):
         """Test that rule-specific exemptions don't override all rules."""
         server, channel, owner = test_server_for_automod
         user = user_pool.get_user()
@@ -732,10 +788,7 @@ class TestRuleExemptionAbuse:
         modules.servers.add_member(server.id, user.id)
 
         role = modules.servers.create_role(
-            user_id=owner.id,
-            server_id=server.id,
-            name="Exempt Role",
-            permissions={}
+            user_id=owner.id, server_id=server.id, name="Exempt Role", permissions={}
         )
 
         modules.servers.assign_role(owner.id, server.id, user.id, role.id)
@@ -745,8 +798,12 @@ class TestRuleExemptionAbuse:
             server_id=server.id,
             name="Rule 1",
             rule_type=RuleType.KEYWORD,
-            rule_config={"keywords": ["test1"], "case_sensitive": False, "whole_word": True},
-            actions=[{"action_type": "delete_message"}]
+            rule_config={
+                "keywords": ["test1"],
+                "case_sensitive": False,
+                "whole_word": True,
+            },
+            actions=[{"action_type": "delete_message"}],
         )
 
         automod_module.create_rule(
@@ -754,8 +811,12 @@ class TestRuleExemptionAbuse:
             server_id=server.id,
             name="Rule 2",
             rule_type=RuleType.KEYWORD,
-            rule_config={"keywords": ["test2"], "case_sensitive": False, "whole_word": True},
-            actions=[{"action_type": "delete_message"}]
+            rule_config={
+                "keywords": ["test2"],
+                "case_sensitive": False,
+                "whole_word": True,
+            },
+            actions=[{"action_type": "delete_message"}],
         )
 
         automod_module.add_exemption(
@@ -763,14 +824,14 @@ class TestRuleExemptionAbuse:
             server_id=server.id,
             target_type="role",
             target_id=role.id,
-            rule_id=rule1.id
+            rule_id=rule1.id,
         )
 
         result1 = automod_module.check_message(
             server_id=server.id,
             channel_id=channel.id,
             user_id=user.id,
-            content="test1 message"
+            content="test1 message",
         )
         assert result1.passed
 
@@ -778,11 +839,13 @@ class TestRuleExemptionAbuse:
             server_id=server.id,
             channel_id=channel.id,
             user_id=user.id,
-            content="test2 message"
+            content="test2 message",
         )
         assert not result2.passed
 
-    def test_channel_exemption_isolation(self, automod_module, test_server_for_automod, modules):
+    def test_channel_exemption_isolation(
+        self, automod_module, test_server_for_automod, modules
+    ):
         """Test that channel exemptions don't leak to other channels."""
         server, channel, owner = test_server_for_automod
 
@@ -790,7 +853,7 @@ class TestRuleExemptionAbuse:
             user_id=owner.id,
             server_id=server.id,
             name="channel2",
-            channel_type=modules.servers.ChannelType.TEXT
+            channel_type=modules.servers.ChannelType.TEXT,
         )
 
         automod_module.create_rule(
@@ -798,16 +861,20 @@ class TestRuleExemptionAbuse:
             server_id=server.id,
             name="Test Rule",
             rule_type=RuleType.KEYWORD,
-            rule_config={"keywords": ["test"], "case_sensitive": False, "whole_word": True},
+            rule_config={
+                "keywords": ["test"],
+                "case_sensitive": False,
+                "whole_word": True,
+            },
             actions=[{"action_type": "delete_message"}],
-            exempt_channels=[channel.id]
+            exempt_channels=[channel.id],
         )
 
         result_exempt = automod_module.check_message(
             server_id=server.id,
             channel_id=channel.id,
             user_id=owner.id + 1,
-            content="test message"
+            content="test message",
         )
         assert result_exempt.passed
 
@@ -815,11 +882,13 @@ class TestRuleExemptionAbuse:
             server_id=server.id,
             channel_id=channel2.id,
             user_id=owner.id + 1,
-            content="test message"
+            content="test message",
         )
         assert not result_not_exempt.passed
 
-    def test_role_hierarchy_exemption_bypass(self, automod_module, test_server_for_automod, modules, user_pool):
+    def test_role_hierarchy_exemption_bypass(
+        self, automod_module, test_server_for_automod, modules, user_pool
+    ):
         """Test that lower role users cannot bypass higher role exemptions."""
         server, channel, owner = test_server_for_automod
         user = user_pool.get_user()
@@ -827,17 +896,11 @@ class TestRuleExemptionAbuse:
         modules.servers.add_member(server.id, user.id)
 
         low_role = modules.servers.create_role(
-            user_id=owner.id,
-            server_id=server.id,
-            name="Low Role",
-            permissions={}
+            user_id=owner.id, server_id=server.id, name="Low Role", permissions={}
         )
 
         high_role = modules.servers.create_role(
-            user_id=owner.id,
-            server_id=server.id,
-            name="High Role",
-            permissions={}
+            user_id=owner.id, server_id=server.id, name="High Role", permissions={}
         )
 
         modules.servers.assign_role(owner.id, server.id, user.id, low_role.id)
@@ -847,20 +910,26 @@ class TestRuleExemptionAbuse:
             server_id=server.id,
             name="Test Rule",
             rule_type=RuleType.KEYWORD,
-            rule_config={"keywords": ["test"], "case_sensitive": False, "whole_word": True},
+            rule_config={
+                "keywords": ["test"],
+                "case_sensitive": False,
+                "whole_word": True,
+            },
             actions=[{"action_type": "delete_message"}],
-            exempt_roles=[high_role.id]
+            exempt_roles=[high_role.id],
         )
 
         result = automod_module.check_message(
             server_id=server.id,
             channel_id=channel.id,
             user_id=user.id,
-            content="test message"
+            content="test message",
         )
         assert not result.passed
 
-    def test_removed_exemption_enforcement(self, automod_module, test_server_for_automod, modules, user_pool):
+    def test_removed_exemption_enforcement(
+        self, automod_module, test_server_for_automod, modules, user_pool
+    ):
         """Test that removed exemptions are immediately enforced."""
         server, channel, owner = test_server_for_automod
         user = user_pool.get_user()
@@ -868,10 +937,7 @@ class TestRuleExemptionAbuse:
         modules.servers.add_member(server.id, user.id)
 
         role = modules.servers.create_role(
-            user_id=owner.id,
-            server_id=server.id,
-            name="Temp Exempt",
-            permissions={}
+            user_id=owner.id, server_id=server.id, name="Temp Exempt", permissions={}
         )
 
         modules.servers.assign_role(owner.id, server.id, user.id, role.id)
@@ -881,7 +947,7 @@ class TestRuleExemptionAbuse:
             server_id=server.id,
             target_type="role",
             target_id=role.id,
-            rule_id=None
+            rule_id=None,
         )
 
         automod_module.create_rule(
@@ -889,15 +955,19 @@ class TestRuleExemptionAbuse:
             server_id=server.id,
             name="Test Rule",
             rule_type=RuleType.KEYWORD,
-            rule_config={"keywords": ["test"], "case_sensitive": False, "whole_word": True},
-            actions=[{"action_type": "delete_message"}]
+            rule_config={
+                "keywords": ["test"],
+                "case_sensitive": False,
+                "whole_word": True,
+            },
+            actions=[{"action_type": "delete_message"}],
         )
 
         result_exempt = automod_module.check_message(
             server_id=server.id,
             channel_id=channel.id,
             user_id=user.id,
-            content="test message"
+            content="test message",
         )
         assert result_exempt.passed
 
@@ -907,11 +977,13 @@ class TestRuleExemptionAbuse:
             server_id=server.id,
             channel_id=channel.id,
             user_id=user.id,
-            content="test message"
+            content="test message",
         )
         assert not result_not_exempt.passed
 
-    def test_admin_role_automatic_exemption(self, automod_module, test_server_for_automod, modules, user_pool):
+    def test_admin_role_automatic_exemption(
+        self, automod_module, test_server_for_automod, modules, user_pool
+    ):
         """Test that admin roles are automatically exempt."""
         server, channel, owner = test_server_for_automod
         user = user_pool.get_user()
@@ -922,7 +994,7 @@ class TestRuleExemptionAbuse:
             user_id=owner.id,
             server_id=server.id,
             name="Admin",
-            permissions={"administrator": True}
+            permissions={"administrator": True},
         )
 
         modules.servers.assign_role(owner.id, server.id, user.id, admin_role.id)
@@ -932,15 +1004,19 @@ class TestRuleExemptionAbuse:
             server_id=server.id,
             name="Test Rule",
             rule_type=RuleType.KEYWORD,
-            rule_config={"keywords": ["test"], "case_sensitive": False, "whole_word": True},
-            actions=[{"action_type": "delete_message"}]
+            rule_config={
+                "keywords": ["test"],
+                "case_sensitive": False,
+                "whole_word": True,
+            },
+            actions=[{"action_type": "delete_message"}],
         )
 
         result = automod_module.check_message(
             server_id=server.id,
             channel_id=channel.id,
             user_id=user.id,
-            content="test message"
+            content="test message",
         )
         assert result.passed
 
@@ -949,7 +1025,9 @@ class TestRuleExemptionAbuse:
 class TestRateLimitBypass:
     """Tests for rate limit bypass attempts."""
 
-    def test_distributed_spam_attack(self, automod_module, test_server_for_automod, modules, user_pool):
+    def test_distributed_spam_attack(
+        self, automod_module, test_server_for_automod, modules, user_pool
+    ):
         """Test detection of distributed spam from multiple users."""
         server, channel, owner = test_server_for_automod
 
@@ -962,9 +1040,9 @@ class TestRateLimitBypass:
                 "max_messages": 5,
                 "window_seconds": 10,
                 "duplicate_threshold": 100,
-                "duplicate_window_seconds": 1
+                "duplicate_window_seconds": 1,
             },
-            actions=[{"action_type": "timeout_user", "duration_seconds": 60}]
+            actions=[{"action_type": "timeout_user", "duration_seconds": 60}],
         )
 
         users = [user_pool.get_user() for _ in range(10)]
@@ -978,7 +1056,7 @@ class TestRateLimitBypass:
                     channel_id=channel.id,
                     user_id=user.id,
                     content=f"spam message {i}",
-                    context={"timestamp": time.time() * 1000}
+                    context={"timestamp": time.time() * 1000},
                 )
 
     def test_burst_then_pause_pattern(self, automod_module, test_server_for_automod):
@@ -994,9 +1072,9 @@ class TestRateLimitBypass:
                 "max_messages": 3,
                 "window_seconds": 5,
                 "duplicate_threshold": 100,
-                "duplicate_window_seconds": 1
+                "duplicate_window_seconds": 1,
             },
-            actions=[{"action_type": "timeout_user", "duration_seconds": 60}]
+            actions=[{"action_type": "timeout_user", "duration_seconds": 60}],
         )
 
         now = time.time() * 1000
@@ -1007,7 +1085,7 @@ class TestRateLimitBypass:
                 channel_id=channel.id,
                 user_id=owner.id + 1,
                 content=f"message {i}",
-                context={"timestamp": now + i * 100}
+                context={"timestamp": now + i * 100},
             )
 
         automod_module.check_message(
@@ -1015,9 +1093,8 @@ class TestRateLimitBypass:
             channel_id=channel.id,
             user_id=owner.id + 1,
             content="message after pause",
-            context={"timestamp": now + 6000}
+            context={"timestamp": now + 6000},
         )
-
 
     @pytest.mark.skip(reason="Rate limit logic mismatch")
     def test_slow_spam_under_threshold(self, automod_module, test_server_for_automod):
@@ -1033,9 +1110,9 @@ class TestRateLimitBypass:
                 "max_messages": 5,
                 "window_seconds": 10,
                 "duplicate_threshold": 100,
-                "duplicate_window_seconds": 1
+                "duplicate_window_seconds": 1,
             },
-            actions=[{"action_type": "timeout_user", "duration_seconds": 60}]
+            actions=[{"action_type": "timeout_user", "duration_seconds": 60}],
         )
 
         now = time.time() * 1000
@@ -1046,7 +1123,7 @@ class TestRateLimitBypass:
                 channel_id=channel.id,
                 user_id=owner.id + 1,
                 content=f"slow spam {i}",
-                context={"timestamp": now + i * 2500}
+                context={"timestamp": now + i * 2500},
             )
 
 
@@ -1065,22 +1142,28 @@ class TestRepresentationManipulation:
             rule_type=RuleType.REGEX,
             rule_config={
                 "patterns": [
-                    {"pattern": r"malicious\.com", "name": "bad_domain", "severity": "high"}
+                    {
+                        "pattern": r"malicious\.com",
+                        "name": "bad_domain",
+                        "severity": "high",
+                    }
                 ]
             },
-            actions=[{"action_type": "delete_message"}]
+            actions=[{"action_type": "delete_message"}],
         )
 
-        rtl_content = "Visit moc.suoicilam\u202E://https"
+        rtl_content = "Visit moc.suoicilam\u202e://https"
 
         automod_module.check_message(
             server_id=server.id,
             channel_id=channel.id,
             user_id=owner.id + 1,
-            content=rtl_content
+            content=rtl_content,
         )
 
-    def test_combining_character_overflow(self, automod_module, test_server_for_automod):
+    def test_combining_character_overflow(
+        self, automod_module, test_server_for_automod
+    ):
         """Test combining character overflow/zalgo text."""
         server, channel, owner = test_server_for_automod
 
@@ -1089,8 +1172,12 @@ class TestRepresentationManipulation:
             server_id=server.id,
             name="Keyword Block",
             rule_type=RuleType.KEYWORD,
-            rule_config={"keywords": ["bad"], "case_sensitive": False, "whole_word": False},
-            actions=[{"action_type": "delete_message"}]
+            rule_config={
+                "keywords": ["bad"],
+                "case_sensitive": False,
+                "whole_word": False,
+            },
+            actions=[{"action_type": "delete_message"}],
         )
 
         zalgo_text = "b" + "\u0301" * 10 + "a" + "\u0308" * 10 + "d"
@@ -1099,7 +1186,7 @@ class TestRepresentationManipulation:
             server_id=server.id,
             channel_id=channel.id,
             user_id=owner.id + 1,
-            content=zalgo_text
+            content=zalgo_text,
         )
 
     def test_markdown_exploitation(self, automod_module, test_server_for_automod):
@@ -1116,7 +1203,7 @@ class TestRepresentationManipulation:
                     {"pattern": r"https?://", "name": "link", "severity": "medium"}
                 ]
             },
-            actions=[{"action_type": "delete_message"}]
+            actions=[{"action_type": "delete_message"}],
         )
 
         markdown_attacks = [
@@ -1131,6 +1218,6 @@ class TestRepresentationManipulation:
                 server_id=server.id,
                 channel_id=channel.id,
                 user_id=owner.id + 1,
-                content=content
+                content=content,
             )
             assert not result.passed

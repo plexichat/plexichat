@@ -30,7 +30,7 @@ class TestMessageSpamRule:
             channel_id=channel.id,
             user_id=owner.id,
             content="Another message",
-            context={"recent_messages": recent_messages}
+            context={"recent_messages": recent_messages},
         )
 
         assert not result.passed
@@ -43,8 +43,16 @@ class TestMessageSpamRule:
         now = int(time.time() * 1000)
         duplicate_content = "This is duplicate content"
         recent_messages = [
-            {"user_id": owner.id, "created_at": now - 5000, "content": duplicate_content},
-            {"user_id": owner.id, "created_at": now - 10000, "content": duplicate_content},
+            {
+                "user_id": owner.id,
+                "created_at": now - 5000,
+                "content": duplicate_content,
+            },
+            {
+                "user_id": owner.id,
+                "created_at": now - 10000,
+                "content": duplicate_content,
+            },
         ]
 
         result = automod.check_message(
@@ -52,7 +60,7 @@ class TestMessageSpamRule:
             channel_id=channel.id,
             user_id=owner.id,
             content=duplicate_content,
-            context={"recent_messages": recent_messages}
+            context={"recent_messages": recent_messages},
         )
 
         assert not result.passed
@@ -71,7 +79,7 @@ class TestMessageSpamRule:
             channel_id=channel.id,
             user_id=owner.id,
             content="Normal message",
-            context={"recent_messages": recent_messages}
+            context={"recent_messages": recent_messages},
         )
 
         assert result.passed
@@ -93,7 +101,7 @@ class TestMessageSpamRule:
             channel_id=channel.id,
             user_id=owner.id,
             content="My message",
-            context={"recent_messages": recent_messages}
+            context={"recent_messages": recent_messages},
         )
 
         assert result.passed
@@ -105,26 +113,20 @@ class TestMessageSpamRuleValidation:
 
     def test_valid_config(self):
         """Test valid configuration passes."""
-        valid, issues = MessageSpamRule.validate_config({
-            "max_messages": 5,
-            "window_seconds": 10,
-            "duplicate_threshold": 3
-        })
+        valid, issues = MessageSpamRule.validate_config(
+            {"max_messages": 5, "window_seconds": 10, "duplicate_threshold": 3}
+        )
 
         assert valid
 
     def test_invalid_max_messages(self):
         """Test invalid max_messages fails."""
-        valid, issues = MessageSpamRule.validate_config({
-            "max_messages": 0
-        })
+        valid, issues = MessageSpamRule.validate_config({"max_messages": 0})
 
         assert not valid
 
     def test_invalid_similarity_threshold(self):
         """Test invalid similarity threshold fails."""
-        valid, issues = MessageSpamRule.validate_config({
-            "similarity_threshold": 1.5
-        })
+        valid, issues = MessageSpamRule.validate_config({"similarity_threshold": 1.5})
 
         assert not valid

@@ -15,37 +15,44 @@ class TestEdgeCases:
         """Test checking empty content."""
         server, channel, owner = test_server_for_automod
 
-        rule = automod_module.create_rule(
+        automod_module.create_rule(
             user_id=owner.id,
             server_id=server.id,
             name="Test",
             rule_type=RuleType.KEYWORD,
-            rule_config={"keywords": ["test"], "case_sensitive": False, "whole_word": True},
-            actions=[{"action_type": "log_only"}]
+            rule_config={
+                "keywords": ["test"],
+                "case_sensitive": False,
+                "whole_word": True,
+            },
+            actions=[{"action_type": "log_only"}],
         )
 
         result = automod_module.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
-            user_id=owner.id,
-            content=""
+            server_id=server.id, channel_id=channel.id, user_id=owner.id, content=""
         )
 
         assert result.passed
 
-    def test_very_long_content(self, automod_module, test_server_for_automod, user_pool, modules):
+    def test_very_long_content(
+        self, automod_module, test_server_for_automod, user_pool, modules
+    ):
         """Test checking very long content."""
         server, channel, owner = test_server_for_automod
         member = user_pool.get_user()
         modules.servers.add_member(server.id, member.id)
 
-        rule = automod_module.create_rule(
+        automod_module.create_rule(
             user_id=owner.id,
             server_id=server.id,
             name="Test",
             rule_type=RuleType.KEYWORD,
-            rule_config={"keywords": ["bad"], "case_sensitive": False, "whole_word": True},
-            actions=[{"action_type": "log_only"}]
+            rule_config={
+                "keywords": ["bad"],
+                "case_sensitive": False,
+                "whole_word": True,
+            },
+            actions=[{"action_type": "log_only"}],
         )
 
         long_content = "a" * 10000 + " bad " + "b" * 10000
@@ -54,7 +61,7 @@ class TestEdgeCases:
             server_id=server.id,
             channel_id=channel.id,
             user_id=member.id,
-            content=long_content
+            content=long_content,
         )
 
         assert not result.passed
@@ -70,7 +77,7 @@ class TestEdgeCases:
                 name="Invalid",
                 rule_type=RuleType.KEYWORD,
                 rule_config={"keywords": "not a list"},
-                actions=[{"action_type": "log_only"}]
+                actions=[{"action_type": "log_only"}],
             )
 
     def test_invalid_action_type(self, automod_module, test_server_for_automod):
@@ -83,8 +90,12 @@ class TestEdgeCases:
                 server_id=server.id,
                 name="Invalid Action",
                 rule_type=RuleType.KEYWORD,
-                rule_config={"keywords": ["test"], "case_sensitive": False, "whole_word": True},
-                actions=[{"action_type": "invalid_action"}]
+                rule_config={
+                    "keywords": ["test"],
+                    "case_sensitive": False,
+                    "whole_word": True,
+                },
+                actions=[{"action_type": "invalid_action"}],
             )
 
     def test_update_nonexistent_rule(self, automod_module, test_server_for_automod):
@@ -92,11 +103,7 @@ class TestEdgeCases:
         server, channel, owner = test_server_for_automod
 
         with pytest.raises(RuleNotFoundError):
-            automod_module.update_rule(
-                user_id=owner.id,
-                rule_id=999999,
-                name="Updated"
-            )
+            automod_module.update_rule(user_id=owner.id, rule_id=999999, name="Updated")
 
     def test_delete_nonexistent_rule(self, automod_module, test_server_for_automod):
         """Test deleting a rule that doesn't exist."""
@@ -105,50 +112,62 @@ class TestEdgeCases:
         with pytest.raises(RuleNotFoundError):
             automod_module.delete_rule(owner.id, 999999)
 
-    def test_unicode_content(self, automod_module, test_server_for_automod, user_pool, modules):
+    def test_unicode_content(
+        self, automod_module, test_server_for_automod, user_pool, modules
+    ):
         """Test handling unicode content."""
         server, channel, owner = test_server_for_automod
         member = user_pool.get_user()
         modules.servers.add_member(server.id, member.id)
 
-        rule = automod_module.create_rule(
+        automod_module.create_rule(
             user_id=owner.id,
             server_id=server.id,
             name="Unicode Test",
             rule_type=RuleType.KEYWORD,
-            rule_config={"keywords": ["test"], "case_sensitive": False, "whole_word": True},
-            actions=[{"action_type": "log_only"}]
+            rule_config={
+                "keywords": ["test"],
+                "case_sensitive": False,
+                "whole_word": True,
+            },
+            actions=[{"action_type": "log_only"}],
         )
 
         result = automod_module.check_message(
             server_id=server.id,
             channel_id=channel.id,
             user_id=member.id,
-            content="Hello 世界 test 🎉"
+            content="Hello 世界 test 🎉",
         )
 
         assert not result.passed
 
-    def test_special_regex_characters(self, automod_module, test_server_for_automod, user_pool, modules):
+    def test_special_regex_characters(
+        self, automod_module, test_server_for_automod, user_pool, modules
+    ):
         """Test keywords with special regex characters."""
         server, channel, owner = test_server_for_automod
         member = user_pool.get_user()
         modules.servers.add_member(server.id, member.id)
 
-        rule = automod_module.create_rule(
+        automod_module.create_rule(
             user_id=owner.id,
             server_id=server.id,
             name="Special Chars",
             rule_type=RuleType.KEYWORD,
-            rule_config={"keywords": ["$$$", "(test)"], "case_sensitive": False, "whole_word": False},
-            actions=[{"action_type": "log_only"}]
+            rule_config={
+                "keywords": ["$$$", "(test)"],
+                "case_sensitive": False,
+                "whole_word": False,
+            },
+            actions=[{"action_type": "log_only"}],
         )
 
         result = automod_module.check_message(
             server_id=server.id,
             channel_id=channel.id,
             user_id=member.id,
-            content="Get $$$ now!"
+            content="Get $$$ now!",
         )
 
         assert not result.passed
@@ -161,7 +180,7 @@ class TestEdgeCases:
             server_id=server.id,
             channel_id=channel.id,
             user_id=owner.id,
-            content="any content"
+            content="any content",
         )
 
         assert result.passed

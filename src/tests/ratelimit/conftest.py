@@ -15,13 +15,13 @@ for path in [project_root, src_path, common_utils_path]:
     if path not in sys.path:
         sys.path.insert(0, path)
 
-from src.core.ratelimit.models import (
+from src.core.ratelimit.models import (  # noqa: E402
     RateLimitConfig,
     RateLimitAlgorithm,
 )
-from src.core.ratelimit.storage import MemoryStorage
-from src.core.ratelimit.manager import RateLimitManager
-from src.core import ratelimit
+from src.core.ratelimit.storage import MemoryStorage  # noqa: E402
+from src.core.ratelimit.manager import RateLimitManager  # noqa: E402
+from src.core import ratelimit  # noqa: E402
 
 
 @pytest.fixture
@@ -127,6 +127,7 @@ def setup_ratelimit(memory_storage):
 @pytest.fixture
 def mock_request():
     """Create a mock request object."""
+
     class MockUser:
         def __init__(self, user_id=12345, token_type="user", permissions=None):
             self.user_id = user_id

@@ -29,7 +29,7 @@ class TestUploadSound:
             size=100000,
             duration_seconds=2.0,
             emoji="loudspeaker",
-            volume=0.8
+            volume=0.8,
         )
 
         assert sound is not None
@@ -50,7 +50,7 @@ class TestUploadSound:
             format=SoundFormat.OGG,
             url="https://cdn.example.com/sounds/test.ogg",
             size=50000,
-            duration_seconds=1.5
+            duration_seconds=1.5,
         )
 
         assert sound.format == SoundFormat.OGG
@@ -67,7 +67,7 @@ class TestUploadSound:
                 format=SoundFormat.MP3,
                 url="https://cdn.example.com/sounds/test.mp3",
                 size=100000,
-                duration_seconds=2.0
+                duration_seconds=2.0,
             )
 
     def test_upload_sound_empty_name_fails(self, server_with_owner):
@@ -82,7 +82,7 @@ class TestUploadSound:
                 format=SoundFormat.MP3,
                 url="https://cdn.example.com/sounds/test.mp3",
                 size=100000,
-                duration_seconds=2.0
+                duration_seconds=2.0,
             )
 
     def test_upload_sound_too_large_fails(self, server_with_owner):
@@ -97,7 +97,7 @@ class TestUploadSound:
                 format=SoundFormat.MP3,
                 url="https://cdn.example.com/sounds/huge.mp3",
                 size=10000000,
-                duration_seconds=2.0
+                duration_seconds=2.0,
             )
 
         assert exc_info.value.max_size == 524288
@@ -114,7 +114,7 @@ class TestUploadSound:
                 format=SoundFormat.MP3,
                 url="https://cdn.example.com/sounds/long.mp3",
                 size=100000,
-                duration_seconds=30.0
+                duration_seconds=30.0,
             )
 
         assert exc_info.value.max_duration == 5
@@ -162,7 +162,7 @@ class TestDeleteSound:
         owner = auth.register(
             username=f"del_sb_owner_{unique_id}",
             email=f"del_sb_owner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         server = servers.create_server(owner.id, f"Del Sound Server {unique_id}")
 
@@ -173,7 +173,7 @@ class TestDeleteSound:
             format=SoundFormat.MP3,
             url="https://cdn.example.com/sounds/delete.mp3",
             size=100000,
-            duration_seconds=2.0
+            duration_seconds=2.0,
         )
 
         result = soundboard.delete_sound(owner.id, sound.id)

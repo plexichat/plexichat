@@ -27,12 +27,12 @@ def fresh_dm(modules):
     new_user1 = modules.auth.register(
         username=f"fresh1_{unique_id}",
         email=f"fresh1_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
     new_user2 = modules.auth.register(
         username=f"fresh2_{unique_id}",
         email=f"fresh2_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     dm = modules.messaging.create_dm(new_user1.id, new_user2.id)
@@ -51,7 +51,7 @@ def group_conversation(modules, user_pool):
     group = modules.messaging.create_group(
         owner_id=owner.id,
         name=f"Test Group {unique_id}",
-        participant_ids=[member1.id, member2.id]
+        participant_ids=[member1.id, member2.id],
     )
 
     return group, owner, member1, member2, modules.messaging

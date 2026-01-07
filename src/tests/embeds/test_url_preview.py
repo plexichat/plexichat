@@ -56,6 +56,7 @@ def _mock_url_preview_scraper(db_and_modules, monkeypatch):
             }
 
         from urllib.parse import urlparse
+
         host = urlparse(url).hostname or "example.com"
         return {
             "type": "link",
@@ -79,17 +80,17 @@ class TestCreateUrlPreview:
         """Test creating URL preview embed."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"url1_{unique_id}",
             email=f"url1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         preview = embeds.create_url_preview(
-            user_id=user.id,
-            url="https://example.com/article"
+            user_id=user.id, url="https://example.com/article"
         )
 
         assert preview is not None
@@ -100,18 +101,16 @@ class TestCreateUrlPreview:
         """Test URL preview has parsed metadata."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"url2_{unique_id}",
             email=f"url2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
-        preview = embeds.create_url_preview(
-            user_id=user.id,
-            url="https://example.com"
-        )
+        preview = embeds.create_url_preview(user_id=user.id, url="https://example.com")
 
         assert preview.title is not None or preview.description is not None
 
@@ -119,17 +118,17 @@ class TestCreateUrlPreview:
         """Test YouTube URL creates video embed."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"url3_{unique_id}",
             email=f"url3_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         preview = embeds.create_url_preview(
-            user_id=user.id,
-            url="https://youtube.com/watch?v=abc123"
+            user_id=user.id, url="https://youtube.com/watch?v=abc123"
         )
 
         assert preview.embed_type == EmbedType.VIDEO
@@ -140,17 +139,17 @@ class TestCreateUrlPreview:
         """Test GitHub URL preview."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"url4_{unique_id}",
             email=f"url4_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         preview = embeds.create_url_preview(
-            user_id=user.id,
-            url="https://github.com/user/repo"
+            user_id=user.id, url="https://github.com/user/repo"
         )
 
         assert preview.provider is not None
@@ -160,17 +159,17 @@ class TestCreateUrlPreview:
         """Test Twitter/X URL preview."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"url5_{unique_id}",
             email=f"url5_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         preview = embeds.create_url_preview(
-            user_id=user.id,
-            url="https://twitter.com/user/status/123"
+            user_id=user.id, url="https://twitter.com/user/status/123"
         )
 
         assert preview.embed_type == EmbedType.ARTICLE
@@ -179,10 +178,8 @@ class TestCreateUrlPreview:
         """Test creating URL preview and attaching to message."""
         user1, user2, dm, msg, embeds, messaging = fresh_users_with_dm
 
-        preview = embeds.create_url_preview(
-            user_id=user1.id,
-            url="https://example.com",
-            message_id=msg.id
+        embeds.create_url_preview(
+            user_id=user1.id, url="https://example.com", message_id=msg.id
         )
 
         message_embeds = embeds.get_message_embeds(user1.id, msg.id)
@@ -193,37 +190,33 @@ class TestCreateUrlPreview:
         """Test URL preview with invalid URL fails."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"url6_{unique_id}",
             email=f"url6_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         with pytest.raises(InvalidUrlError):
-            embeds.create_url_preview(
-                user_id=user.id,
-                url="not-a-valid-url"
-            )
+            embeds.create_url_preview(user_id=user.id, url="not-a-valid-url")
 
     def test_url_preview_javascript_url(self, db_and_modules):
         """Test URL preview rejects JavaScript URL."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"url7_{unique_id}",
             email=f"url7_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         with pytest.raises(InvalidUrlError):
-            embeds.create_url_preview(
-                user_id=user.id,
-                url="javascript:alert('xss')"
-            )
+            embeds.create_url_preview(user_id=user.id, url="javascript:alert('xss')")
 
 
 class TestParseUrlMetadata:
@@ -272,17 +265,17 @@ class TestUrlPreviewTypes:
         """Test video URL creates video embed type."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"type1_{unique_id}",
             email=f"type1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         preview = embeds.create_url_preview(
-            user_id=user.id,
-            url="https://youtube.com/watch?v=test"
+            user_id=user.id, url="https://youtube.com/watch?v=test"
         )
 
         assert preview.embed_type == EmbedType.VIDEO
@@ -291,17 +284,17 @@ class TestUrlPreviewTypes:
         """Test article URL creates article embed type."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"type2_{unique_id}",
             email=f"type2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         preview = embeds.create_url_preview(
-            user_id=user.id,
-            url="https://twitter.com/user/status/123"
+            user_id=user.id, url="https://twitter.com/user/status/123"
         )
 
         assert preview.embed_type == EmbedType.ARTICLE
@@ -310,17 +303,17 @@ class TestUrlPreviewTypes:
         """Test generic URL creates link embed type."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"type3_{unique_id}",
             email=f"type3_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         preview = embeds.create_url_preview(
-            user_id=user.id,
-            url="https://example.com/page"
+            user_id=user.id, url="https://example.com/page"
         )
 
         assert preview.embed_type == EmbedType.LINK
@@ -333,17 +326,17 @@ class TestUrlPreviewProvider:
         """Test provider name is set."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"prov1_{unique_id}",
             email=f"prov1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         preview = embeds.create_url_preview(
-            user_id=user.id,
-            url="https://youtube.com/watch?v=test"
+            user_id=user.id, url="https://youtube.com/watch?v=test"
         )
 
         assert preview.provider is not None
@@ -353,17 +346,17 @@ class TestUrlPreviewProvider:
         """Test provider URL is set."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"prov2_{unique_id}",
             email=f"prov2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         preview = embeds.create_url_preview(
-            user_id=user.id,
-            url="https://example.com/page"
+            user_id=user.id, url="https://example.com/page"
         )
 
         assert preview.provider is not None
@@ -376,17 +369,17 @@ class TestUrlPreviewImage:
         """Test YouTube preview has thumbnail image."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"img1_{unique_id}",
             email=f"img1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         preview = embeds.create_url_preview(
-            user_id=user.id,
-            url="https://youtube.com/watch?v=test"
+            user_id=user.id, url="https://youtube.com/watch?v=test"
         )
 
         assert preview.image is not None
@@ -396,17 +389,17 @@ class TestUrlPreviewImage:
         """Test GitHub preview has OpenGraph image."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"img2_{unique_id}",
             email=f"img2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         preview = embeds.create_url_preview(
-            user_id=user.id,
-            url="https://github.com/user/repo"
+            user_id=user.id, url="https://github.com/user/repo"
         )
 
         assert preview.image is not None

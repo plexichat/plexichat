@@ -36,7 +36,7 @@ class TestMiddlewareExecutionOrder:
     def ordered_app(self, api_module):
         """Create app with all middleware in correct order."""
         app = FastAPI()
-        
+
         app.add_middleware(LoggingMiddleware)
         app.add_middleware(AuthenticationMiddleware)
 
@@ -47,18 +47,20 @@ class TestMiddlewareExecutionOrder:
             user = getattr(request.state, "user", None)
             return {
                 "authenticated": user is not None,
-                "user_id": user.user_id if user else None
+                "user_id": user.user_id if user else None,
             }
 
         return app
 
-    @patch('src.api.middleware.logging._log_info')
-    def test_logging_executes_after_auth(self, mock_log, ordered_app, modules, test_user_with_token):
+    @patch("src.api.middleware.logging._log_info")
+    def test_logging_executes_after_auth(
+        self, mock_log, ordered_app, modules, test_user_with_token
+    ):
         """Test logging middleware executes after authentication."""
         user, token = test_user_with_token
         client = TestClient(ordered_app, raise_server_exceptions=False)
         response = client.get("/test", headers={"Authorization": f"Bearer {token}"})
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["authenticated"] is True
@@ -75,7 +77,7 @@ class TestMiddlewareExecutionOrder:
 
         client = TestClient(app, raise_server_exceptions=False)
         response = client.get("/error")
-        
+
         assert response.status_code == 500
         data = response.json()
         assert "error" in data
@@ -119,19 +121,21 @@ class TestAuthenticationWithRateLimiting:
         ratelimit._manager = None
         ratelimit._setup_complete = False
 
-    def test_authenticated_user_rate_limited(self, auth_ratelimit_app, modules, user_pool):
+    def test_authenticated_user_rate_limited(
+        self, auth_ratelimit_app, modules, user_pool
+    ):
         """Test authenticated users are rate limited by user ID."""
         unique_id = uuid.uuid4().hex[:8]
         user = modules.auth.register(
             username=f"user_{unique_id}",
             email=f"user_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         login_result = modules.auth.login(f"user_{unique_id}", "TestPass123!")
         headers = {"Authorization": f"Bearer {login_result.token}"}
 
         client = TestClient(auth_ratelimit_app, raise_server_exceptions=False)
-        
+
         for i in range(10):
             response = client.get("/api/v1/protected", headers=headers)
             assert response.status_code == 200
@@ -140,10 +144,12 @@ class TestAuthenticationWithRateLimiting:
         response = client.get("/api/v1/protected", headers=headers)
         assert response.status_code == 429
 
-    def test_unauthenticated_request_returns_401_before_rate_limit(self, auth_ratelimit_app):
+    def test_unauthenticated_request_returns_401_before_rate_limit(
+        self, auth_ratelimit_app
+    ):
         """Test unauthenticated requests return 401 before hitting rate limit."""
         client = TestClient(auth_ratelimit_app, raise_server_exceptions=False)
-        
+
         for i in range(5):
             response = client.get("/api/v1/protected")
             assert response.status_code == 401
@@ -151,7 +157,9 @@ class TestAuthenticationWithRateLimiting:
     def test_invalid_token_returns_401(self, auth_ratelimit_app):
         """Test invalid token returns 401."""
         client = TestClient(auth_ratelimit_app, raise_server_exceptions=False)
-        response = client.get("/api/v1/protected", headers={"Authorization": "Bearer invalid"})
+        response = client.get(
+            "/api/v1/protected", headers={"Authorization": "Bearer invalid"}
+        )
         assert response.status_code == 401
 
 
@@ -182,7 +190,7 @@ class TestAuthenticationWithErrorHandling:
         """Test authentication errors are formatted correctly."""
         client = TestClient(auth_error_app, raise_server_exceptions=False)
         response = client.get("/protected")
-        
+
         assert response.status_code == 401
         data = response.json()
         assert "error" in data
@@ -192,18 +200,22 @@ class TestAuthenticationWithErrorHandling:
         """Test custom errors after auth check are handled."""
         client = TestClient(auth_error_app, raise_server_exceptions=False)
         response = client.get("/optional")
-        
+
         assert response.status_code == 403
         data = response.json()
         assert "error" in data
         assert data["error"]["code"] == 403
 
-    def test_valid_auth_bypasses_errors(self, auth_error_app, modules, test_user_with_token):
+    def test_valid_auth_bypasses_errors(
+        self, auth_error_app, modules, test_user_with_token
+    ):
         """Test valid authentication bypasses auth errors."""
         user, token = test_user_with_token
         client = TestClient(auth_error_app, raise_server_exceptions=False)
-        response = client.get("/protected", headers={"Authorization": f"Bearer {token}"})
-        
+        response = client.get(
+            "/protected", headers={"Authorization": f"Bearer {token}"}
+        )
+
         assert response.status_code == 200
         data = response.json()
         assert data["user_id"] == user.id
@@ -233,29 +245,29 @@ class TestLoggingWithErrorHandling:
 
         return app
 
-    @patch('src.api.middleware.logging._log_info')
+    @patch("src.api.middleware.logging._log_info")
     def test_successful_request_logged(self, mock_log, logging_error_app):
         """Test successful requests are logged."""
         client = TestClient(logging_error_app, raise_server_exceptions=False)
         response = client.get("/success")
-        
+
         assert response.status_code == 200
         assert mock_log.called
 
-    @patch('src.api.middleware.logging._log_error')
+    @patch("src.api.middleware.logging._log_error")
     def test_500_error_logged(self, mock_log, logging_error_app):
         """Test 500 errors are logged."""
         client = TestClient(logging_error_app, raise_server_exceptions=False)
         response = client.get("/error")
-        
+
         assert response.status_code == 500
 
-    @patch('src.api.middleware.logging._log_warning')
+    @patch("src.api.middleware.logging._log_warning")
     def test_404_error_logged(self, mock_log, logging_error_app):
         """Test 404 errors are logged."""
         client = TestClient(logging_error_app, raise_server_exceptions=False)
         response = client.get("/http-error")
-        
+
         assert response.status_code == 404
 
 
@@ -283,12 +295,12 @@ class TestAllMiddlewareTogether:
         )
 
         app = FastAPI()
-        
+
         RateLimitMiddleware = create_rate_limit_middleware()
         app.add_middleware(RateLimitMiddleware)
         app.add_middleware(AuthenticationMiddleware)
         app.add_middleware(LoggingMiddleware)
-        
+
         setup_exception_handlers(app)
 
         @app.get("/api/v1/data")
@@ -304,32 +316,38 @@ class TestAllMiddlewareTogether:
         ratelimit._manager = None
         ratelimit._setup_complete = False
 
-    @patch('src.api.middleware.logging._log_info')
-    def test_successful_authenticated_request(self, mock_log, full_stack_app, modules, test_user_with_token):
+    @patch("src.api.middleware.logging._log_info")
+    def test_successful_authenticated_request(
+        self, mock_log, full_stack_app, modules, test_user_with_token
+    ):
         """Test successful authenticated request through all middleware."""
         user, token = test_user_with_token
         client = TestClient(full_stack_app, raise_server_exceptions=False)
-        response = client.get("/api/v1/data", headers={"Authorization": f"Bearer {token}"})
-        
+        response = client.get(
+            "/api/v1/data", headers={"Authorization": f"Bearer {token}"}
+        )
+
         assert response.status_code == 200
         data = response.json()
         assert data["user_id"] == user.id
         assert mock_log.called
 
-    @patch('src.api.middleware.logging._log_info')
-    def test_rate_limited_authenticated_request(self, mock_log, full_stack_app, modules, user_pool):
+    @patch("src.api.middleware.logging._log_info")
+    def test_rate_limited_authenticated_request(
+        self, mock_log, full_stack_app, modules, user_pool
+    ):
         """Test rate limiting works with authentication and logging."""
         unique_id = uuid.uuid4().hex[:8]
         modules.auth.register(
             username=f"user_{unique_id}",
             email=f"user_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         login_result = modules.auth.login(f"user_{unique_id}", "TestPass123!")
         headers = {"Authorization": f"Bearer {login_result.token}"}
 
         client = TestClient(full_stack_app, raise_server_exceptions=False)
-        
+
         for i in range(5):
             response = client.get("/api/v1/data", headers=headers)
             assert response.status_code == 200
@@ -337,35 +355,37 @@ class TestAllMiddlewareTogether:
         response = client.get("/api/v1/data", headers=headers)
         assert response.status_code == 429
 
-    @patch('src.api.middleware.logging._log_warning')
+    @patch("src.api.middleware.logging._log_warning")
     def test_unauthenticated_request_all_middleware(self, mock_log, full_stack_app):
         """Test unauthenticated request through all middleware."""
         client = TestClient(full_stack_app, raise_server_exceptions=False)
         response = client.get("/api/v1/data")
-        
+
         assert response.status_code == 401
         data = response.json()
         assert "error" in data
 
-    def test_admin_bypasses_rate_limit_with_logging(self, full_stack_app, modules, user_pool):
+    def test_admin_bypasses_rate_limit_with_logging(
+        self, full_stack_app, modules, user_pool
+    ):
         """Test admin users bypass rate limits with all middleware active."""
         unique_id = uuid.uuid4().hex[:8]
         user = modules.auth.register(
             username=f"admin_{unique_id}",
             email=f"admin_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
-        
+
         modules.auth.grant_permission(user.id, "admin.*")
-        
+
         login_result = modules.auth.login(f"admin_{unique_id}", "TestPass123!")
         headers = {"Authorization": f"Bearer {login_result.token}"}
 
         client = TestClient(full_stack_app, raise_server_exceptions=False)
-        
+
         for i in range(20):
             response = client.get("/api/v1/data", headers=headers)
-            assert response.status_code == 200, f"Admin request {i+1} failed"
+            assert response.status_code == 200, f"Admin request {i + 1} failed"
 
 
 class TestRealWorldScenarios:
@@ -397,12 +417,12 @@ class TestRealWorldScenarios:
         )
 
         app = FastAPI()
-        
+
         RateLimitMiddleware = create_rate_limit_middleware()
         app.add_middleware(RateLimitMiddleware)
         app.add_middleware(AuthenticationMiddleware)
         app.add_middleware(LoggingMiddleware)
-        
+
         setup_exception_handlers(app)
 
         @app.post("/api/v1/auth/login")
@@ -410,7 +430,9 @@ class TestRealWorldScenarios:
             return {"token": "fake_token"}
 
         @app.get("/api/v1/users/@me")
-        async def get_current_user_endpoint(user: TokenInfo = Depends(get_current_user)):
+        async def get_current_user_endpoint(
+            user: TokenInfo = Depends(get_current_user),
+        ):
             return {"id": user.user_id, "username": user.username}
 
         yield app
@@ -418,58 +440,59 @@ class TestRealWorldScenarios:
         ratelimit._manager = None
         ratelimit._setup_complete = False
 
-    @patch('src.api.middleware.logging._log_info')
+    @patch("src.api.middleware.logging._log_info")
     def test_login_brute_force_protection(self, mock_log, realistic_app):
         """Test login endpoint has brute force protection."""
         client = TestClient(realistic_app, raise_server_exceptions=False)
-        
+
         for i in range(5):
-            response = client.post("/api/v1/auth/login", json={
-                "username": "attacker",
-                "password": f"attempt_{i}"
-            })
+            response = client.post(
+                "/api/v1/auth/login",
+                json={"username": "attacker", "password": f"attempt_{i}"},
+            )
             assert response.status_code == 200
 
-        response = client.post("/api/v1/auth/login", json={
-            "username": "attacker",
-            "password": "attempt_6"
-        })
+        response = client.post(
+            "/api/v1/auth/login", json={"username": "attacker", "password": "attempt_6"}
+        )
         assert response.status_code == 429
 
-    @patch('src.api.middleware.logging._log_info')
-    def test_authenticated_endpoint_rate_limit(self, mock_log, realistic_app, modules, user_pool):
+    @patch("src.api.middleware.logging._log_info")
+    def test_authenticated_endpoint_rate_limit(
+        self, mock_log, realistic_app, modules, user_pool
+    ):
         """Test authenticated endpoint has higher rate limit."""
         unique_id = uuid.uuid4().hex[:8]
         modules.auth.register(
             username=f"user_{unique_id}",
             email=f"user_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         login_result = modules.auth.login(f"user_{unique_id}", "TestPass123!")
         headers = {"Authorization": f"Bearer {login_result.token}"}
 
         client = TestClient(realistic_app, raise_server_exceptions=False)
-        
+
         for i in range(30):
             response = client.get("/api/v1/users/@me", headers=headers)
-            assert response.status_code == 200, f"Request {i+1} failed"
+            assert response.status_code == 200, f"Request {i + 1} failed"
 
     def test_concurrent_users_separate_limits(self, realistic_app, modules, user_pool):
         """Test concurrent users have separate rate limits."""
         import threading
-        
+
         unique_id1 = uuid.uuid4().hex[:8]
         unique_id2 = uuid.uuid4().hex[:8]
-        
+
         modules.auth.register(
             username=f"user1_{unique_id1}",
             email=f"user1_{unique_id1}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         modules.auth.register(
             username=f"user2_{unique_id2}",
             email=f"user2_{unique_id2}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         login1 = modules.auth.login(f"user1_{unique_id1}", "TestPass123!")
@@ -512,7 +535,7 @@ class TestErrorPropagation:
     def error_stack_app(self, api_module):
         """Create app for error propagation testing."""
         app = FastAPI()
-        
+
         app.add_middleware(LoggingMiddleware)
         app.add_middleware(AuthenticationMiddleware)
         setup_exception_handlers(app)
@@ -521,49 +544,56 @@ class TestErrorPropagation:
         async def validation_error():
             class CustomValidationError(Exception):
                 pass
+
             raise CustomValidationError("Invalid input")
 
         @app.get("/not-found")
         async def not_found():
             class NotFoundError(Exception):
                 pass
+
             raise NotFoundError("Resource not found")
 
         @app.get("/permission-denied")
         async def permission_denied(user: TokenInfo = Depends(get_current_user)):
             class PermissionDeniedError(Exception):
                 pass
+
             raise PermissionDeniedError("Permission denied")
 
         return app
 
-    @patch('src.api.middleware.logging._log_warning')
+    @patch("src.api.middleware.logging._log_warning")
     def test_validation_error_propagates(self, mock_log, error_stack_app):
         """Test validation errors propagate correctly."""
         client = TestClient(error_stack_app, raise_server_exceptions=False)
         response = client.get("/validation-error")
-        
+
         assert response.status_code == 400
         data = response.json()
         assert "error" in data
 
-    @patch('src.api.middleware.logging._log_warning')
+    @patch("src.api.middleware.logging._log_warning")
     def test_not_found_error_propagates(self, mock_log, error_stack_app):
         """Test not found errors propagate correctly."""
         client = TestClient(error_stack_app, raise_server_exceptions=False)
         response = client.get("/not-found")
-        
+
         assert response.status_code == 404
         data = response.json()
         assert "error" in data
 
-    @patch('src.api.middleware.logging._log_warning')
-    def test_permission_error_after_auth(self, mock_log, error_stack_app, modules, test_user_with_token):
+    @patch("src.api.middleware.logging._log_warning")
+    def test_permission_error_after_auth(
+        self, mock_log, error_stack_app, modules, test_user_with_token
+    ):
         """Test permission errors after authentication."""
         user, token = test_user_with_token
         client = TestClient(error_stack_app, raise_server_exceptions=False)
-        response = client.get("/permission-denied", headers={"Authorization": f"Bearer {token}"})
-        
+        response = client.get(
+            "/permission-denied", headers={"Authorization": f"Bearer {token}"}
+        )
+
         assert response.status_code == 403
         data = response.json()
         assert "error" in data

@@ -75,7 +75,9 @@ class TestConcurrentRequests:
             allowed_count = sum(1 for r in user_results if r)
             assert allowed_count == 5, f"User {user_id} should have 5 allowed requests"
 
-    def test_concurrent_requests_different_resources(self, memory_storage, test_user_id):
+    def test_concurrent_requests_different_resources(
+        self, memory_storage, test_user_id
+    ):
         """Test concurrent requests to different resources."""
         config = RateLimitConfig(
             requests=3,

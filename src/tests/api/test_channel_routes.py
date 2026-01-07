@@ -14,8 +14,7 @@ class TestGetChannel:
         channel_id = str(test_server["channel"].id)
 
         response = test_client.get(
-            f"/api/v1/channels/{channel_id}",
-            headers=auth_headers
+            f"/api/v1/channels/{channel_id}", headers=auth_headers
         )
 
         assert response.status_code == 200
@@ -27,18 +26,14 @@ class TestGetChannel:
     def test_get_nonexistent_channel(self, test_client, auth_headers):
         """Test getting nonexistent channel."""
         response = test_client.get(
-            "/api/v1/channels/999999999999999999",
-            headers=auth_headers
+            "/api/v1/channels/999999999999999999", headers=auth_headers
         )
 
         assert response.status_code == 404
 
     def test_get_channel_invalid_id(self, test_client, auth_headers):
         """Test getting channel with invalid ID."""
-        response = test_client.get(
-            "/api/v1/channels/invalid_id",
-            headers=auth_headers
-        )
+        response = test_client.get("/api/v1/channels/invalid_id", headers=auth_headers)
 
         assert response.status_code == 400
 
@@ -62,7 +57,7 @@ class TestUpdateChannel:
         response = test_client.patch(
             f"/api/v1/channels/{channel_id}",
             headers=auth_headers,
-            json={"name": f"updated-channel-{unique_id}"}
+            json={"name": f"updated-channel-{unique_id}"},
         )
 
         assert response.status_code == 200
@@ -76,7 +71,7 @@ class TestUpdateChannel:
         response = test_client.patch(
             f"/api/v1/channels/{channel_id}",
             headers=auth_headers,
-            json={"topic": "New channel topic"}
+            json={"topic": "New channel topic"},
         )
 
         assert response.status_code == 200
@@ -88,9 +83,7 @@ class TestUpdateChannel:
         channel_id = str(test_server["channel"].id)
 
         response = test_client.patch(
-            f"/api/v1/channels/{channel_id}",
-            headers=auth_headers,
-            json={"nsfw": True}
+            f"/api/v1/channels/{channel_id}", headers=auth_headers, json={"nsfw": True}
         )
 
         assert response.status_code == 200
@@ -110,12 +103,11 @@ class TestDeleteChannel:
         user = auth.register(
             username=f"deletechan_{unique_id}",
             email=f"deletechan_{unique_id}@example.com",
-            password="SecurePass123!"
+            password="SecurePass123!",
         )
 
         result = auth.login(
-            username=f"deletechan_{unique_id}",
-            password="SecurePass123!"
+            username=f"deletechan_{unique_id}", password="SecurePass123!"
         )
 
         server = servers.create_server(user.id, f"Channel Delete Test {unique_id}")
@@ -123,12 +115,12 @@ class TestDeleteChannel:
             user_id=user.id,
             server_id=server.id,
             name=f"to-delete-{unique_id}",
-            channel_type=ChannelType.TEXT
+            channel_type=ChannelType.TEXT,
         )
 
         response = test_client.delete(
             f"/api/v1/channels/{channel.id}",
-            headers={"Authorization": f"Bearer {result.token}"}
+            headers={"Authorization": f"Bearer {result.token}"},
         )
 
         assert response.status_code == 200
@@ -138,8 +130,7 @@ class TestDeleteChannel:
     def test_delete_nonexistent_channel(self, test_client, auth_headers):
         """Test deleting nonexistent channel."""
         response = test_client.delete(
-            "/api/v1/channels/999999999999999999",
-            headers=auth_headers
+            "/api/v1/channels/999999999999999999", headers=auth_headers
         )
 
         assert response.status_code == 404
@@ -153,8 +144,7 @@ class TestChannelFields:
         channel_id = str(test_server["channel"].id)
 
         response = test_client.get(
-            f"/api/v1/channels/{channel_id}",
-            headers=auth_headers
+            f"/api/v1/channels/{channel_id}", headers=auth_headers
         )
 
         assert response.status_code == 200
@@ -167,8 +157,7 @@ class TestChannelFields:
         channel_id = str(test_server["channel"].id)
 
         response = test_client.get(
-            f"/api/v1/channels/{channel_id}",
-            headers=auth_headers
+            f"/api/v1/channels/{channel_id}", headers=auth_headers
         )
 
         assert response.status_code == 200
@@ -180,8 +169,7 @@ class TestChannelFields:
         channel_id = str(test_server["channel"].id)
 
         response = test_client.get(
-            f"/api/v1/channels/{channel_id}",
-            headers=auth_headers
+            f"/api/v1/channels/{channel_id}", headers=auth_headers
         )
 
         assert response.status_code == 200

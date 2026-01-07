@@ -42,8 +42,9 @@ class TestConversationEdgeCases:
         user1, user2, user3, messaging = users
 
         group = messaging.create_group(
-            user1.id, "Test Group",
-            participant_ids=[user2.id, user2.id, user3.id, user3.id]
+            user1.id,
+            "Test Group",
+            participant_ids=[user2.id, user2.id, user3.id, user3.id],
         )
 
         participants = messaging.get_participants(user1.id, group.id)
@@ -173,8 +174,12 @@ class TestAttachmentEdgeCases:
 
         with pytest.raises(messaging.MessageNotFoundError):
             messaging.add_attachment(
-                user1.id, 999999999, "test.pdf", "application/pdf", 1024,
-                "https://example.com/test.pdf"
+                user1.id,
+                999999999,
+                "test.pdf",
+                "application/pdf",
+                1024,
+                "https://example.com/test.pdf",
             )
 
     def test_get_attachments_nonexistent_message(self, users):
@@ -282,7 +287,9 @@ class TestSystemMessages:
         group = messaging.create_group(user1.id, "Test Group")
 
         messages = messaging.get_messages(user1.id, group.id)
-        system_msgs = [m for m in messages if m.message_type == messaging.MessageType.SYSTEM]
+        system_msgs = [
+            m for m in messages if m.message_type == messaging.MessageType.SYSTEM
+        ]
 
         assert len(system_msgs) >= 1
 
@@ -293,7 +300,9 @@ class TestSystemMessages:
         group = messaging.create_group(user1.id, "Test Group")
 
         messages = messaging.get_messages(user1.id, group.id)
-        system_msgs = [m for m in messages if m.message_type == messaging.MessageType.SYSTEM]
+        system_msgs = [
+            m for m in messages if m.message_type == messaging.MessageType.SYSTEM
+        ]
 
         for msg in system_msgs:
             assert msg.author_id == 0
@@ -305,7 +314,9 @@ class TestSystemMessages:
         group = messaging.create_group(user1.id, "Test Group")
 
         messages = messaging.get_messages(user1.id, group.id)
-        system_msg = next(m for m in messages if m.message_type == messaging.MessageType.SYSTEM)
+        system_msg = next(
+            m for m in messages if m.message_type == messaging.MessageType.SYSTEM
+        )
 
         with pytest.raises(messaging.MessageAccessDeniedError):
             messaging.edit_message(user1.id, system_msg.id, "Edited")
@@ -317,9 +328,13 @@ class TestSystemMessages:
         group = messaging.create_group(user1.id, "Test Group")
 
         messages = messaging.get_messages(user1.id, group.id)
-        system_msg = next(m for m in messages if m.message_type == messaging.MessageType.SYSTEM)
+        system_msg = next(
+            m for m in messages if m.message_type == messaging.MessageType.SYSTEM
+        )
 
         # Should be able to reply to system messages
-        reply = messaging.send_message(user1.id, group.id, "Reply", reply_to_id=system_msg.id)
+        reply = messaging.send_message(
+            user1.id, group.id, "Reply", reply_to_id=system_msg.id
+        )
 
         assert reply.reply_to_id == system_msg.id

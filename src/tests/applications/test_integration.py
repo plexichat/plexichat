@@ -169,13 +169,15 @@ class TestApplicationWorkflow:
 
         assert result is True
 
-    def test_server_installation_workflow(self, modules, app_factory, test_server, user_pool):
+    def test_server_installation_workflow(
+        self, modules, app_factory, test_server, user_pool
+    ):
         """Test application installation on server."""
         app, owner = app_factory.create()
         server, server_owner = test_server
         installer = user_pool.get_user()
 
-        installation = modules.applications.install_application(
+        modules.applications.install_application(
             application_id=app.id,
             server_id=server.id,
             installer_id=installer.id,
@@ -183,7 +185,7 @@ class TestApplicationWorkflow:
             scopes=["bot", "applications.commands"],
         )
 
-        guild_cmd = modules.applications.register_command(
+        modules.applications.register_command(
             application_id=app.id,
             name="serveronly",
             description="Server-specific command",

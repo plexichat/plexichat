@@ -8,7 +8,6 @@ Run: pytest src/tests/test_infrastructure.py -v
 """
 
 
-
 class TestFixturesWork:
     """Verify that the new fixtures are functional."""
 
@@ -20,20 +19,20 @@ class TestFixturesWork:
         """Test that auth module can be loaded."""
         auth = modules.auth
         assert auth is not None
-        assert hasattr(auth, 'register')
-        assert hasattr(auth, 'login')
+        assert hasattr(auth, "register")
+        assert hasattr(auth, "login")
 
     def test_messaging_module_loads(self, modules):
         """Test that messaging module can be loaded."""
         messaging = modules.messaging
         assert messaging is not None
-        assert hasattr(messaging, 'create_dm')
+        assert hasattr(messaging, "create_dm")
 
     def test_servers_module_loads(self, modules):
         """Test that servers module can be loaded."""
         servers = modules.servers
         assert servers is not None
-        assert hasattr(servers, 'create_server')
+        assert hasattr(servers, "create_server")
 
     def test_user_factory_creates_users(self, modules, user_factory):
         """Test that user factory can create users."""
@@ -74,9 +73,9 @@ class TestModuleLazyLoading:
         registry = ModuleRegistry(session_db)
 
         # Nothing should be loaded yet
-        assert not registry.is_loaded('auth')
-        assert not registry.is_loaded('messaging')
-        assert not registry.is_loaded('servers')
+        assert not registry.is_loaded("auth")
+        assert not registry.is_loaded("messaging")
+        assert not registry.is_loaded("servers")
 
     def test_accessing_module_loads_it(self, session_db):
         """Test that accessing a module loads it."""
@@ -86,10 +85,10 @@ class TestModuleLazyLoading:
 
         # Access auth
         _ = registry.auth
-        assert registry.is_loaded('auth')
+        assert registry.is_loaded("auth")
 
         # Others still not loaded
-        assert not registry.is_loaded('servers')
+        assert not registry.is_loaded("servers")
 
 
 class TestConvenienceFixtures:

@@ -3,7 +3,6 @@ Tests for message routes.
 """
 
 
-
 class TestGetMessages:
     """Tests for GET /channels/{channel_id}/messages endpoint."""
 
@@ -12,8 +11,7 @@ class TestGetMessages:
         channel_id = str(test_server["channel"].id)
 
         response = test_client.get(
-            f"/api/v1/channels/{channel_id}/messages",
-            headers=auth_headers
+            f"/api/v1/channels/{channel_id}/messages", headers=auth_headers
         )
 
         assert response.status_code == 200
@@ -25,8 +23,7 @@ class TestGetMessages:
         channel_id = str(test_server["channel"].id)
 
         response = test_client.get(
-            f"/api/v1/channels/{channel_id}/messages?limit=10",
-            headers=auth_headers
+            f"/api/v1/channels/{channel_id}/messages?limit=10", headers=auth_headers
         )
 
         assert response.status_code == 200
@@ -36,8 +33,7 @@ class TestGetMessages:
     def test_get_messages_nonexistent_channel(self, test_client, auth_headers):
         """Test getting messages from nonexistent channel."""
         response = test_client.get(
-            "/api/v1/channels/999999999999999999/messages",
-            headers=auth_headers
+            "/api/v1/channels/999999999999999999/messages", headers=auth_headers
         )
 
         assert response.status_code == 404
@@ -61,7 +57,7 @@ class TestSendMessage:
         response = test_client.post(
             f"/api/v1/channels/{channel_id}/messages",
             headers=auth_headers,
-            json={"content": "Hello, world!"}
+            json={"content": "Hello, world!"},
         )
 
         assert response.status_code == 200
@@ -78,7 +74,7 @@ class TestSendMessage:
         response = test_client.post(
             f"/api/v1/channels/{channel_id}/messages",
             headers=auth_headers,
-            json={"content": ""}
+            json={"content": ""},
         )
 
         assert response.status_code == 400
@@ -88,7 +84,7 @@ class TestSendMessage:
         response = test_client.post(
             "/api/v1/channels/999999999999999999/messages",
             headers=auth_headers,
-            json={"content": "Test message"}
+            json={"content": "Test message"},
         )
 
         assert response.status_code == 404
@@ -99,7 +95,7 @@ class TestSendMessage:
 
         response = test_client.post(
             f"/api/v1/channels/{channel_id}/messages",
-            json={"content": "Unauthorized message"}
+            json={"content": "Unauthorized message"},
         )
 
         assert response.status_code == 401
@@ -108,15 +104,17 @@ class TestSendMessage:
 class TestEditMessage:
     """Tests for PATCH /channels/{channel_id}/messages/{message_id} endpoint."""
 
-    def test_edit_message_success(self, test_client, auth_headers, test_server, db_and_modules):
+    def test_edit_message_success(
+        self, test_client, auth_headers, test_server, db_and_modules
+    ):
         """Test editing a message."""
-        servers = db_and_modules["servers"]
+        db_and_modules["servers"]
         channel_id = str(test_server["channel"].id)
 
         send_response = test_client.post(
             f"/api/v1/channels/{channel_id}/messages",
             headers=auth_headers,
-            json={"content": "Original message"}
+            json={"content": "Original message"},
         )
 
         assert send_response.status_code == 200
@@ -125,7 +123,7 @@ class TestEditMessage:
         response = test_client.patch(
             f"/api/v1/channels/{channel_id}/messages/{message_id}",
             headers=auth_headers,
-            json={"content": "Edited message"}
+            json={"content": "Edited message"},
         )
 
         assert response.status_code == 200
@@ -143,15 +141,14 @@ class TestDeleteMessage:
         send_response = test_client.post(
             f"/api/v1/channels/{channel_id}/messages",
             headers=auth_headers,
-            json={"content": "Message to delete"}
+            json={"content": "Message to delete"},
         )
 
         assert send_response.status_code == 200
         message_id = send_response.json()["id"]
 
         response = test_client.delete(
-            f"/api/v1/channels/{channel_id}/messages/{message_id}",
-            headers=auth_headers
+            f"/api/v1/channels/{channel_id}/messages/{message_id}", headers=auth_headers
         )
 
         assert response.status_code == 200
@@ -164,7 +161,7 @@ class TestDeleteMessage:
 
         response = test_client.delete(
             f"/api/v1/channels/{channel_id}/messages/999999999999999999",
-            headers=auth_headers
+            headers=auth_headers,
         )
 
         assert response.status_code == 404
@@ -180,7 +177,7 @@ class TestMessageFields:
         response = test_client.post(
             f"/api/v1/channels/{channel_id}/messages",
             headers=auth_headers,
-            json={"content": "Test author field"}
+            json={"content": "Test author field"},
         )
 
         assert response.status_code == 200
@@ -195,7 +192,7 @@ class TestMessageFields:
         response = test_client.post(
             f"/api/v1/channels/{channel_id}/messages",
             headers=auth_headers,
-            json={"content": "Test timestamp field"}
+            json={"content": "Test timestamp field"},
         )
 
         assert response.status_code == 200
@@ -210,7 +207,7 @@ class TestMessageFields:
         response = test_client.post(
             f"/api/v1/channels/{channel_id}/messages",
             headers=auth_headers,
-            json={"content": "Test channel field"}
+            json={"content": "Test channel field"},
         )
 
         assert response.status_code == 200

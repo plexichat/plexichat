@@ -29,7 +29,7 @@ class TestPollResults:
             user = auth.register(
                 username=f"count_user{i}_{unique_id}",
                 email=f"count_user{i}_{unique_id}@example.com",
-                password="TestPass123!"
+                password="TestPass123!",
             )
             users.append(user)
 
@@ -40,7 +40,7 @@ class TestPollResults:
             user_id=users[0].id,
             message_id=msg.id,
             question="Count test?",
-            options=["A", "B"]
+            options=["A", "B"],
         )
 
         polls.vote(users[1].id, poll.id, [poll.options[0].id])
@@ -58,12 +58,12 @@ class TestPollResults:
         user1 = auth.register(
             username=f"vis_user1_{unique_id}",
             email=f"vis_user1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"vis_user2_{unique_id}",
             email=f"vis_user2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user1.id, user2.id)
@@ -74,7 +74,7 @@ class TestPollResults:
             message_id=msg.id,
             question="Hidden until vote?",
             options=["A", "B"],
-            results_visibility=PollResultsVisibility.AFTER_VOTE
+            results_visibility=PollResultsVisibility.AFTER_VOTE,
         )
 
         polls.vote(user1.id, poll.id, [poll.options[0].id])
@@ -96,12 +96,12 @@ class TestPollResults:
         user1 = auth.register(
             username=f"total_user1_{unique_id}",
             email=f"total_user1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"total_user2_{unique_id}",
             email=f"total_user2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user1.id, user2.id)
@@ -111,7 +111,7 @@ class TestPollResults:
             user_id=user1.id,
             message_id=msg.id,
             question="Total votes?",
-            options=["A", "B"]
+            options=["A", "B"],
         )
 
         polls.vote(user1.id, poll.id, [poll.options[0].id])

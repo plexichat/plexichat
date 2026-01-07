@@ -4,9 +4,12 @@ Permission system tests for auth module.
 
 import pytest
 from src.core.auth.permissions import (
-    has_permission, validate_permissions, merge_permissions,
-    DEFAULT_USER_PERMISSIONS, DEFAULT_BOT_PERMISSIONS,
-    BOT_RESTRICTED_PERMISSIONS
+    has_permission,
+    validate_permissions,
+    merge_permissions,
+    DEFAULT_USER_PERMISSIONS,
+    DEFAULT_BOT_PERMISSIONS,
+    BOT_RESTRICTED_PERMISSIONS,
 )
 
 
@@ -120,8 +123,10 @@ class TestPermissions:
     def test_bot_restricted_not_in_defaults(self):
         """Test restricted permissions not in bot defaults."""
         for restricted in BOT_RESTRICTED_PERMISSIONS:
-            assert restricted not in DEFAULT_BOT_PERMISSIONS or \
-                   DEFAULT_BOT_PERMISSIONS.get(restricted) is not True
+            assert (
+                restricted not in DEFAULT_BOT_PERMISSIONS
+                or DEFAULT_BOT_PERMISSIONS.get(restricted) is not True
+            )
 
     def test_has_capability_integration(self, logged_in_user):
         """Test has_capability with real token."""

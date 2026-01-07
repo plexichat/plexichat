@@ -24,7 +24,9 @@ class TestGetAuditLog:
 
         entries = servers.get_audit_log(owner.id, server.id)
 
-        create_entries = [e for e in entries if e.action == servers.AuditLogAction.SERVER_CREATE]
+        create_entries = [
+            e for e in entries if e.action == servers.AuditLogAction.SERVER_CREATE
+        ]
         assert len(create_entries) >= 1
 
     def test_audit_log_includes_channel_create(self, server_with_channels):
@@ -33,7 +35,9 @@ class TestGetAuditLog:
 
         entries = servers.get_audit_log(owner.id, server.id)
 
-        channel_entries = [e for e in entries if e.action == servers.AuditLogAction.CHANNEL_CREATE]
+        channel_entries = [
+            e for e in entries if e.action == servers.AuditLogAction.CHANNEL_CREATE
+        ]
         assert len(channel_entries) >= 1
 
     def test_audit_log_includes_role_create(self, server_with_members):
@@ -42,7 +46,9 @@ class TestGetAuditLog:
 
         entries = servers.get_audit_log(owner.id, server.id)
 
-        role_entries = [e for e in entries if e.action == servers.AuditLogAction.ROLE_CREATE]
+        role_entries = [
+            e for e in entries if e.action == servers.AuditLogAction.ROLE_CREATE
+        ]
         assert len(role_entries) >= 1
 
     def test_audit_log_includes_member_join(self, server_with_members):
@@ -51,7 +57,9 @@ class TestGetAuditLog:
 
         entries = servers.get_audit_log(owner.id, server.id)
 
-        join_entries = [e for e in entries if e.action == servers.AuditLogAction.MEMBER_JOIN]
+        join_entries = [
+            e for e in entries if e.action == servers.AuditLogAction.MEMBER_JOIN
+        ]
         assert len(join_entries) >= 1
 
     def test_audit_log_filter_by_action(self, server_with_members):
@@ -59,8 +67,7 @@ class TestGetAuditLog:
         server, owner, _, _, _, _, servers = server_with_members
 
         entries = servers.get_audit_log(
-            owner.id, server.id,
-            action_type=servers.AuditLogAction.MEMBER_JOIN
+            owner.id, server.id, action_type=servers.AuditLogAction.MEMBER_JOIN
         )
 
         assert all(e.action == servers.AuditLogAction.MEMBER_JOIN for e in entries)
@@ -89,7 +96,9 @@ class TestGetAuditLog:
 
         entries = servers.get_audit_log(owner.id, server.id)
 
-        update_entries = [e for e in entries if e.action == servers.AuditLogAction.SERVER_UPDATE]
+        update_entries = [
+            e for e in entries if e.action == servers.AuditLogAction.SERVER_UPDATE
+        ]
         assert len(update_entries) >= 1
         assert update_entries[0].changes is not None
 
@@ -101,7 +110,9 @@ class TestGetAuditLog:
 
         entries = servers.get_audit_log(owner.id, server.id)
 
-        kick_entries = [e for e in entries if e.action == servers.AuditLogAction.MEMBER_KICK]
+        kick_entries = [
+            e for e in entries if e.action == servers.AuditLogAction.MEMBER_KICK
+        ]
         assert len(kick_entries) >= 1
         assert kick_entries[0].reason == "Test kick"
 
@@ -130,7 +141,9 @@ class TestAuditLogEntry:
 
         entries = servers.get_audit_log(owner.id, server.id)
 
-        channel_entries = [e for e in entries if e.action == servers.AuditLogAction.CHANNEL_CREATE]
+        channel_entries = [
+            e for e in entries if e.action == servers.AuditLogAction.CHANNEL_CREATE
+        ]
         assert len(channel_entries) >= 1
 
         entry = channel_entries[0]

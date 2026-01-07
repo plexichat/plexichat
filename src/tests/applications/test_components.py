@@ -308,12 +308,14 @@ class TestComponentValidation:
         """Test validating valid button."""
         from src.core.applications.interactions.components import validate_button
 
-        valid, issues = validate_button({
-            "type": 2,
-            "style": 1,
-            "label": "Click",
-            "custom_id": "btn",
-        })
+        valid, issues = validate_button(
+            {
+                "type": 2,
+                "style": 1,
+                "label": "Click",
+                "custom_id": "btn",
+            }
+        )
 
         assert valid is True
 
@@ -321,11 +323,13 @@ class TestComponentValidation:
         """Test validating button without label or emoji."""
         from src.core.applications.interactions.components import validate_button
 
-        valid, issues = validate_button({
-            "type": 2,
-            "style": 1,
-            "custom_id": "btn",
-        })
+        valid, issues = validate_button(
+            {
+                "type": 2,
+                "style": 1,
+                "custom_id": "btn",
+            }
+        )
 
         assert valid is False
 
@@ -333,11 +337,13 @@ class TestComponentValidation:
         """Test validating link button without URL."""
         from src.core.applications.interactions.components import validate_button
 
-        valid, issues = validate_button({
-            "type": 2,
-            "style": 5,
-            "label": "Link",
-        })
+        valid, issues = validate_button(
+            {
+                "type": 2,
+                "style": 5,
+                "label": "Link",
+            }
+        )
 
         assert valid is False
 
@@ -345,11 +351,13 @@ class TestComponentValidation:
         """Test validating valid select menu."""
         from src.core.applications.interactions.components import validate_select_menu
 
-        valid, issues = validate_select_menu({
-            "type": 3,
-            "custom_id": "select",
-            "options": [{"label": "Option", "value": "opt"}],
-        })
+        valid, issues = validate_select_menu(
+            {
+                "type": 3,
+                "custom_id": "select",
+                "options": [{"label": "Option", "value": "opt"}],
+            }
+        )
 
         assert valid is True
 
@@ -357,17 +365,24 @@ class TestComponentValidation:
         """Test validating string select without options."""
         from src.core.applications.interactions.components import validate_select_menu
 
-        valid, issues = validate_select_menu({
-            "type": 3,
-            "custom_id": "select",
-        })
+        valid, issues = validate_select_menu(
+            {
+                "type": 3,
+                "custom_id": "select",
+            }
+        )
 
         assert valid is False
 
     def test_validate_components_too_many_rows(self):
         """Test validating too many action rows."""
         components = [
-            {"type": 1, "components": [{"type": 2, "style": 1, "label": f"Btn {i}", "custom_id": f"btn{i}"}]}
+            {
+                "type": 1,
+                "components": [
+                    {"type": 2, "style": 1, "label": f"Btn {i}", "custom_id": f"btn{i}"}
+                ],
+            }
             for i in range(10)
         ]
 
@@ -379,12 +394,18 @@ class TestComponentValidation:
         """Test validating action row with mixed component types."""
         from src.core.applications.interactions.components import validate_action_row
 
-        valid, issues = validate_action_row({
-            "type": 1,
-            "components": [
-                {"type": 2, "style": 1, "label": "Button", "custom_id": "btn"},
-                {"type": 3, "custom_id": "select", "options": [{"label": "Opt", "value": "opt"}]},
-            ],
-        })
+        valid, issues = validate_action_row(
+            {
+                "type": 1,
+                "components": [
+                    {"type": 2, "style": 1, "label": "Button", "custom_id": "btn"},
+                    {
+                        "type": 3,
+                        "custom_id": "select",
+                        "options": [{"label": "Opt", "value": "opt"}],
+                    },
+                ],
+            }
+        )
 
         assert valid is False

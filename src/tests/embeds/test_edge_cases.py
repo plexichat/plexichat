@@ -17,12 +17,13 @@ class TestEmptyEmbed:
         """Test creating embed with no fields."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"edge1_{unique_id}",
             email=f"edge1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         # Empty embed should still be valid
@@ -35,12 +36,13 @@ class TestEmptyEmbed:
         """Test creating embed with empty string title."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"edge2_{unique_id}",
             email=f"edge2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(user_id=user.id, title="")
@@ -51,12 +53,13 @@ class TestEmptyEmbed:
         """Test creating embed with whitespace title."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"edge3_{unique_id}",
             email=f"edge3_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(user_id=user.id, title="   ")
@@ -71,12 +74,13 @@ class TestUpdateEmbed:
         """Test updating embed title."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"upd1_{unique_id}",
             email=f"upd1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(user_id=user.id, title="Original")
@@ -88,12 +92,13 @@ class TestUpdateEmbed:
         """Test updating embed description."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"upd2_{unique_id}",
             email=f"upd2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(user_id=user.id, description="Original")
@@ -105,18 +110,17 @@ class TestUpdateEmbed:
         """Test updating embed preserves unchanged fields."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"upd3_{unique_id}",
             email=f"upd3_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
-            user_id=user.id,
-            title="Keep This",
-            description="Original Desc"
+            user_id=user.id, title="Keep This", description="Original Desc"
         )
         updated = embeds.update_embed(user.id, embed.id, description="New Desc")
 
@@ -127,12 +131,13 @@ class TestUpdateEmbed:
         """Test updating nonexistent embed fails."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"upd4_{unique_id}",
             email=f"upd4_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         with pytest.raises(EmbedNotFoundError):
@@ -142,17 +147,18 @@ class TestUpdateEmbed:
         """Test non-owner cannot update embed."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user1 = auth.register(
             username=f"upd5_{unique_id}",
             email=f"upd5_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"upd6_{unique_id}",
             email=f"upd6_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(user_id=user1.id, title="Owner's Embed")
@@ -164,27 +170,23 @@ class TestUpdateEmbed:
         """Test updating embed fields replaces all fields."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"upd7_{unique_id}",
             email=f"upd7_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
             user_id=user.id,
             title="Fields Test",
-            fields=[
-                {"name": "Old1", "value": "V1"},
-                {"name": "Old2", "value": "V2"}
-            ]
+            fields=[{"name": "Old1", "value": "V1"}, {"name": "Old2", "value": "V2"}],
         )
 
         updated = embeds.update_embed(
-            user.id,
-            embed.id,
-            fields=[{"name": "New", "value": "NewV"}]
+            user.id, embed.id, fields=[{"name": "New", "value": "NewV"}]
         )
 
         assert len(updated.fields) == 1
@@ -208,18 +210,16 @@ class TestSpecialCharacters:
         """Test Unicode characters in title."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"spec1_{unique_id}",
             email=f"spec1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
-        embed = embeds.create_embed(
-            user_id=user.id,
-            title="Hello World"
-        )
+        embed = embeds.create_embed(user_id=user.id, title="Hello World")
 
         assert embed.title == "Hello World"
 
@@ -227,17 +227,17 @@ class TestSpecialCharacters:
         """Test newlines in description."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"spec2_{unique_id}",
             email=f"spec2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
-            user_id=user.id,
-            description="Line 1\nLine 2\nLine 3"
+            user_id=user.id, description="Line 1\nLine 2\nLine 3"
         )
 
         assert "\n" in embed.description
@@ -246,17 +246,17 @@ class TestSpecialCharacters:
         """Test markdown formatting in description."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"spec3_{unique_id}",
             email=f"spec3_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(
-            user_id=user.id,
-            description="**Bold** and *italic* and `code`"
+            user_id=user.id, description="**Bold** and *italic* and `code`"
         )
 
         assert "**Bold**" in embed.description
@@ -269,12 +269,13 @@ class TestBoundaryConditions:
         """Test title at exactly 256 characters."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"bound1_{unique_id}",
             email=f"bound1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         title = "a" * 256
@@ -286,12 +287,13 @@ class TestBoundaryConditions:
         """Test description at exactly 4096 characters."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"bound2_{unique_id}",
             email=f"bound2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         desc = "a" * 4096
@@ -303,12 +305,13 @@ class TestBoundaryConditions:
         """Test embed with exactly 25 fields."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"bound3_{unique_id}",
             email=f"bound3_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         fields = [{"name": f"F{i}", "value": f"V{i}"} for i in range(25)]
@@ -331,12 +334,13 @@ class TestBoundaryConditions:
         """Test embed with exactly 6000 total characters."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"bound4_{unique_id}",
             email=f"bound4_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         # 256 + 4096 + 1648 = 6000
@@ -345,10 +349,7 @@ class TestBoundaryConditions:
         footer = "c" * 1648
 
         embed = embeds.create_embed(
-            user_id=user.id,
-            title=title,
-            description=desc,
-            footer={"text": footer}
+            user_id=user.id, title=title, description=desc, footer={"text": footer}
         )
 
         assert embed is not None
@@ -361,12 +362,13 @@ class TestConcurrentOperations:
         """Test creating multiple embeds for same user."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"conc1_{unique_id}",
             email=f"conc1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed1 = embeds.create_embed(user_id=user.id, title="Embed 1")
@@ -379,17 +381,18 @@ class TestConcurrentOperations:
         """Test multiple users creating embeds."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user1 = auth.register(
             username=f"conc2_{unique_id}",
             email=f"conc2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"conc3_{unique_id}",
             email=f"conc3_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed1 = embeds.create_embed(user_id=user1.id, title="User 1 Embed")
@@ -406,12 +409,13 @@ class TestEmbedRetrieval:
         """Test getting embed after deletion returns None."""
         db, auth, messaging, servers, embeds = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user = auth.register(
             username=f"ret1_{unique_id}",
             email=f"ret1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         embed = embeds.create_embed(user_id=user.id, title="Delete Me")
@@ -438,7 +442,7 @@ class TestEmbedRetrieval:
         outsider = auth.register(
             username=f"out_{unique_id}",
             email=f"out_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         with pytest.raises(MessageNotFoundError):

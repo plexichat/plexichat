@@ -3,7 +3,6 @@ Tests for webhook posting to threads.
 """
 
 
-
 class TestWebhookThreads:
     """Tests for posting webhook messages to threads."""
 
@@ -17,7 +16,7 @@ class TestWebhookThreads:
             token=setup["token"],
             content="Thread message",
             thread_id=thread_id,
-            wait=True
+            wait=True,
         )
 
         assert result is not None
@@ -33,7 +32,7 @@ class TestWebhookThreads:
             token=setup["token"],
             embeds=[{"title": "Thread Embed"}],
             thread_id=thread_id,
-            wait=True
+            wait=True,
         )
 
         assert result.thread_id == thread_id
@@ -51,7 +50,7 @@ class TestWebhookThreads:
             username="Thread Bot",
             avatar_url="https://example.com/thread.png",
             thread_id=thread_id,
-            wait=True
+            wait=True,
         )
 
         assert result.thread_id == thread_id
@@ -66,7 +65,7 @@ class TestWebhookThreads:
             webhook_id=setup["webhook"].id,
             token=setup["token"],
             content="No thread",
-            wait=True
+            wait=True,
         )
 
         assert result.thread_id is None
@@ -80,7 +79,7 @@ class TestWebhookThreads:
             webhook_url=setup["webhook"].url,
             content="URL thread message",
             thread_id=thread_id,
-            wait=True
+            wait=True,
         )
 
         assert result.thread_id == thread_id
@@ -97,7 +96,7 @@ class TestWebhookThreads:
                 token=setup["token"],
                 content=f"Thread message {i}",
                 thread_id=thread_id,
-                wait=True
+                wait=True,
             )
             results.append(result)
 
@@ -116,7 +115,7 @@ class TestWebhookThreads:
             token=setup["token"],
             content="Thread 1 message",
             thread_id=111,
-            wait=True
+            wait=True,
         )
 
         result2 = setup["webhooks"].execute_webhook(
@@ -124,7 +123,7 @@ class TestWebhookThreads:
             token=setup["token"],
             content="Thread 2 message",
             thread_id=222,
-            wait=True
+            wait=True,
         )
 
         assert result1.thread_id == 111

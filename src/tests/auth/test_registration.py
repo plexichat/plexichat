@@ -18,7 +18,7 @@ class TestRegistration:
         user = auth.register(
             username=username,
             email=f"{username}@example.com",
-            password="SecurePass123!"
+            password="SecurePass123!",
         )
 
         assert user is not None
@@ -140,7 +140,7 @@ class TestRegistration:
             username="kate",
             email="kate@example.com",
             password="SecurePass123!",
-            device_info={"fingerprint": "abc123", "name": "Test Device"}
+            device_info={"fingerprint": "abc123", "name": "Test Device"},
         )
 
         assert user is not None
@@ -157,7 +157,7 @@ class TestRegistration:
             username="leo",
             email="leo@example.com",
             password="SecurePass123!",
-            ip_address="192.168.1.1"
+            ip_address="192.168.1.1",
         )
 
         assert user is not None

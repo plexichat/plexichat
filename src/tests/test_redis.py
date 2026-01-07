@@ -20,13 +20,14 @@ for path in [project_root, src_path, common_utils_path]:
     if path not in sys.path:
         sys.path.insert(0, path)
 
-import utils.config as config
-import utils.logger as logger
+import utils.config as config  # noqa: E402
+import utils.logger as logger  # noqa: E402
 
 
 # Check if fakeredis is available
 try:
     import fakeredis
+
     FAKEREDIS_AVAILABLE = True
 except ImportError:
     FAKEREDIS_AVAILABLE = False
@@ -34,6 +35,7 @@ except ImportError:
 # Check if real redis is available
 try:
     import redis as real_redis
+
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
@@ -51,6 +53,7 @@ def setup_module():
     yield
 
     import shutil
+
     if os.path.exists("temp_test"):
         try:
             shutil.rmtree("temp_test")
@@ -109,6 +112,7 @@ def redis_disabled_config(setup_module):
 
 
 # ==================== RedisClient Unit Tests (with fakeredis) ====================
+
 
 @pytest.mark.skipif(not FAKEREDIS_AVAILABLE, reason="fakeredis not installed")
 class TestRedisClientWithFake:
@@ -344,6 +348,7 @@ class TestRedisClientWithFake:
 
 # ==================== Cache Module Tests ====================
 
+
 @pytest.mark.skipif(not FAKEREDIS_AVAILABLE, reason="fakeredis not installed")
 class TestCacheModule:
     """Tests for the cache module."""
@@ -390,7 +395,12 @@ class TestCacheModule:
 
     def test_cache_stats(self):
         """Test cache statistics."""
-        from src.core.database.cache import cache_set, cache_get, cache_stats, reset_cache_stats
+        from src.core.database.cache import (
+            cache_set,
+            cache_get,
+            cache_stats,
+            reset_cache_stats,
+        )
 
         reset_cache_stats()
 
@@ -444,13 +454,13 @@ class TestCacheModule:
             call_count += 1
             return {"id": user_id, "stats": include_stats}
 
-        result1 = get_user(1, include_stats=True)
+        get_user(1, include_stats=True)
         assert call_count == 1
 
-        result2 = get_user(1, include_stats=True)
+        get_user(1, include_stats=True)
         assert call_count == 1  # Cached
 
-        result3 = get_user(1, include_stats=False)
+        get_user(1, include_stats=False)
         assert call_count == 2  # Different kwargs
 
     def test_invalidate_pattern(self):
@@ -471,7 +481,12 @@ class TestCacheModule:
 
     def test_cache_health(self):
         """Test cache health check."""
-        from src.core.database.cache import cache_health, cache_set, cache_get, reset_cache_stats
+        from src.core.database.cache import (
+            cache_health,
+            cache_set,
+            cache_get,
+            reset_cache_stats,
+        )
 
         reset_cache_stats()
         cache_set("health_key", "value")
@@ -486,6 +501,7 @@ class TestCacheModule:
 
 
 # ==================== Session Cache Tests ====================
+
 
 @pytest.mark.skipif(not FAKEREDIS_AVAILABLE, reason="fakeredis not installed")
 class TestSessionCache:
@@ -522,7 +538,11 @@ class TestSessionCache:
 
     def test_invalidate_session(self):
         """Test session invalidation."""
-        from src.core.database.cache import cache_session, get_cached_session, invalidate_session
+        from src.core.database.cache import (
+            cache_session,
+            get_cached_session,
+            invalidate_session,
+        )
 
         cache_session("sess_456", user_id=2, data={})
         assert get_cached_session("sess_456") is not None
@@ -533,7 +553,9 @@ class TestSessionCache:
     def test_invalidate_user_sessions(self):
         """Test invalidating all sessions for a user."""
         from src.core.database.cache import (
-            cache_session, get_cached_session, invalidate_user_sessions
+            cache_session,
+            get_cached_session,
+            invalidate_user_sessions,
         )
 
         cache_session("sess_a", user_id=5, data={})
@@ -549,6 +571,7 @@ class TestSessionCache:
 
 
 # ==================== Presence Cache Tests ====================
+
 
 @pytest.mark.skipif(not FAKEREDIS_AVAILABLE, reason="fakeredis not installed")
 class TestPresenceCache:
@@ -599,6 +622,7 @@ class TestPresenceCache:
 
 
 # ==================== Rate Limiting Tests ====================
+
 
 @pytest.mark.skipif(not FAKEREDIS_AVAILABLE, reason="fakeredis not installed")
 class TestRateLimiting:
@@ -669,6 +693,7 @@ class TestRateLimiting:
 
 # ==================== Error Handling Tests ====================
 
+
 class TestErrorHandling:
     """Tests for error handling."""
 
@@ -693,6 +718,7 @@ class TestErrorHandling:
 
 
 # ==================== Integration Tests (Real Redis) ====================
+
 
 @pytest.mark.skipif(not REDIS_AVAILABLE, reason="redis not installed")
 class TestRealRedisIntegration:

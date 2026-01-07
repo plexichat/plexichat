@@ -11,7 +11,7 @@ import shutil
 class DatabaseManager:
     """
     Manages test database lifecycle.
-    
+
     Creates a single database per test session and provides
     transaction-based isolation between tests.
     """
@@ -25,7 +25,7 @@ class DatabaseManager:
     def setup(self):
         """
         Initialize the test database.
-        
+
         Creates the test directory, database file, and connects.
         Should be called once per test session.
         """
@@ -41,7 +41,10 @@ class DatabaseManager:
 
         # Import and setup dependencies
         import sys
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
+
+        project_root = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "../../..")
+        )
         src_path = os.path.join(project_root, "src")
         utils_path = os.path.join(project_root, "src", "utils")
         common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
@@ -52,6 +55,7 @@ class DatabaseManager:
 
         # Setup logger (suppress most output during tests)
         import utils.logger as logger
+
         try:
             logger.setup(log_dir=log_dir, level="WARNING", zip_logs=False)
         except Exception:
@@ -68,6 +72,7 @@ class DatabaseManager:
 
         # Create database
         from src.core.database import Database
+
         self._db = Database()
         self._db.connect()
 
@@ -101,7 +106,7 @@ class DatabaseManager:
     def teardown(self):
         """
         Clean up the test database.
-        
+
         Should be called once at end of test session.
         """
         if self._db:
@@ -120,6 +125,7 @@ class DatabaseManager:
 
         # Clean up test directory
         import gc
+
         gc.collect()
 
         try:

@@ -16,11 +16,8 @@ class TestWebhookEmbeds:
             webhook_id=setup["webhook"].id,
             token=setup["token"],
             content="Message with embed",
-            embeds=[{
-                "title": "Test Embed",
-                "description": "This is a test embed"
-            }],
-            wait=True
+            embeds=[{"title": "Test Embed", "description": "This is a test embed"}],
+            wait=True,
         )
 
         assert result is not None
@@ -32,8 +29,7 @@ class TestWebhookEmbeds:
         setup = webhook_with_token
 
         embeds = [
-            {"title": f"Embed {i}", "description": f"Description {i}"}
-            for i in range(5)
+            {"title": f"Embed {i}", "description": f"Description {i}"} for i in range(5)
         ]
 
         result = setup["webhooks"].execute_webhook(
@@ -41,7 +37,7 @@ class TestWebhookEmbeds:
             token=setup["token"],
             content="Multiple embeds",
             embeds=embeds,
-            wait=True
+            wait=True,
         )
 
         assert len(result.embeds) == 5
@@ -50,17 +46,14 @@ class TestWebhookEmbeds:
         """Test sending message with maximum embeds."""
         setup = webhook_with_token
 
-        embeds = [
-            {"title": f"Embed {i}"}
-            for i in range(10)
-        ]
+        embeds = [{"title": f"Embed {i}"} for i in range(10)]
 
         result = setup["webhooks"].execute_webhook(
             webhook_id=setup["webhook"].id,
             token=setup["token"],
             content="Max embeds",
             embeds=embeds,
-            wait=True
+            wait=True,
         )
 
         assert len(result.embeds) == 10
@@ -70,17 +63,14 @@ class TestWebhookEmbeds:
         setup = webhook_with_token
         from src.core.webhooks import EmbedLimitError
 
-        embeds = [
-            {"title": f"Embed {i}"}
-            for i in range(11)
-        ]
+        embeds = [{"title": f"Embed {i}"} for i in range(11)]
 
         with pytest.raises(EmbedLimitError) as exc_info:
             setup["webhooks"].execute_webhook(
                 webhook_id=setup["webhook"].id,
                 token=setup["token"],
                 content="Too many embeds",
-                embeds=embeds
+                embeds=embeds,
             )
 
         assert exc_info.value.max_allowed == 10
@@ -94,7 +84,7 @@ class TestWebhookEmbeds:
             webhook_id=setup["webhook"].id,
             token=setup["token"],
             embeds=[{"title": "Embed Only"}],
-            wait=True
+            wait=True,
         )
 
         assert result is not None
@@ -114,15 +104,15 @@ class TestWebhookEmbeds:
             "author": {"name": "Author Name"},
             "fields": [
                 {"name": "Field 1", "value": "Value 1", "inline": True},
-                {"name": "Field 2", "value": "Value 2", "inline": False}
-            ]
+                {"name": "Field 2", "value": "Value 2", "inline": False},
+            ],
         }
 
         result = setup["webhooks"].execute_webhook(
             webhook_id=setup["webhook"].id,
             token=setup["token"],
             embeds=[embed],
-            wait=True
+            wait=True,
         )
 
         assert result is not None
@@ -134,14 +124,14 @@ class TestWebhookEmbeds:
 
         embed = {
             "title": "Image Embed",
-            "image": {"url": "https://example.com/image.png"}
+            "image": {"url": "https://example.com/image.png"},
         }
 
         result = setup["webhooks"].execute_webhook(
             webhook_id=setup["webhook"].id,
             token=setup["token"],
             embeds=[embed],
-            wait=True
+            wait=True,
         )
 
         assert result is not None
@@ -152,14 +142,14 @@ class TestWebhookEmbeds:
 
         embed = {
             "title": "Thumbnail Embed",
-            "thumbnail": {"url": "https://example.com/thumb.png"}
+            "thumbnail": {"url": "https://example.com/thumb.png"},
         }
 
         result = setup["webhooks"].execute_webhook(
             webhook_id=setup["webhook"].id,
             token=setup["token"],
             embeds=[embed],
-            wait=True
+            wait=True,
         )
 
         assert result is not None
@@ -171,9 +161,7 @@ class TestWebhookEmbeds:
 
         with pytest.raises(InvalidContentError):
             setup["webhooks"].execute_webhook(
-                webhook_id=setup["webhook"].id,
-                token=setup["token"],
-                embeds=[]
+                webhook_id=setup["webhook"].id, token=setup["token"], embeds=[]
             )
 
     def test_execute_content_and_embeds(self, webhook_with_token):
@@ -185,7 +173,7 @@ class TestWebhookEmbeds:
             token=setup["token"],
             content="Text content",
             embeds=[{"title": "Embed Title"}],
-            wait=True
+            wait=True,
         )
 
         assert result.content == "Text content"
@@ -204,7 +192,7 @@ class TestEmbedWithOverrides:
             token=setup["token"],
             embeds=[{"title": "Override Embed"}],
             username="Custom Embed Bot",
-            wait=True
+            wait=True,
         )
 
         assert result.username == "Custom Embed Bot"
@@ -219,7 +207,7 @@ class TestEmbedWithOverrides:
             token=setup["token"],
             embeds=[{"title": "Avatar Embed"}],
             avatar_url="https://example.com/embed-avatar.png",
-            wait=True
+            wait=True,
         )
 
         assert result.avatar_url == "https://example.com/embed-avatar.png"
@@ -235,7 +223,7 @@ class TestEmbedWithOverrides:
             embeds=[{"title": "Full Embed"}],
             username="Full Bot",
             avatar_url="https://example.com/full.png",
-            wait=True
+            wait=True,
         )
 
         assert result.content == "Full message"

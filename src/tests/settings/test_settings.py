@@ -249,6 +249,7 @@ class TestSettingsTimestamps:
     def test_updated_at_changes_on_update(self, modules, test_user):
         """Test that updated_at changes when updating a setting."""
         import time
+
         settings = modules.settings
 
         # Create setting

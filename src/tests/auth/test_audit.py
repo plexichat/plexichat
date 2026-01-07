@@ -56,6 +56,7 @@ class TestAudit:
         """Test enabling 2FA creates audit entry."""
         db, auth = db_and_auth
         import pyotp
+
         unique_id = uuid.uuid4().hex[:16]
         username = f"audit2fa_{unique_id}"
 
@@ -65,7 +66,9 @@ class TestAudit:
         auth.confirm_2fa(user.id, totp.now())
 
         events = auth.get_security_events(user.id)
-        assert any(e.event_type == auth.AuditEventType.TWO_FACTOR_ENABLED for e in events)
+        assert any(
+            e.event_type == auth.AuditEventType.TWO_FACTOR_ENABLED for e in events
+        )
 
     def test_session_revoke_creates_audit_entry(self, registered_user):
         """Test session revocation creates audit entry."""
@@ -86,7 +89,12 @@ class TestAudit:
         auth.login(username, "TestPass123!", ip_address="192.168.1.100")
 
         history = auth.get_login_history(user.id)
-        entry = next(e for e in history if e.event_type == auth.AuditEventType.LOGIN_SUCCESS and e.ip_address == "192.168.1.100")
+        entry = next(
+            e
+            for e in history
+            if e.event_type == auth.AuditEventType.LOGIN_SUCCESS
+            and e.ip_address == "192.168.1.100"
+        )
 
         assert entry.ip_address == "192.168.1.100"
 
@@ -127,8 +135,12 @@ class TestAudit:
 
         history = auth.get_login_history(user.id)
 
-        success_entries = [e for e in history if e.event_type == auth.AuditEventType.LOGIN_SUCCESS]
-        failed_entries = [e for e in history if e.event_type == auth.AuditEventType.LOGIN_FAILED]
+        success_entries = [
+            e for e in history if e.event_type == auth.AuditEventType.LOGIN_SUCCESS
+        ]
+        failed_entries = [
+            e for e in history if e.event_type == auth.AuditEventType.LOGIN_FAILED
+        ]
 
         assert any(e.success is True for e in success_entries)
         assert any(e.success is False for e in failed_entries)

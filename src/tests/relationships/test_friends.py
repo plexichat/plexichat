@@ -60,7 +60,7 @@ class TestGetFriends:
         main_user = auth.register(
             username=f"main_{unique_id}",
             email=f"main_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         # Create multiple friends
@@ -68,7 +68,7 @@ class TestGetFriends:
             friend = auth.register(
                 username=f"friend_{unique_id}_{i}",
                 email=f"friend_{unique_id}_{i}@example.com",
-                password="TestPass123!"
+                password="TestPass123!",
             )
             request = relationships.send_friend_request(main_user.id, friend.id)
             relationships.accept_friend_request(friend.id, request.id)
@@ -139,17 +139,17 @@ class TestMutualFriends:
         user1 = auth.register(
             username=f"mut1_{unique_id}",
             email=f"mut1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"mut2_{unique_id}",
             email=f"mut2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         mutual = auth.register(
             username=f"mutual_{unique_id}",
             email=f"mutual_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         # Make mutual friend with both
@@ -183,12 +183,12 @@ class TestMutualFriends:
         user1 = auth.register(
             username=f"cnt1_{unique_id}",
             email=f"cnt1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"cnt2_{unique_id}",
             email=f"cnt2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         # Create multiple mutual friends
@@ -196,7 +196,7 @@ class TestMutualFriends:
             mutual = auth.register(
                 username=f"mutcnt_{unique_id}_{i}",
                 email=f"mutcnt_{unique_id}_{i}@example.com",
-                password="TestPass123!"
+                password="TestPass123!",
             )
             req1 = relationships.send_friend_request(user1.id, mutual.id)
             relationships.accept_friend_request(mutual.id, req1.id)
@@ -217,17 +217,17 @@ class TestMutualFriends:
         user1 = auth.register(
             username=f"sym1_{unique_id}",
             email=f"sym1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"sym2_{unique_id}",
             email=f"sym2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         mutual = auth.register(
             username=f"symmut_{unique_id}",
             email=f"symmut_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         req1 = relationships.send_friend_request(user1.id, mutual.id)

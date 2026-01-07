@@ -20,7 +20,7 @@ for path in [project_root, src_path, common_utils_path]:
     if path not in sys.path:
         sys.path.insert(0, path)
 
-import utils.logger as logger
+import utils.logger as logger  # noqa: E402
 
 try:
     os.makedirs("temp_es_test/logs", exist_ok=True)
@@ -28,8 +28,8 @@ try:
 except Exception:
     pass
 
-from src.core.search.indexer.elasticsearch import ElasticsearchIndexer
-from src.core.search.models import IndexedMessage
+from src.core.search.indexer.elasticsearch import ElasticsearchIndexer  # noqa: E402
+from src.core.search.models import IndexedMessage  # noqa: E402
 
 
 class ElasticsearchMock:
@@ -46,20 +46,35 @@ class ElasticsearchMock:
         self.requests.append({"method": method, "path": path, "body": body})
 
         if method == "PUT" and path.startswith("/plexichat") and "/_doc/" not in path:
-            return {"acknowledged": True, "shards_acknowledged": True, "index": path[1:]}
+            return {
+                "acknowledged": True,
+                "shards_acknowledged": True,
+                "index": path[1:],
+            }
 
         if method == "PUT" and "/_doc/" in path:
             parts = path.split("/")
             index = parts[1]
             doc_id = parts[3]
-            index_type = "messages" if "messages" in index else "users" if "users" in index else "servers"
+            index_type = (
+                "messages"
+                if "messages" in index
+                else "users"
+                if "users" in index
+                else "servers"
+            )
             self.indexed_docs[index_type][doc_id] = body
             return {"_index": index, "_id": doc_id, "result": "created", "_version": 1}
 
         if method == "DELETE" and "/_doc/" in path:
             parts = path.split("/")
             doc_id = parts[3]
-            return {"_index": parts[1], "_id": doc_id, "result": "deleted", "_version": 1}
+            return {
+                "_index": parts[1],
+                "_id": doc_id,
+                "result": "deleted",
+                "_version": 1,
+            }
 
         if method == "POST" and "/_search" in path:
             index = path.split("/")[1]
@@ -67,13 +82,25 @@ class ElasticsearchMock:
 
         if method == "GET" and "/_count" in path:
             index = path.split("/")[1]
-            index_type = "messages" if "messages" in index else "users" if "users" in index else "servers"
+            index_type = (
+                "messages"
+                if "messages" in index
+                else "users"
+                if "users" in index
+                else "servers"
+            )
             return {"count": len(self.indexed_docs[index_type])}
 
         return {}
 
     def _search(self, index, body):
-        index_type = "messages" if "messages" in index else "users" if "users" in index else "servers"
+        index_type = (
+            "messages"
+            if "messages" in index
+            else "users"
+            if "users" in index
+            else "servers"
+        )
         docs = self.indexed_docs[index_type]
 
         query_text = ""
@@ -90,12 +117,9 @@ class ElasticsearchMock:
         for doc_id, doc in docs.items():
             searchable = " ".join(str(v) for v in doc.values() if isinstance(v, str))
             if query_text.lower() in searchable.lower():
-                hits.append({
-                    "_index": index,
-                    "_id": doc_id,
-                    "_score": 1.0,
-                    "_source": doc
-                })
+                hits.append(
+                    {"_index": index, "_id": doc_id, "_score": 1.0, "_source": doc}
+                )
 
         limit = body.get("size", 25) if body else 25
         offset = body.get("from", 0) if body else 0
@@ -107,8 +131,8 @@ class ElasticsearchMock:
             "hits": {
                 "total": {"value": len(hits), "relation": "eq"},
                 "max_score": 1.0 if hits else None,
-                "hits": hits[offset:offset + limit]
-            }
+                "hits": hits[offset : offset + limit],
+            },
         }
 
 
@@ -154,10 +178,7 @@ class TestElasticsearchClientRequests:
         indexer.initialize()
 
         indexer.search_messages(
-            "hello",
-            conversation_ids=[1, 2],
-            server_ids=[10],
-            author_ids=[100]
+            "hello", conversation_ids=[1, 2], server_ids=[10], author_ids=[100]
         )
 
         search_request = next(r for r in mock.requests if "/_search" in r["path"])
@@ -169,8 +190,7 @@ class TestElasticsearchClientRequests:
             for clause in query
         )
         has_server_filter = any(
-            "terms" in clause and "server_id" in clause["terms"]
-            for clause in query
+            "terms" in clause and "server_id" in clause["terms"] for clause in query
         )
 
         assert has_match
@@ -286,8 +306,12 @@ class TestElasticsearchIndexOperations:
         indexer.remove_message(12345)
 
         delete_request = next(
-            (r for r in mock.requests if r["method"] == "DELETE" and "/_doc/" in r["path"]),
-            None
+            (
+                r
+                for r in mock.requests
+                if r["method"] == "DELETE" and "/_doc/" in r["path"]
+            ),
+            None,
         )
         assert delete_request is not None
         assert "12345" in delete_request["path"]

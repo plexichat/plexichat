@@ -11,7 +11,9 @@ class TestOnboardingStepCreation:
 
     def test_create_select_roles_step(self, server_with_members):
         """Test creating a select roles onboarding step."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         step = servers.create_onboarding_step(
             user_id=owner.id,
@@ -29,7 +31,9 @@ class TestOnboardingStepCreation:
 
     def test_create_read_rules_step(self, server_with_members):
         """Test creating a read rules onboarding step."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         step = servers.create_onboarding_step(
             user_id=owner.id,
@@ -46,7 +50,18 @@ class TestOnboardingStepCreation:
 
     def test_create_visit_channel_step(self, server_with_channels):
         """Test creating a visit channel onboarding step."""
-        server, owner, admin_user, member_user, outsider, general, announcements, private, category, servers = server_with_channels
+        (
+            server,
+            owner,
+            admin_user,
+            member_user,
+            outsider,
+            general,
+            announcements,
+            private,
+            category,
+            servers,
+        ) = server_with_channels
 
         step = servers.create_onboarding_step(
             user_id=owner.id,
@@ -61,7 +76,9 @@ class TestOnboardingStepCreation:
 
     def test_create_customize_profile_step(self, server_with_members):
         """Test creating a customize profile onboarding step."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         step = servers.create_onboarding_step(
             user_id=owner.id,
@@ -76,7 +93,9 @@ class TestOnboardingStepCreation:
 
     def test_create_custom_step(self, server_with_members):
         """Test creating a custom onboarding step."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         step = servers.create_onboarding_step(
             user_id=owner.id,
@@ -92,7 +111,9 @@ class TestOnboardingStepCreation:
 
     def test_create_step_requires_permission(self, server_with_members):
         """Test that creating steps requires permission."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         with pytest.raises(servers.PermissionDeniedError):
             servers.create_onboarding_step(
@@ -104,7 +125,9 @@ class TestOnboardingStepCreation:
 
     def test_create_step_empty_title_fails(self, server_with_members):
         """Test that empty step title fails."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         with pytest.raises(servers.OnboardingError):
             servers.create_onboarding_step(
@@ -116,7 +139,9 @@ class TestOnboardingStepCreation:
 
     def test_create_step_validates_role_ids(self, server_with_members):
         """Test that step validates role IDs in options."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         with pytest.raises(servers.RoleNotFoundError):
             servers.create_onboarding_step(
@@ -129,7 +154,9 @@ class TestOnboardingStepCreation:
 
     def test_create_step_validates_channel_id(self, server_with_members):
         """Test that step validates channel ID in options."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         with pytest.raises(servers.ChannelNotFoundError):
             servers.create_onboarding_step(
@@ -147,7 +174,9 @@ class TestOnboardingStepRetrieval:
 
     def test_get_onboarding_step(self, server_with_members):
         """Test getting an onboarding step by ID."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         step = servers.create_onboarding_step(
             user_id=owner.id,
@@ -164,7 +193,9 @@ class TestOnboardingStepRetrieval:
 
     def test_get_onboarding_steps(self, server_with_members):
         """Test getting all onboarding steps for a server."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         for i in range(3):
             servers.create_onboarding_step(
@@ -180,16 +211,18 @@ class TestOnboardingStepRetrieval:
 
     def test_get_steps_ordered_by_position(self, server_with_members):
         """Test that steps are returned in position order."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
-        step1 = servers.create_onboarding_step(
+        servers.create_onboarding_step(
             user_id=owner.id,
             server_id=server.id,
             step_type=servers.OnboardingStepType.CUSTOM,
             title="First Step",
         )
 
-        step2 = servers.create_onboarding_step(
+        servers.create_onboarding_step(
             user_id=owner.id,
             server_id=server.id,
             step_type=servers.OnboardingStepType.CUSTOM,
@@ -203,7 +236,9 @@ class TestOnboardingStepRetrieval:
 
     def test_member_can_view_steps(self, server_with_members):
         """Test that members can view onboarding steps."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         step = servers.create_onboarding_step(
             user_id=owner.id,
@@ -223,7 +258,9 @@ class TestOnboardingStepUpdate:
 
     def test_update_step_title(self, server_with_members):
         """Test updating step title."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         step = servers.create_onboarding_step(
             user_id=owner.id,
@@ -242,7 +279,9 @@ class TestOnboardingStepUpdate:
 
     def test_update_step_description(self, server_with_members):
         """Test updating step description."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         step = servers.create_onboarding_step(
             user_id=owner.id,
@@ -261,7 +300,9 @@ class TestOnboardingStepUpdate:
 
     def test_update_step_required(self, server_with_members):
         """Test updating step required flag."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         step = servers.create_onboarding_step(
             user_id=owner.id,
@@ -281,7 +322,9 @@ class TestOnboardingStepUpdate:
 
     def test_update_step_position(self, server_with_members):
         """Test updating step position."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         step = servers.create_onboarding_step(
             user_id=owner.id,
@@ -300,7 +343,9 @@ class TestOnboardingStepUpdate:
 
     def test_update_step_requires_permission(self, server_with_members):
         """Test that updating steps requires permission."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         step = servers.create_onboarding_step(
             user_id=owner.id,
@@ -323,7 +368,9 @@ class TestOnboardingStepDeletion:
 
     def test_delete_onboarding_step(self, server_with_members):
         """Test deleting an onboarding step."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         step = servers.create_onboarding_step(
             user_id=owner.id,
@@ -340,7 +387,9 @@ class TestOnboardingStepDeletion:
 
     def test_delete_step_requires_permission(self, server_with_members):
         """Test that deleting steps requires permission."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         step = servers.create_onboarding_step(
             user_id=owner.id,

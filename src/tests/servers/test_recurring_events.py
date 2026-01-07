@@ -12,7 +12,9 @@ class TestRecurringEventCreation:
 
     def test_create_recurring_event_with_rrule(self, server_with_members):
         """Test creating an event with RRULE."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
 
@@ -31,7 +33,9 @@ class TestRecurringEventCreation:
 
     def test_create_daily_recurring_event(self, server_with_members):
         """Test creating a daily recurring event."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
 
@@ -50,7 +54,9 @@ class TestRecurringEventCreation:
 
     def test_create_monthly_recurring_event(self, server_with_members):
         """Test creating a monthly recurring event."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
 
@@ -69,7 +75,9 @@ class TestRecurringEventCreation:
 
     def test_invalid_rrule_fails(self, server_with_members):
         """Test that invalid RRULE format fails."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
 
@@ -91,7 +99,9 @@ class TestRecurringEventInstances:
 
     def test_generate_recurring_instances(self, server_with_members):
         """Test generating instances from a recurring event."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
         end_time = start_time + 3600000
@@ -116,7 +126,9 @@ class TestRecurringEventInstances:
 
     def test_instances_have_correct_times(self, server_with_members):
         """Test that generated instances have correct start times."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
         end_time = start_time + 3600000
@@ -140,7 +152,9 @@ class TestRecurringEventInstances:
 
     def test_generate_instances_requires_permission(self, server_with_members):
         """Test that generating instances requires permission."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
 
@@ -159,7 +173,9 @@ class TestRecurringEventInstances:
 
     def test_generate_instances_non_recurring_fails(self, server_with_members):
         """Test that generating instances for non-recurring event fails."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
 
@@ -177,7 +193,9 @@ class TestRecurringEventInstances:
 
     def test_instances_preserve_duration(self, server_with_members):
         """Test that instances preserve the original event duration."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
         duration = 7200000
@@ -202,7 +220,9 @@ class TestRecurringEventInstances:
 
     def test_instances_inherit_properties(self, server_with_members):
         """Test that instances inherit parent event properties."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         start_time = int(time.time() * 1000) + 3600000
 

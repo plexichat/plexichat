@@ -10,7 +10,16 @@ class TestStartStage:
 
     def test_start_stage(self, server_with_voice):
         """Test starting a stage instance."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, stage_channel.id)
         stage = voice.start_stage(owner.id, stage_channel.id, "Test Topic")
@@ -23,7 +32,16 @@ class TestStartStage:
 
     def test_start_stage_makes_starter_speaker(self, server_with_voice):
         """Test starting a stage makes the starter a speaker."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, stage_channel.id)
         voice.start_stage(owner.id, stage_channel.id, "Test Topic")
@@ -33,7 +51,16 @@ class TestStartStage:
 
     def test_start_stage_on_voice_channel_fails(self, server_with_voice):
         """Test starting a stage on a voice channel raises error."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, voice_channel.id)
 
@@ -42,7 +69,16 @@ class TestStartStage:
 
     def test_start_stage_already_active(self, server_with_voice):
         """Test starting a stage when one is already active raises error."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, stage_channel.id)
         voice.start_stage(owner.id, stage_channel.id, "First Stage")
@@ -56,7 +92,16 @@ class TestEndStage:
 
     def test_end_stage_by_starter(self, server_with_voice):
         """Test ending a stage by the starter."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, stage_channel.id)
         voice.start_stage(owner.id, stage_channel.id, "Test Topic")
@@ -70,7 +115,16 @@ class TestEndStage:
 
     def test_end_stage_suppresses_all(self, server_with_voice):
         """Test ending a stage suppresses all users."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, stage_channel.id)
         voice.start_stage(owner.id, stage_channel.id, "Test Topic")
@@ -85,7 +139,16 @@ class TestEndStage:
 
     def test_end_stage_clears_requests(self, server_with_voice):
         """Test ending a stage clears speaker requests."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, stage_channel.id)
         voice.start_stage(owner.id, stage_channel.id, "Test Topic")
@@ -100,7 +163,16 @@ class TestEndStage:
 
     def test_end_stage_no_active_stage(self, server_with_voice):
         """Test ending a stage when none is active raises error."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         with pytest.raises(voice.StageNotFoundError):
             voice.end_stage(owner.id, stage_channel.id)
@@ -111,7 +183,16 @@ class TestRequestToSpeak:
 
     def test_request_to_speak(self, server_with_voice):
         """Test requesting to speak."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, stage_channel.id)
         voice.start_stage(owner.id, stage_channel.id, "Test Topic")
@@ -125,7 +206,16 @@ class TestRequestToSpeak:
 
     def test_request_to_speak_already_speaker(self, server_with_voice):
         """Test requesting to speak when already a speaker raises error."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, stage_channel.id)
         voice.start_stage(owner.id, stage_channel.id, "Test Topic")
@@ -135,7 +225,16 @@ class TestRequestToSpeak:
 
     def test_request_to_speak_duplicate(self, server_with_voice):
         """Test duplicate request to speak raises error."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, stage_channel.id)
         voice.start_stage(owner.id, stage_channel.id, "Test Topic")
@@ -148,7 +247,16 @@ class TestRequestToSpeak:
 
     def test_request_to_speak_not_in_channel(self, server_with_voice):
         """Test requesting to speak when not in channel raises error."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, stage_channel.id)
         voice.start_stage(owner.id, stage_channel.id, "Test Topic")
@@ -158,7 +266,16 @@ class TestRequestToSpeak:
 
     def test_request_to_speak_no_stage(self, server_with_voice):
         """Test requesting to speak with no active stage raises error."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(member1.id, stage_channel.id)
 
@@ -171,7 +288,16 @@ class TestCancelSpeakRequest:
 
     def test_cancel_speak_request(self, server_with_voice):
         """Test canceling a speak request."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, stage_channel.id)
         voice.start_stage(owner.id, stage_channel.id, "Test Topic")
@@ -188,7 +314,16 @@ class TestCancelSpeakRequest:
 
     def test_cancel_speak_request_not_found(self, server_with_voice):
         """Test canceling a nonexistent speak request raises error."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         with pytest.raises(voice.SpeakerRequestNotFoundError):
             voice.cancel_speak_request(member1.id, stage_channel.id)
@@ -199,7 +334,16 @@ class TestInviteToSpeak:
 
     def test_invite_to_speak(self, server_with_voice):
         """Test inviting a user to speak."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, stage_channel.id)
         voice.start_stage(owner.id, stage_channel.id, "Test Topic")
@@ -211,7 +355,16 @@ class TestInviteToSpeak:
 
     def test_invite_to_speak_clears_request(self, server_with_voice):
         """Test inviting to speak clears pending request."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, stage_channel.id)
         voice.start_stage(owner.id, stage_channel.id, "Test Topic")
@@ -226,7 +379,16 @@ class TestInviteToSpeak:
 
     def test_invite_to_speak_already_speaker(self, server_with_voice):
         """Test inviting an already speaker raises error."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, stage_channel.id)
         voice.start_stage(owner.id, stage_channel.id, "Test Topic")
@@ -243,7 +405,16 @@ class TestMoveToAudience:
 
     def test_move_to_audience(self, server_with_voice):
         """Test moving a speaker to audience."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, stage_channel.id)
         voice.start_stage(owner.id, stage_channel.id, "Test Topic")
@@ -257,7 +428,16 @@ class TestMoveToAudience:
 
     def test_move_self_to_audience(self, server_with_voice):
         """Test moving self to audience."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, stage_channel.id)
         voice.start_stage(owner.id, stage_channel.id, "Test Topic")
@@ -271,7 +451,16 @@ class TestMoveToAudience:
 
     def test_move_to_audience_not_speaker(self, server_with_voice):
         """Test moving non-speaker to audience raises error."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, stage_channel.id)
         voice.start_stage(owner.id, stage_channel.id, "Test Topic")
@@ -287,7 +476,16 @@ class TestGetSpeakersAndAudience:
 
     def test_get_speakers(self, server_with_voice):
         """Test getting speakers in a stage channel."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, stage_channel.id)
         voice.start_stage(owner.id, stage_channel.id, "Test Topic")
@@ -304,7 +502,16 @@ class TestGetSpeakersAndAudience:
 
     def test_get_audience(self, server_with_voice):
         """Test getting audience in a stage channel."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, stage_channel.id)
         voice.start_stage(owner.id, stage_channel.id, "Test Topic")
@@ -321,7 +528,16 @@ class TestGetSpeakersAndAudience:
 
     def test_get_speaker_requests(self, server_with_voice):
         """Test getting speaker requests."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, stage_channel.id)
         voice.start_stage(owner.id, stage_channel.id, "Test Topic")

@@ -12,7 +12,18 @@ class TestTemplateApplication:
 
     def test_apply_template_creates_server(self, server_with_channels):
         """Test that applying a template creates a new server."""
-        server, owner, admin_user, member_user, outsider, general, announcements, private, category, servers = server_with_channels
+        (
+            server,
+            owner,
+            admin_user,
+            member_user,
+            outsider,
+            general,
+            announcements,
+            private,
+            category,
+            servers,
+        ) = server_with_channels
 
         template = servers.create_template(
             user_id=owner.id,
@@ -35,7 +46,18 @@ class TestTemplateApplication:
 
     def test_apply_template_creates_channels(self, server_with_channels):
         """Test that applying a template creates channels."""
-        server, owner, admin_user, member_user, outsider, general, announcements, private, category, servers = server_with_channels
+        (
+            server,
+            owner,
+            admin_user,
+            member_user,
+            outsider,
+            general,
+            announcements,
+            private,
+            category,
+            servers,
+        ) = server_with_channels
 
         template = servers.create_template(
             user_id=owner.id,
@@ -58,7 +80,18 @@ class TestTemplateApplication:
 
     def test_apply_template_creates_categories(self, server_with_channels):
         """Test that applying a template creates categories."""
-        server, owner, admin_user, member_user, outsider, general, announcements, private, category, servers = server_with_channels
+        (
+            server,
+            owner,
+            admin_user,
+            member_user,
+            outsider,
+            general,
+            announcements,
+            private,
+            category,
+            servers,
+        ) = server_with_channels
 
         template = servers.create_template(
             user_id=owner.id,
@@ -80,9 +113,11 @@ class TestTemplateApplication:
 
     def test_apply_template_creates_roles(self, server_with_members):
         """Test that applying a template creates roles."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
-        mod_role = servers.create_role(
+        servers.create_role(
             user_id=owner.id,
             server_id=server.id,
             name="Moderator",
@@ -111,7 +146,9 @@ class TestTemplateApplication:
 
     def test_apply_template_increments_usage_count(self, server_with_members):
         """Test that applying a template increments usage count."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         template = servers.create_template(
             user_id=owner.id,
@@ -133,7 +170,9 @@ class TestTemplateApplication:
 
     def test_apply_nonexistent_template_fails(self, server_with_members):
         """Test that applying nonexistent template fails."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         with pytest.raises(servers.TemplateNotFoundError):
             servers.apply_template(
@@ -144,7 +183,9 @@ class TestTemplateApplication:
 
     def test_apply_public_template_by_other_user(self, server_with_members):
         """Test that other users can apply public templates."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         template = servers.create_template(
             user_id=owner.id,
@@ -175,9 +216,20 @@ class TestTemplateChannelPreservation:
 
     def test_template_preserves_channel_type(self, server_with_channels):
         """Test that template preserves channel types."""
-        server, owner, admin_user, member_user, outsider, general, announcements, private, category, servers = server_with_channels
+        (
+            server,
+            owner,
+            admin_user,
+            member_user,
+            outsider,
+            general,
+            announcements,
+            private,
+            category,
+            servers,
+        ) = server_with_channels
 
-        voice_channel = servers.create_channel(
+        servers.create_channel(
             user_id=owner.id,
             server_id=server.id,
             name="voice-room",
@@ -198,15 +250,28 @@ class TestTemplateChannelPreservation:
         )
 
         channels = servers.get_channels(owner.id, new_server.id)
-        voice_channels = [ch for ch in channels if ch.channel_type == servers.ChannelType.VOICE]
+        voice_channels = [
+            ch for ch in channels if ch.channel_type == servers.ChannelType.VOICE
+        ]
 
         assert len(voice_channels) > 0
 
     def test_template_preserves_channel_settings(self, server_with_channels):
         """Test that template preserves channel settings like NSFW and slowmode."""
-        server, owner, admin_user, member_user, outsider, general, announcements, private, category, servers = server_with_channels
+        (
+            server,
+            owner,
+            admin_user,
+            member_user,
+            outsider,
+            general,
+            announcements,
+            private,
+            category,
+            servers,
+        ) = server_with_channels
 
-        nsfw_channel = servers.create_channel(
+        servers.create_channel(
             user_id=owner.id,
             server_id=server.id,
             name="nsfw-channel",
@@ -234,9 +299,11 @@ class TestTemplateRolePreservation:
 
     def test_template_preserves_role_permissions(self, server_with_members):
         """Test that template preserves role permissions."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
-        custom_role = servers.create_role(
+        servers.create_role(
             user_id=owner.id,
             server_id=server.id,
             name="Custom Role",
@@ -261,9 +328,11 @@ class TestTemplateRolePreservation:
 
     def test_template_preserves_role_appearance(self, server_with_members):
         """Test that template preserves role color and hoist settings."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
-        styled_role = servers.create_role(
+        servers.create_role(
             user_id=owner.id,
             server_id=server.id,
             name="Styled Role",
@@ -288,7 +357,9 @@ class TestTemplateRolePreservation:
 
     def test_template_excludes_default_role(self, server_with_members):
         """Test that template excludes the @everyone default role."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         template = servers.create_template(
             user_id=owner.id,

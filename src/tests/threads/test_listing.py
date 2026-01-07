@@ -17,15 +17,11 @@ class TestGetActiveThreads:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread1 = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Active Thread 1"
+            user_id=owner.id, channel_id=channel.id, name="Active Thread 1"
         )
 
         thread2 = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Active Thread 2"
+            user_id=owner.id, channel_id=channel.id, name="Active Thread 2"
         )
 
         active = threads.get_active_threads(owner.id, channel.id)
@@ -40,15 +36,11 @@ class TestGetActiveThreads:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread1 = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Active Thread"
+            user_id=owner.id, channel_id=channel.id, name="Active Thread"
         )
 
         thread2 = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Archived Thread"
+            user_id=owner.id, channel_id=channel.id, name="Archived Thread"
         )
 
         threads.archive_thread(owner.id, thread2.id)
@@ -71,8 +63,7 @@ class TestGetActiveThreads:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         new_channel = servers.create_channel(
-            owner.id, server.id, "empty-channel",
-            channel_type=servers.ChannelType.TEXT
+            owner.id, server.id, "empty-channel", channel_type=servers.ChannelType.TEXT
         )
 
         active = threads.get_active_threads(owner.id, new_channel.id)
@@ -87,15 +78,11 @@ class TestGetArchivedThreads:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread1 = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Archived Thread 1"
+            user_id=owner.id, channel_id=channel.id, name="Archived Thread 1"
         )
 
         thread2 = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Archived Thread 2"
+            user_id=owner.id, channel_id=channel.id, name="Archived Thread 2"
         )
 
         threads.archive_thread(owner.id, thread1.id)
@@ -113,15 +100,11 @@ class TestGetArchivedThreads:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread1 = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Active Thread"
+            user_id=owner.id, channel_id=channel.id, name="Active Thread"
         )
 
         thread2 = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Archived Thread"
+            user_id=owner.id, channel_id=channel.id, name="Archived Thread"
         )
 
         threads.archive_thread(owner.id, thread2.id)
@@ -138,9 +121,7 @@ class TestGetArchivedThreads:
 
         for i in range(5):
             thread = threads.create_thread(
-                user_id=owner.id,
-                channel_id=channel.id,
-                name=f"Archived Thread {i}"
+                user_id=owner.id, channel_id=channel.id, name=f"Archived Thread {i}"
             )
             threads.archive_thread(owner.id, thread.id)
 
@@ -163,15 +144,11 @@ class TestGetUserThreads:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread1 = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="User Thread 1"
+            user_id=owner.id, channel_id=channel.id, name="User Thread 1"
         )
 
         thread2 = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="User Thread 2"
+            user_id=owner.id, channel_id=channel.id, name="User Thread 2"
         )
 
         user_threads = threads.get_user_threads(owner.id)
@@ -186,15 +163,11 @@ class TestGetUserThreads:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread1 = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Active User Thread"
+            user_id=owner.id, channel_id=channel.id, name="Active User Thread"
         )
 
         thread2 = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Archived User Thread"
+            user_id=owner.id, channel_id=channel.id, name="Archived User Thread"
         )
 
         threads.archive_thread(owner.id, thread2.id)
@@ -210,15 +183,11 @@ class TestGetUserThreads:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread1 = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Active User Thread"
+            user_id=owner.id, channel_id=channel.id, name="Active User Thread"
         )
 
         thread2 = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Archived User Thread"
+            user_id=owner.id, channel_id=channel.id, name="Archived User Thread"
         )
 
         threads.archive_thread(owner.id, thread2.id)
@@ -234,15 +203,11 @@ class TestGetUserThreads:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread1 = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Owner Thread"
+            user_id=owner.id, channel_id=channel.id, name="Owner Thread"
         )
 
         thread2 = threads.create_thread(
-            user_id=member1.id,
-            channel_id=channel.id,
-            name="Member Thread"
+            user_id=member1.id, channel_id=channel.id, name="Member Thread"
         )
 
         owner_threads = threads.get_user_threads(owner.id)
@@ -265,16 +230,14 @@ class TestGetUserPrivateThreads:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         public_thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Public Thread"
+            user_id=owner.id, channel_id=channel.id, name="Public Thread"
         )
 
         private_thread = threads.create_thread(
             user_id=owner.id,
             channel_id=channel.id,
             name="Private Thread",
-            thread_type=ThreadType.PRIVATE
+            thread_type=ThreadType.PRIVATE,
         )
 
         private_threads = threads.get_user_private_threads(owner.id)
@@ -288,25 +251,26 @@ class TestGetUserPrivateThreads:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         channel2 = servers.create_channel(
-            owner.id, server.id, "channel2",
-            channel_type=servers.ChannelType.TEXT
+            owner.id, server.id, "channel2", channel_type=servers.ChannelType.TEXT
         )
 
         thread1 = threads.create_thread(
             user_id=owner.id,
             channel_id=channel.id,
             name="Private Thread 1",
-            thread_type=ThreadType.PRIVATE
+            thread_type=ThreadType.PRIVATE,
         )
 
         thread2 = threads.create_thread(
             user_id=owner.id,
             channel_id=channel2.id,
             name="Private Thread 2",
-            thread_type=ThreadType.PRIVATE
+            thread_type=ThreadType.PRIVATE,
         )
 
-        private_threads = threads.get_user_private_threads(owner.id, channel_id=channel.id)
+        private_threads = threads.get_user_private_threads(
+            owner.id, channel_id=channel.id
+        )
 
         thread_ids = [t.id for t in private_threads]
         assert thread1.id in thread_ids
@@ -317,9 +281,7 @@ class TestGetUserPrivateThreads:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Public Thread"
+            user_id=owner.id, channel_id=channel.id, name="Public Thread"
         )
 
         private_threads = threads.get_user_private_threads(member1.id)

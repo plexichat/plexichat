@@ -19,9 +19,7 @@ class TestSendMessage:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Message Test"
+            user_id=owner.id, channel_id=channel.id, name="Message Test"
         )
 
         msg = threads.send_message(owner.id, thread.id, "Hello thread!")
@@ -36,9 +34,7 @@ class TestSendMessage:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Count Update Test"
+            user_id=owner.id, channel_id=channel.id, name="Count Update Test"
         )
 
         assert thread.message_count == 0
@@ -54,9 +50,7 @@ class TestSendMessage:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Last Message Test"
+            user_id=owner.id, channel_id=channel.id, name="Last Message Test"
         )
 
         assert thread.last_message_at is None
@@ -71,9 +65,7 @@ class TestSendMessage:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Auto Join Message Test"
+            user_id=owner.id, channel_id=channel.id, name="Auto Join Message Test"
         )
 
         threads.send_message(member1.id, thread.id, "Hello!")
@@ -87,9 +79,7 @@ class TestSendMessage:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Locked Thread Test"
+            user_id=owner.id, channel_id=channel.id, name="Locked Thread Test"
         )
 
         threads.lock_thread(owner.id, thread.id)
@@ -102,9 +92,7 @@ class TestSendMessage:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Unarchive Test"
+            user_id=owner.id, channel_id=channel.id, name="Unarchive Test"
         )
 
         threads.archive_thread(owner.id, thread.id)
@@ -132,9 +120,7 @@ class TestGetMessages:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Get Messages Test"
+            user_id=owner.id, channel_id=channel.id, name="Get Messages Test"
         )
 
         threads.send_message(owner.id, thread.id, "Message 1")
@@ -150,9 +136,7 @@ class TestGetMessages:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Limit Test"
+            user_id=owner.id, channel_id=channel.id, name="Limit Test"
         )
 
         for i in range(10):
@@ -167,9 +151,7 @@ class TestGetMessages:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Empty Messages Test"
+            user_id=owner.id, channel_id=channel.id, name="Empty Messages Test"
         )
 
         messages = threads.get_messages(owner.id, thread.id)
@@ -184,7 +166,7 @@ class TestGetMessages:
             user_id=owner.id,
             channel_id=channel.id,
             name="Private Messages Test",
-            thread_type=threads.ThreadType.PRIVATE
+            thread_type=threads.ThreadType.PRIVATE,
         )
 
         threads.send_message(owner.id, thread.id, "Secret message")
@@ -201,9 +183,7 @@ class TestGetMessageCount:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Message Count Test"
+            user_id=owner.id, channel_id=channel.id, name="Message Count Test"
         )
 
         assert threads.get_message_count(thread.id) == 0

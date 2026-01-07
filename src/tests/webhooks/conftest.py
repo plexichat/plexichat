@@ -11,7 +11,14 @@ import uuid
 @pytest.fixture
 def db_and_modules(modules):
     """Legacy fixture for backward compatibility."""
-    return modules._db, modules.auth, modules.messaging, modules.servers, modules.embeds, modules.webhooks
+    return (
+        modules._db,
+        modules.auth,
+        modules.messaging,
+        modules.servers,
+        modules.embeds,
+        modules.webhooks,
+    )
 
 
 @pytest.fixture
@@ -22,19 +29,19 @@ def base_server_setup(modules):
     owner = modules.auth.register(
         username=f"owner_{unique_id}",
         email=f"owner_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     member = modules.auth.register(
         username=f"member_{unique_id}",
         email=f"member_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     non_member = modules.auth.register(
         username=f"nonmember_{unique_id}",
         email=f"nonmember_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     server = modules.servers.create_server(owner.id, f"Test Server {unique_id}")
@@ -66,7 +73,7 @@ def fresh_server(modules):
     owner = modules.auth.register(
         username=f"fresh_owner_{unique_id}",
         email=f"fresh_owner_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     server = modules.servers.create_server(owner.id, f"Fresh Server {unique_id}")
@@ -94,7 +101,7 @@ def webhook_with_token(base_server_setup):
     webhook = setup["webhooks"].create_webhook(
         user_id=setup["owner"].id,
         channel_id=setup["channel"].id,
-        name=f"Test Webhook {unique_id}"
+        name=f"Test Webhook {unique_id}",
     )
 
     return {

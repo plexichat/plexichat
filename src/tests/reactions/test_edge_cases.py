@@ -127,22 +127,23 @@ class TestAccessControl:
         """Test non-participant cannot view reactions."""
         db, auth, messaging, servers, relationships, reactions = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user1 = auth.register(
             username=f"access1_{unique_id}",
             email=f"access1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"access2_{unique_id}",
             email=f"access2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         outsider = auth.register(
             username=f"access3_{unique_id}",
             email=f"access3_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user1.id, user2.id)
@@ -157,22 +158,23 @@ class TestAccessControl:
         """Test non-participant cannot get user reactions."""
         db, auth, messaging, servers, relationships, reactions = db_and_modules
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user1 = auth.register(
             username=f"userreact1_{unique_id}",
             email=f"userreact1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"userreact2_{unique_id}",
             email=f"userreact2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         outsider = auth.register(
             username=f"userreact3_{unique_id}",
             email=f"userreact3_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         dm = messaging.create_dm(user1.id, user2.id)
@@ -198,7 +200,9 @@ class TestConcurrentOperations:
         assert r3 is not None
 
         msg_reactions = reactions.get_reactions(owner.id, msg.id)
-        concurrent = next((r for r in msg_reactions.reactions if r.emoji == "concurrent"), None)
+        concurrent = next(
+            (r for r in msg_reactions.reactions if r.emoji == "concurrent"), None
+        )
 
         assert concurrent is not None
         assert concurrent.count == 3
@@ -212,7 +216,9 @@ class TestConcurrentOperations:
             reactions.remove_reaction(user1.id, msg.id, f"rapid_{i}")
 
         msg_reactions = reactions.get_reactions(user1.id, msg.id)
-        rapid_reactions = [r for r in msg_reactions.reactions if r.emoji.startswith("rapid_")]
+        rapid_reactions = [
+            r for r in msg_reactions.reactions if r.emoji.startswith("rapid_")
+        ]
 
         assert len(rapid_reactions) == 0
 

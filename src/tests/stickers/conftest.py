@@ -28,7 +28,7 @@ def server_with_pack(server_with_owner):
         user_id=owner.id,
         name="Test Pack",
         description="Test sticker pack",
-        server_id=server.id
+        server_id=server.id,
     )
 
     return owner, server, pack, stickers, servers

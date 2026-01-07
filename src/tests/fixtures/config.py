@@ -12,7 +12,7 @@ TEST_VERSION = "a.1.0-1"
 def get_test_config():
     """
     Get the unified test configuration.
-    
+
     This replaces the 15+ duplicate get_test_config() functions
     that were scattered across conftest.py files.
     """
@@ -111,7 +111,14 @@ def get_test_config():
             "allow_wildcard_cors": True,
             "cors_allow_credentials": True,
             "cors_allow_methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-            "cors_allow_headers": ["Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin", "X-Custom-Header"],
+            "cors_allow_headers": [
+                "Authorization",
+                "Content-Type",
+                "X-Requested-With",
+                "Accept",
+                "Origin",
+                "X-Custom-Header",
+            ],
             "docs_url": "/docs",
             "redoc_url": "/redoc",
             "openapi_url": "/openapi.json",
@@ -147,9 +154,7 @@ def get_test_config():
             "signing_expiry": 3600,
             "scanner_enabled": False,
             "proxy_enabled": False,
-            "compression": {
-                "enabled": False
-            },
+            "compression": {"enabled": False},
         },
         "search": {
             "backend": "sqlite_fts5",

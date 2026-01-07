@@ -24,24 +24,38 @@ def users_with_dm(modules, user_pool):
 
     msg1 = modules.messaging.send_message(user1.id, dm.id, "Hello world from Alice")
     msg2 = modules.messaging.send_message(user2.id, dm.id, "Hi Alice, this is Bob")
-    msg3 = modules.messaging.send_message(user1.id, dm.id, "Check out this link https://example.com")
+    msg3 = modules.messaging.send_message(
+        user1.id, dm.id, "Check out this link https://example.com"
+    )
 
-    modules.search.index_message(msg1.id, msg1.content, {
-        "author_id": user1.id,
-        "conversation_id": dm.id,
-        "created_at": msg1.created_at,
-    })
-    modules.search.index_message(msg2.id, msg2.content, {
-        "author_id": user2.id,
-        "conversation_id": dm.id,
-        "created_at": msg2.created_at,
-    })
-    modules.search.index_message(msg3.id, msg3.content, {
-        "author_id": user1.id,
-        "conversation_id": dm.id,
-        "created_at": msg3.created_at,
-        "has_links": True,
-    })
+    modules.search.index_message(
+        msg1.id,
+        msg1.content,
+        {
+            "author_id": user1.id,
+            "conversation_id": dm.id,
+            "created_at": msg1.created_at,
+        },
+    )
+    modules.search.index_message(
+        msg2.id,
+        msg2.content,
+        {
+            "author_id": user2.id,
+            "conversation_id": dm.id,
+            "created_at": msg2.created_at,
+        },
+    )
+    modules.search.index_message(
+        msg3.id,
+        msg3.content,
+        {
+            "author_id": user1.id,
+            "conversation_id": dm.id,
+            "created_at": msg3.created_at,
+            "has_links": True,
+        },
+    )
 
     return user1, user2, dm, [msg1, msg2, msg3], modules.search
 
@@ -54,19 +68,19 @@ def users_with_server(modules):
     owner = modules.auth.register(
         username=f"owner_{unique_id}",
         email=f"owner_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     member1 = modules.auth.register(
         username=f"member1_{unique_id}",
         email=f"member1_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     member2 = modules.auth.register(
         username=f"member2_{unique_id}",
         email=f"member2_{unique_id}@example.com",
-        password="TestPass123!"
+        password="TestPass123!",
     )
 
     server = modules.servers.create_server(owner.id, f"Test Server {unique_id}")
@@ -86,7 +100,7 @@ def indexed_users(modules):
         user = modules.auth.register(
             username=f"{name}_{unique_id}",
             email=f"{name}_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         modules.search._get_manager()._indexer.index_user(
             modules.search.models.IndexedUser(

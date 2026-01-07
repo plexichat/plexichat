@@ -48,75 +48,80 @@ class TestLoggingMiddleware:
 
         return app
 
-    @patch('src.api.middleware.logging._log_info')
+    @patch("src.api.middleware.logging._log_info")
     def test_logs_successful_request(self, mock_log_info, app_with_logging):
         """Test successful request is logged."""
         client = TestClient(app_with_logging)
         response = client.get("/test")
         assert response.status_code == 200
-        
+
         assert mock_log_info.called
         log_message = mock_log_info.call_args[0][0]
         assert "GET" in log_message
         assert "/test" in log_message
         assert "200" in log_message
 
-    @patch('src.api.middleware.logging._log_warning')
+    @patch("src.api.middleware.logging._log_warning")
     def test_logs_404_as_warning(self, mock_log_warning, app_with_logging):
         """Test 404 response is logged as warning."""
         client = TestClient(app_with_logging)
         response = client.get("/not-found")
         assert response.status_code == 404
-        
+
         assert mock_log_warning.called
         log_message = mock_log_warning.call_args[0][0]
         assert "404" in log_message
 
-    @patch('src.api.middleware.logging._log_error')
+    @patch("src.api.middleware.logging._log_error")
     def test_logs_500_as_error(self, mock_log_error, app_with_logging):
         """Test 500 response is logged as error."""
         client = TestClient(app_with_logging)
         response = client.get("/error")
         assert response.status_code == 500
-        
+
         assert mock_log_error.called
         log_message = mock_log_error.call_args[0][0]
         assert "500" in log_message
 
-    @patch('src.api.middleware.logging._log_info')
+    @patch("src.api.middleware.logging._log_info")
     def test_logs_include_timing(self, mock_log_info, app_with_logging):
         """Test logs include response timing in milliseconds."""
         client = TestClient(app_with_logging)
         response = client.get("/test")
         assert response.status_code == 200
-        
+
         assert mock_log_info.called
         log_message = mock_log_info.call_args[0][0]
         assert "ms" in log_message
 
-    @patch('src.api.middleware.logging._log_info')
+    @patch("src.api.middleware.logging._log_info")
     def test_logs_include_client_ip(self, mock_log_info, app_with_logging):
         """Test logs include client IP address."""
         client = TestClient(app_with_logging)
         response = client.get("/test")
         assert response.status_code == 200
-        
+
         assert mock_log_info.called
         log_message = mock_log_info.call_args[0][0]
-        assert "testclient" in log_message.lower() or "127.0.0.1" in log_message or "unknown" not in log_message.lower()
+        assert (
+            "testclient" in log_message.lower()
+            or "127.0.0.1" in log_message
+            or "unknown" not in log_message.lower()
+        )
 
-    @patch('src.api.middleware.logging._log_info')
+    @patch("src.api.middleware.logging._log_info")
     def test_timing_accuracy(self, mock_log_info, app_with_logging):
         """Test timing measurement is accurate."""
         client = TestClient(app_with_logging)
         response = client.get("/slow")
         assert response.status_code == 200
-        
+
         assert mock_log_info.called
         log_message = mock_log_info.call_args[0][0]
-        
+
         import re
-        timing_match = re.search(r'(\d+\.\d+)ms', log_message)
+
+        timing_match = re.search(r"(\d+\.\d+)ms", log_message)
         if timing_match:
             duration = float(timing_match.group(1))
             assert duration >= 100
@@ -149,7 +154,7 @@ class TestSkippedPaths:
 
         return app
 
-    @patch('src.api.middleware.logging._log_info')
+    @patch("src.api.middleware.logging._log_info")
     def test_health_endpoint_skipped(self, mock_log_info, skip_paths_app):
         """Test /api/v1/health endpoint is not logged."""
         client = TestClient(skip_paths_app)
@@ -157,7 +162,7 @@ class TestSkippedPaths:
         assert response.status_code == 200
         assert not mock_log_info.called
 
-    @patch('src.api.middleware.logging._log_info')
+    @patch("src.api.middleware.logging._log_info")
     def test_alt_health_endpoint_skipped(self, mock_log_info, skip_paths_app):
         """Test /health endpoint is not logged."""
         client = TestClient(skip_paths_app)
@@ -165,7 +170,7 @@ class TestSkippedPaths:
         assert response.status_code == 200
         assert not mock_log_info.called
 
-    @patch('src.api.middleware.logging._log_info')
+    @patch("src.api.middleware.logging._log_info")
     def test_favicon_skipped(self, mock_log_info, skip_paths_app):
         """Test /favicon.ico is not logged."""
         client = TestClient(skip_paths_app)
@@ -173,7 +178,7 @@ class TestSkippedPaths:
         assert response.status_code == 204
         assert not mock_log_info.called
 
-    @patch('src.api.middleware.logging._log_info')
+    @patch("src.api.middleware.logging._log_info")
     def test_normal_endpoint_not_skipped(self, mock_log_info, skip_paths_app):
         """Test normal endpoints are still logged."""
         client = TestClient(skip_paths_app)
@@ -207,13 +212,13 @@ class TestTelemetryIntegration:
 
         return app
 
-    @patch('src.api.middleware.logging._submit_server_telemetry')
+    @patch("src.api.middleware.logging._submit_server_telemetry")
     def test_telemetry_submitted_for_api_endpoints(self, mock_telemetry, telemetry_app):
         """Test telemetry is submitted for API endpoints."""
         client = TestClient(telemetry_app)
         response = client.get("/api/v1/endpoint")
         assert response.status_code == 200
-        
+
         if mock_telemetry.called:
             args = mock_telemetry.call_args[0]
             assert "/api/v1/endpoint" in args[0]
@@ -221,13 +226,13 @@ class TestTelemetryIntegration:
             assert isinstance(args[2], float)
             assert args[3] == 200
 
-    @patch('src.api.middleware.logging._submit_server_telemetry')
+    @patch("src.api.middleware.logging._submit_server_telemetry")
     def test_telemetry_not_submitted_for_non_api(self, mock_telemetry, telemetry_app):
         """Test telemetry is not submitted for non-API endpoints."""
         client = TestClient(telemetry_app)
         response = client.get("/non-api/endpoint")
         assert response.status_code == 200
-        
+
         assert not mock_telemetry.called
 
 
@@ -250,7 +255,7 @@ class TestExceptionLogging:
 
         return app
 
-    @patch('src.api.middleware.logging._log_error')
+    @patch("src.api.middleware.logging._log_error")
     def test_exception_is_logged(self, mock_log_error, exception_app):
         """Test exceptions during request are logged."""
         client = TestClient(exception_app)
@@ -258,12 +263,12 @@ class TestExceptionLogging:
             _ = client.get("/exception")
         except Exception:
             pass
-        
+
         if mock_log_error.called:
             log_message = mock_log_error.call_args[0][0]
             assert "ERROR" in log_message or "/exception" in log_message
 
-    @patch('src.api.middleware.logging._log_error')
+    @patch("src.api.middleware.logging._log_error")
     def test_exception_log_includes_timing(self, mock_log_error, exception_app):
         """Test exception logs include timing information."""
         client = TestClient(exception_app)
@@ -271,7 +276,7 @@ class TestExceptionLogging:
             _ = client.get("/exception")
         except Exception:
             pass
-        
+
         if mock_log_error.called:
             log_message = mock_log_error.call_args[0][0]
             assert "ms" in log_message.lower() or "exception" in log_message.lower()
@@ -292,14 +297,14 @@ class TestLoggerAvailability:
 
         return app
 
-    @patch('src.api.middleware.logging._get_logger', return_value=None)
+    @patch("src.api.middleware.logging._get_logger", return_value=None)
     def test_handles_missing_logger(self, mock_get_logger, no_logger_app):
         """Test middleware handles missing logger gracefully."""
         client = TestClient(no_logger_app)
         response = client.get("/test")
         assert response.status_code == 200
 
-    @patch('src.api.middleware.logging._get_logger')
+    @patch("src.api.middleware.logging._get_logger")
     def test_handles_logger_runtime_error(self, mock_get_logger, no_logger_app):
         """Test middleware handles logger RuntimeError gracefully."""
         mock_logger = Mock()
@@ -342,46 +347,46 @@ class TestDifferentHTTPMethods:
 
         return app
 
-    @patch('src.api.middleware.logging._log_info')
+    @patch("src.api.middleware.logging._log_info")
     def test_get_method_logged(self, mock_log_info, methods_app):
         """Test GET method is logged correctly."""
         client = TestClient(methods_app)
         response = client.get("/resource")
         assert response.status_code == 200
-        
+
         assert mock_log_info.called
         log_message = mock_log_info.call_args[0][0]
         assert "GET" in log_message
 
-    @patch('src.api.middleware.logging._log_info')
+    @patch("src.api.middleware.logging._log_info")
     def test_post_method_logged(self, mock_log_info, methods_app):
         """Test POST method is logged correctly."""
         client = TestClient(methods_app)
         response = client.post("/resource")
         assert response.status_code == 200
-        
+
         assert mock_log_info.called
         log_message = mock_log_info.call_args[0][0]
         assert "POST" in log_message
 
-    @patch('src.api.middleware.logging._log_info')
+    @patch("src.api.middleware.logging._log_info")
     def test_put_method_logged(self, mock_log_info, methods_app):
         """Test PUT method is logged correctly."""
         client = TestClient(methods_app)
         response = client.put("/resource")
         assert response.status_code == 200
-        
+
         assert mock_log_info.called
         log_message = mock_log_info.call_args[0][0]
         assert "PUT" in log_message
 
-    @patch('src.api.middleware.logging._log_info')
+    @patch("src.api.middleware.logging._log_info")
     def test_delete_method_logged(self, mock_log_info, methods_app):
         """Test DELETE method is logged correctly."""
         client = TestClient(methods_app)
         response = client.delete("/resource")
         assert response.status_code == 200
-        
+
         assert mock_log_info.called
         log_message = mock_log_info.call_args[0][0]
         assert "DELETE" in log_message
@@ -430,33 +435,33 @@ class TestStatusCodeRanges:
 
         return app
 
-    @patch('src.api.middleware.logging._log_info')
+    @patch("src.api.middleware.logging._log_info")
     def test_2xx_logged_as_info(self, mock_log_info, status_codes_app):
         """Test 2xx responses are logged as info."""
         client = TestClient(status_codes_app)
-        
+
         for endpoint in ["/success", "/created"]:
             mock_log_info.reset_mock()
             response = client.get(endpoint)
             assert response.status_code < 300
             assert mock_log_info.called
 
-    @patch('src.api.middleware.logging._log_warning')
+    @patch("src.api.middleware.logging._log_warning")
     def test_4xx_logged_as_warning(self, mock_log_warning, status_codes_app):
         """Test 4xx responses are logged as warning."""
         client = TestClient(status_codes_app)
-        
+
         for endpoint in ["/bad-request", "/unauthorized", "/forbidden"]:
             mock_log_warning.reset_mock()
             response = client.get(endpoint)
             assert 400 <= response.status_code < 500
             assert mock_log_warning.called
 
-    @patch('src.api.middleware.logging._log_error')
+    @patch("src.api.middleware.logging._log_error")
     def test_5xx_logged_as_error(self, mock_log_error, status_codes_app):
         """Test 5xx responses are logged as error."""
         client = TestClient(status_codes_app)
-        
+
         for endpoint in ["/server-error", "/service-unavailable"]:
             mock_log_error.reset_mock()
             response = client.get(endpoint)
@@ -479,7 +484,7 @@ class TestWebSocketRequests:
 
         return app
 
-    @patch('src.api.middleware.logging._log_info')
+    @patch("src.api.middleware.logging._log_info")
     def test_http_requests_logged(self, mock_log_info, websocket_app):
         """Test HTTP requests are logged."""
         client = TestClient(websocket_app)
@@ -503,35 +508,36 @@ class TestPerformance:
 
         return app
 
-    @patch('src.api.middleware.logging._log_info')
-    @patch('src.api.middleware.logging._submit_server_telemetry')
+    @patch("src.api.middleware.logging._log_info")
+    @patch("src.api.middleware.logging._submit_server_telemetry")
     def test_minimal_overhead(self, mock_telemetry, mock_log_info, performance_app):
         """Test logging adds minimal overhead."""
         client = TestClient(performance_app)
-        
+
         start = time.perf_counter()
         for _ in range(100):
             response = client.get("/fast")
             assert response.status_code == 200
         duration = time.perf_counter() - start
-        
+
         assert duration < 5.0
 
-    @patch('src.api.middleware.logging._log_info')
+    @patch("src.api.middleware.logging._log_info")
     def test_concurrent_logging_safe(self, mock_log_info, performance_app):
         """Test logging is safe under concurrent load."""
         import threading
+
         client = TestClient(performance_app)
-        
+
         def make_request():
             for _ in range(10):
                 response = client.get("/fast")
                 assert response.status_code == 200
-        
+
         threads = [threading.Thread(target=make_request) for _ in range(10)]
         for thread in threads:
             thread.start()
         for thread in threads:
             thread.join()
-        
+
         assert mock_log_info.called

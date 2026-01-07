@@ -20,17 +20,13 @@ class TestServerSearchBasic:
         owner = auth.register(
             username=f"srvowner_{unique_id}",
             email=f"srvowner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"Searchable Server {unique_id}")
 
         search._get_manager()._indexer.index_server(
-            IndexedServer(
-                server_id=server.id,
-                name=server.name,
-                is_public=True
-            )
+            IndexedServer(server_id=server.id, name=server.name, is_public=True)
         )
 
         results = search.search_servers(owner.id, unique_id)
@@ -53,17 +49,13 @@ class TestServerSearchBasic:
         owner = auth.register(
             username=f"srvtype_{unique_id}",
             email=f"srvtype_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"Type Check Server {unique_id}")
 
         search._get_manager()._indexer.index_server(
-            IndexedServer(
-                server_id=server.id,
-                name=server.name,
-                is_public=True
-            )
+            IndexedServer(server_id=server.id, name=server.name, is_public=True)
         )
 
         results = search.search_servers(owner.id, unique_id)
@@ -92,17 +84,14 @@ class TestServerSearchFilters:
         owner = auth.register(
             username=f"catowner_{unique_id}",
             email=f"catowner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"Gaming Server {unique_id}")
 
         search._get_manager()._indexer.index_server(
             IndexedServer(
-                server_id=server.id,
-                name=server.name,
-                category="gaming",
-                is_public=True
+                server_id=server.id, name=server.name, category="gaming", is_public=True
             )
         )
 
@@ -125,7 +114,7 @@ class TestServerSearchIndexing:
         owner = auth.register(
             username=f"idxowner_{unique_id}",
             email=f"idxowner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"Index Test Server {unique_id}")
@@ -136,7 +125,7 @@ class TestServerSearchIndexing:
                 name=server.name,
                 description="A test server for indexing",
                 tags=["test", "indexing"],
-                is_public=True
+                is_public=True,
             )
         )
 
@@ -152,7 +141,7 @@ class TestServerSearchIndexing:
         owner = auth.register(
             username=f"descowner_{unique_id}",
             email=f"descowner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"Server {unique_id}")
@@ -163,7 +152,7 @@ class TestServerSearchIndexing:
                 server_id=server.id,
                 name=server.name,
                 description=description,
-                is_public=True
+                is_public=True,
             )
         )
 
@@ -179,7 +168,7 @@ class TestServerSearchIndexing:
         owner = auth.register(
             username=f"tagowner_{unique_id}",
             email=f"tagowner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"Tagged Server {unique_id}")
@@ -190,7 +179,7 @@ class TestServerSearchIndexing:
                 server_id=server.id,
                 name=server.name,
                 tags=[tag, "gaming"],
-                is_public=True
+                is_public=True,
             )
         )
 
@@ -225,7 +214,7 @@ class TestServerSearchPublicOnly:
         owner = auth.register(
             username=f"pubowner_{unique_id}",
             email=f"pubowner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         public_server = servers.create_server(owner.id, f"Public {unique_id}")
@@ -233,16 +222,12 @@ class TestServerSearchPublicOnly:
 
         search._get_manager()._indexer.index_server(
             IndexedServer(
-                server_id=public_server.id,
-                name=public_server.name,
-                is_public=True
+                server_id=public_server.id, name=public_server.name, is_public=True
             )
         )
         search._get_manager()._indexer.index_server(
             IndexedServer(
-                server_id=private_server.id,
-                name=private_server.name,
-                is_public=False
+                server_id=private_server.id, name=private_server.name, is_public=False
             )
         )
 
@@ -251,7 +236,7 @@ class TestServerSearchPublicOnly:
         for result in results:
             indexed = search._get_manager()._indexer._db.fetch_one(
                 "SELECT is_public FROM search_servers_fts WHERE server_id = ?",
-                (str(result.server_id),)
+                (str(result.server_id),),
             )
             if indexed:
                 assert indexed["is_public"] == "1"

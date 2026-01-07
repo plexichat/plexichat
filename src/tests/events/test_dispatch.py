@@ -171,9 +171,7 @@ class TestModuleLevelDispatch:
         """Test filter_by_intents function."""
         from src.core.events.types import GatewayIntent
 
-        event = events.create_guild_create(
-            server_id=1, name="Test", owner_id=2
-        )
+        event = events.create_guild_create(server_id=1, name="Test", owner_id=2)
         assert events.filter_by_intents(event, GatewayIntent.GUILDS) is True
         assert events.filter_by_intents(event, 0) is False
 
@@ -222,9 +220,7 @@ class TestEventCreationAndDispatch:
 
         events.subscribe(callback)
         try:
-            event = events.create_guild_create(
-                server_id=1, name="Test", owner_id=2
-            )
+            event = events.create_guild_create(server_id=1, name="Test", owner_id=2)
             events.dispatch(event, user_ids=[1])
             assert EventType.GUILD_CREATE in received
         finally:
@@ -256,9 +252,7 @@ class TestEventCreationAndDispatch:
 
         events.subscribe(callback)
         try:
-            event = events.create_voice_state_update(
-                user_id=1, channel_id=2
-            )
+            event = events.create_voice_state_update(user_id=1, channel_id=2)
             events.dispatch(event, user_ids=[1])
             assert EventType.VOICE_STATE_UPDATE in received
         finally:
@@ -274,8 +268,7 @@ class TestEventCreationAndDispatch:
         events.subscribe(callback)
         try:
             event = events.create_reaction_add(
-                user_id=1, message_id=2, channel_id=3,
-                emoji={"name": "thumbsup"}
+                user_id=1, message_id=2, channel_id=3, emoji={"name": "thumbsup"}
             )
             events.dispatch(event, user_ids=[1])
             assert EventType.MESSAGE_REACTION_ADD in received

@@ -17,9 +17,7 @@ class TestServerIntegration:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Server ID Test"
+            user_id=owner.id, channel_id=channel.id, name="Server ID Test"
         )
 
         assert thread.server_id == server.id
@@ -29,20 +27,15 @@ class TestServerIntegration:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         channel2 = servers.create_channel(
-            owner.id, server.id, "channel2",
-            channel_type=servers.ChannelType.TEXT
+            owner.id, server.id, "channel2", channel_type=servers.ChannelType.TEXT
         )
 
         thread1 = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Thread in Channel 1"
+            user_id=owner.id, channel_id=channel.id, name="Thread in Channel 1"
         )
 
         thread2 = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel2.id,
-            name="Thread in Channel 2"
+            user_id=owner.id, channel_id=channel2.id, name="Thread in Channel 2"
         )
 
         assert thread1.channel_id == channel.id
@@ -54,9 +47,7 @@ class TestServerIntegration:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=member1.id,
-            channel_id=channel.id,
-            name="Member Thread"
+            user_id=member1.id, channel_id=channel.id, name="Member Thread"
         )
 
         assert thread.owner_id == member1.id
@@ -70,21 +61,15 @@ class TestMultipleThreads:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread1 = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Thread 1"
+            user_id=owner.id, channel_id=channel.id, name="Thread 1"
         )
 
         thread2 = threads.create_thread(
-            user_id=member1.id,
-            channel_id=channel.id,
-            name="Thread 2"
+            user_id=member1.id, channel_id=channel.id, name="Thread 2"
         )
 
         thread3 = threads.create_thread(
-            user_id=member2.id,
-            channel_id=channel.id,
-            name="Thread 3"
+            user_id=member2.id, channel_id=channel.id, name="Thread 3"
         )
 
         active = threads.get_active_threads(owner.id, channel.id)
@@ -99,15 +84,11 @@ class TestMultipleThreads:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread1 = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Thread 1"
+            user_id=owner.id, channel_id=channel.id, name="Thread 1"
         )
 
         thread2 = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Thread 2"
+            user_id=owner.id, channel_id=channel.id, name="Thread 2"
         )
 
         threads.join_thread(member1.id, thread1.id)
@@ -124,16 +105,14 @@ class TestMultipleThreads:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         public = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Public Thread"
+            user_id=owner.id, channel_id=channel.id, name="Public Thread"
         )
 
         private = threads.create_thread(
             user_id=owner.id,
             channel_id=channel.id,
             name="Private Thread",
-            thread_type=ThreadType.PRIVATE
+            thread_type=ThreadType.PRIVATE,
         )
 
         active = threads.get_active_threads(member1.id, channel.id)
@@ -151,9 +130,7 @@ class TestThreadLifecycle:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Lifecycle Thread"
+            user_id=owner.id, channel_id=channel.id, name="Lifecycle Thread"
         )
         assert thread.state == ThreadState.ACTIVE
 
@@ -201,7 +178,7 @@ class TestThreadLifecycle:
                 user_id=owner.id,
                 channel_id=channel.id,
                 name=f"Thread {duration.value}",
-                auto_archive_duration=duration
+                auto_archive_duration=duration,
             )
             assert thread.auto_archive_duration == duration
 
@@ -214,9 +191,7 @@ class TestConcurrentOperations:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Concurrent Join Test"
+            user_id=owner.id, channel_id=channel.id, name="Concurrent Join Test"
         )
 
         threads.join_thread(member1.id, thread.id)
@@ -230,9 +205,7 @@ class TestConcurrentOperations:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Message Count Test"
+            user_id=owner.id, channel_id=channel.id, name="Message Count Test"
         )
 
         for i in range(10):

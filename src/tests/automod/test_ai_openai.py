@@ -40,19 +40,17 @@ class TestOpenAIAdapter:
     def test_successful_moderation_check(self, mock_urlopen):
         """Test successful moderation API call."""
         mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({
-            "results": [{
-                "flagged": True,
-                "categories": {
-                    "hate": False,
-                    "violence": True
-                },
-                "category_scores": {
-                    "hate": 0.1,
-                    "violence": 0.8
-                }
-            }]
-        }).encode("utf-8")
+        mock_response.read.return_value = json.dumps(
+            {
+                "results": [
+                    {
+                        "flagged": True,
+                        "categories": {"hate": False, "violence": True},
+                        "category_scores": {"hate": 0.1, "violence": 0.8},
+                    }
+                ]
+            }
+        ).encode("utf-8")
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_response
@@ -69,19 +67,17 @@ class TestOpenAIAdapter:
     def test_clean_content_not_flagged(self, mock_urlopen):
         """Test clean content is not flagged."""
         mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({
-            "results": [{
-                "flagged": False,
-                "categories": {
-                    "hate": False,
-                    "violence": False
-                },
-                "category_scores": {
-                    "hate": 0.01,
-                    "violence": 0.02
-                }
-            }]
-        }).encode("utf-8")
+        mock_response.read.return_value = json.dumps(
+            {
+                "results": [
+                    {
+                        "flagged": False,
+                        "categories": {"hate": False, "violence": False},
+                        "category_scores": {"hate": 0.01, "violence": 0.02},
+                    }
+                ]
+            }
+        ).encode("utf-8")
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_response
@@ -95,13 +91,17 @@ class TestOpenAIAdapter:
     def test_threshold_based_flagging(self, mock_urlopen):
         """Test content flagged based on threshold."""
         mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({
-            "results": [{
-                "flagged": False,
-                "categories": {"hate": False},
-                "category_scores": {"hate": 0.6}
-            }]
-        }).encode("utf-8")
+        mock_response.read.return_value = json.dumps(
+            {
+                "results": [
+                    {
+                        "flagged": False,
+                        "categories": {"hate": False},
+                        "category_scores": {"hate": 0.6},
+                    }
+                ]
+            }
+        ).encode("utf-8")
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_response

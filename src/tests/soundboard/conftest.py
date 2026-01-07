@@ -32,7 +32,7 @@ def server_with_sound(server_with_owner):
         format=SoundFormat.MP3,
         url="https://cdn.example.com/sounds/test.mp3",
         size=100000,
-        duration_seconds=2.5
+        duration_seconds=2.5,
     )
 
     return owner, server, sound, soundboard, servers

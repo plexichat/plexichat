@@ -5,7 +5,6 @@ Tests for integration with other modules.
 from src.core.notifications import MentionType
 
 
-
 class TestMessagingIntegration:
     """Tests for integration with messaging module."""
 
@@ -20,7 +19,7 @@ class TestMessagingIntegration:
             author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
-            content=content
+            content=content,
         )
 
         assert len(notifs) == 1
@@ -37,7 +36,7 @@ class TestMessagingIntegration:
             author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
-            content=content
+            content=content,
         )
 
         assert len(notifs) == 1
@@ -45,7 +44,9 @@ class TestMessagingIntegration:
 
     def test_notification_in_group_conversation(self, group_conversation):
         """Test notifications work in group conversations."""
-        owner, member1, member2, group, messaging, notifications, relationships = group_conversation
+        owner, member1, member2, group, messaging, notifications, relationships = (
+            group_conversation
+        )
 
         content = f"<@{member1.id}> and <@{member2.id}>"
         msg = messaging.send_message(owner.id, group.id, content)
@@ -54,7 +55,7 @@ class TestMessagingIntegration:
             author_id=owner.id,
             message_id=msg.id,
             conversation_id=group.id,
-            content=content
+            content=content,
         )
 
         assert len(notifs) == 2
@@ -68,29 +69,13 @@ class TestServersIntegration:
 
     def test_notification_includes_server_id(self, users_with_server):
         """Test notification includes server ID when provided."""
-        owner, member1, member2, server, channel, servers, messaging, notifications = users_with_server
-
-        group = messaging.create_group(owner.id, "Server Group", [member1.id, member2.id])
-
-        content = f"<@{member1.id}>"
-        msg = messaging.send_message(owner.id, group.id, content)
-
-        notifs = notifications.create_notifications_for_message(
-            author_id=owner.id,
-            message_id=msg.id,
-            conversation_id=group.id,
-            content=content,
-            server_id=server.id
+        owner, member1, member2, server, channel, servers, messaging, notifications = (
+            users_with_server
         )
 
-        assert len(notifs) == 1
-        assert notifs[0].server_id == server.id
-
-    def test_notification_includes_channel_id(self, users_with_server):
-        """Test notification includes channel ID when provided."""
-        owner, member1, member2, server, channel, servers, messaging, notifications = users_with_server
-
-        group = messaging.create_group(owner.id, "Server Group", [member1.id, member2.id])
+        group = messaging.create_group(
+            owner.id, "Server Group", [member1.id, member2.id]
+        )
 
         content = f"<@{member1.id}>"
         msg = messaging.send_message(owner.id, group.id, content)
@@ -101,7 +86,31 @@ class TestServersIntegration:
             conversation_id=group.id,
             content=content,
             server_id=server.id,
-            channel_id=channel.id
+        )
+
+        assert len(notifs) == 1
+        assert notifs[0].server_id == server.id
+
+    def test_notification_includes_channel_id(self, users_with_server):
+        """Test notification includes channel ID when provided."""
+        owner, member1, member2, server, channel, servers, messaging, notifications = (
+            users_with_server
+        )
+
+        group = messaging.create_group(
+            owner.id, "Server Group", [member1.id, member2.id]
+        )
+
+        content = f"<@{member1.id}>"
+        msg = messaging.send_message(owner.id, group.id, content)
+
+        notifs = notifications.create_notifications_for_message(
+            author_id=owner.id,
+            message_id=msg.id,
+            conversation_id=group.id,
+            content=content,
+            server_id=server.id,
+            channel_id=channel.id,
         )
 
         assert len(notifs) == 1
@@ -109,9 +118,21 @@ class TestServersIntegration:
 
     def test_role_mention_notifies_role_members(self, users_with_role):
         """Test role mention notifies all role members."""
-        owner, member1, member2, server, channel, role, servers, messaging, notifications = users_with_role
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            channel,
+            role,
+            servers,
+            messaging,
+            notifications,
+        ) = users_with_role
 
-        group = messaging.create_group(owner.id, "Server Group", [member1.id, member2.id])
+        group = messaging.create_group(
+            owner.id, "Server Group", [member1.id, member2.id]
+        )
 
         content = f"<@&{role.id}>"
         msg = messaging.send_message(owner.id, group.id, content)
@@ -121,7 +142,7 @@ class TestServersIntegration:
             message_id=msg.id,
             conversation_id=group.id,
             content=content,
-            server_id=server.id
+            server_id=server.id,
         )
 
         notified_users = {n.user_id for n in notifs}
@@ -129,9 +150,13 @@ class TestServersIntegration:
 
     def test_everyone_notifies_server_members(self, users_with_server):
         """Test @everyone notifies all server members."""
-        owner, member1, member2, server, channel, servers, messaging, notifications = users_with_server
+        owner, member1, member2, server, channel, servers, messaging, notifications = (
+            users_with_server
+        )
 
-        group = messaging.create_group(owner.id, "Server Group", [member1.id, member2.id])
+        group = messaging.create_group(
+            owner.id, "Server Group", [member1.id, member2.id]
+        )
 
         content = "@everyone"
         msg = messaging.send_message(owner.id, group.id, content)
@@ -141,7 +166,7 @@ class TestServersIntegration:
             message_id=msg.id,
             conversation_id=group.id,
             content=content,
-            server_id=server.id
+            server_id=server.id,
         )
 
         notified_users = {n.user_id for n in notifs}
@@ -154,7 +179,9 @@ class TestRelationshipsIntegration:
 
     def test_blocked_user_not_notified(self, group_conversation):
         """Test blocked user doesn't receive notification."""
-        owner, member1, member2, group, messaging, notifications, relationships = group_conversation
+        owner, member1, member2, group, messaging, notifications, relationships = (
+            group_conversation
+        )
 
         relationships.block_user(member1.id, owner.id)
 
@@ -165,7 +192,7 @@ class TestRelationshipsIntegration:
             author_id=owner.id,
             message_id=msg.id,
             conversation_id=group.id,
-            content=content
+            content=content,
         )
 
         notified_users = {n.user_id for n in notifs}
@@ -173,27 +200,32 @@ class TestRelationshipsIntegration:
 
     def test_user_who_blocked_sender_not_notified(self, db_and_modules):
         """Test user who blocked sender doesn't receive notification."""
-        db, auth, messaging, servers, relationships, presence, notifications = db_and_modules
+        db, auth, messaging, servers, relationships, presence, notifications = (
+            db_and_modules
+        )
         import uuid
+
         unique_id = uuid.uuid4().hex[:8]
 
         user1 = auth.register(
             username=f"block1_{unique_id}",
             email=f"block1_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user2 = auth.register(
             username=f"block2_{unique_id}",
             email=f"block2_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
         user3 = auth.register(
             username=f"block3_{unique_id}",
             email=f"block3_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
-        group = messaging.create_group(user1.id, f"Block Test {unique_id}", [user2.id, user3.id])
+        group = messaging.create_group(
+            user1.id, f"Block Test {unique_id}", [user2.id, user3.id]
+        )
 
         relationships.block_user(user2.id, user1.id)
 
@@ -204,7 +236,7 @@ class TestRelationshipsIntegration:
             author_id=user1.id,
             message_id=msg.id,
             conversation_id=group.id,
-            content=content
+            content=content,
         )
 
         notified_users = {n.user_id for n in notifs}
@@ -238,7 +270,9 @@ class TestHighlightMentions:
 
     def test_highlight_everyone_mention(self, users_with_server):
         """Test highlighting @everyone mention."""
-        owner, member1, member2, server, channel, servers, messaging, notifications = users_with_server
+        owner, member1, member2, server, channel, servers, messaging, notifications = (
+            users_with_server
+        )
 
         content = "@everyone check this"
         positions = notifications.highlight_mentions(content, member1.id)
@@ -249,7 +283,9 @@ class TestHighlightMentions:
 
     def test_highlight_multiple_mentions(self, group_conversation):
         """Test highlighting multiple mentions."""
-        owner, member1, member2, group, messaging, notifications, relationships = group_conversation
+        owner, member1, member2, group, messaging, notifications, relationships = (
+            group_conversation
+        )
 
         content = f"<@{member1.id}> and <@{member2.id}> @everyone"
         positions = notifications.highlight_mentions(content, member1.id)
@@ -273,7 +309,7 @@ class TestPushPayload:
             author_id=user1.id,
             message_id=msg.id,
             conversation_id=dm.id,
-            content=content
+            content=content,
         )
 
         assert len(notifs) == 1
@@ -287,7 +323,9 @@ class TestPushPayload:
 
     def test_push_payload_badge_count(self, group_conversation):
         """Test push payload includes badge count."""
-        owner, member1, member2, group, messaging, notifications, relationships = group_conversation
+        owner, member1, member2, group, messaging, notifications, relationships = (
+            group_conversation
+        )
 
         notifs = []
         for i in range(3):
@@ -297,7 +335,7 @@ class TestPushPayload:
                 author_id=owner.id,
                 message_id=msg.id,
                 conversation_id=group.id,
-                content=content
+                content=content,
             )
 
         if notifs:

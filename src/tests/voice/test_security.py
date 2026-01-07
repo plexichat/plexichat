@@ -71,7 +71,16 @@ class TestWebRTCExploitation:
 
     def test_sdp_injection_attack(self, server_with_voice, security_setup):
         """Test that malicious SDP injection is rejected."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         malicious_sdp = """v=0
 o=- 0 0 IN IP4 127.0.0.1
@@ -129,7 +138,9 @@ m=audio 9 RTP/SAVPF 111
 
     def test_null_byte_injection(self):
         """Test that null byte injection is rejected."""
-        null_byte_candidate = "candidate:1 1 udp 2130706431 192.168.1.100\x00malicious 54321 typ host"
+        null_byte_candidate = (
+            "candidate:1 1 udp 2130706431 192.168.1.100\x00malicious 54321 typ host"
+        )
 
         with pytest.raises(ICECandidateError):
             parse_ice_candidate(null_byte_candidate, "audio", 0)
@@ -140,7 +151,16 @@ class TestSignalingManipulation:
 
     def test_session_hijacking_prevention(self, server_with_voice, security_setup):
         """Test that session hijacking is prevented."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         info1 = create_voice_connection(member1.id, voice_channel.id)
         session_id = info1.session_id
@@ -153,7 +173,16 @@ class TestSignalingManipulation:
 
     def test_replay_attack_prevention(self, server_with_voice, security_setup):
         """Test that replay attacks are prevented via timestamps."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         creds1 = get_turn_credentials(member1.id)
         time.sleep(1)
@@ -164,7 +193,16 @@ class TestSignalingManipulation:
 
     def test_unauthorized_connection_attempt(self, server_with_voice, security_setup):
         """Test that unauthorized users cannot create connections."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         fake_user_id = 999999999
 
@@ -173,7 +211,16 @@ class TestSignalingManipulation:
 
     def test_cross_channel_connection_spoofing(self, server_with_voice, security_setup):
         """Test prevention of cross-channel connection spoofing."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         create_voice_connection(member1.id, voice_channel.id)
 
@@ -184,7 +231,16 @@ class TestSignalingManipulation:
 
     def test_turn_credential_forgery_detection(self, server_with_voice, security_setup):
         """Test that forged TURN credentials are detected."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         get_turn_credentials(member1.id)
 
@@ -193,12 +249,11 @@ class TestSignalingManipulation:
 
         secret = "test_secret_for_security"
         expected = hmac.new(
-            secret.encode(),
-            fake_username.encode(),
-            hashlib.sha1
+            secret.encode(), fake_username.encode(), hashlib.sha1
         ).digest()
 
         import base64
+
         expected_credential = base64.b64encode(expected).decode()
 
         assert fake_credential != expected_credential
@@ -237,7 +292,9 @@ class TestICECandidateInjection:
                 parsed = parser.parse(candidate)
                 validator.validate(parsed)
                 if parsed.get("address") in ["0.0.0.0", "255.255.255.255"]:
-                    pytest.fail(f"Should have rejected malicious candidate: {candidate}")
+                    pytest.fail(
+                        f"Should have rejected malicious candidate: {candidate}"
+                    )
             except ICECandidateError:
                 pass
 
@@ -310,7 +367,9 @@ class TestICECandidateInjection:
 
     def test_tcp_candidate_exploitation(self):
         """Test handling of malicious TCP candidates."""
-        malicious_tcp = "candidate:1 1 tcp 1518280447 192.168.1.100 9 typ host tcptype passive"
+        malicious_tcp = (
+            "candidate:1 1 tcp 1518280447 192.168.1.100 9 typ host tcptype passive"
+        )
 
         parser = ICECandidateParser()
         parsed = parser.parse(malicious_tcp)
@@ -338,7 +397,16 @@ class TestMediaStreamHijacking:
 
     def test_unauthorized_stream_access(self, server_with_voice, security_setup):
         """Test that unauthorized users cannot access streams."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         create_voice_connection(member1.id, voice_channel.id)
 
@@ -349,7 +417,16 @@ class TestMediaStreamHijacking:
 
     def test_stream_id_enumeration_prevention(self, server_with_voice, security_setup):
         """Test prevention of stream ID enumeration attacks."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         info1 = create_voice_connection(member1.id, voice_channel.id)
         info2 = create_voice_connection(member2.id, voice_channel.id)
@@ -363,7 +440,16 @@ class TestMediaStreamHijacking:
 
     def test_cross_user_stream_injection(self, server_with_voice, security_setup):
         """Test prevention of cross-user stream injection."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         info1 = create_voice_connection(member1.id, voice_channel.id)
         info2 = create_voice_connection(member2.id, voice_channel.id)
@@ -377,13 +463,10 @@ class TestMediaStreamHijacking:
         """Test detection of DTLS fingerprint spoofing."""
         valid_fingerprint = {
             "algorithm": "sha-256",
-            "value": "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
+            "value": "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99",
         }
 
-        spoofed_fingerprint = {
-            "algorithm": "md5",
-            "value": "malicious_fingerprint"
-        }
+        spoofed_fingerprint = {"algorithm": "md5", "value": "malicious_fingerprint"}
 
         assert valid_fingerprint["algorithm"] == "sha-256"
         assert spoofed_fingerprint["algorithm"] != "sha-256"
@@ -393,13 +476,13 @@ class TestMediaStreamHijacking:
         legitimate_params = {
             "codecs": [{"mimeType": "audio/opus", "clockRate": 48000}],
             "headerExtensions": [],
-            "encodings": [{"ssrc": 12345}]
+            "encodings": [{"ssrc": 12345}],
         }
 
         malicious_params = {
             "codecs": [{"mimeType": "audio/opus", "clockRate": 48000}],
             "headerExtensions": [],
-            "encodings": [{"ssrc": 99999, "rtx": {"ssrc": 88888}}]
+            "encodings": [{"ssrc": 99999, "rtx": {"ssrc": 88888}}],
         }
 
         assert legitimate_params["encodings"][0]["ssrc"] == 12345
@@ -452,10 +535,12 @@ class TestJanusSFUSecurity:
     async def test_janus_unauthorized_room_access(self, mock_janus_session):
         """Test prevention of unauthorized room access in Janus."""
         mock_session, mock_response = mock_janus_session
-        mock_response.json = AsyncMock(return_value={
-            "janus": "error",
-            "error": {"code": 426, "reason": "Unauthorized"}
-        })
+        mock_response.json = AsyncMock(
+            return_value={
+                "janus": "error",
+                "error": {"code": 426, "reason": "Unauthorized"},
+            }
+        )
 
         with patch("aiohttp.ClientSession", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
@@ -473,17 +558,21 @@ class TestJanusSFUSecurity:
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
             adapter._session = mock_session
 
-            mock_response.json = AsyncMock(side_effect=[
-                {"janus": "success", "data": {"id": 12345}},
-                {"janus": "success", "data": {"id": 67890}},
-            ])
+            mock_response.json = AsyncMock(
+                side_effect=[
+                    {"janus": "success", "data": {"id": 12345}},
+                    {"janus": "success", "data": {"id": 67890}},
+                ]
+            )
 
             await adapter.create_room("room1")
             session_id_1 = adapter._session_id
 
-            mock_response.json = AsyncMock(side_effect=[
-                {"janus": "success", "data": {"id": 54321}},
-            ])
+            mock_response.json = AsyncMock(
+                side_effect=[
+                    {"janus": "success", "data": {"id": 54321}},
+                ]
+            )
 
             await adapter.create_room("room2")
             session_id_2 = adapter._session_id
@@ -494,10 +583,12 @@ class TestJanusSFUSecurity:
     async def test_janus_plugin_injection_prevention(self, mock_janus_session):
         """Test prevention of malicious plugin injection in Janus."""
         mock_session, mock_response = mock_janus_session
-        mock_response.json = AsyncMock(return_value={
-            "janus": "error",
-            "error": {"code": 458, "reason": "Plugin not found"}
-        })
+        mock_response.json = AsyncMock(
+            return_value={
+                "janus": "error",
+                "error": {"code": 458, "reason": "Plugin not found"},
+            }
+        )
 
         with patch("aiohttp.ClientSession", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
@@ -517,11 +608,13 @@ class TestJanusSFUSecurity:
 
             malicious_room_id = "room'; DROP TABLE rooms; --"
 
-            mock_response.json = AsyncMock(side_effect=[
-                {"janus": "success", "data": {"id": 12345}},
-                {"janus": "success", "data": {"id": 67890}},
-                {"janus": "success"},
-            ])
+            mock_response.json = AsyncMock(
+                side_effect=[
+                    {"janus": "success", "data": {"id": 12345}},
+                    {"janus": "success", "data": {"id": 67890}},
+                    {"janus": "success"},
+                ]
+            )
 
             try:
                 await adapter.create_room(malicious_room_id)
@@ -537,10 +630,12 @@ class TestJanusSFUSecurity:
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
             adapter._session = mock_session
 
-            mock_response.json = AsyncMock(return_value={
-                "janus": "error",
-                "error": {"code": 429, "reason": "Too many requests"}
-            })
+            mock_response.json = AsyncMock(
+                return_value={
+                    "janus": "error",
+                    "error": {"code": 429, "reason": "Too many requests"},
+                }
+            )
 
             for _ in range(100):
                 try:
@@ -557,20 +652,27 @@ class TestJanusSFUSecurity:
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
             adapter._session = mock_session
 
-            mock_response.json = AsyncMock(side_effect=[
-                {"janus": "success", "data": {"id": 12345}},
-                {"janus": "success", "data": {"id": 67890}},
-                {"janus": "success"},
-                {"janus": "success", "data": {"id": 11111}},
-                {"janus": "success", "plugindata": {"data": {"publishers": []}}},
-                {"janus": "error", "error": {"code": 436, "reason": "Unauthorized publisher"}},
-            ])
+            mock_response.json = AsyncMock(
+                side_effect=[
+                    {"janus": "success", "data": {"id": 12345}},
+                    {"janus": "success", "data": {"id": 67890}},
+                    {"janus": "success"},
+                    {"janus": "success", "data": {"id": 11111}},
+                    {"janus": "success", "plugindata": {"data": {"publishers": []}}},
+                    {
+                        "janus": "error",
+                        "error": {"code": 436, "reason": "Unauthorized publisher"},
+                    },
+                ]
+            )
 
             await adapter.create_room("room123")
             await adapter.join_room("room123", "peer1")
 
             with pytest.raises(SFUConnectionError):
-                await adapter.produce("room123", "peer1", "transport1", MediaKind.AUDIO, {})
+                await adapter.produce(
+                    "room123", "peer1", "transport1", MediaKind.AUDIO, {}
+                )
 
 
 class TestMediasoupSFUSecurity:
@@ -586,13 +688,17 @@ class TestMediasoupSFUSecurity:
         mock_response.content_type = "application/json"
 
         mock_session = MagicMock()
-        mock_session.request = MagicMock(return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_response)))
+        mock_session.request = MagicMock(
+            return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_response))
+        )
         mock_session.close = AsyncMock()
 
         return mock_session, mock_response
 
     @pytest.mark.asyncio
-    async def test_mediasoup_router_capabilities_tampering(self, mock_mediasoup_session):
+    async def test_mediasoup_router_capabilities_tampering(
+        self, mock_mediasoup_session
+    ):
         """Test detection of tampered router capabilities."""
         mock_session, mock_response = mock_mediasoup_session
 
@@ -600,11 +706,17 @@ class TestMediasoupSFUSecurity:
             adapter = MediasoupAdapter(api_url="http://localhost:3000")
             adapter._session = mock_session
 
-            mock_response.json = AsyncMock(return_value={
-                "codecs": [
-                    {"kind": "audio", "mimeType": "audio/malicious", "clockRate": 48000}
-                ]
-            })
+            mock_response.json = AsyncMock(
+                return_value={
+                    "codecs": [
+                        {
+                            "kind": "audio",
+                            "mimeType": "audio/malicious",
+                            "clockRate": 48000,
+                        }
+                    ]
+                }
+            )
 
             caps = await adapter.get_router_capabilities("room123")
             assert "codecs" in caps
@@ -618,14 +730,18 @@ class TestMediasoupSFUSecurity:
             adapter = MediasoupAdapter(api_url="http://localhost:3000")
             adapter._session = mock_session
 
-            mock_response.json = AsyncMock(return_value={
-                "id": "transport_123",
-                "iceParameters": {"usernameFragment": "test", "password": "test"},
-                "iceCandidates": [],
-                "dtlsParameters": {"fingerprints": []}
-            })
+            mock_response.json = AsyncMock(
+                return_value={
+                    "id": "transport_123",
+                    "iceParameters": {"usernameFragment": "test", "password": "test"},
+                    "iceCandidates": [],
+                    "dtlsParameters": {"fingerprints": []},
+                }
+            )
 
-            transport = await adapter.create_transport("room123", "peer1", TransportDirection.SEND)
+            transport = await adapter.create_transport(
+                "room123", "peer1", TransportDirection.SEND
+            )
 
             mock_response.status = 403
             mock_response.text = AsyncMock(return_value="Forbidden")
@@ -642,10 +758,9 @@ class TestMediasoupSFUSecurity:
             adapter = MediasoupAdapter(api_url="http://localhost:3000")
             adapter._session = mock_session
 
-            mock_response.json = AsyncMock(return_value={
-                "id": "producer_duplicate",
-                "paused": False
-            })
+            mock_response.json = AsyncMock(
+                return_value={"id": "producer_duplicate", "paused": False}
+            )
 
             await adapter.produce("room123", "peer1", "transport1", MediaKind.AUDIO, {})
 
@@ -653,7 +768,9 @@ class TestMediasoupSFUSecurity:
             mock_response.text = AsyncMock(return_value="Conflict")
 
             with pytest.raises(SFUConnectionError):
-                await adapter.produce("room123", "peer2", "transport2", MediaKind.AUDIO, {})
+                await adapter.produce(
+                    "room123", "peer2", "transport2", MediaKind.AUDIO, {}
+                )
 
     @pytest.mark.asyncio
     async def test_mediasoup_consumer_unauthorized_access(self, mock_mediasoup_session):
@@ -665,10 +782,14 @@ class TestMediasoupSFUSecurity:
             adapter._session = mock_session
 
             mock_response.status = 403
-            mock_response.text = AsyncMock(return_value="Forbidden: Cannot consume this producer")
+            mock_response.text = AsyncMock(
+                return_value="Forbidden: Cannot consume this producer"
+            )
 
             with pytest.raises(SFUConnectionError):
-                await adapter.consume("room123", "unauthorized_peer", "transport1", "producer_private", {})
+                await adapter.consume(
+                    "room123", "unauthorized_peer", "transport1", "producer_private", {}
+                )
 
     @pytest.mark.asyncio
     async def test_mediasoup_simulcast_layer_manipulation(self, mock_mediasoup_session):
@@ -684,8 +805,11 @@ class TestMediasoupSFUSecurity:
 
             with pytest.raises(SFUConnectionError):
                 await adapter.set_preferred_layers(
-                    "room123", "peer1", "consumer1",
-                    spatial_layer=999, temporal_layer=999
+                    "room123",
+                    "peer1",
+                    "consumer1",
+                    spatial_layer=999,
+                    temporal_layer=999,
                 )
 
     @pytest.mark.asyncio
@@ -703,13 +827,15 @@ class TestMediasoupSFUSecurity:
                         "mimeType": "audio/opus",
                         "clockRate": 48000,
                         "payloadType": 111,
-                        "maliciousField": "exploit_attempt"
+                        "maliciousField": "exploit_attempt",
                     }
                 ],
-                "encodings": [{"ssrc": 0xFFFFFFFF}]
+                "encodings": [{"ssrc": 0xFFFFFFFF}],
             }
 
-            mock_response.json = AsyncMock(return_value={"id": "producer_malicious", "paused": False})
+            mock_response.json = AsyncMock(
+                return_value={"id": "producer_malicious", "paused": False}
+            )
 
             producer = await adapter.produce(
                 "room123", "peer1", "transport1", MediaKind.AUDIO, malicious_rtp_params
@@ -747,18 +873,17 @@ class TestMediasoupSFUSecurity:
             invalid_dtls_params = {
                 "role": "client",
                 "fingerprints": [
-                    {
-                        "algorithm": "invalid_algo",
-                        "value": "MALICIOUS_FINGERPRINT"
-                    }
-                ]
+                    {"algorithm": "invalid_algo", "value": "MALICIOUS_FINGERPRINT"}
+                ],
             }
 
             mock_response.status = 400
             mock_response.text = AsyncMock(return_value="Invalid DTLS parameters")
 
             with pytest.raises(SFUConnectionError):
-                await adapter.connect_transport("room123", "peer1", "transport1", invalid_dtls_params)
+                await adapter.connect_transport(
+                    "room123", "peer1", "transport1", invalid_dtls_params
+                )
 
 
 class TestCrossProtocolAttacks:
@@ -776,7 +901,7 @@ class TestCrossProtocolAttacks:
             websocket_payload = {
                 "type": "webrtc",
                 "sdp": "malicious_sdp",
-                "candidates": ["malicious_candidate"]
+                "candidates": ["malicious_candidate"],
             }
 
             mock_response.status = 400
@@ -785,9 +910,20 @@ class TestCrossProtocolAttacks:
             with pytest.raises((SFUConnectionError, ValueError, KeyError)):
                 await adapter.create_room(json.dumps(websocket_payload))
 
-    def test_turn_credential_leakage_prevention(self, server_with_voice, security_setup):
+    def test_turn_credential_leakage_prevention(
+        self, server_with_voice, security_setup
+    ):
         """Test that TURN credentials don't leak between users."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         creds1 = get_turn_credentials(member1.id)
         creds2 = get_turn_credentials(member2.id)
@@ -804,12 +940,14 @@ class TestCrossProtocolAttacks:
             adapter = MediasoupAdapter(api_url="http://localhost:3000")
             adapter._session = mock_session
 
-            mock_response.json = AsyncMock(return_value={
-                "id": "transport_flood",
-                "iceParameters": {},
-                "iceCandidates": [],
-                "dtlsParameters": {}
-            })
+            mock_response.json = AsyncMock(
+                return_value={
+                    "id": "transport_flood",
+                    "iceParameters": {},
+                    "iceCandidates": [],
+                    "dtlsParameters": {},
+                }
+            )
 
             transports = []
             for i in range(100):

@@ -26,26 +26,50 @@ class TestIntentMapping:
 
     def test_member_events_require_guild_members_intent(self):
         """Test member events require GUILD_MEMBERS intent."""
-        assert get_required_intent(EventType.GUILD_MEMBER_ADD) == GatewayIntent.GUILD_MEMBERS
-        assert get_required_intent(EventType.GUILD_MEMBER_REMOVE) == GatewayIntent.GUILD_MEMBERS
-        assert get_required_intent(EventType.GUILD_MEMBER_UPDATE) == GatewayIntent.GUILD_MEMBERS
+        assert (
+            get_required_intent(EventType.GUILD_MEMBER_ADD)
+            == GatewayIntent.GUILD_MEMBERS
+        )
+        assert (
+            get_required_intent(EventType.GUILD_MEMBER_REMOVE)
+            == GatewayIntent.GUILD_MEMBERS
+        )
+        assert (
+            get_required_intent(EventType.GUILD_MEMBER_UPDATE)
+            == GatewayIntent.GUILD_MEMBERS
+        )
 
     def test_presence_events_require_guild_presences_intent(self):
         """Test presence events require GUILD_PRESENCES intent."""
-        assert get_required_intent(EventType.PRESENCE_UPDATE) == GatewayIntent.GUILD_PRESENCES
+        assert (
+            get_required_intent(EventType.PRESENCE_UPDATE)
+            == GatewayIntent.GUILD_PRESENCES
+        )
 
     def test_voice_events_require_voice_states_intent(self):
         """Test voice events require GUILD_VOICE_STATES intent."""
-        assert get_required_intent(EventType.VOICE_STATE_UPDATE) == GatewayIntent.GUILD_VOICE_STATES
+        assert (
+            get_required_intent(EventType.VOICE_STATE_UPDATE)
+            == GatewayIntent.GUILD_VOICE_STATES
+        )
 
     def test_reaction_events_require_reactions_intent(self):
         """Test reaction events require GUILD_MESSAGE_REACTIONS intent."""
-        assert get_required_intent(EventType.MESSAGE_REACTION_ADD) == GatewayIntent.GUILD_MESSAGE_REACTIONS
-        assert get_required_intent(EventType.MESSAGE_REACTION_REMOVE) == GatewayIntent.GUILD_MESSAGE_REACTIONS
+        assert (
+            get_required_intent(EventType.MESSAGE_REACTION_ADD)
+            == GatewayIntent.GUILD_MESSAGE_REACTIONS
+        )
+        assert (
+            get_required_intent(EventType.MESSAGE_REACTION_REMOVE)
+            == GatewayIntent.GUILD_MESSAGE_REACTIONS
+        )
 
     def test_typing_events_require_typing_intent(self):
         """Test typing events require GUILD_MESSAGE_TYPING intent."""
-        assert get_required_intent(EventType.TYPING_START) == GatewayIntent.GUILD_MESSAGE_TYPING
+        assert (
+            get_required_intent(EventType.TYPING_START)
+            == GatewayIntent.GUILD_MESSAGE_TYPING
+        )
 
     def test_dm_message_events_require_dm_intent(self):
         """Test DM message events require DIRECT_MESSAGES intent."""
@@ -55,7 +79,9 @@ class TestIntentMapping:
 
     def test_dm_typing_requires_dm_typing_intent(self):
         """Test DM typing requires DIRECT_MESSAGE_TYPING intent."""
-        assert get_dm_intent(EventType.TYPING_START) == GatewayIntent.DIRECT_MESSAGE_TYPING
+        assert (
+            get_dm_intent(EventType.TYPING_START) == GatewayIntent.DIRECT_MESSAGE_TYPING
+        )
 
     def test_ready_event_no_intent_required(self):
         """Test READY event has no intent requirement."""
@@ -65,20 +91,28 @@ class TestIntentMapping:
 class TestIntentFiltering:
     """Tests for intent-based event filtering."""
 
-    def test_guild_event_passes_with_guilds_intent(self, sample_guild_event, all_intents):
+    def test_guild_event_passes_with_guilds_intent(
+        self, sample_guild_event, all_intents
+    ):
         """Test guild event passes with GUILDS intent."""
         assert filter_by_intents(sample_guild_event, all_intents) is True
 
-    def test_guild_event_fails_without_guilds_intent(self, sample_guild_event, no_intents):
+    def test_guild_event_fails_without_guilds_intent(
+        self, sample_guild_event, no_intents
+    ):
         """Test guild event fails without GUILDS intent."""
         assert filter_by_intents(sample_guild_event, no_intents) is False
 
-    def test_message_event_passes_with_guild_messages_intent(self, sample_message_event):
+    def test_message_event_passes_with_guild_messages_intent(
+        self, sample_message_event
+    ):
         """Test message event passes with GUILD_MESSAGES intent."""
         intents = GatewayIntent.GUILD_MESSAGES
         assert filter_by_intents(sample_message_event, intents) is True
 
-    def test_message_event_fails_without_guild_messages_intent(self, sample_message_event):
+    def test_message_event_fails_without_guild_messages_intent(
+        self, sample_message_event
+    ):
         """Test message event fails without GUILD_MESSAGES intent."""
         intents = GatewayIntent.GUILDS
         assert filter_by_intents(sample_message_event, intents) is False
@@ -110,7 +144,9 @@ class TestIntentFiltering:
         intents = GatewayIntent.GUILD_MESSAGE_TYPING
         assert filter_by_intents(sample_typing_event, intents) is True
 
-    def test_default_intents_allow_guild_messages(self, sample_message_event, default_intents):
+    def test_default_intents_allow_guild_messages(
+        self, sample_message_event, default_intents
+    ):
         """Test default intents allow guild messages."""
         assert filter_by_intents(sample_message_event, default_intents) is True
 
@@ -128,7 +164,9 @@ class TestEventRouter:
         """Test router initializes correctly."""
         assert event_router is not None
 
-    def test_get_recipients_with_explicit_user_ids(self, event_router, sample_message_event):
+    def test_get_recipients_with_explicit_user_ids(
+        self, event_router, sample_message_event
+    ):
         """Test get_recipients with explicit user IDs."""
         user_ids = [1, 2, 3]
         recipients = event_router.get_recipients(
@@ -137,7 +175,9 @@ class TestEventRouter:
         )
         assert recipients == user_ids
 
-    def test_get_recipients_excludes_specified_users(self, event_router, sample_message_event):
+    def test_get_recipients_excludes_specified_users(
+        self, event_router, sample_message_event
+    ):
         """Test get_recipients excludes specified users."""
         user_ids = [1, 2, 3, 4, 5]
         exclude = [2, 4]
@@ -152,12 +192,16 @@ class TestEventRouter:
         assert 3 in recipients
         assert 5 in recipients
 
-    def test_get_recipients_returns_empty_without_modules(self, event_router, sample_message_event):
+    def test_get_recipients_returns_empty_without_modules(
+        self, event_router, sample_message_event
+    ):
         """Test get_recipients returns empty without routing modules."""
         recipients = event_router.get_recipients(sample_message_event)
         assert recipients == []
 
-    def test_get_recipients_uses_event_server_id(self, event_router, sample_message_event):
+    def test_get_recipients_uses_event_server_id(
+        self, event_router, sample_message_event
+    ):
         """Test get_recipients uses event's server_id."""
         recipients = event_router.get_recipients(
             sample_message_event,

@@ -69,7 +69,9 @@ class TestMarkDelivered:
         messaging.mark_delivered(user2.id, [msg.id])
 
         status = messaging.get_message_status(user1.id, msg.id)
-        delivered = [s for s in status if s.status == messaging.MessageStatusType.DELIVERED]
+        delivered = [
+            s for s in status if s.status == messaging.MessageStatusType.DELIVERED
+        ]
 
         assert len(delivered) >= 1
 
@@ -81,8 +83,8 @@ class TestMarkRead:
         """Test marking all messages as read."""
         dm, user1, user2, messaging = fresh_dm
 
-        msg1 = messaging.send_message(user1.id, dm.id, "Test 1")
-        msg2 = messaging.send_message(user1.id, dm.id, "Test 2")
+        messaging.send_message(user1.id, dm.id, "Test 1")
+        messaging.send_message(user1.id, dm.id, "Test 2")
 
         count = messaging.mark_read(user2.id, dm.id)
 
@@ -92,9 +94,9 @@ class TestMarkRead:
         """Test marking messages as read up to specific message."""
         dm, user1, user2, messaging = fresh_dm
 
-        msg1 = messaging.send_message(user1.id, dm.id, "Test 1")
+        messaging.send_message(user1.id, dm.id, "Test 1")
         msg2 = messaging.send_message(user1.id, dm.id, "Test 2")
-        msg3 = messaging.send_message(user1.id, dm.id, "Test 3")
+        messaging.send_message(user1.id, dm.id, "Test 3")
 
         count = messaging.mark_read(user2.id, dm.id, up_to_message_id=msg2.id)
 
@@ -245,7 +247,9 @@ class TestGetMessageStatus:
         messaging.mark_delivered(user2.id, [msg.id])
 
         status = messaging.get_message_status(user1.id, msg.id)
-        delivered = [s for s in status if s.status == messaging.MessageStatusType.DELIVERED]
+        delivered = [
+            s for s in status if s.status == messaging.MessageStatusType.DELIVERED
+        ]
 
         assert len(delivered) >= 1
         assert delivered[0].user_id == user2.id

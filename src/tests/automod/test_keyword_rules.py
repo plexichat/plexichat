@@ -21,7 +21,7 @@ class TestKeywordRule:
             server_id=server.id,
             channel_id=channel.id,
             user_id=owner.id,
-            content="This contains badword in it"
+            content="This contains badword in it",
         )
 
         assert not result.passed
@@ -36,7 +36,7 @@ class TestKeywordRule:
             server_id=server.id,
             channel_id=channel.id,
             user_id=owner.id,
-            content="This contains BADWORD in uppercase"
+            content="This contains BADWORD in uppercase",
         )
 
         assert not result.passed
@@ -49,7 +49,7 @@ class TestKeywordRule:
             server_id=server.id,
             channel_id=channel.id,
             user_id=owner.id,
-            content="This is badwording around"
+            content="This is badwording around",
         )
 
         assert result.passed
@@ -62,19 +62,21 @@ class TestKeywordRule:
             server_id=server.id,
             channel_id=channel.id,
             user_id=owner.id,
-            content="This is a perfectly clean message"
+            content="This is a perfectly clean message",
         )
 
         assert result.passed
         assert len(result.violations) == 0
 
-    def test_multiple_keywords_matched(self, automod_module, test_server_for_automod, user_pool, modules):
+    def test_multiple_keywords_matched(
+        self, automod_module, test_server_for_automod, user_pool, modules
+    ):
         """Test multiple keywords in same message."""
         server, channel, owner = test_server_for_automod
         member = user_pool.get_user()
         modules.servers.add_member(server.id, member.id)
 
-        rule = automod_module.create_rule(
+        automod_module.create_rule(
             user_id=owner.id,
             server_id=server.id,
             name="Multi Keyword Test",
@@ -82,16 +84,16 @@ class TestKeywordRule:
             rule_config={
                 "keywords": ["word1", "word2", "word3"],
                 "case_sensitive": False,
-                "whole_word": True
+                "whole_word": True,
             },
-            actions=[{"action_type": "log_only"}]
+            actions=[{"action_type": "log_only"}],
         )
 
         result = automod.check_message(
             server_id=server.id,
             channel_id=channel.id,
             user_id=member.id,
-            content="Message with word1 and word2 together"
+            content="Message with word1 and word2 together",
         )
 
         assert not result.passed
@@ -106,37 +108,30 @@ class TestKeywordRuleValidation:
 
     def test_valid_config(self):
         """Test valid configuration passes."""
-        valid, issues = KeywordRule.validate_config({
-            "keywords": ["test", "word"],
-            "case_sensitive": False,
-            "whole_word": True
-        })
+        valid, issues = KeywordRule.validate_config(
+            {"keywords": ["test", "word"], "case_sensitive": False, "whole_word": True}
+        )
 
         assert valid
         assert len(issues) == 0
 
     def test_missing_keywords(self):
         """Test missing keywords fails validation."""
-        valid, issues = KeywordRule.validate_config({
-            "case_sensitive": False
-        })
+        valid, issues = KeywordRule.validate_config({"case_sensitive": False})
 
         assert not valid
         assert any("keywords" in issue for issue in issues)
 
     def test_invalid_keywords_type(self):
         """Test non-list keywords fails validation."""
-        valid, issues = KeywordRule.validate_config({
-            "keywords": "not a list"
-        })
+        valid, issues = KeywordRule.validate_config({"keywords": "not a list"})
 
         assert not valid
 
     def test_invalid_case_sensitive_type(self):
         """Test non-boolean case_sensitive fails."""
-        valid, issues = KeywordRule.validate_config({
-            "keywords": ["test"],
-            "case_sensitive": "yes"
-        })
+        valid, issues = KeywordRule.validate_config(
+            {"keywords": ["test"], "case_sensitive": "yes"}
+        )
 
         assert not valid

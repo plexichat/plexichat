@@ -20,9 +20,7 @@ class TestCreateThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Test Thread"
+            user_id=owner.id, channel_id=channel.id, name="Test Thread"
         )
 
         assert thread is not None
@@ -44,7 +42,7 @@ class TestCreateThread:
             user_id=owner.id,
             channel_id=channel.id,
             name="Auto Archive Thread",
-            auto_archive_duration=AutoArchiveDuration.THREE_DAYS
+            auto_archive_duration=AutoArchiveDuration.THREE_DAYS,
         )
 
         assert thread.auto_archive_duration == AutoArchiveDuration.THREE_DAYS
@@ -57,7 +55,7 @@ class TestCreateThread:
             user_id=owner.id,
             channel_id=channel.id,
             name="Private Thread",
-            thread_type=ThreadType.PRIVATE
+            thread_type=ThreadType.PRIVATE,
         )
 
         assert thread.thread_type == ThreadType.PRIVATE
@@ -70,7 +68,7 @@ class TestCreateThread:
             user_id=owner.id,
             channel_id=channel.id,
             name="Announcement Thread",
-            thread_type=ThreadType.ANNOUNCEMENT
+            thread_type=ThreadType.ANNOUNCEMENT,
         )
 
         assert thread.thread_type == ThreadType.ANNOUNCEMENT
@@ -80,22 +78,14 @@ class TestCreateThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         with pytest.raises(ThreadNameError):
-            threads.create_thread(
-                user_id=owner.id,
-                channel_id=channel.id,
-                name=""
-            )
+            threads.create_thread(user_id=owner.id, channel_id=channel.id, name="")
 
     def test_create_thread_whitespace_name_fails(self, server_with_channel):
         """Test that whitespace-only thread name fails."""
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         with pytest.raises(ThreadNameError):
-            threads.create_thread(
-                user_id=owner.id,
-                channel_id=channel.id,
-                name="   "
-            )
+            threads.create_thread(user_id=owner.id, channel_id=channel.id, name="   ")
 
     def test_create_thread_long_name_fails(self, server_with_channel):
         """Test that thread name over 100 chars fails."""
@@ -103,9 +93,7 @@ class TestCreateThread:
 
         with pytest.raises(ThreadNameError):
             threads.create_thread(
-                user_id=owner.id,
-                channel_id=channel.id,
-                name="x" * 101
+                user_id=owner.id, channel_id=channel.id, name="x" * 101
             )
 
     def test_create_thread_max_length_name(self, server_with_channel):
@@ -113,9 +101,7 @@ class TestCreateThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="x" * 100
+            user_id=owner.id, channel_id=channel.id, name="x" * 100
         )
 
         assert len(thread.name) == 100
@@ -126,9 +112,7 @@ class TestCreateThread:
 
         with pytest.raises(ChannelNotFoundError):
             threads.create_thread(
-                user_id=owner.id,
-                channel_id=999999999,
-                name="Test Thread"
+                user_id=owner.id, channel_id=999999999, name="Test Thread"
             )
 
     def test_create_thread_auto_joins_creator(self, server_with_channel):
@@ -136,9 +120,7 @@ class TestCreateThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Auto Join Test"
+            user_id=owner.id, channel_id=channel.id, name="Auto Join Test"
         )
 
         members = threads.get_thread_members(owner.id, thread.id)
@@ -150,9 +132,7 @@ class TestCreateThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=member1.id,
-            channel_id=channel.id,
-            name="Member Thread"
+            user_id=member1.id, channel_id=channel.id, name="Member Thread"
         )
 
         assert thread.owner_id == member1.id
@@ -162,15 +142,11 @@ class TestCreateThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread1 = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Thread 1"
+            user_id=owner.id, channel_id=channel.id, name="Thread 1"
         )
 
         thread2 = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Thread 2"
+            user_id=owner.id, channel_id=channel.id, name="Thread 2"
         )
 
         assert thread1.id != thread2.id
@@ -182,9 +158,7 @@ class TestCreateThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="  Trimmed Name  "
+            user_id=owner.id, channel_id=channel.id, name="  Trimmed Name  "
         )
 
         assert thread.name == "Trimmed Name"

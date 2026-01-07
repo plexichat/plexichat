@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 # Try to import hypothesis, skip tests if not available
 try:
     from hypothesis import given, strategies as st, assume, settings
+
     HAS_HYPOTHESIS = True
 except ImportError:
     HAS_HYPOTHESIS = False
@@ -16,6 +17,7 @@ from src.core.servers.manager import ServerManager
 # Mock DB for manager tests
 _MOCK_DB = MagicMock()
 _SERVER_MANAGER_INSTANCE = None
+
 
 def _get_server_manager():
     global _SERVER_MANAGER_INSTANCE
@@ -34,7 +36,7 @@ class TestUsernameValidation:
         """Test username validation using the actual codebase logic."""
         # This calls the real validate_username from src.core.auth.passwords
         valid, issues = validate_username(username)
-        
+
         # Cross-check: if valid, should match basic constraints
         if valid:
             assert 3 <= len(username) <= 32
@@ -42,10 +44,20 @@ class TestUsernameValidation:
             # The real validator may have more rules (pattern matching, reserved words)
             # which we are now correctly testing by calling it directly!
 
-    @pytest.mark.parametrize("invalid_username", [
-        "", "   ", "ab", "a" * 33, "user name", "user@name", 
-        "admin", "root", "system"
-    ])
+    @pytest.mark.parametrize(
+        "invalid_username",
+        [
+            "",
+            "   ",
+            "ab",
+            "a" * 33,
+            "user name",
+            "user@name",
+            "admin",
+            "root",
+            "system",
+        ],
+    )
     def test_invalid_username_patterns(self, invalid_username):
         """Known invalid username patterns should be rejected by the real validator."""
         valid, issues = validate_username(invalid_username)
@@ -65,9 +77,17 @@ class TestEmailValidation:
         is_valid = validate_email(email)
         assert isinstance(is_valid, bool)
 
-    @pytest.mark.parametrize("invalid_email", [
-        "not-an-email", "user@domain", "@domain.com", "user@", "user@domain.", "user@.com"
-    ])
+    @pytest.mark.parametrize(
+        "invalid_email",
+        [
+            "not-an-email",
+            "user@domain",
+            "@domain.com",
+            "user@",
+            "user@domain.",
+            "user@.com",
+        ],
+    )
     def test_invalid_email_patterns(self, invalid_email):
         """Invalid email patterns should be rejected."""
         assert not validate_email(invalid_email)
@@ -83,12 +103,12 @@ class TestPasswordValidation:
         """Test password validation using the actual codebase logic."""
         # This calls the real validate_password which returns a PasswordValidation object
         result = validate_password(password)
-        
+
         # Verify the result object structure
-        assert hasattr(result, 'valid')
-        assert hasattr(result, 'score')
-        assert hasattr(result, 'issues')
-        
+        assert hasattr(result, "valid")
+        assert hasattr(result, "score")
+        assert hasattr(result, "issues")
+
         # If valid, score should be reasonable
         if result.valid:
             assert result.score >= 1
@@ -104,12 +124,12 @@ class TestServerNameValidation:
     def test_server_name_validation_real_logic(self, name):
         """Test server name validation using the actual manager logic."""
         sm = _get_server_manager()
-        
+
         try:
             validated_name = sm._validate_server_name(name)
             # If it didn't raise, it's valid
             assert 2 <= len(validated_name) <= 100
-        except Exception: # Specifically InvalidServerNameError, but we want to be broad for the assert
+        except Exception:  # Specifically InvalidServerNameError, but we want to be broad for the assert
             # If it raised, we can't easily assert unless we know it should have passed
             pass
 
@@ -129,7 +149,7 @@ class TestMessageLimits:
             return
 
         result = validate_content(content, max_length=4000)
-        
+
         if len(content) > 4000:
             assert not result.valid
         else:

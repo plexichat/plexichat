@@ -62,7 +62,16 @@ class TestVoiceConnectionFlow:
 
     def test_full_connection_flow(self, server_with_voice, signaling_setup):
         """Test the complete voice connection flow."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         # Step 1: Get voice server info
         info = get_voice_server_info(member1.id, voice_channel.id)
@@ -74,7 +83,9 @@ class TestVoiceConnectionFlow:
         assert conn_info is not None
 
         # Step 3: Send SDP offer and get answer
-        answer = handle_sdp_offer(member1.id, voice_channel.id, SAMPLE_SDP_OFFER, "offer")
+        answer = handle_sdp_offer(
+            member1.id, voice_channel.id, SAMPLE_SDP_OFFER, "offer"
+        )
         assert answer is not None
         assert answer.sdp_type == SDPType.ANSWER
         assert answer.sdp is not None
@@ -85,7 +96,7 @@ class TestVoiceConnectionFlow:
             voice_channel.id,
             SAMPLE_ICE_CANDIDATE,
             sdp_mid="0",
-            sdp_mline_index=0
+            sdp_mline_index=0,
         )
         assert result is True
 
@@ -99,7 +110,16 @@ class TestVoiceConnectionFlow:
 
     def test_multiple_users_in_channel(self, server_with_voice, signaling_setup):
         """Test multiple users connecting to the same channel."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         # User 1 connects
         info1 = create_voice_connection(member1.id, voice_channel.id)
@@ -125,7 +145,16 @@ class TestVoiceConnectionFlow:
 
     def test_reconnection_after_disconnect(self, server_with_voice, signaling_setup):
         """Test reconnecting after disconnection."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         # Connect
         info1 = create_voice_connection(owner.id, voice_channel.id)
@@ -144,9 +173,20 @@ class TestVoiceConnectionFlow:
         # Cleanup
         disconnect_voice(owner.id)
 
-    def test_sdp_offer_auto_creates_connection(self, server_with_voice, signaling_setup):
+    def test_sdp_offer_auto_creates_connection(
+        self, server_with_voice, signaling_setup
+    ):
         """Test that SDP offer auto-creates connection if not exists."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         # Send SDP offer without creating connection first
         answer = handle_sdp_offer(member1.id, voice_channel.id, SAMPLE_SDP_OFFER)
@@ -161,16 +201,36 @@ class TestVoiceConnectionFlow:
         # Cleanup
         disconnect_voice(member1.id)
 
-    def test_ice_candidate_requires_connection(self, server_with_voice, signaling_setup):
+    def test_ice_candidate_requires_connection(
+        self, server_with_voice, signaling_setup
+    ):
         """Test that ICE candidate requires existing connection."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         with pytest.raises(NotConnectedError):
             handle_ice_candidate(999999, voice_channel.id, SAMPLE_ICE_CANDIDATE)
 
     def test_multiple_ice_candidates(self, server_with_voice, signaling_setup):
         """Test sending multiple ICE candidates."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         create_voice_connection(member1.id, voice_channel.id)
 
@@ -193,7 +253,16 @@ class TestVoiceConnectionErrors:
 
     def test_duplicate_connection_error(self, server_with_voice, signaling_setup):
         """Test error when creating duplicate connection."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         create_voice_connection(member2.id, voice_channel.id)
 
@@ -205,14 +274,32 @@ class TestVoiceConnectionErrors:
 
     def test_quality_check_not_connected(self, server_with_voice, signaling_setup):
         """Test error when checking quality without connection."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         with pytest.raises(NotConnectedError):
             get_connection_quality(999999, voice_channel.id)
 
     def test_disconnect_wrong_channel(self, server_with_voice, signaling_setup):
         """Test disconnecting from wrong channel returns False."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         create_voice_connection(member1.id, voice_channel.id)
 

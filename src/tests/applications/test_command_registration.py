@@ -196,7 +196,9 @@ class TestCommandRetrieval:
         assert "cmd1" in names
         assert "cmd2" in names
 
-    def test_get_guild_commands(self, modules, test_application, test_server, command_factory):
+    def test_get_guild_commands(
+        self, modules, test_application, test_server, command_factory
+    ):
         """Test getting guild-specific commands."""
         app, owner = test_application
         server, server_owner = test_server
@@ -212,7 +214,9 @@ class TestCommandRetrieval:
         assert "guild" in names
         assert "global" not in names
 
-    def test_get_commands_includes_global(self, modules, test_application, test_server, command_factory):
+    def test_get_commands_includes_global(
+        self, modules, test_application, test_server, command_factory
+    ):
         """Test getting guild commands includes global by default."""
         app, owner = test_application
         server, server_owner = test_server

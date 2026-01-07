@@ -20,9 +20,10 @@ for path in [project_root, src_path, common_utils_path]:
     if path not in sys.path:
         sys.path.insert(0, path)
 
-import utils.config as config
-import utils.logger as logger
-from src.core.database.core import Database
+import utils.config as config  # noqa: E402
+import utils.logger as logger  # noqa: E402
+from src.core.database.core import Database  # noqa: E402
+
 
 # Fixture for setup/teardown
 @pytest.fixture(scope="module")
@@ -43,6 +44,7 @@ def setup_module():
             shutil.rmtree("temp_test")
         except OSError:
             pass
+
 
 @pytest.fixture
 def db_config(setup_module):
@@ -69,12 +71,7 @@ def db_config(setup_module):
         except OSError:
             pass
 
-    default_config = {
-        "database": {
-            "type": "sqlite",
-            "path": db_path
-        }
-    }
+    default_config = {"database": {"type": "sqlite", "path": db_path}}
     config.setup(config_path=config_path, default_config=default_config)
 
     yield config_path
@@ -100,6 +97,7 @@ def test_sqlite_connection(db_config):
     assert db.connection is not None
     db.close()
 
+
 def test_sqlite_create_table(db_config):
     """Test creating a table in SQLite."""
     db = Database()
@@ -107,11 +105,14 @@ def test_sqlite_create_table(db_config):
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, email TEXT)")
 
     # Verify table exists
-    cursor = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+    cursor = db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='users'"
+    )
     result = cursor.fetchone()
     assert result is not None
     assert result[0] == "users"
     db.close()
+
 
 def test_sqlite_insert_single_row(db_config):
     """Test inserting a single row."""
@@ -124,6 +125,7 @@ def test_sqlite_insert_single_row(db_config):
     result = cursor.fetchone()
     assert result[0] == "alice"
     db.close()
+
 
 def test_sqlite_insert_multiple_rows(db_config):
     """Test inserting multiple rows."""
@@ -139,18 +141,22 @@ def test_sqlite_insert_multiple_rows(db_config):
     assert count == 3
     db.close()
 
+
 def test_sqlite_update_row(db_config):
     """Test updating a row."""
     db = Database()
     db.connect()
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)")
     db.execute("INSERT INTO users (username) VALUES (?)", ("alice",))
-    db.execute("UPDATE users SET username = ? WHERE username = ?", ("alice_updated", "alice"))
+    db.execute(
+        "UPDATE users SET username = ? WHERE username = ?", ("alice_updated", "alice")
+    )
 
     cursor = db.execute("SELECT username FROM users")
     result = cursor.fetchone()
     assert result[0] == "alice_updated"
     db.close()
+
 
 def test_sqlite_delete_row(db_config):
     """Test deleting a row."""
@@ -170,11 +176,14 @@ def test_sqlite_delete_row(db_config):
     assert result[0] == "bob"
     db.close()
 
+
 def test_sqlite_select_with_where(db_config):
     """Test SELECT with WHERE clause."""
     db = Database()
     db.connect()
-    db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, age INTEGER)")
+    db.execute(
+        "CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, age INTEGER)"
+    )
     db.execute("INSERT INTO users (username, age) VALUES (?, ?)", ("alice", 25))
     db.execute("INSERT INTO users (username, age) VALUES (?, ?)", ("bob", 30))
 
@@ -183,18 +192,20 @@ def test_sqlite_select_with_where(db_config):
     assert result[0] == "bob"
     db.close()
 
+
 def test_sqlite_special_characters_in_data(db_config):
     """Test handling special characters in data."""
     db = Database()
     db.connect()
     db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT)")
-    special_data = "Test's \"quoted\" data with $special @chars!"
+    special_data = 'Test\'s "quoted" data with $special @chars!'
     db.execute("INSERT INTO test (data) VALUES (?)", (special_data,))
 
     cursor = db.execute("SELECT data FROM test")
     result = cursor.fetchone()
     assert result[0] == special_data
     db.close()
+
 
 def test_sqlite_empty_table(db_config):
     """Test querying an empty table."""
@@ -206,6 +217,7 @@ def test_sqlite_empty_table(db_config):
     result = cursor.fetchone()
     assert result is None
     db.close()
+
 
 def test_sqlite_large_text_data(db_config):
     """Test inserting large text data."""
@@ -220,6 +232,7 @@ def test_sqlite_large_text_data(db_config):
     assert len(result[0]) == 10000
     db.close()
 
+
 # Configuration Tests
 def test_config_integration(db_config):
     """Test that database respects configuration changes."""
@@ -231,6 +244,7 @@ def test_config_integration(db_config):
     assert os.path.exists(new_path)
     db.close()
 
+
 def test_config_default_path(db_config):
     """Test default path fallback."""
     cfg = config.get("database")
@@ -239,10 +253,12 @@ def test_config_default_path(db_config):
     assert os.path.exists(cfg["path"])
     db.close()
 
+
 def test_config_type_detection(db_config):
     """Test database type detection from config."""
     db = Database()
     assert db.type == "sqlite"
+
 
 # Error Handling Tests
 def test_invalid_db_type(db_config):
@@ -252,6 +268,7 @@ def test_invalid_db_type(db_config):
     with pytest.raises(ValueError, match="Unsupported database type"):
         db.connect()
 
+
 def test_invalid_sql_query(db_config):
     """Test that invalid SQL raises error."""
     db = Database()
@@ -260,11 +277,13 @@ def test_invalid_sql_query(db_config):
         db.execute("INVALID SQL QUERY")
     db.close()
 
+
 def test_query_on_disconnected_db(db_config):
     """Test querying without connection raises error."""
     db = Database()
     with pytest.raises(ConnectionError):
         db.execute("SELECT 1")
+
 
 def test_table_not_exists_error(db_config):
     """Test querying non-existent table raises error."""
@@ -273,6 +292,7 @@ def test_table_not_exists_error(db_config):
     with pytest.raises(sqlite3.OperationalError):
         db.execute("SELECT * FROM nonexistent_table")
     db.close()
+
 
 def test_duplicate_primary_key(db_config):
     """Test inserting duplicate primary key raises error."""
@@ -284,6 +304,7 @@ def test_duplicate_primary_key(db_config):
         db.execute("INSERT INTO test (id, data) VALUES (1, 'duplicate')")
     db.close()
 
+
 # Logging Tests
 def test_logging_connection(db_config):
     """Test that connection is logged."""
@@ -293,9 +314,10 @@ def test_logging_connection(db_config):
     db.close()
 
     assert os.path.exists(log_file)
-    with open(log_file, 'r') as f:
+    with open(log_file, "r") as f:
         content = f.read()
         assert "Connected to SQLite" in content
+
 
 def test_logging_query_execution(db_config):
     """Test that queries are logged."""
@@ -305,9 +327,10 @@ def test_logging_query_execution(db_config):
     db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY)")
     db.close()
 
-    with open(log_file, 'r') as f:
+    with open(log_file, "r") as f:
         content = f.read()
         assert "Executed query" in content
+
 
 def test_logging_errors(db_config):
     """Test that errors are logged."""
@@ -316,13 +339,14 @@ def test_logging_errors(db_config):
     db.connect()
     try:
         db.execute("INVALID SQL")
-    except:
+    except Exception:
         pass
     db.close()
 
-    with open(log_file, 'r') as f:
+    with open(log_file, "r") as f:
         content = f.read()
         assert "Query execution failed" in content
+
 
 # Integration Tests
 def test_full_crud_cycle(db_config):
@@ -354,13 +378,16 @@ def test_full_crud_cycle(db_config):
 
     db.close()
 
+
 def test_multiple_tables(db_config):
     """Test working with multiple tables."""
     db = Database()
     db.connect()
 
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)")
-    db.execute("CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER, content TEXT)")
+    db.execute(
+        "CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER, content TEXT)"
+    )
 
     db.execute("INSERT INTO users (username) VALUES (?)", ("alice",))
     db.execute("INSERT INTO posts (user_id, content) VALUES (?, ?)", (1, "Hello World"))
@@ -370,6 +397,7 @@ def test_multiple_tables(db_config):
     assert table_count >= 2
 
     db.close()
+
 
 def test_database_reconnection(db_config):
     """Test closing and reconnecting to database."""
@@ -386,6 +414,7 @@ def test_database_reconnection(db_config):
     result = cursor.fetchone()
     assert result[0] == "test"
     db2.close()
+
 
 def test_config_logger_database_integration(db_config):
     """Test full integration of config, logger, and database."""
@@ -404,9 +433,10 @@ def test_config_logger_database_integration(db_config):
     db.close()
 
     # Verify log contains database activity
-    with open(log_file, 'r') as f:
+    with open(log_file, "r") as f:
         content = f.read()
         assert "Database initialized" in content
+
 
 # PostgreSQL Tests
 def test_postgres_connection_real(db_config):
@@ -423,8 +453,8 @@ def test_postgres_connection_real(db_config):
             "port": 5432,
             "user": "postgres",
             "password": "password",
-            "dbname": "postgres"
-        }
+            "dbname": "postgres",
+        },
     }
     config.set("database", pg_config)
 
@@ -435,6 +465,7 @@ def test_postgres_connection_real(db_config):
     except Exception as e:
         pytest.skip(f"PostgreSQL not available: {e}")
 
+
 def test_postgres_type_detection(db_config):
     """Test PostgreSQL type detection."""
     pg_config = {
@@ -444,13 +475,14 @@ def test_postgres_type_detection(db_config):
             "port": 5432,
             "user": "postgres",
             "password": "password",
-            "dbname": "postgres"
-        }
+            "dbname": "postgres",
+        },
     }
     config.set("database", pg_config)
 
     db = Database()
     assert db.type == "postgres"
+
 
 def test_placeholder_conversion(db_config):
     """Test that ? placeholders are converted to %s for PostgreSQL."""
@@ -461,8 +493,8 @@ def test_placeholder_conversion(db_config):
             "port": 5432,
             "user": "postgres",
             "password": "password",
-            "dbname": "postgres"
-        }
+            "dbname": "postgres",
+        },
     }
     config.set("database", pg_config)
 
@@ -483,6 +515,7 @@ def test_placeholder_conversion(db_config):
     converted = db._convert_placeholders(query)
     assert converted == "SELECT * FROM users WHERE name = 'What?' AND id = %s"
 
+
 def test_placeholder_no_conversion_sqlite(db_config):
     """Test that SQLite queries are not modified."""
     db = Database()
@@ -490,6 +523,7 @@ def test_placeholder_no_conversion_sqlite(db_config):
     query = "SELECT * FROM users WHERE id = ?"
     converted = db._convert_placeholders(query)
     assert converted == query  # Should be unchanged for SQLite
+
 
 # Edge Cases
 def test_null_values(db_config):
@@ -504,11 +538,14 @@ def test_null_values(db_config):
     assert result[0] is None
     db.close()
 
+
 def test_numeric_data_types(db_config):
     """Test various numeric data types."""
     db = Database()
     db.connect()
-    db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, int_val INTEGER, real_val REAL)")
+    db.execute(
+        "CREATE TABLE test (id INTEGER PRIMARY KEY, int_val INTEGER, real_val REAL)"
+    )
     db.execute("INSERT INTO test (int_val, real_val) VALUES (?, ?)", (42, 3.14159))
 
     cursor = db.execute("SELECT int_val, real_val FROM test")
@@ -516,6 +553,7 @@ def test_numeric_data_types(db_config):
     assert result[0] == 42
     assert abs(result[1] - 3.14159) < 0.00001
     db.close()
+
 
 def test_boolean_values(db_config):
     """Test handling boolean values (stored as integers in SQLite)."""
@@ -537,6 +575,7 @@ def test_boolean_values(db_config):
 
 # New Method Tests
 
+
 def test_fetch_one(db_config):
     """Test fetch_one helper method."""
     db = Database()
@@ -552,6 +591,7 @@ def test_fetch_one(db_config):
     result = db.fetch_one("SELECT username FROM users WHERE id = ?", (999,))
     assert result is None
     db.close()
+
 
 def test_fetch_all(db_config):
     """Test fetch_all helper method."""
@@ -569,6 +609,7 @@ def test_fetch_all(db_config):
     assert results[2]["username"] == "charlie"
     db.close()
 
+
 def test_fetch_all_empty(db_config):
     """Test fetch_all on empty table."""
     db = Database()
@@ -578,6 +619,7 @@ def test_fetch_all_empty(db_config):
     results = db.fetch_all("SELECT * FROM users")
     assert results == []
     db.close()
+
 
 def test_table_exists(db_config):
     """Test table_exists helper method."""
@@ -590,6 +632,7 @@ def test_table_exists(db_config):
     assert db.table_exists("users") is True
     assert db.table_exists("nonexistent") is False
     db.close()
+
 
 def test_execute_many(db_config):
     """Test execute_many for batch inserts."""
@@ -610,6 +653,7 @@ def test_execute_many(db_config):
     assert results[2]["email"] == "charlie@example.com"
     db.close()
 
+
 def test_context_manager(db_config):
     """Test database as context manager."""
     with Database() as db:
@@ -621,6 +665,7 @@ def test_context_manager(db_config):
 
     # Connection should be closed after context
     assert db.connection is None
+
 
 def test_transaction_commit(db_config):
     """Test transaction with commit."""
@@ -638,6 +683,7 @@ def test_transaction_commit(db_config):
     assert result["balance"] == 50
     db.close()
 
+
 def test_transaction_rollback(db_config):
     """Test transaction with rollback."""
     db = Database()
@@ -654,12 +700,16 @@ def test_transaction_rollback(db_config):
     assert result["balance"] == 100
     db.close()
 
+
 def test_row_factory_dict_access(db_config):
     """Test that rows can be accessed like dictionaries."""
     db = Database()
     db.connect()
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, email TEXT)")
-    db.execute("INSERT INTO users (username, email) VALUES (?, ?)", ("alice", "alice@example.com"))
+    db.execute(
+        "INSERT INTO users (username, email) VALUES (?, ?)",
+        ("alice", "alice@example.com"),
+    )
 
     result = db.fetch_one("SELECT * FROM users WHERE id = 1")
     assert result is not None
@@ -667,6 +717,7 @@ def test_row_factory_dict_access(db_config):
     assert result["email"] == "alice@example.com"
     assert result["id"] == 1
     db.close()
+
 
 def test_ensure_connected_error(db_config):
     """Test that operations fail gracefully when not connected."""
@@ -680,6 +731,7 @@ def test_ensure_connected_error(db_config):
 
     with pytest.raises(ConnectionError):
         db.table_exists("test")
+
 
 def test_auto_create_directory(db_config):
     """Test that database directory is created automatically."""
@@ -696,6 +748,7 @@ def test_auto_create_directory(db_config):
 
 
 # Cross-database helper method tests
+
 
 def test_insert_or_ignore(db_config):
     """Test insert_or_ignore helper method."""
@@ -721,6 +774,7 @@ def test_insert_or_ignore(db_config):
     assert rows[0]["name"] == "alice"
     db.close()
 
+
 def test_upsert(db_config):
     """Test upsert helper method."""
     db = Database()
@@ -744,19 +798,32 @@ def test_upsert(db_config):
     assert len(rows) == 1
     db.close()
 
+
 def test_upsert_specific_columns(db_config):
     """Test upsert with specific update columns."""
     db = Database()
     db.connect()
-    db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT, value INTEGER, created_at TEXT)")
+    db.execute(
+        "CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT, value INTEGER, created_at TEXT)"
+    )
 
     # First insert
-    db.upsert("test", ["id", "name", "value", "created_at"],
-              (1, "alice", 100, "2024-01-01"), ["id"], ["name", "value"])
+    db.upsert(
+        "test",
+        ["id", "name", "value", "created_at"],
+        (1, "alice", 100, "2024-01-01"),
+        ["id"],
+        ["name", "value"],
+    )
 
     # Update only name and value, not created_at
-    db.upsert("test", ["id", "name", "value", "created_at"],
-              (1, "alice_updated", 200, "2024-12-31"), ["id"], ["name", "value"])
+    db.upsert(
+        "test",
+        ["id", "name", "value", "created_at"],
+        (1, "alice_updated", 200, "2024-12-31"),
+        ["id"],
+        ["name", "value"],
+    )
 
     row = db.fetch_one("SELECT * FROM test WHERE id = 1")
     assert row["name"] == "alice_updated"

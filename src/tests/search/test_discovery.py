@@ -61,7 +61,7 @@ class TestServerListing:
             server_id=server.id,
             category="gaming",
             description="A test gaming server",
-            tags=["test", "gaming"]
+            tags=["test", "gaming"],
         )
 
         assert isinstance(listing, ServerListing)
@@ -74,27 +74,25 @@ class TestServerListing:
 
         with pytest.raises(CategoryNotFoundError):
             search.list_server(
-                user_id=owner.id,
-                server_id=server.id,
-                category="invalid_category_xyz"
+                user_id=owner.id, server_id=server.id, category="invalid_category_xyz"
             )
 
     def test_list_server_updates_existing(self, users_with_server):
         """Test listing an already listed server updates it."""
         owner, member1, member2, server, servers_mod, search = users_with_server
 
-        listing1 = search.list_server(
+        search.list_server(
             user_id=owner.id,
             server_id=server.id,
             category="gaming",
-            description="Original description"
+            description="Original description",
         )
 
         listing2 = search.list_server(
             user_id=owner.id,
             server_id=server.id,
             category="music",
-            description="Updated description"
+            description="Updated description",
         )
 
         assert listing2.category == "music"
@@ -103,11 +101,7 @@ class TestServerListing:
         """Test unlisting a server."""
         owner, member1, member2, server, servers_mod, search = users_with_server
 
-        search.list_server(
-            user_id=owner.id,
-            server_id=server.id,
-            category="gaming"
-        )
+        search.list_server(user_id=owner.id, server_id=server.id, category="gaming")
 
         result = search.unlist_server(owner.id, server.id)
 
@@ -121,7 +115,7 @@ class TestServerListing:
         owner = auth.register(
             username=f"unlist_owner_{unique_id}",
             email=f"unlist_owner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"Unlist Test {unique_id}")
@@ -138,11 +132,7 @@ class TestPublicServerListing:
         """Test listing public servers."""
         owner, member1, member2, server, servers_mod, search = users_with_server
 
-        search.list_server(
-            user_id=owner.id,
-            server_id=server.id,
-            category="gaming"
-        )
+        search.list_server(user_id=owner.id, server_id=server.id, category="gaming")
 
         listings = search.list_public_servers()
 
@@ -152,11 +142,7 @@ class TestPublicServerListing:
         """Test listing public servers by category."""
         owner, member1, member2, server, servers_mod, search = users_with_server
 
-        search.list_server(
-            user_id=owner.id,
-            server_id=server.id,
-            category="gaming"
-        )
+        search.list_server(user_id=owner.id, server_id=server.id, category="gaming")
 
         listings = search.list_public_servers(category="gaming")
 
@@ -167,11 +153,7 @@ class TestPublicServerListing:
         """Test sorting by member count."""
         owner, member1, member2, server, servers_mod, search = users_with_server
 
-        search.list_server(
-            user_id=owner.id,
-            server_id=server.id,
-            category="gaming"
-        )
+        search.list_server(user_id=owner.id, server_id=server.id, category="gaming")
 
         listings = search.list_public_servers(sort_by="member_count")
 
@@ -196,11 +178,7 @@ class TestServerBumping:
         """Test bumping a server."""
         owner, member1, member2, server, servers_mod, search = users_with_server
 
-        search.list_server(
-            user_id=owner.id,
-            server_id=server.id,
-            category="gaming"
-        )
+        search.list_server(user_id=owner.id, server_id=server.id, category="gaming")
 
         result = search.bump_server(owner.id, server.id)
 
@@ -214,7 +192,7 @@ class TestServerBumping:
         owner = auth.register(
             username=f"bump_owner_{unique_id}",
             email=f"bump_owner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"Bump Test {unique_id}")
@@ -231,11 +209,7 @@ class TestServerVerification:
         """Test verifying a server."""
         owner, member1, member2, server, servers_mod, search = users_with_server
 
-        search.list_server(
-            user_id=owner.id,
-            server_id=server.id,
-            category="gaming"
-        )
+        search.list_server(user_id=owner.id, server_id=server.id, category="gaming")
 
         result = search.verify_server(server.id, VerificationLevel.LOW)
 
@@ -249,7 +223,7 @@ class TestServerVerification:
         owner = auth.register(
             username=f"verify_owner_{unique_id}",
             email=f"verify_owner_{unique_id}@example.com",
-            password="TestPass123!"
+            password="TestPass123!",
         )
 
         server = servers.create_server(owner.id, f"Verify Test {unique_id}")

@@ -11,7 +11,18 @@ class TestWelcomeScreenCreation:
 
     def test_set_welcome_screen(self, server_with_channels):
         """Test setting a welcome screen for a server."""
-        server, owner, admin_user, member_user, outsider, general, announcements, private, category, servers = server_with_channels
+        (
+            server,
+            owner,
+            admin_user,
+            member_user,
+            outsider,
+            general,
+            announcements,
+            private,
+            category,
+            servers,
+        ) = server_with_channels
 
         welcome_screen = servers.set_welcome_screen(
             user_id=owner.id,
@@ -27,7 +38,18 @@ class TestWelcomeScreenCreation:
 
     def test_set_welcome_screen_with_channels(self, server_with_channels):
         """Test setting a welcome screen with recommended channels."""
-        server, owner, admin_user, member_user, outsider, general, announcements, private, category, servers = server_with_channels
+        (
+            server,
+            owner,
+            admin_user,
+            member_user,
+            outsider,
+            general,
+            announcements,
+            private,
+            category,
+            servers,
+        ) = server_with_channels
 
         welcome_channels = [
             {"channel_id": general.id, "description": "Start chatting here"},
@@ -46,7 +68,9 @@ class TestWelcomeScreenCreation:
 
     def test_set_welcome_screen_requires_permission(self, server_with_members):
         """Test that setting welcome screen requires permission."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         with pytest.raises(servers.PermissionDeniedError):
             servers.set_welcome_screen(
@@ -57,7 +81,18 @@ class TestWelcomeScreenCreation:
 
     def test_set_welcome_screen_validates_channels(self, server_with_channels):
         """Test that welcome screen validates channel IDs."""
-        server, owner, admin_user, member_user, outsider, general, announcements, private, category, servers = server_with_channels
+        (
+            server,
+            owner,
+            admin_user,
+            member_user,
+            outsider,
+            general,
+            announcements,
+            private,
+            category,
+            servers,
+        ) = server_with_channels
 
         welcome_channels = [
             {"channel_id": 999999999, "description": "Invalid channel"},
@@ -78,7 +113,9 @@ class TestWelcomeScreenRetrieval:
 
     def test_get_welcome_screen(self, server_with_members):
         """Test getting a welcome screen."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         servers.set_welcome_screen(
             user_id=owner.id,
@@ -93,7 +130,9 @@ class TestWelcomeScreenRetrieval:
 
     def test_get_welcome_screen_as_member(self, server_with_members):
         """Test that members can view welcome screen."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         servers.set_welcome_screen(
             user_id=owner.id,
@@ -121,7 +160,9 @@ class TestWelcomeScreenUpdate:
 
     def test_update_welcome_screen_description(self, server_with_members):
         """Test updating welcome screen description."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         servers.set_welcome_screen(
             user_id=owner.id,
@@ -139,7 +180,9 @@ class TestWelcomeScreenUpdate:
 
     def test_update_welcome_screen_enabled(self, server_with_members):
         """Test enabling/disabling welcome screen."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         servers.set_welcome_screen(
             user_id=owner.id,
@@ -159,7 +202,18 @@ class TestWelcomeScreenUpdate:
 
     def test_update_welcome_channels(self, server_with_channels):
         """Test updating welcome channels."""
-        server, owner, admin_user, member_user, outsider, general, announcements, private, category, servers = server_with_channels
+        (
+            server,
+            owner,
+            admin_user,
+            member_user,
+            outsider,
+            general,
+            announcements,
+            private,
+            category,
+            servers,
+        ) = server_with_channels
 
         servers.set_welcome_screen(
             user_id=owner.id,
@@ -187,7 +241,9 @@ class TestWelcomeScreenDeletion:
 
     def test_delete_welcome_screen(self, server_with_members):
         """Test deleting a welcome screen."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         servers.set_welcome_screen(
             user_id=owner.id,
@@ -203,7 +259,9 @@ class TestWelcomeScreenDeletion:
 
     def test_delete_welcome_screen_requires_permission(self, server_with_members):
         """Test that deleting welcome screen requires permission."""
-        server, owner, admin_user, member_user, outsider, admin_role, servers = server_with_members
+        server, owner, admin_user, member_user, outsider, admin_role, servers = (
+            server_with_members
+        )
 
         servers.set_welcome_screen(
             user_id=owner.id,
@@ -221,7 +279,18 @@ class TestWelcomeScreenLimits:
 
     def test_max_welcome_channels_limit(self, server_with_channels):
         """Test that welcome channels are limited."""
-        server, owner, admin_user, member_user, outsider, general, announcements, private, category, servers = server_with_channels
+        (
+            server,
+            owner,
+            admin_user,
+            member_user,
+            outsider,
+            general,
+            announcements,
+            private,
+            category,
+            servers,
+        ) = server_with_channels
 
         channels = []
         for i in range(10):

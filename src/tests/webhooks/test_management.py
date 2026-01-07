@@ -14,8 +14,7 @@ class TestGetWebhook:
         setup = webhook_with_token
 
         webhook = setup["webhooks"].get_webhook(
-            webhook_id=setup["webhook"].id,
-            user_id=setup["owner"].id
+            webhook_id=setup["webhook"].id, user_id=setup["owner"].id
         )
 
         assert webhook is not None
@@ -28,8 +27,7 @@ class TestGetWebhook:
         setup = webhook_with_token
 
         webhook = setup["webhooks"].get_webhook(
-            webhook_id=setup["webhook"].id,
-            user_id=setup["owner"].id
+            webhook_id=setup["webhook"].id, user_id=setup["owner"].id
         )
 
         assert webhook.token is None
@@ -39,8 +37,7 @@ class TestGetWebhook:
         setup = base_server_setup
 
         webhook = setup["webhooks"].get_webhook(
-            webhook_id=999999999,
-            user_id=setup["owner"].id
+            webhook_id=999999999, user_id=setup["owner"].id
         )
 
         assert webhook is None
@@ -52,8 +49,7 @@ class TestGetWebhook:
 
         with pytest.raises(WebhookAccessDeniedError):
             setup["webhooks"].get_webhook(
-                webhook_id=setup["webhook"].id,
-                user_id=setup["non_member"].id
+                webhook_id=setup["webhook"].id, user_id=setup["non_member"].id
             )
 
 
@@ -68,12 +64,11 @@ class TestGetChannelWebhooks:
             setup["webhooks"].create_webhook(
                 user_id=setup["owner"].id,
                 channel_id=setup["channel"].id,
-                name=f"Channel Webhook {i}"
+                name=f"Channel Webhook {i}",
             )
 
         webhooks = setup["webhooks"].get_channel_webhooks(
-            user_id=setup["owner"].id,
-            channel_id=setup["channel"].id
+            user_id=setup["owner"].id, channel_id=setup["channel"].id
         )
 
         assert len(webhooks) >= 3
@@ -86,8 +81,7 @@ class TestGetChannelWebhooks:
         setup = fresh_server
 
         webhooks = setup["webhooks"].get_channel_webhooks(
-            user_id=setup["owner"].id,
-            channel_id=setup["channel"].id
+            user_id=setup["owner"].id, channel_id=setup["channel"].id
         )
 
         assert webhooks == []
@@ -99,8 +93,7 @@ class TestGetChannelWebhooks:
 
         with pytest.raises(ChannelNotFoundError):
             setup["webhooks"].get_channel_webhooks(
-                user_id=setup["owner"].id,
-                channel_id=999999999
+                user_id=setup["owner"].id, channel_id=999999999
             )
 
     def test_get_channel_webhooks_no_permission(self, webhook_with_token):
@@ -110,8 +103,7 @@ class TestGetChannelWebhooks:
 
         with pytest.raises(PermissionDeniedError):
             setup["webhooks"].get_channel_webhooks(
-                user_id=setup["non_member"].id,
-                channel_id=setup["channel"].id
+                user_id=setup["non_member"].id, channel_id=setup["channel"].id
             )
 
 
@@ -127,24 +119,21 @@ class TestGetServerWebhooks:
             user_id=setup["owner"].id,
             server_id=setup["server"].id,
             name="second-channel",
-            channel_type=ChannelType.TEXT
+            channel_type=ChannelType.TEXT,
         )
 
         setup["webhooks"].create_webhook(
             user_id=setup["owner"].id,
             channel_id=setup["channel"].id,
-            name="Server Webhook 1"
+            name="Server Webhook 1",
         )
 
         setup["webhooks"].create_webhook(
-            user_id=setup["owner"].id,
-            channel_id=channel2.id,
-            name="Server Webhook 2"
+            user_id=setup["owner"].id, channel_id=channel2.id, name="Server Webhook 2"
         )
 
         webhooks = setup["webhooks"].get_server_webhooks(
-            user_id=setup["owner"].id,
-            server_id=setup["server"].id
+            user_id=setup["owner"].id, server_id=setup["server"].id
         )
 
         assert len(webhooks) == 2
@@ -158,8 +147,7 @@ class TestGetServerWebhooks:
 
         with pytest.raises(PermissionDeniedError):
             setup["webhooks"].get_server_webhooks(
-                user_id=setup["non_member"].id,
-                server_id=setup["server"].id
+                user_id=setup["non_member"].id, server_id=setup["server"].id
             )
 
 
@@ -173,7 +161,7 @@ class TestUpdateWebhook:
         updated = setup["webhooks"].update_webhook(
             user_id=setup["owner"].id,
             webhook_id=setup["webhook"].id,
-            name="Updated Name"
+            name="Updated Name",
         )
 
         assert updated.name == "Updated Name"
@@ -187,7 +175,7 @@ class TestUpdateWebhook:
         updated = setup["webhooks"].update_webhook(
             user_id=setup["owner"].id,
             webhook_id=setup["webhook"].id,
-            avatar_url=new_avatar
+            avatar_url=new_avatar,
         )
 
         assert updated.avatar_url == new_avatar
@@ -201,13 +189,11 @@ class TestUpdateWebhook:
             user_id=setup["owner"].id,
             channel_id=setup["channel"].id,
             name=f"Clear Avatar {unique_id}",
-            avatar_url="https://example.com/avatar.png"
+            avatar_url="https://example.com/avatar.png",
         )
 
         updated = setup["webhooks"].update_webhook(
-            user_id=setup["owner"].id,
-            webhook_id=webhook.id,
-            avatar_url=""
+            user_id=setup["owner"].id, webhook_id=webhook.id, avatar_url=""
         )
 
         assert updated.avatar_url is None
@@ -220,7 +206,7 @@ class TestUpdateWebhook:
             user_id=setup["owner"].id,
             webhook_id=setup["webhook"].id,
             name="Multi Update",
-            avatar_url="https://example.com/multi.png"
+            avatar_url="https://example.com/multi.png",
         )
 
         assert updated.name == "Multi Update"
@@ -233,9 +219,7 @@ class TestUpdateWebhook:
 
         with pytest.raises(WebhookNotFoundError):
             setup["webhooks"].update_webhook(
-                user_id=setup["owner"].id,
-                webhook_id=999999999,
-                name="Not Found"
+                user_id=setup["owner"].id, webhook_id=999999999, name="Not Found"
             )
 
     def test_update_webhook_no_permission(self, webhook_with_token):
@@ -247,7 +231,7 @@ class TestUpdateWebhook:
             setup["webhooks"].update_webhook(
                 user_id=setup["non_member"].id,
                 webhook_id=setup["webhook"].id,
-                name="No Permission"
+                name="No Permission",
             )
 
     def test_update_webhook_invalid_name(self, webhook_with_token):
@@ -257,9 +241,7 @@ class TestUpdateWebhook:
 
         with pytest.raises(WebhookNameError):
             setup["webhooks"].update_webhook(
-                user_id=setup["owner"].id,
-                webhook_id=setup["webhook"].id,
-                name=""
+                user_id=setup["owner"].id, webhook_id=setup["webhook"].id, name=""
             )
 
     def test_update_webhook_invalid_avatar(self, webhook_with_token):
@@ -271,19 +253,20 @@ class TestUpdateWebhook:
             setup["webhooks"].update_webhook(
                 user_id=setup["owner"].id,
                 webhook_id=setup["webhook"].id,
-                avatar_url="javascript:alert(1)"
+                avatar_url="javascript:alert(1)",
             )
 
     def test_update_webhook_updates_timestamp(self, webhook_with_token):
         """Test that update changes updated_at timestamp."""
         setup = webhook_with_token
         import time
+
         time.sleep(0.01)
 
         updated = setup["webhooks"].update_webhook(
             user_id=setup["owner"].id,
             webhook_id=setup["webhook"].id,
-            name="Timestamp Update"
+            name="Timestamp Update",
         )
 
         assert updated.updated_at > setup["webhook"].created_at
@@ -293,8 +276,7 @@ class TestUpdateWebhook:
         setup = webhook_with_token
 
         updated = setup["webhooks"].update_webhook(
-            user_id=setup["owner"].id,
-            webhook_id=setup["webhook"].id
+            user_id=setup["owner"].id, webhook_id=setup["webhook"].id
         )
 
         assert updated.name == setup["webhook"].name
@@ -312,19 +294,15 @@ class TestMoveWebhook:
             user_id=setup["owner"].id,
             server_id=setup["server"].id,
             name="target-channel",
-            channel_type=ChannelType.TEXT
+            channel_type=ChannelType.TEXT,
         )
 
         webhook = setup["webhooks"].create_webhook(
-            user_id=setup["owner"].id,
-            channel_id=setup["channel"].id,
-            name="Move Test"
+            user_id=setup["owner"].id, channel_id=setup["channel"].id, name="Move Test"
         )
 
         updated = setup["webhooks"].update_webhook(
-            user_id=setup["owner"].id,
-            webhook_id=webhook.id,
-            channel_id=channel2.id
+            user_id=setup["owner"].id, webhook_id=webhook.id, channel_id=channel2.id
         )
 
         assert updated.channel_id == channel2.id
@@ -338,7 +316,7 @@ class TestMoveWebhook:
             setup["webhooks"].update_webhook(
                 user_id=setup["owner"].id,
                 webhook_id=setup["webhook"].id,
-                channel_id=999999999
+                channel_id=999999999,
             )
 
 
@@ -352,12 +330,11 @@ class TestDeleteWebhook:
         webhook = setup["webhooks"].create_webhook(
             user_id=setup["owner"].id,
             channel_id=setup["channel"].id,
-            name="Delete Test"
+            name="Delete Test",
         )
 
         result = setup["webhooks"].delete_webhook(
-            user_id=setup["owner"].id,
-            webhook_id=webhook.id
+            user_id=setup["owner"].id, webhook_id=webhook.id
         )
 
         assert result is True
@@ -372,8 +349,7 @@ class TestDeleteWebhook:
 
         with pytest.raises(WebhookNotFoundError):
             setup["webhooks"].delete_webhook(
-                user_id=setup["owner"].id,
-                webhook_id=999999999
+                user_id=setup["owner"].id, webhook_id=999999999
             )
 
     def test_delete_webhook_no_permission(self, webhook_with_token):
@@ -383,6 +359,5 @@ class TestDeleteWebhook:
 
         with pytest.raises(PermissionDeniedError):
             setup["webhooks"].delete_webhook(
-                user_id=setup["non_member"].id,
-                webhook_id=setup["webhook"].id
+                user_id=setup["non_member"].id, webhook_id=setup["webhook"].id
             )

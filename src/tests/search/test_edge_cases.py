@@ -116,7 +116,7 @@ class TestIndexingEdgeCases:
         search.index_message(
             message_id=999999,
             content="",
-            metadata={"author_id": 1, "conversation_id": 1}
+            metadata={"author_id": 1, "conversation_id": 1},
         )
 
     def test_index_very_long_content(self, db_and_modules):
@@ -128,7 +128,7 @@ class TestIndexingEdgeCases:
         search.index_message(
             message_id=999998,
             content=long_content,
-            metadata={"author_id": 1, "conversation_id": 1}
+            metadata={"author_id": 1, "conversation_id": 1},
         )
 
     def test_index_content_with_special_chars(self, db_and_modules):
@@ -140,7 +140,7 @@ class TestIndexingEdgeCases:
         search.index_message(
             message_id=999997,
             content=special_content,
-            metadata={"author_id": 1, "conversation_id": 1}
+            metadata={"author_id": 1, "conversation_id": 1},
         )
 
     def test_remove_nonexistent_message(self, db_and_modules):
@@ -203,7 +203,7 @@ class TestConcurrentOperations:
             search.index_message(
                 message_id=900000 + i,
                 content=f"concurrent message {i} {unique_id}",
-                metadata={"author_id": 1, "conversation_id": 1}
+                metadata={"author_id": 1, "conversation_id": 1},
             )
 
         for i in range(10):
@@ -220,7 +220,7 @@ class TestConcurrentOperations:
             search.index_message(
                 message_id=msg_id,
                 content=f"updated content {i} {unique_id}",
-                metadata={"author_id": 1, "conversation_id": 1}
+                metadata={"author_id": 1, "conversation_id": 1},
             )
 
 

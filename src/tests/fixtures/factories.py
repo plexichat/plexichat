@@ -16,7 +16,7 @@ from .config import TEST_PASSWORD
 class UserFactory:
     """
     Factory for creating test users.
-    
+
     Supports both pooled users (pre-created, fast) and
     fresh users (created on demand, slower but isolated).
     """
@@ -32,18 +32,18 @@ class UserFactory:
         email: Optional[str] = None,
         password: str = TEST_PASSWORD,
         use_pool: bool = True,
-        **kwargs
+        **kwargs,
     ) -> Any:
         """
         Create or retrieve a test user.
-        
+
         Args:
             username: Optional username (auto-generated if not provided)
             email: Optional email (auto-generated if not provided)
             password: Password for the user
             use_pool: If True and no custom username, return from pool
             **kwargs: Additional arguments for registration
-            
+
         Returns:
             User object
         """
@@ -59,10 +59,7 @@ class UserFactory:
         email = email or f"{username}@test.example.com"
 
         user = self.auth_module.register(
-            username=username,
-            email=email,
-            password=password,
-            **kwargs
+            username=username, email=email, password=password, **kwargs
         )
         self._created.append(user)
         return user
@@ -72,32 +69,31 @@ class UserFactory:
         return [self.create(**kwargs) for _ in range(count)]
 
     def create_with_login(
-        self,
-        username: Optional[str] = None,
-        password: str = TEST_PASSWORD,
-        **kwargs
+        self, username: Optional[str] = None, password: str = TEST_PASSWORD, **kwargs
     ) -> tuple:
         """
         Create a user and log them in.
-        
+
         Returns:
             Tuple of (user, token)
         """
-        user = self.create(username=username, password=password, use_pool=False, **kwargs)
+        user = self.create(
+            username=username, password=password, use_pool=False, **kwargs
+        )
         result = self.auth_module.login(user.username, password)
         return user, result.token
 
     def populate_pool(self, size: int = 50):
         """
         Pre-populate the user pool.
-        
+
         Call this at session start for faster user creation.
         """
         for i in range(size):
             user = self.auth_module.register(
                 username=f"pooluser_{i}_{uuid.uuid4().hex[:4]}",
                 email=f"pooluser_{i}_{uuid.uuid4().hex[:4]}@test.example.com",
-                password=TEST_PASSWORD
+                password=TEST_PASSWORD,
             )
             self._pool.append(user)
 
@@ -118,17 +114,17 @@ class ServerFactory:
         owner: Optional[Any] = None,
         name: Optional[str] = None,
         description: str = "Test server",
-        **kwargs
+        **kwargs,
     ) -> Any:
         """
         Create a test server.
-        
+
         Args:
             owner: Owner user (created if not provided)
             name: Server name (auto-generated if not provided)
             description: Server description
             **kwargs: Additional arguments
-            
+
         Returns:
             Server object
         """
@@ -140,21 +136,15 @@ class ServerFactory:
         name = name or f"Test Server {unique_id}"
 
         return self.servers_module.create_server(
-            owner_id=owner.id,
-            name=name,
-            description=description,
-            **kwargs
+            owner_id=owner.id, name=name, description=description, **kwargs
         )
 
     def create_with_members(
-        self,
-        owner: Optional[Any] = None,
-        member_count: int = 2,
-        **kwargs
+        self, owner: Optional[Any] = None, member_count: int = 2, **kwargs
     ) -> tuple:
         """
         Create a server with members.
-        
+
         Returns:
             Tuple of (server, owner, [members])
         """
@@ -175,11 +165,11 @@ class ServerFactory:
         self,
         owner: Optional[Any] = None,
         channel_names: Optional[List[str]] = None,
-        **kwargs
+        **kwargs,
     ) -> tuple:
         """
         Create a server with additional channels.
-        
+
         Returns:
             Tuple of (server, owner, [channels])
         """
@@ -196,9 +186,7 @@ class ServerFactory:
         channel_names = channel_names or ["announcements", "random"]
         for name in channel_names:
             channel = self.servers_module.create_channel(
-                user_id=owner.id,
-                server_id=server.id,
-                name=name
+                user_id=owner.id, server_id=server.id, name=name
             )
             channels.append(channel)
 
@@ -219,7 +207,7 @@ class ConversationFactory:
     ) -> tuple:
         """
         Create a DM conversation.
-        
+
         Returns:
             Tuple of (conversation, user1, user2)
         """
@@ -241,7 +229,7 @@ class ConversationFactory:
     ) -> tuple:
         """
         Create a group conversation.
-        
+
         Returns:
             Tuple of (group, owner, [participants])
         """
@@ -256,9 +244,7 @@ class ConversationFactory:
         name = name or f"Test Group {unique_id}"
 
         group = self.messaging_module.create_group(
-            owner_id=owner.id,
-            name=name,
-            participant_ids=participant_ids
+            owner_id=owner.id, name=name, participant_ids=participant_ids
         )
 
         return group, owner, participants
@@ -276,11 +262,11 @@ class WebhookFactory:
         user: Optional[Any] = None,
         channel: Optional[Any] = None,
         name: Optional[str] = None,
-        **kwargs
+        **kwargs,
     ) -> tuple:
         """
         Create a test webhook.
-        
+
         Returns:
             Tuple of (webhook, channel, server, owner)
         """
@@ -298,10 +284,7 @@ class WebhookFactory:
         name = name or f"Test Webhook {unique_id}"
 
         webhook = self.webhooks_module.create_webhook(
-            user_id=user.id,
-            channel_id=channel.id,
-            name=name,
-            **kwargs
+            user_id=user.id, channel_id=channel.id, name=name, **kwargs
         )
 
         return webhook, channel, server, owner

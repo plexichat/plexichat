@@ -75,7 +75,9 @@ def authenticated_connection(mock_websocket, session_manager):
         heartbeat_interval_ms=session_manager.heartbeat_interval_ms,
     )
     session_manager.add_connection(conn)
-    session_manager.create_session(conn, user_id=12345, intents=GatewayIntent.default_intents())
+    session_manager.create_session(
+        conn, user_id=12345, intents=GatewayIntent.default_intents()
+    )
     return conn
 
 
@@ -126,7 +128,9 @@ def mock_servers_module():
 
 
 @pytest.fixture
-def opcode_handler(session_manager, mock_auth_module, mock_presence_module, mock_servers_module):
+def opcode_handler(
+    session_manager, mock_auth_module, mock_presence_module, mock_servers_module
+):
     """Create an opcode handler instance."""
     return OpcodeHandler(
         session_manager=session_manager,

@@ -145,7 +145,9 @@ class TestAtomicOperations:
     def test_get_and_set_with_default(self, memory_storage):
         """Test get and set with default value."""
         memory_storage.set_bucket("test:key", {})
-        previous = memory_storage.get_and_set("test:key", "value", "new", default="default")
+        previous = memory_storage.get_and_set(
+            "test:key", "value", "new", default="default"
+        )
         assert previous == "default"
 
 
@@ -255,7 +257,9 @@ class TestThreadSafety:
 
         def worker(worker_id):
             for i in range(50):
-                memory_storage.add_to_list("list", "items", f"{worker_id}:{i}", max_size=1000)
+                memory_storage.add_to_list(
+                    "list", "items", f"{worker_id}:{i}", max_size=1000
+                )
 
         with ThreadPoolExecutor(max_workers=4) as executor:
             futures = [executor.submit(worker, i) for i in range(4)]

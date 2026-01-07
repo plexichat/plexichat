@@ -19,9 +19,7 @@ class TestArchiveThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Archive Test"
+            user_id=owner.id, channel_id=channel.id, name="Archive Test"
         )
 
         archived = threads.archive_thread(owner.id, thread.id)
@@ -34,9 +32,7 @@ class TestArchiveThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=member1.id,
-            channel_id=channel.id,
-            name="Owner Archive Test"
+            user_id=member1.id, channel_id=channel.id, name="Owner Archive Test"
         )
 
         archived = threads.archive_thread(member1.id, thread.id)
@@ -47,9 +43,7 @@ class TestArchiveThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Already Archived Test"
+            user_id=owner.id, channel_id=channel.id, name="Already Archived Test"
         )
 
         threads.archive_thread(owner.id, thread.id)
@@ -69,9 +63,7 @@ class TestArchiveThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Permission Archive Test"
+            user_id=owner.id, channel_id=channel.id, name="Permission Archive Test"
         )
 
         threads.join_thread(member1.id, thread.id)
@@ -88,9 +80,7 @@ class TestUnarchiveThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Unarchive Test"
+            user_id=owner.id, channel_id=channel.id, name="Unarchive Test"
         )
 
         threads.archive_thread(owner.id, thread.id)
@@ -104,9 +94,7 @@ class TestUnarchiveThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Active Unarchive Test"
+            user_id=owner.id, channel_id=channel.id, name="Active Unarchive Test"
         )
 
         unarchived = threads.unarchive_thread(owner.id, thread.id)
@@ -124,9 +112,7 @@ class TestUnarchiveThread:
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id,
-            channel_id=channel.id,
-            name="Member Unarchive Test"
+            user_id=owner.id, channel_id=channel.id, name="Member Unarchive Test"
         )
 
         threads.join_thread(member1.id, thread.id)
@@ -149,7 +135,7 @@ class TestAutoArchive:
             user_id=owner.id,
             channel_id=channel.id,
             name="One Hour Archive Test",
-            auto_archive_duration=AutoArchiveDuration.ONE_HOUR
+            auto_archive_duration=AutoArchiveDuration.ONE_HOUR,
         )
 
         assert thread.auto_archive_duration == AutoArchiveDuration.ONE_HOUR
@@ -162,7 +148,7 @@ class TestAutoArchive:
             user_id=owner.id,
             channel_id=channel.id,
             name="One Day Archive Test",
-            auto_archive_duration=AutoArchiveDuration.ONE_DAY
+            auto_archive_duration=AutoArchiveDuration.ONE_DAY,
         )
 
         assert thread.auto_archive_duration == AutoArchiveDuration.ONE_DAY
@@ -175,7 +161,7 @@ class TestAutoArchive:
             user_id=owner.id,
             channel_id=channel.id,
             name="Three Days Archive Test",
-            auto_archive_duration=AutoArchiveDuration.THREE_DAYS
+            auto_archive_duration=AutoArchiveDuration.THREE_DAYS,
         )
 
         assert thread.auto_archive_duration == AutoArchiveDuration.THREE_DAYS
@@ -188,7 +174,7 @@ class TestAutoArchive:
             user_id=owner.id,
             channel_id=channel.id,
             name="Seven Days Archive Test",
-            auto_archive_duration=AutoArchiveDuration.SEVEN_DAYS
+            auto_archive_duration=AutoArchiveDuration.SEVEN_DAYS,
         )
 
         assert thread.auto_archive_duration == AutoArchiveDuration.SEVEN_DAYS
@@ -201,13 +187,11 @@ class TestAutoArchive:
             user_id=owner.id,
             channel_id=channel.id,
             name="Update Duration Test",
-            auto_archive_duration=AutoArchiveDuration.ONE_HOUR
+            auto_archive_duration=AutoArchiveDuration.ONE_HOUR,
         )
 
         updated = threads.update_thread(
-            owner.id,
-            thread.id,
-            auto_archive_duration=AutoArchiveDuration.SEVEN_DAYS
+            owner.id, thread.id, auto_archive_duration=AutoArchiveDuration.SEVEN_DAYS
         )
 
         assert updated.auto_archive_duration == AutoArchiveDuration.SEVEN_DAYS

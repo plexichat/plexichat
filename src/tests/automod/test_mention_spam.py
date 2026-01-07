@@ -21,7 +21,7 @@ class TestMentionSpamRule:
             server_id=server.id,
             channel_id=channel.id,
             user_id=owner.id,
-            content="Hey <@123> <@456> <@789> <@101> check this out"
+            content="Hey <@123> <@456> <@789> <@101> check this out",
         )
 
         assert not result.passed
@@ -35,7 +35,7 @@ class TestMentionSpamRule:
             server_id=server.id,
             channel_id=channel.id,
             user_id=owner.id,
-            content="Attention <@&111> <@&222> <@&333>"
+            content="Attention <@&111> <@&222> <@&333>",
         )
 
         assert not result.passed
@@ -48,7 +48,7 @@ class TestMentionSpamRule:
             server_id=server.id,
             channel_id=channel.id,
             user_id=owner.id,
-            content="Hey @everyone check this out"
+            content="Hey @everyone check this out",
         )
 
         assert not result.passed
@@ -61,7 +61,7 @@ class TestMentionSpamRule:
             server_id=server.id,
             channel_id=channel.id,
             user_id=owner.id,
-            content="Hey @here important announcement"
+            content="Hey @here important announcement",
         )
 
         assert not result.passed
@@ -74,7 +74,7 @@ class TestMentionSpamRule:
             server_id=server.id,
             channel_id=channel.id,
             user_id=owner.id,
-            content="Hey <@123> <@456> check this"
+            content="Hey <@123> <@456> check this",
         )
 
         assert result.passed
@@ -87,7 +87,7 @@ class TestMentionSpamRule:
             server_id=server.id,
             channel_id=channel.id,
             user_id=owner.id,
-            content="Just a normal message"
+            content="Just a normal message",
         )
 
         assert result.passed
@@ -99,26 +99,20 @@ class TestMentionSpamRuleValidation:
 
     def test_valid_config(self):
         """Test valid configuration passes."""
-        valid, issues = MentionSpamRule.validate_config({
-            "max_user_mentions": 5,
-            "max_role_mentions": 3,
-            "block_everyone": True
-        })
+        valid, issues = MentionSpamRule.validate_config(
+            {"max_user_mentions": 5, "max_role_mentions": 3, "block_everyone": True}
+        )
 
         assert valid
 
     def test_invalid_mention_count(self):
         """Test negative mention count fails."""
-        valid, issues = MentionSpamRule.validate_config({
-            "max_user_mentions": -1
-        })
+        valid, issues = MentionSpamRule.validate_config({"max_user_mentions": -1})
 
         assert not valid
 
     def test_invalid_block_everyone_type(self):
         """Test non-boolean block_everyone fails."""
-        valid, issues = MentionSpamRule.validate_config({
-            "block_everyone": "yes"
-        })
+        valid, issues = MentionSpamRule.validate_config({"block_everyone": "yes"})
 
         assert not valid

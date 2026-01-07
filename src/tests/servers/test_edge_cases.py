@@ -65,7 +65,7 @@ class TestChannelEdgeCases:
                 user_id=owner.id,
                 server_id=server.id,
                 name="test",
-                category_id=999999999
+                category_id=999999999,
             )
 
 
@@ -169,8 +169,7 @@ class TestPermissionEdgeCases:
 
         with pytest.raises(servers.ChannelNotFoundError):
             servers.set_channel_override(
-                owner.id, 999999999, "role", 1,
-                deny={"messages.send": True}
+                owner.id, 999999999, "role", 1, deny={"messages.send": True}
             )
 
 
@@ -181,10 +180,7 @@ class TestValidationEdgeCases:
         """Test server name with special characters."""
         owner, _, _, _, servers = users
 
-        server = servers.create_server(
-            owner_id=owner.id,
-            name="Test Server!@#$%"
-        )
+        server = servers.create_server(owner_id=owner.id, name="Test Server!@#$%")
 
         assert server is not None
         assert "Test Server" in server.name
@@ -194,9 +190,7 @@ class TestValidationEdgeCases:
         server, owner, servers = fresh_server
 
         channel = servers.create_channel(
-            user_id=owner.id,
-            server_id=server.id,
-            name="  My Channel  "
+            user_id=owner.id, server_id=server.id, name="  My Channel  "
         )
 
         assert channel.name == "my-channel"
@@ -206,9 +200,7 @@ class TestValidationEdgeCases:
         server, owner, servers = fresh_server
 
         role = servers.create_role(
-            user_id=owner.id,
-            server_id=server.id,
-            name="  Super Admin  "
+            user_id=owner.id, server_id=server.id, name="  Super Admin  "
         )
 
         assert role.name == "Super Admin"
@@ -227,12 +219,13 @@ class TestConcurrentOperations:
 
     def test_delete_channel_with_overrides(self, server_with_channels):
         """Test deleting channel with permission overrides."""
-        server, owner, _, member_user, _, general, _, _, _, servers = server_with_channels
+        server, owner, _, member_user, _, general, _, _, _, servers = (
+            server_with_channels
+        )
 
         # Add override
         servers.set_channel_override(
-            owner.id, general.id, "member", member_user.id,
-            deny={"messages.send": True}
+            owner.id, general.id, "member", member_user.id, deny={"messages.send": True}
         )
 
         # Delete channel
@@ -249,8 +242,7 @@ class TestConcurrentOperations:
 
         # Add override for role
         servers.set_channel_override(
-            owner.id, general.id, "role", role.id,
-            deny={"messages.send": True}
+            owner.id, general.id, "role", role.id, deny={"messages.send": True}
         )
 
         # Delete role

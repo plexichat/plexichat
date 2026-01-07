@@ -18,14 +18,14 @@ class TestWebhookLimits:
             setup["webhooks"].create_webhook(
                 user_id=setup["owner"].id,
                 channel_id=setup["channel"].id,
-                name=f"Limit Test {i}"
+                name=f"Limit Test {i}",
             )
 
         with pytest.raises(WebhookLimitError) as exc_info:
             setup["webhooks"].create_webhook(
                 user_id=setup["owner"].id,
                 channel_id=setup["channel"].id,
-                name="Over Limit"
+                name="Over Limit",
             )
 
         assert exc_info.value.max_allowed == 10
@@ -38,7 +38,7 @@ class TestWebhookLimits:
         webhook = setup["webhooks"].create_webhook(
             user_id=setup["owner"].id,
             channel_id=setup["channel"].id,
-            name="Server Limit Test"
+            name="Server Limit Test",
         )
 
         assert webhook is not None
@@ -56,13 +56,13 @@ class TestDeletedChannel:
             user_id=setup["owner"].id,
             server_id=setup["server"].id,
             name="temp-channel",
-            channel_type=ChannelType.TEXT
+            channel_type=ChannelType.TEXT,
         )
 
         webhook = setup["webhooks"].create_webhook(
             user_id=setup["owner"].id,
             channel_id=channel.id,
-            name="Temp Channel Webhook"
+            name="Temp Channel Webhook",
         )
 
         assert webhook is not None
@@ -79,7 +79,7 @@ class TestSpecialCharacters:
         webhook = setup["webhooks"].create_webhook(
             user_id=setup["owner"].id,
             channel_id=setup["channel"].id,
-            name=f"Test!@#$%^&*() {unique_id}"
+            name=f"Test!@#$%^&*() {unique_id}",
         )
 
         assert "!@#$%^&*()" in webhook.name
@@ -92,7 +92,7 @@ class TestSpecialCharacters:
         webhook = setup["webhooks"].create_webhook(
             user_id=setup["owner"].id,
             channel_id=setup["channel"].id,
-            name=f"Test Bot {unique_id}"
+            name=f"Test Bot {unique_id}",
         )
 
         assert webhook is not None
@@ -105,7 +105,7 @@ class TestSpecialCharacters:
             webhook_id=setup["webhook"].id,
             token=setup["token"],
             content="Special chars: !@#$%^&*()_+-=[]{}|;':\",./<>?",
-            wait=True
+            wait=True,
         )
 
         assert "!@#$%^&*()" in result.content
@@ -118,7 +118,7 @@ class TestSpecialCharacters:
             webhook_id=setup["webhook"].id,
             token=setup["token"],
             content="Line 1\nLine 2\nLine 3",
-            wait=True
+            wait=True,
         )
 
         assert "\n" in result.content
@@ -137,7 +137,7 @@ class TestConcurrentOperations:
                 webhook_id=setup["webhook"].id,
                 token=setup["token"],
                 content=f"Rapid message {i}",
-                wait=True
+                wait=True,
             )
             results.append(result)
 
@@ -155,8 +155,7 @@ class TestErrorMessages:
 
         with pytest.raises(WebhookNotFoundError) as exc_info:
             setup["webhooks"].delete_webhook(
-                user_id=setup["owner"].id,
-                webhook_id=999999999
+                user_id=setup["owner"].id, webhook_id=999999999
             )
 
         assert "not found" in str(exc_info.value).lower()
@@ -168,9 +167,7 @@ class TestErrorMessages:
 
         with pytest.raises(ChannelNotFoundError) as exc_info:
             setup["webhooks"].create_webhook(
-                user_id=setup["owner"].id,
-                channel_id=999999999,
-                name="Test"
+                user_id=setup["owner"].id, channel_id=999999999, name="Test"
             )
 
         assert "not found" in str(exc_info.value).lower()
@@ -182,9 +179,7 @@ class TestErrorMessages:
 
         with pytest.raises(InvalidWebhookTokenError) as exc_info:
             setup["webhooks"].execute_webhook(
-                webhook_id=setup["webhook"].id,
-                token="invalid",
-                content="Test"
+                webhook_id=setup["webhook"].id, token="invalid", content="Test"
             )
 
         assert "token" in str(exc_info.value).lower()
@@ -213,10 +208,7 @@ class TestWebhookUrl:
         """Test URL when token is not set."""
         setup = webhook_with_token
 
-        webhook = setup["webhooks"].get_webhook(
-            setup["webhook"].id,
-            setup["owner"].id
-        )
+        webhook = setup["webhooks"].get_webhook(setup["webhook"].id, setup["owner"].id)
 
         url = webhook.url
         assert url == f"/webhooks/{webhook.id}"
@@ -234,7 +226,7 @@ class TestEmptyAndNull:
             user_id=setup["owner"].id,
             channel_id=setup["channel"].id,
             name=f"Null Avatar {unique_id}",
-            avatar_url=None
+            avatar_url=None,
         )
 
         assert webhook.avatar_url is None
@@ -248,7 +240,7 @@ class TestEmptyAndNull:
             user_id=setup["owner"].id,
             channel_id=setup["channel"].id,
             name=f"Empty Avatar {unique_id}",
-            avatar_url=""
+            avatar_url="",
         )
 
         assert webhook.avatar_url is None
@@ -262,7 +254,7 @@ class TestEmptyAndNull:
             user_id=setup["owner"].id,
             channel_id=setup["channel"].id,
             name=f"Whitespace Avatar {unique_id}",
-            avatar_url="   "
+            avatar_url="   ",
         )
 
         assert webhook.avatar_url is None
@@ -280,7 +272,7 @@ class TestDatabaseConstraints:
             webhook = setup["webhooks"].create_webhook(
                 user_id=setup["owner"].id,
                 channel_id=setup["channel"].id,
-                name=f"Unique ID {i}"
+                name=f"Unique ID {i}",
             )
             ids.add(webhook.id)
 

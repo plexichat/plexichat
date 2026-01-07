@@ -27,8 +27,8 @@ class TestStartTyping:
 
         indicator = presence.start_typing(user1.id, channel_id)
 
-        # Should expire in ~10 seconds
-        expected_timeout = 10000  # 10 seconds in ms
+        # Should expire in ~6 seconds (Timeout hierarchy: Client 3s < Server 6s < UI 7s)
+        expected_timeout = 6000  # 6 seconds in ms
         actual_timeout = indicator.expires_at - indicator.started_at
 
         assert actual_timeout == expected_timeout
@@ -140,6 +140,7 @@ class TestGetTypingUsers:
         """Test that typing users are channel-specific."""
         user1, user2, presence = fresh_users
         import random
+
         channel1 = random.randint(1000000, 9999999)
         channel2 = random.randint(10000000, 99999999)
 
@@ -168,14 +169,14 @@ class TestTypingExpiration:
         assert indicator.expires_at > indicator.started_at
 
     def test_typing_indicator_timeout_value(self, fresh_users):
-        """Test typing indicator timeout is 10 seconds."""
+        """Test typing indicator timeout is 6 seconds (synchronized with client)."""
         user1, user2, presence = fresh_users
         channel_id = 12345
 
         indicator = presence.start_typing(user1.id, channel_id)
         timeout = indicator.expires_at - indicator.started_at
 
-        assert timeout == 10000  # 10 seconds in milliseconds
+        assert timeout == 6000  # 6 seconds in milliseconds (Timeout hierarchy: Client 3s < Server 6s < UI 7s)
 
 
 class TestTypingMultipleUsers:
@@ -195,7 +196,7 @@ class TestTypingMultipleUsers:
             user = auth.register(
                 username=f"typer_{unique_id}_{i}",
                 email=f"typer_{unique_id}_{i}@example.com",
-                password="TestPass123!"
+                password="TestPass123!",
             )
             users.append(user)
             presence.start_typing(user.id, channel_id)

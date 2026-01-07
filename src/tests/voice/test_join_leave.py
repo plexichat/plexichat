@@ -10,7 +10,16 @@ class TestJoinChannel:
 
     def test_join_voice_channel(self, server_with_voice):
         """Test joining a voice channel."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         state = voice.join_channel(member1.id, voice_channel.id)
 
@@ -27,7 +36,16 @@ class TestJoinChannel:
 
     def test_join_stage_channel_as_audience(self, server_with_voice):
         """Test joining a stage channel starts as audience (suppressed)."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         state = voice.join_channel(member2.id, stage_channel.id)
 
@@ -37,7 +55,16 @@ class TestJoinChannel:
 
     def test_join_channel_already_in_same_channel(self, server_with_voice):
         """Test joining a channel user is already in raises error."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, voice_channel.id)
 
@@ -46,11 +73,19 @@ class TestJoinChannel:
 
     def test_join_channel_leaves_previous(self, server_with_voice):
         """Test joining a new channel leaves the previous one."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice_channel2 = servers.create_channel(
-            owner.id, server.id, "voice-2",
-            channel_type=servers.ChannelType.VOICE
+            owner.id, server.id, "voice-2", channel_type=servers.ChannelType.VOICE
         )
 
         voice.join_channel(member1.id, voice_channel.id)
@@ -63,18 +98,35 @@ class TestJoinChannel:
 
     def test_join_nonexistent_channel(self, server_with_voice):
         """Test joining a nonexistent channel raises error."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         with pytest.raises(voice.ChannelNotFoundError):
             voice.join_channel(member1.id, 999999999)
 
     def test_join_text_channel_fails(self, server_with_voice):
         """Test joining a text channel raises error."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         text_channel = servers.create_channel(
-            owner.id, server.id, "text-channel",
-            channel_type=servers.ChannelType.TEXT
+            owner.id, server.id, "text-channel", channel_type=servers.ChannelType.TEXT
         )
 
         with pytest.raises(voice.ChannelTypeError):
@@ -86,7 +138,16 @@ class TestLeaveChannel:
 
     def test_leave_voice_channel(self, server_with_voice):
         """Test leaving a voice channel."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(member1.id, voice_channel.id)
         result = voice.leave_channel(member1.id)
@@ -98,14 +159,32 @@ class TestLeaveChannel:
 
     def test_leave_when_not_in_channel(self, server_with_voice):
         """Test leaving when not in a channel raises error."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         with pytest.raises(voice.UserNotInChannelError):
             voice.leave_channel(member2.id)
 
     def test_leave_clears_speaker_request(self, server_with_voice):
         """Test leaving a stage channel clears speaker request."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, stage_channel.id)
         voice.start_stage(owner.id, stage_channel.id, "Test Stage")
@@ -127,11 +206,19 @@ class TestMoveToChannel:
 
     def test_move_to_different_channel(self, server_with_voice):
         """Test moving to a different voice channel."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice_channel2 = servers.create_channel(
-            owner.id, server.id, "voice-move",
-            channel_type=servers.ChannelType.VOICE
+            owner.id, server.id, "voice-move", channel_type=servers.ChannelType.VOICE
         )
 
         voice.join_channel(member1.id, voice_channel.id)
@@ -141,7 +228,16 @@ class TestMoveToChannel:
 
     def test_move_when_not_in_channel(self, server_with_voice):
         """Test moving when not in a channel joins the target."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         state = voice.move_to_channel(member2.id, voice_channel.id)
 
@@ -153,7 +249,16 @@ class TestGetChannelUsers:
 
     def test_get_channel_users(self, server_with_voice):
         """Test getting all users in a voice channel."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice.join_channel(owner.id, voice_channel.id)
         voice.join_channel(member1.id, voice_channel.id)
@@ -167,11 +272,19 @@ class TestGetChannelUsers:
 
     def test_get_empty_channel_users(self, server_with_voice):
         """Test getting users from an empty channel."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         voice_channel2 = servers.create_channel(
-            owner.id, server.id, "empty-voice",
-            channel_type=servers.ChannelType.VOICE
+            owner.id, server.id, "empty-voice", channel_type=servers.ChannelType.VOICE
         )
 
         users = voice.get_channel_users(voice_channel2.id)
@@ -184,7 +297,16 @@ class TestGetVoiceChannels:
 
     def test_get_voice_channels(self, server_with_voice):
         """Test getting all voice channels in a server."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         channels = voice.get_voice_channels(owner.id, server.id)
 
@@ -195,7 +317,16 @@ class TestGetVoiceChannels:
 
     def test_get_voice_channel_info(self, server_with_voice):
         """Test getting voice channel info."""
-        owner, member1, member2, server, voice_channel, stage_channel, servers, voice = server_with_voice
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
 
         channel = voice.get_voice_channel(voice_channel.id, owner.id)
 
