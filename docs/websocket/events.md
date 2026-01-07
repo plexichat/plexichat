@@ -100,6 +100,59 @@ Sent when a message is deleted.
 }
 ```
 
+## Typing Events
+
+Typing indicators use a timeout hierarchy to ensure smooth UX:
+- Client throttle: 3 seconds (minimum time between TYPING_START sends)
+- Server expiry: 6 seconds (server-side indicator expiration)
+- UI timeout: 7 seconds (client-side indicator removal)
+
+### TYPING_START
+
+Sent when a user starts typing in a channel. Can be triggered via:
+- WebSocket opcode 40 (TYPING_START) - preferred
+- REST POST to `/channels/{channel_id}/typing` - legacy
+
+```json
+{
+  "t": "TYPING_START",
+  "d": {
+    "channel_id": "123456789012345678",
+    "user_id": "123456789012345678",
+    "username": "johndoe"
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| channel_id | string | ID of the channel |
+| user_id | string | ID of the user typing |
+| username | string | Username of the user typing |
+
+### TYPING_STOP
+
+Sent when a user stops typing in a channel. Triggered when:
+- User sends opcode 41 (TYPING_STOP)
+- User clears their message input
+- User sends a message
+- User disconnects from the gateway
+
+```json
+{
+  "t": "TYPING_STOP",
+  "d": {
+    "channel_id": "123456789012345678",
+    "user_id": "123456789012345678"
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| channel_id | string | ID of the channel |
+| user_id | string | ID of the user who stopped typing |
+
 ## Presence Events
 
 ### PRESENCE_UPDATE

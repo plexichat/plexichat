@@ -24,6 +24,7 @@ git submodule update --init --recursive
 - **Identity & Security**:
   - User authentication with 2FA (TOTP) support.
   - Multi-session management and device tracking.
+  - **Hardened Security**: Argon2id password hashing and Blind Indexing for private data.
   - **Zero-friction At-Rest Encryption**: Automatic server-side encryption for messages.
   - **Local QR Generation**: Privacy-focused QR code generation without external services.
 - **Community Management**:
@@ -206,4 +207,4 @@ make test
 
 ## Version
 
-Current version: `a.1.0-30` (Alpha)
+Current version: `a.1.0-31` (Alpha)

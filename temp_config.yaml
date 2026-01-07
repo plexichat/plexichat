@@ -1,0 +1,5 @@
+database:
+  path: ':memory:'
+  type: sqlite
+messaging:
+  encrypt_messages: false

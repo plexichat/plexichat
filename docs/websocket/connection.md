@@ -181,3 +181,58 @@ Server may request version verification:
   }
 }
 ```
+
+## Typing Indicators (Opcodes 40-41)
+
+Typing indicators use lightweight WebSocket opcodes for real-time signaling.
+
+### Timeout Hierarchy
+
+To prevent flickering and ensure smooth UX, typing uses a coordinated timeout hierarchy:
+
+| Component | Timeout | Purpose |
+|-----------|---------|---------|
+| Client Throttle | 3000ms | Minimum time between TYPING_START sends |
+| Server Expiry | 6000ms | Server-side indicator auto-expiration |
+| UI Timeout | 7000ms | Client-side indicator removal |
+
+### TYPING_START (Opcode 40)
+
+Send when user starts typing in a channel:
+
+```json
+{
+  "op": 40,
+  "d": {
+    "channel_id": "123456789012345678"
+  }
+}
+```
+
+The server will:
+1. Record the typing indicator with 6-second expiration
+2. Broadcast TYPING_START event to channel members
+
+### TYPING_STOP (Opcode 41)
+
+Send when user stops typing (clears input, sends message, or switches channels):
+
+```json
+{
+  "op": 41,
+  "d": {
+    "channel_id": "123456789012345678"
+  }
+}
+```
+
+The server will:
+1. Remove the typing indicator from the database
+2. Broadcast TYPING_STOP event to channel members
+
+### Automatic Cleanup
+
+When a user disconnects from the gateway, the server automatically:
+1. Clears all typing indicators for that user
+2. Broadcasts TYPING_STOP events to affected channels
+3. Dispatches PRESENCE_UPDATE with offline status

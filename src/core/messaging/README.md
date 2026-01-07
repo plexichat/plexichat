@@ -2,6 +2,37 @@
 
 Secure messaging system for PlexiChat API supporting direct messages, group conversations, rich text formatting, attachments, and delivery/read receipts.
 
+## Architecture
+
+The messaging module uses a layered architecture for maintainability and testability:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    MessagingManager                          │
+│                    (Facade Layer)                            │
+├─────────────────────────────────────────────────────────────┤
+│  ConversationService  │  MessageService  │  ParticipantService│
+│  MessageStatusService │  AttachmentService│  PinService       │
+│  UserSettingsService  │  ContentFilterService                │
+│                    (Service Layer)                           │
+├─────────────────────────────────────────────────────────────┤
+│  ConversationRepository │ MessageRepository │ ParticipantRepo │
+│  MessageStatusRepository│ AttachmentRepository│ PinRepository │
+│  UserSettingsRepository                                      │
+│                    (Repository Layer)                        │
+├─────────────────────────────────────────────────────────────┤
+│                    Database (SQLite/PostgreSQL)              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Key Design Principles
+
+1. **Single Responsibility**: Each service handles one domain (conversations, messages, participants, etc.)
+2. **Repository Pattern**: Data access abstracted behind repositories for database portability
+3. **Batch Operations**: N+1 queries eliminated through batch fetching methods
+4. **Event Bus**: Reliable event delivery with optional retry support
+5. **Caching**: In-memory caching with TTL for frequently accessed data
+
 ## Features
 
 - Direct messages (DMs) with auto-create option
@@ -365,3 +396,81 @@ Tables (prefixed with `msg_`):
 - `msg_content_filters` - User content filter settings
 - `msg_user_settings` - User message settings
 - `msg_dm_lookup` - Quick DM lookup table
+
+## Event Bus
+
+The messaging module includes an event bus for reliable event delivery:
+
+```python
+from src.core.messaging import get_event_bus, MessagingEventType
+
+# Get the event bus
+event_bus = get_event_bus()
+
+# Subscribe to events
+def handle_message_event(event, recipients):
+    print(f"Event {event.event_type} for {len(recipients)} users")
+
+event_bus.subscribe(handle_message_event)
+
+# For async handlers
+async def async_handler(event, recipients):
+    await notify_websockets(event, recipients)
+
+event_bus.subscribe_async(async_handler)
+
+# Publish events with retry
+import asyncio
+
+async def send_with_retry():
+    event = event_bus.create_event(
+        MessagingEventType.MESSAGE_CREATE,
+        data={"message_id": 123, "content": "Hello"},
+        conversation_id=456
+    )
+    result = await event_bus.publish_with_retry(event, [1, 2, 3])
+    print(f"Delivered to {result.recipients_count} users")
+```
+
+### Event Types
+
+- `MESSAGE_CREATE` - New message sent
+- `MESSAGE_UPDATE` - Message edited
+- `MESSAGE_DELETE` - Message deleted
+- `MESSAGE_ACK` - Message read receipt
+- `MESSAGE_PIN` / `MESSAGE_UNPIN` - Pin status changed
+- `TYPING_START` - User started typing
+- `CONVERSATION_CREATE` / `UPDATE` / `DELETE` - Conversation changes
+- `PARTICIPANT_ADD` / `REMOVE` / `UPDATE` - Participant changes
+
+## Module Structure
+
+```
+messaging/
+├── __init__.py          # Public API exports
+├── manager.py           # Facade coordinating services
+├── models.py            # Data models (dataclasses)
+├── exceptions.py        # Custom exceptions
+├── schema.py            # Database schema
+├── content.py           # Content validation utilities
+├── events.py            # Event bus implementation
+├── repositories/        # Data access layer
+│   ├── base.py
+│   ├── conversation.py
+│   ├── message.py
+│   ├── participant.py
+│   ├── message_status.py
+│   ├── attachment.py
+│   ├── pin.py
+│   └── user_settings.py
+└── services/            # Business logic layer
+    ├── base.py
+    ├── conversation.py
+    ├── message.py
+    ├── participant.py
+    ├── message_status.py
+    ├── attachment.py
+    ├── pin.py
+    ├── user_settings.py
+    └── content_filter.py
+```
