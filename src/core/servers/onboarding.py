@@ -76,7 +76,9 @@ class OnboardingManager:
         if welcome_channels:
             max_channels = self._config.get("max_welcome_channels", 5)
             if len(welcome_channels) > max_channels:
-                raise OnboardingError(f"Maximum {max_channels} welcome channels allowed")
+                raise OnboardingError(
+                    f"Maximum {max_channels} welcome channels allowed"
+                )
 
             for wc in welcome_channels:
                 channel_id = wc.get("channel_id")
@@ -96,8 +98,13 @@ class OnboardingManager:
                 """UPDATE srv_welcome_screens 
                    SET description = ?, enabled = ?, welcome_channels = ?, updated_at = ?
                    WHERE server_id = ?""",
-                (description, 1 if enabled else 0, json.dumps(welcome_channels or []),
-                 now, server_id),
+                (
+                    description,
+                    1 if enabled else 0,
+                    json.dumps(welcome_channels or []),
+                    now,
+                    server_id,
+                ),
             )
         else:
             screen_id = self._generate_id()
@@ -105,8 +112,15 @@ class OnboardingManager:
                 """INSERT INTO srv_welcome_screens 
                    (id, server_id, description, enabled, welcome_channels, created_at, updated_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (screen_id, server_id, description, 1 if enabled else 0,
-                 json.dumps(welcome_channels or []), now, now),
+                (
+                    screen_id,
+                    server_id,
+                    description,
+                    1 if enabled else 0,
+                    json.dumps(welcome_channels or []),
+                    now,
+                    now,
+                ),
             )
 
         self._log_audit(server_id, user_id, AuditLogAction.WELCOME_SCREEN_UPDATE)
@@ -114,7 +128,9 @@ class OnboardingManager:
         assert result is not None  # Should exist since we just created/updated it
         return result
 
-    def get_welcome_screen(self, server_id: int, user_id: int) -> Optional[WelcomeScreen]:
+    def get_welcome_screen(
+        self, server_id: int, user_id: int
+    ) -> Optional[WelcomeScreen]:
         """Get the welcome screen for a server."""
         if not self._server_manager._is_member(server_id, user_id):
             raise ServerNotFoundError("Server not found")
@@ -189,11 +205,23 @@ class OnboardingManager:
             """INSERT INTO srv_onboarding_steps 
                (id, server_id, step_type, title, description, position, required, options, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (step_id, server_id, step_type.value, title, description, position,
-             1 if required else 0, json.dumps(options) if options else None, now, now),
+            (
+                step_id,
+                server_id,
+                step_type.value,
+                title,
+                description,
+                position,
+                1 if required else 0,
+                json.dumps(options) if options else None,
+                now,
+                now,
+            ),
         )
 
-        self._log_audit(server_id, user_id, AuditLogAction.ONBOARDING_UPDATE, "step", step_id)
+        self._log_audit(
+            server_id, user_id, AuditLogAction.ONBOARDING_UPDATE, "step", step_id
+        )
         result = self.get_onboarding_step(step_id, user_id)
         assert result is not None  # Should exist since we just created it
         return result
@@ -223,7 +251,9 @@ class OnboardingManager:
                 if not channel or channel.server_id != server_id:
                     raise ChannelNotFoundError(f"Channel {channel_id} not found")
 
-    def get_onboarding_step(self, step_id: int, user_id: int) -> Optional[OnboardingStep]:
+    def get_onboarding_step(
+        self, step_id: int, user_id: int
+    ) -> Optional[OnboardingStep]:
         """Get an onboarding step by ID."""
         row = self._db.fetch_one(
             "SELECT * FROM srv_onboarding_steps WHERE id = ?",
@@ -237,7 +267,9 @@ class OnboardingManager:
 
         return self._row_to_step(row)
 
-    def get_onboarding_steps(self, user_id: int, server_id: int) -> List[OnboardingStep]:
+    def get_onboarding_steps(
+        self, user_id: int, server_id: int
+    ) -> List[OnboardingStep]:
         """Get all onboarding steps for a server."""
         if not self._server_manager._is_member(server_id, user_id):
             raise ServerNotFoundError("Server not found")
@@ -263,7 +295,9 @@ class OnboardingManager:
         if not step:
             raise OnboardingStepNotFoundError("Step not found")
 
-        self._server_manager.require_permission(user_id, step.server_id, "onboarding.manage")
+        self._server_manager.require_permission(
+            user_id, step.server_id, "onboarding.manage"
+        )
 
         updates = []
         params = []
@@ -284,7 +318,9 @@ class OnboardingManager:
             params.append(1 if required else 0)
 
         if options is not None:
-            self._validate_step_options(user_id, step.server_id, step.step_type, options)
+            self._validate_step_options(
+                user_id, step.server_id, step.step_type, options
+            )
             updates.append("options = ?")
             params.append(json.dumps(options))
 
@@ -312,7 +348,9 @@ class OnboardingManager:
         if not step:
             raise OnboardingStepNotFoundError("Step not found")
 
-        self._server_manager.require_permission(user_id, step.server_id, "onboarding.manage")
+        self._server_manager.require_permission(
+            user_id, step.server_id, "onboarding.manage"
+        )
 
         self._db.execute("DELETE FROM srv_onboarding_steps WHERE id = ?", (step_id,))
 
@@ -374,7 +412,9 @@ class OnboardingManager:
             selected_roles = response.get("selected_roles", [])
             for role_id in selected_roles:
                 try:
-                    self._server_manager.assign_role(user_id, server_id, user_id, role_id)
+                    self._server_manager.assign_role(
+                        user_id, server_id, user_id, role_id
+                    )
                 except Exception:
                     pass
 
@@ -389,15 +429,22 @@ class OnboardingManager:
             """UPDATE srv_onboarding_progress 
                SET completed_steps = ?, completed = ?, completed_at = ?
                WHERE server_id = ? AND user_id = ?""",
-            (json.dumps(completed_steps), 1 if all_required_complete else 0,
-             now if all_required_complete else None, server_id, user_id),
+            (
+                json.dumps(completed_steps),
+                1 if all_required_complete else 0,
+                now if all_required_complete else None,
+                server_id,
+                user_id,
+            ),
         )
 
         result = self.get_onboarding_progress(user_id, server_id)
         assert result is not None  # Should exist since we just updated it
         return result
 
-    def get_onboarding_progress(self, user_id: int, server_id: int) -> Optional[OnboardingProgress]:
+    def get_onboarding_progress(
+        self, user_id: int, server_id: int
+    ) -> Optional[OnboardingProgress]:
         """Get onboarding progress for a user."""
         row = self._db.fetch_one(
             "SELECT * FROM srv_onboarding_progress WHERE server_id = ? AND user_id = ?",

@@ -26,14 +26,14 @@ from .base import (
 class JanusAdapter(SFUAdapter):
     """
     Adapter for Janus WebRTC Gateway.
-    
+
     Uses the Janus REST API with the VideoRoom plugin for SFU functionality.
     """
 
     def __init__(self, api_url: str, timeout: int = 10, api_secret: str = ""):
         """
         Initialize the Janus adapter.
-        
+
         Args:
             api_url: Base URL of the Janus API
             timeout: Request timeout in seconds
@@ -44,13 +44,16 @@ class JanusAdapter(SFUAdapter):
         self._api_secret = api_secret
         self._session = None
         self._janus_sessions: Dict[str, int] = {}  # room_id -> session_id
-        self._janus_handles: Dict[str, Dict[str, int]] = {}  # room_id -> {peer_id -> handle_id}
+        self._janus_handles: Dict[
+            str, Dict[str, int]
+        ] = {}  # room_id -> {peer_id -> handle_id}
 
     async def _get_session(self):
         """Get or create aiohttp session."""
         if self._session is None:
             try:
                 import aiohttp
+
                 self._session = aiohttp.ClientSession(
                     timeout=aiohttp.ClientTimeout(total=self._timeout)
                 )
@@ -58,7 +61,7 @@ class JanusAdapter(SFUAdapter):
                 raise SFUConnectionError(
                     "aiohttp is required for Janus adapter",
                     backend="janus",
-                    url=self._api_url
+                    url=self._api_url,
                 )
         return self._session
 
@@ -73,11 +76,11 @@ class JanusAdapter(SFUAdapter):
     ) -> Dict[str, Any]:
         """
         Make an HTTP request to the Janus API.
-        
+
         Args:
             endpoint: API endpoint
             data: Request body data
-            
+
         Returns:
             Response JSON
         """
@@ -104,7 +107,7 @@ class JanusAdapter(SFUAdapter):
                     raise SFUConnectionError(
                         f"Janus error: {error.get('reason', 'Unknown')}",
                         backend="janus",
-                        url=url
+                        url=url,
                     )
 
                 return result
@@ -113,15 +116,13 @@ class JanusAdapter(SFUAdapter):
             raise SFUTimeoutError(
                 "Janus request timed out",
                 operation=endpoint,
-                timeout_ms=self._timeout * 1000
+                timeout_ms=self._timeout * 1000,
             )
         except Exception as e:
             if isinstance(e, (SFUConnectionError, SFUTimeoutError)):
                 raise
             raise SFUConnectionError(
-                f"Janus connection failed: {e}",
-                backend="janus",
-                url=url
+                f"Janus connection failed: {e}", backend="janus", url=url
             )
 
     async def _create_janus_session(self) -> int:
@@ -129,14 +130,16 @@ class JanusAdapter(SFUAdapter):
         result = await self._request("", {"janus": "create"})
         return result["data"]["id"]
 
-    async def _attach_plugin(self, session_id: int, plugin: str = "janus.plugin.videoroom") -> int:
+    async def _attach_plugin(
+        self, session_id: int, plugin: str = "janus.plugin.videoroom"
+    ) -> int:
         """Attach to a Janus plugin."""
         result = await self._request(
             f"/{session_id}",
             {
                 "janus": "attach",
                 "plugin": plugin,
-            }
+            },
         )
         return result["data"]["id"]
 
@@ -182,7 +185,7 @@ class JanusAdapter(SFUAdapter):
                 "fir_freq": 10,
                 "audiocodec": "opus",
                 "videocodec": "vp8,h264",
-            }
+            },
         )
 
         logger.debug(f"Created Janus room: {room_id} (numeric: {room_num})")
@@ -204,7 +207,7 @@ class JanusAdapter(SFUAdapter):
                 {
                     "request": "destroy",
                     "room": room_num,
-                }
+                },
             )
 
         # Destroy session
@@ -222,9 +225,7 @@ class JanusAdapter(SFUAdapter):
         session_id = self._janus_sessions.get(room_id)
         if not session_id:
             raise SFUConnectionError(
-                f"Room {room_id} not found",
-                backend="janus",
-                url=self._api_url
+                f"Room {room_id} not found", backend="janus", url=self._api_url
             )
 
         # Create handle for this peer
@@ -247,7 +248,7 @@ class JanusAdapter(SFUAdapter):
                 "ptype": "publisher",
                 "id": peer_num,
                 "display": peer_id,
-            }
+            },
         )
 
         plugindata = result.get("plugindata", {}).get("data", {})
@@ -256,7 +257,10 @@ class JanusAdapter(SFUAdapter):
 
         return {
             "routerRtpCapabilities": {},  # Janus handles this differently
-            "peers": [p.get("display", str(p.get("id"))) for p in plugindata.get("publishers", [])],
+            "peers": [
+                p.get("display", str(p.get("id")))
+                for p in plugindata.get("publishers", [])
+            ],
             "producers": [],
         }
 
@@ -266,17 +270,10 @@ class JanusAdapter(SFUAdapter):
         handle_id = self._janus_handles.get(room_id, {}).get(peer_id)
 
         if session_id and handle_id:
-            await self._send_message(
-                session_id,
-                handle_id,
-                {"request": "leave"}
-            )
+            await self._send_message(session_id, handle_id, {"request": "leave"})
 
             # Detach handle
-            await self._request(
-                f"/{session_id}/{handle_id}",
-                {"janus": "detach"}
-            )
+            await self._request(f"/{session_id}/{handle_id}", {"janus": "detach"})
 
             del self._janus_handles[room_id][peer_id]
 
@@ -292,7 +289,9 @@ class JanusAdapter(SFUAdapter):
         """Create a WebRTC transport for a peer."""
         # Janus handles transport creation implicitly during publish/subscribe
         # Return a placeholder transport
-        transport_id = f"{room_id}_{peer_id}_{direction.value}_{int(time.time() * 1000)}"
+        transport_id = (
+            f"{room_id}_{peer_id}_{direction.value}_{int(time.time() * 1000)}"
+        )
 
         return SFUTransport(
             id=transport_id,
@@ -329,7 +328,7 @@ class JanusAdapter(SFUAdapter):
             raise SFUConnectionError(
                 f"Peer {peer_id} not in room {room_id}",
                 backend="janus",
-                url=self._api_url
+                url=self._api_url,
             )
 
         # Configure publishing
@@ -340,7 +339,7 @@ class JanusAdapter(SFUAdapter):
                 "request": "configure",
                 "audio": kind == MediaKind.AUDIO,
                 "video": kind == MediaKind.VIDEO,
-            }
+            },
         )
 
         producer_id = f"{peer_id}_{kind.value}_{int(time.time() * 1000)}"
@@ -365,9 +364,7 @@ class JanusAdapter(SFUAdapter):
 
         if not session_id:
             raise SFUConnectionError(
-                f"Room {room_id} not found",
-                backend="janus",
-                url=self._api_url
+                f"Room {room_id} not found", backend="janus", url=self._api_url
             )
 
         # Create subscriber handle
@@ -389,7 +386,7 @@ class JanusAdapter(SFUAdapter):
                 "room": room_num,
                 "ptype": "subscriber",
                 "feed": feed_num,
-            }
+            },
         )
 
         consumer_id = f"{peer_id}_sub_{producer_id}_{int(time.time() * 1000)}"
@@ -423,7 +420,7 @@ class JanusAdapter(SFUAdapter):
                 {
                     "request": "configure",
                     kind: False,
-                }
+                },
             )
         return True
 
@@ -445,7 +442,7 @@ class JanusAdapter(SFUAdapter):
                 {
                     "request": "configure",
                     kind: True,
-                }
+                },
             )
         return True
 
@@ -460,11 +457,7 @@ class JanusAdapter(SFUAdapter):
         handle_id = self._janus_handles.get(room_id, {}).get(peer_id)
 
         if session_id and handle_id:
-            await self._send_message(
-                session_id,
-                handle_id,
-                {"request": "unpublish"}
-            )
+            await self._send_message(session_id, handle_id, {"request": "unpublish"})
         return True
 
     async def get_room_info(self, room_id: str) -> Optional[RoomInfo]:
@@ -483,7 +476,7 @@ class JanusAdapter(SFUAdapter):
             {
                 "request": "listparticipants",
                 "room": room_num,
-            }
+            },
         )
 
         plugindata = result.get("plugindata", {}).get("data", {})
@@ -533,7 +526,9 @@ class JanusAdapter(SFUAdapter):
             try:
                 await self._request(f"/{session_id}", {"janus": "destroy"})
             except Exception as e:
-                logger.debug(f"Failed to destroy Janus session {session_id} for room {room_id}: {e}")
+                logger.debug(
+                    f"Failed to destroy Janus session {session_id} for room {room_id}: {e}"
+                )
 
         self._janus_sessions.clear()
         self._janus_handles.clear()

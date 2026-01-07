@@ -5,13 +5,13 @@ Provides SDP exchange, ICE candidate relay, TURN credentials, and SFU integratio
 
 Usage:
     from src.core.voice import signaling
-    
+
     # Get voice server info for connecting
     info = signaling.get_voice_server_info(user_id, channel_id)
-    
+
     # Handle SDP offer from client
     answer = signaling.handle_sdp_offer(user_id, channel_id, sdp_offer)
-    
+
     # Relay ICE candidate
     signaling.handle_ice_candidate(user_id, channel_id, candidate)
 """
@@ -112,7 +112,7 @@ def setup(
 ) -> None:
     """
     Initialize the signaling module.
-    
+
     Args:
         voice_module: Voice module for state management
         events_module: Events module for dispatching events
@@ -184,7 +184,9 @@ async def handle_sdp_offer_async(
     sdp_type: str = "offer",
 ) -> SDPMessage:
     """Handle an SDP offer from a client and return the answer (async version that uses SFU)."""
-    return await _get_manager().handle_sdp_offer_async(user_id, channel_id, sdp, sdp_type)
+    return await _get_manager().handle_sdp_offer_async(
+        user_id, channel_id, sdp, sdp_type
+    )
 
 
 def handle_ice_candidate(
@@ -205,7 +207,9 @@ def disconnect_voice(user_id: int, channel_id: Optional[int] = None) -> bool:
     return _get_manager().disconnect_voice(user_id, channel_id)
 
 
-async def disconnect_voice_async(user_id: int, channel_id: Optional[int] = None) -> bool:
+async def disconnect_voice_async(
+    user_id: int, channel_id: Optional[int] = None
+) -> bool:
     """Disconnect a user from voice (async version that cleans up SFU)."""
     return await _get_manager().disconnect_voice_async(user_id, channel_id)
 

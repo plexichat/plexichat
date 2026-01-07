@@ -114,7 +114,9 @@ class TemplateManager:
 
         self._snapshot_server(template_id, server_id, user_id)
 
-        self._log_audit(server_id, user_id, AuditLogAction.TEMPLATE_CREATE, "template", template_id)
+        self._log_audit(
+            server_id, user_id, AuditLogAction.TEMPLATE_CREATE, "template", template_id
+        )
         logger.debug(f"Created template {template_id} from server {server_id}")
 
         result = self.get_template(code, user_id)
@@ -132,10 +134,12 @@ class TemplateManager:
             (server_id,),
         )
         for row in cat_rows:
-            categories_data.append({
-                "name": row["name"],
-                "position": row["position"],
-            })
+            categories_data.append(
+                {
+                    "name": row["name"],
+                    "position": row["position"],
+                }
+            )
 
         max_channels = self._config.get("max_channels_in_template", 100)
         ch_rows = self._db.fetch_all(
@@ -143,15 +147,19 @@ class TemplateManager:
             (server_id, max_channels),
         )
         for row in ch_rows:
-            channels_data.append({
-                "name": row["name"],
-                "channel_type": row["channel_type"],
-                "category_position": self._get_category_position(row["category_id"], cat_rows),
-                "position": row["position"],
-                "topic": row["topic"],
-                "nsfw": bool(row["nsfw"]),
-                "slowmode_seconds": row["slowmode_seconds"],
-            })
+            channels_data.append(
+                {
+                    "name": row["name"],
+                    "channel_type": row["channel_type"],
+                    "category_position": self._get_category_position(
+                        row["category_id"], cat_rows
+                    ),
+                    "position": row["position"],
+                    "topic": row["topic"],
+                    "nsfw": bool(row["nsfw"]),
+                    "slowmode_seconds": row["slowmode_seconds"],
+                }
+            )
 
         max_roles = self._config.get("max_roles_in_template", 50)
         role_rows = self._db.fetch_all(
@@ -162,14 +170,16 @@ class TemplateManager:
             perms = row["permissions"]
             if isinstance(perms, str):
                 perms = json.loads(perms) if perms else {}
-            roles_data.append({
-                "name": row["name"],
-                "permissions": perms,
-                "color": row["color"],
-                "hoist": bool(row["hoist"]),
-                "mentionable": bool(row["mentionable"]),
-                "position": row["position"],
-            })
+            roles_data.append(
+                {
+                    "name": row["name"],
+                    "permissions": perms,
+                    "color": row["color"],
+                    "hoist": bool(row["hoist"]),
+                    "mentionable": bool(row["mentionable"]),
+                    "position": row["position"],
+                }
+            )
 
         now = self._get_timestamp()
         data_id = self._generate_id()
@@ -177,11 +187,19 @@ class TemplateManager:
         self._db.execute(
             """INSERT INTO srv_template_data (id, template_id, channels, categories, roles, created_at)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (data_id, template_id, json.dumps(channels_data), json.dumps(categories_data),
-             json.dumps(roles_data), now),
+            (
+                data_id,
+                template_id,
+                json.dumps(channels_data),
+                json.dumps(categories_data),
+                json.dumps(roles_data),
+                now,
+            ),
         )
 
-    def _get_category_position(self, category_id: Optional[int], cat_rows: List[Dict[str, Any]]) -> Optional[int]:
+    def _get_category_position(
+        self, category_id: Optional[int], cat_rows: List[Dict[str, Any]]
+    ) -> Optional[int]:
         """Get category position by ID."""
         if not category_id:
             return None
@@ -190,7 +208,9 @@ class TemplateManager:
                 return row["position"]
         return None
 
-    def get_template(self, code: str, user_id: Optional[int] = None) -> Optional[ServerTemplate]:
+    def get_template(
+        self, code: str, user_id: Optional[int] = None
+    ) -> Optional[ServerTemplate]:
         """Get a template by code."""
         print(f"Looking up template: {code}")
         row = self._db.fetch_one(
@@ -202,12 +222,16 @@ class TemplateManager:
             return None
 
         if not row["is_public"] and user_id and row["creator_id"] != user_id:
-            print(f"Template access denied: creator {row['creator_id']} != user {user_id}")
+            print(
+                f"Template access denied: creator {row['creator_id']} != user {user_id}"
+            )
             return None
 
         return self._row_to_template(row)
 
-    def get_template_by_id(self, template_id: int, user_id: int) -> Optional[ServerTemplate]:
+    def get_template_by_id(
+        self, template_id: int, user_id: int
+    ) -> Optional[ServerTemplate]:
         """Get a template by ID."""
         row = self._db.fetch_one(
             "SELECT * FROM srv_templates WHERE id = ?",
@@ -277,7 +301,9 @@ class TemplateManager:
             description=server_description,
         )
 
-        categories = json.loads(data_row["categories"]) if data_row["categories"] else []
+        categories = (
+            json.loads(data_row["categories"]) if data_row["categories"] else []
+        )
         channels = json.loads(data_row["channels"]) if data_row["channels"] else []
         roles = json.loads(data_row["roles"]) if data_row["roles"] else []
 
@@ -305,7 +331,9 @@ class TemplateManager:
                 slowmode_seconds=ch_data.get("slowmode_seconds", 0),
             )
 
-        for role_data in sorted(roles, key=lambda x: x.get("position", 0), reverse=True):
+        for role_data in sorted(
+            roles, key=lambda x: x.get("position", 0), reverse=True
+        ):
             self._server_manager.create_role(
                 user_id=user_id,
                 server_id=server.id,
@@ -331,15 +359,22 @@ class TemplateManager:
             raise TemplateNotFoundError("Template not found")
 
         if template.creator_id != user_id:
-            raise PermissionDeniedError("Only the creator can delete this template", "templates.manage")
+            raise PermissionDeniedError(
+                "Only the creator can delete this template", "templates.manage"
+            )
 
-        self._db.execute("DELETE FROM srv_template_data WHERE template_id = ?", (template.id,))
+        self._db.execute(
+            "DELETE FROM srv_template_data WHERE template_id = ?", (template.id,)
+        )
         self._db.execute("DELETE FROM srv_templates WHERE id = ?", (template.id,))
 
         if template.source_server_id:
             self._log_audit(
-                template.source_server_id, user_id,
-                AuditLogAction.TEMPLATE_DELETE, "template", template.id,
+                template.source_server_id,
+                user_id,
+                AuditLogAction.TEMPLATE_DELETE,
+                "template",
+                template.id,
             )
 
         return True
@@ -358,7 +393,9 @@ class TemplateManager:
             raise TemplateNotFoundError("Template not found")
 
         if template.creator_id != user_id:
-            raise PermissionDeniedError("Only the creator can update this template", "templates.manage")
+            raise PermissionDeniedError(
+                "Only the creator can update this template", "templates.manage"
+            )
 
         updates = []
         params = []

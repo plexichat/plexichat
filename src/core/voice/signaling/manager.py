@@ -30,8 +30,8 @@ from .models import (
 )
 from .exceptions import (
     SDPError,
-    ICEError,
-    SFUError,
+    NotConnectedError,
+    ScreenShareError,
 )
 from .sdp import parse_sdp, validate_sdp, SDPManipulator
 from .ice import ICECandidateManager, parse_ice_candidate
@@ -60,7 +60,7 @@ class SignalingManager:
     ):
         """
         Initialize the signaling manager.
-        
+
         Args:
             voice_module: Voice module for state management
             events_module: Events module for dispatching events
@@ -88,7 +88,7 @@ class SignalingManager:
                 ws_url = "wss://" + ws_url[8:]
             elif ws_url.startswith("http://"):
                 ws_url = "ws://" + ws_url[7:]
-            
+
             self._sfu_config = {
                 "backend": "mediasoup-ws",
                 "ws_url": ws_url,
@@ -154,11 +154,11 @@ class SignalingManager:
     def get_voice_server_info(self, user_id: int, channel_id: int) -> VoiceServerInfo:
         """
         Get voice server connection info including TURN credentials.
-        
+
         Args:
             user_id: User ID
             channel_id: Voice channel ID
-            
+
         Returns:
             VoiceServerInfo with connection details
         """
@@ -173,8 +173,11 @@ class SignalingManager:
         if self._voice:
             channel = self._voice.get_voice_channel(channel_id, user_id)
             if not channel:
-                logger.warning(f"Unauthorized access attempt to voice server info for channel {channel_id} by user {user_id}")
+                logger.warning(
+                    f"Unauthorized access attempt to voice server info for channel {channel_id} by user {user_id}"
+                )
                 from .exceptions import NotConnectedError
+
                 raise NotConnectedError(f"Access denied to channel {channel_id}")
             bitrate = channel.bitrate
 
@@ -199,18 +202,20 @@ class SignalingManager:
     def create_voice_connection(self, user_id: int, channel_id: int) -> VoiceServerInfo:
         """
         Create a new voice connection for a user.
-        
+
         Args:
             user_id: User ID
             channel_id: Voice channel ID
-            
+
         Returns:
             VoiceServerInfo with connection details
         """
         # Clean up any existing connection first (handles reconnects gracefully)
         if user_id in self._connections:
             existing = self._connections[user_id]
-            logger.debug(f"Cleaning up existing voice connection for user {user_id} (state: {existing.state})")
+            logger.debug(
+                f"Cleaning up existing voice connection for user {user_id} (state: {existing.state})"
+            )
             # Clean up local state - SFU cleanup will happen async
             self._cleanup_local_connection(user_id)
 
@@ -230,7 +235,9 @@ class SignalingManager:
 
         self._connections[user_id] = connection
 
-        logger.debug(f"Created voice connection for user {user_id} in channel {channel_id}")
+        logger.debug(
+            f"Created voice connection for user {user_id} in channel {channel_id}"
+        )
 
         return info
 
@@ -243,13 +250,13 @@ class SignalingManager:
     ) -> SDPMessage:
         """
         Handle an SDP offer from a client (async version that uses SFU).
-        
+
         Args:
             user_id: User ID
             channel_id: Voice channel ID
             sdp: SDP string
             sdp_type: SDP type (offer/answer)
-            
+
         Returns:
             SDPMessage with answer
         """
@@ -276,8 +283,11 @@ class SignalingManager:
         if self._voice:
             channel = self._voice.get_voice_channel(channel_id, user_id)
             if not channel:
-                logger.warning(f"Unauthorized SDP offer for channel {channel_id} by user {user_id}")
+                logger.warning(
+                    f"Unauthorized SDP offer for channel {channel_id} by user {user_id}"
+                )
                 from .exceptions import NotConnectedError
+
                 raise NotConnectedError(f"Access denied to channel {channel_id}")
             bitrate = channel.bitrate
 
@@ -286,7 +296,9 @@ class SignalingManager:
 
         # Try to get SDP answer from SFU
         try:
-            answer_sdp = await self._get_sfu_answer(user_id, channel_id, modified_sdp, connection.session_id)
+            answer_sdp = await self._get_sfu_answer(
+                user_id, channel_id, modified_sdp, connection.session_id
+            )
             logger.info(f"Got SDP answer from SFU for user {user_id}")
         except Exception as e:
             logger.warning(f"Failed to get SFU answer, using fallback: {e}")
@@ -315,13 +327,13 @@ class SignalingManager:
     ) -> SDPMessage:
         """
         Handle an SDP offer from a client (sync wrapper).
-        
+
         Args:
             user_id: User ID
             channel_id: Voice channel ID
             sdp: SDP string
             sdp_type: SDP type (offer/answer)
-            
+
         Returns:
             SDPMessage with answer
         """
@@ -330,7 +342,7 @@ class SignalingManager:
             loop = asyncio.get_event_loop()
             if loop.is_running():
                 # We're in an async context, create a task
-                future = asyncio.ensure_future(
+                asyncio.ensure_future(
                     self.handle_sdp_offer_async(user_id, channel_id, sdp, sdp_type)
                 )
                 # Can't await here in sync context, so use fallback
@@ -387,13 +399,13 @@ class SignalingManager:
     ) -> str:
         """
         Get SDP answer from the SFU by creating a transport.
-        
+
         Args:
             user_id: User ID
             channel_id: Voice channel ID
             offer_sdp: Client's SDP offer
             session_id: Session ID
-            
+
         Returns:
             SDP answer string
         """
@@ -409,7 +421,9 @@ class SignalingManager:
         # Create a send transport for this peer (to send audio to SFU)
         # mediasoup-demo only accepts "send" or "recv", not "sendrecv"
         logger.debug(f"Creating send transport for peer {peer_id}")
-        transport = await sfu.create_transport(room_id, peer_id, TransportDirection.SEND)
+        transport = await sfu.create_transport(
+            room_id, peer_id, TransportDirection.SEND
+        )
 
         # Store transport info in connection
         connection = self._connections.get(user_id)
@@ -433,15 +447,17 @@ class SignalingManager:
 
         return answer_sdp
 
-    def _build_sdp_from_transport(self, offer_sdp: str, transport, session_id: str) -> str:
+    def _build_sdp_from_transport(
+        self, offer_sdp: str, transport, session_id: str
+    ) -> str:
         """
         Build an SDP answer from mediasoup transport parameters.
-        
+
         Args:
             offer_sdp: Client's SDP offer
             transport: SFUTransport with ICE/DTLS parameters
             session_id: Session ID
-            
+
         Returns:
             SDP answer string
         """
@@ -458,9 +474,16 @@ class SignalingManager:
         # Extract DTLS parameters
         dtls_params = transport.dtls_parameters
         fingerprints = dtls_params.get("fingerprints", [])
-        fingerprint = fingerprints[0] if fingerprints else {"algorithm": "sha-256", "value": ":".join([secrets.token_hex(1).upper() for _ in range(32)])}
+        fingerprint = (
+            fingerprints[0]
+            if fingerprints
+            else {
+                "algorithm": "sha-256",
+                "value": ":".join([secrets.token_hex(1).upper() for _ in range(32)]),
+            }
+        )
         dtls_role = dtls_params.get("role", "auto")
-        
+
         # Map DTLS role to SDP setup attribute
         # For an SDP answer, we should use "active" (we initiate DTLS) or "passive"
         # "actpass" is only valid in offers, not answers
@@ -500,7 +523,9 @@ class SignalingManager:
                     lines.append(f"a={cand_str}")
 
             # DTLS fingerprint and setup
-            lines.append(f"a=fingerprint:{fingerprint.get('algorithm', 'sha-256')} {fingerprint.get('value', '')}")
+            lines.append(
+                f"a=fingerprint:{fingerprint.get('algorithm', 'sha-256')} {fingerprint.get('value', '')}"
+            )
             lines.append(f"a=setup:{setup}")
             lines.append(f"a=mid:{idx}")
 
@@ -562,7 +587,7 @@ class SignalingManager:
     def _generate_answer_sdp(self, offer_sdp: str, session_id: str) -> str:
         """
         Generate an SDP answer from an offer.
-        
+
         In production, this would be generated by the SFU.
         This is a simplified implementation for signaling flow.
         """
@@ -642,23 +667,21 @@ class SignalingManager:
     ) -> bool:
         """
         Handle an ICE candidate from a client.
-        
+
         Args:
             user_id: User ID
             channel_id: Voice channel ID
             candidate: ICE candidate string
             sdp_mid: Media stream ID
             sdp_mline_index: Media line index
-            
+
         Returns:
             True if processed successfully
         """
         connection = self._connections.get(user_id)
         if not connection:
             raise NotConnectedError(
-                "User not connected to voice",
-                user_id=user_id,
-                channel_id=channel_id
+                "User not connected to voice", user_id=user_id, channel_id=channel_id
             )
 
         # Parse and validate candidate
@@ -666,16 +689,16 @@ class SignalingManager:
 
         # Store candidate
         self._ice_manager.add_candidate(
-            connection.session_id,
-            candidate,
-            sdp_mid,
-            sdp_mline_index
+            connection.session_id, candidate, sdp_mid, sdp_mline_index
         )
         connection.ice_candidates.append(ice_candidate)
         connection.last_activity = self._get_timestamp()
 
         # If we have enough candidates, mark as connected
-        if len(connection.ice_candidates) >= 1 and connection.state == SignalingState.CONNECTING:
+        if (
+            len(connection.ice_candidates) >= 1
+            and connection.state == SignalingState.CONNECTING
+        ):
             connection.state = SignalingState.CONNECTED
             logger.debug(f"User {user_id} voice connection established")
 
@@ -684,11 +707,11 @@ class SignalingManager:
     def disconnect_voice(self, user_id: int, channel_id: Optional[int] = None) -> bool:
         """
         Disconnect a user from voice (sync wrapper).
-        
+
         Args:
             user_id: User ID
             channel_id: Optional channel ID to verify
-            
+
         Returns:
             True if disconnected
         """
@@ -710,14 +733,16 @@ class SignalingManager:
         # Sync fallback - just clean up local state
         return self._cleanup_local_connection(user_id, channel_id)
 
-    async def disconnect_voice_async(self, user_id: int, channel_id: Optional[int] = None) -> bool:
+    async def disconnect_voice_async(
+        self, user_id: int, channel_id: Optional[int] = None
+    ) -> bool:
         """
         Disconnect a user from voice (async version that cleans up SFU).
-        
+
         Args:
             user_id: User ID
             channel_id: Optional channel ID to verify
-            
+
         Returns:
             True if disconnected
         """
@@ -736,7 +761,9 @@ class SignalingManager:
             try:
                 sfu = self._get_sfu()
                 await sfu.leave_room(connection.sfu_room_id, connection.sfu_peer_id)
-                logger.debug(f"Left SFU room {connection.sfu_room_id} for user {user_id}")
+                logger.debug(
+                    f"Left SFU room {connection.sfu_room_id} for user {user_id}"
+                )
             except Exception as e:
                 logger.warning(f"Failed to leave SFU room for user {user_id}: {e}")
 
@@ -746,14 +773,16 @@ class SignalingManager:
         logger.debug(f"User {user_id} disconnected from voice (async)")
         return True
 
-    def _cleanup_local_connection(self, user_id: int, channel_id: Optional[int] = None) -> bool:
+    def _cleanup_local_connection(
+        self, user_id: int, channel_id: Optional[int] = None
+    ) -> bool:
         """
         Clean up local connection state without SFU cleanup.
-        
+
         Args:
             user_id: User ID
             channel_id: Optional channel ID to verify
-            
+
         Returns:
             True if cleaned up
         """
@@ -780,10 +809,10 @@ class SignalingManager:
     def get_turn_credentials(self, user_id: int) -> TURNCredentials:
         """
         Get TURN server credentials for a user.
-        
+
         Args:
             user_id: User ID
-            
+
         Returns:
             TURNCredentials
         """
@@ -802,34 +831,30 @@ class SignalingManager:
     def start_screen_share(self, user_id: int, channel_id: int) -> ScreenShareState:
         """
         Start screen sharing for a user.
-        
+
         Args:
             user_id: User ID
             channel_id: Voice channel ID
-            
+
         Returns:
             ScreenShareState
         """
         connection = self._connections.get(user_id)
         if not connection:
             raise NotConnectedError(
-                "User not connected to voice",
-                user_id=user_id,
-                channel_id=channel_id
+                "User not connected to voice", user_id=user_id, channel_id=channel_id
             )
 
         if connection.channel_id != channel_id:
             raise ScreenShareError(
                 "User not in specified channel",
                 user_id=user_id,
-                reason="channel_mismatch"
+                reason="channel_mismatch",
             )
 
         if connection.screen_share and connection.screen_share.active:
             raise ScreenShareError(
-                "Screen share already active",
-                user_id=user_id,
-                reason="already_sharing"
+                "Screen share already active", user_id=user_id, reason="already_sharing"
             )
 
         now = self._get_timestamp()
@@ -851,7 +876,9 @@ class SignalingManager:
             try:
                 self._voice.set_streaming(user_id, True)
             except Exception as e:
-                logger.warning(f"Failed to update voice streaming state for user {user_id}: {e}")
+                logger.warning(
+                    f"Failed to update voice streaming state for user {user_id}: {e}"
+                )
 
         logger.debug(f"User {user_id} started screen share")
 
@@ -860,11 +887,11 @@ class SignalingManager:
     def stop_screen_share(self, user_id: int, channel_id: int) -> bool:
         """
         Stop screen sharing for a user.
-        
+
         Args:
             user_id: User ID
             channel_id: Voice channel ID
-            
+
         Returns:
             True if stopped
         """
@@ -883,29 +910,31 @@ class SignalingManager:
             try:
                 self._voice.set_streaming(user_id, False)
             except Exception as e:
-                logger.warning(f"Failed to stop voice streaming state for user {user_id}: {e}")
+                logger.warning(
+                    f"Failed to stop voice streaming state for user {user_id}: {e}"
+                )
 
         logger.debug(f"User {user_id} stopped screen share")
 
         return True
 
-    def get_connection_quality(self, user_id: int, channel_id: int) -> ConnectionQuality:
+    def get_connection_quality(
+        self, user_id: int, channel_id: int
+    ) -> ConnectionQuality:
         """
         Get connection quality metrics for a user.
-        
+
         Args:
             user_id: User ID
             channel_id: Voice channel ID
-            
+
         Returns:
             ConnectionQuality
         """
         connection = self._connections.get(user_id)
         if not connection:
             raise NotConnectedError(
-                "User not connected to voice",
-                user_id=user_id,
-                channel_id=channel_id
+                "User not connected to voice", user_id=user_id, channel_id=channel_id
             )
 
         # Return cached quality or default
@@ -933,13 +962,13 @@ class SignalingManager:
     ) -> bool:
         """
         Update quality hints for a connection.
-        
+
         Args:
             user_id: User ID
             channel_id: Voice channel ID
             target_bitrate: Target bitrate in bps
             quality_level: Quality level name
-            
+
         Returns:
             True if updated
         """
@@ -955,7 +984,9 @@ class SignalingManager:
             try:
                 level = QualityLevel(quality_level)
             except ValueError:
-                logger.warning(f"Invalid quality level: {quality_level}, defaulting to GOOD")
+                logger.warning(
+                    f"Invalid quality level: {quality_level}, defaulting to GOOD"
+                )
                 level = QualityLevel.GOOD
 
         # Determine bitrate
@@ -982,10 +1013,10 @@ class SignalingManager:
     def get_active_connections(self, channel_id: int) -> List[Dict[str, Any]]:
         """
         Get all active connections in a channel.
-        
+
         Args:
             channel_id: Voice channel ID
-            
+
         Returns:
             List of connection info dictionaries
         """
@@ -993,12 +1024,16 @@ class SignalingManager:
 
         for user_id, conn in self._connections.items():
             if conn.channel_id == channel_id and conn.state == SignalingState.CONNECTED:
-                connections.append({
-                    "user_id": user_id,
-                    "session_id": conn.session_id,
-                    "state": conn.state.value,
-                    "screen_share": conn.screen_share.to_dict() if conn.screen_share else None,
-                    "quality": conn.quality.to_dict() if conn.quality else None,
-                })
+                connections.append(
+                    {
+                        "user_id": user_id,
+                        "session_id": conn.session_id,
+                        "state": conn.state.value,
+                        "screen_share": conn.screen_share.to_dict()
+                        if conn.screen_share
+                        else None,
+                        "quality": conn.quality.to_dict() if conn.quality else None,
+                    }
+                )
 
         return connections

@@ -7,16 +7,18 @@ from typing import Dict, List, Optional, Any
 from .models import SERVER_PERMISSIONS
 
 
-def calculate_base_permissions(roles: List[Dict[str, Any]], is_owner: bool = False) -> Dict[str, bool]:
+def calculate_base_permissions(
+    roles: List[Dict[str, Any]], is_owner: bool = False
+) -> Dict[str, bool]:
     """
     Calculate base permissions from a list of roles.
-    
+
     Permissions are combined using OR - if any role grants a permission, it is granted.
-    
+
     Args:
         roles: List of role dicts with 'permissions' key
         is_owner: Whether the user is the server owner
-        
+
     Returns:
         Dict of permission name to boolean
     """
@@ -29,6 +31,7 @@ def calculate_base_permissions(roles: List[Dict[str, Any]], is_owner: bool = Fal
         role_perms = role.get("permissions", {})
         if isinstance(role_perms, str):
             import json
+
             try:
                 role_perms = json.loads(role_perms)
             except (json.JSONDecodeError, TypeError):
@@ -55,17 +58,17 @@ def apply_channel_overrides(
 ) -> Dict[str, bool]:
     """
     Apply channel permission overrides to base permissions.
-    
+
     Order of application:
     1. Start with base permissions from roles
     2. Apply role-specific overrides (deny first, then allow)
     3. Apply member-specific override (deny first, then allow)
-    
+
     Args:
         base_permissions: Base permissions from roles
         role_overrides: List of role override dicts with 'allow' and 'deny' keys
         member_override: Optional member-specific override
-        
+
     Returns:
         Final permissions dict
     """
@@ -85,6 +88,7 @@ def apply_channel_overrides(
 
         if isinstance(allow, str):
             import json
+
             try:
                 allow = json.loads(allow)
             except (json.JSONDecodeError, TypeError):
@@ -92,6 +96,7 @@ def apply_channel_overrides(
 
         if isinstance(deny, str):
             import json
+
             try:
                 deny = json.loads(deny)
             except (json.JSONDecodeError, TypeError):
@@ -120,6 +125,7 @@ def apply_channel_overrides(
 
         if isinstance(allow, str):
             import json
+
             try:
                 allow = json.loads(allow)
             except (json.JSONDecodeError, TypeError):
@@ -127,6 +133,7 @@ def apply_channel_overrides(
 
         if isinstance(deny, str):
             import json
+
             try:
                 deny = json.loads(deny)
             except (json.JSONDecodeError, TypeError):
@@ -148,13 +155,13 @@ def apply_channel_overrides(
 def has_permission(permissions: Dict[str, bool], permission: str) -> bool:
     """
     Check if a permission is granted.
-    
+
     Supports wildcard permissions (e.g., 'messages.*' matches 'messages.send').
-    
+
     Args:
         permissions: Dict of permission name to boolean
         permission: Permission to check
-        
+
     Returns:
         True if permission is granted
     """
@@ -183,12 +190,12 @@ def has_permission(permissions: Dict[str, bool], permission: str) -> bool:
 def get_highest_role_position(roles: List[Dict[str, Any]]) -> int:
     """
     Get the highest role position from a list of roles.
-    
+
     Higher position = more authority.
-    
+
     Args:
         roles: List of role dicts with 'position' key
-        
+
     Returns:
         Highest position value, or 0 if no roles
     """
@@ -198,17 +205,21 @@ def get_highest_role_position(roles: List[Dict[str, Any]]) -> int:
     return max(role.get("position", 0) for role in roles)
 
 
-def can_manage_role(user_roles: List[Dict[str, Any]], target_role: Dict[str, Any], is_owner: bool = False) -> bool:
+def can_manage_role(
+    user_roles: List[Dict[str, Any]],
+    target_role: Dict[str, Any],
+    is_owner: bool = False,
+) -> bool:
     """
     Check if user can manage a target role based on hierarchy.
-    
+
     User can only manage roles below their highest role.
-    
+
     Args:
         user_roles: List of user's role dicts
         target_role: Target role dict
         is_owner: Whether user is server owner
-        
+
     Returns:
         True if user can manage the role
     """
@@ -229,13 +240,13 @@ def can_manage_member(
 ) -> bool:
     """
     Check if user can manage a target member based on role hierarchy.
-    
+
     Args:
         user_roles: List of user's role dicts
         target_roles: List of target member's role dicts
         is_owner: Whether user is server owner
         target_is_owner: Whether target is server owner
-        
+
     Returns:
         True if user can manage the member
     """

@@ -5,11 +5,13 @@ Voice exceptions - All voice-related error types.
 
 class VoiceError(Exception):
     """Base exception for all voice errors."""
+
     pass
 
 
 class ChannelNotFoundError(VoiceError):
     """Voice channel does not exist."""
+
     pass
 
 
@@ -41,6 +43,7 @@ class ChannelTypeError(VoiceError):
 
 class UserNotInChannelError(VoiceError):
     """User is not in a voice channel."""
+
     pass
 
 
@@ -54,26 +57,31 @@ class UserAlreadyInChannelError(VoiceError):
 
 class StageNotFoundError(VoiceError):
     """Stage instance does not exist."""
+
     pass
 
 
 class SpeakerRequestNotFoundError(VoiceError):
     """Speaker request does not exist."""
+
     pass
 
 
 class SpeakerRequestExistsError(VoiceError):
     """User already has a pending speaker request."""
+
     pass
 
 
 class NotSpeakerError(VoiceError):
     """User is not a speaker in the stage channel."""
+
     pass
 
 
 class AlreadySpeakerError(VoiceError):
     """User is already a speaker in the stage channel."""
+
     pass
 
 
@@ -87,9 +95,11 @@ class PermissionDeniedError(VoiceError):
 
 class InvalidVoiceStateError(VoiceError):
     """Invalid voice state operation."""
+
     pass
 
 
 class UserNotFoundError(VoiceError):
     """User does not exist."""
+
     pass

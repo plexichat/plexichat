@@ -14,12 +14,12 @@ from .exceptions import ICECandidateError
 # ICE candidate patterns
 ICE_CANDIDATE_PATTERN = re.compile(
     r"^(?:a=)?candidate:"
-    r"(\S+)\s+"           # foundation
-    r"(\d+)\s+"           # component
+    r"(\S+)\s+"  # foundation
+    r"(\d+)\s+"  # component
     r"(udp|tcp|UDP|TCP)\s+"  # transport
-    r"(\d+)\s+"           # priority
-    r"(\S+)\s+"           # connection-address
-    r"(\d+)\s+"           # port
+    r"(\d+)\s+"  # priority
+    r"(\S+)\s+"  # connection-address
+    r"(\d+)\s+"  # port
     r"typ\s+(host|srflx|prflx|relay)"  # candidate-type
     r"(?:\s+raddr\s+(\S+))?"  # rel-addr (optional)
     r"(?:\s+rport\s+(\d+))?"  # rel-port (optional)
@@ -43,13 +43,13 @@ class ICECandidateParser:
     def parse(self, candidate_str: str) -> Dict[str, Any]:
         """
         Parse an ICE candidate string.
-        
+
         Args:
             candidate_str: Raw ICE candidate string
-            
+
         Returns:
             Parsed candidate as dictionary
-            
+
         Raises:
             ICECandidateError: If candidate is malformed
         """
@@ -65,8 +65,7 @@ class ICECandidateParser:
         match = ICE_CANDIDATE_PATTERN.match(candidate_str)
         if not match:
             raise ICECandidateError(
-                "Invalid ICE candidate format",
-                candidate=candidate_str[:100]
+                "Invalid ICE candidate format", candidate=candidate_str[:100]
             )
 
         parsed = {
@@ -105,12 +104,12 @@ class ICECandidateParser:
     ) -> ICECandidate:
         """
         Parse string and create ICECandidate object.
-        
+
         Args:
             candidate_str: Raw ICE candidate string
             sdp_mid: Media stream ID
             sdp_mline_index: Media line index
-            
+
         Returns:
             ICECandidate object
         """
@@ -137,10 +136,10 @@ class ICECandidateValidator:
     def validate(self, parsed: Dict[str, Any]) -> None:
         """
         Validate a parsed ICE candidate.
-        
+
         Args:
             parsed: Parsed candidate dictionary
-            
+
         Raises:
             ICECandidateError: If validation fails
         """
@@ -158,8 +157,7 @@ class ICECandidateValidator:
         transport = parsed.get("transport", "").lower()
         if transport not in {"udp", "tcp"}:
             raise ICECandidateError(
-                f"Invalid transport: {transport}",
-                candidate=str(parsed)
+                f"Invalid transport: {transport}", candidate=str(parsed)
             )
 
     def _validate_type(self, parsed: Dict[str, Any]) -> None:
@@ -167,50 +165,39 @@ class ICECandidateValidator:
         ctype = parsed.get("type")
         if ctype not in CANDIDATE_TYPES:
             raise ICECandidateError(
-                f"Invalid candidate type: {ctype}",
-                candidate=str(parsed)
+                f"Invalid candidate type: {ctype}", candidate=str(parsed)
             )
 
     def _validate_address(self, parsed: Dict[str, Any]) -> None:
         """Validate IP address."""
         address = parsed.get("address", "")
         if not address:
-            raise ICECandidateError(
-                "Missing address",
-                candidate=str(parsed)
-            )
+            raise ICECandidateError("Missing address", candidate=str(parsed))
 
         # Basic IP validation (IPv4 or IPv6)
         if not self._is_valid_ip(address):
             raise ICECandidateError(
-                f"Invalid IP address: {address}",
-                candidate=str(parsed)
+                f"Invalid IP address: {address}", candidate=str(parsed)
             )
 
     def _validate_port(self, parsed: Dict[str, Any]) -> None:
         """Validate port number."""
         port = parsed.get("port", 0)
         if not (0 < port <= 65535):
-            raise ICECandidateError(
-                f"Invalid port: {port}",
-                candidate=str(parsed)
-            )
+            raise ICECandidateError(f"Invalid port: {port}", candidate=str(parsed))
 
     def _validate_priority(self, parsed: Dict[str, Any]) -> None:
         """Validate priority value."""
         priority = parsed.get("priority", 0)
         if not (0 <= priority <= 2**31 - 1):
             raise ICECandidateError(
-                f"Invalid priority: {priority}",
-                candidate=str(parsed)
+                f"Invalid priority: {priority}", candidate=str(parsed)
             )
 
     def _is_valid_ip(self, address: str) -> bool:
         """Check if address is valid IPv4 or IPv6."""
         # IPv4
-        ipv4_pattern = re.compile(
-            r"^(\d{1,3}\.){3}\d{1,3}$"
-        )
+        ipv4_pattern = re.compile(r"^(\d{1,3}\.){3}\d{1,3}$")
         if ipv4_pattern.match(address):
             parts = address.split(".")
             return all(0 <= int(p) <= 255 for p in parts)
@@ -220,7 +207,9 @@ class ICECandidateValidator:
             return True
 
         # Hostname (for relay candidates)
-        hostname_pattern = re.compile(r"^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*$")
+        hostname_pattern = re.compile(
+            r"^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*$"
+        )
         return bool(hostname_pattern.match(address))
 
 
@@ -241,13 +230,13 @@ class ICECandidateManager:
     ) -> ICECandidate:
         """
         Add an ICE candidate for a session.
-        
+
         Args:
             session_id: Session identifier
             candidate_str: Raw ICE candidate string
             sdp_mid: Media stream ID
             sdp_mline_index: Media line index
-            
+
         Returns:
             Parsed ICECandidate
         """
@@ -274,7 +263,7 @@ class ICECandidateManager:
     def get_best_candidate(self, session_id: str) -> Optional[ICECandidate]:
         """
         Get the best candidate for a session based on priority.
-        
+
         Prefers relay > srflx > host for NAT traversal.
         """
         candidates = self._candidates.get(session_id, [])
@@ -285,10 +274,14 @@ class ICECandidateManager:
         type_priority = {"relay": 0, "srflx": 1, "prflx": 2, "host": 3}
 
         def sort_key(c: ICECandidate) -> tuple:
-            parsed = self._parser.parse(c.candidate) if c.candidate else {"type": "host", "priority": 0}
+            parsed = (
+                self._parser.parse(c.candidate)
+                if c.candidate
+                else {"type": "host", "priority": 0}
+            )
             return (
                 type_priority.get(parsed.get("type", "host"), 4),
-                -parsed.get("priority", 0)
+                -parsed.get("priority", 0),
             )
 
         sorted_candidates = sorted(candidates, key=sort_key)

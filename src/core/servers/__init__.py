@@ -236,7 +236,13 @@ _onboarding_manager = None
 _setup_complete = False
 
 
-def setup(db: Any, auth_module: Optional[Any] = None, messaging_module: Optional[Any] = None, notifications_module: Optional[Any] = None, events_module: Optional[Any] = None) -> None:
+def setup(
+    db: Any,
+    auth_module: Optional[Any] = None,
+    messaging_module: Optional[Any] = None,
+    notifications_module: Optional[Any] = None,
+    events_module: Optional[Any] = None,
+) -> None:
     """
     Initialize the servers module.
 
@@ -247,7 +253,12 @@ def setup(db: Any, auth_module: Optional[Any] = None, messaging_module: Optional
         notifications_module: Optional notifications module for event reminders
         events_module: Optional events module for dispatching
     """
-    global _manager, _event_manager, _template_manager, _onboarding_manager, _setup_complete
+    global \
+        _manager, \
+        _event_manager, \
+        _template_manager, \
+        _onboarding_manager, \
+        _setup_complete
 
     from .manager import ServerManager
     from .events import ScheduledEventManager
@@ -255,7 +266,9 @@ def setup(db: Any, auth_module: Optional[Any] = None, messaging_module: Optional
     from .onboarding import OnboardingManager
 
     _manager = ServerManager(db, auth_module, messaging_module)
-    _event_manager = ScheduledEventManager(db, _manager, notifications_module, events_module)
+    _event_manager = ScheduledEventManager(
+        db, _manager, notifications_module, events_module
+    )
     _template_manager = TemplateManager(db, _manager)
     _onboarding_manager = OnboardingManager(db, _manager)
     _setup_complete = True
@@ -329,7 +342,9 @@ def update_server(
     default_channel_id: Optional[int] = None,
 ) -> Server:
     """Update server settings."""
-    return _get_manager().update_server(user_id, server_id, name, description, icon_url, default_channel_id)
+    return _get_manager().update_server(
+        user_id, server_id, name, description, icon_url, default_channel_id
+    )
 
 
 def delete_server(user_id: int, server_id: int) -> bool:
@@ -357,7 +372,14 @@ def create_channel(
 ) -> Channel:
     """Create a new channel in a server."""
     return _get_manager().create_channel(
-        user_id, server_id, name, channel_type, category_id, topic, nsfw, slowmode_seconds
+        user_id,
+        server_id,
+        name,
+        channel_type,
+        category_id,
+        topic,
+        nsfw,
+        slowmode_seconds,
     )
 
 
@@ -465,7 +487,9 @@ def move_role(user_id: int, role_id: int, position: int) -> Role:
 # === Member Operations ===
 
 
-def add_member(server_id: int, user_id: int, inviter_id: Optional[int] = None) -> Member:
+def add_member(
+    server_id: int, user_id: int, inviter_id: Optional[int] = None
+) -> Member:
     """Add a user as a member of a server."""
     return _get_manager().add_member(server_id, user_id, inviter_id)
 
@@ -512,7 +536,9 @@ def remove_member(user_id: int, server_id: int) -> bool:
     return _get_manager().remove_member(user_id, server_id)
 
 
-def kick_member(user_id: int, server_id: int, member_user_id: int, reason: Optional[str] = None) -> bool:
+def kick_member(
+    user_id: int, server_id: int, member_user_id: int, reason: Optional[str] = None
+) -> bool:
     """Kick a member from a server."""
     return _get_manager().kick_member(user_id, server_id, member_user_id, reason)
 
@@ -525,7 +551,9 @@ def ban_member(
     delete_message_days: int = 0,
 ) -> Ban:
     """Ban a user from a server."""
-    return _get_manager().ban_member(user_id, server_id, member_user_id, reason, delete_message_days)
+    return _get_manager().ban_member(
+        user_id, server_id, member_user_id, reason, delete_message_days
+    )
 
 
 def unban_member(user_id: int, server_id: int, banned_user_id: int) -> bool:
@@ -541,12 +569,16 @@ def get_bans(user_id: int, server_id: int) -> List[Ban]:
 # === Role Assignment ===
 
 
-def assign_role(user_id: int, server_id: int, member_user_id: int, role_id: int) -> bool:
+def assign_role(
+    user_id: int, server_id: int, member_user_id: int, role_id: int
+) -> bool:
     """Assign a role to a member."""
     return _get_manager().assign_role(user_id, server_id, member_user_id, role_id)
 
 
-def remove_role(user_id: int, server_id: int, member_user_id: int, role_id: int) -> bool:
+def remove_role(
+    user_id: int, server_id: int, member_user_id: int, role_id: int
+) -> bool:
     """Remove a role from a member."""
     return _get_manager().remove_role(user_id, server_id, member_user_id, role_id)
 
@@ -589,7 +621,9 @@ def delete_channel_override(
     target_id: int,
 ) -> bool:
     """Delete a permission override."""
-    return _get_manager().delete_channel_override(user_id, channel_id, target_type, target_id)
+    return _get_manager().delete_channel_override(
+        user_id, channel_id, target_type, target_id
+    )
 
 
 def has_permission(
@@ -632,7 +666,9 @@ def create_invite(
     temporary: bool = False,
 ) -> Invite:
     """Create an invite to a channel."""
-    return _get_manager().create_invite(user_id, channel_id, max_age, max_uses, temporary)
+    return _get_manager().create_invite(
+        user_id, channel_id, max_age, max_uses, temporary
+    )
 
 
 def get_invite(code: str) -> Optional[Invite]:
@@ -666,7 +702,9 @@ def send_channel_message(
     reply_to_id: Optional[int] = None,
 ) -> Any:
     """Send a message to a text channel."""
-    return _get_manager().send_channel_message(user_id, channel_id, content, attachments, reply_to_id)
+    return _get_manager().send_channel_message(
+        user_id, channel_id, content, attachments, reply_to_id
+    )
 
 
 def get_channel_messages(
@@ -677,7 +715,9 @@ def get_channel_messages(
     after_id: Optional[int] = None,
 ) -> List[Any]:
     """Get messages from a text channel."""
-    return _get_manager().get_channel_messages(user_id, channel_id, limit, before_id, after_id)
+    return _get_manager().get_channel_messages(
+        user_id, channel_id, limit, before_id, after_id
+    )
 
 
 # === Audit Log ===
@@ -691,7 +731,9 @@ def get_audit_log(
     before_id: Optional[int] = None,
 ) -> List[AuditLogEntry]:
     """Get audit log entries for a server."""
-    return _get_manager().get_audit_log(user_id, server_id, limit, action_type, before_id)
+    return _get_manager().get_audit_log(
+        user_id, server_id, limit, action_type, before_id
+    )
 
 
 # === Scheduled Events ===
@@ -713,8 +755,18 @@ def create_scheduled_event(
 ) -> ScheduledEvent:
     """Create a new scheduled event."""
     return _get_event_manager().create_event(
-        user_id, server_id, name, start_time, event_type, description,
-        channel_id, location, end_time, timezone_str, image_url, rrule
+        user_id,
+        server_id,
+        name,
+        start_time,
+        event_type,
+        description,
+        channel_id,
+        location,
+        end_time,
+        timezone_str,
+        image_url,
+        rrule,
     )
 
 
@@ -747,8 +799,16 @@ def update_scheduled_event(
 ) -> ScheduledEvent:
     """Update a scheduled event."""
     return _get_event_manager().update_event(
-        user_id, event_id, name, description, start_time, end_time,
-        channel_id, location, image_url, status
+        user_id,
+        event_id,
+        name,
+        description,
+        start_time,
+        end_time,
+        channel_id,
+        location,
+        image_url,
+        status,
     )
 
 
@@ -777,7 +837,9 @@ def get_event_rsvps(
     return _get_event_manager().get_event_rsvps(user_id, event_id, status, limit)
 
 
-def generate_recurring_instances(event_id: int, user_id: int, count: int = 10) -> List[ScheduledEvent]:
+def generate_recurring_instances(
+    event_id: int, user_id: int, count: int = 10
+) -> List[ScheduledEvent]:
     """Generate instances of a recurring event."""
     return _get_event_manager().generate_recurring_instances(event_id, user_id, count)
 
@@ -792,7 +854,9 @@ def create_template(
     description: Optional[str] = None,
 ) -> ServerTemplate:
     """Create a template from an existing server."""
-    return _get_template_manager().create_template(user_id, server_id, name, description)
+    return _get_template_manager().create_template(
+        user_id, server_id, name, description
+    )
 
 
 def get_template(code: str, user_id: Optional[int] = None) -> Optional[ServerTemplate]:
@@ -827,7 +891,9 @@ def apply_template(
     server_description: Optional[str] = None,
 ) -> Optional[Server]:
     """Apply a template to create a new server."""
-    return _get_template_manager().apply_template(user_id, code, server_name, server_description)
+    return _get_template_manager().apply_template(
+        user_id, code, server_name, server_description
+    )
 
 
 def delete_template(user_id: int, code: str) -> bool:
@@ -843,7 +909,9 @@ def update_template(
     is_public: Optional[bool] = None,
 ) -> ServerTemplate:
     """Update template metadata."""
-    return _get_template_manager().update_template(user_id, code, name, description, is_public)
+    return _get_template_manager().update_template(
+        user_id, code, name, description, is_public
+    )
 
 
 # === Welcome Screen ===
@@ -932,10 +1000,14 @@ def complete_onboarding_step(
     response: Optional[Dict[str, Any]] = None,
 ) -> OnboardingProgress:
     """Mark an onboarding step as complete."""
-    return _get_onboarding_manager().complete_onboarding_step(user_id, server_id, step_id, response)
+    return _get_onboarding_manager().complete_onboarding_step(
+        user_id, server_id, step_id, response
+    )
 
 
-def get_onboarding_progress(user_id: int, server_id: int) -> Optional[OnboardingProgress]:
+def get_onboarding_progress(
+    user_id: int, server_id: int
+) -> Optional[OnboardingProgress]:
     """Get onboarding progress for a user."""
     return _get_onboarding_manager().get_onboarding_progress(user_id, server_id)
 

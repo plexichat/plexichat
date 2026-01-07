@@ -133,7 +133,13 @@ _manager = None
 _setup_complete = False
 
 
-def setup(db: Any, auth_module: Optional[Any] = None, servers_module: Optional[Any] = None, relationships_module: Optional[Any] = None, presence_module: Optional[Any] = None) -> None:
+def setup(
+    db: Any,
+    auth_module: Optional[Any] = None,
+    servers_module: Optional[Any] = None,
+    relationships_module: Optional[Any] = None,
+    presence_module: Optional[Any] = None,
+) -> None:
     """
     Initialize the voice module.
 
@@ -148,16 +154,16 @@ def setup(db: Any, auth_module: Optional[Any] = None, servers_module: Optional[A
 
     from .manager import VoiceManager
 
-    _manager = VoiceManager(db, auth_module, servers_module, relationships_module, presence_module)
+    _manager = VoiceManager(
+        db, auth_module, servers_module, relationships_module, presence_module
+    )
     _setup_complete = True
 
 
 def _get_manager():
     """Get the manager instance, raising if not setup."""
     if not _setup_complete or _manager is None:
-        raise RuntimeError(
-            "Voice module not initialized. Call voice.setup(db) first."
-        )
+        raise RuntimeError("Voice module not initialized. Call voice.setup(db) first.")
     return _manager
 
 
@@ -230,7 +236,9 @@ def update_voice_state(
     video: Optional[bool] = None,
 ) -> VoiceState:
     """Update multiple voice state properties at once."""
-    return _get_manager().update_voice_state(user_id, self_mute, self_deaf, streaming, video)
+    return _get_manager().update_voice_state(
+        user_id, self_mute, self_deaf, streaming, video
+    )
 
 
 # === Server Moderation ===
@@ -294,12 +302,16 @@ def cancel_speak_request(user_id: int, channel_id: int) -> bool:
     return _get_manager().cancel_speak_request(user_id, channel_id)
 
 
-def invite_to_speak(moderator_id: int, target_user_id: int, channel_id: int) -> VoiceState:
+def invite_to_speak(
+    moderator_id: int, target_user_id: int, channel_id: int
+) -> VoiceState:
     """Invite a user to speak in a stage channel."""
     return _get_manager().invite_to_speak(moderator_id, target_user_id, channel_id)
 
 
-def move_to_audience(moderator_id: int, target_user_id: int, channel_id: int) -> VoiceState:
+def move_to_audience(
+    moderator_id: int, target_user_id: int, channel_id: int
+) -> VoiceState:
     """Move a speaker to audience in a stage channel."""
     return _get_manager().move_to_audience(moderator_id, target_user_id, channel_id)
 
@@ -332,7 +344,9 @@ def set_bitrate(user_id: int, channel_id: int, bitrate: int) -> VoiceChannel:
     return _get_manager().set_bitrate(user_id, channel_id, bitrate)
 
 
-def set_voice_region(user_id: int, channel_id: int, region_id: Optional[str]) -> VoiceChannel:
+def set_voice_region(
+    user_id: int, channel_id: int, region_id: Optional[str]
+) -> VoiceChannel:
     """Set voice region for a channel (None = automatic)."""
     return _get_manager().set_voice_region(user_id, channel_id, region_id)
 
@@ -410,7 +424,9 @@ def handle_ice_candidate(
     sdp_mline_index: Optional[int] = None,
 ):
     """Handle an ICE candidate from a client."""
-    return signaling.handle_ice_candidate(user_id, channel_id, candidate, sdp_mid, sdp_mline_index)
+    return signaling.handle_ice_candidate(
+        user_id, channel_id, candidate, sdp_mid, sdp_mline_index
+    )
 
 
 def disconnect_voice(user_id: int, channel_id: Optional[int] = None) -> bool:

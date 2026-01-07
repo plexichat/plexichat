@@ -14,9 +14,7 @@ from .exceptions import SDPParseError, SDPValidationError
 # SDP line patterns
 SDP_LINE_PATTERN = re.compile(r"^([a-z])=(.*)$")
 SDP_VERSION_PATTERN = re.compile(r"^0$")
-SDP_ORIGIN_PATTERN = re.compile(
-    r"^(\S+)\s+(\d+)\s+(\d+)\s+(IN)\s+(IP[46])\s+(\S+)$"
-)
+SDP_ORIGIN_PATTERN = re.compile(r"^(\S+)\s+(\d+)\s+(\d+)\s+(IN)\s+(IP[46])\s+(\S+)$")
 SDP_MEDIA_PATTERN = re.compile(
     r"^(audio|video|application)\s+(\d+)(?:/(\d+))?\s+(\S+)(?:\s+(.+))?$"
 )
@@ -40,13 +38,13 @@ class SDPParser:
     def parse(self, sdp: str) -> Dict[str, Any]:
         """
         Parse an SDP string into a structured dictionary.
-        
+
         Args:
             sdp: Raw SDP string
-            
+
         Returns:
             Parsed SDP as dictionary
-            
+
         Raises:
             SDPParseError: If SDP is malformed
         """
@@ -71,9 +69,7 @@ class SDPParser:
             match = SDP_LINE_PATTERN.match(line)
             if not match:
                 raise SDPParseError(
-                    "Invalid SDP line format",
-                    line=line_num,
-                    detail=line[:50]
+                    "Invalid SDP line format", line=line_num, detail=line[:50]
                 )
 
             line_type = match.group(1)
@@ -110,9 +106,7 @@ class SDPParser:
         """Parse v= line."""
         if not SDP_VERSION_PATTERN.match(value):
             raise SDPParseError(
-                "Invalid SDP version",
-                line=line_num,
-                detail=f"Expected 0, got {value}"
+                "Invalid SDP version", line=line_num, detail=f"Expected 0, got {value}"
             )
         self._parsed["version"] = int(value)
 
@@ -120,11 +114,7 @@ class SDPParser:
         """Parse o= line."""
         match = SDP_ORIGIN_PATTERN.match(value)
         if not match:
-            raise SDPParseError(
-                "Invalid origin line",
-                line=line_num,
-                detail=value[:50]
-            )
+            raise SDPParseError("Invalid origin line", line=line_num, detail=value[:50])
         self._parsed["origin"] = {
             "username": match.group(1),
             "session_id": match.group(2),
@@ -138,11 +128,7 @@ class SDPParser:
         """Parse t= line."""
         parts = value.split()
         if len(parts) != 2:
-            raise SDPParseError(
-                "Invalid timing line",
-                line=line_num,
-                detail=value
-            )
+            raise SDPParseError("Invalid timing line", line=line_num, detail=value)
         self._parsed["timing"] = {
             "start": int(parts[0]),
             "stop": int(parts[1]),
@@ -155,11 +141,7 @@ class SDPParser:
 
         match = SDP_MEDIA_PATTERN.match(value)
         if not match:
-            raise SDPParseError(
-                "Invalid media line",
-                line=line_num,
-                detail=value[:50]
-            )
+            raise SDPParseError("Invalid media line", line=line_num, detail=value[:50])
 
         formats = match.group(5).split() if match.group(5) else []
 
@@ -178,11 +160,7 @@ class SDPParser:
         """Parse c= line."""
         parts = value.split()
         if len(parts) < 3:
-            raise SDPParseError(
-                "Invalid connection line",
-                line=line_num,
-                detail=value
-            )
+            raise SDPParseError("Invalid connection line", line=line_num, detail=value)
 
         connection = {
             "net_type": parts[0],
@@ -204,7 +182,11 @@ class SDPParser:
         attr_name = match.group(1)
         attr_value = match.group(2) if match.group(2) else True
 
-        target = self._current_media["attributes"] if self._current_media else self._parsed["attributes"]
+        target = (
+            self._current_media["attributes"]
+            if self._current_media
+            else self._parsed["attributes"]
+        )
 
         if attr_name in target:
             if isinstance(target[attr_name], list):
@@ -240,11 +222,11 @@ class SDPValidator:
     def validate(self, parsed_sdp: Dict[str, Any], sdp_type: SDPType) -> None:
         """
         Validate a parsed SDP message.
-        
+
         Args:
             parsed_sdp: Parsed SDP dictionary
             sdp_type: Expected SDP type (offer/answer)
-            
+
         Raises:
             SDPValidationError: If validation fails
         """
@@ -258,18 +240,14 @@ class SDPValidator:
         """Validate SDP version."""
         if parsed_sdp.get("version") != 0:
             raise SDPValidationError(
-                "Invalid SDP version",
-                field="version",
-                reason="Must be 0"
+                "Invalid SDP version", field="version", reason="Must be 0"
             )
 
     def _validate_origin(self, parsed_sdp: Dict[str, Any]) -> None:
         """Validate origin line."""
         if not parsed_sdp.get("origin"):
             raise SDPValidationError(
-                "Missing origin",
-                field="origin",
-                reason="Origin line is required"
+                "Missing origin", field="origin", reason="Origin line is required"
             )
 
     def _validate_ice_credentials(self, parsed_sdp: Dict[str, Any]) -> None:
@@ -282,7 +260,7 @@ class SDPValidator:
                 raise SDPValidationError(
                     "Invalid ICE ufrag",
                     field="ice-ufrag",
-                    reason="Must be 4-256 alphanumeric characters"
+                    reason="Must be 4-256 alphanumeric characters",
                 )
 
         ice_pwd = attrs.get("ice-pwd")
@@ -291,7 +269,7 @@ class SDPValidator:
                 raise SDPValidationError(
                     "Invalid ICE password",
                     field="ice-pwd",
-                    reason="Must be 22-256 alphanumeric characters"
+                    reason="Must be 22-256 alphanumeric characters",
                 )
 
     def _validate_fingerprint(self, parsed_sdp: Dict[str, Any]) -> None:
@@ -304,7 +282,7 @@ class SDPValidator:
                 raise SDPValidationError(
                     "Invalid fingerprint format",
                     field="fingerprint",
-                    reason="Must be sha-256 or sha-1 with hex digest"
+                    reason="Must be sha-256 or sha-1 with hex digest",
                 )
 
     def _validate_media(self, parsed_sdp: Dict[str, Any], sdp_type: SDPType) -> None:
@@ -315,7 +293,7 @@ class SDPValidator:
             raise SDPValidationError(
                 "No media sections",
                 field="media",
-                reason="At least one media section required"
+                reason="At least one media section required",
             )
 
         media_types = [m.get("type") for m in media]
@@ -325,7 +303,7 @@ class SDPValidator:
                 raise SDPValidationError(
                     "No audio or video media",
                     field="media",
-                    reason="Offer must include audio or video"
+                    reason="Offer must include audio or video",
                 )
 
 
@@ -335,12 +313,12 @@ class SDPManipulator:
     def set_bitrate(self, sdp: str, bitrate: int, media_type: str = "audio") -> str:
         """
         Set bandwidth limit in SDP.
-        
+
         Args:
             sdp: Original SDP string
             bitrate: Target bitrate in bps
             media_type: Media type to modify
-            
+
         Returns:
             Modified SDP string
         """
@@ -372,12 +350,12 @@ class SDPManipulator:
     def add_ice_candidate(self, sdp: str, candidate: str, media_index: int = 0) -> str:
         """
         Add an ICE candidate to SDP.
-        
+
         Args:
             sdp: Original SDP string
             candidate: ICE candidate string
             media_index: Media section index
-            
+
         Returns:
             Modified SDP string
         """
@@ -403,11 +381,11 @@ class SDPManipulator:
     def munge_for_simulcast(self, sdp: str, num_layers: int = 3) -> str:
         """
         Modify SDP for simulcast support.
-        
+
         Args:
             sdp: Original SDP string
             num_layers: Number of simulcast layers
-            
+
         Returns:
             Modified SDP string
         """
@@ -446,7 +424,9 @@ def validate_sdp(sdp: str, sdp_type: SDPType) -> None:
     validator.validate(parsed, sdp_type)
 
 
-def create_sdp_message(sdp: str, sdp_type: SDPType, session_id: Optional[str] = None) -> SDPMessage:
+def create_sdp_message(
+    sdp: str, sdp_type: SDPType, session_id: Optional[str] = None
+) -> SDPMessage:
     """Create an SDPMessage from raw SDP."""
     validate_sdp(sdp, sdp_type)
     return SDPMessage(sdp_type=sdp_type, sdp=sdp, session_id=session_id)

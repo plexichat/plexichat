@@ -32,7 +32,9 @@ from .exceptions import (
 class ScheduledEventManager:
     """Manages scheduled server events."""
 
-    def __init__(self, db, server_manager, notifications_module=None, events_module=None):
+    def __init__(
+        self, db, server_manager, notifications_module=None, events_module=None
+    ):
         """
         Initialize the scheduled event manager.
 
@@ -97,10 +99,14 @@ class ScheduledEventManager:
 
         now = self._get_timestamp()
         if start_time < now:
-            raise InvalidEventTimeError("Event start time must be in the future", start_time)
+            raise InvalidEventTimeError(
+                "Event start time must be in the future", start_time
+            )
 
         if end_time and end_time <= start_time:
-            raise InvalidEventTimeError("Event end time must be after start time", start_time, end_time)
+            raise InvalidEventTimeError(
+                "Event end time must be after start time", start_time, end_time
+            )
 
         max_duration = self._config.get("max_event_duration_hours", 168) * 3600 * 1000
         if end_time and (end_time - start_time) > max_duration:
@@ -133,13 +139,28 @@ class ScheduledEventManager:
                 created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                event_id, server_id, user_id, name, description, event_type.value,
-                channel_id, location, start_time, end_time, timezone_str,
-                ScheduledEventStatus.SCHEDULED.value, image_url, rrule, now, now,
+                event_id,
+                server_id,
+                user_id,
+                name,
+                description,
+                event_type.value,
+                channel_id,
+                location,
+                start_time,
+                end_time,
+                timezone_str,
+                ScheduledEventStatus.SCHEDULED.value,
+                image_url,
+                rrule,
+                now,
+                now,
             ),
         )
 
-        self._log_audit(server_id, user_id, AuditLogAction.EVENT_CREATE, "event", event_id)
+        self._log_audit(
+            server_id, user_id, AuditLogAction.EVENT_CREATE, "event", event_id
+        )
         logger.debug(f"Created scheduled event {event_id} in server {server_id}")
 
         result = self.get_event(event_id, user_id)
@@ -202,9 +223,14 @@ class ScheduledEventManager:
         if not event:
             raise ScheduledEventNotFoundError("Event not found")
 
-        self._server_manager.require_permission(user_id, event.server_id, "events.manage")
+        self._server_manager.require_permission(
+            user_id, event.server_id, "events.manage"
+        )
 
-        if event.status in (ScheduledEventStatus.COMPLETED, ScheduledEventStatus.CANCELLED):
+        if event.status in (
+            ScheduledEventStatus.COMPLETED,
+            ScheduledEventStatus.CANCELLED,
+        ):
             raise ScheduledEventError("Cannot update completed or cancelled events")
 
         updates = []
@@ -273,8 +299,12 @@ class ScheduledEventManager:
             )
 
             self._log_audit(
-                event.server_id, user_id, AuditLogAction.EVENT_UPDATE,
-                "event", event_id, changes,
+                event.server_id,
+                user_id,
+                AuditLogAction.EVENT_UPDATE,
+                "event",
+                event_id,
+                changes,
             )
 
         result = self.get_event(event_id, user_id)
@@ -287,12 +317,16 @@ class ScheduledEventManager:
         if not event:
             raise ScheduledEventNotFoundError("Event not found")
 
-        self._server_manager.require_permission(user_id, event.server_id, "events.manage")
+        self._server_manager.require_permission(
+            user_id, event.server_id, "events.manage"
+        )
 
         self._db.execute("DELETE FROM srv_event_rsvps WHERE event_id = ?", (event_id,))
         self._db.execute("DELETE FROM srv_scheduled_events WHERE id = ?", (event_id,))
 
-        self._log_audit(event.server_id, user_id, AuditLogAction.EVENT_DELETE, "event", event_id)
+        self._log_audit(
+            event.server_id, user_id, AuditLogAction.EVENT_DELETE, "event", event_id
+        )
         return True
 
     def rsvp_event(
@@ -389,7 +423,9 @@ class ScheduledEventManager:
         rows = self._db.fetch_all(query, tuple(params))
         return [self._row_to_rsvp(row) for row in rows]
 
-    def _update_rsvp_counts(self, event_id: int, old_status: Optional[str], new_status: Optional[str]) -> None:
+    def _update_rsvp_counts(
+        self, event_id: int, old_status: Optional[str], new_status: Optional[str]
+    ) -> None:
         """Update RSVP counts on the event."""
         updates = []
         if old_status == RSVPStatus.INTERESTED.value:
@@ -408,7 +444,9 @@ class ScheduledEventManager:
                 (event_id,),
             )
 
-    def generate_recurring_instances(self, event_id: int, user_id: int, count: int = 10) -> List[ScheduledEvent]:
+    def generate_recurring_instances(
+        self, event_id: int, user_id: int, count: int = 10
+    ) -> List[ScheduledEvent]:
         """Generate instances of a recurring event."""
         event = self.get_event(event_id, user_id)
         if not event:
@@ -417,13 +455,20 @@ class ScheduledEventManager:
         if not event.rrule:
             raise ScheduledEventError("Event is not recurring")
 
-        self._server_manager.require_permission(user_id, event.server_id, "events.manage")
+        self._server_manager.require_permission(
+            user_id, event.server_id, "events.manage"
+        )
 
         max_instances = self._config.get("max_recurring_instances", 50)
         count = min(count, max_instances)
 
         try:
-            rule = rrulestr(event.rrule, dtstart=datetime.fromtimestamp(event.start_time / 1000, tz=timezone.utc))
+            rule = rrulestr(
+                event.rrule,
+                dtstart=datetime.fromtimestamp(
+                    event.start_time / 1000, tz=timezone.utc
+                ),
+            )
         except Exception:
             raise ScheduledEventError("Invalid RRULE format")
 
@@ -449,11 +494,22 @@ class ScheduledEventManager:
                     parent_event_id, created_at, updated_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    instance_id, event.server_id, event.creator_id, event.name,
-                    event.description, event.event_type.value, event.channel_id,
-                    event.location, start_ms, end_ms, event.timezone,
-                    ScheduledEventStatus.SCHEDULED.value, event.image_url,
-                    event_id, now, now,
+                    instance_id,
+                    event.server_id,
+                    event.creator_id,
+                    event.name,
+                    event.description,
+                    event.event_type.value,
+                    event.channel_id,
+                    event.location,
+                    start_ms,
+                    end_ms,
+                    event.timezone,
+                    ScheduledEventStatus.SCHEDULED.value,
+                    event.image_url,
+                    event_id,
+                    now,
+                    now,
                 ),
             )
             instance = self.get_event(instance_id, user_id)
@@ -479,8 +535,16 @@ class ScheduledEventManager:
             """INSERT INTO srv_audit_log 
                (id, server_id, user_id, action, target_type, target_id, changes, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (entry_id, server_id, user_id, action.value, target_type, target_id,
-             json.dumps(changes) if changes else None, now),
+            (
+                entry_id,
+                server_id,
+                user_id,
+                action.value,
+                target_type,
+                target_id,
+                json.dumps(changes) if changes else None,
+                now,
+            ),
         )
 
     def _row_to_event(self, row: Dict[str, Any]) -> ScheduledEvent:

@@ -42,7 +42,14 @@ from .schema import create_tables
 class VoiceManager(BaseManager):
     """Core voice manager handling all operations."""
 
-    def __init__(self, db, auth_module=None, servers_module=None, relationships_module=None, presence_module=None):
+    def __init__(
+        self,
+        db,
+        auth_module=None,
+        servers_module=None,
+        relationships_module=None,
+        presence_module=None,
+    ):
         """
         Initialize the voice manager.
 
@@ -71,8 +78,7 @@ class VoiceManager(BaseManager):
         """Get channel info from servers module or database."""
         if self._servers:
             row = self._db.fetch_one(
-                "SELECT * FROM srv_channels WHERE id = ? AND deleted = 0",
-                (channel_id,)
+                "SELECT * FROM srv_channels WHERE id = ? AND deleted = 0", (channel_id,)
             )
             return dict(row) if row else None
         return None
@@ -81,13 +87,27 @@ class VoiceManager(BaseManager):
         """Check if channel type is a voice channel."""
         return channel_type in ("voice", "stage")
 
-    def _check_permission(self, user_id: SnowflakeID, server_id: SnowflakeID, permission: str, channel_id: Optional[SnowflakeID] = None) -> bool:
+    def _check_permission(
+        self,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
+        permission: str,
+        channel_id: Optional[SnowflakeID] = None,
+    ) -> bool:
         """Check if user has permission."""
         if self._servers:
-            return self._servers.has_permission(user_id, server_id, permission, channel_id)
+            return self._servers.has_permission(
+                user_id, server_id, permission, channel_id
+            )
         return True
 
-    def _require_permission(self, user_id: SnowflakeID, server_id: SnowflakeID, permission: str, channel_id: Optional[SnowflakeID] = None) -> None:
+    def _require_permission(
+        self,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
+        permission: str,
+        channel_id: Optional[SnowflakeID] = None,
+    ) -> None:
         """Require a permission, raising if not granted."""
         if not self._check_permission(user_id, server_id, permission, channel_id):
             raise PermissionDeniedError(f"Missing permission: {permission}", permission)
@@ -96,26 +116,28 @@ class VoiceManager(BaseManager):
         """Get number of users in a channel."""
         row = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM voice_states WHERE channel_id = ?",
-            (channel_id,)
+            (channel_id,),
         )
         return row["count"] if row else 0
 
     def _get_channel_settings(self, channel_id: SnowflakeID) -> Dict[str, Any]:
         """Get voice channel settings."""
         row = self._db.fetch_one(
-            "SELECT * FROM voice_channel_settings WHERE channel_id = ?",
-            (channel_id,)
+            "SELECT * FROM voice_channel_settings WHERE channel_id = ?", (channel_id,)
         )
         if row:
             return dict(row)
-        return {"channel_id": channel_id, "user_limit": 0, "bitrate": 64000, "region_id": None}
+        return {
+            "channel_id": channel_id,
+            "user_limit": 0,
+            "bitrate": 64000,
+            "region_id": None,
+        }
 
     def _ensure_channel_settings(self, channel_id: SnowflakeID) -> None:
         """Ensure channel settings record exists."""
         self._db.insert_or_ignore(
-            "voice_channel_settings",
-            ["channel_id"],
-            (channel_id,)
+            "voice_channel_settings", ["channel_id"], (channel_id,)
         )
 
     def _row_to_voice_state(self, row: Dict[str, Any]) -> VoiceState:
@@ -135,9 +157,15 @@ class VoiceManager(BaseManager):
             last_activity=row["last_activity"],
         )
 
-    def _row_to_voice_channel(self, channel_row: Dict[str, Any], settings: Dict[str, Any]) -> VoiceChannel:
+    def _row_to_voice_channel(
+        self, channel_row: Dict[str, Any], settings: Dict[str, Any]
+    ) -> VoiceChannel:
         """Convert database rows to VoiceChannel."""
-        channel_type = VoiceChannelType.STAGE if channel_row["channel_type"] == "stage" else VoiceChannelType.VOICE
+        channel_type = (
+            VoiceChannelType.STAGE
+            if channel_row["channel_type"] == "stage"
+            else VoiceChannelType.VOICE
+        )
         user_count = self._get_channel_user_count(channel_row["id"])
 
         return VoiceChannel(
@@ -160,11 +188,11 @@ class VoiceManager(BaseManager):
     def join_channel(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> VoiceState:
         """
         Join a voice channel.
-        
+
         Args:
             user_id: ID of the user joining
             channel_id: ID of the voice channel
-            
+
         Returns:
             VoiceState for the user
         """
@@ -178,7 +206,7 @@ class VoiceManager(BaseManager):
             raise ChannelTypeError(
                 "Not a voice channel",
                 expected="voice or stage",
-                actual=channel["channel_type"]
+                actual=channel["channel_type"],
             )
 
         server_id = channel["server_id"]
@@ -200,7 +228,7 @@ class VoiceManager(BaseManager):
                     raise ChannelFullError(
                         f"Channel is full ({current_count}/{user_limit})",
                         limit=user_limit,
-                        current=current_count
+                        current=current_count,
                     )
 
         now = self._get_timestamp()
@@ -210,7 +238,7 @@ class VoiceManager(BaseManager):
             """INSERT INTO voice_states 
                (user_id, channel_id, server_id, suppress, joined_at, last_activity)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (user_id, channel_id, server_id, 1 if suppress else 0, now, now)
+            (user_id, channel_id, server_id, 1 if suppress else 0, now, now),
         )
 
         logger.debug(f"User {user_id} joined voice channel {channel_id}")
@@ -222,10 +250,10 @@ class VoiceManager(BaseManager):
     def leave_channel(self, user_id: SnowflakeID) -> bool:
         """
         Leave current voice channel.
-        
+
         Args:
             user_id: ID of the user leaving
-            
+
         Returns:
             True if successfully left
         """
@@ -234,27 +262,25 @@ class VoiceManager(BaseManager):
             raise UserNotInChannelError(f"User {user_id} is not in a voice channel")
 
         self._db.execute(
-            "DELETE FROM voice_speaker_requests WHERE user_id = ?",
-            (user_id,)
+            "DELETE FROM voice_speaker_requests WHERE user_id = ?", (user_id,)
         )
 
-        self._db.execute(
-            "DELETE FROM voice_states WHERE user_id = ?",
-            (user_id,)
-        )
+        self._db.execute("DELETE FROM voice_states WHERE user_id = ?", (user_id,))
 
         logger.debug(f"User {user_id} left voice channel {state.channel_id}")
 
         return True
 
-    def move_to_channel(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> VoiceState:
+    def move_to_channel(
+        self, user_id: SnowflakeID, channel_id: SnowflakeID
+    ) -> VoiceState:
         """
         Move to a different voice channel.
-        
+
         Args:
             user_id: ID of the user moving
             channel_id: ID of the target channel
-            
+
         Returns:
             New VoiceState
         """
@@ -267,12 +293,13 @@ class VoiceManager(BaseManager):
     def get_channel_users(self, channel_id: SnowflakeID) -> List[VoiceState]:
         """Get all users in a voice channel."""
         rows = self._db.fetch_all(
-            "SELECT * FROM voice_states WHERE channel_id = ?",
-            (channel_id,)
+            "SELECT * FROM voice_states WHERE channel_id = ?", (channel_id,)
         )
         return [self._row_to_voice_state(row) for row in rows]
 
-    def get_voice_channel(self, channel_id: SnowflakeID, user_id: SnowflakeID) -> Optional[VoiceChannel]:
+    def get_voice_channel(
+        self, channel_id: SnowflakeID, user_id: SnowflakeID
+    ) -> Optional[VoiceChannel]:
         """Get voice channel info."""
         channel = self._get_server_channel(channel_id)
         if not channel:
@@ -282,25 +309,31 @@ class VoiceManager(BaseManager):
             return None
 
         if self._servers:
-            if not self._servers.has_permission(user_id, channel["server_id"], "channels.view", channel_id):
+            if not self._servers.has_permission(
+                user_id, channel["server_id"], "channels.view", channel_id
+            ):
                 return None
 
         settings = self._get_channel_settings(channel_id)
         return self._row_to_voice_channel(channel, settings)
 
-    def get_voice_channels(self, user_id: SnowflakeID, server_id: SnowflakeID) -> List[VoiceChannel]:
+    def get_voice_channels(
+        self, user_id: SnowflakeID, server_id: SnowflakeID
+    ) -> List[VoiceChannel]:
         """Get all voice channels in a server."""
         rows = self._db.fetch_all(
             """SELECT * FROM srv_channels 
                WHERE server_id = ? AND channel_type IN ('voice', 'stage') AND deleted = 0
                ORDER BY position""",
-            (server_id,)
+            (server_id,),
         )
 
         channels = []
         for row in rows:
             if self._servers:
-                if not self._servers.has_permission(user_id, server_id, "channels.view", row["id"]):
+                if not self._servers.has_permission(
+                    user_id, server_id, "channels.view", row["id"]
+                ):
                     continue
             settings = self._get_channel_settings(row["id"])
             channels.append(self._row_to_voice_channel(dict(row), settings))
@@ -312,8 +345,7 @@ class VoiceManager(BaseManager):
     def get_voice_state(self, user_id: SnowflakeID) -> Optional[VoiceState]:
         """Get user's current voice state."""
         row = self._db.fetch_one(
-            "SELECT * FROM voice_states WHERE user_id = ?",
-            (user_id,)
+            "SELECT * FROM voice_states WHERE user_id = ?", (user_id,)
         )
         return self._row_to_voice_state(row) if row else None
 
@@ -326,7 +358,7 @@ class VoiceManager(BaseManager):
         now = self._get_timestamp()
         self._db.execute(
             "UPDATE voice_states SET self_mute = ?, last_activity = ? WHERE user_id = ?",
-            (1 if muted else 0, now, user_id)
+            (1 if muted else 0, now, user_id),
         )
 
         result = self.get_voice_state(user_id)
@@ -343,7 +375,7 @@ class VoiceManager(BaseManager):
         mute_val = 1 if deafened else state.self_mute
         self._db.execute(
             "UPDATE voice_states SET self_deaf = ?, self_mute = ?, last_activity = ? WHERE user_id = ?",
-            (1 if deafened else 0, mute_val, now, user_id)
+            (1 if deafened else 0, mute_val, now, user_id),
         )
 
         result = self.get_voice_state(user_id)
@@ -359,7 +391,7 @@ class VoiceManager(BaseManager):
         now = self._get_timestamp()
         self._db.execute(
             "UPDATE voice_states SET streaming = ?, last_activity = ? WHERE user_id = ?",
-            (1 if streaming else 0, now, user_id)
+            (1 if streaming else 0, now, user_id),
         )
 
         result = self.get_voice_state(user_id)
@@ -375,7 +407,7 @@ class VoiceManager(BaseManager):
         now = self._get_timestamp()
         self._db.execute(
             "UPDATE voice_states SET video = ?, last_activity = ? WHERE user_id = ?",
-            (1 if video else 0, now, user_id)
+            (1 if video else 0, now, user_id),
         )
 
         result = self.get_voice_state(user_id)
@@ -425,7 +457,7 @@ class VoiceManager(BaseManager):
 
             self._db.execute(
                 f"UPDATE voice_states SET {', '.join(updates)} WHERE user_id = ?",
-                tuple(params)
+                tuple(params),
             )
 
         result = self.get_voice_state(user_id)
@@ -434,13 +466,20 @@ class VoiceManager(BaseManager):
 
     # === Server Moderation ===
 
-    def server_mute(self, moderator_id: SnowflakeID, target_user_id: SnowflakeID, server_id: SnowflakeID) -> VoiceState:
+    def server_mute(
+        self,
+        moderator_id: SnowflakeID,
+        target_user_id: SnowflakeID,
+        server_id: SnowflakeID,
+    ) -> VoiceState:
         """Server mute a user (moderator action)."""
         self._require_permission(moderator_id, server_id, "voice.mute_members")
 
         state = self.get_voice_state(target_user_id)
         if not state:
-            raise UserNotInChannelError(f"User {target_user_id} is not in a voice channel")
+            raise UserNotInChannelError(
+                f"User {target_user_id} is not in a voice channel"
+            )
 
         if state.server_id != server_id:
             raise ChannelAccessDeniedError("User is not in this server's voice channel")
@@ -448,7 +487,7 @@ class VoiceManager(BaseManager):
         now = self._get_timestamp()
         self._db.execute(
             "UPDATE voice_states SET server_mute = 1, last_activity = ? WHERE user_id = ?",
-            (now, target_user_id)
+            (now, target_user_id),
         )
 
         logger.debug(f"User {target_user_id} server muted by {moderator_id}")
@@ -457,13 +496,20 @@ class VoiceManager(BaseManager):
         assert result is not None
         return result
 
-    def server_unmute(self, moderator_id: SnowflakeID, target_user_id: SnowflakeID, server_id: SnowflakeID) -> VoiceState:
+    def server_unmute(
+        self,
+        moderator_id: SnowflakeID,
+        target_user_id: SnowflakeID,
+        server_id: SnowflakeID,
+    ) -> VoiceState:
         """Server unmute a user (moderator action)."""
         self._require_permission(moderator_id, server_id, "voice.mute_members")
 
         state = self.get_voice_state(target_user_id)
         if not state:
-            raise UserNotInChannelError(f"User {target_user_id} is not in a voice channel")
+            raise UserNotInChannelError(
+                f"User {target_user_id} is not in a voice channel"
+            )
 
         if state.server_id != server_id:
             raise ChannelAccessDeniedError("User is not in this server's voice channel")
@@ -471,20 +517,27 @@ class VoiceManager(BaseManager):
         now = self._get_timestamp()
         self._db.execute(
             "UPDATE voice_states SET server_mute = 0, last_activity = ? WHERE user_id = ?",
-            (now, target_user_id)
+            (now, target_user_id),
         )
 
         result = self.get_voice_state(target_user_id)
         assert result is not None
         return result
 
-    def server_deaf(self, moderator_id: SnowflakeID, target_user_id: SnowflakeID, server_id: SnowflakeID) -> VoiceState:
+    def server_deaf(
+        self,
+        moderator_id: SnowflakeID,
+        target_user_id: SnowflakeID,
+        server_id: SnowflakeID,
+    ) -> VoiceState:
         """Server deafen a user (moderator action)."""
         self._require_permission(moderator_id, server_id, "voice.deafen_members")
 
         state = self.get_voice_state(target_user_id)
         if not state:
-            raise UserNotInChannelError(f"User {target_user_id} is not in a voice channel")
+            raise UserNotInChannelError(
+                f"User {target_user_id} is not in a voice channel"
+            )
 
         if state.server_id != server_id:
             raise ChannelAccessDeniedError("User is not in this server's voice channel")
@@ -492,7 +545,7 @@ class VoiceManager(BaseManager):
         now = self._get_timestamp()
         self._db.execute(
             "UPDATE voice_states SET server_deaf = 1, server_mute = 1, last_activity = ? WHERE user_id = ?",
-            (now, target_user_id)
+            (now, target_user_id),
         )
 
         logger.debug(f"User {target_user_id} server deafened by {moderator_id}")
@@ -501,13 +554,20 @@ class VoiceManager(BaseManager):
         assert result is not None
         return result
 
-    def server_undeaf(self, moderator_id: SnowflakeID, target_user_id: SnowflakeID, server_id: SnowflakeID) -> VoiceState:
+    def server_undeaf(
+        self,
+        moderator_id: SnowflakeID,
+        target_user_id: SnowflakeID,
+        server_id: SnowflakeID,
+    ) -> VoiceState:
         """Server undeafen a user (moderator action)."""
         self._require_permission(moderator_id, server_id, "voice.deafen_members")
 
         state = self.get_voice_state(target_user_id)
         if not state:
-            raise UserNotInChannelError(f"User {target_user_id} is not in a voice channel")
+            raise UserNotInChannelError(
+                f"User {target_user_id} is not in a voice channel"
+            )
 
         if state.server_id != server_id:
             raise ChannelAccessDeniedError("User is not in this server's voice channel")
@@ -515,32 +575,42 @@ class VoiceManager(BaseManager):
         now = self._get_timestamp()
         self._db.execute(
             "UPDATE voice_states SET server_deaf = 0, last_activity = ? WHERE user_id = ?",
-            (now, target_user_id)
+            (now, target_user_id),
         )
 
         result = self.get_voice_state(target_user_id)
         assert result is not None
         return result
 
-    def move_member(self, moderator_id: SnowflakeID, target_user_id: SnowflakeID, channel_id: SnowflakeID) -> VoiceState:
+    def move_member(
+        self,
+        moderator_id: SnowflakeID,
+        target_user_id: SnowflakeID,
+        channel_id: SnowflakeID,
+    ) -> VoiceState:
         """Move a member to a different voice channel (moderator action)."""
         channel = self._get_server_channel(channel_id)
         if not channel:
             raise ChannelNotFoundError(f"Channel {channel_id} not found")
 
         if not self._is_voice_channel(channel["channel_type"]):
-            raise ChannelTypeError("Not a voice channel", expected="voice or stage", actual=channel["channel_type"])
+            raise ChannelTypeError(
+                "Not a voice channel",
+                expected="voice or stage",
+                actual=channel["channel_type"],
+            )
 
         server_id = channel["server_id"]
         self._require_permission(moderator_id, server_id, "voice.move_members")
 
         state = self.get_voice_state(target_user_id)
         if not state:
-            raise UserNotInChannelError(f"User {target_user_id} is not in a voice channel")
+            raise UserNotInChannelError(
+                f"User {target_user_id} is not in a voice channel"
+            )
 
         self._db.execute(
-            "DELETE FROM voice_speaker_requests WHERE user_id = ?",
-            (target_user_id,)
+            "DELETE FROM voice_speaker_requests WHERE user_id = ?", (target_user_id,)
         )
 
         now = self._get_timestamp()
@@ -550,52 +620,60 @@ class VoiceManager(BaseManager):
             """UPDATE voice_states 
                SET channel_id = ?, server_id = ?, suppress = ?, last_activity = ?
                WHERE user_id = ?""",
-            (channel_id, server_id, 1 if suppress else 0, now, target_user_id)
+            (channel_id, server_id, 1 if suppress else 0, now, target_user_id),
         )
 
-        logger.debug(f"User {target_user_id} moved to channel {channel_id} by {moderator_id}")
+        logger.debug(
+            f"User {target_user_id} moved to channel {channel_id} by {moderator_id}"
+        )
 
         result = self.get_voice_state(target_user_id)
         assert result is not None
         return result
 
-    def disconnect_member(self, moderator_id: SnowflakeID, target_user_id: SnowflakeID, server_id: SnowflakeID) -> bool:
+    def disconnect_member(
+        self,
+        moderator_id: SnowflakeID,
+        target_user_id: SnowflakeID,
+        server_id: SnowflakeID,
+    ) -> bool:
         """Disconnect a member from voice (moderator action)."""
         self._require_permission(moderator_id, server_id, "voice.move_members")
 
         state = self.get_voice_state(target_user_id)
         if not state:
-            raise UserNotInChannelError(f"User {target_user_id} is not in a voice channel")
+            raise UserNotInChannelError(
+                f"User {target_user_id} is not in a voice channel"
+            )
 
         if state.server_id != server_id:
             raise ChannelAccessDeniedError("User is not in this server's voice channel")
 
         self._db.execute(
-            "DELETE FROM voice_speaker_requests WHERE user_id = ?",
-            (target_user_id,)
+            "DELETE FROM voice_speaker_requests WHERE user_id = ?", (target_user_id,)
         )
 
         self._db.execute(
-            "DELETE FROM voice_states WHERE user_id = ?",
-            (target_user_id,)
+            "DELETE FROM voice_states WHERE user_id = ?", (target_user_id,)
         )
 
         logger.debug(f"User {target_user_id} disconnected from voice by {moderator_id}")
 
         return True
 
-
     # === Stage Channel Operations ===
 
-    def start_stage(self, user_id: SnowflakeID, channel_id: SnowflakeID, topic: str) -> StageInstance:
+    def start_stage(
+        self, user_id: SnowflakeID, channel_id: SnowflakeID, topic: str
+    ) -> StageInstance:
         """
         Start a stage instance in a stage channel.
-        
+
         Args:
             user_id: ID of the user starting the stage
             channel_id: ID of the stage channel
             topic: Topic of the stage
-            
+
         Returns:
             StageInstance
         """
@@ -604,7 +682,9 @@ class VoiceManager(BaseManager):
             raise ChannelNotFoundError(f"Channel {channel_id} not found")
 
         if channel["channel_type"] != "stage":
-            raise ChannelTypeError("Not a stage channel", expected="stage", actual=channel["channel_type"])
+            raise ChannelTypeError(
+                "Not a stage channel", expected="stage", actual=channel["channel_type"]
+            )
 
         server_id = channel["server_id"]
         self._require_permission(user_id, server_id, "voice.speak", channel_id)
@@ -620,14 +700,14 @@ class VoiceManager(BaseManager):
             """INSERT INTO voice_stage_instances 
                (id, channel_id, server_id, topic, started_by, started_at)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (stage_id, channel_id, server_id, topic, user_id, now)
+            (stage_id, channel_id, server_id, topic, user_id, now),
         )
 
         state = self.get_voice_state(user_id)
         if state and state.channel_id == channel_id:
             self._db.execute(
                 "UPDATE voice_states SET suppress = 0, last_activity = ? WHERE user_id = ?",
-                (now, user_id)
+                (now, user_id),
             )
 
         logger.debug(f"Stage started in channel {channel_id} by user {user_id}")
@@ -639,11 +719,11 @@ class VoiceManager(BaseManager):
     def end_stage(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> bool:
         """
         End a stage instance.
-        
+
         Args:
             user_id: ID of the user ending the stage
             channel_id: ID of the stage channel
-            
+
         Returns:
             True if ended successfully
         """
@@ -655,25 +735,25 @@ class VoiceManager(BaseManager):
         server_id = channel["server_id"] if channel else stage.server_id
 
         is_starter = stage.started_by == user_id
-        has_permission = self._check_permission(user_id, server_id, "voice.mute_members", channel_id)
+        has_permission = self._check_permission(
+            user_id, server_id, "voice.mute_members", channel_id
+        )
 
         if not is_starter and not has_permission:
             raise PermissionDeniedError("Cannot end stage", "voice.mute_members")
 
         self._db.execute(
-            "DELETE FROM voice_speaker_requests WHERE channel_id = ?",
-            (channel_id,)
+            "DELETE FROM voice_speaker_requests WHERE channel_id = ?", (channel_id,)
         )
 
         now = self._get_timestamp()
         self._db.execute(
             "UPDATE voice_states SET suppress = 1, last_activity = ? WHERE channel_id = ?",
-            (now, channel_id)
+            (now, channel_id),
         )
 
         self._db.execute(
-            "DELETE FROM voice_stage_instances WHERE channel_id = ?",
-            (channel_id,)
+            "DELETE FROM voice_stage_instances WHERE channel_id = ?", (channel_id,)
         )
 
         logger.debug(f"Stage ended in channel {channel_id} by user {user_id}")
@@ -683,8 +763,7 @@ class VoiceManager(BaseManager):
     def get_stage(self, channel_id: SnowflakeID) -> Optional[StageInstance]:
         """Get active stage instance for a channel."""
         row = self._db.fetch_one(
-            "SELECT * FROM voice_stage_instances WHERE channel_id = ?",
-            (channel_id,)
+            "SELECT * FROM voice_stage_instances WHERE channel_id = ?", (channel_id,)
         )
 
         if not row:
@@ -692,11 +771,11 @@ class VoiceManager(BaseManager):
 
         speaker_count = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM voice_states WHERE channel_id = ? AND suppress = 0",
-            (channel_id,)
+            (channel_id,),
         )
         audience_count = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM voice_states WHERE channel_id = ? AND suppress = 1",
-            (channel_id,)
+            (channel_id,),
         )
 
         return StageInstance(
@@ -710,20 +789,24 @@ class VoiceManager(BaseManager):
             audience_count=audience_count["count"] if audience_count else 0,
         )
 
-    def request_to_speak(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> SpeakerRequest:
+    def request_to_speak(
+        self, user_id: SnowflakeID, channel_id: SnowflakeID
+    ) -> SpeakerRequest:
         """
         Request to speak in a stage channel (raise hand).
-        
+
         Args:
             user_id: ID of the user requesting
             channel_id: ID of the stage channel
-            
+
         Returns:
             SpeakerRequest
         """
         state = self.get_voice_state(user_id)
         if not state or state.channel_id != channel_id:
-            raise UserNotInChannelError(f"User {user_id} is not in channel {channel_id}")
+            raise UserNotInChannelError(
+                f"User {user_id} is not in channel {channel_id}"
+            )
 
         stage = self.get_stage(channel_id)
         if not stage:
@@ -734,7 +817,7 @@ class VoiceManager(BaseManager):
 
         existing = self._db.fetch_one(
             "SELECT * FROM voice_speaker_requests WHERE user_id = ? AND channel_id = ?",
-            (user_id, channel_id)
+            (user_id, channel_id),
         )
         if existing:
             raise SpeakerRequestExistsError("Speaker request already exists")
@@ -745,7 +828,7 @@ class VoiceManager(BaseManager):
         self._db.execute(
             """INSERT INTO voice_speaker_requests (id, user_id, channel_id, requested_at)
                VALUES (?, ?, ?, ?)""",
-            (request_id, user_id, channel_id, now)
+            (request_id, user_id, channel_id, now),
         )
 
         logger.debug(f"User {user_id} requested to speak in channel {channel_id}")
@@ -757,40 +840,47 @@ class VoiceManager(BaseManager):
             requested_at=now,
         )
 
-    def cancel_speak_request(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> bool:
+    def cancel_speak_request(
+        self, user_id: SnowflakeID, channel_id: SnowflakeID
+    ) -> bool:
         """
         Cancel a request to speak.
-        
+
         Args:
             user_id: ID of the user canceling
             channel_id: ID of the stage channel
-            
+
         Returns:
             True if canceled
         """
         existing = self._db.fetch_one(
             "SELECT * FROM voice_speaker_requests WHERE user_id = ? AND channel_id = ?",
-            (user_id, channel_id)
+            (user_id, channel_id),
         )
         if not existing:
             raise SpeakerRequestNotFoundError("No speaker request found")
 
         self._db.execute(
             "DELETE FROM voice_speaker_requests WHERE user_id = ? AND channel_id = ?",
-            (user_id, channel_id)
+            (user_id, channel_id),
         )
 
         return True
 
-    def invite_to_speak(self, moderator_id: SnowflakeID, target_user_id: SnowflakeID, channel_id: SnowflakeID) -> VoiceState:
+    def invite_to_speak(
+        self,
+        moderator_id: SnowflakeID,
+        target_user_id: SnowflakeID,
+        channel_id: SnowflakeID,
+    ) -> VoiceState:
         """
         Invite a user to speak in a stage channel.
-        
+
         Args:
             moderator_id: ID of the moderator inviting
             target_user_id: ID of the user being invited
             channel_id: ID of the stage channel
-            
+
         Returns:
             Updated VoiceState
         """
@@ -799,27 +889,33 @@ class VoiceManager(BaseManager):
             raise ChannelNotFoundError(f"Channel {channel_id} not found")
 
         if channel["channel_type"] != "stage":
-            raise ChannelTypeError("Not a stage channel", expected="stage", actual=channel["channel_type"])
+            raise ChannelTypeError(
+                "Not a stage channel", expected="stage", actual=channel["channel_type"]
+            )
 
         server_id = channel["server_id"]
-        self._require_permission(moderator_id, server_id, "voice.mute_members", channel_id)
+        self._require_permission(
+            moderator_id, server_id, "voice.mute_members", channel_id
+        )
 
         state = self.get_voice_state(target_user_id)
         if not state or state.channel_id != channel_id:
-            raise UserNotInChannelError(f"User {target_user_id} is not in channel {channel_id}")
+            raise UserNotInChannelError(
+                f"User {target_user_id} is not in channel {channel_id}"
+            )
 
         if not state.suppress:
             raise AlreadySpeakerError("User is already a speaker")
 
         self._db.execute(
             "DELETE FROM voice_speaker_requests WHERE user_id = ? AND channel_id = ?",
-            (target_user_id, channel_id)
+            (target_user_id, channel_id),
         )
 
         now = self._get_timestamp()
         self._db.execute(
             "UPDATE voice_states SET suppress = 0, last_activity = ? WHERE user_id = ?",
-            (now, target_user_id)
+            (now, target_user_id),
         )
 
         logger.debug(f"User {target_user_id} invited to speak by {moderator_id}")
@@ -828,15 +924,20 @@ class VoiceManager(BaseManager):
         assert result is not None
         return result
 
-    def move_to_audience(self, moderator_id: SnowflakeID, target_user_id: SnowflakeID, channel_id: SnowflakeID) -> VoiceState:
+    def move_to_audience(
+        self,
+        moderator_id: SnowflakeID,
+        target_user_id: SnowflakeID,
+        channel_id: SnowflakeID,
+    ) -> VoiceState:
         """
         Move a speaker to audience in a stage channel.
-        
+
         Args:
             moderator_id: ID of the moderator
             target_user_id: ID of the user being moved
             channel_id: ID of the stage channel
-            
+
         Returns:
             Updated VoiceState
         """
@@ -845,17 +946,23 @@ class VoiceManager(BaseManager):
             raise ChannelNotFoundError(f"Channel {channel_id} not found")
 
         if channel["channel_type"] != "stage":
-            raise ChannelTypeError("Not a stage channel", expected="stage", actual=channel["channel_type"])
+            raise ChannelTypeError(
+                "Not a stage channel", expected="stage", actual=channel["channel_type"]
+            )
 
         server_id = channel["server_id"]
 
         is_self = moderator_id == target_user_id
         if not is_self:
-            self._require_permission(moderator_id, server_id, "voice.mute_members", channel_id)
+            self._require_permission(
+                moderator_id, server_id, "voice.mute_members", channel_id
+            )
 
         state = self.get_voice_state(target_user_id)
         if not state or state.channel_id != channel_id:
-            raise UserNotInChannelError(f"User {target_user_id} is not in channel {channel_id}")
+            raise UserNotInChannelError(
+                f"User {target_user_id} is not in channel {channel_id}"
+            )
 
         if state.suppress:
             raise NotSpeakerError("User is not a speaker")
@@ -863,7 +970,7 @@ class VoiceManager(BaseManager):
         now = self._get_timestamp()
         self._db.execute(
             "UPDATE voice_states SET suppress = 1, last_activity = ? WHERE user_id = ?",
-            (now, target_user_id)
+            (now, target_user_id),
         )
 
         logger.debug(f"User {target_user_id} moved to audience by {moderator_id}")
@@ -876,7 +983,7 @@ class VoiceManager(BaseManager):
         """Get all pending speaker requests for a stage channel."""
         rows = self._db.fetch_all(
             "SELECT * FROM voice_speaker_requests WHERE channel_id = ? ORDER BY requested_at",
-            (channel_id,)
+            (channel_id,),
         )
 
         return [
@@ -893,7 +1000,7 @@ class VoiceManager(BaseManager):
         """Get all speakers in a stage channel."""
         rows = self._db.fetch_all(
             "SELECT * FROM voice_states WHERE channel_id = ? AND suppress = 0",
-            (channel_id,)
+            (channel_id,),
         )
         return [self._row_to_voice_state(row) for row in rows]
 
@@ -901,21 +1008,23 @@ class VoiceManager(BaseManager):
         """Get all audience members in a stage channel."""
         rows = self._db.fetch_all(
             "SELECT * FROM voice_states WHERE channel_id = ? AND suppress = 1",
-            (channel_id,)
+            (channel_id,),
         )
         return [self._row_to_voice_state(row) for row in rows]
 
     # === Channel Settings ===
 
-    def set_user_limit(self, user_id: SnowflakeID, channel_id: SnowflakeID, limit: int) -> VoiceChannel:
+    def set_user_limit(
+        self, user_id: SnowflakeID, channel_id: SnowflakeID, limit: int
+    ) -> VoiceChannel:
         """
         Set user limit for a voice channel (0 = unlimited).
-        
+
         Args:
             user_id: ID of the user setting the limit
             channel_id: ID of the voice channel
             limit: User limit (0 = unlimited)
-            
+
         Returns:
             Updated VoiceChannel
         """
@@ -924,7 +1033,11 @@ class VoiceManager(BaseManager):
             raise ChannelNotFoundError(f"Channel {channel_id} not found")
 
         if not self._is_voice_channel(channel["channel_type"]):
-            raise ChannelTypeError("Not a voice channel", expected="voice or stage", actual=channel["channel_type"])
+            raise ChannelTypeError(
+                "Not a voice channel",
+                expected="voice or stage",
+                actual=channel["channel_type"],
+            )
 
         server_id = channel["server_id"]
         self._require_permission(user_id, server_id, "channels.manage")
@@ -933,22 +1046,24 @@ class VoiceManager(BaseManager):
 
         self._db.execute(
             "UPDATE voice_channel_settings SET user_limit = ? WHERE channel_id = ?",
-            (max(0, limit), channel_id)
+            (max(0, limit), channel_id),
         )
 
         result = self.get_voice_channel(channel_id, user_id)
         assert result is not None
         return result
 
-    def set_bitrate(self, user_id: SnowflakeID, channel_id: SnowflakeID, bitrate: int) -> VoiceChannel:
+    def set_bitrate(
+        self, user_id: SnowflakeID, channel_id: SnowflakeID, bitrate: int
+    ) -> VoiceChannel:
         """
         Set bitrate for a voice channel.
-        
+
         Args:
             user_id: ID of the user setting the bitrate
             channel_id: ID of the voice channel
             bitrate: Bitrate in bits per second (8000-384000)
-            
+
         Returns:
             Updated VoiceChannel
         """
@@ -957,7 +1072,11 @@ class VoiceManager(BaseManager):
             raise ChannelNotFoundError(f"Channel {channel_id} not found")
 
         if not self._is_voice_channel(channel["channel_type"]):
-            raise ChannelTypeError("Not a voice channel", expected="voice or stage", actual=channel["channel_type"])
+            raise ChannelTypeError(
+                "Not a voice channel",
+                expected="voice or stage",
+                actual=channel["channel_type"],
+            )
 
         server_id = channel["server_id"]
         self._require_permission(user_id, server_id, "channels.manage")
@@ -968,22 +1087,24 @@ class VoiceManager(BaseManager):
 
         self._db.execute(
             "UPDATE voice_channel_settings SET bitrate = ? WHERE channel_id = ?",
-            (bitrate, channel_id)
+            (bitrate, channel_id),
         )
 
         result = self.get_voice_channel(channel_id, user_id)
         assert result is not None
         return result
 
-    def set_voice_region(self, user_id: SnowflakeID, channel_id: SnowflakeID, region_id: Optional[str]) -> VoiceChannel:
+    def set_voice_region(
+        self, user_id: SnowflakeID, channel_id: SnowflakeID, region_id: Optional[str]
+    ) -> VoiceChannel:
         """
         Set voice region for a channel (None = automatic).
-        
+
         Args:
             user_id: ID of the user setting the region
             channel_id: ID of the voice channel
             region_id: Region ID or None for automatic
-            
+
         Returns:
             Updated VoiceChannel
         """
@@ -992,7 +1113,11 @@ class VoiceManager(BaseManager):
             raise ChannelNotFoundError(f"Channel {channel_id} not found")
 
         if not self._is_voice_channel(channel["channel_type"]):
-            raise ChannelTypeError("Not a voice channel", expected="voice or stage", actual=channel["channel_type"])
+            raise ChannelTypeError(
+                "Not a voice channel",
+                expected="voice or stage",
+                actual=channel["channel_type"],
+            )
 
         server_id = channel["server_id"]
         self._require_permission(user_id, server_id, "channels.manage")
@@ -1006,7 +1131,7 @@ class VoiceManager(BaseManager):
 
         self._db.execute(
             "UPDATE voice_channel_settings SET region_id = ? WHERE channel_id = ?",
-            (region_id, channel_id)
+            (region_id, channel_id),
         )
 
         result = self.get_voice_channel(channel_id, user_id)
@@ -1022,8 +1147,7 @@ class VoiceManager(BaseManager):
     def _get_server_settings(self, server_id: SnowflakeID) -> Dict[str, Any]:
         """Get voice server settings."""
         row = self._db.fetch_one(
-            "SELECT * FROM voice_server_settings WHERE server_id = ?",
-            (server_id,)
+            "SELECT * FROM voice_server_settings WHERE server_id = ?", (server_id,)
         )
         if row:
             return dict(row)
@@ -1031,21 +1155,22 @@ class VoiceManager(BaseManager):
 
     def _ensure_server_settings(self, server_id: SnowflakeID) -> None:
         """Ensure voice server settings record exists."""
-        self._db.insert_or_ignore(
-            "voice_server_settings",
-            ["server_id"],
-            (server_id,)
-        )
+        self._db.insert_or_ignore("voice_server_settings", ["server_id"], (server_id,))
 
-    def set_afk_channel(self, user_id: SnowflakeID, server_id: SnowflakeID, channel_id: Optional[SnowflakeID]) -> bool:
+    def set_afk_channel(
+        self,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
+        channel_id: Optional[SnowflakeID],
+    ) -> bool:
         """
         Set the AFK channel for a server.
-        
+
         Args:
             user_id: ID of the user setting the AFK channel
             server_id: ID of the server
             channel_id: ID of the voice channel to use for AFK, or None
-            
+
         Returns:
             True if set successfully
         """
@@ -1054,30 +1179,40 @@ class VoiceManager(BaseManager):
         if channel_id:
             channel = self._get_server_channel(channel_id)
             if not channel or channel["server_id"] != server_id:
-                raise ChannelNotFoundError(f"Channel {channel_id} not found in server {server_id}")
+                raise ChannelNotFoundError(
+                    f"Channel {channel_id} not found in server {server_id}"
+                )
             if channel["channel_type"] != "voice":
-                raise ChannelTypeError("AFK channel must be a standard voice channel", expected="voice", actual=channel["channel_type"])
+                raise ChannelTypeError(
+                    "AFK channel must be a standard voice channel",
+                    expected="voice",
+                    actual=channel["channel_type"],
+                )
 
         self._ensure_server_settings(server_id)
 
         self._db.execute(
             "UPDATE voice_server_settings SET afk_channel_id = ? WHERE server_id = ?",
-            (channel_id, server_id)
+            (channel_id, server_id),
         )
 
-        logger.debug(f"AFK channel for server {server_id} set to {channel_id} by {user_id}")
+        logger.debug(
+            f"AFK channel for server {server_id} set to {channel_id} by {user_id}"
+        )
 
         return True
 
-    def set_afk_timeout(self, user_id: SnowflakeID, server_id: SnowflakeID, timeout: int) -> bool:
+    def set_afk_timeout(
+        self, user_id: SnowflakeID, server_id: SnowflakeID, timeout: int
+    ) -> bool:
         """
         Set the AFK timeout for a server in seconds.
-        
+
         Args:
             user_id: ID of the user setting the timeout
             server_id: ID of the server
             timeout: Timeout in seconds (60-3600)
-            
+
         Returns:
             True if set successfully
         """
@@ -1089,7 +1224,7 @@ class VoiceManager(BaseManager):
 
         self._db.execute(
             "UPDATE voice_server_settings SET afk_timeout = ? WHERE server_id = ?",
-            (timeout, server_id)
+            (timeout, server_id),
         )
 
         return True
@@ -1097,10 +1232,10 @@ class VoiceManager(BaseManager):
     def get_afk_channel(self, server_id: SnowflakeID) -> Optional[SnowflakeID]:
         """
         Get the AFK channel ID for a server.
-        
+
         Args:
             server_id: ID of the server
-            
+
         Returns:
             Channel ID or None
         """
@@ -1110,10 +1245,10 @@ class VoiceManager(BaseManager):
     def get_afk_timeout(self, server_id: SnowflakeID) -> int:
         """
         Get the AFK timeout for a server in seconds.
-        
+
         Args:
             server_id: ID of the server
-            
+
         Returns:
             Timeout in seconds
         """
@@ -1123,7 +1258,7 @@ class VoiceManager(BaseManager):
     def check_afk_timeout(self, user_id: SnowflakeID) -> bool:
         """
         Check if a user has timed out and move them to AFK if needed.
-        
+
         Returns:
             True if moved to AFK
         """
@@ -1143,7 +1278,9 @@ class VoiceManager(BaseManager):
         timeout_ms = settings["afk_timeout"] * 1000
 
         if now - state.last_activity >= timeout_ms:
-            logger.info(f"User {user_id} timed out, moving to AFK channel {settings['afk_channel_id']}")
+            logger.info(
+                f"User {user_id} timed out, moving to AFK channel {settings['afk_channel_id']}"
+            )
             self.move_member(user_id, user_id, settings["afk_channel_id"])
             return True
 
@@ -1154,8 +1291,7 @@ class VoiceManager(BaseManager):
     def is_user_in_voice(self, user_id: SnowflakeID) -> bool:
         """Check if a user is currently in a voice channel."""
         row = self._db.fetch_one(
-            "SELECT 1 FROM voice_states WHERE user_id = ?",
-            (user_id,)
+            "SELECT 1 FROM voice_states WHERE user_id = ?", (user_id,)
         )
         return row is not None
 
@@ -1167,7 +1303,6 @@ class VoiceManager(BaseManager):
     def get_channel_members(self, channel_id: SnowflakeID) -> List[SnowflakeID]:
         """Get IDs of all members in a channel."""
         rows = self._db.fetch_all(
-            "SELECT user_id FROM voice_states WHERE channel_id = ?",
-            (channel_id,)
+            "SELECT user_id FROM voice_states WHERE channel_id = ?", (channel_id,)
         )
         return [row["user_id"] for row in rows]

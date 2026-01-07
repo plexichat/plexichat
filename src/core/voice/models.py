@@ -10,6 +10,7 @@ from src.core.base import SnowflakeID
 
 class VoiceChannelType(Enum):
     """Types of voice channels."""
+
     VOICE = "voice"
     STAGE = "stage"
 
@@ -17,6 +18,7 @@ class VoiceChannelType(Enum):
 @dataclass
 class VoiceState:
     """User's voice state in a channel."""
+
     user_id: SnowflakeID
     channel_id: SnowflakeID
     server_id: SnowflakeID
@@ -34,6 +36,7 @@ class VoiceState:
 @dataclass
 class VoiceChannel:
     """Voice channel with settings."""
+
     id: SnowflakeID
     server_id: SnowflakeID
     name: str
@@ -51,6 +54,7 @@ class VoiceChannel:
 @dataclass
 class StageInstance:
     """Active stage instance in a stage channel."""
+
     id: SnowflakeID
     channel_id: SnowflakeID
     server_id: SnowflakeID
@@ -64,6 +68,7 @@ class StageInstance:
 @dataclass
 class SpeakerRequest:
     """Request to speak in a stage channel."""
+
     id: SnowflakeID
     user_id: SnowflakeID
     channel_id: SnowflakeID
@@ -73,6 +78,7 @@ class SpeakerRequest:
 @dataclass
 class VoiceRegion:
     """Voice server region for WebRTC."""
+
     id: str
     name: str
     optimal: bool = False
@@ -99,6 +105,7 @@ DEFAULT_VOICE_REGIONS = [
 @dataclass
 class AFKSettings:
     """AFK channel settings for a server."""
+
     server_id: SnowflakeID
     channel_id: Optional[SnowflakeID] = None
     timeout_seconds: int = 300

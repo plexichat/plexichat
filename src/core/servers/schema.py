@@ -345,7 +345,11 @@ def create_tables(db):
         if statement:
             try:
                 # Convert schema types for PostgreSQL compatibility (INTEGER -> BIGINT, etc.)
-                converted = db.convert_schema(statement) if hasattr(db, 'convert_schema') else statement
+                converted = (
+                    db.convert_schema(statement)
+                    if hasattr(db, "convert_schema")
+                    else statement
+                )
                 db.execute(converted)
             except Exception as e:
                 logger.error(f"Failed to execute schema statement: {e}")

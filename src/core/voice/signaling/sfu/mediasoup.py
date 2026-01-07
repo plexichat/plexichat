@@ -24,7 +24,7 @@ from .base import (
 class MediasoupAdapter(SFUAdapter):
     """
     Adapter for mediasoup-based SFU servers.
-    
+
     Expects a mediasoup server with a REST API following the common
     mediasoup-demo patterns.
     """
@@ -32,7 +32,7 @@ class MediasoupAdapter(SFUAdapter):
     def __init__(self, api_url: str, timeout: int = 10):
         """
         Initialize the mediasoup adapter.
-        
+
         Args:
             api_url: Base URL of the mediasoup API
             timeout: Request timeout in seconds
@@ -46,6 +46,7 @@ class MediasoupAdapter(SFUAdapter):
         if self._session is None:
             try:
                 import aiohttp
+
                 self._session = aiohttp.ClientSession(
                     timeout=aiohttp.ClientTimeout(total=self._timeout)
                 )
@@ -53,7 +54,7 @@ class MediasoupAdapter(SFUAdapter):
                 raise SFUConnectionError(
                     "aiohttp is required for mediasoup adapter",
                     backend="mediasoup",
-                    url=self._api_url
+                    url=self._api_url,
                 )
         return self._session
 
@@ -65,12 +66,12 @@ class MediasoupAdapter(SFUAdapter):
     ) -> Dict[str, Any]:
         """
         Make an HTTP request to the mediasoup API.
-        
+
         Args:
             method: HTTP method
             endpoint: API endpoint
             data: Request body data
-            
+
         Returns:
             Response JSON
         """
@@ -89,7 +90,7 @@ class MediasoupAdapter(SFUAdapter):
                     raise SFUConnectionError(
                         f"Mediasoup API error: {response.status} - {text}",
                         backend="mediasoup",
-                        url=url
+                        url=url,
                     )
 
                 if response.content_type == "application/json":
@@ -100,24 +101,18 @@ class MediasoupAdapter(SFUAdapter):
             raise SFUTimeoutError(
                 "Mediasoup request timed out",
                 operation=endpoint,
-                timeout_ms=self._timeout * 1000
+                timeout_ms=self._timeout * 1000,
             )
         except Exception as e:
             if isinstance(e, (SFUConnectionError, SFUTimeoutError)):
                 raise
             raise SFUConnectionError(
-                f"Mediasoup connection failed: {e}",
-                backend="mediasoup",
-                url=url
+                f"Mediasoup connection failed: {e}", backend="mediasoup", url=url
             )
 
     async def create_room(self, room_id: str) -> RoomInfo:
         """Create a new room on the mediasoup server."""
-        result = await self._request(
-            "POST",
-            "/rooms",
-            {"roomId": room_id}
-        )
+        result = await self._request("POST", "/rooms", {"roomId": room_id})
 
         logger.debug(f"Created mediasoup room: {room_id}")
 
@@ -136,9 +131,7 @@ class MediasoupAdapter(SFUAdapter):
     async def join_room(self, room_id: str, peer_id: str) -> Dict[str, Any]:
         """Join a peer to a room."""
         result = await self._request(
-            "POST",
-            f"/rooms/{room_id}/peers",
-            {"peerId": peer_id}
+            "POST", f"/rooms/{room_id}/peers", {"peerId": peer_id}
         )
 
         logger.debug(f"Peer {peer_id} joined room {room_id}")
@@ -168,7 +161,7 @@ class MediasoupAdapter(SFUAdapter):
             {
                 "direction": direction.value,
                 "sctpCapabilities": None,
-            }
+            },
         )
 
         transport = SFUTransport(
@@ -195,7 +188,7 @@ class MediasoupAdapter(SFUAdapter):
         await self._request(
             "POST",
             f"/rooms/{room_id}/peers/{peer_id}/transports/{transport_id}/connect",
-            {"dtlsParameters": dtls_parameters}
+            {"dtlsParameters": dtls_parameters},
         )
 
         logger.debug(f"Connected transport {transport_id}")
@@ -216,7 +209,7 @@ class MediasoupAdapter(SFUAdapter):
             {
                 "kind": kind.value,
                 "rtpParameters": rtp_parameters,
-            }
+            },
         )
 
         producer = SFUProducer(
@@ -245,7 +238,7 @@ class MediasoupAdapter(SFUAdapter):
             {
                 "producerId": producer_id,
                 "rtpCapabilities": rtp_capabilities,
-            }
+            },
         )
 
         consumer = SFUConsumer(
@@ -331,7 +324,7 @@ class MediasoupAdapter(SFUAdapter):
             {
                 "spatialLayer": spatial_layer,
                 "temporalLayer": temporal_layer,
-            }
+            },
         )
         return True
 

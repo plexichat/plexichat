@@ -29,6 +29,7 @@ from .base import (
 @dataclass
 class PendingRequest:
     """A pending protoo request."""
+
     id: int
     method: str
     future: asyncio.Future
@@ -38,6 +39,7 @@ class PendingRequest:
 @dataclass
 class PeerConnection:
     """Represents a peer's connection to a room."""
+
     peer_id: str
     room_id: str
     websocket: Any  # websockets.WebSocketClientProtocol
@@ -54,7 +56,7 @@ class PeerConnection:
 class MediasoupWSAdapter(SFUAdapter):
     """
     WebSocket-based adapter for mediasoup-demo server.
-    
+
     Uses the protoo protocol for signaling.
     """
 
@@ -66,7 +68,7 @@ class MediasoupWSAdapter(SFUAdapter):
     ):
         """
         Initialize the mediasoup WebSocket adapter.
-        
+
         Args:
             ws_url: WebSocket URL of the mediasoup server (e.g., wss://host:4443)
             timeout: Request timeout in seconds
@@ -94,11 +96,11 @@ class MediasoupWSAdapter(SFUAdapter):
     async def _connect(self, room_id: str, peer_id: str) -> PeerConnection:
         """
         Establish WebSocket connection to mediasoup server.
-        
+
         Args:
             room_id: Room to join
             peer_id: Peer identifier
-            
+
         Returns:
             PeerConnection instance
         """
@@ -108,7 +110,7 @@ class MediasoupWSAdapter(SFUAdapter):
             raise SFUConnectionError(
                 "websockets library is required for mediasoup WebSocket adapter",
                 backend="mediasoup-ws",
-                url=self._ws_url
+                url=self._ws_url,
             )
 
         key = self._get_connection_key(room_id, peer_id)
@@ -117,7 +119,7 @@ class MediasoupWSAdapter(SFUAdapter):
 
         # Build WebSocket URL with query parameters
         ws_url = f"{self._ws_url}/?roomId={room_id}&peerId={peer_id}"
-        
+
         try:
             websocket = await asyncio.wait_for(
                 websockets.connect(
@@ -127,19 +129,17 @@ class MediasoupWSAdapter(SFUAdapter):
                     subprotocols=cast(Any, ["protoo"]),
                     max_size=960000,
                 ),
-                timeout=self._timeout
+                timeout=self._timeout,
             )
         except asyncio.TimeoutError:
             raise SFUTimeoutError(
                 "WebSocket connection timed out",
                 operation="connect",
-                timeout_ms=self._timeout * 1000
+                timeout_ms=self._timeout * 1000,
             )
         except Exception as e:
             raise SFUConnectionError(
-                f"WebSocket connection failed: {e}",
-                backend="mediasoup-ws",
-                url=ws_url
+                f"WebSocket connection failed: {e}", backend="mediasoup-ws", url=ws_url
             )
 
         connection = PeerConnection(
@@ -184,7 +184,9 @@ class MediasoupWSAdapter(SFUAdapter):
                 else:
                     error_msg = data.get("errorReason", "Unknown error")
                     pending.future.set_exception(
-                        SFUConnectionError(error_msg, backend="mediasoup-ws", url=self._ws_url)
+                        SFUConnectionError(
+                            error_msg, backend="mediasoup-ws", url=self._ws_url
+                        )
                     )
         elif data.get("request"):
             # Server request (e.g., newConsumer)
@@ -213,7 +215,7 @@ class MediasoupWSAdapter(SFUAdapter):
                 paused=request_data.get("producerPaused", False),
             )
             connection.consumers[consumer.id] = consumer
-            
+
             # Store consumer info for the handler
             handler_key = f"newConsumer:{connection.room_id}:{connection.peer_id}"
             if handler_key in self._message_handlers:
@@ -221,9 +223,11 @@ class MediasoupWSAdapter(SFUAdapter):
 
         elif method == "newDataConsumer":
             # Data channel consumer - acknowledge but don't process
-            logger.debug(f"Acknowledged newDataConsumer from server for peer {connection.peer_id}")
+            logger.debug(
+                f"Acknowledged newDataConsumer from server for peer {connection.peer_id}"
+            )
             # No logic needed for data consumers in this implementation
-        
+
         # Send response
         await connection.websocket.send(json.dumps(response))
 
@@ -236,10 +240,14 @@ class MediasoupWSAdapter(SFUAdapter):
 
         if method == "newPeer":
             # New peer joined
-            logger.debug(f"New peer joined room {connection.room_id}: {notification_data.get('id')}")
+            logger.debug(
+                f"New peer joined room {connection.room_id}: {notification_data.get('id')}"
+            )
         elif method == "peerClosed":
             # Peer left
-            logger.debug(f"Peer left room {connection.room_id}: {notification_data.get('peerId')}")
+            logger.debug(
+                f"Peer left room {connection.room_id}: {notification_data.get('peerId')}"
+            )
         elif method == "producerScore":
             # Producer quality score
             logger.debug(f"Producer score update: {notification_data}")
@@ -262,12 +270,12 @@ class MediasoupWSAdapter(SFUAdapter):
     ) -> Dict[str, Any]:
         """
         Send a protoo request and wait for response.
-        
+
         Args:
             connection: Peer connection
             method: Request method
             data: Request data
-            
+
         Returns:
             Response data
         """
@@ -283,7 +291,7 @@ class MediasoupWSAdapter(SFUAdapter):
 
         loop = asyncio.get_event_loop()
         future = loop.create_future()
-        
+
         pending = PendingRequest(
             id=request_id,
             method=method,
@@ -301,7 +309,7 @@ class MediasoupWSAdapter(SFUAdapter):
             raise SFUTimeoutError(
                 f"Request '{method}' timed out",
                 operation=method,
-                timeout_ms=self._timeout * 1000
+                timeout_ms=self._timeout * 1000,
             )
         except Exception as e:
             connection.pending_requests.pop(request_id, None)
@@ -310,7 +318,7 @@ class MediasoupWSAdapter(SFUAdapter):
             raise SFUConnectionError(
                 f"Request '{method}' failed: {e}",
                 backend="mediasoup-ws",
-                url=self._ws_url
+                url=self._ws_url,
             )
 
     async def create_room(self, room_id: str) -> RoomInfo:
@@ -323,24 +331,23 @@ class MediasoupWSAdapter(SFUAdapter):
         """Close a room by disconnecting all peers."""
         # Close all connections in this room
         keys_to_remove = [
-            key for key in self._connections
-            if key.startswith(f"{room_id}:")
+            key for key in self._connections if key.startswith(f"{room_id}:")
         ]
         for key in keys_to_remove:
             conn = self._connections.pop(key, None)
             if conn and conn.websocket:
                 await conn.websocket.close()
-        
+
         self._rooms.pop(room_id, None)
         return True
 
     async def join_room(self, room_id: str, peer_id: str) -> Dict[str, Any]:
         """Join a peer to a room."""
         connection = await self._connect(room_id, peer_id)
-        
+
         # Get router RTP capabilities
         capabilities = await self._request(connection, "getRouterRtpCapabilities")
-        
+
         # Update room info
         if room_id not in self._rooms:
             self._rooms[room_id] = RoomInfo(id=room_id)
@@ -362,26 +369,28 @@ class MediasoupWSAdapter(SFUAdapter):
     ) -> Any:
         """
         Complete the join process by sending RTP capabilities.
-        
+
         This must be called after join_room and before producing/consuming.
         """
         key = self._get_connection_key(room_id, peer_id)
         connection = self._connections.get(key)
         if not connection:
             raise SFUConnectionError(
-                "Not connected to room",
-                backend="mediasoup-ws",
-                url=self._ws_url
+                "Not connected to room", backend="mediasoup-ws", url=self._ws_url
             )
 
         connection.rtp_capabilities = rtp_capabilities
 
-        result = await self._request(connection, "join", {
-            "displayName": display_name or "User",
-            "device": {"name": "PlexiChat", "version": "1.0"},
-            "rtpCapabilities": rtp_capabilities,
-            "sctpCapabilities": None,
-        })
+        result = await self._request(
+            connection,
+            "join",
+            {
+                "displayName": display_name or "User",
+                "device": {"name": "PlexiChat", "version": "1.0"},
+                "rtpCapabilities": rtp_capabilities,
+                "sctpCapabilities": None,
+            },
+        )
 
         connection.joined = True
         return result
@@ -390,7 +399,7 @@ class MediasoupWSAdapter(SFUAdapter):
         """Remove a peer from a room."""
         key = self._get_connection_key(room_id, peer_id)
         connection = self._connections.pop(key, None)
-        
+
         if connection and connection.websocket:
             await connection.websocket.close()
 
@@ -410,9 +419,7 @@ class MediasoupWSAdapter(SFUAdapter):
         connection = self._connections.get(key)
         if not connection:
             raise SFUConnectionError(
-                "Not connected to room",
-                backend="mediasoup-ws",
-                url=self._ws_url
+                "Not connected to room", backend="mediasoup-ws", url=self._ws_url
             )
 
         # mediasoup-demo expects direction to be "producer" or "consumer" inside appData
@@ -422,17 +429,21 @@ class MediasoupWSAdapter(SFUAdapter):
         # Direction string for appData - mediasoup-demo uses "producer" or "consumer"
         dir_str = "producer" if producing else "consumer"
 
-        result = await self._request(connection, "createWebRtcTransport", {
-            "forceTcp": False,
-            "producing": producing,
-            "consuming": consuming,
-            "sctpCapabilities": None,
-            "appData": {"direction": dir_str},
-        })
+        result = await self._request(
+            connection,
+            "createWebRtcTransport",
+            {
+                "forceTcp": False,
+                "producing": producing,
+                "consuming": consuming,
+                "sctpCapabilities": None,
+                "appData": {"direction": dir_str},
+            },
+        )
 
         # mediasoup-demo returns transportId, not id
         transport_id = str(result.get("transportId") or result.get("id") or "")
-        
+
         transport = SFUTransport(
             id=transport_id,
             direction=direction,
@@ -463,15 +474,17 @@ class MediasoupWSAdapter(SFUAdapter):
         connection = self._connections.get(key)
         if not connection:
             raise SFUConnectionError(
-                "Not connected to room",
-                backend="mediasoup-ws",
-                url=self._ws_url
+                "Not connected to room", backend="mediasoup-ws", url=self._ws_url
             )
 
-        await self._request(connection, "connectWebRtcTransport", {
-            "transportId": transport_id,
-            "dtlsParameters": dtls_parameters,
-        })
+        await self._request(
+            connection,
+            "connectWebRtcTransport",
+            {
+                "transportId": transport_id,
+                "dtlsParameters": dtls_parameters,
+            },
+        )
 
         logger.debug(f"Connected transport {transport_id}")
         return True
@@ -489,17 +502,19 @@ class MediasoupWSAdapter(SFUAdapter):
         connection = self._connections.get(key)
         if not connection:
             raise SFUConnectionError(
-                "Not connected to room",
-                backend="mediasoup-ws",
-                url=self._ws_url
+                "Not connected to room", backend="mediasoup-ws", url=self._ws_url
             )
 
-        result = await self._request(connection, "produce", {
-            "transportId": transport_id,
-            "kind": kind.value,
-            "rtpParameters": rtp_parameters,
-            "appData": {},
-        })
+        result = await self._request(
+            connection,
+            "produce",
+            {
+                "transportId": transport_id,
+                "kind": kind.value,
+                "rtpParameters": rtp_parameters,
+                "appData": {},
+            },
+        )
 
         producer = SFUProducer(
             id=result["id"],
@@ -527,7 +542,7 @@ class MediasoupWSAdapter(SFUAdapter):
     ) -> SFUConsumer:
         """
         Create a consumer to receive media.
-        
+
         Note: In mediasoup-demo, consumers are created server-side via newConsumer request.
         This method is for compatibility but consumers are typically created automatically.
         """
@@ -535,9 +550,7 @@ class MediasoupWSAdapter(SFUAdapter):
         connection = self._connections.get(key)
         if not connection:
             raise SFUConnectionError(
-                "Not connected to room",
-                backend="mediasoup-ws",
-                url=self._ws_url
+                "Not connected to room", backend="mediasoup-ws", url=self._ws_url
             )
 
         # Check if we already have this consumer
@@ -550,7 +563,7 @@ class MediasoupWSAdapter(SFUAdapter):
         raise SFUConnectionError(
             "Consumer not found - consumers are created automatically in mediasoup-demo",
             backend="mediasoup-ws",
-            url=self._ws_url
+            url=self._ws_url,
         )
 
     async def pause_producer(
@@ -565,9 +578,13 @@ class MediasoupWSAdapter(SFUAdapter):
         if not connection:
             return False
 
-        await self._request(connection, "pauseProducer", {
-            "producerId": producer_id,
-        })
+        await self._request(
+            connection,
+            "pauseProducer",
+            {
+                "producerId": producer_id,
+            },
+        )
 
         if producer_id in connection.producers:
             connection.producers[producer_id].paused = True
@@ -586,9 +603,13 @@ class MediasoupWSAdapter(SFUAdapter):
         if not connection:
             return False
 
-        await self._request(connection, "resumeProducer", {
-            "producerId": producer_id,
-        })
+        await self._request(
+            connection,
+            "resumeProducer",
+            {
+                "producerId": producer_id,
+            },
+        )
 
         if producer_id in connection.producers:
             connection.producers[producer_id].paused = False
@@ -607,9 +628,13 @@ class MediasoupWSAdapter(SFUAdapter):
         if not connection:
             return False
 
-        await self._request(connection, "closeProducer", {
-            "producerId": producer_id,
-        })
+        await self._request(
+            connection,
+            "closeProducer",
+            {
+                "producerId": producer_id,
+            },
+        )
 
         connection.producers.pop(producer_id, None)
 
@@ -628,7 +653,7 @@ class MediasoupWSAdapter(SFUAdapter):
         for key, connection in self._connections.items():
             if key.startswith(f"{room_id}:"):
                 return await self._request(connection, "getRouterRtpCapabilities")
-        
+
         return {}
 
     async def set_preferred_layers(
@@ -645,11 +670,15 @@ class MediasoupWSAdapter(SFUAdapter):
         if not connection:
             return False
 
-        await self._request(connection, "setConsumerPreferredLayers", {
-            "consumerId": consumer_id,
-            "spatialLayer": spatial_layer,
-            "temporalLayer": temporal_layer,
-        })
+        await self._request(
+            connection,
+            "setConsumerPreferredLayers",
+            {
+                "consumerId": consumer_id,
+                "spatialLayer": spatial_layer,
+                "temporalLayer": temporal_layer,
+            },
+        )
 
         return True
 
@@ -657,7 +686,7 @@ class MediasoupWSAdapter(SFUAdapter):
         """Check if the mediasoup server is healthy by attempting a connection."""
         test_room = f"health_check_{secrets.token_hex(4)}"
         test_peer = f"health_{secrets.token_hex(4)}"
-        
+
         try:
             connection = await self._connect(test_room, test_peer)
             await self._request(connection, "getRouterRtpCapabilities")

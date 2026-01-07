@@ -10,6 +10,7 @@ from enum import Enum
 
 class TransportDirection(Enum):
     """Transport direction for WebRTC."""
+
     SEND = "send"
     RECV = "recv"
     SENDRECV = "sendrecv"
@@ -17,6 +18,7 @@ class TransportDirection(Enum):
 
 class MediaKind(Enum):
     """Media types."""
+
     AUDIO = "audio"
     VIDEO = "video"
 
@@ -24,6 +26,7 @@ class MediaKind(Enum):
 @dataclass
 class SFUTransport:
     """WebRTC transport on the SFU."""
+
     id: str
     direction: TransportDirection
     ice_parameters: Dict[str, Any]
@@ -48,6 +51,7 @@ class SFUTransport:
 @dataclass
 class SFUProducer:
     """Media producer on the SFU (sends media)."""
+
     id: str
     kind: MediaKind
     rtp_parameters: Dict[str, Any]
@@ -66,6 +70,7 @@ class SFUProducer:
 @dataclass
 class SFUConsumer:
     """Media consumer on the SFU (receives media)."""
+
     id: str
     producer_id: str
     kind: MediaKind
@@ -86,6 +91,7 @@ class SFUConsumer:
 @dataclass
 class RoomInfo:
     """Information about an SFU room."""
+
     id: str
     peers: List[str] = field(default_factory=list)
     producers: List[str] = field(default_factory=list)
@@ -98,10 +104,10 @@ class SFUAdapter(ABC):
     async def create_room(self, room_id: str) -> RoomInfo:
         """
         Create a new room on the SFU.
-        
+
         Args:
             room_id: Unique room identifier
-            
+
         Returns:
             RoomInfo for the created room
         """
@@ -111,10 +117,10 @@ class SFUAdapter(ABC):
     async def close_room(self, room_id: str) -> bool:
         """
         Close a room on the SFU.
-        
+
         Args:
             room_id: Room identifier
-            
+
         Returns:
             True if closed successfully
         """
@@ -124,11 +130,11 @@ class SFUAdapter(ABC):
     async def join_room(self, room_id: str, peer_id: str) -> Dict[str, Any]:
         """
         Join a peer to a room.
-        
+
         Args:
             room_id: Room identifier
             peer_id: Peer identifier
-            
+
         Returns:
             Room capabilities and existing producers
         """
@@ -151,11 +157,11 @@ class SFUAdapter(ABC):
     async def leave_room(self, room_id: str, peer_id: str) -> bool:
         """
         Remove a peer from a room.
-        
+
         Args:
             room_id: Room identifier
             peer_id: Peer identifier
-            
+
         Returns:
             True if left successfully
         """
@@ -170,12 +176,12 @@ class SFUAdapter(ABC):
     ) -> SFUTransport:
         """
         Create a WebRTC transport for a peer.
-        
+
         Args:
             room_id: Room identifier
             peer_id: Peer identifier
             direction: Transport direction
-            
+
         Returns:
             SFUTransport with connection parameters
         """
@@ -191,13 +197,13 @@ class SFUAdapter(ABC):
     ) -> bool:
         """
         Connect a transport with DTLS parameters.
-        
+
         Args:
             room_id: Room identifier
             peer_id: Peer identifier
             transport_id: Transport identifier
             dtls_parameters: DTLS parameters from client
-            
+
         Returns:
             True if connected successfully
         """
@@ -214,14 +220,14 @@ class SFUAdapter(ABC):
     ) -> SFUProducer:
         """
         Create a producer to send media.
-        
+
         Args:
             room_id: Room identifier
             peer_id: Peer identifier
             transport_id: Transport identifier
             kind: Media kind (audio/video)
             rtp_parameters: RTP parameters from client
-            
+
         Returns:
             SFUProducer
         """
@@ -238,14 +244,14 @@ class SFUAdapter(ABC):
     ) -> SFUConsumer:
         """
         Create a consumer to receive media.
-        
+
         Args:
             room_id: Room identifier
             peer_id: Peer identifier
             transport_id: Transport identifier
             producer_id: Producer to consume
             rtp_capabilities: Client RTP capabilities
-            
+
         Returns:
             SFUConsumer
         """

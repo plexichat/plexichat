@@ -30,7 +30,7 @@ __all__ = [
 def create_adapter(backend: str, **kwargs) -> SFUAdapter:
     """
     Create an SFU adapter for the specified backend.
-    
+
     Args:
         backend: SFU backend name
             - "mediasoup-ws": WebSocket adapter for mediasoup-demo (recommended)
@@ -41,7 +41,7 @@ def create_adapter(backend: str, **kwargs) -> SFUAdapter:
             - ws_url: WebSocket URL (mediasoup-ws)
             - origin: Origin header for CORS (mediasoup-ws)
             - timeout: Request timeout in seconds
-        
+
     Returns:
         SFUAdapter instance
     """
@@ -62,4 +62,6 @@ def create_adapter(backend: str, **kwargs) -> SFUAdapter:
             timeout=kwargs.get("timeout", 10),
         )
     else:
-        raise ValueError(f"Unknown SFU backend: {backend}. Supported: mediasoup-ws, mediasoup, janus")
+        raise ValueError(
+            f"Unknown SFU backend: {backend}. Supported: mediasoup-ws, mediasoup, janus"
+        )

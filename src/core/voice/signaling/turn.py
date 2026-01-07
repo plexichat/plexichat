@@ -18,10 +18,10 @@ from .exceptions import TURNCredentialError
 class TURNCredentialGenerator:
     """
     Generates time-limited TURN credentials using HMAC-SHA1.
-    
+
     The username format is: timestamp:user_id
     The credential is: HMAC-SHA1(secret, username)
-    
+
     This follows the TURN REST API specification used by coturn and other
     TURN servers.
     """
@@ -34,7 +34,7 @@ class TURNCredentialGenerator:
     ):
         """
         Initialize the credential generator.
-        
+
         Args:
             secret: Shared secret with TURN server
             turn_urls: List of TURN server URLs
@@ -50,10 +50,10 @@ class TURNCredentialGenerator:
     def generate(self, user_id: int) -> TURNCredentials:
         """
         Generate TURN credentials for a user.
-        
+
         Args:
             user_id: User identifier
-            
+
         Returns:
             TURNCredentials with username, credential, and expiry
         """
@@ -78,29 +78,25 @@ class TURNCredentialGenerator:
     def _generate_credential(self, username: str) -> str:
         """
         Generate HMAC-SHA1 credential.
-        
+
         Args:
             username: Username string
-            
+
         Returns:
             Base64-encoded HMAC-SHA1 digest
         """
-        digest = hmac.new(
-            self._secret,
-            username.encode("utf-8"),
-            hashlib.sha1
-        ).digest()
+        digest = hmac.new(self._secret, username.encode("utf-8"), hashlib.sha1).digest()
 
         return base64.b64encode(digest).decode("utf-8")
 
     def verify(self, username: str, credential: str) -> bool:
         """
         Verify TURN credentials.
-        
+
         Args:
             username: Username to verify
             credential: Credential to verify
-            
+
         Returns:
             True if credentials are valid and not expired
         """
@@ -135,7 +131,7 @@ class ICEServerBuilder:
     ):
         """
         Initialize the ICE server builder.
-        
+
         Args:
             stun_urls: List of STUN server URLs
             turn_urls: List of TURN server URLs
@@ -161,10 +157,10 @@ class ICEServerBuilder:
     def build(self, user_id: int) -> List[ICEServer]:
         """
         Build ICE server list for a user.
-        
+
         Args:
             user_id: User identifier
-            
+
         Returns:
             List of ICEServer configurations
         """
@@ -179,28 +175,32 @@ class ICEServerBuilder:
             if self._turn_generator:
                 # Use time-limited credentials (coturn with static-auth-secret)
                 creds = self._turn_generator.generate(user_id)
-                servers.append(ICEServer(
-                    urls=creds.urls,
-                    username=creds.username,
-                    credential=creds.credential,
-                ))
+                servers.append(
+                    ICEServer(
+                        urls=creds.urls,
+                        username=creds.username,
+                        credential=creds.credential,
+                    )
+                )
             elif self._static_username and self._static_credential:
                 # Use static credentials (metered.ca, Twilio, etc.)
-                servers.append(ICEServer(
-                    urls=self._turn_urls.copy(),
-                    username=self._static_username,
-                    credential=self._static_credential,
-                ))
+                servers.append(
+                    ICEServer(
+                        urls=self._turn_urls.copy(),
+                        username=self._static_username,
+                        credential=self._static_credential,
+                    )
+                )
 
         return servers
 
     def get_turn_credentials(self, user_id: int) -> Optional[TURNCredentials]:
         """
         Get TURN credentials for a user.
-        
+
         Args:
             user_id: User identifier
-            
+
         Returns:
             TURNCredentials or None if TURN not configured
         """
@@ -228,13 +228,13 @@ def generate_turn_credentials(
 ) -> TURNCredentials:
     """
     Generate TURN credentials for a user.
-    
+
     Args:
         user_id: User identifier
         secret: Shared secret with TURN server
         turn_urls: List of TURN server URLs
         ttl: Credential TTL in seconds
-        
+
     Returns:
         TURNCredentials
     """
@@ -249,12 +249,12 @@ def verify_turn_credentials(
 ) -> bool:
     """
     Verify TURN credentials.
-    
+
     Args:
         username: Username to verify
         credential: Credential to verify
         secret: Shared secret
-        
+
     Returns:
         True if valid
     """

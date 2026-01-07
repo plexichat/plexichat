@@ -9,6 +9,7 @@ from typing import Optional, List, Dict, Any
 
 class SDPType(Enum):
     """SDP message types."""
+
     OFFER = "offer"
     ANSWER = "answer"
     PRANSWER = "pranswer"
@@ -17,6 +18,7 @@ class SDPType(Enum):
 
 class SignalingState(Enum):
     """WebRTC signaling connection states."""
+
     NEW = "new"
     CONNECTING = "connecting"
     CONNECTED = "connected"
@@ -27,6 +29,7 @@ class SignalingState(Enum):
 
 class QualityLevel(Enum):
     """Connection quality levels."""
+
     EXCELLENT = "excellent"
     GOOD = "good"
     FAIR = "fair"
@@ -37,6 +40,7 @@ class QualityLevel(Enum):
 @dataclass
 class SDPMessage:
     """SDP (Session Description Protocol) message."""
+
     sdp_type: SDPType
     sdp: str
     session_id: Optional[str] = None
@@ -53,6 +57,7 @@ class SDPMessage:
 @dataclass
 class ICECandidate:
     """ICE (Interactive Connectivity Establishment) candidate."""
+
     candidate: str
     sdp_mid: Optional[str] = None
     sdp_mline_index: Optional[int] = None
@@ -74,13 +79,15 @@ class ICECandidate:
             candidate=data.get("candidate", ""),
             sdp_mid=data.get("sdpMid") or data.get("sdp_mid"),
             sdp_mline_index=data.get("sdpMLineIndex") or data.get("sdp_mline_index"),
-            username_fragment=data.get("usernameFragment") or data.get("username_fragment"),
+            username_fragment=data.get("usernameFragment")
+            or data.get("username_fragment"),
         )
 
 
 @dataclass
 class TURNCredentials:
     """TURN server credentials with time-limited authentication."""
+
     username: str
     credential: str
     urls: List[str]
@@ -101,6 +108,7 @@ class TURNCredentials:
 @dataclass
 class ICEServer:
     """ICE server configuration (STUN or TURN)."""
+
     urls: List[str]
     username: Optional[str] = None
     credential: Optional[str] = None
@@ -118,6 +126,7 @@ class ICEServer:
 @dataclass
 class VoiceServerInfo:
     """Voice server connection information."""
+
     endpoint: str
     token: str
     ice_servers: List[ICEServer]
@@ -142,6 +151,7 @@ class VoiceServerInfo:
 @dataclass
 class ConnectionQuality:
     """Connection quality metrics."""
+
     user_id: int
     channel_id: int
     quality_level: QualityLevel
@@ -168,6 +178,7 @@ class ConnectionQuality:
 @dataclass
 class ScreenShareState:
     """Screen sharing state for a user."""
+
     user_id: int
     channel_id: int
     active: bool
@@ -188,6 +199,7 @@ class ScreenShareState:
 @dataclass
 class VoiceConnection:
     """Active voice connection state."""
+
     user_id: int
     channel_id: int
     session_id: str

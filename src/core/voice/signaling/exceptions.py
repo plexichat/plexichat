@@ -5,11 +5,13 @@ Signaling exceptions - All WebRTC signaling error types.
 
 class SignalingError(Exception):
     """Base exception for all signaling errors."""
+
     pass
 
 
 class SDPError(SignalingError):
     """Base exception for SDP-related errors."""
+
     pass
 
 
@@ -33,6 +35,7 @@ class SDPValidationError(SDPError):
 
 class ICEError(SignalingError):
     """Base exception for ICE-related errors."""
+
     pass
 
 
@@ -46,16 +49,19 @@ class ICECandidateError(ICEError):
 
 class TURNError(SignalingError):
     """Base exception for TURN-related errors."""
+
     pass
 
 
 class TURNCredentialError(TURNError):
     """Failed to generate TURN credentials."""
+
     pass
 
 
 class SFUError(SignalingError):
     """Base exception for SFU-related errors."""
+
     pass
 
 
@@ -79,6 +85,7 @@ class SFUTimeoutError(SFUError):
 
 class ConnectionError(SignalingError):
     """Base exception for connection-related errors."""
+
     pass
 
 
