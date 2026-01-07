@@ -10,6 +10,7 @@ from .common import SnowflakeID
 
 class ReactionResponse(BaseModel):
     """Reaction response model."""
+
     model_config = ConfigDict(from_attributes=True)
 
     emoji: str = Field(..., description="Emoji identifier")
@@ -19,6 +20,7 @@ class ReactionResponse(BaseModel):
 
 class ReactionUserResponse(BaseModel):
     """User who reacted response model."""
+
     model_config = ConfigDict(from_attributes=True)
 
     user_id: SnowflakeID = Field(..., description="User ID")
@@ -27,8 +29,11 @@ class ReactionUserResponse(BaseModel):
 
 class MessageReactionsResponse(BaseModel):
     """All reactions on a message response model."""
+
     model_config = ConfigDict(from_attributes=True)
 
     message_id: SnowflakeID = Field(..., description="Message ID")
-    reactions: List[ReactionResponse] = Field(default_factory=list, description="List of reactions")
+    reactions: List[ReactionResponse] = Field(
+        default_factory=list, description="List of reactions"
+    )
     total_count: int = Field(0, description="Total reaction count")

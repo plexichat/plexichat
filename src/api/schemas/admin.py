@@ -2,13 +2,13 @@
 Admin API schemas.
 """
 
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict
 from pydantic import BaseModel, Field, ConfigDict
-from src.api.schemas.common import SnowflakeID
 
 
 class AdminLoginRequest(BaseModel):
     """Admin login request."""
+
     model_config = ConfigDict(from_attributes=True)
 
     username: str = Field(..., min_length=1, max_length=100)
@@ -17,18 +17,26 @@ class AdminLoginRequest(BaseModel):
 
 class AdminLoginResponse(BaseModel):
     """Admin login response."""
+
     model_config = ConfigDict(from_attributes=True)
 
-    status: str = Field(..., description="Login status (success, otp_required, otp_setup_required)")
-    token: Optional[str] = Field(None, description="Session token if successful")
-    admin_id: Optional[str] = Field(None, description="Admin ID if OTP required")
-    otp_secret: Optional[str] = Field(None, description="OTP secret for setup")
-    otp_qr_uri: Optional[str] = Field(None, description="OTP QR URI for setup")
-    message: Optional[str] = Field(None, description="Instruction message")
+    status: str = Field(
+        ..., description="Login status (success, otp_required, otp_setup_required)"
+    )
+    token: Optional[str] = Field(
+        default=None, description="Session token if successful"
+    )
+    admin_id: Optional[str] = Field(
+        default=None, description="Admin ID if OTP required"
+    )
+    otp_secret: Optional[str] = Field(default=None, description="OTP secret for setup")
+    otp_qr_uri: Optional[str] = Field(default=None, description="OTP QR URI for setup")
+    message: Optional[str] = Field(default=None, description="Instruction message")
 
 
 class OTPVerifyRequest(BaseModel):
     """OTP verification request."""
+
     model_config = ConfigDict(from_attributes=True)
 
     admin_id: str = Field(..., description="Admin ID")
@@ -38,6 +46,7 @@ class OTPVerifyRequest(BaseModel):
 
 class TicketStatusUpdate(BaseModel):
     """Update ticket status."""
+
     model_config = ConfigDict(from_attributes=True)
 
     status: str = Field(..., pattern="^(open|in_progress|resolved|closed)$")
@@ -45,6 +54,7 @@ class TicketStatusUpdate(BaseModel):
 
 class InternalNoteCreate(BaseModel):
     """Create internal note."""
+
     model_config = ConfigDict(from_attributes=True)
 
     content: str = Field(..., min_length=1, max_length=2000)
@@ -52,6 +62,7 @@ class InternalNoteCreate(BaseModel):
 
 class HashReportReviewRequest(BaseModel):
     """Review a hash report."""
+
     model_config = ConfigDict(from_attributes=True)
 
     action: str = Field(..., pattern="^(block|clear|dismiss)$")
@@ -60,6 +71,7 @@ class HashReportReviewRequest(BaseModel):
 
 class ManualBlockHashRequest(BaseModel):
     """Manually block a hash."""
+
     model_config = ConfigDict(from_attributes=True)
 
     hash_value: str = Field(..., min_length=64, max_length=128)
@@ -68,6 +80,7 @@ class ManualBlockHashRequest(BaseModel):
 
 class TicketResponse(BaseModel):
     """Feedback ticket response."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: int = Field(..., description="Ticket ID")
@@ -84,6 +97,7 @@ class TicketResponse(BaseModel):
 
 class NoteResponse(BaseModel):
     """Admin note response."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: int = Field(..., description="Note ID")
@@ -96,6 +110,7 @@ class NoteResponse(BaseModel):
 
 class TelemetryEndpointStat(BaseModel):
     """Statistics for a single endpoint."""
+
     model_config = ConfigDict(from_attributes=True)
 
     endpoint: str = Field(..., description="Endpoint path")
@@ -104,22 +119,30 @@ class TelemetryEndpointStat(BaseModel):
     avg_ms: float = Field(..., description="Average response time in ms")
     min_ms: Optional[float] = Field(None, description="Minimum response time in ms")
     max_ms: Optional[float] = Field(None, description="Maximum response time in ms")
-    p50_ms: Optional[float] = Field(None, description="50th percentile response time in ms")
+    p50_ms: Optional[float] = Field(
+        None, description="50th percentile response time in ms"
+    )
     p95_ms: float = Field(..., description="95th percentile response time in ms")
-    p99_ms: Optional[float] = Field(None, description="99th percentile response time in ms")
+    p99_ms: Optional[float] = Field(
+        None, description="99th percentile response time in ms"
+    )
     error_rate: float = Field(..., description="Error rate percentage")
 
 
 class AdminDashboardResponse(BaseModel):
     """Admin dashboard data."""
+
     model_config = ConfigDict(from_attributes=True)
 
     tickets: Dict[str, int] = Field(..., description="Ticket counts by status")
-    telemetry: List[TelemetryEndpointStat] = Field(..., description="Top telemetry stats")
+    telemetry: List[TelemetryEndpointStat] = Field(
+        ..., description="Top telemetry stats"
+    )
 
 
 class TelemetryStatsResponse(BaseModel):
     """Telemetry statistics response."""
+
     model_config = ConfigDict(from_attributes=True)
 
     stats: List[TelemetryEndpointStat] = Field(..., description="Endpoint statistics")
@@ -128,6 +151,7 @@ class TelemetryStatsResponse(BaseModel):
 
 class TelemetryHistoryBucket(BaseModel):
     """A single time bucket in telemetry history."""
+
     model_config = ConfigDict(from_attributes=True)
 
     timestamp: int = Field(..., description="Bucket start timestamp")
@@ -138,13 +162,17 @@ class TelemetryHistoryBucket(BaseModel):
 
 class TelemetryHistoryResponse(BaseModel):
     """Telemetry history response."""
+
     model_config = ConfigDict(from_attributes=True)
 
-    history: List[TelemetryHistoryBucket] = Field(..., description="History data buckets")
+    history: List[TelemetryHistoryBucket] = Field(
+        ..., description="History data buckets"
+    )
 
 
 class TelemetryResetResponse(BaseModel):
     """Telemetry reset response."""
+
     model_config = ConfigDict(from_attributes=True)
 
     success: bool = Field(..., description="Whether reset was successful")
@@ -153,28 +181,34 @@ class TelemetryResetResponse(BaseModel):
 
 class HashReportResponse(BaseModel):
     """Hash report for admin review."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: int = Field(..., description="Report ID")
     hash_value: str = Field(..., description="SHA-256 hash")
-    phash_value: Optional[str] = Field(None, description="Perceptual hash")
+    phash_value: Optional[str] = Field(default=None, description="Perceptual hash")
     reporter_id: int = Field(..., description="User ID who reported")
-    reporter_username: str = Field(..., description="Username who reported")
+    reporter_username: Optional[str] = Field(
+        default=None, description="Username who reported"
+    )
     reason: str = Field(..., description="Report reason")
-    details: Optional[str] = Field(None, description="Report details")
+    details: Optional[str] = Field(default=None, description="Report details")
     status: str = Field(..., description="Report status")
     reported_at: int = Field(..., description="Report timestamp")
-    reviewed_at: Optional[int] = Field(None, description="Review timestamp")
-    reviewed_by: Optional[int] = Field(None, description="Admin ID who reviewed")
-    admin_notes: Optional[str] = Field(None, description="Admin notes")
-    uploader_id: Optional[int] = Field(None, description="Uploader user ID")
-    message_id: Optional[int] = Field(None, description="Message ID")
-    attachment_url: Optional[str] = Field(None, description="Attachment URL")
+    reviewed_at: Optional[int] = Field(default=None, description="Review timestamp")
+    reviewed_by: Optional[int] = Field(
+        default=None, description="Admin ID who reviewed"
+    )
+    admin_notes: Optional[str] = Field(default=None, description="Admin notes")
+    uploader_id: Optional[int] = Field(default=None, description="Uploader user ID")
+    message_id: Optional[int] = Field(default=None, description="Message ID")
+    attachment_url: Optional[str] = Field(default=None, description="Attachment URL")
     block_uploader: bool = Field(False, description="Whether to block uploader")
 
 
 class HashReportCountsResponse(BaseModel):
     """Hash report counts by status."""
+
     model_config = ConfigDict(from_attributes=True)
 
     open: int = Field(0, description="Open reports")
@@ -184,12 +218,13 @@ class HashReportCountsResponse(BaseModel):
 
 class BlockedHashResponse(BaseModel):
     """Blocked hash information."""
+
     model_config = ConfigDict(from_attributes=True)
 
     hash_value: str = Field(..., description="Hash value")
     reason: str = Field(..., description="Reason for blocking")
     blocked_at: int = Field(..., description="Block timestamp")
-    blocked_by: int = Field(..., description="Admin ID who blocked")
+    blocked_by: Optional[int] = Field(default=None, description="Admin ID who blocked")
     auto_blocked: bool = Field(False, description="Whether auto-blocked")
     hash_type: str = Field(..., description="Hash type (sha256, phash)")
     phash_threshold: int = Field(0, description="pHash similarity threshold")
@@ -197,27 +232,34 @@ class BlockedHashResponse(BaseModel):
 
 class BlockUserRequest(BaseModel):
     """Block a user from uploading media."""
+
     model_config = ConfigDict(from_attributes=True)
 
     user_id: int = Field(..., description="User ID to block")
-    reason: str = Field(..., min_length=1, max_length=500, description="Reason for blocking")
-    duration_hours: Optional[int] = Field(None, description="Duration in hours (None = permanent)")
+    reason: str = Field(
+        ..., min_length=1, max_length=500, description="Reason for blocking"
+    )
+    duration_hours: Optional[int] = Field(
+        None, description="Duration in hours (None = permanent)"
+    )
 
 
 class BlockedUserResponse(BaseModel):
     """Blocked user information."""
+
     model_config = ConfigDict(from_attributes=True)
 
     user_id: int = Field(..., description="User ID")
-    username: str = Field(..., description="Username")
+    username: Optional[str] = Field(default=None, description="Username")
     reason: str = Field(..., description="Reason for blocking")
     blocked_at: int = Field(..., description="Block timestamp")
-    blocked_by: int = Field(..., description="Admin ID who blocked")
-    expires_at: Optional[int] = Field(None, description="Expiration timestamp")
+    blocked_by: Optional[int] = Field(default=None, description="Admin ID who blocked")
+    expires_at: Optional[int] = Field(default=None, description="Expiration timestamp")
 
 
 class UserTierUpdate(BaseModel):
     """Update user tier."""
+
     model_config = ConfigDict(from_attributes=True)
 
     tier: str = Field(..., pattern="^(free|alpha|beta|premium|staff)$")
@@ -225,6 +267,7 @@ class UserTierUpdate(BaseModel):
 
 class UserSearchResponse(BaseModel):
     """User search result."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: str = Field(..., description="User ID as string")
@@ -237,6 +280,7 @@ class UserSearchResponse(BaseModel):
 
 class UserSearchListResponse(BaseModel):
     """List of user search results."""
+
     model_config = ConfigDict(from_attributes=True)
 
     users: List[UserSearchResponse] = Field(..., description="Search results")
@@ -244,6 +288,7 @@ class UserSearchListResponse(BaseModel):
 
 class UserDetailsResponse(BaseModel):
     """Detailed user information for admin."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: str = Field(..., description="User ID as string")
@@ -257,6 +302,7 @@ class UserDetailsResponse(BaseModel):
 
 class UserTierUpdateResponse(BaseModel):
     """Response for user tier update."""
+
     model_config = ConfigDict(from_attributes=True)
 
     success: bool = Field(..., description="Whether update was successful")
@@ -266,6 +312,7 @@ class UserTierUpdateResponse(BaseModel):
 
 class UserBadgeUpdateResponse(BaseModel):
     """Response for user badge update."""
+
     model_config = ConfigDict(from_attributes=True)
 
     success: bool = Field(..., description="Whether update was successful")
@@ -274,6 +321,7 @@ class UserBadgeUpdateResponse(BaseModel):
 
 class HashReportReviewResponse(BaseModel):
     """Response for hash report review."""
+
     model_config = ConfigDict(from_attributes=True)
 
     success: bool = Field(..., description="Whether review was successful")
@@ -282,6 +330,7 @@ class HashReportReviewResponse(BaseModel):
 
 class BlockHashResponse(BaseModel):
     """Response for manual hash block."""
+
     model_config = ConfigDict(from_attributes=True)
 
     success: bool = Field(..., description="Whether block was successful")
@@ -291,6 +340,7 @@ class BlockHashResponse(BaseModel):
 
 class BlockUserResponse(BaseModel):
     """Response for user block."""
+
     model_config = ConfigDict(from_attributes=True)
 
     success: bool = Field(..., description="Whether block was successful")
@@ -299,6 +349,7 @@ class BlockUserResponse(BaseModel):
 
 class TelemetryExportResponse(BaseModel):
     """Telemetry export response (JSON format)."""
+
     model_config = ConfigDict(from_attributes=True)
 
     export_time: str = Field(..., description="Export generation time")
@@ -308,6 +359,7 @@ class TelemetryExportResponse(BaseModel):
 
 class AvailableTierInfo(BaseModel):
     """Information about an available tier."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: str = Field(..., description="Tier ID")
@@ -317,6 +369,7 @@ class AvailableTierInfo(BaseModel):
 
 class AvailableTiersResponse(BaseModel):
     """Available tiers response."""
+
     model_config = ConfigDict(from_attributes=True)
 
     tiers: List[AvailableTierInfo] = Field(..., description="List of available tiers")
@@ -324,6 +377,7 @@ class AvailableTiersResponse(BaseModel):
 
 class AvailableBadgesResponse(BaseModel):
     """Available badges response."""
+
     model_config = ConfigDict(from_attributes=True)
 
     badges: List[str] = Field(..., description="List of available badge names")

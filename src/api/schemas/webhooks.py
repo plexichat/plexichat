@@ -10,6 +10,7 @@ from .common import SnowflakeID
 
 class WebhookCreateRequest(BaseModel):
     """Webhook creation request."""
+
     model_config = ConfigDict(from_attributes=True)
 
     channel_id: SnowflakeID = Field(..., description="Channel ID for the webhook")
@@ -19,15 +20,19 @@ class WebhookCreateRequest(BaseModel):
 
 class WebhookUpdateRequest(BaseModel):
     """Webhook update request."""
+
     model_config = ConfigDict(from_attributes=True)
 
-    name: Optional[str] = Field(None, min_length=1, max_length=80, description="Webhook name")
+    name: Optional[str] = Field(
+        None, min_length=1, max_length=80, description="Webhook name"
+    )
     avatar_url: Optional[str] = Field(None, description="Webhook avatar URL")
     channel_id: Optional[SnowflakeID] = Field(None, description="New channel ID")
 
 
 class WebhookResponse(BaseModel):
     """Webhook response model."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: SnowflakeID = Field(..., description="Webhook ID")
@@ -43,10 +48,13 @@ class WebhookResponse(BaseModel):
 
 class WebhookExecuteRequest(BaseModel):
     """Webhook execution request."""
+
     model_config = ConfigDict(from_attributes=True)
 
     content: Optional[str] = Field(None, max_length=2000, description="Message content")
-    username: Optional[str] = Field(None, max_length=80, description="Override username")
+    username: Optional[str] = Field(
+        None, max_length=80, description="Override username"
+    )
     avatar_url: Optional[str] = Field(None, description="Override avatar URL")
     embeds: Optional[List[Dict[str, Any]]] = Field(None, description="Rich embeds")
     thread_id: Optional[SnowflakeID] = Field(None, description="Thread ID to post to")
@@ -54,6 +62,7 @@ class WebhookExecuteRequest(BaseModel):
 
 class WebhookMessageResponse(BaseModel):
     """Webhook message response model."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: SnowflakeID = Field(..., description="Message ID")

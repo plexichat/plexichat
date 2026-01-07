@@ -22,10 +22,12 @@ class SnowflakeID(str):
         """Define how Pydantic should validate this type."""
         return core_schema.no_info_after_validator_function(
             cls._validate,
-            core_schema.union_schema([
-                core_schema.int_schema(),
-                core_schema.str_schema(),
-            ]),
+            core_schema.union_schema(
+                [
+                    core_schema.int_schema(),
+                    core_schema.str_schema(),
+                ]
+            ),
             serialization=core_schema.to_string_ser_schema(),
         )
 
@@ -46,6 +48,7 @@ class SnowflakeID(str):
 
 class ErrorDetail(BaseModel):
     """Error detail model."""
+
     model_config = ConfigDict(from_attributes=True)
 
     code: int = Field(..., description="Error code")
@@ -54,6 +57,7 @@ class ErrorDetail(BaseModel):
 
 class ErrorResponse(BaseModel):
     """Standard error response."""
+
     model_config = ConfigDict(from_attributes=True)
 
     error: ErrorDetail
@@ -61,15 +65,23 @@ class ErrorResponse(BaseModel):
 
 class PaginationParams(BaseModel):
     """Pagination parameters."""
+
     model_config = ConfigDict(from_attributes=True)
 
-    limit: int = Field(default=50, ge=1, le=100, description="Number of items to return")
-    before: Optional[SnowflakeID] = Field(default=None, description="Get items before this ID")
-    after: Optional[SnowflakeID] = Field(default=None, description="Get items after this ID")
+    limit: int = Field(
+        default=50, ge=1, le=100, description="Number of items to return"
+    )
+    before: Optional[SnowflakeID] = Field(
+        default=None, description="Get items before this ID"
+    )
+    after: Optional[SnowflakeID] = Field(
+        default=None, description="Get items after this ID"
+    )
 
 
 class PaginatedResponse(BaseModel, Generic[T]):
     """Paginated response wrapper."""
+
     model_config = ConfigDict(from_attributes=True)
 
     items: List[T]
@@ -79,6 +91,7 @@ class PaginatedResponse(BaseModel, Generic[T]):
 
 class SuccessResponse(BaseModel):
     """Simple success response."""
+
     model_config = ConfigDict(from_attributes=True)
 
     success: bool = Field(True, description="Whether the operation was successful")
@@ -86,13 +99,16 @@ class SuccessResponse(BaseModel):
 
 class RootResponse(BaseModel):
     """Root endpoint response."""
+
     model_config = ConfigDict(from_attributes=True)
 
     name: str = Field(..., description="API name")
     version: str = Field(..., description="API version")
     docs: str = Field(..., description="API docs URL")
     api: str = Field(..., description="API prefix")
-    api_docs: Optional[str] = Field(default=None, description="Detailed API documentation path")
+    api_docs: Optional[str] = Field(
+        default=None, description="Detailed API documentation path"
+    )
 
 
 def snowflake_to_str(v: Any) -> Optional[str]:

@@ -2,12 +2,13 @@
 Emoji schemas - Pydantic models for custom emoji endpoints.
 """
 
-from typing import Optional, List, Any
+from typing import Optional, Any
 from pydantic import BaseModel, Field, ConfigDict, field_serializer
 
 
 class EmojiResponse(BaseModel):
     """Custom emoji response model."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: str = Field(..., description="Emoji ID")
@@ -26,6 +27,7 @@ class EmojiResponse(BaseModel):
 
 class EmojiCountsResponse(BaseModel):
     """Emoji counts response model."""
+
     static: int = Field(..., description="Number of static emojis")
     animated: int = Field(..., description="Number of animated emojis")
     max_static: int = Field(..., description="Maximum static emojis allowed")
@@ -34,4 +36,5 @@ class EmojiCountsResponse(BaseModel):
 
 class EmojiUpdateRequest(BaseModel):
     """Emoji update request model."""
+
     name: Optional[str] = Field(None, description="New emoji name")

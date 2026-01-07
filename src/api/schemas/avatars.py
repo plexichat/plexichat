@@ -2,12 +2,12 @@
 Avatar schemas - Pydantic models for avatar and icon endpoints.
 """
 
-from typing import Optional
 from pydantic import BaseModel, Field, ConfigDict
 
 
 class AvatarUploadResponse(BaseModel):
     """Response after uploading a user avatar."""
+
     model_config = ConfigDict(from_attributes=True)
 
     success: bool = Field(..., description="Whether the upload was successful")
@@ -20,6 +20,7 @@ class AvatarUploadResponse(BaseModel):
 
 class IconUploadResponse(BaseModel):
     """Response after uploading a server icon."""
+
     model_config = ConfigDict(from_attributes=True)
 
     success: bool = Field(..., description="Whether the upload was successful")
