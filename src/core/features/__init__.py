@@ -50,16 +50,16 @@ Configuration (in config.yaml):
 Usage:
     from src.core import features
     features.setup(db)
-    
+
     # Get user's tier
     tier = features.get_user_tier(user_id)
-    
+
     # Get tier limits
     limits = features.get_tier_limits(tier)
-    
+
     # Check feature flag
     can_voice = features.has_feature(user_id, "can_voice")
-    
+
     # Get badges
     badges = features.get_user_badges(user_id)
 """
@@ -73,11 +73,16 @@ import utils.config as config
 
 from .schema import create_tables
 from .models import (
-    UserFeatures, TierLimits, Badge,
-    AVAILABLE_BADGES, DEFAULT_TIER_LIMITS
+    UserFeatures,
+    TierLimits,
+    Badge,
+    AVAILABLE_BADGES,
+    DEFAULT_TIER_LIMITS,
 )
 from .exceptions import (
-    FeatureError, InvalidTierError, InvalidBadgeError,
+    FeatureError,
+    InvalidTierError,
+    InvalidBadgeError,
 )
 
 _db: Any = None
@@ -102,7 +107,9 @@ def is_setup() -> bool:
 def _get_db():
     """Get database instance."""
     if not _setup_complete:
-        raise RuntimeError("Features module not initialized. Call features.setup(db) first.")
+        raise RuntimeError(
+            "Features module not initialized. Call features.setup(db) first."
+        )
     if _db is None:
         raise RuntimeError("Features database not set")
     return _db
@@ -123,19 +130,22 @@ def _get_config(key: str, default: Any = None) -> Any:
 
 # === Tier Management ===
 
+
 def get_available_tiers() -> List[str]:
     """Get list of available rate limit tiers."""
     tiers_config = _get_config("rate_limit_tiers", {})
-    return list(tiers_config.keys()) if tiers_config else ["standard", "alpha", "premium"]
+    return (
+        list(tiers_config.keys()) if tiers_config else ["standard", "alpha", "premium"]
+    )
 
 
 def get_tier_limits(tier: str) -> TierLimits:
     """
     Get limits for a specific tier.
-    
+
     Args:
         tier: Tier name (e.g., 'standard', 'alpha', 'premium')
-        
+
     Returns:
         TierLimits object with all limits for that tier
     """
@@ -171,11 +181,11 @@ def get_default_tier() -> str:
 def is_alpha_registration_enabled() -> bool:
     """
     Check if alpha registration mode is enabled.
-    
+
     When enabled, new user registrations automatically receive:
     - The 'alpha' tier (higher limits)
     - The 'alpha_tester' badge
-    
+
     Returns:
         True if alpha registration mode is active
     """
@@ -185,13 +195,13 @@ def is_alpha_registration_enabled() -> bool:
 def apply_new_user_features(user_id: int) -> Optional[UserFeatures]:
     """
     Apply default features to a newly registered user.
-    
+
     Called automatically after user registration. If alpha registration
     mode is enabled, grants alpha tier and alpha_tester badge.
-    
+
     Args:
         user_id: The newly registered user's ID
-        
+
     Returns:
         UserFeatures if any were applied, None otherwise
     """
@@ -202,6 +212,7 @@ def apply_new_user_features(user_id: int) -> Optional[UserFeatures]:
     now = int(time.time() * 1000)
 
     from src.utils.encryption import generate_snowflake_id
+
     feature_id = generate_snowflake_id()
 
     # Grant alpha tier and alpha_tester badge
@@ -212,8 +223,16 @@ def apply_new_user_features(user_id: int) -> Optional[UserFeatures]:
            (id, user_id, rate_limit_tier, badges, 
             granted_by, granted_at, expires_at, notes)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (feature_id, user_id, "alpha", badges,
-         None, now, None, "Auto-granted: Alpha registration")
+        (
+            feature_id,
+            user_id,
+            "alpha",
+            badges,
+            None,
+            now,
+            None,
+            "Auto-granted: Alpha registration",
+        ),
     )
 
     logger.info(f"Applied alpha tester features to new user {user_id}")
@@ -226,13 +245,14 @@ def apply_new_user_features(user_id: int) -> Optional[UserFeatures]:
 
 # === User Features ===
 
+
 def get_user_features(user_id: int) -> Optional[UserFeatures]:
     """
     Get all features for a user.
-    
+
     Args:
         user_id: User ID
-        
+
     Returns:
         UserFeatures object or None if no features set
     """
@@ -242,7 +262,7 @@ def get_user_features(user_id: int) -> Optional[UserFeatures]:
         """SELECT id, user_id, rate_limit_tier, badges,
                   granted_by, granted_at, expires_at, notes
            FROM user_features WHERE user_id = ?""",
-        (user_id,)
+        (user_id,),
     )
 
     if not row:
@@ -270,10 +290,10 @@ def get_user_features(user_id: int) -> Optional[UserFeatures]:
 def get_user_tier(user_id: int) -> str:
     """
     Get user's rate limit tier.
-    
+
     Args:
         user_id: User ID
-        
+
     Returns:
         Tier name (defaults to 'standard' if not set)
     """
@@ -289,10 +309,10 @@ def get_user_tier(user_id: int) -> str:
 def get_user_tier_limits(user_id: int) -> TierLimits:
     """
     Get the tier limits for a specific user.
-    
+
     Args:
         user_id: User ID
-        
+
     Returns:
         TierLimits for the user's current tier
     """
@@ -303,11 +323,11 @@ def get_user_tier_limits(user_id: int) -> TierLimits:
 def has_feature(user_id: int, feature: str) -> bool:
     """
     Check if user has a specific feature flag.
-    
+
     Args:
         user_id: User ID
         feature: Feature name (e.g., 'can_voice')
-        
+
     Returns:
         True if user has the feature
     """
@@ -325,10 +345,10 @@ def has_feature(user_id: int, feature: str) -> bool:
 def get_user_badges(user_id: int) -> List[str]:
     """
     Get user's profile badges.
-    
+
     Args:
         user_id: User ID
-        
+
     Returns:
         List of badge names
     """
@@ -343,6 +363,7 @@ def get_user_badges(user_id: int) -> List[str]:
 
 # === Admin Functions ===
 
+
 def set_user_features(
     user_id: int,
     admin_id: int,
@@ -352,14 +373,14 @@ def set_user_features(
 ) -> UserFeatures:
     """
     Set or update user features (admin only).
-    
+
     Args:
         user_id: Target user ID
         admin_id: Admin performing the action
         rate_limit_tier: Rate limit tier name
         expires_at: Unix timestamp when features expire (None = permanent)
         notes: Admin notes
-        
+
     Returns:
         Updated UserFeatures object
     """
@@ -369,7 +390,9 @@ def set_user_features(
     if rate_limit_tier:
         available = get_available_tiers()
         if rate_limit_tier not in available:
-            raise InvalidTierError(f"Invalid tier '{rate_limit_tier}'. Available: {available}")
+            raise InvalidTierError(
+                f"Invalid tier '{rate_limit_tier}'. Available: {available}"
+            )
 
     existing = get_user_features(user_id)
     now = int(time.time() * 1000)
@@ -400,13 +423,14 @@ def set_user_features(
 
         db.execute(
             f"UPDATE user_features SET {', '.join(updates)} WHERE user_id = ?",
-            tuple(params)
+            tuple(params),
         )
 
         logger.info(f"Updated features for user {user_id} by admin {admin_id}")
     else:
         # Create new
         from src.utils.encryption import generate_snowflake_id
+
         feature_id = generate_snowflake_id()
 
         db.execute(
@@ -414,10 +438,16 @@ def set_user_features(
                (id, user_id, rate_limit_tier, badges, 
                 granted_by, granted_at, expires_at, notes)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (feature_id, user_id,
-             rate_limit_tier or get_default_tier(),
-             "[]",  # Empty badges
-             admin_id, now, expires_at, notes)
+            (
+                feature_id,
+                user_id,
+                rate_limit_tier or get_default_tier(),
+                "[]",  # Empty badges
+                admin_id,
+                now,
+                expires_at,
+                notes,
+            ),
         )
 
         logger.info(f"Created features for user {user_id} by admin {admin_id}")
@@ -431,12 +461,12 @@ def set_user_features(
 def add_badge(user_id: int, admin_id: int, badge: str) -> List[str]:
     """
     Add a badge to user's profile (admin only).
-    
+
     Args:
         user_id: Target user ID
         admin_id: Admin performing the action
         badge: Badge name to add
-        
+
     Returns:
         Updated list of badges
     """
@@ -463,7 +493,7 @@ def add_badge(user_id: int, admin_id: int, badge: str) -> List[str]:
 
         db.execute(
             "UPDATE user_features SET badges = ?, granted_by = ?, granted_at = ? WHERE user_id = ?",
-            (json.dumps(badges), admin_id, int(time.time() * 1000), user_id)
+            (json.dumps(badges), admin_id, int(time.time() * 1000), user_id),
         )
 
         logger.info(f"Added badge '{badge}' to user {user_id} by admin {admin_id}")
@@ -474,12 +504,12 @@ def add_badge(user_id: int, admin_id: int, badge: str) -> List[str]:
 def remove_badge(user_id: int, admin_id: int, badge: str) -> List[str]:
     """
     Remove a badge from user's profile (admin only).
-    
+
     Args:
         user_id: Target user ID
         admin_id: Admin performing the action
         badge: Badge name to remove
-        
+
     Returns:
         Updated list of badges
     """
@@ -495,7 +525,7 @@ def remove_badge(user_id: int, admin_id: int, badge: str) -> List[str]:
 
         db.execute(
             "UPDATE user_features SET badges = ?, granted_by = ?, granted_at = ? WHERE user_id = ?",
-            (json.dumps(badges), admin_id, int(time.time() * 1000), user_id)
+            (json.dumps(badges), admin_id, int(time.time() * 1000), user_id),
         )
 
         logger.info(f"Removed badge '{badge}' from user {user_id} by admin {admin_id}")
@@ -503,16 +533,18 @@ def remove_badge(user_id: int, admin_id: int, badge: str) -> List[str]:
     return badges
 
 
-def set_user_tier(user_id: int, admin_id: int, tier: str, expires_at: Optional[int] = None) -> str:
+def set_user_tier(
+    user_id: int, admin_id: int, tier: str, expires_at: Optional[int] = None
+) -> str:
     """
     Set user's rate limit tier (admin only).
-    
+
     Args:
         user_id: Target user ID
         admin_id: Admin performing the action
         tier: Tier name
         expires_at: When tier expires (None = permanent)
-        
+
     Returns:
         The tier that was set
     """
@@ -523,12 +555,12 @@ def set_user_tier(user_id: int, admin_id: int, tier: str, expires_at: Optional[i
 def get_rate_limit_multiplier(user_id: int) -> float:
     """
     Get the rate limit multiplier for a user.
-    
+
     This is used by the rate limiting middleware to adjust limits.
-    
+
     Args:
         user_id: User ID
-        
+
     Returns:
         Multiplier (e.g., 1.0 for standard, 2.0 for alpha)
     """
@@ -538,13 +570,27 @@ def get_rate_limit_multiplier(user_id: int) -> float:
 
 
 __all__ = [
-    'setup', 'is_setup',
-    'get_available_tiers', 'get_tier_limits', 'get_default_tier',
-    'get_user_features', 'get_user_tier', 'get_user_tier_limits',
-    'has_feature', 'get_user_badges',
-    'set_user_features', 'add_badge', 'remove_badge', 'set_user_tier',
-    'get_rate_limit_multiplier',
-    'is_alpha_registration_enabled', 'apply_new_user_features',
-    'UserFeatures', 'TierLimits', 'Badge',
-    'FeatureError', 'InvalidTierError', 'InvalidBadgeError',
+    "setup",
+    "is_setup",
+    "get_available_tiers",
+    "get_tier_limits",
+    "get_default_tier",
+    "get_user_features",
+    "get_user_tier",
+    "get_user_tier_limits",
+    "has_feature",
+    "get_user_badges",
+    "set_user_features",
+    "add_badge",
+    "remove_badge",
+    "set_user_tier",
+    "get_rate_limit_multiplier",
+    "is_alpha_registration_enabled",
+    "apply_new_user_features",
+    "UserFeatures",
+    "TierLimits",
+    "Badge",
+    "FeatureError",
+    "InvalidTierError",
+    "InvalidBadgeError",
 ]

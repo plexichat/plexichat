@@ -7,11 +7,13 @@ from typing import List
 
 class SoundboardError(Exception):
     """Base exception for all soundboard errors."""
+
     pass
 
 
 class SoundNotFoundError(SoundboardError):
     """Sound does not exist."""
+
     pass
 
 
@@ -53,6 +55,7 @@ class SoundTooLongError(SoundboardError):
 
 class InvalidSoundNameError(SoundboardError):
     """Sound name is invalid."""
+
     pass
 
 
@@ -74,14 +77,17 @@ class PermissionDeniedError(SoundboardError):
 
 class ServerNotFoundError(SoundboardError):
     """Server does not exist."""
+
     pass
 
 
 class ChannelNotFoundError(SoundboardError):
     """Channel does not exist or is not a voice channel."""
+
     pass
 
 
 class NotInVoiceChannelError(SoundboardError):
     """User is not in a voice channel."""
+
     pass

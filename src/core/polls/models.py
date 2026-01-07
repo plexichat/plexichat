@@ -10,6 +10,7 @@ from src.core.base import SnowflakeID
 
 class PollResultsVisibility(Enum):
     """When poll results are visible."""
+
     ALWAYS = "always"
     AFTER_VOTE = "after_vote"
     AFTER_END = "after_end"
@@ -18,6 +19,7 @@ class PollResultsVisibility(Enum):
 @dataclass
 class PollOption:
     """Represents a poll option."""
+
     id: SnowflakeID
     poll_id: SnowflakeID
     text: str
@@ -28,6 +30,7 @@ class PollOption:
 @dataclass
 class Poll:
     """Represents a poll attached to a message."""
+
     id: SnowflakeID
     message_id: SnowflakeID
     question: str
@@ -45,6 +48,7 @@ class Poll:
 @dataclass
 class PollVote:
     """Represents a user's vote on a poll."""
+
     id: SnowflakeID
     poll_id: SnowflakeID
     option_id: SnowflakeID
@@ -55,6 +59,7 @@ class PollVote:
 @dataclass
 class PollResults:
     """Poll results with vote counts and percentages."""
+
     poll: Poll
     options: List[PollOption]
     total_votes: int

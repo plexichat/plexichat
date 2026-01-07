@@ -9,6 +9,7 @@ from src.core.base import SnowflakeID
 @dataclass
 class SettingsConfig:
     """Configuration for the settings module."""
+
     max_settings_per_user: int = 100
     max_key_length: int = 100
     max_value_length: int = 10000
@@ -18,6 +19,7 @@ class SettingsConfig:
 @dataclass
 class UserSetting:
     """A single user setting."""
+
     id: SnowflakeID
     user_id: SnowflakeID
     key: str

@@ -10,6 +10,7 @@ from src.core.base import SnowflakeID
 
 class UserStatus(Enum):
     """User online status."""
+
     ONLINE = "online"
     IDLE = "idle"
     DND = "dnd"
@@ -19,6 +20,7 @@ class UserStatus(Enum):
 
 class ActivityType(Enum):
     """Type of user activity."""
+
     PLAYING = "playing"
     STREAMING = "streaming"
     LISTENING = "listening"
@@ -30,6 +32,7 @@ class ActivityType(Enum):
 @dataclass
 class CustomStatus:
     """User's custom status message."""
+
     text: str
     emoji: Optional[str] = None
     expires_at: Optional[int] = None
@@ -39,6 +42,7 @@ class CustomStatus:
 @dataclass
 class Activity:
     """User's current activity."""
+
     activity_type: ActivityType
     name: str
     details: Optional[str] = None
@@ -56,6 +60,7 @@ class Activity:
 @dataclass
 class TypingIndicator:
     """Typing indicator for a user in a channel."""
+
     user_id: SnowflakeID
     channel_id: SnowflakeID
     started_at: int
@@ -65,6 +70,7 @@ class TypingIndicator:
 @dataclass
 class Presence:
     """Full presence information for a user."""
+
     user_id: SnowflakeID
     status: UserStatus
     custom_status: Optional[CustomStatus] = None

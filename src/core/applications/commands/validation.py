@@ -15,14 +15,16 @@ MAX_COMMAND_DESCRIPTION_LENGTH = 100
 MAX_OPTIONS_PER_COMMAND = 25
 
 
-def validate_command_name(name: str, command_type: CommandType = CommandType.CHAT_INPUT) -> Tuple[bool, List[str]]:
+def validate_command_name(
+    name: str, command_type: CommandType = CommandType.CHAT_INPUT
+) -> Tuple[bool, List[str]]:
     """
     Validate a command name.
-    
+
     Args:
         name: Command name
         command_type: Type of command
-        
+
     Returns:
         Tuple of (valid, issues)
     """
@@ -37,25 +39,31 @@ def validate_command_name(name: str, command_type: CommandType = CommandType.CHA
 
     if command_type == CommandType.CHAT_INPUT:
         if not COMMAND_NAME_PATTERN.match(name):
-            issues.append("Chat command name must be lowercase and contain only letters, numbers, hyphens, and underscores")
+            issues.append(
+                "Chat command name must be lowercase and contain only letters, numbers, hyphens, and underscores"
+            )
 
         if name != name.lower():
             issues.append("Chat command name must be lowercase")
     else:
         if not CONTEXT_MENU_NAME_PATTERN.match(name):
-            issues.append("Context menu command name can only contain letters, numbers, hyphens, underscores, and spaces")
+            issues.append(
+                "Context menu command name can only contain letters, numbers, hyphens, underscores, and spaces"
+            )
 
     return len(issues) == 0, issues
 
 
-def validate_command_description(description: str, command_type: CommandType) -> Tuple[bool, List[str]]:
+def validate_command_description(
+    description: str, command_type: CommandType
+) -> Tuple[bool, List[str]]:
     """
     Validate a command description.
-    
+
     Args:
         description: Command description
         command_type: Type of command
-        
+
     Returns:
         Tuple of (valid, issues)
     """
@@ -65,10 +73,14 @@ def validate_command_description(description: str, command_type: CommandType) ->
         if not description:
             issues.append("Chat input commands require a description")
         elif len(description) > MAX_COMMAND_DESCRIPTION_LENGTH:
-            issues.append(f"Command description exceeds {MAX_COMMAND_DESCRIPTION_LENGTH} characters")
+            issues.append(
+                f"Command description exceeds {MAX_COMMAND_DESCRIPTION_LENGTH} characters"
+            )
     else:
         if description and len(description) > MAX_COMMAND_DESCRIPTION_LENGTH:
-            issues.append(f"Command description exceeds {MAX_COMMAND_DESCRIPTION_LENGTH} characters")
+            issues.append(
+                f"Command description exceeds {MAX_COMMAND_DESCRIPTION_LENGTH} characters"
+            )
 
     return len(issues) == 0, issues
 
@@ -76,10 +88,10 @@ def validate_command_description(description: str, command_type: CommandType) ->
 def validate_command(command_data: Dict[str, Any]) -> Tuple[bool, List[str]]:
     """
     Validate complete command data.
-    
+
     Args:
         command_data: Command data dict
-        
+
     Returns:
         Tuple of (valid, issues)
     """
@@ -109,6 +121,7 @@ def validate_command(command_data: Dict[str, Any]) -> Tuple[bool, List[str]]:
             issues.append(f"Command exceeds {MAX_OPTIONS_PER_COMMAND} options")
         else:
             from .options import validate_options
+
             opts_valid, opts_issues = validate_options(options)
             issues.extend(opts_issues)
 
@@ -117,7 +130,9 @@ def validate_command(command_data: Dict[str, Any]) -> Tuple[bool, List[str]]:
         try:
             int(default_perms)
         except (ValueError, TypeError):
-            issues.append("default_member_permissions must be a valid permission integer string")
+            issues.append(
+                "default_member_permissions must be a valid permission integer string"
+            )
 
     return len(issues) == 0, issues
 
@@ -125,10 +140,10 @@ def validate_command(command_data: Dict[str, Any]) -> Tuple[bool, List[str]]:
 def validate_command_update(update_data: Dict[str, Any]) -> Tuple[bool, List[str]]:
     """
     Validate command update data.
-    
+
     Args:
         update_data: Update data dict
-        
+
     Returns:
         Tuple of (valid, issues)
     """
@@ -142,7 +157,9 @@ def validate_command_update(update_data: Dict[str, Any]) -> Tuple[bool, List[str
             except ValueError:
                 command_type = CommandType.CHAT_INPUT
 
-        name_valid, name_issues = validate_command_name(update_data["name"], command_type)
+        name_valid, name_issues = validate_command_name(
+            update_data["name"], command_type
+        )
         issues.extend(name_issues)
 
     if "description" in update_data:
@@ -164,6 +181,7 @@ def validate_command_update(update_data: Dict[str, Any]) -> Tuple[bool, List[str
             issues.append(f"Command exceeds {MAX_OPTIONS_PER_COMMAND} options")
         elif options:
             from .options import validate_options
+
             opts_valid, opts_issues = validate_options(options)
             issues.extend(opts_issues)
 

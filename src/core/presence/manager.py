@@ -42,7 +42,9 @@ class PresenceManager(BaseManager):
     TypingIndicator = TypingIndicator
     CustomStatus = CustomStatus
 
-    def __init__(self, db, auth_module=None, relationships_module=None, servers_module=None):
+    def __init__(
+        self, db, auth_module=None, relationships_module=None, servers_module=None
+    ):
         """
         Initialize the presence manager.
 
@@ -57,8 +59,8 @@ class PresenceManager(BaseManager):
         self._servers = servers_module
         self._config = self._load_config()
 
-        # Load config
-        self._typing_timeout_ms = self._config.get("typing_timeout_ms", 10000)
+        # Load config - Timeout hierarchy: Client throttle (3s) < Server expiry (6s) < UI timeout (7s)
+        self._typing_timeout_ms = self._config.get("typing_timeout_ms", 6000)
         self._presence_timeout_ms = self._config.get("timeout_ms", 300000)
 
         create_tables(db)
@@ -80,35 +82,34 @@ class PresenceManager(BaseManager):
         self._db.insert_or_ignore(
             "pres_presence",
             ["user_id", "status", "last_seen", "updated_at"],
-            (user_id, "offline", now, now)
+            (user_id, "offline", now, now),
         )
 
     def _cleanup_expired_typing(self) -> None:
         """Remove expired typing indicators."""
         now = self._get_timestamp()
-        self._db.execute(
-            "DELETE FROM pres_typing WHERE expires_at < ?",
-            (now,)
-        )
+        self._db.execute("DELETE FROM pres_typing WHERE expires_at < ?", (now,))
 
     def _cleanup_expired_custom_status(self, user_id: SnowflakeID) -> None:
         """Remove expired custom status for user."""
         now = self._get_timestamp()
         self._db.execute(
             "DELETE FROM pres_custom_status WHERE user_id = ? AND expires_at IS NOT NULL AND expires_at < ?",
-            (user_id, now)
+            (user_id, now),
         )
 
     # === Status Operations ===
 
-    def set_status(self, user_id: SnowflakeID, status: Union[UserStatus, str]) -> Presence:
+    def set_status(
+        self, user_id: SnowflakeID, status: Union[UserStatus, str]
+    ) -> Presence:
         """
         Set user's status.
-        
+
         Args:
             user_id: ID of the user
             status: New status (online, idle, dnd, offline)
-            
+
         Returns:
             Updated Presence
         """
@@ -125,14 +126,18 @@ class PresenceManager(BaseManager):
 
         self._db.execute(
             "UPDATE pres_presence SET status = ?, last_seen = ?, updated_at = ? WHERE user_id = ?",
-            (status.value, now, now, user_id)
+            (status.value, now, now, user_id),
         )
 
         # Invalidate/Update cache
         if redis_available():
             # We fetch full presence to cache it
             presence = self.get_presence(user_id, use_cache=False)
-            cache_set(f"presence:{user_id}", self._presence_to_dict(presence), ttl=self._presence_timeout_ms // 1000)
+            cache_set(
+                f"presence:{user_id}",
+                self._presence_to_dict(presence),
+                ttl=self._presence_timeout_ms // 1000,
+            )
 
         logger.debug(f"User {user_id} status set to {status.value}")
 
@@ -142,8 +147,7 @@ class PresenceManager(BaseManager):
     def get_status(self, user_id: SnowflakeID) -> UserStatus:
         """Get user's current status."""
         row = self._db.fetch_one(
-            "SELECT status FROM pres_presence WHERE user_id = ?",
-            (user_id,)
+            "SELECT status FROM pres_presence WHERE user_id = ?", (user_id,)
         )
 
         if not row:
@@ -162,17 +166,17 @@ class PresenceManager(BaseManager):
         user_id: SnowflakeID,
         text: str,
         emoji: Optional[str] = None,
-        expires_at: Optional[int] = None
+        expires_at: Optional[int] = None,
     ) -> Presence:
         """
         Set user's custom status message.
-        
+
         Args:
             user_id: ID of the user
             text: Custom status text
             emoji: Optional emoji
             expires_at: Optional expiration timestamp in milliseconds
-            
+
         Returns:
             Updated Presence
         """
@@ -186,13 +190,12 @@ class PresenceManager(BaseManager):
             ["user_id", "text", "emoji", "expires_at", "created_at"],
             (user_id, text, emoji, expires_at, now),
             ["user_id"],
-            ["text", "emoji", "expires_at"]
+            ["text", "emoji", "expires_at"],
         )
 
         # Update presence timestamp
         self._db.execute(
-            "UPDATE pres_presence SET updated_at = ? WHERE user_id = ?",
-            (now, user_id)
+            "UPDATE pres_presence SET updated_at = ? WHERE user_id = ?", (now, user_id)
         )
 
         logger.debug(f"User {user_id} custom status set")
@@ -205,8 +208,7 @@ class PresenceManager(BaseManager):
         self._cleanup_expired_custom_status(user_id)
 
         row = self._db.fetch_one(
-            "SELECT * FROM pres_custom_status WHERE user_id = ?",
-            (user_id,)
+            "SELECT * FROM pres_custom_status WHERE user_id = ?", (user_id,)
         )
 
         if not row:
@@ -216,21 +218,18 @@ class PresenceManager(BaseManager):
             text=row["text"],
             emoji=row["emoji"],
             expires_at=row["expires_at"],
-            created_at=row["created_at"]
+            created_at=row["created_at"],
         )
 
     def clear_custom_status(self, user_id: SnowflakeID) -> Presence:
         """Clear user's custom status."""
         self._validate_user(user_id)
-        self._db.execute(
-            "DELETE FROM pres_custom_status WHERE user_id = ?",
-            (user_id,)
-        )
+        self._db.execute("DELETE FROM pres_custom_status WHERE user_id = ?", (user_id,))
 
         # Update presence timestamp
         self._db.execute(
             "UPDATE pres_presence SET updated_at = ? WHERE user_id = ?",
-            (self._get_timestamp(), user_id)
+            (self._get_timestamp(), user_id),
         )
 
         logger.debug(f"User {user_id} custom status cleared")
@@ -248,11 +247,11 @@ class PresenceManager(BaseManager):
         url: Optional[str] = None,
         state: Optional[str] = None,
         timestamps: Optional[Dict[str, int]] = None,
-        assets: Optional[Dict[str, str]] = None
+        assets: Optional[Dict[str, str]] = None,
     ) -> Presence:
         """
         Set user's current activity.
-        
+
         Args:
             user_id: ID of the user
             activity_type: Type of activity
@@ -262,7 +261,7 @@ class PresenceManager(BaseManager):
             state: Optional state text
             timestamps: Optional dict with 'start' and/or 'end' timestamps
             assets: Optional dict with image keys (large_image, large_text, etc.)
-            
+
         Returns:
             Updated Presence
         """
@@ -289,25 +288,63 @@ class PresenceManager(BaseManager):
 
         self._db.upsert(
             "pres_activity",
-            ["user_id", "activity_type", "name", "details", "url", "state",
-             "start_timestamp", "end_timestamp", "large_image", "large_text",
-             "small_image", "small_text", "created_at"],
-            (user_id, activity_type.value, name, details, url, state,
-             start_ts, end_ts, large_image, large_text, small_image, small_text, now),
+            [
+                "user_id",
+                "activity_type",
+                "name",
+                "details",
+                "url",
+                "state",
+                "start_timestamp",
+                "end_timestamp",
+                "large_image",
+                "large_text",
+                "small_image",
+                "small_text",
+                "created_at",
+            ],
+            (
+                user_id,
+                activity_type.value,
+                name,
+                details,
+                url,
+                state,
+                start_ts,
+                end_ts,
+                large_image,
+                large_text,
+                small_image,
+                small_text,
+                now,
+            ),
             ["user_id"],
-            ["activity_type", "name", "details", "url", "state",
-             "start_timestamp", "end_timestamp", "large_image", "large_text",
-             "small_image", "small_text"]
+            [
+                "activity_type",
+                "name",
+                "details",
+                "url",
+                "state",
+                "start_timestamp",
+                "end_timestamp",
+                "large_image",
+                "large_text",
+                "small_image",
+                "small_text",
+            ],
         )
 
         self._db.execute(
-            "UPDATE pres_presence SET updated_at = ? WHERE user_id = ?",
-            (now, user_id)
+            "UPDATE pres_presence SET updated_at = ? WHERE user_id = ?", (now, user_id)
         )
 
         if redis_available():
             presence = self.get_presence(user_id, use_cache=False)
-            cache_set(f"presence:{user_id}", self._presence_to_dict(presence), ttl=self._presence_timeout_ms // 1000)
+            cache_set(
+                f"presence:{user_id}",
+                self._presence_to_dict(presence),
+                ttl=self._presence_timeout_ms // 1000,
+            )
 
         logger.debug(f"User {user_id} activity set to {activity_type.value}: {name}")
 
@@ -317,8 +354,7 @@ class PresenceManager(BaseManager):
     def get_activity(self, user_id: SnowflakeID) -> Optional[Activity]:
         """Get user's current activity."""
         row = self._db.fetch_one(
-            "SELECT * FROM pres_activity WHERE user_id = ?",
-            (user_id,)
+            "SELECT * FROM pres_activity WHERE user_id = ?", (user_id,)
         )
 
         if not row:
@@ -336,27 +372,27 @@ class PresenceManager(BaseManager):
             large_text=row["large_text"],
             small_image=row["small_image"],
             small_text=row["small_text"],
-            created_at=row["created_at"]
+            created_at=row["created_at"],
         )
 
     def clear_activity(self, user_id: SnowflakeID) -> Presence:
         """Clear user's current activity."""
         self._validate_user(user_id)
 
-        self._db.execute(
-            "DELETE FROM pres_activity WHERE user_id = ?",
-            (user_id,)
-        )
+        self._db.execute("DELETE FROM pres_activity WHERE user_id = ?", (user_id,))
 
         now = self._get_timestamp()
         self._db.execute(
-            "UPDATE pres_presence SET updated_at = ? WHERE user_id = ?",
-            (now, user_id)
+            "UPDATE pres_presence SET updated_at = ? WHERE user_id = ?", (now, user_id)
         )
 
         if redis_available():
             presence = self.get_presence(user_id, use_cache=False)
-            cache_set(f"presence:{user_id}", self._presence_to_dict(presence), ttl=self._presence_timeout_ms // 1000)
+            cache_set(
+                f"presence:{user_id}",
+                self._presence_to_dict(presence),
+                ttl=self._presence_timeout_ms // 1000,
+            )
 
         result = self.get_presence(user_id)
         return result
@@ -371,8 +407,7 @@ class PresenceManager(BaseManager):
                 return self._dict_to_presence(cached)
 
         row = self._db.fetch_one(
-            "SELECT * FROM pres_presence WHERE user_id = ?",
-            (user_id,)
+            "SELECT * FROM pres_presence WHERE user_id = ?", (user_id,)
         )
 
         if not row:
@@ -382,7 +417,7 @@ class PresenceManager(BaseManager):
                 custom_status=None,
                 activity=None,
                 last_seen=0,
-                updated_at=0
+                updated_at=0,
             )
         else:
             custom_status = self.get_custom_status(user_id)
@@ -394,13 +429,17 @@ class PresenceManager(BaseManager):
                 custom_status=custom_status,
                 activity=activity,
                 last_seen=row["last_seen"],
-                updated_at=row["updated_at"]
+                updated_at=row["updated_at"],
             )
-            
+
         # Cache the result
         if use_cache and redis_available() and row:
-             cache_set(f"presence:{user_id}", self._presence_to_dict(presence), ttl=self._presence_timeout_ms // 1000)
-             
+            cache_set(
+                f"presence:{user_id}",
+                self._presence_to_dict(presence),
+                ttl=self._presence_timeout_ms // 1000,
+            )
+
         return presence
 
     def get_presences(self, user_ids: List[SnowflakeID]) -> List[Presence]:
@@ -415,6 +454,7 @@ class PresenceManager(BaseManager):
         if redis_available():
             try:
                 from src.core.database.cache import get_bulk_presence
+
                 cached_data = get_bulk_presence(user_ids)
                 for uid, data in cached_data.items():
                     try:
@@ -432,7 +472,7 @@ class PresenceManager(BaseManager):
         placeholders = ",".join("?" * len(missing_ids))
         presence_rows = self._db.fetch_all(
             f"SELECT * FROM pres_presence WHERE user_id IN ({placeholders})",
-            tuple(missing_ids)
+            tuple(missing_ids),
         )
         presence_map = {row["user_id"]: row for row in presence_rows}
 
@@ -440,14 +480,14 @@ class PresenceManager(BaseManager):
         self._cleanup_expired_custom_status_batch(missing_ids)
         custom_rows = self._db.fetch_all(
             f"SELECT * FROM pres_custom_status WHERE user_id IN ({placeholders})",
-            tuple(missing_ids)
+            tuple(missing_ids),
         )
         custom_map = {row["user_id"]: row for row in custom_rows}
 
         # Batch fetch all activities
         activity_rows = self._db.fetch_all(
             f"SELECT * FROM pres_activity WHERE user_id IN ({placeholders})",
-            tuple(missing_ids)
+            tuple(missing_ids),
         )
         activity_map = {row["user_id"]: row for row in activity_rows}
 
@@ -461,31 +501,39 @@ class PresenceManager(BaseManager):
                     custom_status=None,
                     activity=None,
                     last_seen=0,
-                    updated_at=0
+                    updated_at=0,
                 )
             else:
                 cust_row = custom_map.get(uid)
-                custom_status = CustomStatus(
-                    text=cust_row["text"],
-                    emoji=cust_row["emoji"],
-                    expires_at=cust_row["expires_at"]
-                ) if cust_row else None
+                custom_status = (
+                    CustomStatus(
+                        text=cust_row["text"],
+                        emoji=cust_row["emoji"],
+                        expires_at=cust_row["expires_at"],
+                    )
+                    if cust_row
+                    else None
+                )
 
                 act_row = activity_map.get(uid)
-                activity = Activity(
-                    activity_type=ActivityType(act_row["activity_type"]),
-                    name=act_row["name"],
-                    details=act_row["details"],
-                    url=act_row["url"],
-                    state=act_row["state"],
-                    start_timestamp=act_row["start_timestamp"],
-                    end_timestamp=act_row["end_timestamp"],
-                    large_image=act_row["large_image"],
-                    large_text=act_row["large_text"],
-                    small_image=act_row["small_image"],
-                    small_text=act_row["small_text"],
-                    created_at=act_row["created_at"]
-                ) if act_row else None
+                activity = (
+                    Activity(
+                        activity_type=ActivityType(act_row["activity_type"]),
+                        name=act_row["name"],
+                        details=act_row["details"],
+                        url=act_row["url"],
+                        state=act_row["state"],
+                        start_timestamp=act_row["start_timestamp"],
+                        end_timestamp=act_row["end_timestamp"],
+                        large_image=act_row["large_image"],
+                        large_text=act_row["large_text"],
+                        small_image=act_row["small_image"],
+                        small_text=act_row["small_text"],
+                        created_at=act_row["created_at"],
+                    )
+                    if act_row
+                    else None
+                )
 
                 presence = Presence(
                     user_id=uid,
@@ -493,17 +541,20 @@ class PresenceManager(BaseManager):
                     custom_status=custom_status,
                     activity=activity,
                     last_seen=pres_row["last_seen"],
-                    updated_at=pres_row["updated_at"]
+                    updated_at=pres_row["updated_at"],
                 )
-            
+
             results_map[uid] = presence
-            
+
             # Cache missing ones
             if redis_available() and pres_row:
-                 cache_set(f"presence:{uid}", self._presence_to_dict(presence), ttl=self._presence_timeout_ms // 1000)
+                cache_set(
+                    f"presence:{uid}",
+                    self._presence_to_dict(presence),
+                    ttl=self._presence_timeout_ms // 1000,
+                )
 
         return [results_map[uid] for uid in user_ids]
-
 
     def _cleanup_expired_custom_status_batch(self, user_ids: List[SnowflakeID]) -> None:
         """Remove expired custom statuses for multiple users."""
@@ -513,7 +564,7 @@ class PresenceManager(BaseManager):
         placeholders = ",".join("?" * len(user_ids))
         self._db.execute(
             f"DELETE FROM pres_custom_status WHERE user_id IN ({placeholders}) AND expires_at IS NOT NULL AND expires_at < ?",
-            tuple(user_ids) + (now,)
+            tuple(user_ids) + (now,),
         )
 
     def update_last_seen(self, user_id: SnowflakeID) -> Presence:
@@ -525,7 +576,7 @@ class PresenceManager(BaseManager):
 
         self._db.execute(
             "UPDATE pres_presence SET last_seen = ?, updated_at = ? WHERE user_id = ?",
-            (now, now, user_id)
+            (now, now, user_id),
         )
 
         result = self.get_presence(user_id)
@@ -533,14 +584,16 @@ class PresenceManager(BaseManager):
 
     # === Typing Indicators ===
 
-    def start_typing(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> TypingIndicator:
+    def start_typing(
+        self, user_id: SnowflakeID, channel_id: SnowflakeID
+    ) -> TypingIndicator:
         """
         Start typing indicator in a channel.
-        
+
         Args:
             user_id: ID of the user typing
             channel_id: ID of the channel
-            
+
         Returns:
             TypingIndicator
         """
@@ -557,7 +610,7 @@ class PresenceManager(BaseManager):
             ["id", "user_id", "channel_id", "started_at", "expires_at"],
             (indicator_id, user_id, channel_id, now, expires_at),
             ["user_id", "channel_id"],
-            ["id", "started_at", "expires_at"]
+            ["id", "started_at", "expires_at"],
         )
 
         logger.debug(f"User {user_id} started typing in channel {channel_id}")
@@ -566,23 +619,23 @@ class PresenceManager(BaseManager):
             user_id=user_id,
             channel_id=channel_id,
             started_at=now,
-            expires_at=expires_at
+            expires_at=expires_at,
         )
 
     def stop_typing(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> bool:
         """
         Stop typing indicator in a channel.
-        
+
         Args:
             user_id: ID of the user
             channel_id: ID of the channel
-            
+
         Returns:
             True if indicator was removed
         """
         self._db.execute(
             "DELETE FROM pres_typing WHERE user_id = ? AND channel_id = ?",
-            (user_id, channel_id)
+            (user_id, channel_id),
         )
 
         logger.debug(f"User {user_id} stopped typing in channel {channel_id}")
@@ -594,8 +647,7 @@ class PresenceManager(BaseManager):
         self._cleanup_expired_typing()
 
         rows = self._db.fetch_all(
-            "SELECT * FROM pres_typing WHERE channel_id = ?",
-            (channel_id,)
+            "SELECT * FROM pres_typing WHERE channel_id = ?", (channel_id,)
         )
 
         return [
@@ -603,20 +655,61 @@ class PresenceManager(BaseManager):
                 user_id=row["user_id"],
                 channel_id=row["channel_id"],
                 started_at=row["started_at"],
-                expires_at=row["expires_at"]
+                expires_at=row["expires_at"],
             )
             for row in rows
         ]
+
+    def get_user_typing_channels(self, user_id: SnowflakeID) -> List[SnowflakeID]:
+        """
+        Get all channels where a user is currently typing.
+
+        Args:
+            user_id: ID of the user
+
+        Returns:
+            List of channel IDs where user has active typing indicators
+        """
+        self._cleanup_expired_typing()
+
+        rows = self._db.fetch_all(
+            "SELECT channel_id FROM pres_typing WHERE user_id = ?", (user_id,)
+        )
+
+        return [row["channel_id"] for row in rows]
+
+    def clear_all_typing(self, user_id: SnowflakeID) -> List[SnowflakeID]:
+        """
+        Clear all typing indicators for a user (used on disconnect).
+
+        Args:
+            user_id: ID of the user
+
+        Returns:
+            List of channel IDs where typing was cleared
+        """
+        # Get channels before clearing
+        channels = self.get_user_typing_channels(user_id)
+
+        if channels:
+            self._db.execute(
+                "DELETE FROM pres_typing WHERE user_id = ?", (user_id,)
+            )
+            logger.debug(
+                f"Cleared typing indicators for user {user_id} in {len(channels)} channels"
+            )
+
+        return channels
 
     # === Online Queries ===
 
     def get_online_friends(self, user_id: SnowflakeID) -> List[SnowflakeID]:
         """
         Get list of online friend user IDs.
-        
+
         Args:
             user_id: ID of the user
-            
+
         Returns:
             List of online friend user IDs
         """
@@ -627,7 +720,11 @@ class PresenceManager(BaseManager):
         if not friend_ids:
             return []
 
-        online_statuses = [UserStatus.ONLINE.value, UserStatus.IDLE.value, UserStatus.DND.value]
+        online_statuses = [
+            UserStatus.ONLINE.value,
+            UserStatus.IDLE.value,
+            UserStatus.DND.value,
+        ]
 
         placeholders = ",".join("?" * len(friend_ids))
         status_placeholders = ",".join("?" * len(online_statuses))
@@ -636,19 +733,21 @@ class PresenceManager(BaseManager):
             f"""SELECT user_id FROM pres_presence 
                 WHERE user_id IN ({placeholders}) 
                 AND status IN ({status_placeholders})""",
-            tuple(friend_ids) + tuple(online_statuses)
+            tuple(friend_ids) + tuple(online_statuses),
         )
 
         return [row["user_id"] for row in rows]
 
-    def get_online_server_members(self, user_id: SnowflakeID, server_id: SnowflakeID) -> List[SnowflakeID]:
+    def get_online_server_members(
+        self, user_id: SnowflakeID, server_id: SnowflakeID
+    ) -> List[SnowflakeID]:
         """
         Get list of online member user IDs in a server.
-        
+
         Args:
             user_id: ID of the requesting user
             server_id: ID of the server
-            
+
         Returns:
             List of online member user IDs
         """
@@ -660,7 +759,11 @@ class PresenceManager(BaseManager):
             return []
 
         member_ids = [m.user_id for m in members]
-        online_statuses = [UserStatus.ONLINE.value, UserStatus.IDLE.value, UserStatus.DND.value]
+        online_statuses = [
+            UserStatus.ONLINE.value,
+            UserStatus.IDLE.value,
+            UserStatus.DND.value,
+        ]
 
         placeholders = ",".join("?" * len(member_ids))
         status_placeholders = ",".join("?" * len(online_statuses))
@@ -669,25 +772,27 @@ class PresenceManager(BaseManager):
             f"""SELECT user_id FROM pres_presence 
                 WHERE user_id IN ({placeholders}) 
                 AND status IN ({status_placeholders})""",
-            tuple(member_ids) + tuple(online_statuses)
+            tuple(member_ids) + tuple(online_statuses),
         )
 
         return [row["user_id"] for row in rows]
 
     # === Visibility ===
 
-    def get_visible_presence(self, viewer_id: SnowflakeID, target_id: SnowflakeID) -> Presence:
+    def get_visible_presence(
+        self, viewer_id: SnowflakeID, target_id: SnowflakeID
+    ) -> Presence:
         """
         Get presence as visible to a specific viewer.
-        
+
         Respects invisible mode and block relationships.
         Blocked users see target as offline.
         Invisible users appear offline to others.
-        
+
         Args:
             viewer_id: ID of the user viewing
             target_id: ID of the user being viewed
-            
+
         Returns:
             Presence (may show offline if invisible or blocked)
         """
@@ -706,7 +811,7 @@ class PresenceManager(BaseManager):
                     custom_status=None,
                     activity=None,
                     last_seen=0,
-                    updated_at=0
+                    updated_at=0,
                 )
 
         # Invisible users appear offline to others
@@ -717,7 +822,7 @@ class PresenceManager(BaseManager):
                 custom_status=presence.custom_status,
                 activity=None,
                 last_seen=presence.last_seen,
-                updated_at=presence.updated_at
+                updated_at=presence.updated_at,
             )
 
         return presence
@@ -727,11 +832,11 @@ class PresenceManager(BaseManager):
     ) -> Dict[SnowflakeID, Presence]:
         """
         Get visible presence for multiple users efficiently.
-        
+
         Args:
             viewer_id: ID of the user viewing
             target_ids: List of user IDs to view
-            
+
         Returns:
             Dict mapping user_id to Presence
         """
@@ -739,13 +844,12 @@ class PresenceManager(BaseManager):
         result = {}
 
         # Pre-fetch blocked status for efficient bulk check
-        blocked_ids = set()
         if self._relationships:
             # This assumes relationships module has a way to bulk check or we iterate
-            # For now, we iterate as optimizing relationships is a separate task, 
+            # For now, we iterate as optimizing relationships is a separate task,
             # but usually the list of members is larger than list of blocks.
             # Ideally relationships would have `get_blocked_ids(user_id)`
-            blocked_ids = set(self._relationships.get_blocked_ids(viewer_id))
+            set(self._relationships.get_blocked_ids(viewer_id))
             # Note: is_blocked_by_either handles both directions.
             # We would need a bulk "is_blocked_by_either" check to be fully efficient,
             # but standardizing on just checking if viewer has blocked them or vice versa is a start.
@@ -755,7 +859,7 @@ class PresenceManager(BaseManager):
 
         for p in presences:
             target_id = p.user_id
-            
+
             # User viewing themselves always sees real status
             if viewer_id == target_id:
                 result[target_id] = p
@@ -764,8 +868,10 @@ class PresenceManager(BaseManager):
             # Check if blocked (this might still be N+1 for blocks, but fewer db hits than full presence fetch)
             is_blocked = False
             if self._relationships:
-                is_blocked = self._relationships.is_blocked_by_either(viewer_id, target_id)
-            
+                is_blocked = self._relationships.is_blocked_by_either(
+                    viewer_id, target_id
+                )
+
             if is_blocked:
                 result[target_id] = Presence(
                     user_id=target_id,
@@ -773,7 +879,7 @@ class PresenceManager(BaseManager):
                     custom_status=None,
                     activity=None,
                     last_seen=0,
-                    updated_at=0
+                    updated_at=0,
                 )
                 continue
 
@@ -785,21 +891,21 @@ class PresenceManager(BaseManager):
                     custom_status=p.custom_status,
                     activity=None,
                     last_seen=p.last_seen,
-                    updated_at=p.updated_at
+                    updated_at=p.updated_at,
                 )
             else:
                 result[target_id] = p
-                
+
         return result
 
     def can_see_presence(self, viewer_id: SnowflakeID, target_id: SnowflakeID) -> bool:
         """
         Check if viewer can see target's real presence.
-        
+
         Args:
             viewer_id: ID of the user viewing
             target_id: ID of the user being viewed
-            
+
         Returns:
             True if viewer can see real presence
         """
@@ -818,6 +924,7 @@ class PresenceManager(BaseManager):
             return False
 
         return True
+
     def _presence_to_dict(self, presence: Presence) -> Dict[str, Any]:
         """Convert Presence model to dict for caching."""
         return {
@@ -826,8 +933,10 @@ class PresenceManager(BaseManager):
             "custom_status": {
                 "text": presence.custom_status.text,
                 "emoji": presence.custom_status.emoji,
-                "expires_at": presence.custom_status.expires_at
-            } if presence.custom_status else None,
+                "expires_at": presence.custom_status.expires_at,
+            }
+            if presence.custom_status
+            else None,
             "activity": {
                 "activity_type": presence.activity.activity_type.value,
                 "name": presence.activity.name,
@@ -840,25 +949,29 @@ class PresenceManager(BaseManager):
                 "large_text": presence.activity.large_text,
                 "small_image": presence.activity.small_image,
                 "small_text": presence.activity.small_text,
-                "created_at": presence.activity.created_at
-            } if presence.activity else None,
+                "created_at": presence.activity.created_at,
+            }
+            if presence.activity
+            else None,
             "last_seen": presence.last_seen,
-            "updated_at": presence.updated_at
+            "updated_at": presence.updated_at,
         }
 
     def _dict_to_presence(self, data: Dict[str, Any]) -> Presence:
         """Convert cached dict to Presence model."""
         custom_status = data.get("custom_status")
         activity = data.get("activity")
-        
+
         return Presence(
             user_id=data["user_id"],
             status=UserStatus(data["status"]),
             custom_status=CustomStatus(
                 text=custom_status["text"],
                 emoji=custom_status["emoji"],
-                expires_at=custom_status["expires_at"]
-            ) if custom_status else None,
+                expires_at=custom_status["expires_at"],
+            )
+            if custom_status
+            else None,
             activity=Activity(
                 activity_type=ActivityType(activity["activity_type"]),
                 name=activity["name"],
@@ -871,8 +984,10 @@ class PresenceManager(BaseManager):
                 large_text=activity.get("large_text"),
                 small_image=activity.get("small_image"),
                 small_text=activity.get("small_text"),
-                created_at=activity.get("created_at", 0)
-            ) if activity else None,
+                created_at=activity.get("created_at", 0),
+            )
+            if activity
+            else None,
             last_seen=data.get("last_seen", 0),
-            updated_at=data.get("updated_at", 0)
+            updated_at=data.get("updated_at", 0),
         )

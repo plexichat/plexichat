@@ -11,4 +11,4 @@ from . import database
 from . import auth
 from . import settings
 
-__all__ = ['database', 'auth', 'settings']
+__all__ = ["database", "auth", "settings"]

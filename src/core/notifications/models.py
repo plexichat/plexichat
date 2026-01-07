@@ -10,6 +10,7 @@ from src.core.base import SnowflakeID
 
 class MentionType(Enum):
     """Types of mentions that can appear in messages."""
+
     USER = "user"
     ROLE = "role"
     EVERYONE = "everyone"
@@ -19,6 +20,7 @@ class MentionType(Enum):
 
 class NotificationType(Enum):
     """Types of notifications."""
+
     MESSAGE = "message"
     MENTION = "mention"
     FRIEND_REQUEST = "friend_request"
@@ -29,6 +31,7 @@ class NotificationType(Enum):
 
 class NotificationLevel(Enum):
     """Notification level settings."""
+
     ALL_MESSAGES = "all"
     ONLY_MENTIONS = "mentions"
     NOTHING = "nothing"
@@ -38,6 +41,7 @@ class NotificationLevel(Enum):
 @dataclass
 class Mention:
     """Represents a parsed mention from message content."""
+
     mention_type: MentionType
     target_id: Optional[SnowflakeID] = None
     raw_text: str = ""
@@ -50,6 +54,7 @@ class Mention:
 @dataclass
 class MentionPosition:
     """Position of a mention in message content for highlighting."""
+
     start_pos: int
     end_pos: int
     mention_type: MentionType = MentionType.USER
@@ -59,6 +64,7 @@ class MentionPosition:
 @dataclass
 class Notification:
     """Represents a notification for a user."""
+
     id: SnowflakeID
     user_id: SnowflakeID
     author_id: SnowflakeID
@@ -76,6 +82,7 @@ class Notification:
 @dataclass
 class NotificationSettings:
     """User notification settings (global or per-server)."""
+
     user_id: SnowflakeID
     server_id: Optional[SnowflakeID] = None
     level: NotificationLevel = NotificationLevel.ALL_MESSAGES
@@ -90,6 +97,7 @@ class NotificationSettings:
 @dataclass
 class ChannelNotificationOverride:
     """Per-channel notification override."""
+
     user_id: SnowflakeID
     channel_id: SnowflakeID
     level: NotificationLevel = NotificationLevel.ALL_MESSAGES
@@ -101,6 +109,7 @@ class ChannelNotificationOverride:
 @dataclass
 class UnreadCount:
     """Unread message count for a user in a channel/conversation."""
+
     user_id: SnowflakeID
     conversation_id: SnowflakeID
     unread_count: int = 0
@@ -115,6 +124,7 @@ class UnreadCount:
 @dataclass
 class NotificationFeed:
     """Collection of notifications for feed display."""
+
     notifications: List[Notification] = field(default_factory=list)
     total_count: int = 0
     unread_count: int = 0
@@ -124,6 +134,7 @@ class NotificationFeed:
 @dataclass
 class PushPayload:
     """Push notification payload (prepared but not sent)."""
+
     user_id: SnowflakeID
     title: str
     body: str

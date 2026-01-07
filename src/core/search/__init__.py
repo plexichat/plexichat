@@ -135,10 +135,10 @@ def search_messages(
 ) -> List[MessageSearchResult]:
     """
     Search messages with advanced query syntax.
-    
+
     Supports filters: from:user, in:channel, before:date, after:date,
     has:link/image/file/embed, mentions:user, pinned:true, "exact phrase"
-    
+
     Args:
         user_id: ID of user performing search
         query: Search query string
@@ -147,7 +147,7 @@ def search_messages(
         channel_id: Optional channel to search within
         limit: Maximum results to return
         offset: Offset for pagination
-        
+
     Returns:
         List of MessageSearchResult objects
     """
@@ -162,10 +162,12 @@ def search_messages(
     )
 
 
-def index_message(message_id: int, content: str, metadata: Optional[Dict[str, Any]] = None):
+def index_message(
+    message_id: int, content: str, metadata: Optional[Dict[str, Any]] = None
+):
     """
     Index a message for search.
-    
+
     Args:
         message_id: ID of message to index
         content: Message content
@@ -177,7 +179,7 @@ def index_message(message_id: int, content: str, metadata: Optional[Dict[str, An
 def remove_from_index(message_id: int):
     """
     Remove a message from the search index.
-    
+
     Args:
         message_id: ID of message to remove
     """
@@ -187,7 +189,7 @@ def remove_from_index(message_id: int):
 def reindex_conversation(conversation_id: int):
     """
     Reindex all messages in a conversation.
-    
+
     Args:
         conversation_id: ID of conversation to reindex
     """
@@ -206,14 +208,14 @@ def search_users(
 ) -> List[UserSearchResult]:
     """
     Search users by username or display name.
-    
+
     Args:
         user_id: ID of user performing search
         query: Search query string
         server_id: Optional server to search within
         limit: Maximum results to return
         offset: Offset for pagination
-        
+
     Returns:
         List of UserSearchResult objects
     """
@@ -238,14 +240,14 @@ def search_servers(
 ) -> List[ServerSearchResult]:
     """
     Search servers by name, description, or tags.
-    
+
     Args:
         user_id: ID of user performing search
         query: Search query string
         category: Optional category filter
         limit: Maximum results to return
         offset: Offset for pagination
-        
+
     Returns:
         List of ServerSearchResult objects
     """
@@ -269,13 +271,13 @@ def list_public_servers(
 ) -> List[ServerListing]:
     """
     List public servers in the discovery directory.
-    
+
     Args:
         category: Optional category filter
         sort_by: Sort order (member_count, bumped_at, created_at)
         limit: Maximum results to return
         offset: Offset for pagination
-        
+
     Returns:
         List of ServerListing objects
     """
@@ -290,7 +292,7 @@ def list_public_servers(
 def get_server_categories() -> List[ServerCategory]:
     """
     Get all available server categories.
-    
+
     Returns:
         List of ServerCategory objects
     """
@@ -306,14 +308,14 @@ def list_server(
 ) -> ServerListing:
     """
     List a server in the public directory.
-    
+
     Args:
         user_id: ID of user listing server (must be owner/admin)
         server_id: ID of server to list
         category: Category for the listing
         description: Optional description override
         tags: Optional tags for discovery
-        
+
     Returns:
         ServerListing object
     """
@@ -329,11 +331,11 @@ def list_server(
 def unlist_server(user_id: int, server_id: int) -> bool:
     """
     Remove a server from the public directory.
-    
+
     Args:
         user_id: ID of user unlisting server (must be owner/admin)
         server_id: ID of server to unlist
-        
+
     Returns:
         True if unlisted
     """
@@ -343,11 +345,11 @@ def unlist_server(user_id: int, server_id: int) -> bool:
 def verify_server(server_id: int, level: VerificationLevel) -> bool:
     """
     Set verification level for a server (admin only).
-    
+
     Args:
         server_id: ID of server to verify
         level: Verification level to set
-        
+
     Returns:
         True if verified
     """
@@ -357,11 +359,11 @@ def verify_server(server_id: int, level: VerificationLevel) -> bool:
 def bump_server(user_id: int, server_id: int) -> bool:
     """
     Bump a server in the discovery listing.
-    
+
     Args:
         user_id: ID of user bumping server
         server_id: ID of server to bump
-        
+
     Returns:
         True if bumped
     """
@@ -374,10 +376,10 @@ def bump_server(user_id: int, server_id: int) -> bool:
 def parse_query(query: str) -> ParsedQuery:
     """
     Parse a search query into structured components.
-    
+
     Args:
         query: Raw query string
-        
+
     Returns:
         ParsedQuery object with filters and search terms
     """
@@ -391,12 +393,12 @@ def get_search_suggestions(
 ) -> List[str]:
     """
     Get search suggestions based on partial query.
-    
+
     Args:
         user_id: ID of user requesting suggestions
         partial_query: Partial query string
         limit: Maximum suggestions to return
-        
+
     Returns:
         List of suggested query completions
     """

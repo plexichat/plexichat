@@ -10,6 +10,7 @@ from src.core.base import SnowflakeID
 @dataclass
 class CustomEmoji:
     """Represents a custom emoji from a server."""
+
     id: SnowflakeID
     server_id: SnowflakeID
     name: str
@@ -26,6 +27,7 @@ class CustomEmoji:
 @dataclass
 class Reaction:
     """Represents a single reaction by a user on a message."""
+
     id: SnowflakeID
     message_id: SnowflakeID
     user_id: SnowflakeID
@@ -38,6 +40,7 @@ class Reaction:
 @dataclass
 class ReactionCount:
     """Represents aggregated reaction count for an emoji on a message."""
+
     message_id: SnowflakeID
     emoji: str
     count: int
@@ -49,6 +52,7 @@ class ReactionCount:
 @dataclass
 class ReactionUser:
     """Represents a user who reacted with a specific emoji."""
+
     user_id: SnowflakeID
     reacted_at: int
 
@@ -56,6 +60,7 @@ class ReactionUser:
 @dataclass
 class MessageReactions:
     """All reactions on a message with counts and user info."""
+
     message_id: SnowflakeID
     reactions: List[ReactionCount] = field(default_factory=list)
     total_count: int = 0

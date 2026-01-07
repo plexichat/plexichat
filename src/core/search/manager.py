@@ -61,10 +61,12 @@ class SearchManager(BaseManager):
         """Compatibility method for some test patterns."""
         return self
 
-    def __init__(self, db, auth_module=None, messaging_module=None, servers_module=None):
+    def __init__(
+        self, db, auth_module=None, messaging_module=None, servers_module=None
+    ):
         """
         Initialize the search manager.
-        
+
         Args:
             db: Database instance (must be connected)
             auth_module: Auth module for user data
@@ -166,7 +168,7 @@ class SearchManager(BaseManager):
     ) -> List[MessageSearchResult]:
         """
         Search messages with advanced query syntax.
-        
+
         Args:
             user_id: ID of user performing search
             query: Search query string
@@ -179,7 +181,7 @@ class SearchManager(BaseManager):
             mentions_user: Optional filter for messages mentioning a user
             limit: Maximum results to return
             offset: Offset for pagination
-            
+
         Returns:
             List of MessageSearchResult objects
         """
@@ -188,7 +190,7 @@ class SearchManager(BaseManager):
             raise SearchLimitError(
                 f"Limit exceeds maximum of {max_limit}",
                 max_allowed=max_limit,
-                requested=limit
+                requested=limit,
             )
 
         rate_limit = self._config.get("rate_limit_per_minute")
@@ -198,9 +200,13 @@ class SearchManager(BaseManager):
             if window_start is None or now - window_start >= 60_000:
                 self._search_rate_window_started_ms[user_id] = now
                 self._search_rate_count[user_id] = 0
-            self._search_rate_count[user_id] = self._search_rate_count.get(user_id, 0) + 1
+            self._search_rate_count[user_id] = (
+                self._search_rate_count.get(user_id, 0) + 1
+            )
             if self._search_rate_count[user_id] > int(rate_limit):
-                raise SearchRateLimitError("Search rate limit exceeded", retry_after_seconds=60)
+                raise SearchRateLimitError(
+                    "Search rate limit exceeded", retry_after_seconds=60
+                )
 
         parsed = self._query_parser.parse(query)
 
@@ -224,13 +230,20 @@ class SearchManager(BaseManager):
         )
 
         if after_timestamp is not None:
-            results = [r for r in results if r.created_at and r.created_at > after_timestamp]
+            results = [
+                r for r in results if r.created_at and r.created_at > after_timestamp
+            ]
 
         if has_attachments is not None:
             results = [r for r in results if r.has_attachments == has_attachments]
 
         if mentions_user is not None:
-            results = [r for r in results if f"<@{mentions_user}>" in (r.content or "") or f"<@!{mentions_user}>" in (r.content or "")]
+            results = [
+                r
+                for r in results
+                if f"<@{mentions_user}>" in (r.content or "")
+                or f"<@!{mentions_user}>" in (r.content or "")
+            ]
 
         results = self._filter_processor.apply_filters(results, parsed, user_id)
 
@@ -274,7 +287,9 @@ class SearchManager(BaseManager):
     ) -> List[MessageSearchResult]:
         if not self._can_access_server(user_id, server_id):
             return []
-        return self.search_messages(user_id, query, server_id=server_id, limit=limit, offset=offset)
+        return self.search_messages(
+            user_id, query, server_id=server_id, limit=limit, offset=offset
+        )
 
     def _can_access_server(self, user_id: int, server_id: int) -> bool:
         member = self._db.fetch_one(
@@ -291,7 +306,7 @@ class SearchManager(BaseManager):
     ):
         """
         Index a message for search.
-        
+
         Args:
             message_id: ID of message to index
             content: Message content
@@ -322,18 +337,33 @@ class SearchManager(BaseManager):
         now = self._get_timestamp()
         self._db.upsert(
             "search_message_index",
-            ["message_id", "conversation_id", "server_id", "channel_id", "author_id", "indexed_at", "updated_at"],
-            (message_id, indexed.conversation_id, indexed.server_id, indexed.channel_id, indexed.author_id, now, now),
+            [
+                "message_id",
+                "conversation_id",
+                "server_id",
+                "channel_id",
+                "author_id",
+                "indexed_at",
+                "updated_at",
+            ],
+            (
+                message_id,
+                indexed.conversation_id,
+                indexed.server_id,
+                indexed.channel_id,
+                indexed.author_id,
+                now,
+                now,
+            ),
             ["message_id"],
-            ["conversation_id", "server_id", "channel_id", "author_id", "updated_at"]
+            ["conversation_id", "server_id", "channel_id", "author_id", "updated_at"],
         )
 
     def remove_from_index(self, message_id: int):
         """Remove a message from the search index."""
         self._indexer.remove_message(message_id)
         self._db.execute(
-            "DELETE FROM search_message_index WHERE message_id = ?",
-            (message_id,)
+            "DELETE FROM search_message_index WHERE message_id = ?", (message_id,)
         )
 
     def reindex_conversation(self, conversation_id: int):
@@ -345,7 +375,7 @@ class SearchManager(BaseManager):
             """SELECT id, content, author_id, created_at 
                FROM msg_messages 
                WHERE conversation_id = ? AND deleted = 0""",
-            (conversation_id,)
+            (conversation_id,),
         )
 
         for msg in messages:
@@ -356,7 +386,7 @@ class SearchManager(BaseManager):
                     "author_id": msg["author_id"],
                     "conversation_id": conversation_id,
                     "created_at": msg["created_at"],
-                }
+                },
             )
 
     # === User Search ===
@@ -371,14 +401,14 @@ class SearchManager(BaseManager):
     ) -> List[UserSearchResult]:
         """
         Search users by username or display name.
-        
+
         Args:
             user_id: ID of user performing search
             query: Search query string
             server_id: Optional server to search within
             limit: Maximum results to return
             offset: Offset for pagination
-            
+
         Returns:
             List of UserSearchResult objects
         """
@@ -387,7 +417,7 @@ class SearchManager(BaseManager):
             raise SearchLimitError(
                 f"Limit exceeds maximum of {max_limit}",
                 max_allowed=max_limit,
-                requested=limit
+                requested=limit,
             )
 
         results = self._indexer.search_users(query, limit * 2, offset)
@@ -402,7 +432,13 @@ class SearchManager(BaseManager):
 
         return results[:limit]
 
-    def index_user(self, user_id: int, username: str, display_name: Optional[str] = None, is_bot: bool = False):
+    def index_user(
+        self,
+        user_id: int,
+        username: str,
+        display_name: Optional[str] = None,
+        is_bot: bool = False,
+    ):
         """Index a user for search."""
         indexed = IndexedUser(
             user_id=user_id,
@@ -419,7 +455,7 @@ class SearchManager(BaseManager):
             ["user_id", "indexed_at", "updated_at"],
             (user_id, now, now),
             ["user_id"],
-            ["updated_at"]
+            ["updated_at"],
         )
 
     # === Server Search ===
@@ -434,14 +470,14 @@ class SearchManager(BaseManager):
     ) -> List[ServerSearchResult]:
         """
         Search servers by name, description, or tags.
-        
+
         Args:
             user_id: ID of user performing search
             query: Search query string
             category: Optional category filter
             limit: Maximum results to return
             offset: Offset for pagination
-            
+
         Returns:
             List of ServerSearchResult objects
         """
@@ -450,7 +486,7 @@ class SearchManager(BaseManager):
             raise SearchLimitError(
                 f"Limit exceeds maximum of {max_limit}",
                 max_allowed=max_limit,
-                requested=limit
+                requested=limit,
             )
 
         results = self._indexer.search_servers(
@@ -496,7 +532,7 @@ class SearchManager(BaseManager):
             ["server_id", "indexed_at", "updated_at"],
             (server_id, now, now),
             ["server_id"],
-            ["updated_at"]
+            ["updated_at"],
         )
 
     # === Discovery ===
@@ -524,7 +560,9 @@ class SearchManager(BaseManager):
         tags: Optional[List[str]] = None,
     ) -> ServerListing:
         """List a server in the public directory."""
-        return self._discovery.list_server(user_id, server_id, category, description, tags)
+        return self._discovery.list_server(
+            user_id, server_id, category, description, tags
+        )
 
     def unlist_server(self, user_id: int, server_id: int) -> bool:
         """Remove a server from the public directory."""
@@ -561,7 +599,7 @@ class SearchManager(BaseManager):
                 """SELECT DISTINCT query FROM search_history 
                    WHERE user_id = ? AND query LIKE ?
                    ORDER BY searched_at DESC LIMIT ?""",
-                (user_id, f"{partial_query}%", limit - len(suggestions))
+                (user_id, f"{partial_query}%", limit - len(suggestions)),
             )
             suggestions.extend(row["query"] for row in history)
 
@@ -584,8 +622,7 @@ class SearchManager(BaseManager):
 
         if channel_id:
             channel = self._db.fetch_one(
-                "SELECT conversation_id FROM srv_channels WHERE id = ?",
-                (channel_id,)
+                "SELECT conversation_id FROM srv_channels WHERE id = ?", (channel_id,)
             )
             if channel and self._can_access_channel(user_id, channel_id):
                 return [channel["conversation_id"]]
@@ -596,7 +633,7 @@ class SearchManager(BaseManager):
         dm_convs = self._db.fetch_all(
             """SELECT conversation_id FROM msg_participants 
                WHERE user_id = ?""",
-            (user_id,)
+            (user_id,),
         )
         conversations.extend(row["conversation_id"] for row in dm_convs)
 
@@ -604,20 +641,21 @@ class SearchManager(BaseManager):
             channels = self._db.fetch_all(
                 """SELECT id, conversation_id FROM srv_channels 
                    WHERE server_id = ?""",
-                (server_id,)
+                (server_id,),
             )
             for ch in channels:
-                if ch["conversation_id"] and self._can_access_channel(user_id, ch["id"]):
+                if ch["conversation_id"] and self._can_access_channel(
+                    user_id, ch["id"]
+                ):
                     conversations.append(ch["conversation_id"])
         else:
             user_servers = self._db.fetch_all(
-                "SELECT server_id FROM srv_members WHERE user_id = ?",
-                (user_id,)
+                "SELECT server_id FROM srv_members WHERE user_id = ?", (user_id,)
             )
             for srv in user_servers:
                 channels = self._db.fetch_all(
                     "SELECT id, conversation_id FROM srv_channels WHERE server_id = ?",
-                    (srv["server_id"],)
+                    (srv["server_id"],),
                 )
                 for ch in channels:
                     if ch["conversation_id"]:
@@ -629,7 +667,7 @@ class SearchManager(BaseManager):
         """Check if user can access a conversation."""
         row = self._db.fetch_one(
             "SELECT 1 FROM msg_participants WHERE conversation_id = ? AND user_id = ?",
-            (conversation_id, user_id)
+            (conversation_id, user_id),
         )
         return row is not None
 
@@ -639,23 +677,21 @@ class SearchManager(BaseManager):
             return True
 
         channel = self._db.fetch_one(
-            "SELECT server_id FROM srv_channels WHERE id = ?",
-            (channel_id,)
+            "SELECT server_id FROM srv_channels WHERE id = ?", (channel_id,)
         )
         if not channel:
             return False
 
         member = self._db.fetch_one(
             "SELECT 1 FROM srv_members WHERE server_id = ? AND user_id = ?",
-            (channel["server_id"], user_id)
+            (channel["server_id"], user_id),
         )
         return member is not None
 
     def _get_server_member_ids(self, server_id: int) -> set:
         """Get set of user IDs who are members of a server."""
         rows = self._db.fetch_all(
-            "SELECT user_id FROM srv_members WHERE server_id = ?",
-            (server_id,)
+            "SELECT user_id FROM srv_members WHERE server_id = ?", (server_id,)
         )
         return {row["user_id"] for row in rows}
 
@@ -667,31 +703,28 @@ class SearchManager(BaseManager):
         """Enrich message results with additional data."""
         for result in results:
             author = self._db.fetch_one(
-                "SELECT username FROM auth_users WHERE id = ?",
-                (result.author_id,)
+                "SELECT username FROM auth_users WHERE id = ?", (result.author_id,)
             )
             if author:
                 result.author_username = author["username"]
 
             conv = self._db.fetch_one(
                 "SELECT name, conversation_type FROM msg_conversations WHERE id = ?",
-                (result.conversation_id,)
+                (result.conversation_id,),
             )
             if conv:
                 result.conversation_name = conv["name"]
 
             if result.server_id:
                 server = self._db.fetch_one(
-                    "SELECT name FROM srv_servers WHERE id = ?",
-                    (result.server_id,)
+                    "SELECT name FROM srv_servers WHERE id = ?", (result.server_id,)
                 )
                 if server:
                     result.server_name = server["name"]
 
             if result.channel_id:
                 channel = self._db.fetch_one(
-                    "SELECT name FROM srv_channels WHERE id = ?",
-                    (result.channel_id,)
+                    "SELECT name FROM srv_channels WHERE id = ?", (result.channel_id,)
                 )
                 if channel:
                     result.channel_name = channel["name"]
@@ -728,7 +761,6 @@ class SearchManager(BaseManager):
     def _get_user_server_ids(self, user_id: int) -> set:
         """Get set of server IDs the user is a member of."""
         rows = self._db.fetch_all(
-            "SELECT server_id FROM srv_members WHERE user_id = ?",
-            (user_id,)
+            "SELECT server_id FROM srv_members WHERE user_id = ?", (user_id,)
         )
         return {row["server_id"] for row in rows}

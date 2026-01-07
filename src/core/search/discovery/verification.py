@@ -26,21 +26,20 @@ class VerificationManager:
     ) -> bool:
         """
         Set verification level for a server.
-        
+
         Args:
             server_id: ID of server to verify
             level: Verification level to set
             verified_by: ID of admin who verified
             reason: Reason for verification
-            
+
         Returns:
             True if verification updated
         """
         listing = self._get_listing(server_id)
         if not listing:
             raise ServerNotListedError(
-                "Server is not listed in discovery",
-                server_id=server_id
+                "Server is not listed in discovery", server_id=server_id
             )
 
         is_verified = level in (VerificationLevel.HIGH, VerificationLevel.VERIFIED)
@@ -49,7 +48,7 @@ class VerificationManager:
             """UPDATE search_server_listings 
                SET verification_level = ?, is_verified = ?
                WHERE server_id = ?""",
-            (level.value, 1 if is_verified else 0, server_id)
+            (level.value, 1 if is_verified else 0, server_id),
         )
 
         logger.info(
@@ -81,7 +80,7 @@ class VerificationManager:
     ) -> Dict[str, Any]:
         """
         Check if server meets requirements for verification level.
-        
+
         Returns dict with 'eligible' bool and 'missing' list of requirements.
         """
         result = {"eligible": True, "missing": []}
@@ -123,14 +122,13 @@ class VerificationManager:
     def _get_listing(self, server_id: int) -> Optional[Dict]:
         """Get server listing from database."""
         return self._db.fetch_one(
-            "SELECT * FROM search_server_listings WHERE server_id = ?",
-            (server_id,)
+            "SELECT * FROM search_server_listings WHERE server_id = ?", (server_id,)
         )
 
     def _get_member_count(self, server_id: int) -> int:
         """Get member count for a server."""
         row = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM srv_members WHERE server_id = ?",
-            (server_id,)
+            (server_id,),
         )
         return row["count"] if row else 0

@@ -10,6 +10,7 @@ from src.core.base import SnowflakeID
 
 class ApplicationType(Enum):
     """Type of application."""
+
     BOT = "bot"
     WEBHOOK = "webhook"
     OAUTH = "oauth"
@@ -17,6 +18,7 @@ class ApplicationType(Enum):
 
 class OAuth2Scope(Enum):
     """OAuth2 scopes for application authorization."""
+
     IDENTIFY = "identify"
     EMAIL = "email"
     GUILDS = "guilds"
@@ -31,6 +33,7 @@ class OAuth2Scope(Enum):
 
 class CommandType(IntEnum):
     """Type of application command."""
+
     CHAT_INPUT = 1
     USER = 2
     MESSAGE = 3
@@ -38,6 +41,7 @@ class CommandType(IntEnum):
 
 class CommandOptionType(IntEnum):
     """Type of command option."""
+
     SUB_COMMAND = 1
     SUB_COMMAND_GROUP = 2
     STRING = 3
@@ -53,6 +57,7 @@ class CommandOptionType(IntEnum):
 
 class InteractionType(IntEnum):
     """Type of interaction."""
+
     PING = 1
     APPLICATION_COMMAND = 2
     MESSAGE_COMPONENT = 3
@@ -62,6 +67,7 @@ class InteractionType(IntEnum):
 
 class InteractionResponseType(IntEnum):
     """Type of interaction response."""
+
     PONG = 1
     CHANNEL_MESSAGE_WITH_SOURCE = 4
     DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE = 5
@@ -73,6 +79,7 @@ class InteractionResponseType(IntEnum):
 
 class ComponentType(IntEnum):
     """Type of message component."""
+
     ACTION_ROW = 1
     BUTTON = 2
     STRING_SELECT = 3
@@ -85,6 +92,7 @@ class ComponentType(IntEnum):
 
 class ButtonStyle(IntEnum):
     """Style of button component."""
+
     PRIMARY = 1
     SECONDARY = 2
     SUCCESS = 3
@@ -94,6 +102,7 @@ class ButtonStyle(IntEnum):
 
 class TextInputStyle(IntEnum):
     """Style of text input component."""
+
     SHORT = 1
     PARAGRAPH = 2
 
@@ -101,6 +110,7 @@ class TextInputStyle(IntEnum):
 @dataclass
 class Application:
     """Represents a registered application."""
+
     id: SnowflakeID
     owner_id: SnowflakeID
     name: str
@@ -123,6 +133,7 @@ class Application:
 @dataclass
 class CommandOption:
     """Represents a command option."""
+
     name: str
     description: str
     option_type: CommandOptionType
@@ -140,6 +151,7 @@ class CommandOption:
 @dataclass
 class Command:
     """Represents an application command."""
+
     id: SnowflakeID
     application_id: SnowflakeID
     name: str
@@ -158,6 +170,7 @@ class Command:
 @dataclass
 class CommandChoice:
     """Represents a choice for a command option."""
+
     name: str
     value: Any
 
@@ -165,6 +178,7 @@ class CommandChoice:
 @dataclass
 class InteractionData:
     """Data payload for an interaction."""
+
     id: SnowflakeID
     name: str
     command_type: Optional[CommandType] = None
@@ -180,6 +194,7 @@ class InteractionData:
 @dataclass
 class Interaction:
     """Represents an interaction from a user."""
+
     id: SnowflakeID
     application_id: SnowflakeID
     interaction_type: InteractionType
@@ -201,6 +216,7 @@ class Interaction:
 @dataclass
 class InteractionResponse:
     """Response to an interaction."""
+
     response_type: InteractionResponseType
     content: Optional[str] = None
     embeds: Optional[List[Dict[str, Any]]] = None
@@ -217,6 +233,7 @@ class InteractionResponse:
 @dataclass
 class Button:
     """Represents a button component."""
+
     style: ButtonStyle
     label: Optional[str] = None
     emoji: Optional[Dict[str, Any]] = None
@@ -228,6 +245,7 @@ class Button:
 @dataclass
 class SelectOption:
     """Represents a select menu option."""
+
     label: str
     value: str
     description: Optional[str] = None
@@ -238,6 +256,7 @@ class SelectOption:
 @dataclass
 class SelectMenu:
     """Represents a select menu component."""
+
     custom_id: str
     component_type: ComponentType
     options: Optional[List[SelectOption]] = None
@@ -251,6 +270,7 @@ class SelectMenu:
 @dataclass
 class TextInput:
     """Represents a text input component."""
+
     custom_id: str
     style: TextInputStyle
     label: str
@@ -264,12 +284,14 @@ class TextInput:
 @dataclass
 class ActionRow:
     """Represents an action row container."""
+
     components: List[Any]
 
 
 @dataclass
 class Modal:
     """Represents a modal dialog."""
+
     custom_id: str
     title: str
     components: List[ActionRow]
@@ -278,6 +300,7 @@ class Modal:
 @dataclass
 class OAuth2Token:
     """Represents an OAuth2 access token."""
+
     id: int
     application_id: int
     user_id: int
@@ -295,6 +318,7 @@ class OAuth2Token:
 @dataclass
 class OAuth2AuthorizationCode:
     """Represents an OAuth2 authorization code."""
+
     id: int
     application_id: int
     user_id: int
@@ -311,6 +335,7 @@ class OAuth2AuthorizationCode:
 @dataclass
 class ApplicationInstallation:
     """Represents an application installation on a server."""
+
     id: int
     application_id: int
     server_id: int
@@ -324,6 +349,7 @@ class ApplicationInstallation:
 @dataclass
 class WebhookDelivery:
     """Represents a webhook delivery attempt."""
+
     id: int
     application_id: int
     interaction_id: int

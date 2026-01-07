@@ -7,16 +7,19 @@ from typing import List
 
 class StickerError(Exception):
     """Base exception for all sticker errors."""
+
     pass
 
 
 class PackNotFoundError(StickerError):
     """Sticker pack does not exist."""
+
     pass
 
 
 class StickerNotFoundError(StickerError):
     """Sticker does not exist."""
+
     pass
 
 
@@ -58,11 +61,13 @@ class StickerTooLargeError(StickerError):
 
 class InvalidStickerNameError(StickerError):
     """Sticker name is invalid."""
+
     pass
 
 
 class InvalidPackNameError(StickerError):
     """Pack name is invalid."""
+
     pass
 
 
@@ -76,9 +81,11 @@ class PermissionDeniedError(StickerError):
 
 class ServerNotFoundError(StickerError):
     """Server does not exist."""
+
     pass
 
 
 class MessageNotFoundError(StickerError):
     """Message does not exist or is not accessible."""
+
     pass

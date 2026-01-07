@@ -168,7 +168,7 @@ def get_sticker_suggestions(
     user_id: int,
     content: str,
     server_id: Optional[int] = None,
-    limit: Optional[int] = None
+    limit: Optional[int] = None,
 ) -> List[StickerSuggestion]:
     """Get sticker suggestions based on message content."""
     return _get_manager().get_sticker_suggestions(user_id, content, server_id, limit)

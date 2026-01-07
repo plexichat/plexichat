@@ -134,9 +134,21 @@ DEFAULT_CATEGORIES = [
     ("gaming", "Gaming", "Servers for gamers and gaming communities", "gamepad", 1),
     ("music", "Music", "Music discussion, sharing, and listening parties", "music", 2),
     ("entertainment", "Entertainment", "Movies, TV shows, anime, and more", "film", 3),
-    ("education", "Education", "Learning, studying, and academic communities", "book", 4),
+    (
+        "education",
+        "Education",
+        "Learning, studying, and academic communities",
+        "book",
+        4,
+    ),
     ("science", "Science & Tech", "Science, technology, and programming", "flask", 5),
-    ("creative", "Creative", "Art, design, writing, and creative projects", "palette", 6),
+    (
+        "creative",
+        "Creative",
+        "Art, design, writing, and creative projects",
+        "palette",
+        6,
+    ),
     ("social", "Social", "General hangout and social communities", "users", 7),
     ("sports", "Sports", "Sports discussion and fan communities", "trophy", 8),
     ("finance", "Finance", "Investing, trading, and financial discussion", "chart", 9),
@@ -173,7 +185,7 @@ def _seed_categories(db):
             db.insert_or_ignore(
                 "search_categories",
                 ["id", "name", "description", "icon", "position"],
-                (cat_id, name, description, icon, position)
+                (cat_id, name, description, icon, position),
             )
         except Exception as e:
             logger.warning(f"Failed to seed category {cat_id}: {e}")

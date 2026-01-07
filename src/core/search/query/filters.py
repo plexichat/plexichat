@@ -2,7 +2,7 @@
 Filter processor - Apply parsed filters to search results.
 """
 
-from typing import List, Dict, Optional, Callable
+from typing import List, Optional, Callable
 from datetime import datetime
 
 import utils.config as config
@@ -17,10 +17,10 @@ class FilterProcessor:
         self._db = db
         self._auth = auth_module
         self._servers = servers_module
-        
+
         # Cache size limit from config
         max_cache = config.get("redis.cache_max_items", 1000)
-        
+
         self._user_cache = CappedDict(max_size=max_cache)
         self._channel_cache = CappedDict(max_size=max_cache)
 
@@ -32,12 +32,12 @@ class FilterProcessor:
     ) -> List[MessageSearchResult]:
         """
         Apply all filters from parsed query to results.
-        
+
         Args:
             results: List of search results to filter
             parsed_query: Parsed query with filters
             user_id: ID of user performing search
-            
+
         Returns:
             Filtered list of results
         """
@@ -50,10 +50,7 @@ class FilterProcessor:
             filtered = self._apply_single_filter(filtered, query_filter, user_id)
 
         for phrase in parsed_query.exact_phrases:
-            filtered = [
-                r for r in filtered
-                if phrase.lower() in r.content.lower()
-            ]
+            filtered = [r for r in filtered if phrase.lower() in r.content.lower()]
 
         return filtered
 
@@ -159,7 +156,7 @@ class FilterProcessor:
         if self._db:
             row = self._db.fetch_one(
                 "SELECT id FROM auth_users WHERE username = ? COLLATE NOCASE",
-                (identifier,)
+                (identifier,),
             )
             if row:
                 self._user_cache[identifier] = row["id"]
@@ -182,7 +179,7 @@ class FilterProcessor:
         if self._db:
             row = self._db.fetch_one(
                 "SELECT id FROM srv_channels WHERE name = ? COLLATE NOCASE",
-                (identifier,)
+                (identifier,),
             )
             if row:
                 self._channel_cache[identifier] = row["id"]
@@ -236,7 +233,7 @@ def apply_filters(
 ) -> List[MessageSearchResult]:
     """
     Apply filters to search results.
-    
+
     Convenience function using FilterProcessor.
     """
     processor = FilterProcessor(db, auth_module, servers_module)

@@ -3,19 +3,20 @@ Feedback module - Handles user feedback submission and management.
 """
 
 import time
-from typing import Optional, List, Dict, Any
+from typing import Optional, Any
 from dataclasses import dataclass
 
 import utils.logger as logger
-import utils.config as config
 from src.utils.encryption import generate_snowflake_id
 
 _db: Any = None
 _setup_complete = False
 
+
 @dataclass
 class FeedbackEntry:
     """Represents a feedback entry."""
+
     id: int
     user_id: int
     content: str
@@ -27,6 +28,7 @@ class FeedbackEntry:
     resolved_by: Optional[int] = None
     internal_notes: Optional[str] = None
 
+
 def setup(db: Any) -> None:
     """Initialize the feedback module."""
     global _db, _setup_complete
@@ -35,15 +37,20 @@ def setup(db: Any) -> None:
     _create_tables()
     logger.info("Feedback module initialized")
 
+
 def is_setup() -> bool:
     """Check if module is initialized."""
     return _setup_complete
 
+
 def _get_db():
     """Get database instance."""
     if not _setup_complete:
-        raise RuntimeError("Feedback module not initialized. Call feedback.setup(db) first.")
+        raise RuntimeError(
+            "Feedback module not initialized. Call feedback.setup(db) first."
+        )
     return _db
+
 
 def _create_tables() -> None:
     """Create feedback tables."""
@@ -64,20 +71,23 @@ def _create_tables() -> None:
     )
     """
     try:
-        converted = db.convert_schema(schema) if hasattr(db, 'convert_schema') else schema
+        converted = (
+            db.convert_schema(schema) if hasattr(db, "convert_schema") else schema
+        )
         db.execute(converted)
     except Exception as e:
         logger.error(f"Failed to create feedback table: {e}")
+
 
 def submit_feedback(
     user_id: int,
     content: str,
     category: Optional[str] = None,
-    rating: Optional[int] = None
+    rating: Optional[int] = None,
 ) -> int:
     """
     Submit user feedback.
-    
+
     Returns the generated feedback ID.
     """
     db = _get_db()
@@ -87,10 +97,11 @@ def submit_feedback(
     db.execute(
         """INSERT INTO feedback (id, user_id, content, category, rating, created_at)
            VALUES (?, ?, ?, ?, ?, ?)""",
-        (feedback_id, user_id, content, category, rating, now)
+        (feedback_id, user_id, content, category, rating, now),
     )
-    
+
     return feedback_id
+
 
 def get_feedback_by_id(feedback_id: int) -> Optional[FeedbackEntry]:
     """Get feedback entry by ID."""

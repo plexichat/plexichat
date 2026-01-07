@@ -10,11 +10,11 @@ from typing import Tuple, Optional
 def generate_authorization_code(code_id: int, length: int = 32) -> Tuple[str, str]:
     """
     Generate an authorization code.
-    
+
     Args:
         code_id: ID of the authorization code record
         length: Length of random bytes
-        
+
     Returns:
         Tuple of (full_code, code_hash)
     """
@@ -27,11 +27,11 @@ def generate_authorization_code(code_id: int, length: int = 32) -> Tuple[str, st
 def generate_access_token(token_id: int, length: int = 32) -> Tuple[str, str]:
     """
     Generate an access token.
-    
+
     Args:
         token_id: ID of the token record
         length: Length of random bytes
-        
+
     Returns:
         Tuple of (full_token, token_hash)
     """
@@ -44,11 +44,11 @@ def generate_access_token(token_id: int, length: int = 32) -> Tuple[str, str]:
 def generate_refresh_token(token_id: int, length: int = 48) -> Tuple[str, str]:
     """
     Generate a refresh token.
-    
+
     Args:
         token_id: ID of the token record
         length: Length of random bytes
-        
+
     Returns:
         Tuple of (full_token, token_hash)
     """
@@ -58,14 +58,16 @@ def generate_refresh_token(token_id: int, length: int = 48) -> Tuple[str, str]:
     return full_token, token_hash
 
 
-def generate_interaction_token(interaction_id: int, length: int = 32) -> Tuple[str, str]:
+def generate_interaction_token(
+    interaction_id: int, length: int = 32
+) -> Tuple[str, str]:
     """
     Generate an interaction token.
-    
+
     Args:
         interaction_id: ID of the interaction record
         length: Length of random bytes
-        
+
     Returns:
         Tuple of (full_token, token_hash)
     """
@@ -78,10 +80,10 @@ def generate_interaction_token(interaction_id: int, length: int = 32) -> Tuple[s
 def generate_client_secret(length: int = 32) -> Tuple[str, str]:
     """
     Generate a client secret.
-    
+
     Args:
         length: Length of random bytes
-        
+
     Returns:
         Tuple of (secret, secret_hash)
     """
@@ -93,10 +95,10 @@ def generate_client_secret(length: int = 32) -> Tuple[str, str]:
 def hash_token(token: str) -> str:
     """
     Hash a token using SHA-256.
-    
+
     Args:
         token: Token to hash
-        
+
     Returns:
         Hex-encoded hash
     """
@@ -106,11 +108,11 @@ def hash_token(token: str) -> str:
 def verify_token_hash(token: str, expected_hash: str) -> bool:
     """
     Verify a token against its hash using constant-time comparison.
-    
+
     Args:
         token: Token to verify
         expected_hash: Expected hash
-        
+
     Returns:
         True if token matches hash
     """
@@ -121,10 +123,10 @@ def verify_token_hash(token: str, expected_hash: str) -> bool:
 def parse_oauth_token(token: str) -> Optional[dict]:
     """
     Parse an OAuth token string.
-    
+
     Args:
         token: Full token string
-        
+
     Returns:
         Dict with token_type, id, and secret, or None if invalid
     """

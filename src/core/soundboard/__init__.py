@@ -128,10 +128,7 @@ def delete_sound(user_id: int, sound_id: int) -> bool:
 
 
 def set_sound_permissions(
-    user_id: int,
-    sound_id: int,
-    role_id: int,
-    can_use: bool
+    user_id: int, sound_id: int, role_id: int, can_use: bool
 ) -> SoundPermissions:
     """Set sound usage permissions for a role."""
     return _get_manager().set_sound_permissions(user_id, sound_id, role_id, can_use)

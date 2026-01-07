@@ -5,13 +5,11 @@ Base manager class for all core modules.
 import time
 import logging
 from typing import TypeAlias
+from src.utils.encryption import generate_snowflake_id
 
 # Type alias for Snowflake IDs to ensure consistent typing throughout the core layer.
 # While stored as integers in the database, they are represented as strings in the API layer.
 SnowflakeID: TypeAlias = int
-
-
-from src.utils.encryption import generate_snowflake_id
 
 
 logger = logging.getLogger(__name__)
@@ -53,10 +51,10 @@ class BaseManager:
     def _user_exists(self, user_id: SnowflakeID) -> bool:
         """
         Check if a user exists.
-        
+
         Args:
             user_id: The ID of the user to check.
-            
+
         Returns:
             bool: True if user exists, False otherwise.
         """
@@ -67,10 +65,7 @@ class BaseManager:
                 return user is not None
             except Exception as e:
                 logger.debug(f"Auth module check failed for user {user_id}: {e}")
-        
+
         # Fallback to direct DB check if auth module is not available or fails
-        row = self._db.fetch_one(
-            "SELECT 1 FROM auth_users WHERE id = ?",
-            (user_id,)
-        )
+        row = self._db.fetch_one("SELECT 1 FROM auth_users WHERE id = ?", (user_id,))
         return row is not None

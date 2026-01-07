@@ -42,10 +42,10 @@ PRIVILEGED_SCOPES = {
 def validate_scopes(scopes: List[str]) -> Tuple[bool, List[str]]:
     """
     Validate a list of scopes.
-    
+
     Args:
         scopes: List of scope strings
-        
+
     Returns:
         Tuple of (valid, issues)
     """
@@ -68,10 +68,10 @@ def validate_scopes(scopes: List[str]) -> Tuple[bool, List[str]]:
 def parse_scopes(scope_string: str) -> List[str]:
     """
     Parse a space-separated scope string.
-    
+
     Args:
         scope_string: Space-separated scopes
-        
+
     Returns:
         List of scope strings
     """
@@ -83,10 +83,10 @@ def parse_scopes(scope_string: str) -> List[str]:
 def scopes_to_string(scopes: List[str]) -> str:
     """
     Convert a list of scopes to a space-separated string.
-    
+
     Args:
         scopes: List of scope strings
-        
+
     Returns:
         Space-separated scope string
     """
@@ -96,11 +96,11 @@ def scopes_to_string(scopes: List[str]) -> str:
 def has_scope(granted_scopes: List[str], required_scope: str) -> bool:
     """
     Check if a required scope is in the granted scopes.
-    
+
     Args:
         granted_scopes: List of granted scopes
         required_scope: Scope to check for
-        
+
     Returns:
         True if scope is granted
     """
@@ -110,10 +110,10 @@ def has_scope(granted_scopes: List[str], required_scope: str) -> bool:
 def get_scope_description(scope: str) -> str:
     """
     Get the human-readable description for a scope.
-    
+
     Args:
         scope: Scope string
-        
+
     Returns:
         Description string
     """

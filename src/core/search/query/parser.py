@@ -49,18 +49,18 @@ class QueryParser:
 
     def __init__(self):
         self._filter_regex = re.compile(
-            r'(-?)(' + '|'.join(FILTER_PATTERNS.keys()) + r'):(\S+|"[^"]*")',
-            re.IGNORECASE
+            r"(-?)(" + "|".join(FILTER_PATTERNS.keys()) + r'):(\S+|"[^"]*")',
+            re.IGNORECASE,
         )
         self._phrase_regex = re.compile(r'"([^"]+)"')
 
     def parse(self, query: str) -> ParsedQuery:
         """
         Parse a search query into structured components.
-        
+
         Args:
             query: Raw query string
-            
+
         Returns:
             ParsedQuery with filters and search terms
         """
@@ -87,11 +87,13 @@ class QueryParser:
             if filter_type:
                 validated_value = self._validate_filter_value(filter_type, value)
                 if validated_value is not None:
-                    filters.append(QueryFilter(
-                        filter_type=filter_type,
-                        value=validated_value,
-                        negated=negated
-                    ))
+                    filters.append(
+                        QueryFilter(
+                            filter_type=filter_type,
+                            value=validated_value,
+                            negated=negated,
+                        )
+                    )
 
         remaining = self._filter_regex.sub("", remaining)
 
@@ -105,10 +107,12 @@ class QueryParser:
             raw_query=query,
             search_terms=search_terms,
             filters=filters,
-            exact_phrases=exact_phrases
+            exact_phrases=exact_phrases,
         )
 
-    def _validate_filter_value(self, filter_type: FilterType, value: str) -> Optional[str]:
+    def _validate_filter_value(
+        self, filter_type: FilterType, value: str
+    ) -> Optional[str]:
         """Validate and normalize filter value."""
         if not value:
             return None
@@ -190,12 +194,12 @@ class QueryParser:
 def parse_query(query: str) -> ParsedQuery:
     """
     Parse a search query into structured components.
-    
+
     Convenience function using default parser.
-    
+
     Args:
         query: Raw query string
-        
+
     Returns:
         ParsedQuery with filters and search terms
     """

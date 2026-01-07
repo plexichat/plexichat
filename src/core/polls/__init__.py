@@ -90,9 +90,7 @@ def setup(db, messaging_module=None):
 def _get_manager():
     """Get the manager instance, raising if not setup."""
     if not _setup_complete or _manager is None:
-        raise RuntimeError(
-            "Polls module not initialized. Call polls.setup(db) first."
-        )
+        raise RuntimeError("Polls module not initialized. Call polls.setup(db) first.")
     return _manager
 
 
@@ -107,8 +105,13 @@ def create_poll(
 ) -> Poll:
     """Create a new poll attached to a message."""
     return _get_manager().create_poll(
-        user_id, message_id, question, options, duration_hours,
-        allow_multiple_choice, results_visibility
+        user_id,
+        message_id,
+        question,
+        options,
+        duration_hours,
+        allow_multiple_choice,
+        results_visibility,
     )
 
 

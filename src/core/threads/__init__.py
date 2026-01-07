@@ -96,7 +96,13 @@ _manager = None
 _setup_complete = False
 
 
-def setup(db, auth_module=None, messaging_module=None, servers_module=None, notifications_module=None):
+def setup(
+    db,
+    auth_module=None,
+    messaging_module=None,
+    servers_module=None,
+    notifications_module=None,
+):
     """
     Initialize the threads module.
 
@@ -111,7 +117,9 @@ def setup(db, auth_module=None, messaging_module=None, servers_module=None, noti
 
     from .manager import ThreadManager
 
-    _manager = ThreadManager(db, auth_module, messaging_module, servers_module, notifications_module)
+    _manager = ThreadManager(
+        db, auth_module, messaging_module, servers_module, notifications_module
+    )
     _setup_complete = True
 
 
@@ -176,7 +184,9 @@ def remove_member(user_id: int, thread_id: int, member_user_id: int) -> bool:
     return _get_manager().remove_member(user_id, thread_id, member_user_id)
 
 
-def get_thread_members(user_id: int, thread_id: int, limit: int = 100, after_user_id: Optional[int] = None) -> List[ThreadMember]:
+def get_thread_members(
+    user_id: int, thread_id: int, limit: int = 100, after_user_id: Optional[int] = None
+) -> List[ThreadMember]:
     """Get members of a thread."""
     return _get_manager().get_thread_members(user_id, thread_id, limit, after_user_id)
 
@@ -248,7 +258,9 @@ def get_archived_threads(
     before_timestamp: Optional[int] = None,
 ) -> List[Thread]:
     """Get archived threads in a channel (paginated)."""
-    return _get_manager().get_archived_threads(user_id, channel_id, limit, before_timestamp)
+    return _get_manager().get_archived_threads(
+        user_id, channel_id, limit, before_timestamp
+    )
 
 
 def get_user_threads(user_id: int, include_archived: bool = False) -> List[Thread]:
@@ -256,7 +268,9 @@ def get_user_threads(user_id: int, include_archived: bool = False) -> List[Threa
     return _get_manager().get_user_threads(user_id, include_archived)
 
 
-def get_user_private_threads(user_id: int, channel_id: Optional[int] = None) -> List[Thread]:
+def get_user_private_threads(
+    user_id: int, channel_id: Optional[int] = None
+) -> List[Thread]:
     """Get private threads the user is a member of."""
     return _get_manager().get_user_private_threads(user_id, channel_id)
 

@@ -10,6 +10,7 @@ from src.core.base import SnowflakeID
 
 class ThreadType(Enum):
     """Types of threads."""
+
     PUBLIC = "public"
     PRIVATE = "private"
     ANNOUNCEMENT = "announcement"
@@ -17,6 +18,7 @@ class ThreadType(Enum):
 
 class ThreadState(Enum):
     """Thread states."""
+
     ACTIVE = "active"
     ARCHIVED = "archived"
     LOCKED = "locked"
@@ -24,6 +26,7 @@ class ThreadState(Enum):
 
 class AutoArchiveDuration(Enum):
     """Auto-archive duration options in minutes."""
+
     ONE_HOUR = 60
     ONE_DAY = 1440
     THREE_DAYS = 4320
@@ -33,6 +36,7 @@ class AutoArchiveDuration(Enum):
 @dataclass
 class Thread:
     """Thread entity."""
+
     id: SnowflakeID
     channel_id: SnowflakeID
     server_id: SnowflakeID
@@ -54,6 +58,7 @@ class Thread:
 @dataclass
 class ThreadMember:
     """Thread member entity."""
+
     thread_id: SnowflakeID
     user_id: SnowflakeID
     joined_at: int

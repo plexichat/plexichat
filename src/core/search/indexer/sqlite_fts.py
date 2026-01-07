@@ -86,7 +86,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
             raise SearchBackendError(
                 f"Failed to initialize FTS5: {e}",
                 backend="sqlite_fts5",
-                original_error=e
+                original_error=e,
             )
 
     def close(self):
@@ -100,7 +100,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
 
             self._db.execute(
                 "DELETE FROM search_messages_fts WHERE message_id = ?",
-                (str(message.message_id),)
+                (str(message.message_id),),
             )
 
             mentions_json = json.dumps(message.mentions) if message.mentions else "[]"
@@ -125,7 +125,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
                     "1" if message.has_links else "0",
                     mentions_json,
                     "1" if message.is_pinned else "0",
-                )
+                ),
             )
 
             return True
@@ -133,8 +133,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
         except Exception as e:
             logger.error(f"Failed to index message {message.message_id}: {e}")
             raise SearchIndexError(
-                f"Failed to index message: {e}",
-                item_id=message.message_id
+                f"Failed to index message: {e}", item_id=message.message_id
             )
 
     def index_messages_batch(self, messages: List[IndexedMessage]) -> int:
@@ -154,7 +153,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
             self._ensure_initialized()
             self._db.execute(
                 "DELETE FROM search_messages_fts WHERE message_id = ?",
-                (str(message_id),)
+                (str(message_id),),
             )
             return True
         except Exception as e:
@@ -225,7 +224,9 @@ class SQLiteFTS5Indexer(BaseIndexer):
                     message_id=int(row["message_id"]),
                     content=row["content"] or "",
                     author_id=int(row["author_id"]) if row["author_id"] else 0,
-                    conversation_id=int(row["conversation_id"]) if row["conversation_id"] else 0,
+                    conversation_id=int(row["conversation_id"])
+                    if row["conversation_id"]
+                    else 0,
                     server_id=int(row["server_id"]) if row["server_id"] else None,
                     channel_id=int(row["channel_id"]) if row["channel_id"] else None,
                     created_at=int(row["created_at"]) if row["created_at"] else 0,
@@ -247,8 +248,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
             self._ensure_initialized()
 
             self._db.execute(
-                "DELETE FROM search_users_fts WHERE user_id = ?",
-                (str(user.user_id),)
+                "DELETE FROM search_users_fts WHERE user_id = ?", (str(user.user_id),)
             )
 
             self._db.execute(
@@ -260,7 +260,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
                     user.username or "",
                     user.display_name or "",
                     "1" if user.is_bot else "0",
-                )
+                ),
             )
 
             return True
@@ -274,8 +274,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
         try:
             self._ensure_initialized()
             self._db.execute(
-                "DELETE FROM search_users_fts WHERE user_id = ?",
-                (str(user_id),)
+                "DELETE FROM search_users_fts WHERE user_id = ?", (str(user_id),)
             )
             return True
         except Exception as e:
@@ -303,7 +302,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
                    WHERE search_users_fts MATCH ?
                    ORDER BY rank
                    LIMIT ? OFFSET ?""",
-                (fts_query, limit, offset)
+                (fts_query, limit, offset),
             )
 
             results = []
@@ -331,7 +330,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
 
             self._db.execute(
                 "DELETE FROM search_servers_fts WHERE server_id = ?",
-                (str(server.server_id),)
+                (str(server.server_id),),
             )
 
             tags_str = " ".join(server.tags) if server.tags else ""
@@ -348,7 +347,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
                     server.category or "",
                     str(server.member_count),
                     "1" if server.is_public else "0",
-                )
+                ),
             )
 
             return True
@@ -362,8 +361,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
         try:
             self._ensure_initialized()
             self._db.execute(
-                "DELETE FROM search_servers_fts WHERE server_id = ?",
-                (str(server_id),)
+                "DELETE FROM search_servers_fts WHERE server_id = ?", (str(server_id),)
             )
             return True
         except Exception as e:

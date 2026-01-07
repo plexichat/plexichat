@@ -2,7 +2,7 @@
 Category manager - Manage server discovery categories.
 """
 
-from typing import List, Optional, Dict
+from typing import List, Optional
 
 import utils.config as config
 from src.core.database.collections import CappedDict
@@ -15,10 +15,10 @@ class CategoryManager:
 
     def __init__(self, db):
         self._db = db
-        
+
         # Cache size limit from config
         max_cache = config.get("redis.cache_max_items", 1000)
-        
+
         self._cache = CappedDict(max_size=max_cache)
         self._cache_loaded = False
 
@@ -43,8 +43,7 @@ class CategoryManager:
         """Validate and return category ID, raising if invalid."""
         if not self.category_exists(category_id):
             raise CategoryNotFoundError(
-                f"Category '{category_id}' does not exist",
-                category=category_id
+                f"Category '{category_id}' does not exist", category=category_id
             )
         return category_id
 
@@ -53,7 +52,7 @@ class CategoryManager:
         row = self._db.fetch_one(
             """SELECT COUNT(*) as count FROM search_server_listings 
                WHERE category = ?""",
-            (category_id,)
+            (category_id,),
         )
         return row["count"] if row else 0
 

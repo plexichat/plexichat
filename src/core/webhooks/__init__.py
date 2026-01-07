@@ -73,7 +73,13 @@ _manager = None
 _setup_complete = False
 
 
-def setup(db: Any, auth_module: Optional[Any] = None, messaging_module: Optional[Any] = None, servers_module: Optional[Any] = None, embeds_module: Optional[Any] = None) -> None:
+def setup(
+    db: Any,
+    auth_module: Optional[Any] = None,
+    messaging_module: Optional[Any] = None,
+    servers_module: Optional[Any] = None,
+    embeds_module: Optional[Any] = None,
+) -> None:
     """
     Initialize the webhooks module.
 
@@ -88,7 +94,9 @@ def setup(db: Any, auth_module: Optional[Any] = None, messaging_module: Optional
 
     from .manager import WebhookManager
 
-    _manager = WebhookManager(db, auth_module, messaging_module, servers_module, embeds_module)
+    _manager = WebhookManager(
+        db, auth_module, messaging_module, servers_module, embeds_module
+    )
     _setup_complete = True
 
 
@@ -105,10 +113,7 @@ def _get_manager():
 
 
 def create_webhook(
-    user_id: int,
-    channel_id: int,
-    name: str,
-    avatar_url: Optional[str] = None
+    user_id: int, channel_id: int, name: str, avatar_url: Optional[str] = None
 ) -> Webhook:
     """Create a new webhook for a channel."""
     return _get_manager().create_webhook(user_id, channel_id, name, avatar_url)
@@ -139,10 +144,12 @@ def update_webhook(
     webhook_id: int,
     name: Optional[str] = None,
     avatar_url: Optional[str] = None,
-    channel_id: Optional[int] = None
+    channel_id: Optional[int] = None,
 ) -> Webhook:
     """Update a webhook."""
-    return _get_manager().update_webhook(user_id, webhook_id, name, avatar_url, channel_id)
+    return _get_manager().update_webhook(
+        user_id, webhook_id, name, avatar_url, channel_id
+    )
 
 
 def delete_webhook(user_id: int, webhook_id: int) -> bool:
@@ -166,7 +173,7 @@ def execute_webhook(
     avatar_url: Optional[str] = None,
     embeds: Optional[List[Dict[str, Any]]] = None,
     thread_id: Optional[int] = None,
-    wait: bool = False
+    wait: bool = False,
 ) -> Optional[WebhookMessage]:
     """Execute a webhook to send a message."""
     return _get_manager().execute_webhook(
@@ -181,7 +188,7 @@ def execute_webhook_by_url(
     avatar_url: Optional[str] = None,
     embeds: Optional[List[Dict[str, Any]]] = None,
     thread_id: Optional[int] = None,
-    wait: bool = False
+    wait: bool = False,
 ) -> Optional[WebhookMessage]:
     """Execute a webhook using its URL."""
     return _get_manager().execute_webhook_by_url(

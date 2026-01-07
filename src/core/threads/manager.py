@@ -8,7 +8,7 @@ with proper validation, permission checks, and database interactions.
 from typing import Optional, List, Dict, Any
 
 import utils.logger as logger
-from src.core.base import BaseManager, SnowflakeID
+from src.core.base import BaseManager
 
 from .models import (
     Thread,
@@ -37,7 +37,14 @@ class ThreadManager(BaseManager):
 
     MAX_THREAD_NAME_LENGTH = 100
 
-    def __init__(self, db, auth_module=None, messaging_module=None, servers_module=None, notifications_module=None):
+    def __init__(
+        self,
+        db,
+        auth_module=None,
+        messaging_module=None,
+        servers_module=None,
+        notifications_module=None,
+    ):
         """
         Initialize the thread manager.
 
@@ -66,7 +73,7 @@ class ThreadManager(BaseManager):
         if len(name) > self.MAX_THREAD_NAME_LENGTH:
             raise ThreadNameError(
                 f"Thread name cannot exceed {self.MAX_THREAD_NAME_LENGTH} characters",
-                name
+                name,
             )
 
         return name
@@ -74,26 +81,38 @@ class ThreadManager(BaseManager):
     def _get_channel(self, channel_id: int) -> Optional[Dict[str, Any]]:
         """Get channel info from database."""
         row = self._db.fetch_one(
-            "SELECT * FROM srv_channels WHERE id = ? AND deleted = 0",
-            (channel_id,)
+            "SELECT * FROM srv_channels WHERE id = ? AND deleted = 0", (channel_id,)
         )
         return dict(row) if row else None
 
     def _get_message(self, message_id: int) -> Optional[Dict[str, Any]]:
         """Get message info from database."""
         row = self._db.fetch_one(
-            "SELECT * FROM msg_messages WHERE id = ? AND deleted = 0",
-            (message_id,)
+            "SELECT * FROM msg_messages WHERE id = ? AND deleted = 0", (message_id,)
         )
         return dict(row) if row else None
 
-    def _check_permission(self, user_id: int, server_id: int, permission: str, channel_id: Optional[int] = None) -> bool:
+    def _check_permission(
+        self,
+        user_id: int,
+        server_id: int,
+        permission: str,
+        channel_id: Optional[int] = None,
+    ) -> bool:
         """Check if user has permission."""
         if self._servers:
-            return self._servers.has_permission(user_id, server_id, permission, channel_id)
+            return self._servers.has_permission(
+                user_id, server_id, permission, channel_id
+            )
         return True
 
-    def _require_permission(self, user_id: int, server_id: int, permission: str, channel_id: Optional[int] = None) -> None:
+    def _require_permission(
+        self,
+        user_id: int,
+        server_id: int,
+        permission: str,
+        channel_id: Optional[int] = None,
+    ) -> None:
         """Require a permission, raising if not granted."""
         if not self._check_permission(user_id, server_id, permission, channel_id):
             raise PermissionDeniedError(f"Missing permission: {permission}", permission)
@@ -144,7 +163,7 @@ class ThreadManager(BaseManager):
         """Check if user is a member of the thread."""
         row = self._db.fetch_one(
             "SELECT 1 FROM thread_members WHERE thread_id = ? AND user_id = ?",
-            (thread_id, user_id)
+            (thread_id, user_id),
         )
         return row is not None
 
@@ -152,12 +171,12 @@ class ThreadManager(BaseManager):
         """Update the member count for a thread."""
         row = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM thread_members WHERE thread_id = ?",
-            (thread_id,)
+            (thread_id,),
         )
         count = row["count"] if row else 0
         self._db.execute(
             "UPDATE thread_threads SET member_count = ? WHERE id = ?",
-            (count, thread_id)
+            (count, thread_id),
         )
 
     # === Thread Creation ===
@@ -192,9 +211,13 @@ class ThreadManager(BaseManager):
         server_id = channel["server_id"]
 
         if thread_type == ThreadType.PRIVATE:
-            self._require_permission(user_id, server_id, "threads.create_private", channel_id)
+            self._require_permission(
+                user_id, server_id, "threads.create_private", channel_id
+            )
         else:
-            self._require_permission(user_id, server_id, "threads.create_public", channel_id)
+            self._require_permission(
+                user_id, server_id, "threads.create_public", channel_id
+            )
 
         now = self._get_timestamp()
         thread_id = self._generate_id()
@@ -203,7 +226,9 @@ class ThreadManager(BaseManager):
         conversation_id = None
         if self._messaging:
             try:
-                conv = self._messaging.create_thread_conversation(server_id, channel_id, name)
+                conv = self._messaging.create_thread_conversation(
+                    server_id, channel_id, name
+                )
                 conversation_id = conv.id
             except Exception as e:
                 logger.warning(f"Failed to create conversation for thread: {e}")
@@ -213,17 +238,31 @@ class ThreadManager(BaseManager):
                (id, channel_id, server_id, owner_id, name, thread_type, state, 
                 auto_archive_duration, message_count, member_count, created_at, conversation_id)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (thread_id, channel_id, server_id, user_id, name, thread_type.value,
-             ThreadState.ACTIVE.value, auto_archive_duration.value, 0, 1, now, conversation_id)
+            (
+                thread_id,
+                channel_id,
+                server_id,
+                user_id,
+                name,
+                thread_type.value,
+                ThreadState.ACTIVE.value,
+                auto_archive_duration.value,
+                0,
+                1,
+                now,
+                conversation_id,
+            ),
         )
 
         self._db.execute(
             """INSERT INTO thread_members (thread_id, user_id, joined_at)
                VALUES (?, ?, ?)""",
-            (thread_id, user_id, now)
+            (thread_id, user_id, now),
         )
 
-        logger.debug(f"Thread {thread_id} created by user {user_id} in channel {channel_id}")
+        logger.debug(
+            f"Thread {thread_id} created by user {user_id} in channel {channel_id}"
+        )
 
         result = self.get_thread(user_id, thread_id)
         assert result is not None  # Should exist since we just created/updated it
@@ -258,7 +297,7 @@ class ThreadManager(BaseManager):
 
         existing = self._db.fetch_one(
             "SELECT id FROM thread_threads WHERE parent_message_id = ? AND deleted = 0",
-            (message_id,)
+            (message_id,),
         )
         if existing:
             raise ThreadError("A thread already exists for this message")
@@ -266,7 +305,7 @@ class ThreadManager(BaseManager):
         conversation_id = message["conversation_id"]
         conv_row = self._db.fetch_one(
             "SELECT server_id, channel_id FROM msg_conversations WHERE id = ?",
-            (conversation_id,)
+            (conversation_id,),
         )
 
         if not conv_row or not conv_row["server_id"]:
@@ -276,9 +315,13 @@ class ThreadManager(BaseManager):
         channel_id = conv_row["channel_id"]
 
         if thread_type == ThreadType.PRIVATE:
-            self._require_permission(user_id, server_id, "threads.create_private", channel_id)
+            self._require_permission(
+                user_id, server_id, "threads.create_private", channel_id
+            )
         else:
-            self._require_permission(user_id, server_id, "threads.create_public", channel_id)
+            self._require_permission(
+                user_id, server_id, "threads.create_public", channel_id
+            )
 
         now = self._get_timestamp()
         thread_id = self._generate_id()
@@ -287,7 +330,9 @@ class ThreadManager(BaseManager):
         conversation_id = None
         if self._messaging:
             try:
-                conv = self._messaging.create_thread_conversation(server_id, channel_id, name)
+                conv = self._messaging.create_thread_conversation(
+                    server_id, channel_id, name
+                )
                 conversation_id = conv.id
             except Exception as e:
                 logger.warning(f"Failed to create conversation for thread: {e}")
@@ -298,18 +343,32 @@ class ThreadManager(BaseManager):
                 parent_message_id, auto_archive_duration, message_count, member_count, 
                 created_at, conversation_id)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (thread_id, channel_id, server_id, user_id, name, thread_type.value,
-             ThreadState.ACTIVE.value, message_id, auto_archive_duration.value, 0, 1, 
-             now, conversation_id)
+            (
+                thread_id,
+                channel_id,
+                server_id,
+                user_id,
+                name,
+                thread_type.value,
+                ThreadState.ACTIVE.value,
+                message_id,
+                auto_archive_duration.value,
+                0,
+                1,
+                now,
+                conversation_id,
+            ),
         )
 
         self._db.execute(
             """INSERT INTO thread_members (thread_id, user_id, joined_at)
                VALUES (?, ?, ?)""",
-            (thread_id, user_id, now)
+            (thread_id, user_id, now),
         )
 
-        logger.debug(f"Thread {thread_id} created from message {message_id} by user {user_id}")
+        logger.debug(
+            f"Thread {thread_id} created from message {message_id} by user {user_id}"
+        )
 
         result = self.get_thread(user_id, thread_id)
         assert result is not None  # Should exist since we just created/updated it
@@ -342,7 +401,7 @@ class ThreadManager(BaseManager):
         self._db.execute(
             """INSERT INTO thread_members (thread_id, user_id, joined_at)
                VALUES (?, ?, ?)""",
-            (thread_id, user_id, now)
+            (thread_id, user_id, now),
         )
 
         self._update_member_count(thread_id)
@@ -373,7 +432,7 @@ class ThreadManager(BaseManager):
 
         self._db.execute(
             "DELETE FROM thread_members WHERE thread_id = ? AND user_id = ?",
-            (thread_id, user_id)
+            (thread_id, user_id),
         )
 
         self._update_member_count(thread_id)
@@ -382,7 +441,9 @@ class ThreadManager(BaseManager):
 
         return True
 
-    def add_member(self, user_id: int, thread_id: int, member_user_id: int) -> ThreadMember:
+    def add_member(
+        self, user_id: int, thread_id: int, member_user_id: int
+    ) -> ThreadMember:
         """
         Add a member to a thread.
 
@@ -406,13 +467,15 @@ class ThreadManager(BaseManager):
 
         if thread.thread_type == ThreadType.PRIVATE:
             if not self.can_manage_thread(user_id, thread_id):
-                raise PermissionDeniedError("Cannot add members to private thread", "threads.manage")
+                raise PermissionDeniedError(
+                    "Cannot add members to private thread", "threads.manage"
+                )
 
         now = self._get_timestamp()
         self._db.execute(
             """INSERT INTO thread_members (thread_id, user_id, joined_at)
                VALUES (?, ?, ?)""",
-            (thread_id, member_user_id, now)
+            (thread_id, member_user_id, now),
         )
 
         self._update_member_count(thread_id)
@@ -451,12 +514,14 @@ class ThreadManager(BaseManager):
 
         self._db.execute(
             "DELETE FROM thread_members WHERE thread_id = ? AND user_id = ?",
-            (thread_id, member_user_id)
+            (thread_id, member_user_id),
         )
 
         self._update_member_count(thread_id)
 
-        logger.debug(f"User {member_user_id} removed from thread {thread_id} by {user_id}")
+        logger.debug(
+            f"User {member_user_id} removed from thread {thread_id} by {user_id}"
+        )
 
         return True
 
@@ -465,7 +530,7 @@ class ThreadManager(BaseManager):
         user_id: int,
         thread_id: int,
         limit: int = 100,
-        after_user_id: Optional[int] = None
+        after_user_id: Optional[int] = None,
     ) -> List[ThreadMember]:
         """
         Get members of a thread.
@@ -487,14 +552,14 @@ class ThreadManager(BaseManager):
                 """SELECT * FROM thread_members 
                    WHERE thread_id = ? AND user_id > ?
                    ORDER BY user_id LIMIT ?""",
-                (thread_id, after_user_id, limit)
+                (thread_id, after_user_id, limit),
             )
         else:
             rows = self._db.fetch_all(
                 """SELECT * FROM thread_members 
                    WHERE thread_id = ?
                    ORDER BY user_id LIMIT ?""",
-                (thread_id, limit)
+                (thread_id, limit),
             )
 
         return [self._row_to_thread_member(row) for row in rows]
@@ -503,10 +568,9 @@ class ThreadManager(BaseManager):
         """Get a specific thread member."""
         row = self._db.fetch_one(
             "SELECT * FROM thread_members WHERE thread_id = ? AND user_id = ?",
-            (thread_id, user_id)
+            (thread_id, user_id),
         )
         return self._row_to_thread_member(row) if row else None
-
 
     # === Thread Messages ===
 
@@ -559,29 +623,37 @@ class ThreadManager(BaseManager):
                     user_id=user_id,
                     conversation_id=thread.conversation_id,
                     content=content,
-                    attachments=attachments
+                    attachments=attachments,
                 )
                 message_id = msg.id
             except Exception as e:
-                logger.error(f"Failed to send message via messaging module for thread {thread_id}: {e}")
+                logger.error(
+                    f"Failed to send message via messaging module for thread {thread_id}: {e}"
+                )
                 # Fallback to local message ID if messaging fails (though content might be lost)
 
         self._db.execute(
             """INSERT INTO thread_messages (id, thread_id, message_id, user_id, created_at)
                VALUES (?, ?, ?, ?, ?)""",
-            (self._generate_id(), thread_id, message_id, user_id, now)
+            (self._generate_id(), thread_id, message_id, user_id, now),
         )
 
         self._db.execute(
             """UPDATE thread_threads 
                SET message_count = message_count + 1, last_message_at = ?
                WHERE id = ?""",
-            (now, thread_id)
+            (now, thread_id),
         )
 
         logger.debug(f"Message sent to thread {thread_id} by user {user_id}")
 
-        return {"id": message_id, "thread_id": thread_id, "user_id": user_id, "content": content, "created_at": now}
+        return {
+            "id": message_id,
+            "thread_id": thread_id,
+            "user_id": user_id,
+            "content": content,
+            "created_at": now,
+        }
 
     def get_messages(
         self,
@@ -626,26 +698,28 @@ class ThreadManager(BaseManager):
             query += " ORDER BY tm.message_id ASC LIMIT ?"
         else:
             query += " ORDER BY tm.message_id DESC LIMIT ?"
-        
+
         params.append(limit)
 
         rows = self._db.fetch_all(query, tuple(params))
 
         # Handle message decryption if needed
         from src.utils.encryption import decrypt_message
-        
+
         results = []
         for row in rows:
             data = dict(row)
             content = data.get("content", "")
-            
+
             # Use decrypt_message helper which handles prefix detection
             try:
                 data["content"] = decrypt_message(content, data["message_id"])
             except Exception as e:
                 # If decryption fails, keep as is (might be plaintext or corrupted)
-                logger.debug(f"Failed to decrypt message {data['message_id']} in thread {thread_id}: {e}")
-                
+                logger.debug(
+                    f"Failed to decrypt message {data['message_id']} in thread {thread_id}: {e}"
+                )
+
             results.append(data)
 
         return results
@@ -654,7 +728,7 @@ class ThreadManager(BaseManager):
         """Get the message count for a thread."""
         row = self._db.fetch_one(
             "SELECT message_count FROM thread_threads WHERE id = ? AND deleted = 0",
-            (thread_id,)
+            (thread_id,),
         )
         return row["message_count"] if row else 0
 
@@ -684,7 +758,7 @@ class ThreadManager(BaseManager):
         now = self._get_timestamp()
         self._db.execute(
             "UPDATE thread_threads SET state = ?, archived_at = ? WHERE id = ?",
-            (ThreadState.ARCHIVED.value, now, thread_id)
+            (ThreadState.ARCHIVED.value, now, thread_id),
         )
 
         logger.debug(f"Thread {thread_id} archived by user {user_id}")
@@ -697,7 +771,7 @@ class ThreadManager(BaseManager):
         """Internal method to unarchive a thread."""
         self._db.execute(
             "UPDATE thread_threads SET state = ?, archived_at = NULL WHERE id = ?",
-            (ThreadState.ACTIVE.value, thread_id)
+            (ThreadState.ACTIVE.value, thread_id),
         )
 
     def unarchive_thread(self, user_id: int, thread_id: int) -> Thread:
@@ -749,8 +823,7 @@ class ThreadManager(BaseManager):
             raise PermissionDeniedError("Cannot lock thread", "threads.manage")
 
         self._db.execute(
-            "UPDATE thread_threads SET locked = 1 WHERE id = ?",
-            (thread_id,)
+            "UPDATE thread_threads SET locked = 1 WHERE id = ?", (thread_id,)
         )
 
         logger.debug(f"Thread {thread_id} locked by user {user_id}")
@@ -778,8 +851,7 @@ class ThreadManager(BaseManager):
             raise PermissionDeniedError("Cannot unlock thread", "threads.manage")
 
         self._db.execute(
-            "UPDATE thread_threads SET locked = 0 WHERE id = ?",
-            (thread_id,)
+            "UPDATE thread_threads SET locked = 0 WHERE id = ?", (thread_id,)
         )
 
         logger.debug(f"Thread {thread_id} unlocked by user {user_id}")
@@ -809,7 +881,7 @@ class ThreadManager(BaseManager):
             """SELECT * FROM thread_threads 
                WHERE channel_id = ? AND state = ? AND deleted = 0
                ORDER BY last_message_at DESC NULLS LAST""",
-            (channel_id, ThreadState.ACTIVE.value)
+            (channel_id, ThreadState.ACTIVE.value),
         )
 
         threads = []
@@ -818,7 +890,7 @@ class ThreadManager(BaseManager):
             if self._check_auto_archive(thread):
                 self._db.execute(
                     "UPDATE thread_threads SET state = ?, archived_at = ? WHERE id = ?",
-                    (ThreadState.ARCHIVED.value, self._get_timestamp(), thread.id)
+                    (ThreadState.ARCHIVED.value, self._get_timestamp(), thread.id),
                 )
                 continue
             if self.can_view_thread(user_id, thread.id):
@@ -854,14 +926,14 @@ class ThreadManager(BaseManager):
                 """SELECT * FROM thread_threads 
                    WHERE channel_id = ? AND state = ? AND deleted = 0 AND archived_at < ?
                    ORDER BY archived_at DESC LIMIT ?""",
-                (channel_id, ThreadState.ARCHIVED.value, before_timestamp, limit)
+                (channel_id, ThreadState.ARCHIVED.value, before_timestamp, limit),
             )
         else:
             rows = self._db.fetch_all(
                 """SELECT * FROM thread_threads 
                    WHERE channel_id = ? AND state = ? AND deleted = 0
                    ORDER BY archived_at DESC LIMIT ?""",
-                (channel_id, ThreadState.ARCHIVED.value, limit)
+                (channel_id, ThreadState.ARCHIVED.value, limit),
             )
 
         threads = []
@@ -872,7 +944,9 @@ class ThreadManager(BaseManager):
 
         return threads
 
-    def get_user_threads(self, user_id: int, include_archived: bool = False) -> List[Thread]:
+    def get_user_threads(
+        self, user_id: int, include_archived: bool = False
+    ) -> List[Thread]:
         """
         Get threads the user has joined.
 
@@ -889,7 +963,7 @@ class ThreadManager(BaseManager):
                    JOIN thread_members m ON t.id = m.thread_id
                    WHERE m.user_id = ? AND t.deleted = 0
                    ORDER BY t.last_message_at DESC NULLS LAST""",
-                (user_id,)
+                (user_id,),
             )
         else:
             rows = self._db.fetch_all(
@@ -897,12 +971,14 @@ class ThreadManager(BaseManager):
                    JOIN thread_members m ON t.id = m.thread_id
                    WHERE m.user_id = ? AND t.state = ? AND t.deleted = 0
                    ORDER BY t.last_message_at DESC NULLS LAST""",
-                (user_id, ThreadState.ACTIVE.value)
+                (user_id, ThreadState.ACTIVE.value),
             )
 
         return [self._row_to_thread(row) for row in rows]
 
-    def get_user_private_threads(self, user_id: int, channel_id: Optional[int] = None) -> List[Thread]:
+    def get_user_private_threads(
+        self, user_id: int, channel_id: Optional[int] = None
+    ) -> List[Thread]:
         """
         Get private threads the user is a member of.
 
@@ -919,7 +995,7 @@ class ThreadManager(BaseManager):
                    JOIN thread_members m ON t.id = m.thread_id
                    WHERE m.user_id = ? AND t.thread_type = ? AND t.channel_id = ? AND t.deleted = 0
                    ORDER BY t.last_message_at DESC NULLS LAST""",
-                (user_id, ThreadType.PRIVATE.value, channel_id)
+                (user_id, ThreadType.PRIVATE.value, channel_id),
             )
         else:
             rows = self._db.fetch_all(
@@ -927,7 +1003,7 @@ class ThreadManager(BaseManager):
                    JOIN thread_members m ON t.id = m.thread_id
                    WHERE m.user_id = ? AND t.thread_type = ? AND t.deleted = 0
                    ORDER BY t.last_message_at DESC NULLS LAST""",
-                (user_id, ThreadType.PRIVATE.value)
+                (user_id, ThreadType.PRIVATE.value),
             )
 
         return [self._row_to_thread(row) for row in rows]
@@ -937,8 +1013,7 @@ class ThreadManager(BaseManager):
     def _get_thread_internal(self, thread_id: int) -> Optional[Thread]:
         """Get thread without permission check."""
         row = self._db.fetch_one(
-            "SELECT * FROM thread_threads WHERE id = ? AND deleted = 0",
-            (thread_id,)
+            "SELECT * FROM thread_threads WHERE id = ? AND deleted = 0", (thread_id,)
         )
         return self._row_to_thread(row) if row else None
 
@@ -963,7 +1038,7 @@ class ThreadManager(BaseManager):
         if self._check_auto_archive(thread):
             self._db.execute(
                 "UPDATE thread_threads SET state = ?, archived_at = ? WHERE id = ?",
-                (ThreadState.ARCHIVED.value, self._get_timestamp(), thread_id)
+                (ThreadState.ARCHIVED.value, self._get_timestamp(), thread_id),
             )
             return self._get_thread_internal(thread_id)
 
@@ -1011,7 +1086,7 @@ class ThreadManager(BaseManager):
             params.append(thread_id)
             self._db.execute(
                 f"UPDATE thread_threads SET {', '.join(updates)} WHERE id = ?",
-                tuple(params)
+                tuple(params),
             )
 
         logger.debug(f"Thread {thread_id} updated by user {user_id}")
@@ -1039,8 +1114,7 @@ class ThreadManager(BaseManager):
             raise PermissionDeniedError("Cannot delete thread", "threads.manage")
 
         self._db.execute(
-            "UPDATE thread_threads SET deleted = 1 WHERE id = ?",
-            (thread_id,)
+            "UPDATE thread_threads SET deleted = 1 WHERE id = ?", (thread_id,)
         )
 
         logger.debug(f"Thread {thread_id} deleted by user {user_id}")
@@ -1068,7 +1142,9 @@ class ThreadManager(BaseManager):
             return self._is_member(user_id, thread_id)
 
         if self._servers:
-            return self._check_permission(user_id, thread.server_id, "channels.view", thread.channel_id)
+            return self._check_permission(
+                user_id, thread.server_id, "channels.view", thread.channel_id
+            )
 
         return True
 
@@ -1094,7 +1170,9 @@ class ThreadManager(BaseManager):
             return False
 
         if self._servers:
-            return self._check_permission(user_id, thread.server_id, "messages.send", thread.channel_id)
+            return self._check_permission(
+                user_id, thread.server_id, "messages.send", thread.channel_id
+            )
 
         return True
 
@@ -1117,8 +1195,8 @@ class ThreadManager(BaseManager):
             return True
 
         if self._servers:
-            return self._check_permission(user_id, thread.server_id, "threads.manage", thread.channel_id)
+            return self._check_permission(
+                user_id, thread.server_id, "threads.manage", thread.channel_id
+            )
 
         return False
-
-

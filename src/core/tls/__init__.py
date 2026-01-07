@@ -8,7 +8,7 @@ This module provides:
 
 Usage:
     from src.core import tls
-    
+
     cert_path, key_path = tls.ensure_certificates()
 """
 
@@ -31,18 +31,18 @@ def ensure_certificates(
     key_path: Optional[str] = None,
     validity_days: int = 365,
     hostname: str = "localhost",
-    force_regenerate: bool = False
+    force_regenerate: bool = False,
 ) -> Tuple[str, str]:
     """
     Ensure TLS certificates exist, generating if necessary.
-    
+
     Args:
         cert_path: Path to certificate file (default: ~/.plexichat/certs/server.crt)
         key_path: Path to private key file (default: ~/.plexichat/certs/server.key)
         validity_days: Certificate validity period in days
         hostname: Hostname for the certificate
         force_regenerate: Force regeneration even if certs exist
-        
+
     Returns:
         Tuple of (cert_path, key_path)
     """
@@ -65,7 +65,9 @@ def ensure_certificates(
             logger.info(f"Using existing TLS certificate: {cert_path}")
             return cert_path, key_path
         else:
-            logger.warning("Existing certificate is expired or invalid, regenerating...")
+            logger.warning(
+                "Existing certificate is expired or invalid, regenerating..."
+            )
 
     # Generate new certificates
     logger.info("Generating self-signed TLS certificate...")
@@ -105,10 +107,7 @@ def _check_certificate_validity(cert_path: str) -> bool:
 
 
 def _generate_self_signed_cert(
-    cert_path: str,
-    key_path: str,
-    validity_days: int,
-    hostname: str
+    cert_path: str, key_path: str, validity_days: int, hostname: str
 ) -> None:
     """Generate a self-signed certificate using cryptography library."""
     try:
@@ -127,18 +126,18 @@ def _generate_self_signed_cert(
 
     # Generate private key
     private_key = rsa.generate_private_key(
-        public_exponent=65537,
-        key_size=2048,
-        backend=default_backend()
+        public_exponent=65537, key_size=2048, backend=default_backend()
     )
 
     # Build certificate subject
-    subject = issuer = x509.Name([
-        x509.NameAttribute(NameOID.COUNTRY_NAME, "US"),
-        x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "Development"),
-        x509.NameAttribute(NameOID.LOCALITY_NAME, "Local"),
-        x509.NameAttribute(NameOID.COMMON_NAME, hostname),
-    ])
+    subject = issuer = x509.Name(
+        [
+            x509.NameAttribute(NameOID.COUNTRY_NAME, "US"),
+            x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "Development"),
+            x509.NameAttribute(NameOID.LOCALITY_NAME, "Local"),
+            x509.NameAttribute(NameOID.COMMON_NAME, hostname),
+        ]
+    )
 
     # Build Subject Alternative Names
     san_list = [
@@ -182,11 +181,13 @@ def _generate_self_signed_cert(
 
     # Write private key
     with open(key_path, "wb") as f:
-        f.write(private_key.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.TraditionalOpenSSL,
-            encryption_algorithm=serialization.NoEncryption()
-        ))
+        f.write(
+            private_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.TraditionalOpenSSL,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
+        )
 
     # Set restrictive permissions on private key
     try:
@@ -204,11 +205,11 @@ def _generate_self_signed_cert(
 def get_ssl_context(cert_path: str, key_path: str):
     """
     Create an SSL context for use with uvicorn.
-    
+
     Args:
         cert_path: Path to certificate file
         key_path: Path to private key file
-        
+
     Returns:
         SSL context dictionary for uvicorn
     """
@@ -226,7 +227,9 @@ def get_ssl_context(cert_path: str, key_path: str):
 def is_tls_enabled() -> bool:
     """Check if TLS is enabled in configuration."""
     tls_config = config.get("tls", {})
-    return tls_config.get("enabled", False) or tls_config.get("auto_generate_self_signed", False)
+    return tls_config.get("enabled", False) or tls_config.get(
+        "auto_generate_self_signed", False
+    )
 
 
 def get_tls_config() -> dict:
@@ -251,9 +254,9 @@ def get_tls_config() -> dict:
 
 
 __all__ = [
-    'ensure_certificates',
-    'get_ssl_context',
-    'is_tls_enabled',
-    'get_tls_config',
-    'get_default_cert_dir',
+    "ensure_certificates",
+    "get_ssl_context",
+    "is_tls_enabled",
+    "get_tls_config",
+    "get_default_cert_dir",
 ]

@@ -109,7 +109,7 @@ class PollManager(BaseManager):
             raise InvalidPollDurationError(
                 f"Poll duration must be between {min_hours} and {max_hours} hours",
                 min_hours,
-                max_hours
+                max_hours,
             )
 
         return duration_hours
@@ -163,7 +163,7 @@ class PollManager(BaseManager):
                 f"Poll must have between {min_opts} and {max_opts} options",
                 min_opts,
                 max_opts,
-                len(options)
+                len(options),
             )
 
         validated_options = [self._validate_option(opt) for opt in options]
@@ -185,9 +185,17 @@ class PollManager(BaseManager):
                    (id, message_id, question, created_by, created_at, ends_at, 
                     allow_multiple_choice, results_visibility)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (poll_id, message_id, question, user_id, now, ends_at,
-                 1 if allow_multiple_choice else 0, results_visibility.value),
-                auto_commit=False
+                (
+                    poll_id,
+                    message_id,
+                    question,
+                    user_id,
+                    now,
+                    ends_at,
+                    1 if allow_multiple_choice else 0,
+                    results_visibility.value,
+                ),
+                auto_commit=False,
             )
 
             for i, option_text in enumerate(validated_options):
@@ -196,7 +204,7 @@ class PollManager(BaseManager):
                     """INSERT INTO poll_options (id, poll_id, text, position)
                        VALUES (?, ?, ?, ?)""",
                     (option_id, poll_id, option_text, i),
-                    auto_commit=False
+                    auto_commit=False,
                 )
 
             self._db.commit()
@@ -212,10 +220,7 @@ class PollManager(BaseManager):
 
     def get_poll(self, poll_id: SnowflakeID, user_id: SnowflakeID) -> Optional[Poll]:
         """Get a poll by ID."""
-        row = self._db.fetch_one(
-            "SELECT * FROM poll_polls WHERE id = ?",
-            (poll_id,)
-        )
+        row = self._db.fetch_one("SELECT * FROM poll_polls WHERE id = ?", (poll_id,))
 
         if not row:
             return None
@@ -229,10 +234,7 @@ class PollManager(BaseManager):
         return self._row_to_poll(row)
 
     def vote(
-        self,
-        user_id: SnowflakeID,
-        poll_id: SnowflakeID,
-        option_ids: List[SnowflakeID]
+        self, user_id: SnowflakeID, poll_id: SnowflakeID, option_ids: List[SnowflakeID]
     ) -> PollResults:
         """
         Vote on a poll.
@@ -274,7 +276,7 @@ class PollManager(BaseManager):
         # Check if already voted
         existing_votes = self._db.fetch_one(
             "SELECT 1 FROM poll_votes WHERE poll_id = ? AND user_id = ? LIMIT 1",
-            (poll_id, user_id)
+            (poll_id, user_id),
         )
 
         if existing_votes:
@@ -284,11 +286,13 @@ class PollManager(BaseManager):
         placeholders = ",".join("?" * len(unique_option_ids))
         valid_options = self._db.fetch_all(
             f"SELECT id FROM poll_options WHERE poll_id = ? AND id IN ({placeholders})",
-            (poll_id, *unique_option_ids)
+            (poll_id, *unique_option_ids),
         )
-        
+
         if len(valid_options) != len(unique_option_ids):
-            raise PollOptionNotFoundError("One or more selected options are invalid for this poll")
+            raise PollOptionNotFoundError(
+                "One or more selected options are invalid for this poll"
+            )
 
         now = self._get_timestamp()
 
@@ -301,7 +305,7 @@ class PollManager(BaseManager):
                     """INSERT INTO poll_votes (id, poll_id, option_id, user_id, voted_at)
                        VALUES (?, ?, ?, ?, ?)""",
                     (vote_id, poll_id, option_id, user_id, now),
-                    auto_commit=False
+                    auto_commit=False,
                 )
             self._db.commit()
         except Exception:
@@ -333,7 +337,7 @@ class PollManager(BaseManager):
         # Get user's own votes
         user_votes = self._db.fetch_all(
             "SELECT option_id FROM poll_votes WHERE poll_id = ? AND user_id = ?",
-            (poll_id, user_id)
+            (poll_id, user_id),
         )
         user_voted = len(user_votes) > 0
         user_vote_ids = [v["option_id"] for v in user_votes]
@@ -343,32 +347,36 @@ class PollManager(BaseManager):
         if poll.results_visibility == PollResultsVisibility.AFTER_VOTE:
             can_see_results = user_voted
         elif poll.results_visibility == PollResultsVisibility.AFTER_END:
-            can_see_results = poll.is_ended or (poll.ends_at and self._get_timestamp() >= poll.ends_at)
+            can_see_results = poll.is_ended or (
+                poll.ends_at and self._get_timestamp() >= poll.ends_at
+            )
 
         # Fetch all vote counts in a single query (optimized)
         vote_counts = {}
         if can_see_results:
             rows = self._db.fetch_all(
                 "SELECT option_id, COUNT(*) as count FROM poll_votes WHERE poll_id = ? GROUP BY option_id",
-                (poll_id,)
+                (poll_id,),
             )
             vote_counts = {row["option_id"]: row["count"] for row in rows}
 
         options_with_counts = []
         for option in poll.options:
             vote_count = vote_counts.get(option.id, 0)
-            options_with_counts.append(PollOption(
-                id=option.id,
-                poll_id=option.poll_id,
-                text=option.text,
-                position=option.position,
-                vote_count=vote_count
-            ))
+            options_with_counts.append(
+                PollOption(
+                    id=option.id,
+                    poll_id=option.poll_id,
+                    text=option.text,
+                    position=option.position,
+                    vote_count=vote_count,
+                )
+            )
 
         # Total votes = number of unique participants
         voter_count_row = self._db.fetch_one(
             "SELECT COUNT(DISTINCT user_id) as count FROM poll_votes WHERE poll_id = ?",
-            (poll_id,)
+            (poll_id,),
         )
         total_voters = voter_count_row["count"] if voter_count_row else 0
 
@@ -377,7 +385,7 @@ class PollManager(BaseManager):
             options=options_with_counts,
             total_votes=total_voters,
             user_voted=user_voted,
-            user_votes=user_vote_ids
+            user_votes=user_vote_ids,
         )
 
     def close_poll(self, user_id: SnowflakeID, poll_id: SnowflakeID) -> Poll:
@@ -447,8 +455,7 @@ class PollManager(BaseManager):
         """Mark a poll as ended."""
         now = self._get_timestamp()
         self._db.execute(
-            "UPDATE poll_polls SET ended_at = ? WHERE id = ?",
-            (now, poll_id)
+            "UPDATE poll_polls SET ended_at = ? WHERE id = ?", (now, poll_id)
         )
 
     def check_expired_polls(self) -> int:
@@ -464,7 +471,7 @@ class PollManager(BaseManager):
 
         rows = self._db.fetch_all(
             "SELECT id FROM poll_polls WHERE ends_at IS NOT NULL AND ends_at <= ? AND ended_at IS NULL",
-            (now,)
+            (now,),
         )
 
         count = 0
@@ -482,8 +489,7 @@ class PollManager(BaseManager):
         poll_id = row["id"]
 
         option_rows = self._db.fetch_all(
-            "SELECT * FROM poll_options WHERE poll_id = ? ORDER BY position",
-            (poll_id,)
+            "SELECT * FROM poll_options WHERE poll_id = ? ORDER BY position", (poll_id,)
         )
 
         options = [
@@ -491,14 +497,13 @@ class PollManager(BaseManager):
                 id=opt["id"],
                 poll_id=opt["poll_id"],
                 text=opt["text"],
-                position=opt["position"]
+                position=opt["position"],
             )
             for opt in option_rows
         ]
 
         total_votes_row = self._db.fetch_one(
-            "SELECT COUNT(*) as count FROM poll_votes WHERE poll_id = ?",
-            (poll_id,)
+            "SELECT COUNT(*) as count FROM poll_votes WHERE poll_id = ?", (poll_id,)
         )
         total_votes = total_votes_row["count"] if total_votes_row else 0
 
@@ -518,5 +523,5 @@ class PollManager(BaseManager):
             results_visibility=PollResultsVisibility(row["results_visibility"]),
             options=options,
             total_votes=total_votes,
-            is_ended=is_ended
+            is_ended=is_ended,
         )

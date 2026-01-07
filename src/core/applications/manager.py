@@ -5,7 +5,6 @@ Handles creating, updating, and managing applications with proper
 validation, permission checks, and database interactions.
 """
 
-import time
 import json
 import hmac
 import hashlib
@@ -16,8 +15,13 @@ import utils.logger as logger
 from src.core.base import BaseManager, SnowflakeID
 
 from .models import (
-    Application, Command, Interaction, ApplicationInstallation,
-    CommandType, InteractionType, InteractionResponse,
+    Application,
+    Command,
+    Interaction,
+    ApplicationInstallation,
+    CommandType,
+    InteractionType,
+    InteractionResponse,
 )
 from .exceptions import (
     ApplicationNotFoundError,
@@ -57,16 +61,26 @@ class ApplicationManager(BaseManager):
         create_tables(db)
 
         oauth_config = {
-            "token_expiry_seconds": self._config.get("oauth", {}).get("token_expiry_seconds", 604800),
-            "code_expiry_seconds": self._config.get("oauth", {}).get("code_expiry_seconds", 600),
-            "refresh_enabled": self._config.get("oauth", {}).get("refresh_enabled", True),
+            "token_expiry_seconds": self._config.get("oauth", {}).get(
+                "token_expiry_seconds", 604800
+            ),
+            "code_expiry_seconds": self._config.get("oauth", {}).get(
+                "code_expiry_seconds", 600
+            ),
+            "refresh_enabled": self._config.get("oauth", {}).get(
+                "refresh_enabled", True
+            ),
             "authorization_endpoint": "/oauth2/authorize",
         }
         self._oauth = OAuth2Flow(db, oauth_config)
 
         command_config = {
-            "max_commands_per_app": self._config.get("command_limits", {}).get("max_commands_per_app", 100),
-            "max_options_per_command": self._config.get("command_limits", {}).get("max_options_per_command", 25),
+            "max_commands_per_app": self._config.get("command_limits", {}).get(
+                "max_commands_per_app", 100
+            ),
+            "max_options_per_command": self._config.get("command_limits", {}).get(
+                "max_options_per_command", 25
+            ),
         }
         self._commands = CommandRegistry(db, command_config)
 
@@ -134,18 +148,17 @@ class ApplicationManager(BaseManager):
             Created Application object
         """
         name = self._validate_app_name(name)
-        
+
         max_apps = self._config.get("max_applications_per_user", 25)
         count = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM app_applications WHERE owner_id = ?",
-            (owner_id,)
+            (owner_id,),
         )
         current = count["count"] if count else 0
 
         if current >= max_apps:
             raise ApplicationLimitError(
-                f"Maximum of {max_apps} applications per user",
-                max_apps, current
+                f"Maximum of {max_apps} applications per user", max_apps, current
             )
 
         app_id = self._generate_id()
@@ -162,10 +175,23 @@ class ApplicationManager(BaseManager):
                 redirect_uris, interactions_endpoint_url, client_secret_hash,
                 created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (app_id, owner_id, name, description, None, None,
-             1 if bot_public else 0, 1 if bot_require_code_grant else 0,
-             terms_of_service_url, privacy_policy_url, uris_json,
-             interactions_endpoint_url, secret_hash, now, now)
+            (
+                app_id,
+                owner_id,
+                name,
+                description,
+                None,
+                None,
+                1 if bot_public else 0,
+                1 if bot_require_code_grant else 0,
+                terms_of_service_url,
+                privacy_policy_url,
+                uris_json,
+                interactions_endpoint_url,
+                secret_hash,
+                now,
+                now,
+            ),
         )
 
         logger.info(f"Application created: {name} (ID: {app_id}) by user {owner_id}")
@@ -189,7 +215,9 @@ class ApplicationManager(BaseManager):
             client_secret_hash=secret_hash,
         )
 
-    def get_application(self, application_id: SnowflakeID, user_id: Optional[SnowflakeID] = None) -> Optional[Application]:
+    def get_application(
+        self, application_id: SnowflakeID, user_id: Optional[SnowflakeID] = None
+    ) -> Optional[Application]:
         """
         Get an application by ID.
 
@@ -205,7 +233,7 @@ class ApplicationManager(BaseManager):
                       bot_require_code_grant, terms_of_service_url, privacy_policy_url,
                       redirect_uris, interactions_endpoint_url, created_at, updated_at
                FROM app_applications WHERE id = ?""",
-            (application_id,)
+            (application_id,),
         )
 
         if not row:
@@ -229,7 +257,7 @@ class ApplicationManager(BaseManager):
                       redirect_uris, interactions_endpoint_url, created_at, updated_at
                FROM app_applications WHERE owner_id = ?
                ORDER BY created_at DESC""",
-            (user_id,)
+            (user_id,),
         )
 
         return [self._row_to_application(row) for row in rows]
@@ -317,7 +345,7 @@ class ApplicationManager(BaseManager):
 
             self._db.execute(
                 f"UPDATE app_applications SET {', '.join(updates)} WHERE id = ?",
-                tuple(params)
+                tuple(params),
             )
 
             logger.debug(f"Application updated: {application_id}")
@@ -326,7 +354,9 @@ class ApplicationManager(BaseManager):
         assert result is not None  # Should exist since we just updated it
         return result
 
-    def delete_application(self, user_id: SnowflakeID, application_id: SnowflakeID) -> bool:
+    def delete_application(
+        self, user_id: SnowflakeID, application_id: SnowflakeID
+    ) -> bool:
         """
         Delete an application.
         """
@@ -335,7 +365,9 @@ class ApplicationManager(BaseManager):
             raise ApplicationNotFoundError("Application not found")
 
         if app.owner_id != user_id:
-            raise ApplicationAccessDeniedError("Only the owner can delete the application")
+            raise ApplicationAccessDeniedError(
+                "Only the owner can delete the application"
+            )
 
         self._db.execute("DELETE FROM app_applications WHERE id = ?", (application_id,))
         logger.info(f"Application deleted: {application_id}")
@@ -345,16 +377,22 @@ class ApplicationManager(BaseManager):
         """Validate and normalize application name."""
         if not name or not name.strip():
             raise InvalidApplicationNameError("Application name cannot be empty")
-        
+
         name = name.strip()
         if len(name) < 2:
-            raise InvalidApplicationNameError("Application name too short (min 2 characters)")
+            raise InvalidApplicationNameError(
+                "Application name too short (min 2 characters)"
+            )
         if len(name) > 100:
-            raise InvalidApplicationNameError("Application name too long (max 100 characters)")
-        
+            raise InvalidApplicationNameError(
+                "Application name too long (max 100 characters)"
+            )
+
         return name
 
-    def regenerate_client_secret(self, user_id: SnowflakeID, application_id: SnowflakeID) -> str:
+    def regenerate_client_secret(
+        self, user_id: SnowflakeID, application_id: SnowflakeID
+    ) -> str:
         """
         Regenerate the client secret for an application.
 
@@ -380,7 +418,7 @@ class ApplicationManager(BaseManager):
 
         self._db.execute(
             "UPDATE app_applications SET client_secret_hash = ?, updated_at = ? WHERE id = ?",
-            (secret_hash, self._get_timestamp(), application_id)
+            (secret_hash, self._get_timestamp(), application_id),
         )
 
         logger.info(f"Client secret regenerated for application: {application_id}")
@@ -430,7 +468,7 @@ class ApplicationManager(BaseManager):
 
         self._db.execute(
             "UPDATE app_applications SET bot_id = ?, updated_at = ? WHERE id = ?",
-            (bot.id, self._get_timestamp(), application_id)
+            (bot.id, self._get_timestamp(), application_id),
         )
 
         logger.info(f"Bot created for application {application_id}: {bot.id}")
@@ -485,7 +523,9 @@ class ApplicationManager(BaseManager):
         Returns:
             Dict with access_token, refresh_token, expires_in, scopes
         """
-        token = self._oauth.exchange_code(application_id, client_secret, code, redirect_uri)
+        token = self._oauth.exchange_code(
+            application_id, client_secret, code, redirect_uri
+        )
 
         return {
             "access_token": token.access_token,
@@ -694,11 +734,7 @@ class ApplicationManager(BaseManager):
         secret = self._config.get("webhook_signature_secret", "")
         message = timestamp.encode() + body
 
-        expected = hmac.new(
-            secret.encode(),
-            message,
-            hashlib.sha256
-        ).hexdigest()
+        expected = hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
 
         if not hmac.compare_digest(expected, signature):
             raise WebhookSignatureError("Invalid webhook signature")
@@ -736,10 +772,12 @@ class ApplicationManager(BaseManager):
 
         existing = self._db.fetch_one(
             "SELECT id FROM app_installations WHERE application_id = ? AND server_id = ?",
-            (application_id, server_id)
+            (application_id, server_id),
         )
         if existing:
-            raise InstallationExistsError("Application is already installed on this server")
+            raise InstallationExistsError(
+                "Application is already installed on this server"
+            )
 
         installation_id = self._generate_id()
         now = self._get_timestamp()
@@ -748,8 +786,16 @@ class ApplicationManager(BaseManager):
             """INSERT INTO app_installations
                (id, application_id, server_id, installer_id, permissions, scopes, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (installation_id, application_id, server_id, installer_id,
-             permissions, json.dumps(scopes or []), now, now)
+            (
+                installation_id,
+                application_id,
+                server_id,
+                installer_id,
+                permissions,
+                json.dumps(scopes or []),
+                now,
+                now,
+            ),
         )
 
         if app.bot_id and self._servers:
@@ -793,14 +839,16 @@ class ApplicationManager(BaseManager):
         """
         installation = self._db.fetch_one(
             "SELECT id FROM app_installations WHERE application_id = ? AND server_id = ?",
-            (application_id, server_id)
+            (application_id, server_id),
         )
         if not installation:
-            raise InstallationNotFoundError("Application is not installed on this server")
+            raise InstallationNotFoundError(
+                "Application is not installed on this server"
+            )
 
         self._db.execute(
             "DELETE FROM app_installations WHERE application_id = ? AND server_id = ?",
-            (application_id, server_id)
+            (application_id, server_id),
         )
 
         app = self.get_application(application_id)
@@ -834,21 +882,21 @@ class ApplicationManager(BaseManager):
                           scopes, created_at, updated_at
                    FROM app_installations
                    WHERE application_id = ? AND server_id = ?""",
-                (application_id, server_id)
+                (application_id, server_id),
             )
         elif application_id:
             rows = self._db.fetch_all(
                 """SELECT id, application_id, server_id, installer_id, permissions,
                           scopes, created_at, updated_at
                    FROM app_installations WHERE application_id = ?""",
-                (application_id,)
+                (application_id,),
             )
         elif server_id:
             rows = self._db.fetch_all(
                 """SELECT id, application_id, server_id, installer_id, permissions,
                           scopes, created_at, updated_at
                    FROM app_installations WHERE server_id = ?""",
-                (server_id,)
+                (server_id,),
             )
         else:
             rows = self._db.fetch_all(
@@ -885,8 +933,7 @@ class ApplicationManager(BaseManager):
         if rate_info["count"] >= requests_per_minute:
             retry_after = (rate_info["reset_at"] - now) // 1000
             raise RateLimitError(
-                f"Rate limit exceeded for application {application_id}",
-                retry_after
+                f"Rate limit exceeded for application {application_id}", retry_after
             )
 
         rate_info["count"] += 1

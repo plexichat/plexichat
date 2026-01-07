@@ -85,7 +85,13 @@ _manager = None
 _setup_complete = False
 
 
-def setup(db: Any, messaging_module: Optional[Any] = None, servers_module: Optional[Any] = None, relationships_module: Optional[Any] = None, media_module: Optional[Any] = None) -> None:
+def setup(
+    db: Any,
+    messaging_module: Optional[Any] = None,
+    servers_module: Optional[Any] = None,
+    relationships_module: Optional[Any] = None,
+    media_module: Optional[Any] = None,
+) -> None:
     """
     Initialize the reactions module.
 
@@ -101,7 +107,9 @@ def setup(db: Any, messaging_module: Optional[Any] = None, servers_module: Optio
     from .manager import ReactionManager
 
     # Pass None for auth_module as it's not currently used by ReactionManager
-    _manager = ReactionManager(db, None, messaging_module, servers_module, relationships_module, media_module)
+    _manager = ReactionManager(
+        db, None, messaging_module, servers_module, relationships_module, media_module
+    )
     _setup_complete = True
 
 
@@ -150,7 +158,7 @@ def get_reactions(user_id: int, message_id: int) -> MessageReactions:
 def get_reactions_batch(user_id: int, message_ids: List[int]) -> Dict[int, List[Dict]]:
     """
     Get reactions for multiple messages in a single batch query.
-    
+
     Optimized to avoid N+1 queries when loading message lists.
     Returns dict mapping message_id to list of reaction dicts.
     """
@@ -162,10 +170,12 @@ def get_reaction_users(
     message_id: int,
     emoji: str,
     limit: int = 100,
-    after_user_id: Optional[int] = None
+    after_user_id: Optional[int] = None,
 ) -> List[ReactionUser]:
     """Get users who reacted with a specific emoji."""
-    return _get_manager().get_reaction_users(user_id, message_id, emoji, limit, after_user_id)
+    return _get_manager().get_reaction_users(
+        user_id, message_id, emoji, limit, after_user_id
+    )
 
 
 def get_user_reactions(user_id: int, message_id: int) -> List[Reaction]:
@@ -184,7 +194,9 @@ def create_custom_emoji(
     content_type: str,
 ) -> CustomEmoji:
     """Create a custom emoji for a server with image upload."""
-    return _get_manager().create_custom_emoji(user_id, server_id, name, image_data, content_type)
+    return _get_manager().create_custom_emoji(
+        user_id, server_id, name, image_data, content_type
+    )
 
 
 def update_custom_emoji(
@@ -206,7 +218,9 @@ def get_custom_emoji(emoji_id: int) -> Optional[CustomEmoji]:
     return _get_manager().get_custom_emoji(emoji_id)
 
 
-def get_server_custom_emojis(server_id: int, include_unavailable: bool = False) -> List[CustomEmoji]:
+def get_server_custom_emojis(
+    server_id: int, include_unavailable: bool = False
+) -> List[CustomEmoji]:
     """Get all custom emojis for a server."""
     return _get_manager().get_server_custom_emojis(server_id, include_unavailable)
 

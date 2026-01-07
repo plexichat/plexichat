@@ -10,6 +10,7 @@ from src.core.base import SnowflakeID
 
 class SoundFormat(Enum):
     """Sound file format."""
+
     MP3 = "mp3"
     OGG = "ogg"
 
@@ -17,6 +18,7 @@ class SoundFormat(Enum):
 @dataclass
 class Sound:
     """Represents a soundboard sound."""
+
     id: SnowflakeID
     server_id: SnowflakeID
     name: str
@@ -34,6 +36,7 @@ class Sound:
 @dataclass
 class SoundPermissions:
     """Sound usage permissions per role."""
+
     id: SnowflakeID
     sound_id: SnowflakeID
     role_id: SnowflakeID
@@ -43,6 +46,7 @@ class SoundPermissions:
 @dataclass
 class SoundCooldown:
     """Sound cooldown tracking per user."""
+
     user_id: SnowflakeID
     sound_id: SnowflakeID
     last_used_at: int
@@ -52,6 +56,7 @@ class SoundCooldown:
 @dataclass
 class SoundUsage:
     """Tracks sound usage statistics."""
+
     id: SnowflakeID
     sound_id: SnowflakeID
     user_id: SnowflakeID
@@ -62,6 +67,7 @@ class SoundUsage:
 @dataclass
 class SoundPlayback:
     """Sound playback event."""
+
     sound: Sound
     user_id: SnowflakeID
     channel_id: SnowflakeID

@@ -5,11 +5,13 @@ Thread exceptions - All thread-related error types.
 
 class ThreadError(Exception):
     """Base exception for all thread errors."""
+
     pass
 
 
 class ThreadNotFoundError(ThreadError):
     """Thread does not exist."""
+
     pass
 
 
@@ -22,21 +24,25 @@ class ThreadAccessDeniedError(ThreadError):
 
 class ThreadArchivedError(ThreadError):
     """Thread is archived and cannot be modified."""
+
     pass
 
 
 class ThreadLockedError(ThreadError):
     """Thread is locked and cannot receive new messages."""
+
     pass
 
 
 class ThreadMemberNotFoundError(ThreadError):
     """User is not a member of the thread."""
+
     pass
 
 
 class ThreadMemberExistsError(ThreadError):
     """User is already a member of the thread."""
+
     pass
 
 
@@ -50,11 +56,13 @@ class ThreadNameError(ThreadError):
 
 class MessageNotFoundError(ThreadError):
     """Message does not exist."""
+
     pass
 
 
 class ChannelNotFoundError(ThreadError):
     """Channel does not exist."""
+
     pass
 
 

@@ -97,7 +97,14 @@ _manager = None
 _setup_complete = False
 
 
-def setup(db, auth_module=None, messaging_module=None, servers_module=None, relationships_module=None, presence_module=None):
+def setup(
+    db,
+    auth_module=None,
+    messaging_module=None,
+    servers_module=None,
+    relationships_module=None,
+    presence_module=None,
+):
     """
     Initialize the notifications module.
 
@@ -113,7 +120,14 @@ def setup(db, auth_module=None, messaging_module=None, servers_module=None, rela
 
     from .manager import NotificationManager
 
-    _manager = NotificationManager(db, auth_module, messaging_module, servers_module, relationships_module, presence_module)
+    _manager = NotificationManager(
+        db,
+        auth_module,
+        messaging_module,
+        servers_module,
+        relationships_module,
+        presence_module,
+    )
     _setup_complete = True
 
 
@@ -138,7 +152,7 @@ def validate_mentions(
     user_id: int,
     mentions: List[Mention],
     server_id: Optional[int] = None,
-    channel_id: Optional[int] = None
+    channel_id: Optional[int] = None,
 ) -> List[Mention]:
     """Validate mentions and filter out invalid ones."""
     return _get_manager().validate_mentions(user_id, mentions, server_id, channel_id)
@@ -158,7 +172,7 @@ def create_notifications_for_message(
     conversation_id: int,
     content: str,
     server_id: Optional[int] = None,
-    channel_id: Optional[int] = None
+    channel_id: Optional[int] = None,
 ) -> List[Notification]:
     """Create notifications for all mentioned users in a message."""
     return _get_manager().create_notifications_for_message(
@@ -175,7 +189,7 @@ def get_notifications(
     user_id: int,
     limit: int = 50,
     before_id: Optional[int] = None,
-    unread_only: bool = False
+    unread_only: bool = False,
 ) -> List[Notification]:
     """Get notifications for a user."""
     return _get_manager().get_notifications(user_id, limit, before_id, unread_only)
@@ -228,9 +242,7 @@ def get_mention_count(user_id: int, server_id: Optional[int] = None) -> int:
 
 
 def get_notification_feed(
-    user_id: int,
-    limit: int = 50,
-    before_id: Optional[int] = None
+    user_id: int, limit: int = 50, before_id: Optional[int] = None
 ) -> NotificationFeed:
     """Get recent mentions across all servers."""
     return _get_manager().get_notification_feed(user_id, limit, before_id)
@@ -239,21 +251,23 @@ def get_notification_feed(
 # === Settings Operations ===
 
 
-def get_notification_settings(user_id: int, server_id: Optional[int] = None) -> NotificationSettings:
+def get_notification_settings(
+    user_id: int, server_id: Optional[int] = None
+) -> NotificationSettings:
     """Get notification settings for a user."""
     return _get_manager().get_notification_settings(user_id, server_id)
 
 
 def update_notification_settings(
-    user_id: int,
-    server_id: Optional[int] = None,
-    **kwargs
+    user_id: int, server_id: Optional[int] = None, **kwargs
 ) -> NotificationSettings:
     """Update notification settings for a user."""
     return _get_manager().update_notification_settings(user_id, server_id, **kwargs)
 
 
-def get_channel_override(user_id: int, channel_id: int) -> Optional[ChannelNotificationOverride]:
+def get_channel_override(
+    user_id: int, channel_id: int
+) -> Optional[ChannelNotificationOverride]:
     """Get channel notification override for a user."""
     return _get_manager().get_channel_override(user_id, channel_id)
 
@@ -262,7 +276,7 @@ def set_channel_override(
     user_id: int,
     channel_id: int,
     level: NotificationLevel,
-    muted_until: Optional[int] = None
+    muted_until: Optional[int] = None,
 ) -> ChannelNotificationOverride:
     """Set channel notification override for a user."""
     return _get_manager().set_channel_override(user_id, channel_id, level, muted_until)

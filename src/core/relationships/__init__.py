@@ -94,7 +94,9 @@ _manager = None
 _setup_complete = False
 
 
-def setup(db: Any, auth_module: Optional[Any] = None, servers_module: Optional[Any] = None) -> None:
+def setup(
+    db: Any, auth_module: Optional[Any] = None, servers_module: Optional[Any] = None
+) -> None:
     """
     Initialize the relationships module.
 
@@ -124,9 +126,7 @@ def _get_manager():
 
 
 def send_friend_request(
-    sender_id: int,
-    recipient_id: int,
-    message: Optional[str] = None
+    sender_id: int, recipient_id: int, message: Optional[str] = None
 ) -> FriendRequest:
     """Send a friend request to another user."""
     return _get_manager().send_friend_request(sender_id, recipient_id, message)
@@ -152,12 +152,16 @@ def get_friend_request(request_id: int) -> Optional[FriendRequest]:
     return _get_manager().get_friend_request(request_id)
 
 
-def get_pending_requests_incoming(user_id: int, limit: int = 100) -> List[FriendRequest]:
+def get_pending_requests_incoming(
+    user_id: int, limit: int = 100
+) -> List[FriendRequest]:
     """Get incoming pending friend requests."""
     return _get_manager().get_pending_requests_incoming(user_id, limit)
 
 
-def get_pending_requests_outgoing(user_id: int, limit: int = 100) -> List[FriendRequest]:
+def get_pending_requests_outgoing(
+    user_id: int, limit: int = 100
+) -> List[FriendRequest]:
     """Get outgoing pending friend requests."""
     return _get_manager().get_pending_requests_outgoing(user_id, limit)
 
@@ -184,9 +188,7 @@ def remove_friend(user_id: int, friend_id: int) -> bool:
 
 
 def block_user(
-    blocker_id: int,
-    blocked_id: int,
-    reason: Optional[str] = None
+    blocker_id: int, blocked_id: int, reason: Optional[str] = None
 ) -> BlockedUser:
     """Block a user."""
     return _get_manager().block_user(blocker_id, blocked_id, reason)

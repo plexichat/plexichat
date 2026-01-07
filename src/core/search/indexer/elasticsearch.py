@@ -62,7 +62,7 @@ class ElasticsearchIndexer(BaseIndexer):
             raise SearchBackendError(
                 f"Failed to initialize Elasticsearch: {e}",
                 backend="elasticsearch",
-                original_error=e
+                original_error=e,
             )
 
     def close(self):
@@ -83,10 +83,7 @@ class ElasticsearchIndexer(BaseIndexer):
                 headers = {"Content-Type": "application/json"}
 
                 req = urllib.request.Request(
-                    url,
-                    data=data,
-                    headers=headers,
-                    method=method
+                    url, data=data, headers=headers, method=method
                 )
 
                 with urllib.request.urlopen(req, timeout=30) as response:
@@ -97,13 +94,13 @@ class ElasticsearchIndexer(BaseIndexer):
                 raise SearchBackendError(
                     f"Elasticsearch request failed: {e.code} {error_body}",
                     backend="elasticsearch",
-                    original_error=e
+                    original_error=e,
                 )
             except Exception as e:
                 raise SearchBackendError(
                     f"Elasticsearch request failed: {e}",
                     backend="elasticsearch",
-                    original_error=e
+                    original_error=e,
                 )
         else:
             return self._http_client.request(method, path, body)
@@ -131,7 +128,7 @@ class ElasticsearchIndexer(BaseIndexer):
             "settings": {
                 "number_of_shards": 1,
                 "number_of_replicas": 0,
-            }
+            },
         }
 
         try:
@@ -154,7 +151,7 @@ class ElasticsearchIndexer(BaseIndexer):
             "settings": {
                 "number_of_shards": 1,
                 "number_of_replicas": 0,
-            }
+            },
         }
 
         try:
@@ -180,7 +177,7 @@ class ElasticsearchIndexer(BaseIndexer):
             "settings": {
                 "number_of_shards": 1,
                 "number_of_replicas": 0,
-            }
+            },
         }
 
         try:
@@ -204,22 +201,21 @@ class ElasticsearchIndexer(BaseIndexer):
                 "has_attachments": message.has_attachments,
                 "has_embeds": message.has_embeds,
                 "has_links": message.has_links,
-                "mentions": [str(m) for m in message.mentions] if message.mentions else [],
+                "mentions": [str(m) for m in message.mentions]
+                if message.mentions
+                else [],
                 "is_pinned": message.is_pinned,
             }
 
             self._request(
-                "PUT",
-                f"/{self._message_index}/_doc/{message.message_id}",
-                doc
+                "PUT", f"/{self._message_index}/_doc/{message.message_id}", doc
             )
             return True
 
         except Exception as e:
             logger.error(f"Failed to index message {message.message_id}: {e}")
             raise SearchIndexError(
-                f"Failed to index message: {e}",
-                item_id=message.message_id
+                f"Failed to index message: {e}", item_id=message.message_id
             )
 
     def index_messages_batch(self, messages: List[IndexedMessage]) -> int:
@@ -230,43 +226,62 @@ class ElasticsearchIndexer(BaseIndexer):
         try:
             bulk_body = []
             for message in messages:
-                bulk_body.append(json.dumps({
-                    "index": {
-                        "_index": self._message_index,
-                        "_id": str(message.message_id)
-                    }
-                }))
-                bulk_body.append(json.dumps({
-                    "message_id": str(message.message_id),
-                    "content": message.content or "",
-                    "author_id": str(message.author_id),
-                    "conversation_id": str(message.conversation_id),
-                    "server_id": str(message.server_id) if message.server_id else None,
-                    "channel_id": str(message.channel_id) if message.channel_id else None,
-                    "created_at": message.created_at,
-                    "has_attachments": message.has_attachments,
-                    "has_embeds": message.has_embeds,
-                    "has_links": message.has_links,
-                    "mentions": [str(m) for m in message.mentions] if message.mentions else [],
-                    "is_pinned": message.is_pinned,
-                }))
+                bulk_body.append(
+                    json.dumps(
+                        {
+                            "index": {
+                                "_index": self._message_index,
+                                "_id": str(message.message_id),
+                            }
+                        }
+                    )
+                )
+                bulk_body.append(
+                    json.dumps(
+                        {
+                            "message_id": str(message.message_id),
+                            "content": message.content or "",
+                            "author_id": str(message.author_id),
+                            "conversation_id": str(message.conversation_id),
+                            "server_id": str(message.server_id)
+                            if message.server_id
+                            else None,
+                            "channel_id": str(message.channel_id)
+                            if message.channel_id
+                            else None,
+                            "created_at": message.created_at,
+                            "has_attachments": message.has_attachments,
+                            "has_embeds": message.has_embeds,
+                            "has_links": message.has_links,
+                            "mentions": [str(m) for m in message.mentions]
+                            if message.mentions
+                            else [],
+                            "is_pinned": message.is_pinned,
+                        }
+                    )
+                )
 
             bulk_data = "\n".join(bulk_body) + "\n"
 
             import urllib.request
+
             url = f"{self._hosts[0]}/_bulk"
             req = urllib.request.Request(
                 url,
                 data=bulk_data.encode(),
                 headers={"Content-Type": "application/x-ndjson"},
-                method="POST"
+                method="POST",
             )
 
             with urllib.request.urlopen(req, timeout=60) as response:
                 result = json.loads(response.read().decode())
 
             if result.get("errors"):
-                failed = sum(1 for item in result.get("items", []) if "error" in item.get("index", {}))
+                failed = sum(
+                    1
+                    for item in result.get("items", [])
+                    if "error" in item.get("index", {})
+                )
                 return len(messages) - failed
 
             return len(messages)
@@ -310,7 +325,9 @@ class ElasticsearchIndexer(BaseIndexer):
             must: List[Dict[str, Any]] = [{"match": {"content": query}}]
 
             if conversation_ids:
-                must.append({"terms": {"conversation_id": [str(c) for c in conversation_ids]}})
+                must.append(
+                    {"terms": {"conversation_id": [str(c) for c in conversation_ids]}}
+                )
             if server_ids:
                 must.append({"terms": {"server_id": [str(s) for s in server_ids]}})
             if channel_ids:
@@ -326,27 +343,31 @@ class ElasticsearchIndexer(BaseIndexer):
             }
 
             result = self._request(
-                "POST",
-                f"/{self._message_index}/_search",
-                search_body
+                "POST", f"/{self._message_index}/_search", search_body
             )
 
             results = []
             for hit in result.get("hits", {}).get("hits", []):
                 source = hit.get("_source", {})
-                results.append(MessageSearchResult(
-                    id=int(source.get("message_id", 0)),
-                    message_id=int(source.get("message_id", 0)),
-                    content=source.get("content", ""),
-                    author_id=int(source.get("author_id", 0)),
-                    conversation_id=int(source.get("conversation_id", 0)),
-                    server_id=int(source["server_id"]) if source.get("server_id") else None,
-                    channel_id=int(source["channel_id"]) if source.get("channel_id") else None,
-                    created_at=source.get("created_at", 0),
-                    has_attachments=source.get("has_attachments", False),
-                    is_pinned=source.get("is_pinned", False),
-                    score=hit.get("_score", 0.0),
-                ))
+                results.append(
+                    MessageSearchResult(
+                        id=int(source.get("message_id", 0)),
+                        message_id=int(source.get("message_id", 0)),
+                        content=source.get("content", ""),
+                        author_id=int(source.get("author_id", 0)),
+                        conversation_id=int(source.get("conversation_id", 0)),
+                        server_id=int(source["server_id"])
+                        if source.get("server_id")
+                        else None,
+                        channel_id=int(source["channel_id"])
+                        if source.get("channel_id")
+                        else None,
+                        created_at=source.get("created_at", 0),
+                        has_attachments=source.get("has_attachments", False),
+                        is_pinned=source.get("is_pinned", False),
+                        score=hit.get("_score", 0.0),
+                    )
+                )
 
             return results
 
@@ -403,14 +424,16 @@ class ElasticsearchIndexer(BaseIndexer):
             results = []
             for hit in result.get("hits", {}).get("hits", []):
                 source = hit.get("_source", {})
-                results.append(UserSearchResult(
-                    id=int(source.get("user_id", 0)),
-                    user_id=int(source.get("user_id", 0)),
-                    username=source.get("username", ""),
-                    display_name=source.get("display_name") or None,
-                    is_bot=source.get("is_bot", False),
-                    score=hit.get("_score", 0.0),
-                ))
+                results.append(
+                    UserSearchResult(
+                        id=int(source.get("user_id", 0)),
+                        user_id=int(source.get("user_id", 0)),
+                        username=source.get("username", ""),
+                        display_name=source.get("display_name") or None,
+                        is_bot=source.get("is_bot", False),
+                        score=hit.get("_score", 0.0),
+                    )
+                )
 
             return results
 
@@ -476,22 +499,28 @@ class ElasticsearchIndexer(BaseIndexer):
                 "size": limit,
             }
 
-            result = self._request("POST", f"/{self._server_index}/_search", search_body)
+            result = self._request(
+                "POST", f"/{self._server_index}/_search", search_body
+            )
 
             results = []
             for hit in result.get("hits", {}).get("hits", []):
                 source = hit.get("_source", {})
-                results.append(ServerSearchResult(
-                    id=int(source.get("server_id", 0)),
-                    server_id=int(source.get("server_id", 0)),
-                    name=source.get("name", ""),
-                    description=source.get("description") or None,
-                    category=source.get("category") or None,
-                    categories=[source.get("category")] if source.get("category") else [],
-                    tags=source.get("tags", []),
-                    member_count=source.get("member_count", 0),
-                    score=hit.get("_score", 0.0),
-                ))
+                results.append(
+                    ServerSearchResult(
+                        id=int(source.get("server_id", 0)),
+                        server_id=int(source.get("server_id", 0)),
+                        name=source.get("name", ""),
+                        description=source.get("description") or None,
+                        category=source.get("category") or None,
+                        categories=[source.get("category")]
+                        if source.get("category")
+                        else [],
+                        tags=source.get("tags", []),
+                        member_count=source.get("member_count", 0),
+                        score=hit.get("_score", 0.0),
+                    )
+                )
 
             return results
 

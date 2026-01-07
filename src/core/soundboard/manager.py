@@ -10,7 +10,7 @@ from typing import Optional, List, Dict, Any
 
 import utils.config as config
 import utils.logger as logger
-from src.core.base import BaseManager, SnowflakeID
+from src.core.base import BaseManager
 
 from .models import (
     Sound,
@@ -97,10 +97,12 @@ class SoundboardManager(BaseManager):
         roles = self._servers.get_member_roles(server_id, user_id)
         return [role.id for role in roles]
 
-    def _check_cooldown(self, user_id: int, sound_id: int, cooldown_seconds: int) -> Optional[int]:
+    def _check_cooldown(
+        self, user_id: int, sound_id: int, cooldown_seconds: int
+    ) -> Optional[int]:
         """
         Check if sound is on cooldown for user.
-        
+
         Returns:
             None if not on cooldown, remaining seconds if on cooldown
         """
@@ -165,8 +167,7 @@ class SoundboardManager(BaseManager):
         """
         if not self._check_server_permission(user_id, server_id):
             raise PermissionDeniedError(
-                "Missing permission to manage server",
-                "server.manage"
+                "Missing permission to manage server", "server.manage"
             )
 
         name = self._validate_sound_name(name)
@@ -174,17 +175,13 @@ class SoundboardManager(BaseManager):
         allowed_formats = self._config.get("allowed_formats", ["mp3", "ogg"])
         if format.value not in allowed_formats:
             raise InvalidSoundFormatError(
-                f"Format {format.value} not allowed",
-                format.value,
-                allowed_formats
+                f"Format {format.value} not allowed", format.value, allowed_formats
             )
 
         max_size = self._config.get("max_sound_size", 524288)
         if size > max_size:
             raise SoundTooLargeError(
-                f"Sound exceeds maximum size of {max_size} bytes",
-                max_size,
-                size
+                f"Sound exceeds maximum size of {max_size} bytes", max_size, size
             )
 
         max_duration = self._config.get("max_sound_duration_seconds", 5)
@@ -192,7 +189,7 @@ class SoundboardManager(BaseManager):
             raise SoundTooLongError(
                 f"Sound exceeds maximum duration of {max_duration} seconds",
                 max_duration,
-                duration_seconds
+                duration_seconds,
             )
 
         if volume < 0.0 or volume > 1.0:
@@ -200,14 +197,14 @@ class SoundboardManager(BaseManager):
 
         count_row = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM soundboard_sounds WHERE server_id = ?",
-            (server_id,)
+            (server_id,),
         )
         max_sounds = self._config.get("max_sounds_per_server", 100)
         if count_row and count_row["count"] >= max_sounds:
             raise SoundLimitError(
                 f"Server has reached maximum of {max_sounds} sounds",
                 max_sounds,
-                count_row["count"]
+                count_row["count"],
             )
 
         now = self._get_timestamp()
@@ -217,8 +214,19 @@ class SoundboardManager(BaseManager):
             """INSERT INTO soundboard_sounds 
                (id, server_id, name, format, emoji, url, size, duration_seconds, volume, created_by, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (sound_id, server_id, name, format.value, emoji, url, size,
-             duration_seconds, volume, user_id, now)
+            (
+                sound_id,
+                server_id,
+                name,
+                format.value,
+                emoji,
+                url,
+                size,
+                duration_seconds,
+                volume,
+                user_id,
+                now,
+            ),
         )
 
         logger.debug(f"Uploaded sound {sound_id} to server {server_id}")
@@ -235,7 +243,7 @@ class SoundboardManager(BaseManager):
                LEFT JOIN soundboard_usage u ON s.id = u.sound_id
                WHERE s.id = ?
                GROUP BY s.id""",
-            (sound_id,)
+            (sound_id,),
         )
 
         if not row:
@@ -258,7 +266,7 @@ class SoundboardManager(BaseManager):
                WHERE s.server_id = ?
                GROUP BY s.id
                ORDER BY s.name""",
-            (server_id,)
+            (server_id,),
         )
 
         return [self._row_to_sound(row) for row in rows]
@@ -284,22 +292,19 @@ class SoundboardManager(BaseManager):
 
         if not self._check_server_permission(user_id, sound.server_id):
             raise PermissionDeniedError(
-                "Missing permission to manage server",
-                "server.manage"
+                "Missing permission to manage server", "server.manage"
             )
 
-        self._db.execute("DELETE FROM soundboard_permissions WHERE sound_id = ?", (sound_id,))
+        self._db.execute(
+            "DELETE FROM soundboard_permissions WHERE sound_id = ?", (sound_id,)
+        )
         self._db.execute("DELETE FROM soundboard_sounds WHERE id = ?", (sound_id,))
 
         logger.debug(f"Deleted sound {sound_id}")
         return True
 
     def set_sound_permissions(
-        self,
-        user_id: int,
-        sound_id: int,
-        role_id: int,
-        can_use: bool
+        self, user_id: int, sound_id: int, role_id: int, can_use: bool
     ) -> SoundPermissions:
         """
         Set sound usage permissions for a role.
@@ -323,19 +328,18 @@ class SoundboardManager(BaseManager):
 
         if not self._check_server_permission(user_id, sound.server_id):
             raise PermissionDeniedError(
-                "Missing permission to manage server",
-                "server.manage"
+                "Missing permission to manage server", "server.manage"
             )
 
         existing = self._db.fetch_one(
             "SELECT id FROM soundboard_permissions WHERE sound_id = ? AND role_id = ?",
-            (sound_id, role_id)
+            (sound_id, role_id),
         )
 
         if existing:
             self._db.execute(
                 "UPDATE soundboard_permissions SET can_use = ? WHERE id = ?",
-                (1 if can_use else 0, existing["id"])
+                (1 if can_use else 0, existing["id"]),
             )
             perm_id = existing["id"]
         else:
@@ -343,14 +347,11 @@ class SoundboardManager(BaseManager):
             self._db.execute(
                 """INSERT INTO soundboard_permissions (id, sound_id, role_id, can_use)
                    VALUES (?, ?, ?, ?)""",
-                (perm_id, sound_id, role_id, 1 if can_use else 0)
+                (perm_id, sound_id, role_id, 1 if can_use else 0),
             )
 
         return SoundPermissions(
-            id=perm_id,
-            sound_id=sound_id,
-            role_id=role_id,
-            can_use=can_use
+            id=perm_id, sound_id=sound_id, role_id=role_id, can_use=can_use
         )
 
     def _can_use_sound(self, user_id: int, sound_id: int, server_id: int) -> bool:
@@ -361,7 +362,7 @@ class SoundboardManager(BaseManager):
 
         perms = self._db.fetch_all(
             "SELECT role_id, can_use FROM soundboard_permissions WHERE sound_id = ?",
-            (sound_id,)
+            (sound_id,),
         )
 
         if not perms:
@@ -374,12 +375,7 @@ class SoundboardManager(BaseManager):
 
         return True
 
-    def play_sound(
-        self,
-        user_id: int,
-        sound_id: int,
-        channel_id: int
-    ) -> SoundPlayback:
+    def play_sound(self, user_id: int, sound_id: int, channel_id: int) -> SoundPlayback:
         """
         Play a sound in a voice channel.
 
@@ -417,8 +413,7 @@ class SoundboardManager(BaseManager):
         remaining = self._check_cooldown(user_id, sound_id, cooldown_seconds)
         if remaining is not None:
             raise SoundCooldownError(
-                f"Sound is on cooldown for {remaining} more seconds",
-                remaining
+                f"Sound is on cooldown for {remaining} more seconds", remaining
             )
 
         now = self._get_timestamp()
@@ -427,18 +422,17 @@ class SoundboardManager(BaseManager):
         self._db.execute(
             """INSERT INTO soundboard_usage (id, sound_id, user_id, channel_id, used_at)
                VALUES (?, ?, ?, ?, ?)""",
-            (usage_id, sound_id, user_id, channel_id, now)
+            (usage_id, sound_id, user_id, channel_id, now),
         )
 
         self._set_cooldown(user_id, sound_id)
 
-        logger.debug(f"Sound {sound_id} played by user {user_id} in channel {channel_id}")
+        logger.debug(
+            f"Sound {sound_id} played by user {user_id} in channel {channel_id}"
+        )
 
         return SoundPlayback(
-            sound=sound,
-            user_id=user_id,
-            channel_id=channel_id,
-            timestamp=now
+            sound=sound, user_id=user_id, channel_id=channel_id, timestamp=now
         )
 
     def _row_to_sound(self, row) -> Sound:
@@ -462,5 +456,5 @@ class SoundboardManager(BaseManager):
             volume=row["volume"],
             created_by=row["created_by"],
             created_at=row["created_at"],
-            usage_count=usage_count
+            usage_count=usage_count,
         )

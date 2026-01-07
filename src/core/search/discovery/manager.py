@@ -60,14 +60,14 @@ class DiscoveryManager:
     ) -> ServerListing:
         """
         List a server in the public directory.
-        
+
         Args:
             user_id: ID of user listing server
             server_id: ID of server to list
             category: Category for the listing
             description: Optional description override
             tags: Optional tags for discovery
-            
+
         Returns:
             ServerListing object
         """
@@ -82,7 +82,7 @@ class DiscoveryManager:
             raise MinimumMembersError(
                 f"Server needs at least {min_members} members to be listed",
                 required=min_members,
-                current=member_count
+                current=member_count,
             )
 
         existing = self._get_listing(server_id)
@@ -104,7 +104,7 @@ class DiscoveryManager:
                    SET category = ?, description = ?, tags = ?, 
                        member_count = ?, listed_by = ?
                    WHERE server_id = ?""",
-                (category, description, tags_json, member_count, user_id, server_id)
+                (category, description, tags_json, member_count, user_id, server_id),
             )
             listing_id = existing["id"]
         else:
@@ -116,28 +116,54 @@ class DiscoveryManager:
                     listed_at, bumped_at, bump_count, listed_by)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    listing_id, server_id, category, description, tags_json,
-                    member_count, 0, VerificationLevel.NONE.value, 0, 0,
-                    now, now, 0, user_id
-                )
+                    listing_id,
+                    server_id,
+                    category,
+                    description,
+                    tags_json,
+                    member_count,
+                    0,
+                    VerificationLevel.NONE.value,
+                    0,
+                    0,
+                    now,
+                    now,
+                    0,
+                    user_id,
+                ),
             )
 
-        logger.info(f"Server {server_id} listed in category {category} by user {user_id}")
+        logger.info(
+            f"Server {server_id} listed in category {category} by user {user_id}"
+        )
 
         return self._build_listing(
-            listing_id, server_id, server_name, description, server_icon,
-            None, category, tags or [], member_count, 0,
-            VerificationLevel.NONE, False, False, now, now, 0
+            listing_id,
+            server_id,
+            server_name,
+            description,
+            server_icon,
+            None,
+            category,
+            tags or [],
+            member_count,
+            0,
+            VerificationLevel.NONE,
+            False,
+            False,
+            now,
+            now,
+            0,
         )
 
     def unlist_server(self, user_id: int, server_id: int) -> bool:
         """
         Remove a server from the public directory.
-        
+
         Args:
             user_id: ID of user unlisting server
             server_id: ID of server to unlist
-            
+
         Returns:
             True if unlisted
         """
@@ -146,13 +172,11 @@ class DiscoveryManager:
         existing = self._get_listing(server_id)
         if not existing:
             raise ServerNotListedError(
-                "Server is not listed in discovery",
-                server_id=server_id
+                "Server is not listed in discovery", server_id=server_id
             )
 
         self._db.execute(
-            "DELETE FROM search_server_listings WHERE server_id = ?",
-            (server_id,)
+            "DELETE FROM search_server_listings WHERE server_id = ?", (server_id,)
         )
 
         logger.info(f"Server {server_id} unlisted by user {user_id}")
@@ -162,11 +186,11 @@ class DiscoveryManager:
     def bump_server(self, user_id: int, server_id: int) -> bool:
         """
         Bump a server in the discovery listing.
-        
+
         Args:
             user_id: ID of user bumping server
             server_id: ID of server to bump
-            
+
         Returns:
             True if bumped
         """
@@ -175,8 +199,7 @@ class DiscoveryManager:
         existing = self._get_listing(server_id)
         if not existing:
             raise ServerNotListedError(
-                "Server is not listed in discovery",
-                server_id=server_id
+                "Server is not listed in discovery", server_id=server_id
             )
 
         cooldown_remaining = self._check_bump_cooldown(server_id)
@@ -184,7 +207,7 @@ class DiscoveryManager:
             raise BumpCooldownError(
                 f"Server can be bumped again in {cooldown_remaining // 1000} seconds",
                 server_id=server_id,
-                cooldown_remaining=cooldown_remaining
+                cooldown_remaining=cooldown_remaining,
             )
 
         now = self._get_timestamp()
@@ -193,14 +216,14 @@ class DiscoveryManager:
             """UPDATE search_server_listings 
                SET bumped_at = ?, bump_count = bump_count + 1
                WHERE server_id = ?""",
-            (now, server_id)
+            (now, server_id),
         )
 
         bump_id = self._generate_id()
         self._db.execute(
             """INSERT INTO search_bump_history (id, server_id, user_id, bumped_at)
                VALUES (?, ?, ?, ?)""",
-            (bump_id, server_id, user_id, now)
+            (bump_id, server_id, user_id, now),
         )
 
         logger.info(f"Server {server_id} bumped by user {user_id}")
@@ -216,13 +239,13 @@ class DiscoveryManager:
     ) -> List[ServerListing]:
         """
         List public servers in the discovery directory.
-        
+
         Args:
             category: Optional category filter
             sort_by: Sort order (member_count, bumped_at, created_at)
             limit: Maximum results
             offset: Offset for pagination
-            
+
         Returns:
             List of ServerListing objects
         """
@@ -251,24 +274,26 @@ class DiscoveryManager:
         results = []
         for row in rows:
             tags = json.loads(row["tags"]) if row["tags"] else []
-            results.append(self._build_listing(
-                row["id"],
-                row["server_id"],
-                row.get("server_name", ""),
-                row["description"],
-                row.get("server_icon"),
-                None,
-                row["category"],
-                tags,
-                row["member_count"],
-                row["online_count"],
-                VerificationLevel(row["verification_level"]),
-                bool(row["is_verified"]),
-                bool(row["is_partnered"]),
-                row["listed_at"],
-                row["bumped_at"],
-                row["bump_count"],
-            ))
+            results.append(
+                self._build_listing(
+                    row["id"],
+                    row["server_id"],
+                    row.get("server_name", ""),
+                    row["description"],
+                    row.get("server_icon"),
+                    None,
+                    row["category"],
+                    tags,
+                    row["member_count"],
+                    row["online_count"],
+                    VerificationLevel(row["verification_level"]),
+                    bool(row["is_verified"]),
+                    bool(row["is_partnered"]),
+                    row["listed_at"],
+                    row["bumped_at"],
+                    row["bump_count"],
+                )
+            )
 
         return results
 
@@ -284,7 +309,7 @@ class DiscoveryManager:
                FROM search_server_listings l
                LEFT JOIN srv_servers s ON l.server_id = s.id
                WHERE l.server_id = ?""",
-            (server_id,)
+            (server_id,),
         )
 
         if not row:
@@ -323,14 +348,13 @@ class DiscoveryManager:
             if not self._servers.has_permission(user_id, server_id, "server.manage"):
                 raise SearchPermissionError(
                     "You need server management permission to list this server",
-                    permission="server.manage"
+                    permission="server.manage",
                 )
         except Exception as e:
             if isinstance(e, SearchPermissionError):
                 raise
             raise SearchPermissionError(
-                "Could not verify server permissions",
-                permission="server.manage"
+                "Could not verify server permissions", permission="server.manage"
             )
 
     def _check_bump_permission(self, user_id: int, server_id: int):
@@ -341,12 +365,12 @@ class DiscoveryManager:
         try:
             member = self._db.fetch_one(
                 "SELECT 1 FROM srv_members WHERE server_id = ? AND user_id = ?",
-                (server_id, user_id)
+                (server_id, user_id),
             )
             if not member:
                 raise SearchPermissionError(
                     "You must be a member of the server to bump it",
-                    permission="server.member"
+                    permission="server.member",
                 )
         except Exception as e:
             if isinstance(e, SearchPermissionError):
@@ -362,7 +386,7 @@ class DiscoveryManager:
         last_bump = self._db.fetch_one(
             """SELECT bumped_at FROM search_server_listings 
                WHERE server_id = ?""",
-            (server_id,)
+            (server_id,),
         )
 
         if not last_bump:
@@ -377,23 +401,21 @@ class DiscoveryManager:
     def _get_listing(self, server_id: int) -> Optional[Dict]:
         """Get raw listing from database."""
         return self._db.fetch_one(
-            "SELECT * FROM search_server_listings WHERE server_id = ?",
-            (server_id,)
+            "SELECT * FROM search_server_listings WHERE server_id = ?", (server_id,)
         )
 
     def _get_member_count(self, server_id: int) -> int:
         """Get member count for a server."""
         row = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM srv_members WHERE server_id = ?",
-            (server_id,)
+            (server_id,),
         )
         return row["count"] if row else 0
 
     def _get_server_info(self, server_id: int) -> Optional[Dict]:
         """Get server info from database."""
         return self._db.fetch_one(
-            "SELECT * FROM srv_servers WHERE id = ?",
-            (server_id,)
+            "SELECT * FROM srv_servers WHERE id = ?", (server_id,)
         )
 
     def _build_listing(

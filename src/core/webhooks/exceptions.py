@@ -5,21 +5,25 @@ Webhook exceptions - All webhook-related error types.
 
 class WebhookError(Exception):
     """Base exception for all webhook errors."""
+
     pass
 
 
 class WebhookNotFoundError(WebhookError):
     """Webhook does not exist."""
+
     pass
 
 
 class WebhookAccessDeniedError(WebhookError):
     """User does not have access to this webhook."""
+
     pass
 
 
 class InvalidWebhookTokenError(WebhookError):
     """Webhook token is invalid or expired."""
+
     pass
 
 
@@ -33,6 +37,7 @@ class WebhookNameError(WebhookError):
 
 class WebhookAvatarError(WebhookError):
     """Webhook avatar URL is invalid."""
+
     pass
 
 
@@ -47,6 +52,7 @@ class WebhookLimitError(WebhookError):
 
 class ChannelNotFoundError(WebhookError):
     """Channel does not exist or is not accessible."""
+
     pass
 
 
@@ -64,6 +70,24 @@ class InvalidContentError(WebhookError):
     def __init__(self, message: str, issues: list | None = None):
         super().__init__(message)
         self.issues = issues or []
+
+
+class InvalidWebhookContentError(InvalidContentError):
+    """Specific error for invalid webhook content."""
+
+    pass
+
+
+class ContentTooLongError(InvalidContentError):
+    """Webhook content exceeds maximum length."""
+
+    pass
+
+
+class RateLimitError(WebhookError):
+    """Webhook execution rate limit exceeded."""
+
+    pass
 
 
 class EmbedLimitError(WebhookError):

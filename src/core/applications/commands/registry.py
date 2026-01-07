@@ -26,7 +26,7 @@ class CommandRegistry:
     def __init__(self, db, config: Dict[str, Any]):
         """
         Initialize command registry.
-        
+
         Args:
             db: Database instance
             config: Command configuration
@@ -52,7 +52,7 @@ class CommandRegistry:
     ) -> Command:
         """
         Register a new command.
-        
+
         Args:
             application_id: Application ID
             name: Command name
@@ -63,18 +63,17 @@ class CommandRegistry:
             default_member_permissions: Default permissions required
             dm_permission: Whether command works in DMs
             nsfw: Whether command is NSFW
-            
+
         Returns:
             Registered Command
-            
+
         Raises:
             ApplicationNotFoundError: Application not found
             CommandLimitError: Command limit reached
             CommandValidationError: Invalid command data
         """
         app = self._db.fetch_one(
-            "SELECT id FROM app_applications WHERE id = ?",
-            (application_id,)
+            "SELECT id FROM app_applications WHERE id = ?", (application_id,)
         )
         if not app:
             raise ApplicationNotFoundError("Application not found")
@@ -96,31 +95,31 @@ class CommandRegistry:
             count = self._db.fetch_one(
                 """SELECT COUNT(*) as count FROM app_commands
                    WHERE application_id = ? AND server_id = ?""",
-                (application_id, server_id)
+                (application_id, server_id),
             )
         else:
             count = self._db.fetch_one(
                 """SELECT COUNT(*) as count FROM app_commands
                    WHERE application_id = ? AND server_id IS NULL""",
-                (application_id,)
+                (application_id,),
             )
 
         current = count["count"] if count else 0
         if current >= max_commands:
             raise CommandLimitError(
                 f"Maximum of {max_commands} commands per application",
-                max_commands, current
+                max_commands,
+                current,
             )
 
         existing = self._db.fetch_one(
             """SELECT id FROM app_commands
                WHERE application_id = ? AND name = ? AND server_id IS ?""",
-            (application_id, name.lower(), server_id)
+            (application_id, name.lower(), server_id),
         )
         if existing:
             raise CommandValidationError(
-                "Command with this name already exists",
-                ["Duplicate command name"]
+                "Command with this name already exists", ["Duplicate command name"]
             )
 
         command_id = generate_snowflake_id()
@@ -134,10 +133,23 @@ class CommandRegistry:
                 options, default_member_permissions, dm_permission, nsfw,
                 version, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (command_id, application_id, name.lower(), description,
-             command_type.value if isinstance(command_type, CommandType) else command_type,
-             server_id, options_json, default_member_permissions,
-             1 if dm_permission else 0, 1 if nsfw else 0, 1, now, now)
+            (
+                command_id,
+                application_id,
+                name.lower(),
+                description,
+                command_type.value
+                if isinstance(command_type, CommandType)
+                else command_type,
+                server_id,
+                options_json,
+                default_member_permissions,
+                1 if dm_permission else 0,
+                1 if nsfw else 0,
+                1,
+                now,
+                now,
+            ),
         )
 
         logger.info(f"Command registered: {name} for app {application_id}")
@@ -149,10 +161,10 @@ class CommandRegistry:
     def get_command(self, command_id: int) -> Optional[Command]:
         """
         Get a command by ID.
-        
+
         Args:
             command_id: Command ID
-            
+
         Returns:
             Command or None
         """
@@ -161,7 +173,7 @@ class CommandRegistry:
                       server_id, options, default_member_permissions,
                       dm_permission, nsfw, version, created_at, updated_at
                FROM app_commands WHERE id = ?""",
-            (command_id,)
+            (command_id,),
         )
 
         if not row:
@@ -177,12 +189,12 @@ class CommandRegistry:
     ) -> List[Command]:
         """
         Get commands for an application.
-        
+
         Args:
             application_id: Application ID
             server_id: Server ID to filter by
             include_global: Include global commands when server_id is set
-            
+
         Returns:
             List of Commands
         """
@@ -194,7 +206,7 @@ class CommandRegistry:
                    FROM app_commands
                    WHERE application_id = ? AND server_id IS NULL
                    ORDER BY name""",
-                (application_id,)
+                (application_id,),
             )
         elif include_global:
             rows = self._db.fetch_all(
@@ -204,7 +216,7 @@ class CommandRegistry:
                    FROM app_commands
                    WHERE application_id = ? AND (server_id IS NULL OR server_id = ?)
                    ORDER BY server_id NULLS FIRST, name""",
-                (application_id, server_id)
+                (application_id, server_id),
             )
         else:
             rows = self._db.fetch_all(
@@ -214,7 +226,7 @@ class CommandRegistry:
                    FROM app_commands
                    WHERE application_id = ? AND server_id = ?
                    ORDER BY name""",
-                (application_id, server_id)
+                (application_id, server_id),
             )
 
         return [self._row_to_command(row) for row in rows]
@@ -231,7 +243,7 @@ class CommandRegistry:
     ) -> Command:
         """
         Update a command.
-        
+
         Args:
             command_id: Command ID
             name: New name
@@ -240,10 +252,10 @@ class CommandRegistry:
             default_member_permissions: New permissions
             dm_permission: New DM permission
             nsfw: New NSFW flag
-            
+
         Returns:
             Updated Command
-            
+
         Raises:
             CommandNotFoundError: Command not found
             CommandValidationError: Invalid update data
@@ -272,12 +284,11 @@ class CommandRegistry:
             existing = self._db.fetch_one(
                 """SELECT id FROM app_commands
                    WHERE application_id = ? AND name = ? AND server_id IS ? AND id != ?""",
-                (command.application_id, name.lower(), command.server_id, command_id)
+                (command.application_id, name.lower(), command.server_id, command_id),
             )
             if existing:
                 raise CommandValidationError(
-                    "Command with this name already exists",
-                    ["Duplicate command name"]
+                    "Command with this name already exists", ["Duplicate command name"]
                 )
 
         updates = []
@@ -315,7 +326,7 @@ class CommandRegistry:
 
             self._db.execute(
                 f"UPDATE app_commands SET {', '.join(updates)} WHERE id = ?",
-                tuple(params)
+                tuple(params),
             )
 
             logger.debug(f"Command updated: {command_id}")
@@ -327,13 +338,13 @@ class CommandRegistry:
     def delete_command(self, command_id: int) -> bool:
         """
         Delete a command.
-        
+
         Args:
             command_id: Command ID
-            
+
         Returns:
             True if deleted
-            
+
         Raises:
             CommandNotFoundError: Command not found
         """
@@ -341,10 +352,7 @@ class CommandRegistry:
         if not command:
             raise CommandNotFoundError("Command not found")
 
-        self._db.execute(
-            "DELETE FROM app_commands WHERE id = ?",
-            (command_id,)
-        )
+        self._db.execute("DELETE FROM app_commands WHERE id = ?", (command_id,))
 
         logger.info(f"Command deleted: {command.name} ({command_id})")
         return True
@@ -357,12 +365,12 @@ class CommandRegistry:
     ) -> List[Command]:
         """
         Bulk overwrite commands for an application.
-        
+
         Args:
             application_id: Application ID
             commands: List of command data
             server_id: Server ID for guild commands
-            
+
         Returns:
             List of registered Commands
         """
@@ -371,18 +379,18 @@ class CommandRegistry:
             if not valid:
                 raise CommandValidationError(
                     f"Command '{cmd_data.get('name', 'unknown')}' validation failed",
-                    issues
+                    issues,
                 )
 
         if server_id:
             self._db.execute(
                 "DELETE FROM app_commands WHERE application_id = ? AND server_id = ?",
-                (application_id, server_id)
+                (application_id, server_id),
             )
         else:
             self._db.execute(
                 "DELETE FROM app_commands WHERE application_id = ? AND server_id IS NULL",
-                (application_id,)
+                (application_id,),
             )
 
         result = []

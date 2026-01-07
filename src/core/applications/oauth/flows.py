@@ -36,7 +36,7 @@ class OAuth2Flow:
     def __init__(self, db, config: Dict[str, Any]):
         """
         Initialize OAuth2 flow handler.
-        
+
         Args:
             db: Database instance
             config: OAuth configuration
@@ -58,14 +58,14 @@ class OAuth2Flow:
     ) -> str:
         """
         Generate an OAuth2 authorization URL.
-        
+
         Args:
             application_id: Application ID
             redirect_uri: Redirect URI
             scopes: List of scopes
             state: Optional state parameter
             permissions: Optional bot permissions
-            
+
         Returns:
             Authorization URL
         """
@@ -94,15 +94,15 @@ class OAuth2Flow:
     ) -> Dict[str, Any]:
         """
         Validate an authorization request.
-        
+
         Args:
             application_id: Application ID
             redirect_uri: Redirect URI
             scopes: List of scopes
-            
+
         Returns:
             Dict with application info
-            
+
         Raises:
             InvalidClientError: Invalid application
             InvalidRedirectUriError: Invalid redirect URI
@@ -110,7 +110,7 @@ class OAuth2Flow:
         """
         app = self._db.fetch_one(
             "SELECT id, name, redirect_uris, icon_url FROM app_applications WHERE id = ?",
-            (application_id,)
+            (application_id,),
         )
 
         if not app:
@@ -118,7 +118,9 @@ class OAuth2Flow:
 
         allowed_uris = json.loads(app["redirect_uris"])
         if redirect_uri not in allowed_uris:
-            raise InvalidRedirectUriError(f"Redirect URI not registered: {redirect_uri}")
+            raise InvalidRedirectUriError(
+                f"Redirect URI not registered: {redirect_uri}"
+            )
 
         valid, issues = validate_scopes(scopes)
         if not valid:
@@ -141,13 +143,13 @@ class OAuth2Flow:
     ) -> OAuth2AuthorizationCode:
         """
         Create an authorization code after user consent.
-        
+
         Args:
             application_id: Application ID
             user_id: User ID
             redirect_uri: Redirect URI
             scopes: Granted scopes
-            
+
         Returns:
             OAuth2AuthorizationCode
         """
@@ -161,11 +163,21 @@ class OAuth2Flow:
             """INSERT INTO app_oauth_codes
                (id, application_id, user_id, code_hash, redirect_uri, scopes, expires_at, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (code_id, application_id, user_id, code_hash, redirect_uri,
-             json.dumps(scopes), expires_at, now)
+            (
+                code_id,
+                application_id,
+                user_id,
+                code_hash,
+                redirect_uri,
+                json.dumps(scopes),
+                expires_at,
+                now,
+            ),
         )
 
-        logger.debug(f"Authorization code created for app {application_id}, user {user_id}")
+        logger.debug(
+            f"Authorization code created for app {application_id}, user {user_id}"
+        )
 
         return OAuth2AuthorizationCode(
             id=code_id,
@@ -188,23 +200,23 @@ class OAuth2Flow:
     ) -> OAuth2Token:
         """
         Exchange an authorization code for tokens.
-        
+
         Args:
             application_id: Application ID
             client_secret: Client secret
             code: Authorization code
             redirect_uri: Redirect URI (must match original)
-            
+
         Returns:
             OAuth2Token with access and refresh tokens
-            
+
         Raises:
             InvalidClientError: Invalid client credentials
             InvalidGrantError: Invalid or expired code
         """
         app = self._db.fetch_one(
             "SELECT id, client_secret_hash FROM app_applications WHERE id = ?",
-            (application_id,)
+            (application_id,),
         )
 
         if not app:
@@ -221,7 +233,7 @@ class OAuth2Flow:
             """SELECT id, application_id, user_id, code_hash, redirect_uri, scopes,
                       expires_at, used
                FROM app_oauth_codes WHERE id = ?""",
-            (parsed["id"],)
+            (parsed["id"],),
         )
 
         if not code_record:
@@ -243,8 +255,7 @@ class OAuth2Flow:
             raise InvalidGrantError("Redirect URI mismatch")
 
         self._db.execute(
-            "UPDATE app_oauth_codes SET used = 1 WHERE id = ?",
-            (parsed["id"],)
+            "UPDATE app_oauth_codes SET used = 1 WHERE id = ?", (parsed["id"],)
         )
 
         scopes = json.loads(code_record["scopes"])
@@ -254,7 +265,9 @@ class OAuth2Flow:
             scopes,
         )
 
-        logger.info(f"Code exchanged for tokens: app {application_id}, user {code_record['user_id']}")
+        logger.info(
+            f"Code exchanged for tokens: app {application_id}, user {code_record['user_id']}"
+        )
 
         return token
 
@@ -266,15 +279,15 @@ class OAuth2Flow:
     ) -> OAuth2Token:
         """
         Refresh an access token.
-        
+
         Args:
             application_id: Application ID
             client_secret: Client secret
             refresh_token: Refresh token
-            
+
         Returns:
             New OAuth2Token
-            
+
         Raises:
             InvalidClientError: Invalid client credentials
             InvalidGrantError: Invalid refresh token
@@ -284,7 +297,7 @@ class OAuth2Flow:
 
         app = self._db.fetch_one(
             "SELECT id, client_secret_hash FROM app_applications WHERE id = ?",
-            (application_id,)
+            (application_id,),
         )
 
         if not app:
@@ -300,7 +313,7 @@ class OAuth2Flow:
         token_record = self._db.fetch_one(
             """SELECT id, application_id, user_id, refresh_token_hash, scopes, revoked
                FROM app_oauth_tokens WHERE id = ?""",
-            (parsed["id"],)
+            (parsed["id"],),
         )
 
         if not token_record:
@@ -319,8 +332,7 @@ class OAuth2Flow:
             raise InvalidGrantError("Invalid refresh token")
 
         self._db.execute(
-            "UPDATE app_oauth_tokens SET revoked = 1 WHERE id = ?",
-            (parsed["id"],)
+            "UPDATE app_oauth_tokens SET revoked = 1 WHERE id = ?", (parsed["id"],)
         )
 
         scopes = json.loads(token_record["scopes"])
@@ -330,20 +342,22 @@ class OAuth2Flow:
             scopes,
         )
 
-        logger.info(f"Token refreshed: app {application_id}, user {token_record['user_id']}")
+        logger.info(
+            f"Token refreshed: app {application_id}, user {token_record['user_id']}"
+        )
 
         return new_token
 
     def verify_access_token(self, access_token: str) -> Dict[str, Any]:
         """
         Verify an access token.
-        
+
         Args:
             access_token: Access token
-            
+
         Returns:
             Dict with token info
-            
+
         Raises:
             InvalidGrantError: Invalid token
             TokenExpiredError: Token expired
@@ -357,7 +371,7 @@ class OAuth2Flow:
             """SELECT id, application_id, user_id, access_token_hash, scopes,
                       expires_at, revoked
                FROM app_oauth_tokens WHERE id = ?""",
-            (parsed["id"],)
+            (parsed["id"],),
         )
 
         if not token_record:
@@ -383,10 +397,10 @@ class OAuth2Flow:
     def revoke_token(self, token: str) -> bool:
         """
         Revoke an access or refresh token.
-        
+
         Args:
             token: Token to revoke
-            
+
         Returns:
             True if revoked
         """
@@ -398,8 +412,7 @@ class OAuth2Flow:
             return False
 
         self._db.execute(
-            "UPDATE app_oauth_tokens SET revoked = 1 WHERE id = ?",
-            (parsed["id"],)
+            "UPDATE app_oauth_tokens SET revoked = 1 WHERE id = ?", (parsed["id"],)
         )
 
         logger.debug(f"Token revoked: {parsed['id']}")
@@ -408,21 +421,21 @@ class OAuth2Flow:
     def revoke_user_tokens(self, application_id: int, user_id: int) -> int:
         """
         Revoke all tokens for a user on an application.
-        
+
         Args:
             application_id: Application ID
             user_id: User ID
-            
+
         Returns:
             Number of tokens revoked
         """
         result = self._db.execute(
             """UPDATE app_oauth_tokens SET revoked = 1
                WHERE application_id = ? AND user_id = ? AND revoked = 0""",
-            (application_id, user_id)
+            (application_id, user_id),
         )
 
-        count = result.rowcount if hasattr(result, 'rowcount') else 0
+        count = result.rowcount if hasattr(result, "rowcount") else 0
         logger.debug(f"Revoked {count} tokens for app {application_id}, user {user_id}")
         return count
 
@@ -449,8 +462,16 @@ class OAuth2Flow:
                (id, application_id, user_id, access_token_hash, refresh_token_hash,
                 scopes, expires_at, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (token_id, application_id, user_id, access_hash, refresh_hash,
-             json.dumps(scopes), expires_at, now)
+            (
+                token_id,
+                application_id,
+                user_id,
+                access_hash,
+                refresh_hash,
+                json.dumps(scopes),
+                expires_at,
+                now,
+            ),
         )
 
         return OAuth2Token(

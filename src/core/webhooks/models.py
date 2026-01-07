@@ -10,6 +10,7 @@ from src.core.base import SnowflakeID
 
 class WebhookType(Enum):
     """Types of webhooks."""
+
     INCOMING = "incoming"
     CHANNEL_FOLLOWER = "channel_follower"
 
@@ -17,6 +18,7 @@ class WebhookType(Enum):
 @dataclass
 class Webhook:
     """Represents a webhook for a channel."""
+
     id: SnowflakeID
     channel_id: SnowflakeID
     server_id: SnowflakeID
@@ -39,6 +41,7 @@ class Webhook:
 @dataclass
 class WebhookMessage:
     """Represents a message sent via webhook."""
+
     id: SnowflakeID
     webhook_id: SnowflakeID
     channel_id: SnowflakeID
@@ -53,6 +56,7 @@ class WebhookMessage:
 @dataclass
 class WebhookExecution:
     """Result of a webhook execution."""
+
     success: bool
     message: Optional[WebhookMessage] = None
     error: Optional[str] = None

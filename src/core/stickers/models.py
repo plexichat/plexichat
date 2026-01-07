@@ -10,6 +10,7 @@ from src.core.base import SnowflakeID
 
 class StickerFormat(Enum):
     """Sticker file format."""
+
     PNG = "png"
     APNG = "apng"
     LOTTIE = "json"
@@ -17,6 +18,7 @@ class StickerFormat(Enum):
 
 class PackType(Enum):
     """Type of sticker pack."""
+
     DEFAULT = "default"
     SERVER = "server"
     PURCHASED = "purchased"
@@ -25,6 +27,7 @@ class PackType(Enum):
 @dataclass
 class StickerPack:
     """Represents a sticker pack."""
+
     id: SnowflakeID
     name: str
     description: Optional[str] = None
@@ -40,6 +43,7 @@ class StickerPack:
 @dataclass
 class Sticker:
     """Represents a single sticker."""
+
     id: SnowflakeID
     pack_id: SnowflakeID
     name: str
@@ -57,6 +61,7 @@ class Sticker:
 @dataclass
 class StickerUsage:
     """Tracks sticker usage statistics."""
+
     id: SnowflakeID
     sticker_id: SnowflakeID
     user_id: SnowflakeID
@@ -67,6 +72,7 @@ class StickerUsage:
 @dataclass
 class StickerSuggestion:
     """Sticker suggestion based on message content."""
+
     sticker: Sticker
     relevance_score: float
     matched_keywords: List[str] = field(default_factory=list)

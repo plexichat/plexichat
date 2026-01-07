@@ -19,6 +19,7 @@ from ..models import (
 @dataclass
 class IndexerConfig:
     """Configuration for search indexer."""
+
     batch_size: int = 100
     write_time_indexing: bool = True
     result_limit: int = 100
@@ -37,7 +38,7 @@ class BaseIndexer(ABC):
     def initialize(self) -> bool:
         """
         Initialize the indexer and create necessary structures.
-        
+
         Returns:
             True if initialization successful
         """
@@ -52,10 +53,10 @@ class BaseIndexer(ABC):
     def index_message(self, message: IndexedMessage) -> bool:
         """
         Index a single message.
-        
+
         Args:
             message: Message to index
-            
+
         Returns:
             True if indexed successfully
         """
@@ -65,10 +66,10 @@ class BaseIndexer(ABC):
     def index_messages_batch(self, messages: List[IndexedMessage]) -> int:
         """
         Index multiple messages in batch.
-        
+
         Args:
             messages: List of messages to index
-            
+
         Returns:
             Number of messages indexed
         """
@@ -78,10 +79,10 @@ class BaseIndexer(ABC):
     def remove_message(self, message_id: int) -> bool:
         """
         Remove a message from the index.
-        
+
         Args:
             message_id: ID of message to remove
-            
+
         Returns:
             True if removed successfully
         """
@@ -91,10 +92,10 @@ class BaseIndexer(ABC):
     def update_message(self, message: IndexedMessage) -> bool:
         """
         Update an indexed message.
-        
+
         Args:
             message: Updated message data
-            
+
         Returns:
             True if updated successfully
         """
@@ -113,7 +114,7 @@ class BaseIndexer(ABC):
     ) -> List[MessageSearchResult]:
         """
         Search messages.
-        
+
         Args:
             query: Search query
             conversation_ids: Filter by conversations
@@ -122,7 +123,7 @@ class BaseIndexer(ABC):
             author_ids: Filter by authors
             limit: Maximum results
             offset: Offset for pagination
-            
+
         Returns:
             List of search results
         """
@@ -132,10 +133,10 @@ class BaseIndexer(ABC):
     def index_user(self, user: IndexedUser) -> bool:
         """
         Index a user.
-        
+
         Args:
             user: User to index
-            
+
         Returns:
             True if indexed successfully
         """
@@ -145,10 +146,10 @@ class BaseIndexer(ABC):
     def remove_user(self, user_id: int) -> bool:
         """
         Remove a user from the index.
-        
+
         Args:
             user_id: ID of user to remove
-            
+
         Returns:
             True if removed successfully
         """
@@ -163,12 +164,12 @@ class BaseIndexer(ABC):
     ) -> List[UserSearchResult]:
         """
         Search users.
-        
+
         Args:
             query: Search query
             limit: Maximum results
             offset: Offset for pagination
-            
+
         Returns:
             List of user search results
         """
@@ -178,10 +179,10 @@ class BaseIndexer(ABC):
     def index_server(self, server: IndexedServer) -> bool:
         """
         Index a server.
-        
+
         Args:
             server: Server to index
-            
+
         Returns:
             True if indexed successfully
         """
@@ -191,10 +192,10 @@ class BaseIndexer(ABC):
     def remove_server(self, server_id: int) -> bool:
         """
         Remove a server from the index.
-        
+
         Args:
             server_id: ID of server to remove
-            
+
         Returns:
             True if removed successfully
         """
@@ -211,14 +212,14 @@ class BaseIndexer(ABC):
     ) -> List[ServerSearchResult]:
         """
         Search servers.
-        
+
         Args:
             query: Search query
             category: Filter by category
             public_only: Only search public servers
             limit: Maximum results
             offset: Offset for pagination
-            
+
         Returns:
             List of server search results
         """
@@ -228,7 +229,7 @@ class BaseIndexer(ABC):
     def get_stats(self) -> Dict[str, Any]:
         """
         Get indexer statistics.
-        
+
         Returns:
             Dict with stats (message_count, user_count, server_count, etc.)
         """
@@ -237,7 +238,7 @@ class BaseIndexer(ABC):
     def health_check(self) -> bool:
         """
         Check if indexer is healthy.
-        
+
         Returns:
             True if healthy
         """

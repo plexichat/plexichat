@@ -5,8 +5,15 @@ Component builders - Build and validate message components.
 from typing import List, Dict, Any, Optional, Tuple
 
 from ..models import (
-    Button, SelectMenu, SelectOption, TextInput, ActionRow, Modal,
-    ComponentType, ButtonStyle, TextInputStyle,
+    Button,
+    SelectMenu,
+    SelectOption,
+    TextInput,
+    ActionRow,
+    Modal,
+    ComponentType,
+    ButtonStyle,
+    TextInputStyle,
 )
 
 
@@ -30,7 +37,7 @@ def build_button(
 ) -> Button:
     """
     Build a button component.
-    
+
     Args:
         style: Button style
         label: Button label
@@ -38,7 +45,7 @@ def build_button(
         custom_id: Custom ID for non-link buttons
         url: URL for link buttons
         disabled: Whether button is disabled
-        
+
     Returns:
         Button
     """
@@ -64,7 +71,7 @@ def build_select_menu(
 ) -> SelectMenu:
     """
     Build a select menu component.
-    
+
     Args:
         custom_id: Custom ID
         component_type: Type of select menu
@@ -74,7 +81,7 @@ def build_select_menu(
         min_values: Minimum selections
         max_values: Maximum selections
         disabled: Whether menu is disabled
-        
+
     Returns:
         SelectMenu
     """
@@ -115,7 +122,7 @@ def build_text_input(
 ) -> TextInput:
     """
     Build a text input component.
-    
+
     Args:
         custom_id: Custom ID
         label: Input label
@@ -125,7 +132,7 @@ def build_text_input(
         required: Whether input is required
         value: Pre-filled value
         placeholder: Placeholder text
-        
+
     Returns:
         TextInput
     """
@@ -144,10 +151,10 @@ def build_text_input(
 def build_action_row(components: List[Any]) -> ActionRow:
     """
     Build an action row container.
-    
+
     Args:
         components: List of components
-        
+
     Returns:
         ActionRow
     """
@@ -161,12 +168,12 @@ def build_modal(
 ) -> Modal:
     """
     Build a modal dialog.
-    
+
     Args:
         custom_id: Custom ID
         title: Modal title
         components: List of action rows with text inputs
-        
+
     Returns:
         Modal
     """
@@ -305,7 +312,9 @@ def validate_text_input(text_input: Dict[str, Any]) -> Tuple[bool, List[str]]:
     return len(issues) == 0, issues
 
 
-def validate_action_row(row: Dict[str, Any], context: str = "message") -> Tuple[bool, List[str]]:
+def validate_action_row(
+    row: Dict[str, Any], context: str = "message"
+) -> Tuple[bool, List[str]]:
     """Validate an action row."""
     issues = []
 
@@ -327,11 +336,16 @@ def validate_action_row(row: Dict[str, Any], context: str = "message") -> Tuple[
 
     if len(component_types) > 1:
         has_button = ComponentType.BUTTON in component_types
-        has_select = any(t in component_types for t in [
-            ComponentType.STRING_SELECT, ComponentType.USER_SELECT,
-            ComponentType.ROLE_SELECT, ComponentType.MENTIONABLE_SELECT,
-            ComponentType.CHANNEL_SELECT
-        ])
+        has_select = any(
+            t in component_types
+            for t in [
+                ComponentType.STRING_SELECT,
+                ComponentType.USER_SELECT,
+                ComponentType.ROLE_SELECT,
+                ComponentType.MENTIONABLE_SELECT,
+                ComponentType.CHANNEL_SELECT,
+            ]
+        )
         has_text = ComponentType.TEXT_INPUT in component_types
 
         if has_button and has_select:
@@ -339,7 +353,11 @@ def validate_action_row(row: Dict[str, Any], context: str = "message") -> Tuple[
         if has_text and (has_button or has_select):
             issues.append("Action row cannot mix text inputs with other components")
 
-    button_count = sum(1 for c in components if c.get("type") == ComponentType.BUTTON or c.get("type") == 2)
+    button_count = sum(
+        1
+        for c in components
+        if c.get("type") == ComponentType.BUTTON or c.get("type") == 2
+    )
     if button_count > MAX_BUTTONS_PER_ROW:
         issues.append(f"Action row exceeds {MAX_BUTTONS_PER_ROW} buttons")
 
@@ -365,14 +383,16 @@ def validate_action_row(row: Dict[str, Any], context: str = "message") -> Tuple[
     return len(issues) == 0, issues
 
 
-def validate_components(components: List[Dict[str, Any]], context: str = "message") -> Tuple[bool, List[str]]:
+def validate_components(
+    components: List[Dict[str, Any]], context: str = "message"
+) -> Tuple[bool, List[str]]:
     """
     Validate a list of components.
-    
+
     Args:
         components: List of component dicts
         context: "message" or "modal"
-        
+
     Returns:
         Tuple of (valid, issues)
     """
@@ -400,14 +420,18 @@ def components_to_dict(components: List[Any]) -> List[Dict[str, Any]]:
 
     for comp in components:
         if isinstance(comp, ActionRow):
-            result.append({
-                "type": ComponentType.ACTION_ROW.value,
-                "components": components_to_dict(comp.components),
-            })
+            result.append(
+                {
+                    "type": ComponentType.ACTION_ROW.value,
+                    "components": components_to_dict(comp.components),
+                }
+            )
         elif isinstance(comp, Button):
             btn = {
                 "type": ComponentType.BUTTON.value,
-                "style": comp.style.value if isinstance(comp.style, ButtonStyle) else comp.style,
+                "style": comp.style.value
+                if isinstance(comp.style, ButtonStyle)
+                else comp.style,
                 "disabled": comp.disabled,
             }
             if comp.label:
@@ -421,7 +445,9 @@ def components_to_dict(components: List[Any]) -> List[Dict[str, Any]]:
             result.append(btn)
         elif isinstance(comp, SelectMenu):
             sel = {
-                "type": comp.component_type.value if isinstance(comp.component_type, ComponentType) else comp.component_type,
+                "type": comp.component_type.value
+                if isinstance(comp.component_type, ComponentType)
+                else comp.component_type,
                 "custom_id": comp.custom_id,
                 "min_values": comp.min_values,
                 "max_values": comp.max_values,
@@ -447,7 +473,9 @@ def components_to_dict(components: List[Any]) -> List[Dict[str, Any]]:
             inp = {
                 "type": ComponentType.TEXT_INPUT.value,
                 "custom_id": comp.custom_id,
-                "style": comp.style.value if isinstance(comp.style, TextInputStyle) else comp.style,
+                "style": comp.style.value
+                if isinstance(comp.style, TextInputStyle)
+                else comp.style,
                 "label": comp.label,
                 "required": comp.required,
             }

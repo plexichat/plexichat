@@ -279,7 +279,9 @@ def create_application(
     )
 
 
-def get_application(application_id: int, user_id: Optional[int] = None) -> Optional[Application]:
+def get_application(
+    application_id: int, user_id: Optional[int] = None
+) -> Optional[Application]:
     """Get an application by ID."""
     return _get_manager().get_application(application_id, user_id)
 
@@ -334,7 +336,9 @@ def create_bot_for_application(
     permissions: Optional[Dict[str, bool]] = None,
 ) -> Dict[str, Any]:
     """Create a bot account for an application."""
-    return _get_manager().create_bot_for_application(user_id, application_id, permissions)
+    return _get_manager().create_bot_for_application(
+        user_id, application_id, permissions
+    )
 
 
 # === OAuth Operations ===
@@ -360,7 +364,9 @@ def exchange_code(
     redirect_uri: str,
 ) -> Dict[str, Any]:
     """Exchange an authorization code for tokens."""
-    return _get_manager().exchange_code(application_id, client_secret, code, redirect_uri)
+    return _get_manager().exchange_code(
+        application_id, client_secret, code, redirect_uri
+    )
 
 
 def refresh_token(
@@ -369,7 +375,9 @@ def refresh_token(
     refresh_token_str: str,
 ) -> Dict[str, Any]:
     """Refresh an access token."""
-    return _get_manager().refresh_token(application_id, client_secret, refresh_token_str)
+    return _get_manager().refresh_token(
+        application_id, client_secret, refresh_token_str
+    )
 
 
 def revoke_token(token: str) -> bool:

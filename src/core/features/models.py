@@ -9,20 +9,21 @@ from src.core.base import SnowflakeID
 
 # Available badge types
 AVAILABLE_BADGES = [
-    "alpha_tester",      # Alpha testing participant
-    "early_supporter",   # Early adopter
-    "staff",             # PlexiChat staff member
-    "verified",          # Verified account
-    "bug_hunter",        # Found and reported bugs
-    "contributor",       # Code/docs contributor
-    "moderator",         # Community moderator
-    "partner",           # Partner program member
+    "alpha_tester",  # Alpha testing participant
+    "early_supporter",  # Early adopter
+    "staff",  # PlexiChat staff member
+    "verified",  # Verified account
+    "bug_hunter",  # Found and reported bugs
+    "contributor",  # Code/docs contributor
+    "moderator",  # Community moderator
+    "partner",  # Partner program member
 ]
 
 
 @dataclass
 class Badge:
     """Represents a profile badge."""
+
     name: str
     display_name: str
     description: str
@@ -38,70 +39,74 @@ class Badge:
                 display_name="Alpha Tester",
                 description="Participated in PlexiChat alpha testing",
                 icon="🧪",
-                color="#9333ea"
+                color="#9333ea",
             ),
             "early_supporter": Badge(
                 name="early_supporter",
                 display_name="Early Supporter",
                 description="Supported PlexiChat early on",
                 icon="💎",
-                color="#06b6d4"
+                color="#06b6d4",
             ),
             "staff": Badge(
                 name="staff",
                 display_name="Staff",
                 description="PlexiChat team member",
                 icon="⚡",
-                color="#ef4444"
+                color="#ef4444",
             ),
             "verified": Badge(
                 name="verified",
                 display_name="Verified",
                 description="Verified account",
                 icon="✓",
-                color="#22c55e"
+                color="#22c55e",
             ),
             "bug_hunter": Badge(
                 name="bug_hunter",
                 display_name="Bug Hunter",
                 description="Found and reported bugs",
                 icon="🐛",
-                color="#84cc16"
+                color="#84cc16",
             ),
             "contributor": Badge(
                 name="contributor",
                 display_name="Contributor",
                 description="Contributed to PlexiChat",
                 icon="🔧",
-                color="#3b82f6"
+                color="#3b82f6",
             ),
             "moderator": Badge(
                 name="moderator",
                 display_name="Moderator",
                 description="Community moderator",
                 icon="🛡️",
-                color="#8b5cf6"
+                color="#8b5cf6",
             ),
             "partner": Badge(
                 name="partner",
                 display_name="Partner",
                 description="PlexiChat partner",
                 icon="🤝",
-                color="#ec4899"
+                color="#ec4899",
             ),
         }
-        return badges.get(badge_name, Badge(
-            name=badge_name,
-            display_name=badge_name.replace("_", " ").title(),
-            description="",
-            icon="🏷️",
-            color="#6b7280"
-        ))
+        return badges.get(
+            badge_name,
+            Badge(
+                name=badge_name,
+                display_name=badge_name.replace("_", " ").title(),
+                description="",
+                icon="🏷️",
+                color="#6b7280",
+            ),
+        )
 
 
 @dataclass
 class TierLimits:
     """Rate limit tier configuration."""
+
     name: str
     multiplier: float = 1.0
 
@@ -176,6 +181,7 @@ DEFAULT_TIER_LIMITS = {
 @dataclass
 class UserFeatures:
     """User feature flags and badges."""
+
     id: SnowflakeID
     user_id: SnowflakeID
 

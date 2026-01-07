@@ -81,7 +81,12 @@ _manager = None
 _setup_complete = False
 
 
-def setup(db: Any, auth_module: Optional[Any] = None, relationships_module: Optional[Any] = None, servers_module: Optional[Any] = None) -> None:
+def setup(
+    db: Any,
+    auth_module: Optional[Any] = None,
+    relationships_module: Optional[Any] = None,
+    servers_module: Optional[Any] = None,
+) -> None:
     """
     Initialize the presence module.
 
@@ -133,7 +138,7 @@ def set_custom_status(
     user_id: int,
     text: str,
     emoji: Optional[str] = None,
-    expires_at: Optional[int] = None
+    expires_at: Optional[int] = None,
 ) -> Presence:
     """Set user's custom status message."""
     return _get_manager().set_custom_status(user_id, text, emoji, expires_at)
@@ -160,7 +165,7 @@ def set_activity(
     url: Optional[str] = None,
     state: Optional[str] = None,
     timestamps: Optional[Dict[str, int]] = None,
-    assets: Optional[Dict[str, str]] = None
+    assets: Optional[Dict[str, str]] = None,
 ) -> Presence:
     """Set user's current activity."""
     return _get_manager().set_activity(

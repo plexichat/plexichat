@@ -21,7 +21,7 @@ def create_message_response(
 ) -> InteractionResponse:
     """
     Create a channel message response.
-    
+
     Args:
         content: Message content
         embeds: Message embeds
@@ -30,7 +30,7 @@ def create_message_response(
         tts: Whether to use text-to-speech
         allowed_mentions: Allowed mentions configuration
         attachments: Message attachments
-        
+
     Returns:
         InteractionResponse
     """
@@ -54,18 +54,19 @@ def create_deferred_response(
 ) -> InteractionResponse:
     """
     Create a deferred response.
-    
+
     Args:
         ephemeral: Whether eventual message is ephemeral
         update: Whether this is a deferred update (for components)
-        
+
     Returns:
         InteractionResponse
     """
     flags = EPHEMERAL_FLAG if ephemeral else 0
 
     response_type = (
-        InteractionResponseType.DEFERRED_UPDATE_MESSAGE if update
+        InteractionResponseType.DEFERRED_UPDATE_MESSAGE
+        if update
         else InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
     )
 
@@ -83,13 +84,13 @@ def create_update_response(
 ) -> InteractionResponse:
     """
     Create an update message response (for component interactions).
-    
+
     Args:
         content: New message content
         embeds: New message embeds
         components: New message components
         attachments: New message attachments
-        
+
     Returns:
         InteractionResponse
     """
@@ -109,12 +110,12 @@ def create_modal_response(
 ) -> InteractionResponse:
     """
     Create a modal popup response.
-    
+
     Args:
         custom_id: Modal custom ID
         title: Modal title
         components: Modal components (action rows with text inputs)
-        
+
     Returns:
         InteractionResponse
     """
@@ -131,10 +132,10 @@ def create_autocomplete_response(
 ) -> InteractionResponse:
     """
     Create an autocomplete results response.
-    
+
     Args:
         choices: List of autocomplete choices
-        
+
     Returns:
         InteractionResponse
     """
@@ -147,15 +148,17 @@ def create_autocomplete_response(
 def response_to_dict(response: InteractionResponse) -> Dict[str, Any]:
     """
     Convert an interaction response to dict format.
-    
+
     Args:
         response: InteractionResponse
-        
+
     Returns:
         Dict for JSON serialization
     """
     result: Dict[str, Any] = {
-        "type": response.response_type.value if isinstance(response.response_type, InteractionResponseType) else response.response_type,
+        "type": response.response_type.value
+        if isinstance(response.response_type, InteractionResponseType)
+        else response.response_type,
     }
 
     if response.response_type == InteractionResponseType.MODAL:
@@ -164,7 +167,10 @@ def response_to_dict(response: InteractionResponse) -> Dict[str, Any]:
             "title": response.title,
             "components": response.components,
         }
-    elif response.response_type == InteractionResponseType.APPLICATION_COMMAND_AUTOCOMPLETE_RESULT:
+    elif (
+        response.response_type
+        == InteractionResponseType.APPLICATION_COMMAND_AUTOCOMPLETE_RESULT
+    ):
         result["data"] = {
             "choices": response.choices or [],
         }

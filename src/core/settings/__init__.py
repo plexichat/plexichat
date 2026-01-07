@@ -8,16 +8,16 @@ Usage:
     # In main.py (setup once)
     from src.core.settings import setup as settings_setup
     settings_setup(db)
-    
+
     # In any other file
     from src.core.settings import get_setting, set_setting, get_all_settings
-    
+
     # Get a setting
     theme = get_setting(user_id, "theme")
-    
+
     # Set a setting
     set_setting(user_id, "theme", "dark")
-    
+
     # Get all settings
     all_settings = get_all_settings(user_id)
 """
@@ -43,7 +43,7 @@ _setup_complete = False
 def setup(db: Any, config: Optional[SettingsConfig] = None) -> None:
     """
     Initialize the settings module.
-    
+
     Args:
         db: Database instance (must be connected)
         config: Optional settings configuration
@@ -56,7 +56,9 @@ def setup(db: Any, config: Optional[SettingsConfig] = None) -> None:
 def _ensure_setup():
     """Ensure setup was called."""
     if not _setup_complete:
-        raise RuntimeError("Settings module not initialized. Call settings.setup() first.")
+        raise RuntimeError(
+            "Settings module not initialized. Call settings.setup() first."
+        )
 
 
 def get_setting(user_id: int, key: str) -> Optional[str]:

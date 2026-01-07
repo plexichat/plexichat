@@ -10,6 +10,7 @@ from src.core.base import SnowflakeID
 
 class RelationshipStatus(Enum):
     """Status of relationship between two users."""
+
     NONE = "none"
     FRIEND = "friend"
     BLOCKED = "blocked"
@@ -19,6 +20,7 @@ class RelationshipStatus(Enum):
 
 class FriendRequestStatus(Enum):
     """Status of a friend request."""
+
     PENDING = "pending"
     ACCEPTED = "accepted"
     DECLINED = "declined"
@@ -28,6 +30,7 @@ class FriendRequestStatus(Enum):
 @dataclass
 class Relationship:
     """Represents the relationship between two users."""
+
     user_id: SnowflakeID
     target_user_id: SnowflakeID
     status: RelationshipStatus
@@ -38,6 +41,7 @@ class Relationship:
 @dataclass
 class FriendRequest:
     """Represents a friend request between users."""
+
     id: SnowflakeID
     sender_id: SnowflakeID
     recipient_id: SnowflakeID
@@ -50,6 +54,7 @@ class FriendRequest:
 @dataclass
 class BlockedUser:
     """Represents a blocked user relationship."""
+
     id: SnowflakeID
     blocker_id: SnowflakeID
     blocked_id: SnowflakeID
@@ -60,6 +65,7 @@ class BlockedUser:
 @dataclass
 class Friend:
     """Represents a friendship between users."""
+
     id: SnowflakeID
     user_id: SnowflakeID
     friend_id: SnowflakeID
@@ -69,6 +75,7 @@ class Friend:
 @dataclass
 class MutualInfo:
     """Information about mutual friends and servers."""
+
     mutual_friends: List[SnowflakeID]
     mutual_friend_count: int
     mutual_servers: List[SnowflakeID]

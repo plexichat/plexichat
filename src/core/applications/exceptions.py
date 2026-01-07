@@ -7,16 +7,19 @@ from typing import Optional
 
 class ApplicationError(Exception):
     """Base exception for all application errors."""
+
     pass
 
 
 class ApplicationNotFoundError(ApplicationError):
     """Application does not exist."""
+
     pass
 
 
 class ApplicationAccessDeniedError(ApplicationError):
     """User does not have access to this application."""
+
     pass
 
 
@@ -31,11 +34,13 @@ class ApplicationLimitError(ApplicationError):
 
 class InvalidApplicationNameError(ApplicationError):
     """Application name is invalid (too short, too long, or reserved)."""
+
     pass
 
 
 class CommandNotFoundError(ApplicationError):
     """Command does not exist."""
+
     pass
 
 
@@ -67,16 +72,19 @@ class CommandOptionLimitError(ApplicationError):
 
 class InteractionNotFoundError(ApplicationError):
     """Interaction does not exist."""
+
     pass
 
 
 class InteractionExpiredError(ApplicationError):
     """Interaction token has expired."""
+
     pass
 
 
 class InteractionAlreadyRespondedError(ApplicationError):
     """Interaction has already been responded to."""
+
     pass
 
 
@@ -156,16 +164,19 @@ class TokenRevokedError(OAuth2Error):
 
 class InstallationNotFoundError(ApplicationError):
     """Application installation does not exist."""
+
     pass
 
 
 class InstallationExistsError(ApplicationError):
     """Application is already installed on this server."""
+
     pass
 
 
 class WebhookSignatureError(ApplicationError):
     """Webhook signature verification failed."""
+
     pass
 
 

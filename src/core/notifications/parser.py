@@ -38,49 +38,59 @@ def parse_mentions(content: str) -> List[Mention]:
     mentions = []
 
     for match in USER_MENTION_PATTERN.finditer(content):
-        mentions.append(Mention(
-            mention_type=MentionType.USER,
-            target_id=int(match.group(1)),
-            raw_text=match.group(0),
-            start_pos=match.start(),
-            end_pos=match.end()
-        ))
+        mentions.append(
+            Mention(
+                mention_type=MentionType.USER,
+                target_id=int(match.group(1)),
+                raw_text=match.group(0),
+                start_pos=match.start(),
+                end_pos=match.end(),
+            )
+        )
 
     for match in ROLE_MENTION_PATTERN.finditer(content):
-        mentions.append(Mention(
-            mention_type=MentionType.ROLE,
-            target_id=int(match.group(1)),
-            raw_text=match.group(0),
-            start_pos=match.start(),
-            end_pos=match.end()
-        ))
+        mentions.append(
+            Mention(
+                mention_type=MentionType.ROLE,
+                target_id=int(match.group(1)),
+                raw_text=match.group(0),
+                start_pos=match.start(),
+                end_pos=match.end(),
+            )
+        )
 
     for match in CHANNEL_MENTION_PATTERN.finditer(content):
-        mentions.append(Mention(
-            mention_type=MentionType.CHANNEL,
-            target_id=int(match.group(1)),
-            raw_text=match.group(0),
-            start_pos=match.start(),
-            end_pos=match.end()
-        ))
+        mentions.append(
+            Mention(
+                mention_type=MentionType.CHANNEL,
+                target_id=int(match.group(1)),
+                raw_text=match.group(0),
+                start_pos=match.start(),
+                end_pos=match.end(),
+            )
+        )
 
     for match in EVERYONE_PATTERN.finditer(content):
-        mentions.append(Mention(
-            mention_type=MentionType.EVERYONE,
-            target_id=None,
-            raw_text=match.group(0),
-            start_pos=match.start(),
-            end_pos=match.end()
-        ))
+        mentions.append(
+            Mention(
+                mention_type=MentionType.EVERYONE,
+                target_id=None,
+                raw_text=match.group(0),
+                start_pos=match.start(),
+                end_pos=match.end(),
+            )
+        )
 
     for match in HERE_PATTERN.finditer(content):
-        mentions.append(Mention(
-            mention_type=MentionType.HERE,
-            target_id=None,
-            raw_text=match.group(0),
-            start_pos=match.start(),
-            end_pos=match.end()
-        ))
+        mentions.append(
+            Mention(
+                mention_type=MentionType.HERE,
+                target_id=None,
+                raw_text=match.group(0),
+                start_pos=match.start(),
+                end_pos=match.end(),
+            )
+        )
 
     mentions.sort(key=lambda m: m.start_pos)
 

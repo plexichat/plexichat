@@ -10,10 +10,10 @@ Usage:
     # In main.py (setup once)
     from src.core import telemetry
     telemetry.setup(db)
-    
+
     # In any other file
     from src.core import telemetry
-    
+
     telemetry.submit_response_times(user_id, data)
     stats = telemetry.get_endpoint_stats()
 """
@@ -32,6 +32,7 @@ _setup_complete = False
 @dataclass
 class ResponseTimeEntry:
     """A single response time measurement."""
+
     id: int
     endpoint: str
     method: str
@@ -44,6 +45,7 @@ class ResponseTimeEntry:
 @dataclass
 class EndpointStats:
     """Aggregated statistics for an endpoint."""
+
     endpoint: str
     method: str
     count: int
@@ -60,7 +62,7 @@ class EndpointStats:
 def setup(db: Any) -> None:
     """
     Initialize the telemetry module.
-    
+
     Args:
         db: Database instance (must be connected)
     """
@@ -95,9 +97,15 @@ def _create_tables() -> None:
     db.execute(convert_schema(schema) if convert_schema else schema)
 
     # Create indexes for efficient querying
-    db.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_endpoint ON telemetry_response_times(endpoint)")
-    db.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_timestamp ON telemetry_response_times(timestamp)")
-    db.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_method_endpoint ON telemetry_response_times(method, endpoint)")
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_telemetry_endpoint ON telemetry_response_times(endpoint)"
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_telemetry_timestamp ON telemetry_response_times(timestamp)"
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_telemetry_method_endpoint ON telemetry_response_times(method, endpoint)"
+    )
 
 
 def is_setup() -> bool:
@@ -117,7 +125,7 @@ def _get_db():
 def _normalize_endpoint(endpoint: str) -> str:
     """
     Normalize endpoint by replacing numeric IDs and emojis with placeholders.
-    
+
     This groups endpoints like /channels/123/messages and /channels/456/messages
     into a single /channels/:id/messages entry for better aggregation.
     """
@@ -131,46 +139,53 @@ def _normalize_endpoint(endpoint: str) -> str:
         logger.warning(f"Failed to unquote endpoint '{endpoint}': {e}")
 
     # Remove query parameters for cleaner grouping
-    if '?' in endpoint:
-        endpoint = endpoint.split('?')[0]
+    if "?" in endpoint:
+        endpoint = endpoint.split("?")[0]
 
     # Replace numeric IDs (snowflake IDs are typically 15-20 digits)
-    normalized = re.sub(r'/(\d{10,20})(?=/|$)', r'/:id', endpoint)
+    normalized = re.sub(r"/(\d{10,20})(?=/|$)", r"/:id", endpoint)
     # Also handle shorter numeric IDs
-    normalized = re.sub(r'/(\d+)(?=/|$)', r'/:id', normalized)
+    normalized = re.sub(r"/(\d+)(?=/|$)", r"/:id", normalized)
 
     # Normalize emoji paths in reactions endpoints
-    if '/reactions/' in normalized:
-        normalized = re.sub(r'/reactions/[^/]+', '/reactions/:emoji', normalized)
+    if "/reactions/" in normalized:
+        normalized = re.sub(r"/reactions/[^/]+", "/reactions/:emoji", normalized)
 
     # Normalize invite codes
-    if '/invites/' in normalized:
-        normalized = re.sub(r'/invites/[a-zA-Z0-9]+', '/invites/:code', normalized)
+    if "/invites/" in normalized:
+        normalized = re.sub(r"/invites/[a-zA-Z0-9]+", "/invites/:code", normalized)
 
     # Normalize settings keys
-    if '/settings/' in normalized:
-        normalized = re.sub(r'/settings/[^/]+$', '/settings/:key', normalized)
+    if "/settings/" in normalized:
+        normalized = re.sub(r"/settings/[^/]+$", "/settings/:key", normalized)
 
     # Normalize media attachment paths (UUIDs/hashes)
-    if '/media/' in normalized:
-        normalized = re.sub(r'/media/attachments/[a-f0-9]+\.[a-z]+', '/media/attachments/:file', normalized)
-        normalized = re.sub(r'/media/avatars/[a-f0-9]+\.[a-z]+', '/media/avatars/:file', normalized)
-        normalized = re.sub(r'/media/icons/[a-f0-9]+\.[a-z]+', '/media/icons/:file', normalized)
+    if "/media/" in normalized:
+        normalized = re.sub(
+            r"/media/attachments/[a-f0-9]+\.[a-z]+",
+            "/media/attachments/:file",
+            normalized,
+        )
+        normalized = re.sub(
+            r"/media/avatars/[a-f0-9]+\.[a-z]+", "/media/avatars/:file", normalized
+        )
+        normalized = re.sub(
+            r"/media/icons/[a-f0-9]+\.[a-z]+", "/media/icons/:file", normalized
+        )
 
     # Normalize user search queries
-    if '/users/search' in normalized:
-        normalized = '/users/search'
+    if "/users/search" in normalized:
+        normalized = "/users/search"
 
     return normalized
 
 
 def submit_response_times(
-    entries: List[Dict[str, Any]],
-    client_id: Optional[str] = None
+    entries: List[Dict[str, Any]], client_id: Optional[str] = None
 ) -> int:
     """
     Submit response time measurements from a client.
-    
+
     Args:
         entries: List of response time entries with keys:
             - endpoint: API endpoint path
@@ -179,7 +194,7 @@ def submit_response_times(
             - status_code: HTTP status code
             - timestamp: Unix timestamp in milliseconds
         client_id: Optional anonymized client identifier
-        
+
     Returns:
         Number of entries successfully stored
     """
@@ -191,6 +206,7 @@ def submit_response_times(
     # Pre-import snowflake generator
     try:
         from src.utils.encryption import generate_snowflake_id
+
         generate_id = generate_snowflake_id
     except ImportError:
         generate_id = None
@@ -219,7 +235,17 @@ def submit_response_times(
             else:
                 entry_id = int(time.time() * 1000000) + idx
 
-            batch_data.append((entry_id, endpoint, method, response_time_ms, status_code, timestamp, client_id))
+            batch_data.append(
+                (
+                    entry_id,
+                    endpoint,
+                    method,
+                    response_time_ms,
+                    status_code,
+                    timestamp,
+                    client_id,
+                )
+            )
 
         except Exception:
             continue
@@ -233,7 +259,7 @@ def submit_response_times(
             """INSERT INTO telemetry_response_times 
                (id, endpoint, method, response_time_ms, status_code, timestamp, client_id)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            batch_data
+            batch_data,
         )
         return len(batch_data)
     except AttributeError:
@@ -245,7 +271,7 @@ def submit_response_times(
                     """INSERT INTO telemetry_response_times 
                        (id, endpoint, method, response_time_ms, status_code, timestamp, client_id)
                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    data
+                    data,
                 )
                 stored += 1
             except Exception:
@@ -257,17 +283,17 @@ def get_endpoint_stats(
     hours: int = 24,
     endpoint_filter: Optional[str] = None,
     aggregate_by_pattern: bool = True,
-    client_id_filter: Optional[str] = None
+    client_id_filter: Optional[str] = None,
 ) -> List[EndpointStats]:
     """
     Get aggregated statistics for endpoints.
-    
+
     Args:
         hours: Number of hours to look back
         endpoint_filter: Optional endpoint pattern to filter by
         aggregate_by_pattern: If True, aggregate endpoints with IDs into patterns
         client_id_filter: Optional client_id to filter by
-        
+
     Returns:
         List of EndpointStats for each endpoint/method combination
     """
@@ -339,39 +365,38 @@ def get_endpoint_stats(
         p95_idx = int(count * 0.95)
         p99_idx = int(count * 0.99)
 
-        stats.append(EndpointStats(
-            endpoint=pattern,
-            method=method,
-            count=count,
-            avg_response_time_ms=sum(all_times) / count,
-            min_response_time_ms=min(all_times),
-            max_response_time_ms=max(all_times),
-            p50_response_time_ms=sorted_times[min(p50_idx, count - 1)],
-            p95_response_time_ms=sorted_times[min(p95_idx, count - 1)],
-            p99_response_time_ms=sorted_times[min(p99_idx, count - 1)],
-            error_rate=error_count / count if count > 0 else 0,
-            last_updated=int(time.time() * 1000)
-        ))
+        stats.append(
+            EndpointStats(
+                endpoint=pattern,
+                method=method,
+                count=count,
+                avg_response_time_ms=sum(all_times) / count,
+                min_response_time_ms=min(all_times),
+                max_response_time_ms=max(all_times),
+                p50_response_time_ms=sorted_times[min(p50_idx, count - 1)],
+                p95_response_time_ms=sorted_times[min(p95_idx, count - 1)],
+                p99_response_time_ms=sorted_times[min(p99_idx, count - 1)],
+                error_rate=error_count / count if count > 0 else 0,
+                last_updated=int(time.time() * 1000),
+            )
+        )
 
     stats.sort(key=lambda s: s.count, reverse=True)
     return stats
 
 
 def get_response_time_history(
-    endpoint: str,
-    method: str = "GET",
-    hours: int = 24,
-    bucket_minutes: int = 5
+    endpoint: str, method: str = "GET", hours: int = 24, bucket_minutes: int = 5
 ) -> List[Dict[str, Any]]:
     """
     Get response time history bucketed by time intervals.
-    
+
     Args:
         endpoint: API endpoint path
         method: HTTP method
         hours: Number of hours to look back
         bucket_minutes: Size of time buckets in minutes
-        
+
     Returns:
         List of time buckets with avg response time
     """
@@ -384,7 +409,7 @@ def get_response_time_history(
         """SELECT timestamp, response_time_ms FROM telemetry_response_times 
            WHERE endpoint = ? AND method = ? AND timestamp > ?
            ORDER BY timestamp""",
-        (endpoint, method, cutoff)
+        (endpoint, method, cutoff),
     )
 
     if not rows:
@@ -402,13 +427,15 @@ def get_response_time_history(
 
     result = []
     for bucket_ts, times in sorted(buckets.items()):
-        result.append({
-            "timestamp": bucket_ts,
-            "avg_response_time_ms": sum(times) / len(times),
-            "count": len(times),
-            "min_response_time_ms": min(times),
-            "max_response_time_ms": max(times)
-        })
+        result.append(
+            {
+                "timestamp": bucket_ts,
+                "avg_response_time_ms": sum(times) / len(times),
+                "count": len(times),
+                "min_response_time_ms": min(times),
+                "max_response_time_ms": max(times),
+            }
+        )
 
     return result
 
@@ -416,10 +443,10 @@ def get_response_time_history(
 def cleanup_old_data(days: int = 30) -> int:
     """
     Remove telemetry data older than specified days.
-    
+
     Args:
         days: Number of days to keep
-        
+
     Returns:
         Number of rows deleted
     """
@@ -428,17 +455,16 @@ def cleanup_old_data(days: int = 30) -> int:
     cutoff = int((time.time() - days * 24 * 3600) * 1000)
 
     cursor = db.execute(
-        "DELETE FROM telemetry_response_times WHERE timestamp < ?",
-        (cutoff,)
+        "DELETE FROM telemetry_response_times WHERE timestamp < ?", (cutoff,)
     )
 
-    return cursor.rowcount if hasattr(cursor, 'rowcount') else 0
+    return cursor.rowcount if hasattr(cursor, "rowcount") else 0
 
 
 def reset_all_stats() -> int:
     """
     Reset all telemetry statistics by deleting all data.
-    
+
     Returns:
         Number of rows deleted
     """
@@ -446,7 +472,13 @@ def reset_all_stats() -> int:
 
     # Get count first
     count_row = db.fetch_one("SELECT COUNT(*) as count FROM telemetry_response_times")
-    count = count_row["count"] if isinstance(count_row, dict) else count_row[0] if count_row else 0
+    count = (
+        count_row["count"]
+        if isinstance(count_row, dict)
+        else count_row[0]
+        if count_row
+        else 0
+    )
 
     db.execute("DELETE FROM telemetry_response_times")
 
@@ -456,11 +488,11 @@ def reset_all_stats() -> int:
 def get_raw_data(hours: int = 24, limit: int = 10000) -> List[Dict[str, Any]]:
     """
     Get raw telemetry data for export.
-    
+
     Args:
         hours: Number of hours to look back
         limit: Maximum number of records to return
-        
+
     Returns:
         List of raw telemetry entries
     """
@@ -474,44 +506,48 @@ def get_raw_data(hours: int = 24, limit: int = 10000) -> List[Dict[str, Any]]:
            WHERE timestamp > ?
            ORDER BY timestamp DESC
            LIMIT ?""",
-        (cutoff, limit)
+        (cutoff, limit),
     )
 
     result = []
     for row in rows:
         if isinstance(row, dict):
-            result.append({
-                "id": row["id"],
-                "endpoint": row["endpoint"],
-                "method": row["method"],
-                "response_time_ms": row["response_time_ms"],
-                "status_code": row["status_code"],
-                "timestamp": row["timestamp"],
-                "client_id": row["client_id"]
-            })
+            result.append(
+                {
+                    "id": row["id"],
+                    "endpoint": row["endpoint"],
+                    "method": row["method"],
+                    "response_time_ms": row["response_time_ms"],
+                    "status_code": row["status_code"],
+                    "timestamp": row["timestamp"],
+                    "client_id": row["client_id"],
+                }
+            )
         else:
-            result.append({
-                "id": row[0],
-                "endpoint": row[1],
-                "method": row[2],
-                "response_time_ms": row[3],
-                "status_code": row[4],
-                "timestamp": row[5],
-                "client_id": row[6]
-            })
+            result.append(
+                {
+                    "id": row[0],
+                    "endpoint": row[1],
+                    "method": row[2],
+                    "response_time_ms": row[3],
+                    "status_code": row[4],
+                    "timestamp": row[5],
+                    "client_id": row[6],
+                }
+            )
 
     return result
 
 
 __all__ = [
-    'setup',
-    'is_setup',
-    'submit_response_times',
-    'get_endpoint_stats',
-    'get_response_time_history',
-    'cleanup_old_data',
-    'reset_all_stats',
-    'get_raw_data',
-    'ResponseTimeEntry',
-    'EndpointStats',
+    "setup",
+    "is_setup",
+    "submit_response_times",
+    "get_endpoint_stats",
+    "get_response_time_history",
+    "cleanup_old_data",
+    "reset_all_stats",
+    "get_raw_data",
+    "ResponseTimeEntry",
+    "EndpointStats",
 ]

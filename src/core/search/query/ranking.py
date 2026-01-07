@@ -18,6 +18,7 @@ from ..models import (
 @dataclass
 class RankingWeights:
     """Weights for ranking factors."""
+
     text_relevance: float = 1.0
     recency: float = 0.3
     author_match: float = 0.5
@@ -42,12 +43,12 @@ class RankingEngine:
     ) -> List[MessageSearchResult]:
         """
         Rank message search results by relevance.
-        
+
         Args:
             results: List of search results to rank
             parsed_query: Parsed query for context
             now_ms: Current timestamp in milliseconds
-            
+
         Returns:
             Sorted list of results by score (descending)
         """
@@ -69,12 +70,12 @@ class RankingEngine:
     ) -> List[UserSearchResult]:
         """
         Rank user search results by relevance.
-        
+
         Args:
             results: List of user results to rank
             query: Search query string
             user_id: ID of user performing search
-            
+
         Returns:
             Sorted list of results by score (descending)
         """
@@ -95,11 +96,11 @@ class RankingEngine:
     ) -> List[ServerSearchResult]:
         """
         Rank server search results by relevance.
-        
+
         Args:
             results: List of server results to rank
             query: Search query string
-            
+
         Returns:
             Sorted list of results by score (descending)
         """
@@ -219,14 +220,16 @@ def rank_results(
 ) -> List[SearchResult]:
     """
     Rank search results by relevance.
-    
+
     Convenience function using RankingEngine.
     """
     engine = RankingEngine(weights)
 
     if results and isinstance(results[0], MessageSearchResult):
         msg_results = [r for r in results if isinstance(r, MessageSearchResult)]
-        ranked = engine.rank_message_results(msg_results, parsed_query or ParsedQuery(raw_query=""), now_ms)
+        ranked = engine.rank_message_results(
+            msg_results, parsed_query or ParsedQuery(raw_query=""), now_ms
+        )
         return list(ranked)
 
     if results and isinstance(results[0], UserSearchResult):

@@ -32,7 +32,7 @@ def build_option(
 ) -> CommandOption:
     """
     Build a command option.
-    
+
     Args:
         name: Option name
         description: Option description
@@ -46,22 +46,18 @@ def build_option(
         min_length: Minimum length for string options
         max_length: Maximum length for string options
         autocomplete: Whether to enable autocomplete
-        
+
     Returns:
         CommandOption
     """
     parsed_choices = None
     if choices:
-        parsed_choices = [
-            {"name": c["name"], "value": c["value"]}
-            for c in choices
-        ]
+        parsed_choices = [{"name": c["name"], "value": c["value"]} for c in choices]
 
     parsed_options = None
     if options:
         parsed_options = [
-            build_option(**opt) if isinstance(opt, dict) else opt
-            for opt in options
+            build_option(**opt) if isinstance(opt, dict) else opt for opt in options
         ]
 
     return CommandOption(
@@ -83,11 +79,11 @@ def build_option(
 def validate_option(option: Dict[str, Any], depth: int = 0) -> Tuple[bool, List[str]]:
     """
     Validate a command option.
-    
+
     Args:
         option: Option data dict
         depth: Current nesting depth
-        
+
     Returns:
         Tuple of (valid, issues)
     """
@@ -105,7 +101,9 @@ def validate_option(option: Dict[str, Any], depth: int = 0) -> Tuple[bool, List[
     if not description:
         issues.append(f"Option '{name}' requires a description")
     elif len(description) > MAX_OPTION_DESCRIPTION_LENGTH:
-        issues.append(f"Option '{name}' description exceeds {MAX_OPTION_DESCRIPTION_LENGTH} characters")
+        issues.append(
+            f"Option '{name}' description exceeds {MAX_OPTION_DESCRIPTION_LENGTH} characters"
+        )
 
     option_type = option.get("option_type") or option.get("type")
     if option_type is None:
@@ -130,7 +128,9 @@ def validate_option(option: Dict[str, Any], depth: int = 0) -> Tuple[bool, List[
             if not choice.get("name"):
                 issues.append(f"Option '{name}' choice {i} requires a name")
             elif len(choice["name"]) > MAX_CHOICE_NAME_LENGTH:
-                issues.append(f"Option '{name}' choice {i} name exceeds {MAX_CHOICE_NAME_LENGTH} characters")
+                issues.append(
+                    f"Option '{name}' choice {i} name exceeds {MAX_CHOICE_NAME_LENGTH} characters"
+                )
 
             if "value" not in choice:
                 issues.append(f"Option '{name}' choice {i} requires a value")
@@ -157,10 +157,10 @@ def validate_option(option: Dict[str, Any], depth: int = 0) -> Tuple[bool, List[
 def validate_options(options: List[Dict[str, Any]]) -> Tuple[bool, List[str]]:
     """
     Validate a list of command options.
-    
+
     Args:
         options: List of option data dicts
-        
+
     Returns:
         Tuple of (valid, issues)
     """
@@ -194,10 +194,10 @@ def validate_options(options: List[Dict[str, Any]]) -> Tuple[bool, List[str]]:
 def options_to_dict(options: List[CommandOption]) -> List[Dict[str, Any]]:
     """
     Convert command options to dict format.
-    
+
     Args:
         options: List of CommandOption
-        
+
     Returns:
         List of option dicts
     """
@@ -206,7 +206,9 @@ def options_to_dict(options: List[CommandOption]) -> List[Dict[str, Any]]:
         opt_dict = {
             "name": opt.name,
             "description": opt.description,
-            "type": opt.option_type.value if isinstance(opt.option_type, CommandOptionType) else opt.option_type,
+            "type": opt.option_type.value
+            if isinstance(opt.option_type, CommandOptionType)
+            else opt.option_type,
             "required": opt.required,
         }
 
@@ -242,10 +244,10 @@ def options_to_dict(options: List[CommandOption]) -> List[Dict[str, Any]]:
 def options_from_dict(options_data: List[Dict[str, Any]]) -> List[CommandOption]:
     """
     Convert dict format to command options.
-    
+
     Args:
         options_data: List of option dicts
-        
+
     Returns:
         List of CommandOption
     """
@@ -261,19 +263,21 @@ def options_from_dict(options_data: List[Dict[str, Any]]) -> List[CommandOption]
         if opt_dict.get("options"):
             sub_options = options_from_dict(opt_dict["options"])
 
-        result.append(CommandOption(
-            name=opt_dict["name"],
-            description=opt_dict["description"],
-            option_type=option_type,
-            required=opt_dict.get("required", False),
-            choices=opt_dict.get("choices"),
-            options=sub_options,
-            channel_types=opt_dict.get("channel_types"),
-            min_value=opt_dict.get("min_value"),
-            max_value=opt_dict.get("max_value"),
-            min_length=opt_dict.get("min_length"),
-            max_length=opt_dict.get("max_length"),
-            autocomplete=opt_dict.get("autocomplete", False),
-        ))
+        result.append(
+            CommandOption(
+                name=opt_dict["name"],
+                description=opt_dict["description"],
+                option_type=option_type,
+                required=opt_dict.get("required", False),
+                choices=opt_dict.get("choices"),
+                options=sub_options,
+                channel_types=opt_dict.get("channel_types"),
+                min_value=opt_dict.get("min_value"),
+                max_value=opt_dict.get("max_value"),
+                min_length=opt_dict.get("min_length"),
+                max_length=opt_dict.get("max_length"),
+                autocomplete=opt_dict.get("autocomplete", False),
+            )
+        )
 
     return result

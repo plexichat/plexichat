@@ -10,6 +10,7 @@ from src.core.base import SnowflakeID
 
 class SearchBackend(Enum):
     """Available search backend types."""
+
     SQLITE_FTS5 = "sqlite_fts5"
     ELASTICSEARCH = "elasticsearch"
     MEILISEARCH = "meilisearch"
@@ -17,6 +18,7 @@ class SearchBackend(Enum):
 
 class FilterType(Enum):
     """Types of search filters."""
+
     FROM_USER = "from"
     IN_CHANNEL = "in"
     BEFORE_DATE = "before"
@@ -29,6 +31,7 @@ class FilterType(Enum):
 
 class VerificationLevel(Enum):
     """Server verification levels."""
+
     NONE = "none"
     LOW = "low"
     MEDIUM = "medium"
@@ -39,6 +42,7 @@ class VerificationLevel(Enum):
 @dataclass
 class QueryFilter:
     """A single filter in a parsed query."""
+
     filter_type: FilterType
     value: str
     negated: bool = False
@@ -47,6 +51,7 @@ class QueryFilter:
 @dataclass
 class ParsedQuery:
     """Parsed search query with filters and terms."""
+
     raw_query: str
     search_terms: List[str] = field(default_factory=list)
     filters: List[QueryFilter] = field(default_factory=list)
@@ -66,6 +71,7 @@ class ParsedQuery:
 @dataclass
 class SearchResult:
     """Base search result."""
+
     id: SnowflakeID
     score: float = 0.0
     highlights: Dict[str, str] = field(default_factory=dict)
@@ -74,6 +80,7 @@ class SearchResult:
 @dataclass
 class MessageSearchResult(SearchResult):
     """Search result for a message."""
+
     message_id: SnowflakeID = 0
     content: str = ""
     author_id: SnowflakeID = 0
@@ -92,6 +99,7 @@ class MessageSearchResult(SearchResult):
 @dataclass
 class UserSearchResult(SearchResult):
     """Search result for a user."""
+
     user_id: SnowflakeID = 0
     username: str = ""
     display_name: Optional[str] = None
@@ -104,6 +112,7 @@ class UserSearchResult(SearchResult):
 @dataclass
 class ServerSearchResult(SearchResult):
     """Search result for a server (discovery)."""
+
     server_id: SnowflakeID = 0
     name: str = ""
     description: Optional[str] = None
@@ -119,6 +128,7 @@ class ServerSearchResult(SearchResult):
 @dataclass
 class SearchResponse:
     """Aggregated search results for a query."""
+
     query: str
     total_results: int
     results: List[SearchResult]
@@ -130,6 +140,7 @@ class SearchResponse:
 @dataclass
 class ServerCategory:
     """A category for server discovery."""
+
     id: str
     name: str
     description: Optional[str] = None
@@ -140,6 +151,7 @@ class ServerCategory:
 @dataclass
 class ServerListing:
     """A server listing in the discovery directory."""
+
     id: SnowflakeID
     server_id: SnowflakeID
     name: str
@@ -161,6 +173,7 @@ class ServerListing:
 @dataclass
 class IndexedMessage:
     """A message stored in the search index."""
+
     message_id: SnowflakeID
     content: str
     author_id: SnowflakeID
@@ -178,6 +191,7 @@ class IndexedMessage:
 @dataclass
 class IndexedUser:
     """A user stored in the search index."""
+
     user_id: SnowflakeID
     username: str
     display_name: Optional[str] = None
@@ -188,6 +202,7 @@ class IndexedUser:
 @dataclass
 class IndexedServer:
     """A server stored in the search index."""
+
     server_id: SnowflakeID
     name: str
     description: Optional[str] = None

@@ -44,7 +44,14 @@ TOKEN_BYTES = 48
 class WebhookManager(BaseManager):
     """Core webhook manager handling all operations."""
 
-    def __init__(self, db, auth_module=None, messaging_module=None, servers_module=None, embeds_module=None):
+    def __init__(
+        self,
+        db,
+        auth_module=None,
+        messaging_module=None,
+        servers_module=None,
+        embeds_module=None,
+    ):
         """
         Initialize the webhook manager.
 
@@ -111,17 +118,19 @@ class WebhookManager(BaseManager):
         if len(name) > WEBHOOK_NAME_MAX_LENGTH:
             raise WebhookNameError(
                 f"Webhook name cannot exceed {WEBHOOK_NAME_MAX_LENGTH} characters",
-                WEBHOOK_NAME_MAX_LENGTH
+                WEBHOOK_NAME_MAX_LENGTH,
             )
 
         # Sanitize HTML tags and dangerous patterns
-        name = re.sub(r'<[^>]*>', '', name)
-        name = re.sub(r'javascript:', '', name, flags=re.IGNORECASE)
-        
+        name = re.sub(r"<[^>]*>", "", name)
+        name = re.sub(r"javascript:", "", name, flags=re.IGNORECASE)
+
         # Check again after sanitization
         name = name.strip()
         if not name:
-            raise WebhookNameError("Webhook name contains only restricted characters or becomes empty after sanitization")
+            raise WebhookNameError(
+                "Webhook name contains only restricted characters or becomes empty after sanitization"
+            )
 
         return name
 
@@ -153,28 +162,33 @@ class WebhookManager(BaseManager):
     def _get_channel(self, channel_id: SnowflakeID) -> Optional[Dict]:
         """Get channel from database."""
         return self._db.fetch_one(
-            "SELECT * FROM srv_channels WHERE id = ?",
-            (channel_id,)
+            "SELECT * FROM srv_channels WHERE id = ?", (channel_id,)
         )
 
     def _get_server(self, server_id: SnowflakeID) -> Optional[Dict]:
         """Get server from database."""
         return self._db.fetch_one(
-            "SELECT * FROM srv_servers WHERE id = ?",
-            (server_id,)
+            "SELECT * FROM srv_servers WHERE id = ?", (server_id,)
         )
 
-    def _check_manage_webhooks_permission(self, user_id: SnowflakeID, server_id: SnowflakeID, channel_id: Optional[SnowflakeID] = None) -> bool:
+    def _check_manage_webhooks_permission(
+        self,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
+        channel_id: Optional[SnowflakeID] = None,
+    ) -> bool:
         """Check if user has manage_webhooks permission."""
         if not self._servers:
             return True
-        return self._servers.has_permission(user_id, server_id, "webhooks.manage", channel_id)
+        return self._servers.has_permission(
+            user_id, server_id, "webhooks.manage", channel_id
+        )
 
     def _get_channel_webhook_count(self, channel_id: SnowflakeID) -> int:
         """Get count of webhooks in a channel."""
         row = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM webhook_webhooks WHERE channel_id = ?",
-            (channel_id,)
+            (channel_id,),
         )
         return row["count"] if row else 0
 
@@ -182,7 +196,7 @@ class WebhookManager(BaseManager):
         """Get count of webhooks in a server."""
         row = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM webhook_webhooks WHERE server_id = ?",
-            (server_id,)
+            (server_id,),
         )
         return row["count"] if row else 0
 
@@ -191,20 +205,20 @@ class WebhookManager(BaseManager):
         user_id: SnowflakeID,
         channel_id: SnowflakeID,
         name: str,
-        avatar_url: Optional[str] = None
+        avatar_url: Optional[str] = None,
     ) -> Webhook:
         """
         Create a new webhook for a channel.
-        
+
         Args:
             user_id: ID of user creating webhook
             channel_id: ID of channel for webhook
             name: Webhook name (max 80 chars)
             avatar_url: Optional avatar URL
-            
+
         Returns:
             Created Webhook with token
-            
+
         Raises:
             ChannelNotFoundError: Channel not found
             PermissionDeniedError: No manage_webhooks permission
@@ -220,8 +234,7 @@ class WebhookManager(BaseManager):
 
         if not self._check_manage_webhooks_permission(user_id, server_id, channel_id):
             raise PermissionDeniedError(
-                "Missing permission to manage webhooks",
-                "webhooks.manage"
+                "Missing permission to manage webhooks", "webhooks.manage"
             )
 
         name = self._validate_name(name)
@@ -233,7 +246,7 @@ class WebhookManager(BaseManager):
             raise WebhookLimitError(
                 f"Channel has reached maximum of {max_per_channel} webhooks",
                 max_per_channel,
-                channel_count
+                channel_count,
             )
 
         max_per_server = self._config.get("max_webhooks_per_server", 50)
@@ -242,7 +255,7 @@ class WebhookManager(BaseManager):
             raise WebhookLimitError(
                 f"Server has reached maximum of {max_per_server} webhooks",
                 max_per_server,
-                server_count
+                server_count,
             )
 
         now = self._get_timestamp()
@@ -256,11 +269,23 @@ class WebhookManager(BaseManager):
                (id, channel_id, server_id, creator_id, name, webhook_type, 
                 avatar_url, token_hash, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (webhook_id, channel_id, server_id, user_id, name,
-             WebhookType.INCOMING.value, avatar_url, token_hash, now, now)
+            (
+                webhook_id,
+                channel_id,
+                server_id,
+                user_id,
+                name,
+                WebhookType.INCOMING.value,
+                avatar_url,
+                token_hash,
+                now,
+                now,
+            ),
         )
 
-        logger.debug(f"Webhook {webhook_id} created for channel {channel_id} by user {user_id}")
+        logger.debug(
+            f"Webhook {webhook_id} created for channel {channel_id} by user {user_id}"
+        )
 
         return Webhook(
             id=webhook_id,
@@ -272,30 +297,33 @@ class WebhookManager(BaseManager):
             avatar_url=avatar_url,
             token=full_token,
             created_at=now,
-            updated_at=now
+            updated_at=now,
         )
 
-    def get_webhook(self, webhook_id: SnowflakeID, user_id: Optional[SnowflakeID] = None) -> Optional[Webhook]:
+    def get_webhook(
+        self, webhook_id: SnowflakeID, user_id: Optional[SnowflakeID] = None
+    ) -> Optional[Webhook]:
         """
         Get a webhook by ID.
-        
+
         Args:
             webhook_id: ID of webhook
             user_id: Optional user ID for permission check
-            
+
         Returns:
             Webhook without token (token only shown on create/regenerate)
         """
         row = self._db.fetch_one(
-            "SELECT * FROM webhook_webhooks WHERE id = ?",
-            (webhook_id,)
+            "SELECT * FROM webhook_webhooks WHERE id = ?", (webhook_id,)
         )
 
         if not row:
             return None
 
         if user_id is not None:
-            if not self._check_manage_webhooks_permission(user_id, row["server_id"], row["channel_id"]):
+            if not self._check_manage_webhooks_permission(
+                user_id, row["server_id"], row["channel_id"]
+            ):
                 raise WebhookAccessDeniedError("You do not have access to this webhook")
 
         return self._row_to_webhook(row, include_token=False)
@@ -303,13 +331,13 @@ class WebhookManager(BaseManager):
     def get_webhook_by_token(self, token: str) -> Optional[Webhook]:
         """
         Get a webhook by its token (for execution).
-        
+
         Args:
             token: Full webhook token
-            
+
         Returns:
             Webhook if token is valid
-            
+
         Raises:
             InvalidWebhookTokenError: Token is invalid
         """
@@ -318,8 +346,7 @@ class WebhookManager(BaseManager):
             raise InvalidWebhookTokenError("Invalid webhook token format")
 
         row = self._db.fetch_one(
-            "SELECT * FROM webhook_webhooks WHERE id = ?",
-            (parsed["webhook_id"],)
+            "SELECT * FROM webhook_webhooks WHERE id = ?", (parsed["webhook_id"],)
         )
 
         if not row:
@@ -330,17 +357,19 @@ class WebhookManager(BaseManager):
 
         return self._row_to_webhook(row, include_token=False)
 
-    def get_channel_webhooks(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> List[Webhook]:
+    def get_channel_webhooks(
+        self, user_id: SnowflakeID, channel_id: SnowflakeID
+    ) -> List[Webhook]:
         """
         Get all webhooks for a channel.
-        
+
         Args:
             user_id: ID of user requesting
             channel_id: ID of channel
-            
+
         Returns:
             List of Webhooks without tokens
-            
+
         Raises:
             ChannelNotFoundError: Channel not found
             PermissionDeniedError: No permission
@@ -349,30 +378,33 @@ class WebhookManager(BaseManager):
         if not channel:
             raise ChannelNotFoundError("Channel not found")
 
-        if not self._check_manage_webhooks_permission(user_id, channel["server_id"], channel_id):
+        if not self._check_manage_webhooks_permission(
+            user_id, channel["server_id"], channel_id
+        ):
             raise PermissionDeniedError(
-                "Missing permission to view webhooks",
-                "webhooks.manage"
+                "Missing permission to view webhooks", "webhooks.manage"
             )
 
         rows = self._db.fetch_all(
             "SELECT * FROM webhook_webhooks WHERE channel_id = ? ORDER BY created_at",
-            (channel_id,)
+            (channel_id,),
         )
 
         return [self._row_to_webhook(row, include_token=False) for row in rows]
 
-    def get_server_webhooks(self, user_id: SnowflakeID, server_id: SnowflakeID) -> List[Webhook]:
+    def get_server_webhooks(
+        self, user_id: SnowflakeID, server_id: SnowflakeID
+    ) -> List[Webhook]:
         """
         Get all webhooks for a server.
-        
+
         Args:
             user_id: ID of user requesting
             server_id: ID of server
-            
+
         Returns:
             List of Webhooks without tokens
-            
+
         Raises:
             PermissionDeniedError: No permission
         """
@@ -382,13 +414,12 @@ class WebhookManager(BaseManager):
 
         if not self._check_manage_webhooks_permission(user_id, server_id):
             raise PermissionDeniedError(
-                "Missing permission to view webhooks",
-                "webhooks.manage"
+                "Missing permission to view webhooks", "webhooks.manage"
             )
 
         rows = self._db.fetch_all(
             "SELECT * FROM webhook_webhooks WHERE server_id = ? ORDER BY created_at",
-            (server_id,)
+            (server_id,),
         )
 
         return [self._row_to_webhook(row, include_token=False) for row in rows]
@@ -399,21 +430,21 @@ class WebhookManager(BaseManager):
         webhook_id: SnowflakeID,
         name: Optional[str] = None,
         avatar_url: Optional[str] = None,
-        channel_id: Optional[SnowflakeID] = None
+        channel_id: Optional[SnowflakeID] = None,
     ) -> Webhook:
         """
         Update a webhook.
-        
+
         Args:
             user_id: ID of user updating
             webhook_id: ID of webhook
             name: New name (optional)
             avatar_url: New avatar URL (optional, empty string to clear)
             channel_id: New channel ID (optional, move webhook)
-            
+
         Returns:
             Updated Webhook
-            
+
         Raises:
             WebhookNotFoundError: Webhook not found
             PermissionDeniedError: No permission
@@ -422,17 +453,17 @@ class WebhookManager(BaseManager):
             ChannelNotFoundError: New channel not found
         """
         row = self._db.fetch_one(
-            "SELECT * FROM webhook_webhooks WHERE id = ?",
-            (webhook_id,)
+            "SELECT * FROM webhook_webhooks WHERE id = ?", (webhook_id,)
         )
 
         if not row:
             raise WebhookNotFoundError("Webhook not found")
 
-        if not self._check_manage_webhooks_permission(user_id, row["server_id"], row["channel_id"]):
+        if not self._check_manage_webhooks_permission(
+            user_id, row["server_id"], row["channel_id"]
+        ):
             raise PermissionDeniedError(
-                "Missing permission to manage webhooks",
-                "webhooks.manage"
+                "Missing permission to manage webhooks", "webhooks.manage"
             )
 
         updates = []
@@ -459,10 +490,12 @@ class WebhookManager(BaseManager):
             if new_channel["server_id"] != row["server_id"]:
                 raise PermissionDeniedError("Cannot move webhook to a different server")
 
-            if not self._check_manage_webhooks_permission(user_id, row["server_id"], channel_id):
+            if not self._check_manage_webhooks_permission(
+                user_id, row["server_id"], channel_id
+            ):
                 raise PermissionDeniedError(
                     "Missing permission to manage webhooks in target channel",
-                    "webhooks.manage"
+                    "webhooks.manage",
                 )
 
             max_per_channel = self._config.get("max_webhooks_per_channel", 10)
@@ -471,7 +504,7 @@ class WebhookManager(BaseManager):
                 raise WebhookLimitError(
                     f"Target channel has reached maximum of {max_per_channel} webhooks",
                     max_per_channel,
-                    channel_count
+                    channel_count,
                 )
 
             updates.append("channel_id = ?")
@@ -487,7 +520,7 @@ class WebhookManager(BaseManager):
 
         self._db.execute(
             f"UPDATE webhook_webhooks SET {', '.join(updates)} WHERE id = ?",
-            tuple(params)
+            tuple(params),
         )
 
         logger.debug(f"Webhook {webhook_id} updated by user {user_id}")
@@ -499,73 +532,71 @@ class WebhookManager(BaseManager):
     def delete_webhook(self, user_id: SnowflakeID, webhook_id: SnowflakeID) -> bool:
         """
         Delete a webhook.
-        
+
         Args:
             user_id: ID of user deleting
             webhook_id: ID of webhook
-            
+
         Returns:
             True if deleted
-            
+
         Raises:
             WebhookNotFoundError: Webhook not found
             PermissionDeniedError: No permission
         """
         row = self._db.fetch_one(
-            "SELECT * FROM webhook_webhooks WHERE id = ?",
-            (webhook_id,)
+            "SELECT * FROM webhook_webhooks WHERE id = ?", (webhook_id,)
         )
 
         if not row:
             raise WebhookNotFoundError("Webhook not found")
 
-        if not self._check_manage_webhooks_permission(user_id, row["server_id"], row["channel_id"]):
+        if not self._check_manage_webhooks_permission(
+            user_id, row["server_id"], row["channel_id"]
+        ):
             raise PermissionDeniedError(
-                "Missing permission to manage webhooks",
-                "webhooks.manage"
+                "Missing permission to manage webhooks", "webhooks.manage"
             )
 
         self._db.execute(
-            "DELETE FROM webhook_messages WHERE webhook_id = ?",
-            (webhook_id,)
+            "DELETE FROM webhook_messages WHERE webhook_id = ?", (webhook_id,)
         )
 
-        self._db.execute(
-            "DELETE FROM webhook_webhooks WHERE id = ?",
-            (webhook_id,)
-        )
+        self._db.execute("DELETE FROM webhook_webhooks WHERE id = ?", (webhook_id,))
 
         logger.debug(f"Webhook {webhook_id} deleted by user {user_id}")
 
         return True
 
-    def regenerate_token(self, user_id: SnowflakeID, webhook_id: SnowflakeID) -> Webhook:
+    def regenerate_token(
+        self, user_id: SnowflakeID, webhook_id: SnowflakeID
+    ) -> Webhook:
         """
         Regenerate a webhook's token.
-        
+
         Args:
             user_id: ID of user regenerating
             webhook_id: ID of webhook
-            
+
         Returns:
             Webhook with new token
-            
+
         Raises:
             WebhookNotFoundError: Webhook not found
             PermissionDeniedError: No permission
         """
         row = self._db.fetch_one(
-            "SELECT * FROM webhook_webhooks WHERE id = ?",
-            (webhook_id,)
+            "SELECT * FROM webhook_webhooks WHERE id = ?", (webhook_id,)
         )
 
         if not row:
             raise WebhookNotFoundError("Webhook not found")
 
-        if not self._check_manage_webhooks_permission(user_id, row["server_id"], row["channel_id"]):
+        if not self._check_manage_webhooks_permission(
+            user_id, row["server_id"], row["channel_id"]
+        ):
             raise PermissionDeniedError(
-                "Missing permission to manage webhooks",
-                "webhooks.manage"
+                "Missing permission to manage webhooks", "webhooks.manage"
             )
 
         now = self._get_timestamp()
@@ -575,7 +606,7 @@ class WebhookManager(BaseManager):
 
         self._db.execute(
             "UPDATE webhook_webhooks SET token_hash = ?, updated_at = ? WHERE id = ?",
-            (token_hash, now, webhook_id)
+            (token_hash, now, webhook_id),
         )
 
         logger.debug(f"Webhook {webhook_id} token regenerated by user {user_id}")
@@ -594,11 +625,11 @@ class WebhookManager(BaseManager):
         avatar_url: Optional[str] = None,
         embeds: Optional[List[Dict[str, Any]]] = None,
         thread_id: Optional[SnowflakeID] = None,
-        wait: bool = False
+        wait: bool = False,
     ) -> Optional[WebhookMessage]:
         """
         Execute a webhook to send a message.
-        
+
         Args:
             webhook_id: ID of webhook
             token: Webhook token (secret part only or full token)
@@ -608,10 +639,10 @@ class WebhookManager(BaseManager):
             embeds: List of embed dictionaries
             thread_id: Optional thread to post to
             wait: If True, return the created message
-            
+
         Returns:
             WebhookMessage if wait=True, else None
-            
+
         Raises:
             InvalidWebhookTokenError: Token is invalid
             InvalidContentError: Content is invalid
@@ -626,8 +657,7 @@ class WebhookManager(BaseManager):
             raise InvalidWebhookTokenError("Invalid webhook token")
 
         row = self._db.fetch_one(
-            "SELECT * FROM webhook_webhooks WHERE id = ?",
-            (webhook_id,)
+            "SELECT * FROM webhook_webhooks WHERE id = ?", (webhook_id,)
         )
 
         if not row:
@@ -637,23 +667,25 @@ class WebhookManager(BaseManager):
             raise InvalidWebhookTokenError("Invalid webhook token")
 
         if not content and not embeds:
-            raise InvalidContentError("Message must have content or embeds", ["empty_message"])
+            raise InvalidContentError(
+                "Message must have content or embeds", ["empty_message"]
+            )
 
         if content:
             max_length = self._config.get("max_message_length", 2000)
             if len(content) > max_length:
                 raise InvalidContentError(
                     f"Content exceeds maximum length of {max_length}",
-                    ["content_too_long"]
+                    ["content_too_long"],
                 )
 
         if embeds:
-            max_embeds = self._config.get("max_embeds_per_message", MAX_EMBEDS_PER_MESSAGE)
+            max_embeds = self._config.get(
+                "max_embeds_per_message", MAX_EMBEDS_PER_MESSAGE
+            )
             if len(embeds) > max_embeds:
                 raise EmbedLimitError(
-                    f"Maximum {max_embeds} embeds allowed",
-                    max_embeds,
-                    len(embeds)
+                    f"Maximum {max_embeds} embeds allowed", max_embeds, len(embeds)
                 )
 
         if username:
@@ -661,20 +693,20 @@ class WebhookManager(BaseManager):
             if len(username) > USERNAME_OVERRIDE_MAX_LENGTH:
                 raise InvalidContentError(
                     f"Username override exceeds maximum length of {USERNAME_OVERRIDE_MAX_LENGTH}",
-                    ["username_too_long"]
+                    ["username_too_long"],
                 )
-            username = re.sub(r'<[^>]*>', '', username)
+            username = re.sub(r"<[^>]*>", "", username)
 
         if avatar_url:
             avatar_url = self._validate_avatar_url(avatar_url)
 
-        channel_id = row["channel_id"]
+        row["channel_id"]
         # Webhook execution must use the actual conversation_id associated with the channel
         channel_id_for_conv = row["channel_id"]
         conversation_id = channel_id_for_conv
         channel_row = self._db.fetch_one(
             "SELECT conversation_id FROM srv_channels WHERE id = ?",
-            (channel_id_for_conv,)
+            (channel_id_for_conv,),
         )
         if channel_row and channel_row["conversation_id"]:
             conversation_id = channel_row["conversation_id"]
@@ -694,11 +726,13 @@ class WebhookManager(BaseManager):
                     conversation_id=conversation_id,
                     content=content or "",
                     embeds=embeds,
-                    webhook_id=webhook_id
+                    webhook_id=webhook_id,
                 )
                 message_id = msg.id
             except Exception as e:
-                logger.error(f"Failed to send webhook message via messaging module: {e}")
+                logger.error(
+                    f"Failed to send webhook message via messaging module: {e}"
+                )
                 # Fallback to direct insert if messaging fails (legacy behavior)
                 try:
                     self._db.execute(
@@ -706,8 +740,15 @@ class WebhookManager(BaseManager):
                            (id, conversation_id, author_id, content, created_at, updated_at, 
                             deleted, edited, webhook_id)
                            VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?)""",
-                        (message_id, conversation_id, row["creator_id"], content or "",
-                         now, now, webhook_id)
+                        (
+                            message_id,
+                            conversation_id,
+                            row["creator_id"],
+                            content or "",
+                            now,
+                            now,
+                            webhook_id,
+                        ),
                     )
                 except Exception:
                     self._db.execute(
@@ -715,7 +756,14 @@ class WebhookManager(BaseManager):
                            (id, conversation_id, author_id, content, created_at, updated_at, 
                             deleted, edited)
                            VALUES (?, ?, ?, ?, ?, ?, 0, 0)""",
-                        (message_id, conversation_id, row["creator_id"], content or "", now, now)
+                        (
+                            message_id,
+                            conversation_id,
+                            row["creator_id"],
+                            content or "",
+                            now,
+                            now,
+                        ),
                     )
 
         self._db.execute(
@@ -723,15 +771,25 @@ class WebhookManager(BaseManager):
                (id, webhook_id, message_id, channel_id, username_override, 
                 avatar_override, thread_id, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (self._generate_id(), webhook_id, message_id, row["channel_id"],
-             username, avatar_url, thread_id, now)
+            (
+                self._generate_id(),
+                webhook_id,
+                message_id,
+                row["channel_id"],
+                username,
+                avatar_url,
+                thread_id,
+                now,
+            ),
         )
 
         if embeds and self._embeds:
             for embed_data in embeds:
                 try:
                     embed = self._embeds.create_embed(row["creator_id"], **embed_data)
-                    self._embeds.attach_embed_to_message(row["creator_id"], message_id, embed.id)
+                    self._embeds.attach_embed_to_message(
+                        row["creator_id"], message_id, embed.id
+                    )
                 except Exception as e:
                     logger.warning(f"Failed to create embed for webhook message: {e}")
 
@@ -747,7 +805,7 @@ class WebhookManager(BaseManager):
                 avatar_url=display_avatar,
                 embeds=embeds or [],
                 thread_id=thread_id,
-                created_at=now
+                created_at=now,
             )
 
         return None
@@ -760,11 +818,11 @@ class WebhookManager(BaseManager):
         avatar_url: Optional[str] = None,
         embeds: Optional[List[Dict[str, Any]]] = None,
         thread_id: Optional[SnowflakeID] = None,
-        wait: bool = False
+        wait: bool = False,
     ) -> Optional[WebhookMessage]:
         """
         Execute a webhook using its URL.
-        
+
         Args:
             webhook_url: Webhook URL (/webhooks/{id}/{token})
             content: Message content
@@ -773,11 +831,11 @@ class WebhookManager(BaseManager):
             embeds: List of embed dictionaries
             thread_id: Optional thread to post to
             wait: If True, return the created message
-            
+
         Returns:
             WebhookMessage if wait=True, else None
         """
-        match = re.match(r'^/?webhooks/(\d+)/(.+)$', webhook_url)
+        match = re.match(r"^/?webhooks/(\d+)/(.+)$", webhook_url)
         if not match:
             raise InvalidWebhookTokenError("Invalid webhook URL format")
 
@@ -801,5 +859,5 @@ class WebhookManager(BaseManager):
             avatar_url=row["avatar_url"],
             token=None,
             created_at=row["created_at"],
-            updated_at=row["updated_at"]
+            updated_at=row["updated_at"],
         )
