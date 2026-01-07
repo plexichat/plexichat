@@ -13,6 +13,7 @@ import asyncio
 import threading
 import argparse
 import secrets
+import time
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
 
@@ -821,104 +822,104 @@ class PlexiChatServer:
             logger.error(f"Failed to check encryption key rotation: {e}")
 
         # Initialize core modules in dependency order
-        logger.info("Initializing auth module...")
-        auth.setup(self.db)
+        startup_times = {}
+        
+        def timed_init(name: str, init_func):
+            """Initialize a module and track how long it takes."""
+            start = time.perf_counter()
+            logger.info(f"Initializing {name} module...")
+            try:
+                result = init_func()
+                elapsed = (time.perf_counter() - start) * 1000
+                startup_times[name] = elapsed
+                logger.info(f"  └─ {name} initialized in {elapsed:.1f}ms")
+                return result
+            except Exception as e:
+                elapsed = (time.perf_counter() - start) * 1000
+                startup_times[name] = elapsed
+                logger.error(f"  └─ {name} FAILED after {elapsed:.1f}ms: {e}")
+                raise
+        
+        timed_init("auth", lambda: auth.setup(self.db))
         self._modules["auth"] = auth
 
-        logger.info("Initializing messaging module...")
-        messaging.setup(self.db, auth)
+        timed_init("messaging", lambda: messaging.setup(self.db, auth))
         self._modules["messaging"] = messaging
 
-        logger.info("Initializing servers module...")
-        servers.setup(self.db, auth, messaging)
+        timed_init("servers", lambda: servers.setup(self.db, auth, messaging))
         self._modules["servers"] = servers
 
-        logger.info("Initializing relationships module...")
-        relationships.setup(self.db, auth, servers)
+        timed_init("relationships", lambda: relationships.setup(self.db, auth, servers))
         self._modules["relationships"] = relationships
 
-        logger.info("Initializing presence module...")
-        presence.setup(self.db, auth, relationships, servers)
+        timed_init("presence", lambda: presence.setup(self.db, auth, relationships, servers))
         self._modules["presence"] = presence
 
-        logger.info("Initializing reactions module...")
-        reactions.setup(self.db, messaging, servers, relationships)
+        timed_init("reactions", lambda: reactions.setup(self.db, messaging, servers, relationships))
         self._modules["reactions"] = reactions
 
-        logger.info("Initializing embeds module...")
-        embeds.setup(self.db, messaging, servers)
+        timed_init("embeds", lambda: embeds.setup(self.db, messaging, servers))
         self._modules["embeds"] = embeds
 
-        logger.info("Initializing events module...")
-        events.setup(
+        timed_init("events", lambda: events.setup(
             relationships_module=relationships,
             servers_module=servers,
             messaging_module=messaging,
-        )
+        ))
         self._modules["events"] = events
 
-        logger.info("Initializing webhooks module...")
-        webhooks.setup(self.db, auth, messaging, servers, embeds)
+        timed_init("webhooks", lambda: webhooks.setup(self.db, auth, messaging, servers, embeds))
         self._modules["webhooks"] = webhooks
 
-        logger.info("Initializing settings module...")
-        settings.setup(self.db)
+        timed_init("settings", lambda: settings.setup(self.db))
         self._modules["settings"] = settings
 
-        logger.info("Initializing notifications module...")
         try:
-            notifications.setup(
+            timed_init("notifications", lambda: notifications.setup(
                 self.db,
                 auth_module=auth,
                 messaging_module=messaging,
                 servers_module=servers,
                 relationships_module=relationships,
                 presence_module=presence,
-            )
+            ))
             self._modules["notifications"] = notifications
         except Exception as e:
             logger.warning(f"Failed to initialize notifications module: {e}")
             failed_modules.append("notifications")
 
-        logger.info("Initializing threads module...")
         try:
-            threads.setup(self.db, messaging, servers)
+            timed_init("threads", lambda: threads.setup(self.db, messaging, servers))
             self._modules["threads"] = threads
         except Exception as e:
             logger.warning(f"Failed to initialize threads module: {e}")
             failed_modules.append("threads")
 
         # Initialize user features module
-        logger.info("Initializing user features module...")
         features = None
         try:
             from src.core import features
-
-            features.setup(self.db)
+            timed_init("features", lambda: features.setup(self.db))
             self._modules["features"] = features
         except Exception as e:
             logger.warning(f"Failed to initialize user features module: {e}")
             failed_modules.append("features")
 
-        logger.info("Initializing media module...")
-        media.setup(self.db, messaging)
+        timed_init("media", lambda: media.setup(self.db, messaging))
         self._modules["media"] = media
 
         # Initialize avatars module
-        logger.info("Initializing avatars module...")
         try:
             from src.core import avatars
-
-            avatars.setup(self.db)
+            timed_init("avatars", lambda: avatars.setup(self.db))
             self._modules["avatars"] = avatars
         except Exception as e:
             logger.warning(f"Failed to initialize avatars module: {e}")
             failed_modules.append("avatars")
 
         # Initialize voice module
-        logger.info("Initializing voice module...")
         try:
-            voice.setup(self.db, auth, servers, relationships, presence)
+            timed_init("voice", lambda: voice.setup(self.db, auth, servers, relationships, presence))
             self._modules["voice"] = voice
         except Exception as e:
             logger.warning(f"Failed to initialize voice module: {e}")
@@ -927,32 +928,33 @@ class PlexiChatServer:
         # Initialize voice signaling with SFU configuration
         voice_config = config.get("voice") or {}
         if voice_config.get("enabled", False):
-            logger.info("Initializing voice signaling module...")
             try:
                 sfu_backend = voice_config.get("sfu_backend", "mediasoup")
-                signaling.setup(
-                    voice_module=voice,
-                    events_module=events,
-                    sfu_backend=sfu_backend,
-                    mediasoup_url=voice_config.get(
-                        "mediasoup_url", "https://localhost:4443"
-                    ),
-                    mediasoup_origin=voice_config.get(
-                        "mediasoup_origin",
-                        "https://plexichat-app.tail79f345.ts.net:8443",
-                    ),
-                    janus_url=voice_config.get(
-                        "janus_url", "http://localhost:8088/janus"
-                    ),
-                    stun_urls=voice_config.get(
-                        "stun_urls", ["stun:stun.l.google.com:19302"]
-                    ),
-                    turn_urls=voice_config.get("turn_urls", []),
-                    turn_secret=voice_config.get("turn_secret", ""),
-                    turn_ttl=voice_config.get("turn_ttl", 86400),
-                    turn_username=voice_config.get("turn_username", ""),
-                    turn_credential=voice_config.get("turn_credential", ""),
-                )
+                def init_signaling():
+                    signaling.setup(
+                        voice_module=voice,
+                        events_module=events,
+                        sfu_backend=sfu_backend,
+                        mediasoup_url=voice_config.get(
+                            "mediasoup_url", "https://localhost:4443"
+                        ),
+                        mediasoup_origin=voice_config.get(
+                            "mediasoup_origin",
+                            "https://plexichat-app.tail79f345.ts.net:8443",
+                        ),
+                        janus_url=voice_config.get(
+                            "janus_url", "http://localhost:8088/janus"
+                        ),
+                        stun_urls=voice_config.get(
+                            "stun_urls", ["stun:stun.l.google.com:19302"]
+                        ),
+                        turn_urls=voice_config.get("turn_urls", []),
+                        turn_secret=voice_config.get("turn_secret", ""),
+                        turn_ttl=voice_config.get("turn_ttl", 86400),
+                        turn_username=voice_config.get("turn_username", ""),
+                        turn_credential=voice_config.get("turn_credential", ""),
+                    )
+                timed_init("signaling", init_signaling)
                 self._modules["signaling"] = signaling
                 sfu_url = (
                     voice_config.get("mediasoup_url")
@@ -977,7 +979,6 @@ class PlexiChatServer:
         # Initialize rate limit module
         rate_limit_settings = config.get("rate_limiting", {})
         if rate_limit_settings.get("enabled", True):
-            logger.info("Initializing rate limit module...")
             try:
                 from src.core import ratelimit
                 from src.core.ratelimit.storage import (
@@ -989,27 +990,29 @@ class PlexiChatServer:
                     is_available as redis_is_available,
                 )
 
-                storage = None
-                if redis_is_available():
-                    storage = RedisStorage()
-                    logger.info("Using Redis storage for rate limiting")
-                elif self.db:
-                    storage = SQLiteStorage(self.db)
-                    logger.info(
-                        "Using SQLite storage for rate limiting (shared across workers)"
-                    )
-                else:
-                    storage = MemoryStorage()
-                    logger.info("Using in-memory storage for rate limiting (fallback)")
+                def init_ratelimit():
+                    storage = None
+                    if redis_is_available():
+                        storage = RedisStorage()
+                        logger.info("Using Redis storage for rate limiting")
+                    elif self.db:
+                        storage = SQLiteStorage(self.db)
+                        logger.info(
+                            "Using SQLite storage for rate limiting (shared across workers)"
+                        )
+                    else:
+                        storage = MemoryStorage()
+                        logger.info("Using in-memory storage for rate limiting (fallback)")
 
-                ratelimit.setup(
-                    storage_backend=storage,
-                    bot_multiplier=rate_limit_settings.get("bot_multiplier", 1.5),
-                    webhook_multiplier=rate_limit_settings.get(
-                        "webhook_multiplier", 1.0
-                    ),
-                    enable_global_limit=True,
-                )
+                    ratelimit.setup(
+                        storage_backend=storage,
+                        bot_multiplier=rate_limit_settings.get("bot_multiplier", 1.5),
+                        webhook_multiplier=rate_limit_settings.get(
+                            "webhook_multiplier", 1.0
+                        ),
+                        enable_global_limit=True,
+                    )
+                timed_init("ratelimit", init_ratelimit)
                 self._modules["ratelimit"] = ratelimit
             except Exception as e:
                 logger.warning(f"Failed to initialize rate limit module: {e}")
@@ -1018,11 +1021,9 @@ class PlexiChatServer:
         # Initialize telemetry module
         telemetry_config = config.get("telemetry") or {}
         if telemetry_config.get("enabled", True):
-            logger.info("Initializing telemetry module...")
             try:
                 from src.core import telemetry
-
-                telemetry.setup(self.db)
+                timed_init("telemetry", lambda: telemetry.setup(self.db))
                 self._modules["telemetry"] = telemetry
             except Exception as e:
                 logger.warning(f"Failed to initialize telemetry module: {e}")
@@ -1031,11 +1032,9 @@ class PlexiChatServer:
         # Initialize feedback module
         feedback_config = config.get("feedback") or {}
         if feedback_config.get("enabled", True):
-            logger.info("Initializing feedback module...")
             try:
                 from src.core import feedback
-
-                feedback.setup(self.db)
+                timed_init("feedback", lambda: feedback.setup(self.db))
                 self._modules["feedback"] = feedback
             except Exception as e:
                 logger.warning(f"Failed to initialize feedback module: {e}")
@@ -1044,11 +1043,9 @@ class PlexiChatServer:
         # Initialize reports module
         reports_config = config.get("reports") or {}
         if reports_config.get("enabled", True):
-            logger.info("Initializing reports module...")
             try:
                 from src.core import reports
-
-                reports.setup(self.db, messaging)
+                timed_init("reports", lambda: reports.setup(self.db, messaging))
                 self._modules["reports"] = reports
             except Exception as e:
                 logger.warning(f"Failed to initialize reports module: {e}")
@@ -1057,11 +1054,9 @@ class PlexiChatServer:
         # Initialize admin module
         admin_config = config.get("admin_ui") or {}
         if admin_config.get("enabled", True):
-            logger.info("Initializing admin module...")
             try:
                 from src.core import admin
-
-                admin.setup(self.db, auth, features)
+                timed_init("admin", lambda: admin.setup(self.db, auth, features))
                 self._modules["admin"] = admin
                 logger.info(
                     f"Admin module initialized (path: {admin_config.get('path', '/admin')})"
@@ -1070,7 +1065,17 @@ class PlexiChatServer:
                 logger.warning(f"Failed to initialize admin module: {e}")
                 failed_modules.append("admin")
 
-        # Log summary of initialization
+        # Log summary of initialization with timing
+        total_time = sum(startup_times.values())
+        logger.info("=" * 60)
+        logger.info("MODULE INITIALIZATION SUMMARY")
+        logger.info("=" * 60)
+        for module_name, elapsed in sorted(startup_times.items(), key=lambda x: -x[1]):
+            logger.info(f"  {module_name:20s} {elapsed:8.1f}ms")
+        logger.info("-" * 60)
+        logger.info(f"  {'TOTAL':20s} {total_time:8.1f}ms")
+        logger.info("=" * 60)
+        
         if failed_modules:
             logger.error(
                 f"Module initialization incomplete. Failed modules: {', '.join(failed_modules)}"
@@ -1107,6 +1112,7 @@ class PlexiChatServer:
         """Create and configure the FastAPI application."""
         from src.api import setup as api_setup, create_app
 
+        start = time.perf_counter()
         logger.info("Initializing API module...")
         api_setup(
             db=self.db,
@@ -1139,6 +1145,8 @@ class PlexiChatServer:
         self.app = create_app(
             enable_rate_limiting=enable_rate_limiting, enable_docs=enable_docs
         )
+        elapsed = (time.perf_counter() - start) * 1000
+        logger.info(f"  └─ API initialized in {elapsed:.1f}ms")
         return self.app
 
     async def notify_clients_shutdown(self, message: str = "Server shutting down"):
