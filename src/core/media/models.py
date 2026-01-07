@@ -10,6 +10,7 @@ from src.core.base import SnowflakeID
 
 class MediaType(Enum):
     """Type of media file."""
+
     IMAGE = "image"
     VIDEO = "video"
     AUDIO = "audio"
@@ -19,6 +20,7 @@ class MediaType(Enum):
 
 class StorageBackend(Enum):
     """Storage backend type."""
+
     LOCAL = "local"
     S3 = "s3"
     DATABASE = "database"
@@ -26,6 +28,7 @@ class StorageBackend(Enum):
 
 class ThumbnailSize(Enum):
     """Standard thumbnail sizes."""
+
     TINY = 64
     SMALL = 128
     MEDIUM = 256
@@ -34,6 +37,7 @@ class ThumbnailSize(Enum):
 
 class ScanStatus(Enum):
     """Malware scan status."""
+
     PENDING = "pending"
     CLEAN = "clean"
     INFECTED = "infected"
@@ -44,6 +48,7 @@ class ScanStatus(Enum):
 @dataclass
 class MediaFile:
     """Represents an uploaded media file."""
+
     id: SnowflakeID
     filename: str
     original_filename: str
@@ -66,6 +71,7 @@ class MediaFile:
 @dataclass
 class Thumbnail:
     """Represents a generated thumbnail."""
+
     id: SnowflakeID
     media_file_id: SnowflakeID
     size: int
@@ -79,6 +85,7 @@ class Thumbnail:
 @dataclass
 class ImageMetadata:
     """Metadata for image files."""
+
     width: int
     height: int
     format: str
@@ -92,6 +99,7 @@ class ImageMetadata:
 @dataclass
 class VideoMetadata:
     """Metadata for video files."""
+
     width: int
     height: int
     duration: float
@@ -107,6 +115,7 @@ class VideoMetadata:
 @dataclass
 class SignedUrl:
     """Represents a signed URL with expiration."""
+
     url: str
     expires_at: int
     signature: str
@@ -116,6 +125,7 @@ class SignedUrl:
 @dataclass
 class ProxiedContent:
     """Represents cached proxied content."""
+
     id: int
     source_url: str
     content_type: str
@@ -131,6 +141,7 @@ class ProxiedContent:
 @dataclass
 class UploadResult:
     """Result of a file upload operation."""
+
     file_id: int
     filename: str
     content_type: str
@@ -144,6 +155,7 @@ class UploadResult:
 @dataclass
 class AttachmentData:
     """Data format compatible with messaging module attachments."""
+
     filename: str
     content_type: str
     size: int

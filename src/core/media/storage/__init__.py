@@ -9,10 +9,10 @@ from .database import DatabaseStorage
 from .encrypted import EncryptedStorage, wrap_storage_with_encryption
 
 __all__ = [
-    'StorageBackendBase', 
-    'LocalStorage', 
-    'S3Storage', 
-    'DatabaseStorage',
-    'EncryptedStorage',
-    'wrap_storage_with_encryption',
+    "StorageBackendBase",
+    "LocalStorage",
+    "S3Storage",
+    "DatabaseStorage",
+    "EncryptedStorage",
+    "wrap_storage_with_encryption",
 ]

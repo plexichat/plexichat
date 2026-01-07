@@ -56,7 +56,7 @@ class VideoProcessor:
     ):
         """
         Initialize video processor.
-        
+
         Args:
             ffprobe_path: Path to ffprobe executable (auto-detected if None)
             timeout: Timeout in seconds for ffprobe (default: 30)
@@ -66,7 +66,9 @@ class VideoProcessor:
 
         # Load config with fallbacks
         video_config = _get_video_config()
-        self._timeout = timeout or video_config.get("ffprobe_timeout", DEFAULT_FFPROBE_TIMEOUT)
+        self._timeout = timeout or video_config.get(
+            "ffprobe_timeout", DEFAULT_FFPROBE_TIMEOUT
+        )
         self._max_size = max_size_for_metadata or video_config.get(
             "max_size_for_metadata", DEFAULT_MAX_VIDEO_SIZE_FOR_METADATA
         )
@@ -88,10 +90,10 @@ class VideoProcessor:
     def get_metadata(self, file_path: str) -> VideoMetadata:
         """
         Extract metadata from video file.
-        
+
         Args:
             file_path: Path to video file
-            
+
         Returns:
             VideoMetadata object
         """
@@ -101,8 +103,10 @@ class VideoProcessor:
         try:
             cmd = [
                 self._ffprobe_path,
-                "-v", "quiet",
-                "-print_format", "json",
+                "-v",
+                "quiet",
+                "-print_format",
+                "json",
                 "-show_format",
                 "-show_streams",
                 file_path,
@@ -117,8 +121,7 @@ class VideoProcessor:
 
             if result.returncode != 0:
                 raise VideoProcessingError(
-                    f"ffprobe failed: {result.stderr}",
-                    "metadata"
+                    f"ffprobe failed: {result.stderr}", "metadata"
                 )
 
             data = json.loads(result.stdout)
@@ -127,7 +130,9 @@ class VideoProcessor:
         except subprocess.TimeoutExpired:
             raise VideoProcessingError("ffprobe timed out", "metadata")
         except json.JSONDecodeError as e:
-            raise VideoProcessingError(f"Failed to parse ffprobe output: {e}", "metadata")
+            raise VideoProcessingError(
+                f"Failed to parse ffprobe output: {e}", "metadata"
+            )
         except Exception as e:
             logger.error(f"Failed to extract video metadata: {e}")
             raise VideoProcessingError(f"Failed to extract metadata: {e}", "metadata")
@@ -135,13 +140,13 @@ class VideoProcessor:
     def get_metadata_from_bytes(self, video_data: bytes) -> VideoMetadata:
         """
         Extract metadata from video bytes.
-        
+
         Args:
             video_data: Raw video bytes
-            
+
         Returns:
             VideoMetadata object
-            
+
         Raises:
             VideoProcessingError: If file too large or ffprobe fails/times out
         """
@@ -154,18 +159,21 @@ class VideoProcessor:
                 f"Video too large for metadata extraction: {len(video_data)} > {self._max_size}"
             )
             raise VideoProcessingError(
-                f"Video exceeds maximum size for metadata extraction ({self._max_size // (1024*1024)}MB)",
-                "metadata"
+                f"Video exceeds maximum size for metadata extraction ({self._max_size // (1024 * 1024)}MB)",
+                "metadata",
             )
 
         try:
             cmd = [
                 self._ffprobe_path,
-                "-v", "quiet",
-                "-print_format", "json",
+                "-v",
+                "quiet",
+                "-print_format",
+                "json",
                 "-show_format",
                 "-show_streams",
-                "-i", "pipe:0",
+                "-i",
+                "pipe:0",
             ]
 
             result = subprocess.run(
@@ -177,8 +185,7 @@ class VideoProcessor:
 
             if result.returncode != 0:
                 raise VideoProcessingError(
-                    f"ffprobe failed: {result.stderr.decode()}",
-                    "metadata"
+                    f"ffprobe failed: {result.stderr.decode()}", "metadata"
                 )
 
             data = json.loads(result.stdout.decode())
@@ -187,7 +194,9 @@ class VideoProcessor:
         except subprocess.TimeoutExpired:
             raise VideoProcessingError("ffprobe timed out", "metadata")
         except json.JSONDecodeError as e:
-            raise VideoProcessingError(f"Failed to parse ffprobe output: {e}", "metadata")
+            raise VideoProcessingError(
+                f"Failed to parse ffprobe output: {e}", "metadata"
+            )
         except Exception as e:
             logger.error(f"Failed to extract video metadata: {e}")
             raise VideoProcessingError(f"Failed to extract metadata: {e}", "metadata")
@@ -268,10 +277,10 @@ class VideoProcessor:
     def get_duration(self, file_path: str) -> float:
         """
         Get video duration in seconds.
-        
+
         Args:
             file_path: Path to video file
-            
+
         Returns:
             Duration in seconds
         """
@@ -281,10 +290,10 @@ class VideoProcessor:
     def get_dimensions(self, file_path: str) -> tuple:
         """
         Get video dimensions.
-        
+
         Args:
             file_path: Path to video file
-            
+
         Returns:
             Tuple of (width, height)
         """

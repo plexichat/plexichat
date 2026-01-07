@@ -22,6 +22,7 @@ import utils.config as config
 
 class CompressionQuality(Enum):
     """Compression quality presets."""
+
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
@@ -30,6 +31,7 @@ class CompressionQuality(Enum):
 
 class ImageFormat(Enum):
     """Output image formats."""
+
     WEBP = "webp"
     JPEG = "jpeg"
     PNG = "png"
@@ -38,6 +40,7 @@ class ImageFormat(Enum):
 
 class VideoCodec(Enum):
     """Video codecs for transcoding."""
+
     H264 = "h264"
     H265 = "h265"
     VP9 = "vp9"
@@ -47,6 +50,7 @@ class VideoCodec(Enum):
 @dataclass
 class CompressionResult:
     """Result of compression operation."""
+
     success: bool
     data: Optional[bytes] = None
     original_size: int = 0
@@ -120,16 +124,16 @@ class ImageCompressor:
         self,
         image_data: bytes,
         quality: Optional[CompressionQuality] = None,
-        output_format: Optional[ImageFormat] = None
+        output_format: Optional[ImageFormat] = None,
     ) -> CompressionResult:
         """
         Compress an image.
-        
+
         Args:
             image_data: Raw image bytes
             quality: Quality preset (uses config default if None)
             output_format: Output format (uses config default if None)
-            
+
         Returns:
             CompressionResult with compressed data
         """
@@ -137,7 +141,7 @@ class ImageCompressor:
             return CompressionResult(
                 success=False,
                 original_size=len(image_data),
-                error="Image compression not available"
+                error="Image compression not available",
             )
 
         try:
@@ -160,7 +164,9 @@ class ImageCompressor:
             if quality is None or quality == CompressionQuality.ORIGINAL:
                 q = self._config["quality"]
             else:
-                presets = IMAGE_QUALITY_PRESETS.get(quality, IMAGE_QUALITY_PRESETS[CompressionQuality.MEDIUM])
+                presets = IMAGE_QUALITY_PRESETS.get(
+                    quality, IMAGE_QUALITY_PRESETS[CompressionQuality.MEDIUM]
+                )
                 q = presets.get(fmt, 80)
 
             # Resize if too large
@@ -174,7 +180,9 @@ class ImageCompressor:
                 background = Image.new("RGB", img.size, (255, 255, 255))
                 if img.mode == "P":
                     img = img.convert("RGBA")
-                background.paste(img, mask=img.split()[3] if len(img.split()) == 4 else None)
+                background.paste(
+                    img, mask=img.split()[3] if len(img.split()) == 4 else None
+                )
                 img = background
             elif fmt == "jpeg" and img.mode != "RGB":
                 img = img.convert("RGB")
@@ -199,31 +207,34 @@ class ImageCompressor:
             compressed_size = len(compressed_data)
 
             # Only use compressed version if it's smaller
-            if compressed_size >= original_size and not self._config["preserve_original"]:
+            if (
+                compressed_size >= original_size
+                and not self._config["preserve_original"]
+            ):
                 return CompressionResult(
                     success=True,
                     data=image_data,
                     original_size=original_size,
                     compressed_size=original_size,
-                    format=original_format
+                    format=original_format,
                 )
 
-            logger.debug(f"Image compressed: {original_size} -> {compressed_size} bytes ({100 - (compressed_size/original_size*100):.1f}% reduction)")
+            logger.debug(
+                f"Image compressed: {original_size} -> {compressed_size} bytes ({100 - (compressed_size / original_size * 100):.1f}% reduction)"
+            )
 
             return CompressionResult(
                 success=True,
                 data=compressed_data,
                 original_size=original_size,
                 compressed_size=compressed_size,
-                format=mime_type
+                format=mime_type,
             )
 
         except Exception as e:
             logger.error(f"Image compression failed: {e}")
             return CompressionResult(
-                success=False,
-                original_size=len(image_data),
-                error=str(e)
+                success=False, original_size=len(image_data), error=str(e)
             )
 
 
@@ -254,9 +265,7 @@ class VideoCompressor:
         """Find ffmpeg executable."""
         try:
             result = subprocess.run(
-                ["ffmpeg", "-version"],
-                capture_output=True,
-                timeout=5
+                ["ffmpeg", "-version"], capture_output=True, timeout=5
             )
             if result.returncode == 0:
                 return "ffmpeg"
@@ -284,16 +293,16 @@ class VideoCompressor:
         self,
         video_data: bytes,
         quality: Optional[CompressionQuality] = None,
-        codec: Optional[VideoCodec] = None
+        codec: Optional[VideoCodec] = None,
     ) -> CompressionResult:
         """
         Compress a video.
-        
+
         Args:
             video_data: Raw video bytes
             quality: Quality preset
             codec: Output codec
-            
+
         Returns:
             CompressionResult with compressed data
         """
@@ -301,7 +310,7 @@ class VideoCompressor:
             return CompressionResult(
                 success=False,
                 original_size=len(video_data),
-                error="Video compression not available"
+                error="Video compression not available",
             )
 
         original_size = len(video_data)
@@ -316,7 +325,9 @@ class VideoCompressor:
         if quality is None or quality == CompressionQuality.ORIGINAL:
             crf = self._config["crf"]
         else:
-            presets = VIDEO_CRF_PRESETS.get(quality, VIDEO_CRF_PRESETS[CompressionQuality.MEDIUM])
+            presets = VIDEO_CRF_PRESETS.get(
+                quality, VIDEO_CRF_PRESETS[CompressionQuality.MEDIUM]
+            )
             crf = presets.get(codec_name, 23)
 
         input_path: Optional[str] = None
@@ -332,15 +343,34 @@ class VideoCompressor:
             # Build ffmpeg command
             cmd = [
                 self._ffmpeg_path,
-                "-i", input_path,
+                "-i",
+                input_path,
                 "-y",  # Overwrite output
             ]
 
             # Codec settings
             if codec_name == "h264":
-                cmd.extend(["-c:v", "libx264", "-crf", str(crf), "-preset", self._config["preset"]])
+                cmd.extend(
+                    [
+                        "-c:v",
+                        "libx264",
+                        "-crf",
+                        str(crf),
+                        "-preset",
+                        self._config["preset"],
+                    ]
+                )
             elif codec_name == "h265":
-                cmd.extend(["-c:v", "libx265", "-crf", str(crf), "-preset", self._config["preset"]])
+                cmd.extend(
+                    [
+                        "-c:v",
+                        "libx265",
+                        "-crf",
+                        str(crf),
+                        "-preset",
+                        self._config["preset"],
+                    ]
+                )
             elif codec_name == "vp9":
                 cmd.extend(["-c:v", "libvpx-vp9", "-crf", str(crf), "-b:v", "0"])
 
@@ -354,7 +384,7 @@ class VideoCompressor:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
-                timeout=300  # 5 minute timeout
+                timeout=300,  # 5 minute timeout
             )
 
             if result.returncode != 0:
@@ -363,7 +393,7 @@ class VideoCompressor:
                 return CompressionResult(
                     success=False,
                     original_size=original_size,
-                    error=f"Transcoding failed: {error}"
+                    error=f"Transcoding failed: {error}",
                 )
 
             # Read compressed output
@@ -376,14 +406,16 @@ class VideoCompressor:
             os.unlink(input_path)
             os.unlink(output_path)
 
-            logger.debug(f"Video compressed: {original_size} -> {compressed_size} bytes ({100 - (compressed_size/original_size*100):.1f}% reduction)")
+            logger.debug(
+                f"Video compressed: {original_size} -> {compressed_size} bytes ({100 - (compressed_size / original_size * 100):.1f}% reduction)"
+            )
 
             return CompressionResult(
                 success=True,
                 data=compressed_data,
                 original_size=original_size,
                 compressed_size=compressed_size,
-                format="video/mp4"
+                format="video/mp4",
             )
 
         except subprocess.TimeoutExpired:
@@ -391,14 +423,12 @@ class VideoCompressor:
             return CompressionResult(
                 success=False,
                 original_size=original_size,
-                error="Compression timed out"
+                error="Compression timed out",
             )
         except Exception as e:
             logger.error(f"Video compression failed: {e}")
             return CompressionResult(
-                success=False,
-                original_size=original_size,
-                error=str(e)
+                success=False, original_size=original_size, error=str(e)
             )
         finally:
             # Cleanup temp files
@@ -432,16 +462,16 @@ class CompressionManager:
         self,
         file_data: bytes,
         content_type: str,
-        quality: Optional[CompressionQuality] = None
+        quality: Optional[CompressionQuality] = None,
     ) -> CompressionResult:
         """
         Compress a file based on its content type.
-        
+
         Args:
             file_data: Raw file bytes
             content_type: MIME type
             quality: Quality preset
-            
+
         Returns:
             CompressionResult
         """
@@ -450,7 +480,7 @@ class CompressionManager:
                 success=True,
                 data=file_data,
                 original_size=len(file_data),
-                compressed_size=len(file_data)
+                compressed_size=len(file_data),
             )
 
         ct_lower = content_type.lower()
@@ -465,7 +495,7 @@ class CompressionManager:
                 success=True,
                 data=file_data,
                 original_size=len(file_data),
-                compressed_size=len(file_data)
+                compressed_size=len(file_data),
             )
 
     def get_status(self) -> Dict[str, Any]:

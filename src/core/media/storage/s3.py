@@ -32,7 +32,7 @@ class S3Storage(StorageBackendBase):
     ):
         """
         Initialize S3 storage.
-        
+
         Args:
             bucket: S3 bucket name
             access_key: AWS access key ID
@@ -54,11 +54,12 @@ class S3Storage(StorageBackendBase):
             import boto3  # type: ignore[reportMissingImports]
             from botocore.config import Config  # type: ignore[reportMissingImports]
             from botocore.exceptions import ClientError  # type: ignore[reportMissingImports]
+
             self._ClientError = ClientError
         except ImportError:
             raise StorageError(
                 "boto3 is required for S3 storage. Install with: pip install boto3",
-                "s3"
+                "s3",
             )
 
         config = Config(
@@ -105,13 +106,17 @@ class S3Storage(StorageBackendBase):
                 Body=file_data,
                 ContentType=content_type,
             )
-            logger.debug(f"Stored file at s3://{self._bucket}/{key} ({len(file_data)} bytes)")
+            logger.debug(
+                f"Stored file at s3://{self._bucket}/{key} ({len(file_data)} bytes)"
+            )
             return path
         except self._ClientError as e:
             logger.error(f"Failed to store file at s3://{self._bucket}/{key}: {e}")
             raise StorageWriteError(f"Failed to write to S3: {e}", "s3")
 
-    def store_stream(self, stream: BinaryIO, path: str, content_type: str, size: int) -> str:
+    def store_stream(
+        self, stream: BinaryIO, path: str, content_type: str, size: int
+    ) -> str:
         """Store file from a stream."""
         key = self._full_path(path)
 
@@ -135,7 +140,9 @@ class S3Storage(StorageBackendBase):
         try:
             response = self._client.get_object(Bucket=self._bucket, Key=key)
             data = response["Body"].read()
-            logger.debug(f"Retrieved file from s3://{self._bucket}/{key} ({len(data)} bytes)")
+            logger.debug(
+                f"Retrieved file from s3://{self._bucket}/{key} ({len(data)} bytes)"
+            )
             return data
         except self._ClientError as e:
             error_code = e.response.get("Error", {}).get("Code", "")
@@ -230,11 +237,11 @@ class S3Storage(StorageBackendBase):
     def generate_presigned_url(self, path: str, expires_in: int = 3600) -> str:
         """
         Generate a presigned URL for temporary access.
-        
+
         Args:
             path: Storage path
             expires_in: URL expiration time in seconds
-            
+
         Returns:
             Presigned URL
         """
@@ -260,13 +267,13 @@ class S3Storage(StorageBackendBase):
     ) -> dict:
         """
         Generate presigned POST data for direct upload.
-        
+
         Args:
             path: Storage path
             content_type: Expected content type
             expires_in: URL expiration time in seconds
             max_size: Maximum file size in bytes
-            
+
         Returns:
             Dict with url and fields for POST request
         """

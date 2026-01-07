@@ -7,11 +7,13 @@ from typing import Optional
 
 class MediaError(Exception):
     """Base exception for all media errors."""
+
     pass
 
 
 class FileNotFoundError(MediaError):
     """File does not exist."""
+
     pass
 
 
@@ -35,7 +37,12 @@ class FileSizeError(MediaError):
 class FileTypeError(MediaError):
     """File type not allowed."""
 
-    def __init__(self, message: str, content_type: Optional[str] = None, allowed_types: Optional[list] = None):
+    def __init__(
+        self,
+        message: str,
+        content_type: Optional[str] = None,
+        allowed_types: Optional[list] = None,
+    ):
         super().__init__(message)
         self.content_type = content_type
         self.allowed_types = allowed_types or []
@@ -51,21 +58,25 @@ class StorageError(MediaError):
 
 class StorageConnectionError(StorageError):
     """Failed to connect to storage backend."""
+
     pass
 
 
 class StorageWriteError(StorageError):
     """Failed to write to storage."""
+
     pass
 
 
 class StorageReadError(StorageError):
     """Failed to read from storage."""
+
     pass
 
 
 class StorageDeleteError(StorageError):
     """Failed to delete from storage."""
+
     pass
 
 
@@ -87,16 +98,19 @@ class VideoProcessingError(MediaError):
 
 class SigningError(MediaError):
     """URL signing failed."""
+
     pass
 
 
 class SignatureExpiredError(MediaError):
     """Signed URL has expired."""
+
     pass
 
 
 class SignatureInvalidError(MediaError):
     """Signature verification failed."""
+
     pass
 
 
@@ -110,16 +124,19 @@ class ProxyError(MediaError):
 
 class ProxyFetchError(ProxyError):
     """Failed to fetch external URL."""
+
     pass
 
 
 class ProxyCacheError(ProxyError):
     """Failed to cache proxied content."""
+
     pass
 
 
 class ScannerError(MediaError):
     """Malware scanner error."""
+
     pass
 
 
@@ -133,9 +150,11 @@ class MalwareDetectedError(MediaError):
 
 class ScannerUnavailableError(ScannerError):
     """Scanner service unavailable."""
+
     pass
 
 
 class PermissionDeniedError(MediaError):
     """User does not have permission to perform this action."""
+
     pass

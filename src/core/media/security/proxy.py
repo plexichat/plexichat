@@ -44,11 +44,13 @@ class ResponseStreamWrapper(io.RawIOBase):
                 chunk = next(self._iterator)
                 if not chunk:
                     break
-                
+
                 self._bytes_read += len(chunk)
                 if self._bytes_read > self._max_size:
-                    raise ValueError(f"Content exceeds maximum size of {self._max_size} bytes")
-                
+                    raise ValueError(
+                        f"Content exceeds maximum size of {self._max_size} bytes"
+                    )
+
                 self._hash.update(chunk)
                 self._buffer += chunk
             except StopIteration:
@@ -99,7 +101,7 @@ class ExternalProxy:
     ):
         """
         Initialize external proxy.
-        
+
         Args:
             storage_backend: Storage backend for cached content
             db: Database instance
@@ -124,18 +126,21 @@ class ExternalProxy:
 
         try:
             import requests
+
             self._requests = requests
         except ImportError:
-            raise ProxyError("requests is required for proxy. Install with: pip install requests")
+            raise ProxyError(
+                "requests is required for proxy. Install with: pip install requests"
+            )
 
     def fetch(self, url: str, force_refresh: bool = False) -> ProxiedContent:
         """
         Fetch and cache external URL.
-        
+
         Args:
             url: URL to fetch
             force_refresh: Force refresh even if cached
-            
+
         Returns:
             ProxiedContent object
         """
@@ -158,10 +163,10 @@ class ExternalProxy:
     def get_content(self, url: str) -> Tuple[bytes, str]:
         """
         Get content for URL (from cache or fetch).
-        
+
         Args:
             url: URL to get content for
-            
+
         Returns:
             Tuple of (content bytes, content_type)
         """
@@ -172,10 +177,10 @@ class ExternalProxy:
     def get_content_stream(self, url: str) -> Tuple[BinaryIO, int, str]:
         """
         Get content stream for URL.
-        
+
         Args:
             url: URL to get content for
-            
+
         Returns:
             Tuple of (stream, size, content_type)
         """
@@ -191,16 +196,15 @@ class ExternalProxy:
     def invalidate(self, url: str) -> bool:
         """
         Invalidate cached content for URL.
-        
+
         Args:
             url: URL to invalidate
-            
+
         Returns:
             True if invalidated
         """
         row = self._db.fetch_one(
-            "SELECT * FROM media_proxy_cache WHERE source_url = ?",
-            (url,)
+            "SELECT * FROM media_proxy_cache WHERE source_url = ?", (url,)
         )
 
         if not row:
@@ -211,10 +215,7 @@ class ExternalProxy:
         except Exception:
             pass
 
-        self._db.execute(
-            "DELETE FROM media_proxy_cache WHERE id = ?",
-            (row["id"],)
-        )
+        self._db.execute("DELETE FROM media_proxy_cache WHERE id = ?", (row["id"],))
 
         return True
 
@@ -231,15 +232,14 @@ class ExternalProxy:
     def cleanup_expired(self) -> int:
         """
         Remove expired cache entries.
-        
+
         Returns:
             Number of entries removed
         """
         now = int(time.time() * 1000)
 
         rows = self._db.fetch_all(
-            "SELECT * FROM media_proxy_cache WHERE expires_at < ?",
-            (now,)
+            "SELECT * FROM media_proxy_cache WHERE expires_at < ?", (now,)
         )
 
         count = 0
@@ -249,10 +249,7 @@ class ExternalProxy:
             except Exception:
                 pass
 
-            self._db.execute(
-                "DELETE FROM media_proxy_cache WHERE id = ?",
-                (row["id"],)
-            )
+            self._db.execute("DELETE FROM media_proxy_cache WHERE id = ?", (row["id"],))
             count += 1
 
         if count > 0:
@@ -266,17 +263,14 @@ class ExternalProxy:
 
         row = self._db.fetch_one(
             "SELECT * FROM media_proxy_cache WHERE source_url = ? AND expires_at > ?",
-            (url, now)
+            (url, now),
         )
 
         if not row:
             return None
 
         if not self._storage.exists(row["storage_path"]):
-            self._db.execute(
-                "DELETE FROM media_proxy_cache WHERE id = ?",
-                (row["id"],)
-            )
+            self._db.execute("DELETE FROM media_proxy_cache WHERE id = ?", (row["id"],))
             return None
 
         return ProxiedContent(
@@ -292,7 +286,9 @@ class ExternalProxy:
             checksum=row["checksum"],
         )
 
-    def _fetch_url(self, url: str, hostname: str, resolved_ip: str) -> Tuple[str, ResponseStreamWrapper]:
+    def _fetch_url(
+        self, url: str, hostname: str, resolved_ip: str
+    ) -> Tuple[str, ResponseStreamWrapper]:
         """Fetch content from URL using safe IP."""
         parsed = urlparse(url)
         port = parsed.port or (80 if parsed.scheme == "http" else 443)
@@ -305,7 +301,7 @@ class ExternalProxy:
                 request_url,
                 headers={
                     "User-Agent": self._user_agent,
-                    "Host": hostname # Important for virtual hosting
+                    "Host": hostname,  # Important for virtual hosting
                 },
                 timeout=self._timeout,
                 stream=True,
@@ -314,7 +310,9 @@ class ExternalProxy:
 
             response.raise_for_status()
 
-            content_type = response.headers.get("Content-Type", "application/octet-stream")
+            content_type = response.headers.get(
+                "Content-Type", "application/octet-stream"
+            )
             content_type = content_type.split(";")[0].strip().lower()
 
             if content_type not in self._allowed_types:
@@ -326,15 +324,16 @@ class ExternalProxy:
 
             # Create stream wrapper for memory-safe reading and hashing
             stream_wrapper = ResponseStreamWrapper(
-                response.iter_content(chunk_size=self._buffer_size),
-                self._max_size
+                response.iter_content(chunk_size=self._buffer_size), self._max_size
             )
 
             return content_type, stream_wrapper
         except (self._requests.RequestException, ValueError) as e:
             raise ProxyFetchError(f"Failed to fetch URL: {e}", url)
 
-    def _cache_content(self, url: str, content_type: str, stream_wrapper: ResponseStreamWrapper) -> ProxiedContent:
+    def _cache_content(
+        self, url: str, content_type: str, stream_wrapper: ResponseStreamWrapper
+    ) -> ProxiedContent:
         """Cache fetched content from stream."""
         url_hash = hashlib.sha256(url.encode()).hexdigest()[:16]
         ext = self._get_extension(content_type)
@@ -352,8 +351,7 @@ class ExternalProxy:
         expires_at = now + (self._cache_ttl * 1000)
 
         existing = self._db.fetch_one(
-            "SELECT id FROM media_proxy_cache WHERE source_url = ?",
-            (url,)
+            "SELECT id FROM media_proxy_cache WHERE source_url = ?", (url,)
         )
 
         if existing:
@@ -362,11 +360,21 @@ class ExternalProxy:
                    content_type = ?, size = ?, storage_path = ?, checksum = ?,
                    cached_at = ?, expires_at = ?, last_accessed = ?, access_count = access_count + 1
                    WHERE id = ?""",
-                (content_type, size, storage_path, checksum, now, expires_at, now, existing["id"])
+                (
+                    content_type,
+                    size,
+                    storage_path,
+                    checksum,
+                    now,
+                    expires_at,
+                    now,
+                    existing["id"],
+                ),
             )
             cache_id = existing["id"]
         else:
             from src.utils.encryption import generate_snowflake_id
+
             cache_id = generate_snowflake_id()
 
             self._db.execute(
@@ -374,7 +382,17 @@ class ExternalProxy:
                    (id, source_url, content_type, size, storage_path, checksum,
                     cached_at, expires_at, last_accessed, access_count)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
-                (cache_id, url, content_type, size, storage_path, checksum, now, expires_at, now)
+                (
+                    cache_id,
+                    url,
+                    content_type,
+                    size,
+                    storage_path,
+                    checksum,
+                    now,
+                    expires_at,
+                    now,
+                ),
             )
 
         return ProxiedContent(
@@ -395,7 +413,7 @@ class ExternalProxy:
         now = int(time.time() * 1000)
         self._db.execute(
             "UPDATE media_proxy_cache SET last_accessed = ?, access_count = access_count + 1 WHERE id = ?",
-            (now, cache_id)
+            (now, cache_id),
         )
 
     def _get_extension(self, content_type: str) -> str:

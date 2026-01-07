@@ -22,7 +22,7 @@ class LocalStorage(StorageBackendBase):
     def __init__(self, base_path: str, base_url: str = "/media"):
         """
         Initialize local storage.
-        
+
         Args:
             base_path: Base directory for file storage
             base_url: Base URL prefix for serving files
@@ -61,7 +61,9 @@ class LocalStorage(StorageBackendBase):
             logger.error(f"Failed to store file at {full_path}: {e}")
             raise StorageWriteError(f"Failed to write file: {e}", "local")
 
-    def store_stream(self, stream: BinaryIO, path: str, content_type: str, size: int) -> str:
+    def store_stream(
+        self, stream: BinaryIO, path: str, content_type: str, size: int
+    ) -> str:
         """Store file from a stream."""
         full_path = self._full_path(path)
 

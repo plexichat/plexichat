@@ -27,34 +27,41 @@ MAGIC_SIGNATURES = {
     "image/tiff": [(0, b"II*\x00"), (0, b"MM\x00*")],
     "image/x-icon": [(0, b"\x00\x00\x01\x00"), (0, b"\x00\x00\x02\x00")],
     "image/svg+xml": [],  # Text-based, no magic bytes
-
     # Videos
     "video/mp4": [(4, b"ftyp")],  # ftyp at offset 4
     "video/webm": [(0, b"\x1a\x45\xdf\xa3")],
     "video/quicktime": [(4, b"ftyp")],
     "video/x-msvideo": [(0, b"RIFF"), (8, b"AVI ")],
     "video/x-matroska": [(0, b"\x1a\x45\xdf\xa3")],
-
     # Audio
-    "audio/mpeg": [(0, b"\xff\xfb"), (0, b"\xff\xfa"), (0, b"\xff\xf3"), (0, b"\xff\xf2"), (0, b"ID3")],
+    "audio/mpeg": [
+        (0, b"\xff\xfb"),
+        (0, b"\xff\xfa"),
+        (0, b"\xff\xf3"),
+        (0, b"\xff\xf2"),
+        (0, b"ID3"),
+    ],
     "audio/ogg": [(0, b"OggS")],
     "audio/wav": [(0, b"RIFF"), (8, b"WAVE")],
     "audio/webm": [(0, b"\x1a\x45\xdf\xa3")],
     "audio/flac": [(0, b"fLaC")],
     "audio/aac": [(0, b"\xff\xf1"), (0, b"\xff\xf9")],
-
     # Documents
     "application/pdf": [(0, b"%PDF")],
     "application/zip": [(0, b"PK\x03\x04"), (0, b"PK\x05\x06"), (0, b"PK\x07\x08")],
     "application/x-rar-compressed": [(0, b"Rar!\x1a\x07")],
     "application/x-7z-compressed": [(0, b"7z\xbc\xaf\x27\x1c")],
     "application/gzip": [(0, b"\x1f\x8b")],
-
     # Office documents (ZIP-based)
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [(0, b"PK\x03\x04")],
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [(0, b"PK\x03\x04")],
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation": [(0, b"PK\x03\x04")],
-
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [
+        (0, b"PK\x03\x04")
+    ],
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [
+        (0, b"PK\x03\x04")
+    ],
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": [
+        (0, b"PK\x03\x04")
+    ],
     # Text types - no magic bytes
     "text/plain": [],
     "text/markdown": [],
@@ -67,23 +74,61 @@ MAGIC_SIGNATURES = {
 # Dangerous executable extensions
 BLOCKED_EXTENSIONS = {
     # Windows executables
-    ".exe", ".bat", ".cmd", ".com", ".msi", ".msp", ".msc",
-    ".pif", ".scr", ".hta", ".cpl", ".msu",
+    ".exe",
+    ".bat",
+    ".cmd",
+    ".com",
+    ".msi",
+    ".msp",
+    ".msc",
+    ".pif",
+    ".scr",
+    ".hta",
+    ".cpl",
+    ".msu",
     # Windows scripts
-    ".ps1", ".psm1", ".psd1", ".vbs", ".vbe", ".js", ".jse",
-    ".ws", ".wsf", ".wsc", ".wsh",
+    ".ps1",
+    ".psm1",
+    ".psd1",
+    ".vbs",
+    ".vbe",
+    ".js",
+    ".jse",
+    ".ws",
+    ".wsf",
+    ".wsc",
+    ".wsh",
     # Unix executables
-    ".sh", ".bash", ".zsh", ".csh", ".ksh",
-    ".run", ".bin", ".elf",
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".csh",
+    ".ksh",
+    ".run",
+    ".bin",
+    ".elf",
     # Libraries
-    ".dll", ".so", ".dylib",
+    ".dll",
+    ".so",
+    ".dylib",
     # Java
-    ".jar", ".class",
+    ".jar",
+    ".class",
     # Python (can be dangerous)
-    ".py", ".pyc", ".pyo", ".pyw",
+    ".py",
+    ".pyc",
+    ".pyo",
+    ".pyw",
     # Other
-    ".app", ".deb", ".rpm", ".dmg", ".pkg",
-    ".reg", ".inf", ".lnk", ".url",
+    ".app",
+    ".deb",
+    ".rpm",
+    ".dmg",
+    ".pkg",
+    ".reg",
+    ".inf",
+    ".lnk",
+    ".url",
 }
 
 # Dangerous MIME types
@@ -117,18 +162,24 @@ class FileValidator:
         return {
             "magic_byte_validation": security_config.get("magic_byte_validation", True),
             "block_executables": security_config.get("block_executables", True),
-            "blocked_extensions": set(security_config.get("blocked_extensions", BLOCKED_EXTENSIONS)),
-            "blocked_mime_types": set(security_config.get("blocked_mime_types", BLOCKED_MIME_TYPES)),
+            "blocked_extensions": set(
+                security_config.get("blocked_extensions", BLOCKED_EXTENSIONS)
+            ),
+            "blocked_mime_types": set(
+                security_config.get("blocked_mime_types", BLOCKED_MIME_TYPES)
+            ),
         }
 
-    def validate_magic_bytes(self, file_data: bytes, content_type: str) -> Tuple[bool, Optional[str]]:
+    def validate_magic_bytes(
+        self, file_data: bytes, content_type: str
+    ) -> Tuple[bool, Optional[str]]:
         """
         Validate file content matches declared content type using magic bytes.
-        
+
         Args:
             file_data: Raw file bytes
             content_type: Declared content type
-            
+
         Returns:
             Tuple of (is_valid, error_message)
         """
@@ -153,7 +204,7 @@ class FileValidator:
         # Check if file matches any valid signature
         for offset, sig in signatures:
             if len(file_data) >= offset + len(sig):
-                if file_data[offset:offset + len(sig)] == sig:
+                if file_data[offset : offset + len(sig)] == sig:
                     return True, None
 
         # Special handling for container formats
@@ -170,14 +221,16 @@ class FileValidator:
         logger.warning(f"Magic byte validation failed for content type: {content_type}")
         return False, f"File content does not match declared type: {content_type}"
 
-    def is_executable_blocked(self, filename: str, content_type: str) -> Tuple[bool, Optional[str]]:
+    def is_executable_blocked(
+        self, filename: str, content_type: str
+    ) -> Tuple[bool, Optional[str]]:
         """
         Check if file is a blocked executable type.
-        
+
         Args:
             filename: Original filename
             content_type: MIME type
-            
+
         Returns:
             Tuple of (is_blocked, error_message)
         """
@@ -200,16 +253,16 @@ class FileValidator:
     def sanitize_filename(self, filename: str) -> str:
         """
         Sanitize filename to prevent path traversal and other attacks.
-        
+
         Args:
             filename: Original filename
-            
+
         Returns:
             Sanitized filename
         """
         # Normalize path separators first (handle both Unix and Windows paths)
         filename = filename.replace("\\", "/")
-        
+
         # Remove path components
         filename = os.path.basename(filename)
 
@@ -222,7 +275,7 @@ class FileValidator:
         filename = filename.replace("\\", "_")
 
         # Remove control characters
-        filename = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', filename)
+        filename = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", filename)
 
         # Limit length
         name, ext = os.path.splitext(filename)
@@ -240,19 +293,16 @@ class FileValidator:
         return filename
 
     def validate_file(
-        self,
-        file_data: bytes,
-        filename: str,
-        content_type: str
+        self, file_data: bytes, filename: str, content_type: str
     ) -> Tuple[bool, Optional[str], str]:
         """
         Perform all security validations on a file.
-        
+
         Args:
             file_data: Raw file bytes
             filename: Original filename
             content_type: MIME type
-            
+
         Returns:
             Tuple of (is_valid, error_message, sanitized_filename)
         """
@@ -284,7 +334,9 @@ def get_validator() -> FileValidator:
     return _validator
 
 
-def validate_file(file_data: bytes, filename: str, content_type: str) -> Tuple[bool, Optional[str], str]:
+def validate_file(
+    file_data: bytes, filename: str, content_type: str
+) -> Tuple[bool, Optional[str], str]:
     """Convenience function to validate a file."""
     return get_validator().validate_file(file_data, filename, content_type)
 

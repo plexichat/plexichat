@@ -22,6 +22,7 @@ import utils.config as config
 
 class UploadSessionStatus(Enum):
     """Status of an upload session."""
+
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
@@ -32,6 +33,7 @@ class UploadSessionStatus(Enum):
 @dataclass
 class UploadSession:
     """Represents a chunked upload session."""
+
     id: str
     user_id: int
     filename: str
@@ -52,6 +54,7 @@ class UploadSession:
 @dataclass
 class ChunkUploadResult:
     """Result of uploading a chunk."""
+
     success: bool
     session_id: str
     chunk_index: int
@@ -110,7 +113,9 @@ class ChunkedUploadManager:
             "chunk_size": chunked_config.get("chunk_size", 5 * 1024 * 1024),  # 5MB
             "max_chunks": chunked_config.get("max_chunks", 200),
             "session_timeout": chunked_config.get("session_timeout", 3600),  # 1 hour
-            "cleanup_interval": chunked_config.get("cleanup_interval", 300),  # 5 minutes
+            "cleanup_interval": chunked_config.get(
+                "cleanup_interval", 300
+            ),  # 5 minutes
         }
 
     def _create_tables(self):
@@ -119,7 +124,11 @@ class ChunkedUploadManager:
         for statement in statements:
             if statement:
                 try:
-                    converted = self._db.convert_schema(statement) if hasattr(self._db, 'convert_schema') else statement
+                    converted = (
+                        self._db.convert_schema(statement)
+                        if hasattr(self._db, "convert_schema")
+                        else statement
+                    )
                     self._db.execute(converted)
                 except Exception as e:
                     logger.error(f"Failed to create chunked upload table: {e}")
@@ -137,21 +146,17 @@ class ChunkedUploadManager:
         return self._config["enabled"]
 
     def create_session(
-        self,
-        user_id: int,
-        filename: str,
-        content_type: str,
-        total_size: int
+        self, user_id: int, filename: str, content_type: str, total_size: int
     ) -> Optional[UploadSession]:
         """
         Create a new upload session.
-        
+
         Args:
             user_id: User ID
             filename: Original filename
             content_type: MIME type
             total_size: Total file size in bytes
-            
+
         Returns:
             UploadSession or None if failed
         """
@@ -166,6 +171,7 @@ class ChunkedUploadManager:
             return None
 
         import secrets
+
         session_id = secrets.token_urlsafe(32)
 
         now = int(time.time() * 1000)
@@ -189,11 +195,24 @@ class ChunkedUploadManager:
                 total_chunks, uploaded_chunks, uploaded_bytes, status, 
                 created_at, updated_at, expires_at, temp_path)
                VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 'pending', ?, ?, ?, ?)""",
-            (session_id, user_id, filename, content_type, total_size, chunk_size,
-             total_chunks, now, now, expires_at, temp_path)
+            (
+                session_id,
+                user_id,
+                filename,
+                content_type,
+                total_size,
+                chunk_size,
+                total_chunks,
+                now,
+                now,
+                expires_at,
+                temp_path,
+            ),
         )
 
-        logger.debug(f"Created upload session {session_id} for {filename} ({total_chunks} chunks)")
+        logger.debug(
+            f"Created upload session {session_id} for {filename} ({total_chunks} chunks)"
+        )
 
         return UploadSession(
             id=session_id,
@@ -209,7 +228,7 @@ class ChunkedUploadManager:
             created_at=now,
             updated_at=now,
             expires_at=expires_at,
-            temp_path=temp_path
+            temp_path=temp_path,
         )
 
     def get_session(self, session_id: str, user_id: int) -> Optional[UploadSession]:
@@ -220,7 +239,7 @@ class ChunkedUploadManager:
                       created_at, updated_at, expires_at, temp_path, checksum
                FROM media_upload_sessions
                WHERE id = ? AND user_id = ?""",
-            (session_id, user_id)
+            (session_id, user_id),
         )
 
         if not row:
@@ -242,16 +261,25 @@ class ChunkedUploadManager:
                 updated_at=row["updated_at"],
                 expires_at=row["expires_at"],
                 temp_path=row["temp_path"],
-                checksum=row["checksum"]
+                checksum=row["checksum"],
             )
         else:
             return UploadSession(
-                id=row[0], user_id=row[1], filename=row[2], content_type=row[3],
-                total_size=row[4], chunk_size=row[5], total_chunks=row[6],
-                uploaded_chunks=row[7], uploaded_bytes=row[8],
-                status=UploadSessionStatus(row[9]), created_at=row[10],
-                updated_at=row[11], expires_at=row[12], temp_path=row[13],
-                checksum=row[14]
+                id=row[0],
+                user_id=row[1],
+                filename=row[2],
+                content_type=row[3],
+                total_size=row[4],
+                chunk_size=row[5],
+                total_chunks=row[6],
+                uploaded_chunks=row[7],
+                uploaded_bytes=row[8],
+                status=UploadSessionStatus(row[9]),
+                created_at=row[10],
+                updated_at=row[11],
+                expires_at=row[12],
+                temp_path=row[13],
+                checksum=row[14],
             )
 
     def upload_chunk(
@@ -260,18 +288,18 @@ class ChunkedUploadManager:
         user_id: int,
         chunk_index: int,
         chunk_data: bytes,
-        chunk_checksum: Optional[str] = None
+        chunk_checksum: Optional[str] = None,
     ) -> ChunkUploadResult:
         """
         Upload a chunk to a session.
-        
+
         Args:
             session_id: Session ID
             user_id: User ID
             chunk_index: Zero-based chunk index
             chunk_data: Chunk bytes
             chunk_checksum: Optional MD5 checksum for verification
-            
+
         Returns:
             ChunkUploadResult
         """
@@ -286,7 +314,7 @@ class ChunkedUploadManager:
                 total_chunks=0,
                 progress_percent=0,
                 is_complete=False,
-                error="Session not found"
+                error="Session not found",
             )
 
         # Check if session expired
@@ -301,7 +329,7 @@ class ChunkedUploadManager:
                 total_chunks=session.total_chunks,
                 progress_percent=0,
                 is_complete=False,
-                error="Session expired"
+                error="Session expired",
             )
 
         # Validate chunk index
@@ -314,7 +342,7 @@ class ChunkedUploadManager:
                 total_chunks=session.total_chunks,
                 progress_percent=(session.uploaded_chunks / session.total_chunks) * 100,
                 is_complete=False,
-                error=f"Invalid chunk index: {chunk_index}"
+                error=f"Invalid chunk index: {chunk_index}",
             )
 
         # Verify checksum if provided
@@ -327,9 +355,10 @@ class ChunkedUploadManager:
                     chunk_index=chunk_index,
                     uploaded_chunks=session.uploaded_chunks,
                     total_chunks=session.total_chunks,
-                    progress_percent=(session.uploaded_chunks / session.total_chunks) * 100,
+                    progress_percent=(session.uploaded_chunks / session.total_chunks)
+                    * 100,
                     is_complete=False,
-                    error="Checksum mismatch"
+                    error="Checksum mismatch",
                 )
 
         # Write chunk to temp file
@@ -350,7 +379,7 @@ class ChunkedUploadManager:
                 total_chunks=session.total_chunks,
                 progress_percent=(session.uploaded_chunks / session.total_chunks) * 100,
                 is_complete=False,
-                error=f"Write failed: {e}"
+                error=f"Write failed: {e}",
             )
 
         # Update session
@@ -363,12 +392,14 @@ class ChunkedUploadManager:
             """UPDATE media_upload_sessions 
                SET uploaded_chunks = ?, uploaded_bytes = ?, status = ?, updated_at = ?
                WHERE id = ?""",
-            (uploaded_chunks, uploaded_bytes, status, now, session_id)
+            (uploaded_chunks, uploaded_bytes, status, now, session_id),
         )
 
         progress = (uploaded_chunks / session.total_chunks) * 100
 
-        logger.debug(f"Chunk {chunk_index + 1}/{session.total_chunks} uploaded for session {session_id} ({progress:.1f}%)")
+        logger.debug(
+            f"Chunk {chunk_index + 1}/{session.total_chunks} uploaded for session {session_id} ({progress:.1f}%)"
+        )
 
         return ChunkUploadResult(
             success=True,
@@ -377,17 +408,17 @@ class ChunkedUploadManager:
             uploaded_chunks=uploaded_chunks,
             total_chunks=session.total_chunks,
             progress_percent=progress,
-            is_complete=is_complete
+            is_complete=is_complete,
         )
 
     def complete_session(self, session_id: str, user_id: int) -> Optional[bytes]:
         """
         Complete an upload session and return the assembled file.
-        
+
         Args:
             session_id: Session ID
             user_id: User ID
-            
+
         Returns:
             Complete file bytes or None if failed
         """
@@ -427,14 +458,13 @@ class ChunkedUploadManager:
         """Mark session as expired."""
         self._db.execute(
             "UPDATE media_upload_sessions SET status = 'expired' WHERE id = ?",
-            (session_id,)
+            (session_id,),
         )
 
     def _cleanup_session(self, session_id: str):
         """Clean up session and temp files."""
         row = self._db.fetch_one(
-            "SELECT temp_path FROM media_upload_sessions WHERE id = ?",
-            (session_id,)
+            "SELECT temp_path FROM media_upload_sessions WHERE id = ?", (session_id,)
         )
 
         if row:
@@ -446,8 +476,7 @@ class ChunkedUploadManager:
                     logger.warning(f"Failed to delete temp file: {e}")
 
         self._db.execute(
-            "DELETE FROM media_upload_sessions WHERE id = ?",
-            (session_id,)
+            "DELETE FROM media_upload_sessions WHERE id = ?", (session_id,)
         )
 
     def cleanup_expired(self) -> int:
@@ -456,7 +485,7 @@ class ChunkedUploadManager:
 
         rows = self._db.fetch_all(
             "SELECT id, temp_path FROM media_upload_sessions WHERE expires_at < ?",
-            (now,)
+            (now,),
         )
 
         count = 0
@@ -471,8 +500,7 @@ class ChunkedUploadManager:
                     pass
 
             self._db.execute(
-                "DELETE FROM media_upload_sessions WHERE id = ?",
-                (session_id,)
+                "DELETE FROM media_upload_sessions WHERE id = ?", (session_id,)
             )
             count += 1
 
@@ -492,20 +520,30 @@ class ChunkedUploadManager:
                FROM media_upload_sessions
                WHERE user_id = ? AND expires_at > ? AND status NOT IN ('completed', 'expired')
                ORDER BY created_at DESC""",
-            (user_id, now)
+            (user_id, now),
         )
 
         sessions = []
         for row in rows:
             if isinstance(row, dict):
-                sessions.append(UploadSession(
-                    id=row["id"], user_id=row["user_id"], filename=row["filename"],
-                    content_type=row["content_type"], total_size=row["total_size"],
-                    chunk_size=row["chunk_size"], total_chunks=row["total_chunks"],
-                    uploaded_chunks=row["uploaded_chunks"], uploaded_bytes=row["uploaded_bytes"],
-                    status=UploadSessionStatus(row["status"]), created_at=row["created_at"],
-                    updated_at=row["updated_at"], expires_at=row["expires_at"],
-                    temp_path=row["temp_path"], checksum=row["checksum"]
-                ))
+                sessions.append(
+                    UploadSession(
+                        id=row["id"],
+                        user_id=row["user_id"],
+                        filename=row["filename"],
+                        content_type=row["content_type"],
+                        total_size=row["total_size"],
+                        chunk_size=row["chunk_size"],
+                        total_chunks=row["total_chunks"],
+                        uploaded_chunks=row["uploaded_chunks"],
+                        uploaded_bytes=row["uploaded_bytes"],
+                        status=UploadSessionStatus(row["status"]),
+                        created_at=row["created_at"],
+                        updated_at=row["updated_at"],
+                        expires_at=row["expires_at"],
+                        temp_path=row["temp_path"],
+                        checksum=row["checksum"],
+                    )
+                )
 
         return sessions

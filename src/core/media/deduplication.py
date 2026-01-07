@@ -20,6 +20,7 @@ import utils.config as config
 
 class HashAlgorithm(Enum):
     """Supported hash algorithms."""
+
     SHA256 = "sha256"
     SHA512 = "sha512"
     BLAKE2B = "blake2b"
@@ -28,6 +29,7 @@ class HashAlgorithm(Enum):
 
 class ReportStatus(Enum):
     """Status of a reported hash."""
+
     PENDING = "pending"
     REVIEWED = "reviewed"
     BLOCKED = "blocked"
@@ -37,6 +39,7 @@ class ReportStatus(Enum):
 @dataclass
 class FileHash:
     """Represents a file hash record."""
+
     id: int
     hash_value: str
     algorithm: str
@@ -51,6 +54,7 @@ class FileHash:
 @dataclass
 class HashReport:
     """Represents a content report for a hash."""
+
     id: int
     hash_value: str
     reporter_id: int
@@ -67,6 +71,7 @@ class HashReport:
 @dataclass
 class DeduplicationResult:
     """Result of deduplication check."""
+
     is_duplicate: bool
     hash_value: str
     existing_file_id: Optional[int] = None
@@ -160,7 +165,9 @@ class DeduplicationManager:
             "enabled": dedup_config.get("enabled", True),
             "hash_algorithm": dedup_config.get("hash_algorithm", "sha256"),
             "min_size": dedup_config.get("min_size", 10240),  # 10KB minimum
-            "auto_block_threshold": dedup_config.get("auto_block_threshold", 5),  # Auto-block after 5 reports
+            "auto_block_threshold": dedup_config.get(
+                "auto_block_threshold", 5
+            ),  # Auto-block after 5 reports
             # pHash settings from dedicated config section
             "phash_enabled": phash_config.get("enabled", True),
             "phash_threshold": phash_config.get("similarity_threshold", 10),
@@ -173,7 +180,11 @@ class DeduplicationManager:
         for statement in statements:
             if statement:
                 try:
-                    converted = self._db.convert_schema(statement) if hasattr(self._db, 'convert_schema') else statement
+                    converted = (
+                        self._db.convert_schema(statement)
+                        if hasattr(self._db, "convert_schema")
+                        else statement
+                    )
                     self._db.execute(converted)
                 except Exception as e:
                     logger.error(f"Failed to create deduplication table: {e}")
@@ -193,12 +204,13 @@ class DeduplicationManager:
         """Compute perceptual hash for images."""
         if not self._config.get("phash_enabled", True):
             return None
-        
+
         if not content_type.lower().startswith("image/"):
             return None
-        
+
         try:
             from .phash import compute_phash, is_available
+
             if not is_available():
                 return None
             return compute_phash(file_data)
@@ -206,25 +218,28 @@ class DeduplicationManager:
             logger.warning(f"Failed to compute pHash: {e}")
             return None
 
-    def is_blocked(self, hash_value: str, phash_value: Optional[str] = None) -> Tuple[bool, Optional[str]]:
+    def is_blocked(
+        self, hash_value: str, phash_value: Optional[str] = None
+    ) -> Tuple[bool, Optional[str]]:
         """Check if a hash is blocked (by SHA256 or pHash similarity)."""
         # Check exact SHA256 match
         row = self._db.fetch_one(
             "SELECT reason FROM media_blocked_hashes WHERE hash_value = ? AND hash_type = 'sha256'",
-            (hash_value,)
+            (hash_value,),
         )
         if row:
             reason = row["reason"] if isinstance(row, dict) else row[0]
             return True, reason
-        
+
         # Check pHash similarity if provided
         if phash_value and self._config.get("phash_enabled", True):
             blocked_phashes = self._db.fetch_all(
                 "SELECT hash_value, phash_threshold, reason FROM media_blocked_hashes WHERE hash_type = 'phash'"
             )
-            
+
             try:
                 from .phash import hamming_distance
+
                 for row in blocked_phashes:
                     if isinstance(row, dict):
                         blocked_hash = row["hash_value"]
@@ -232,23 +247,24 @@ class DeduplicationManager:
                         reason = row["reason"]
                     else:
                         blocked_hash, threshold, reason = row[0], row[1] or 10, row[2]
-                    
+
                     distance = hamming_distance(phash_value, blocked_hash)
                     if 0 <= distance <= threshold:
                         return True, f"{reason} (similar image detected)"
             except Exception as e:
                 logger.warning(f"pHash comparison failed: {e}")
-        
+
         return False, None
 
     def is_user_blocked(self, user_id: int) -> Tuple[bool, Optional[str]]:
         """Check if a user is blocked from uploading."""
         import time
+
         now = int(time.time() * 1000)
-        
+
         row = self._db.fetch_one(
             "SELECT reason, expires_at FROM media_blocked_users WHERE user_id = ?",
-            (user_id,)
+            (user_id,),
         )
         if row:
             if isinstance(row, dict):
@@ -256,40 +272,36 @@ class DeduplicationManager:
                 expires_at = row.get("expires_at")
             else:
                 reason, expires_at = row[0], row[1]
-            
+
             # Check if ban has expired
             if expires_at and expires_at < now:
-                self._db.execute("DELETE FROM media_blocked_users WHERE user_id = ?", (user_id,))
+                self._db.execute(
+                    "DELETE FROM media_blocked_users WHERE user_id = ?", (user_id,)
+                )
                 return False, None
-            
+
             return True, reason
         return False, None
 
     def check_duplicate(
-        self,
-        file_data: bytes,
-        content_type: str,
-        user_id: Optional[int] = None
+        self, file_data: bytes, content_type: str, user_id: Optional[int] = None
     ) -> DeduplicationResult:
         """
         Check if file is a duplicate and if it's blocked.
-        
+
         Args:
             file_data: Raw file bytes
             content_type: MIME type
             user_id: Optional user ID to check if blocked
-            
+
         Returns:
             DeduplicationResult with duplicate/block status
         """
         hash_value = self.compute_hash(file_data)
         phash_value = self.compute_phash(file_data, content_type)
-        
+
         if not self._config["enabled"]:
-            return DeduplicationResult(
-                is_duplicate=False,
-                hash_value=hash_value
-            )
+            return DeduplicationResult(is_duplicate=False, hash_value=hash_value)
 
         # Check if user is blocked from uploading
         if user_id:
@@ -299,17 +311,14 @@ class DeduplicationManager:
                     is_duplicate=False,
                     hash_value=hash_value,
                     is_blocked=True,
-                    block_reason=f"User blocked: {user_reason}"
+                    block_reason=f"User blocked: {user_reason}",
                 )
 
         file_size = len(file_data)
 
         # Skip deduplication for small files
         if file_size < self._config["min_size"]:
-            return DeduplicationResult(
-                is_duplicate=False,
-                hash_value=hash_value
-            )
+            return DeduplicationResult(is_duplicate=False, hash_value=hash_value)
 
         # Check if blocked (by SHA256 or pHash)
         is_blocked, block_reason = self.is_blocked(hash_value, phash_value)
@@ -318,14 +327,14 @@ class DeduplicationManager:
                 is_duplicate=False,
                 hash_value=hash_value,
                 is_blocked=True,
-                block_reason=block_reason
+                block_reason=block_reason,
             )
 
         # Check for existing file with same hash
         row = self._db.fetch_one(
             """SELECT id, storage_path, storage_backend 
                FROM media_file_hashes WHERE hash_value = ?""",
-            (hash_value,)
+            (hash_value,),
         )
 
         if row:
@@ -339,7 +348,7 @@ class DeduplicationManager:
                 is_duplicate=True,
                 hash_value=hash_value,
                 existing_file_id=file_id,
-                existing_url=storage_path
+                existing_url=storage_path,
             )
 
         # Check for similar images by pHash
@@ -350,28 +359,26 @@ class DeduplicationManager:
                     is_duplicate=True,
                     hash_value=hash_value,
                     existing_file_id=similar["id"],
-                    existing_url=similar["storage_path"]
+                    existing_url=similar["storage_path"],
                 )
 
-        return DeduplicationResult(
-            is_duplicate=False,
-            hash_value=hash_value
-        )
+        return DeduplicationResult(is_duplicate=False, hash_value=hash_value)
 
     def _find_similar_by_phash(self, phash_value: str) -> Optional[Dict[str, Any]]:
         """Find existing file with similar pHash."""
         if not self._config.get("phash_enabled", True):
             return None
-        
+
         threshold = self._config.get("phash_threshold", 10)
-        
+
         # Get all stored pHashes
         rows = self._db.fetch_all(
             "SELECT id, phash_value, storage_path FROM media_file_hashes WHERE phash_value IS NOT NULL"
         )
-        
+
         try:
             from .phash import hamming_distance
+
             for row in rows:
                 if isinstance(row, dict):
                     stored_phash = row["phash_value"]
@@ -379,14 +386,14 @@ class DeduplicationManager:
                     storage_path = row["storage_path"]
                 else:
                     file_id, stored_phash, storage_path = row
-                
+
                 if stored_phash:
                     distance = hamming_distance(phash_value, stored_phash)
                     if 0 <= distance <= threshold:
                         return {"id": file_id, "storage_path": storage_path}
         except Exception as e:
             logger.warning(f"pHash similarity search failed: {e}")
-        
+
         return None
 
     def register_file(
@@ -396,11 +403,11 @@ class DeduplicationManager:
         content_type: str,
         storage_path: str,
         storage_backend: str,
-        timestamp: int
+        timestamp: int,
     ) -> int:
         """
         Register a new file hash or increment reference count.
-        
+
         Returns:
             Hash record ID
         """
@@ -410,7 +417,7 @@ class DeduplicationManager:
         # Check if hash already exists
         row = self._db.fetch_one(
             "SELECT id, reference_count FROM media_file_hashes WHERE hash_value = ?",
-            (hash_value,)
+            (hash_value,),
         )
 
         if row:
@@ -418,12 +425,13 @@ class DeduplicationManager:
             # Increment reference count
             self._db.execute(
                 "UPDATE media_file_hashes SET reference_count = reference_count + 1 WHERE id = ?",
-                (hash_id,)
+                (hash_id,),
             )
             return hash_id
 
         # Create new hash record
         from src.utils.encryption import generate_snowflake_id
+
         hash_id = generate_snowflake_id()
 
         self._db.execute(
@@ -431,8 +439,16 @@ class DeduplicationManager:
                (id, hash_value, algorithm, file_size, content_type, reference_count, 
                 first_seen, storage_path, storage_backend)
                VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)""",
-            (hash_id, hash_value, self._config["hash_algorithm"], file_size,
-             content_type, timestamp, storage_path, storage_backend)
+            (
+                hash_id,
+                hash_value,
+                self._config["hash_algorithm"],
+                file_size,
+                content_type,
+                timestamp,
+                storage_path,
+                storage_backend,
+            ),
         )
 
         return hash_id
@@ -440,7 +456,7 @@ class DeduplicationManager:
     def decrement_reference(self, hash_value: str) -> bool:
         """
         Decrement reference count for a hash.
-        
+
         Returns:
             True if file can be deleted (reference count is 0)
         """
@@ -449,7 +465,7 @@ class DeduplicationManager:
 
         row = self._db.fetch_one(
             "SELECT id, reference_count FROM media_file_hashes WHERE hash_value = ?",
-            (hash_value,)
+            (hash_value,),
         )
 
         if not row:
@@ -466,7 +482,7 @@ class DeduplicationManager:
             # Decrement count
             self._db.execute(
                 "UPDATE media_file_hashes SET reference_count = reference_count - 1 WHERE id = ?",
-                (hash_id,)
+                (hash_id,),
             )
             return False
 
@@ -480,11 +496,11 @@ class DeduplicationManager:
         uploader_id: Optional[int] = None,
         message_id: Optional[int] = None,
         attachment_url: Optional[str] = None,
-        block_uploader: bool = False
+        block_uploader: bool = False,
     ) -> int:
         """
         Report a file hash for content moderation.
-        
+
         Args:
             hash_value: SHA-256 hash of the file
             reporter_id: User ID of reporter
@@ -495,7 +511,7 @@ class DeduplicationManager:
             message_id: Message ID containing the attachment
             attachment_url: URL of the attachment
             block_uploader: Whether to request blocking the uploader
-        
+
         Returns:
             Report ID
         """
@@ -510,23 +526,38 @@ class DeduplicationManager:
                (id, hash_value, phash_value, reporter_id, reason, details, status, 
                 reported_at, uploader_id, message_id, attachment_url, block_uploader)
                VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)""",
-            (report_id, hash_value, phash_value, reporter_id, reason, details, 
-             now, uploader_id, message_id, attachment_url, 1 if block_uploader else 0)
+            (
+                report_id,
+                hash_value,
+                phash_value,
+                reporter_id,
+                reason,
+                details,
+                now,
+                uploader_id,
+                message_id,
+                attachment_url,
+                1 if block_uploader else 0,
+            ),
         )
 
         # Check if auto-block threshold reached
         report_count = self._get_report_count(hash_value)
         if report_count >= self._config["auto_block_threshold"]:
-            self.block_hash(hash_value, f"Auto-blocked: {report_count} reports", auto=True)
+            self.block_hash(
+                hash_value, f"Auto-blocked: {report_count} reports", auto=True
+            )
 
-        logger.info(f"Hash {hash_value[:16]}... reported by user {reporter_id}: {reason}")
+        logger.info(
+            f"Hash {hash_value[:16]}... reported by user {reporter_id}: {reason}"
+        )
         return report_id
 
     def _get_report_count(self, hash_value: str) -> int:
         """Get number of reports for a hash."""
         row = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM media_hash_reports WHERE hash_value = ? AND status = 'pending'",
-            (hash_value,)
+            (hash_value,),
         )
         return row["count"] if isinstance(row, dict) else row[0] if row else 0
 
@@ -537,10 +568,11 @@ class DeduplicationManager:
         blocked_by: Optional[int] = None,
         auto: bool = False,
         hash_type: str = "sha256",
-        phash_threshold: int = 10
+        phash_threshold: int = 10,
     ) -> bool:
         """Block a hash from being uploaded."""
         import time
+
         now = int(time.time() * 1000)
 
         try:
@@ -548,7 +580,15 @@ class DeduplicationManager:
                 """INSERT OR REPLACE INTO media_blocked_hashes 
                    (hash_value, hash_type, phash_threshold, reason, blocked_at, blocked_by, auto_blocked)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (hash_value, hash_type, phash_threshold, reason, now, blocked_by, 1 if auto else 0)
+                (
+                    hash_value,
+                    hash_type,
+                    phash_threshold,
+                    reason,
+                    now,
+                    blocked_by,
+                    1 if auto else 0,
+                ),
             )
 
             # Update all pending reports for this hash
@@ -556,10 +596,12 @@ class DeduplicationManager:
                 """UPDATE media_hash_reports 
                    SET status = 'blocked', reviewed_at = ?, reviewed_by = ?
                    WHERE hash_value = ? AND status = 'pending'""",
-                (now, blocked_by, hash_value)
+                (now, blocked_by, hash_value),
             )
 
-            logger.info(f"Hash {hash_value[:16]}... blocked (type={hash_type}): {reason}")
+            logger.info(
+                f"Hash {hash_value[:16]}... blocked (type={hash_type}): {reason}"
+            )
             return True
         except Exception as e:
             logger.error(f"Failed to block hash: {e}")
@@ -569,8 +611,7 @@ class DeduplicationManager:
         """Unblock a hash."""
         try:
             self._db.execute(
-                "DELETE FROM media_blocked_hashes WHERE hash_value = ?",
-                (hash_value,)
+                "DELETE FROM media_blocked_hashes WHERE hash_value = ?", (hash_value,)
             )
             logger.info(f"Hash {hash_value[:16]}... unblocked")
             return True
@@ -583,10 +624,11 @@ class DeduplicationManager:
         user_id: int,
         reason: str,
         blocked_by: Optional[int] = None,
-        duration_hours: Optional[int] = None
+        duration_hours: Optional[int] = None,
     ) -> bool:
         """Block a user from uploading media."""
         import time
+
         now = int(time.time() * 1000)
         expires_at = None
         if duration_hours:
@@ -597,7 +639,7 @@ class DeduplicationManager:
                 """INSERT OR REPLACE INTO media_blocked_users 
                    (user_id, reason, blocked_at, blocked_by, expires_at)
                    VALUES (?, ?, ?, ?, ?)""",
-                (user_id, reason, now, blocked_by, expires_at)
+                (user_id, reason, now, blocked_by, expires_at),
             )
             logger.info(f"User {user_id} blocked from uploads: {reason}")
             return True
@@ -609,8 +651,7 @@ class DeduplicationManager:
         """Unblock a user from uploading media."""
         try:
             self._db.execute(
-                "DELETE FROM media_blocked_users WHERE user_id = ?",
-                (user_id,)
+                "DELETE FROM media_blocked_users WHERE user_id = ?", (user_id,)
             )
             logger.info(f"User {user_id} unblocked from uploads")
             return True
@@ -618,42 +659,45 @@ class DeduplicationManager:
             logger.error(f"Failed to unblock user: {e}")
             return False
 
-    def get_blocked_users(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    def get_blocked_users(
+        self, limit: int = 100, offset: int = 0
+    ) -> List[Dict[str, Any]]:
         """Get list of blocked users."""
         rows = self._db.fetch_all(
             """SELECT user_id, reason, blocked_at, blocked_by, expires_at
                FROM media_blocked_users
                ORDER BY blocked_at DESC
                LIMIT ? OFFSET ?""",
-            (limit, offset)
+            (limit, offset),
         )
 
         result = []
         for row in rows:
             if isinstance(row, dict):
-                result.append({
-                    "user_id": row["user_id"],
-                    "reason": row["reason"],
-                    "blocked_at": row["blocked_at"],
-                    "blocked_by": row["blocked_by"],
-                    "expires_at": row.get("expires_at")
-                })
+                result.append(
+                    {
+                        "user_id": row["user_id"],
+                        "reason": row["reason"],
+                        "blocked_at": row["blocked_at"],
+                        "blocked_by": row["blocked_by"],
+                        "expires_at": row.get("expires_at"),
+                    }
+                )
             else:
-                result.append({
-                    "user_id": row[0],
-                    "reason": row[1],
-                    "blocked_at": row[2],
-                    "blocked_by": row[3],
-                    "expires_at": row[4]
-                })
+                result.append(
+                    {
+                        "user_id": row[0],
+                        "reason": row[1],
+                        "blocked_at": row[2],
+                        "blocked_by": row[3],
+                        "expires_at": row[4],
+                    }
+                )
 
         return result
 
     def get_reports(
-        self,
-        status_filter: Optional[str] = None,
-        limit: int = 50,
-        offset: int = 0
+        self, status_filter: Optional[str] = None, limit: int = 50, offset: int = 0
     ) -> List[HashReport]:
         """Get hash reports for admin review."""
         if status_filter:
@@ -666,7 +710,7 @@ class DeduplicationManager:
                    WHERE r.status = ?
                    ORDER BY r.reported_at DESC
                    LIMIT ? OFFSET ?""",
-                (status_filter, limit, offset)
+                (status_filter, limit, offset),
             )
         else:
             rows = self._db.fetch_all(
@@ -677,32 +721,43 @@ class DeduplicationManager:
                    LEFT JOIN auth_users u ON r.reporter_id = u.id
                    ORDER BY r.reported_at DESC
                    LIMIT ? OFFSET ?""",
-                (limit, offset)
+                (limit, offset),
             )
 
         reports = []
         for row in rows:
             if isinstance(row, dict):
-                reports.append(HashReport(
-                    id=row["id"],
-                    hash_value=row["hash_value"],
-                    reporter_id=row["reporter_id"],
-                    reporter_username=row["username"],
-                    reason=row["reason"],
-                    details=row["details"],
-                    status=ReportStatus(row["status"]),
-                    reported_at=row["reported_at"],
-                    reviewed_at=row["reviewed_at"],
-                    reviewed_by=row["reviewed_by"],
-                    admin_notes=row["admin_notes"]
-                ))
+                reports.append(
+                    HashReport(
+                        id=row["id"],
+                        hash_value=row["hash_value"],
+                        reporter_id=row["reporter_id"],
+                        reporter_username=row["username"],
+                        reason=row["reason"],
+                        details=row["details"],
+                        status=ReportStatus(row["status"]),
+                        reported_at=row["reported_at"],
+                        reviewed_at=row["reviewed_at"],
+                        reviewed_by=row["reviewed_by"],
+                        admin_notes=row["admin_notes"],
+                    )
+                )
             else:
-                reports.append(HashReport(
-                    id=row[0], hash_value=row[1], reporter_id=row[2],
-                    reporter_username=row[3], reason=row[4], details=row[5],
-                    status=ReportStatus(row[6]), reported_at=row[7],
-                    reviewed_at=row[8], reviewed_by=row[9], admin_notes=row[10]
-                ))
+                reports.append(
+                    HashReport(
+                        id=row[0],
+                        hash_value=row[1],
+                        reporter_id=row[2],
+                        reporter_username=row[3],
+                        reason=row[4],
+                        details=row[5],
+                        status=ReportStatus(row[6]),
+                        reported_at=row[7],
+                        reviewed_at=row[8],
+                        reviewed_by=row[9],
+                        admin_notes=row[10],
+                    )
+                )
 
         return reports
 
@@ -723,47 +778,49 @@ class DeduplicationManager:
 
         return counts
 
-    def get_blocked_hashes(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    def get_blocked_hashes(
+        self, limit: int = 100, offset: int = 0
+    ) -> List[Dict[str, Any]]:
         """Get list of blocked hashes."""
         rows = self._db.fetch_all(
             """SELECT hash_value, reason, blocked_at, blocked_by, auto_blocked
                FROM media_blocked_hashes
                ORDER BY blocked_at DESC
                LIMIT ? OFFSET ?""",
-            (limit, offset)
+            (limit, offset),
         )
 
         result = []
         for row in rows:
             if isinstance(row, dict):
-                result.append({
-                    "hash_value": row["hash_value"],
-                    "reason": row["reason"],
-                    "blocked_at": row["blocked_at"],
-                    "blocked_by": row["blocked_by"],
-                    "auto_blocked": bool(row["auto_blocked"])
-                })
+                result.append(
+                    {
+                        "hash_value": row["hash_value"],
+                        "reason": row["reason"],
+                        "blocked_at": row["blocked_at"],
+                        "blocked_by": row["blocked_by"],
+                        "auto_blocked": bool(row["auto_blocked"]),
+                    }
+                )
             else:
-                result.append({
-                    "hash_value": row[0],
-                    "reason": row[1],
-                    "blocked_at": row[2],
-                    "blocked_by": row[3],
-                    "auto_blocked": bool(row[4])
-                })
+                result.append(
+                    {
+                        "hash_value": row[0],
+                        "reason": row[1],
+                        "blocked_at": row[2],
+                        "blocked_by": row[3],
+                        "auto_blocked": bool(row[4]),
+                    }
+                )
 
         return result
 
     def review_report(
-        self,
-        report_id: int,
-        admin_id: int,
-        action: str,
-        notes: Optional[str] = None
+        self, report_id: int, admin_id: int, action: str, notes: Optional[str] = None
     ) -> bool:
         """
         Review a hash report.
-        
+
         Args:
             report_id: Report ID
             admin_id: Admin user ID
@@ -771,12 +828,12 @@ class DeduplicationManager:
             notes: Admin notes
         """
         import time
+
         now = int(time.time() * 1000)
 
         # Get report
         row = self._db.fetch_one(
-            "SELECT hash_value FROM media_hash_reports WHERE id = ?",
-            (report_id,)
+            "SELECT hash_value FROM media_hash_reports WHERE id = ?", (report_id,)
         )
         if not row:
             return False
@@ -795,7 +852,7 @@ class DeduplicationManager:
             """UPDATE media_hash_reports 
                SET status = ?, reviewed_at = ?, reviewed_by = ?, admin_notes = ?
                WHERE id = ?""",
-            (status, now, admin_id, notes, report_id)
+            (status, now, admin_id, notes, report_id),
         )
 
         return True

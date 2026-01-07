@@ -62,7 +62,7 @@ class ImageProcessor:
     ):
         """
         Initialize image processor.
-        
+
         Args:
             quality: JPEG/WebP quality (1-100)
             optimize: Enable optimization for output
@@ -83,19 +83,20 @@ class ImageProcessor:
 
         try:
             from PIL import Image
+
             self._Image = Image
             # Set Pillow's decompression bomb limit
             Image.MAX_IMAGE_PIXELS = self._max_pixels
         except ImportError:
             raise ImageProcessingError(
                 "Pillow is required for image processing. Install with: pip install Pillow",
-                "init"
+                "init",
             )
 
     def _validate_image_dimensions(self, img) -> None:
         """
         Validate image dimensions are within safe limits.
-        
+
         Raises:
             ImageProcessingError: If image exceeds dimension limits
         """
@@ -103,23 +104,23 @@ class ImageProcessor:
             raise ImageProcessingError(
                 f"Image dimensions ({img.width}x{img.height}) exceed maximum "
                 f"allowed ({self._max_dimension}x{self._max_dimension})",
-                "validation"
+                "validation",
             )
 
         total_pixels = img.width * img.height
         if total_pixels > self._max_pixels:
             raise ImageProcessingError(
                 f"Image has too many pixels ({total_pixels:,}) - maximum is {self._max_pixels:,}",
-                "validation"
+                "validation",
             )
 
     def get_metadata(self, image_data: bytes) -> ImageMetadata:
         """
         Extract metadata from image.
-        
+
         Args:
             image_data: Raw image bytes
-            
+
         Returns:
             ImageMetadata object
         """
@@ -144,6 +145,7 @@ class ImageProcessor:
                     for tag_id, value in raw_exif.items():
                         try:
                             from PIL.ExifTags import TAGS
+
                             tag = TAGS.get(tag_id, tag_id)
                             if isinstance(value, bytes):
                                 continue
@@ -174,13 +176,13 @@ class ImageProcessor:
     ) -> Tuple[bytes, int, int]:
         """
         Create a thumbnail of the specified size.
-        
+
         Args:
             image_data: Raw image bytes
             size: Maximum dimension (width or height)
             output_format: Output format (JPEG, PNG, WEBP)
             maintain_aspect: Maintain aspect ratio
-            
+
         Returns:
             Tuple of (thumbnail bytes, width, height)
         """
@@ -202,7 +204,9 @@ class ImageProcessor:
                 background = self._Image.new("RGB", img.size, (255, 255, 255))
                 if img.mode == "P":
                     img = img.convert("RGBA")
-                background.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
+                background.paste(
+                    img, mask=img.split()[-1] if img.mode == "RGBA" else None
+                )
                 img = background
 
             output = io.BytesIO()
@@ -228,12 +232,12 @@ class ImageProcessor:
     ) -> Dict[int, Tuple[bytes, int, int]]:
         """
         Create multiple thumbnails at standard sizes.
-        
+
         Args:
             image_data: Raw image bytes
             sizes: List of sizes (defaults to ThumbnailSize values)
             output_format: Output format
-            
+
         Returns:
             Dict mapping size to (bytes, width, height)
         """
@@ -259,14 +263,14 @@ class ImageProcessor:
     ) -> Tuple[bytes, int, int]:
         """
         Resize image to specified dimensions.
-        
+
         Args:
             image_data: Raw image bytes
             width: Target width (None to calculate from height)
             height: Target height (None to calculate from width)
             maintain_aspect: Maintain aspect ratio
             output_format: Output format (None to keep original)
-            
+
         Returns:
             Tuple of (resized bytes, width, height)
         """
@@ -308,7 +312,9 @@ class ImageProcessor:
                 background = self._Image.new("RGB", img.size, (255, 255, 255))
                 if img.mode == "P":
                     img = img.convert("RGBA")
-                background.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
+                background.paste(
+                    img, mask=img.split()[-1] if img.mode == "RGBA" else None
+                )
                 img = background
 
             output = io.BytesIO()
@@ -334,12 +340,12 @@ class ImageProcessor:
     ) -> bytes:
         """
         Convert image to different format.
-        
+
         Args:
             image_data: Raw image bytes
             output_format: Target format (JPEG, PNG, WEBP, etc.)
             quality: Quality for lossy formats
-            
+
         Returns:
             Converted image bytes
         """
@@ -350,7 +356,9 @@ class ImageProcessor:
                 background = self._Image.new("RGB", img.size, (255, 255, 255))
                 if img.mode == "P":
                     img = img.convert("RGBA")
-                background.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
+                background.paste(
+                    img, mask=img.split()[-1] if img.mode == "RGBA" else None
+                )
                 img = background
 
             output = io.BytesIO()
@@ -368,14 +376,16 @@ class ImageProcessor:
             logger.error(f"Failed to convert image format: {e}")
             raise ImageProcessingError(f"Failed to convert format: {e}", "convert")
 
-    def strip_metadata(self, image_data: bytes, output_format: Optional[str] = None) -> bytes:
+    def strip_metadata(
+        self, image_data: bytes, output_format: Optional[str] = None
+    ) -> bytes:
         """
         Strip EXIF and other metadata from image.
-        
+
         Args:
             image_data: Raw image bytes
             output_format: Output format (None to keep original)
-            
+
         Returns:
             Image bytes without metadata
         """
@@ -383,9 +393,8 @@ class ImageProcessor:
             img = self._Image.open(io.BytesIO(image_data))
             original_format = img.format
 
-            data = list(img.getdata())
             img_no_exif = self._Image.new(img.mode, img.size)
-            img_no_exif.putdata(data)
+            img_no_exif.paste(img)
 
             out_format = output_format or original_format or "PNG"
 
@@ -400,7 +409,9 @@ class ImageProcessor:
             return output.getvalue()
         except Exception as e:
             logger.error(f"Failed to strip metadata: {e}")
-            raise ImageProcessingError(f"Failed to strip metadata: {e}", "strip_metadata")
+            raise ImageProcessingError(
+                f"Failed to strip metadata: {e}", "strip_metadata"
+            )
 
     def is_supported(self, content_type: str) -> bool:
         """Check if content type is supported."""

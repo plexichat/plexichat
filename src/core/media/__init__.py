@@ -145,7 +145,12 @@ def setup(db: Any, messaging_module: Optional[Any] = None) -> None:
         db: Database instance (must be connected)
         messaging_module: Optional messaging module for attachment integration
     """
-    global _manager, _dedup_manager, _compression_manager, _chunked_manager, _setup_complete
+    global \
+        _manager, \
+        _dedup_manager, \
+        _compression_manager, \
+        _chunked_manager, \
+        _setup_complete
 
     from .manager import MediaManager
     from .deduplication import DeduplicationManager
@@ -162,9 +167,7 @@ def setup(db: Any, messaging_module: Optional[Any] = None) -> None:
 def _get_manager():
     """Get the manager instance, raising if not setup."""
     if not _setup_complete or _manager is None:
-        raise RuntimeError(
-            "Media module not initialized. Call media.setup(db) first."
-        )
+        raise RuntimeError("Media module not initialized. Call media.setup(db) first.")
     return _manager
 
 
@@ -306,7 +309,9 @@ def get_thumbnails(file_id: int) -> Dict[int, str]:
     return _get_manager().get_thumbnails(file_id)
 
 
-def create_thumbnail(file_id: int, size: int, user_id: Optional[int] = None) -> Optional[str]:
+def create_thumbnail(
+    file_id: int, size: int, user_id: Optional[int] = None
+) -> Optional[str]:
     """
     Create thumbnail at specific size.
 
@@ -444,7 +449,7 @@ def report_hash(
     uploader_id: Optional[int] = None,
     message_id: Optional[int] = None,
     attachment_url: Optional[str] = None,
-    block_uploader: bool = False
+    block_uploader: bool = False,
 ) -> int:
     """
     Report a file hash for content moderation.
@@ -472,7 +477,7 @@ def report_hash(
         uploader_id=uploader_id,
         message_id=message_id,
         attachment_url=attachment_url,
-        block_uploader=block_uploader
+        block_uploader=block_uploader,
     )
 
 
@@ -512,6 +517,7 @@ def compress_file(file_data: bytes, content_type: str, quality: Optional[str] = 
         CompressionResult with compressed data
     """
     from .compression import CompressionQuality
+
     q = CompressionQuality(quality) if quality else None
     return _get_compression_manager().compress(file_data, content_type, q)
 
@@ -531,7 +537,9 @@ def _get_chunked_manager():
     return _chunked_manager
 
 
-def create_upload_session(user_id: int, filename: str, content_type: str, total_size: int):
+def create_upload_session(
+    user_id: int, filename: str, content_type: str, total_size: int
+):
     """
     Create a chunked upload session.
 
@@ -544,7 +552,9 @@ def create_upload_session(user_id: int, filename: str, content_type: str, total_
     Returns:
         UploadSession or None
     """
-    return _get_chunked_manager().create_session(user_id, filename, content_type, total_size)
+    return _get_chunked_manager().create_session(
+        user_id, filename, content_type, total_size
+    )
 
 
 def upload_chunk(
@@ -552,7 +562,7 @@ def upload_chunk(
     user_id: int,
     chunk_index: int,
     chunk_data: bytes,
-    chunk_checksum: Optional[str] = None
+    chunk_checksum: Optional[str] = None,
 ):
     """
     Upload a chunk to a session.
@@ -567,7 +577,9 @@ def upload_chunk(
     Returns:
         ChunkUploadResult
     """
-    return _get_chunked_manager().upload_chunk(session_id, user_id, chunk_index, chunk_data, chunk_checksum)
+    return _get_chunked_manager().upload_chunk(
+        session_id, user_id, chunk_index, chunk_data, chunk_checksum
+    )
 
 
 def complete_upload_session(session_id: str, user_id: int) -> Optional[bytes]:

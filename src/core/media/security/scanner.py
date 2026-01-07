@@ -26,7 +26,7 @@ class MalwareScanner:
     ):
         """
         Initialize malware scanner.
-        
+
         Args:
             host: ClamAV daemon host
             port: ClamAV daemon port
@@ -58,13 +58,13 @@ class MalwareScanner:
     def scan_bytes(self, data: bytes) -> Tuple[ScanStatus, Optional[str]]:
         """
         Scan bytes for malware.
-        
+
         Args:
             data: Data to scan
-            
+
         Returns:
             Tuple of (ScanStatus, threat_name or None)
-            
+
         Raises:
             ScannerUnavailableError: If scanner is not available
             MalwareDetectedError: If malware is detected
@@ -81,7 +81,7 @@ class MalwareScanner:
 
             offset = 0
             while offset < len(data):
-                chunk = data[offset:offset + self.CHUNK_SIZE]
+                chunk = data[offset : offset + self.CHUNK_SIZE]
                 size = struct.pack("!I", len(chunk))
                 sock.send(size + chunk)
                 offset += len(chunk)
@@ -111,10 +111,10 @@ class MalwareScanner:
     def scan_file(self, file_path: str) -> Tuple[ScanStatus, Optional[str]]:
         """
         Scan file for malware.
-        
+
         Args:
             file_path: Path to file to scan
-            
+
         Returns:
             Tuple of (ScanStatus, threat_name or None)
         """

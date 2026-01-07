@@ -20,7 +20,7 @@ class UrlSigner:
     def __init__(self, secret_key: str, default_expiry: int = 3600):
         """
         Initialize URL signer.
-        
+
         Args:
             secret_key: Secret key for HMAC signing
             default_expiry: Default expiration time in seconds
@@ -40,13 +40,13 @@ class UrlSigner:
     ) -> SignedUrl:
         """
         Sign a URL with HMAC and expiration.
-        
+
         Args:
             url: URL to sign
             file_id: File ID for verification
             expires_in: Expiration time in seconds (None for default)
             extra_data: Additional data to include in signature
-            
+
         Returns:
             SignedUrl object
         """
@@ -54,7 +54,9 @@ class UrlSigner:
         now_ms = int(time.time() * 1000)
         expires_at = now_ms + (expiry_seconds * 1000)
 
-        signature_data = self._build_signature_data(url, file_id, expires_at, extra_data)
+        signature_data = self._build_signature_data(
+            url, file_id, expires_at, extra_data
+        )
         signature = self._generate_signature(signature_data)
 
         signed_url = self._append_signature_params(url, file_id, expires_at, signature)
@@ -69,13 +71,13 @@ class UrlSigner:
     def verify_url(self, url: str) -> Tuple[bool, int]:
         """
         Verify a signed URL.
-        
+
         Args:
             url: Signed URL to verify
-            
+
         Returns:
             Tuple of (is_valid, file_id)
-            
+
         Raises:
             SignatureExpiredError: If URL has expired
             SignatureInvalidError: If signature is invalid
@@ -159,14 +161,16 @@ class UrlSigner:
 
         new_query = urlencode(flat_params)
 
-        return urlunparse((
-            parsed.scheme,
-            parsed.netloc,
-            parsed.path,
-            parsed.params,
-            new_query,
-            parsed.fragment,
-        ))
+        return urlunparse(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path,
+                parsed.params,
+                new_query,
+                parsed.fragment,
+            )
+        )
 
     def _remove_signature_params(self, url: str) -> str:
         """Remove signature parameters from URL."""
@@ -183,22 +187,24 @@ class UrlSigner:
 
         new_query = urlencode(flat_params)
 
-        return urlunparse((
-            parsed.scheme,
-            parsed.netloc,
-            parsed.path,
-            parsed.params,
-            new_query,
-            parsed.fragment,
-        ))
+        return urlunparse(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path,
+                parsed.params,
+                new_query,
+                parsed.fragment,
+            )
+        )
 
     def get_expiry_time(self, url: str) -> Optional[int]:
         """
         Get expiration timestamp from signed URL.
-        
+
         Args:
             url: Signed URL
-            
+
         Returns:
             Expiration timestamp in seconds, or None if not found
         """
@@ -217,10 +223,10 @@ class UrlSigner:
     def is_expired(self, url: str) -> bool:
         """
         Check if signed URL has expired.
-        
+
         Args:
             url: Signed URL
-            
+
         Returns:
             True if expired
         """

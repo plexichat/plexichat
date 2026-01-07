@@ -34,7 +34,7 @@ DEFAULT_MAX_SIZE = 512 * 1024
 class DatabaseStorage(StorageBackendBase):
     """
     Database BLOB storage backend.
-    
+
     Stores file content directly in the database as base64-encoded BLOBs.
     Best for small files where simplicity and single-source-of-truth matter
     more than raw performance.
@@ -48,7 +48,7 @@ class DatabaseStorage(StorageBackendBase):
     ):
         """
         Initialize database storage.
-        
+
         Args:
             db: Database instance (must be connected)
             base_url: Base URL for serving files via API
@@ -75,7 +75,11 @@ class DatabaseStorage(StorageBackendBase):
             )
         """
         # Convert schema types for PostgreSQL compatibility (BLOB -> BYTEA)
-        converted = self._db.convert_schema(schema) if hasattr(self._db, 'convert_schema') else schema
+        converted = (
+            self._db.convert_schema(schema)
+            if hasattr(self._db, "convert_schema")
+            else schema
+        )
         self._db.execute(converted)
         self._db.execute("""
             CREATE INDEX IF NOT EXISTS idx_media_blobs_checksum 
@@ -85,6 +89,7 @@ class DatabaseStorage(StorageBackendBase):
     def _get_timestamp(self) -> int:
         """Get current timestamp in milliseconds."""
         import time
+
         return int(time.time() * 1000)
 
     def _compute_checksum(self, data: bytes) -> str:
@@ -99,7 +104,7 @@ class DatabaseStorage(StorageBackendBase):
             raise StorageWriteError(
                 f"File size {size} exceeds database storage limit {self._max_size}. "
                 f"Use local or S3 storage for larger files.",
-                "database"
+                "database",
             )
 
         checksum = self._compute_checksum(file_data)
@@ -108,8 +113,7 @@ class DatabaseStorage(StorageBackendBase):
         try:
             # Check if path exists (update) or new (insert)
             existing = self._db.fetch_one(
-                "SELECT path FROM media_blobs WHERE path = ?",
-                (path,)
+                "SELECT path FROM media_blobs WHERE path = ?", (path,)
             )
 
             if existing:
@@ -118,14 +122,14 @@ class DatabaseStorage(StorageBackendBase):
                        SET content = ?, content_type = ?, size = ?, 
                            checksum = ?, updated_at = ?
                        WHERE path = ?""",
-                    (file_data, content_type, size, checksum, now, path)
+                    (file_data, content_type, size, checksum, now, path),
                 )
             else:
                 self._db.execute(
                     """INSERT INTO media_blobs 
                        (path, content, content_type, size, checksum, created_at, updated_at)
                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (path, file_data, content_type, size, checksum, now, now)
+                    (path, file_data, content_type, size, checksum, now, now),
                 )
 
             logger.debug(f"Stored blob at {path} ({size} bytes)")
@@ -135,12 +139,14 @@ class DatabaseStorage(StorageBackendBase):
             logger.error(f"Failed to store blob at {path}: {e}")
             raise StorageWriteError(f"Failed to write to database: {e}", "database")
 
-    def store_stream(self, stream: BinaryIO, path: str, content_type: str, size: int) -> str:
+    def store_stream(
+        self, stream: BinaryIO, path: str, content_type: str, size: int
+    ) -> str:
         """Store file from stream."""
         if size > self._max_size:
             raise StorageWriteError(
                 f"File size {size} exceeds database storage limit {self._max_size}",
-                "database"
+                "database",
             )
 
         # Read entire stream into memory (acceptable for small files)
@@ -151,8 +157,7 @@ class DatabaseStorage(StorageBackendBase):
         """Retrieve file data from database."""
         try:
             row = self._db.fetch_one(
-                "SELECT content FROM media_blobs WHERE path = ?",
-                (path,)
+                "SELECT content FROM media_blobs WHERE path = ?", (path,)
             )
 
             if not row:
@@ -176,12 +181,9 @@ class DatabaseStorage(StorageBackendBase):
     def delete(self, path: str) -> bool:
         """Delete file from database."""
         try:
-            result = self._db.execute(
-                "DELETE FROM media_blobs WHERE path = ?",
-                (path,)
-            )
+            result = self._db.execute("DELETE FROM media_blobs WHERE path = ?", (path,))
 
-            deleted = result.rowcount > 0 if hasattr(result, 'rowcount') else True
+            deleted = result.rowcount > 0 if hasattr(result, "rowcount") else True
             if deleted:
                 logger.debug(f"Deleted blob at {path}")
             return deleted
@@ -192,10 +194,7 @@ class DatabaseStorage(StorageBackendBase):
 
     def exists(self, path: str) -> bool:
         """Check if file exists in database."""
-        row = self._db.fetch_one(
-            "SELECT 1 FROM media_blobs WHERE path = ?",
-            (path,)
-        )
+        row = self._db.fetch_one("SELECT 1 FROM media_blobs WHERE path = ?", (path,))
         return row is not None
 
     def get_url(self, path: str) -> str:
@@ -206,10 +205,7 @@ class DatabaseStorage(StorageBackendBase):
 
     def get_size(self, path: str) -> int:
         """Get file size."""
-        row = self._db.fetch_one(
-            "SELECT size FROM media_blobs WHERE path = ?",
-            (path,)
-        )
+        row = self._db.fetch_one("SELECT size FROM media_blobs WHERE path = ?", (path,))
         return row["size"] if row else 0
 
     def get_metadata(self, path: str) -> dict:
@@ -217,7 +213,7 @@ class DatabaseStorage(StorageBackendBase):
         row = self._db.fetch_one(
             """SELECT path, content_type, size, checksum, created_at, updated_at 
                FROM media_blobs WHERE path = ?""",
-            (path,)
+            (path,),
         )
 
         if not row:
@@ -236,26 +232,25 @@ class DatabaseStorage(StorageBackendBase):
     def get_by_checksum(self, checksum: str) -> Optional[str]:
         """
         Find file path by checksum (for deduplication).
-        
+
         Args:
             checksum: SHA-256 checksum
-            
+
         Returns:
             Path if found, None otherwise
         """
         row = self._db.fetch_one(
-            "SELECT path FROM media_blobs WHERE checksum = ?",
-            (checksum,)
+            "SELECT path FROM media_blobs WHERE checksum = ?", (checksum,)
         )
         return row["path"] if row else None
 
     def cleanup_orphaned(self, valid_paths: list) -> int:
         """
         Remove blobs not in the valid paths list.
-        
+
         Args:
             valid_paths: List of paths that should be kept
-            
+
         Returns:
             Number of deleted blobs
         """
@@ -264,11 +259,10 @@ class DatabaseStorage(StorageBackendBase):
 
         placeholders = ",".join("?" * len(valid_paths))
         result = self._db.execute(
-            f"DELETE FROM media_blobs WHERE path NOT IN ({placeholders})",
-            valid_paths
+            f"DELETE FROM media_blobs WHERE path NOT IN ({placeholders})", valid_paths
         )
 
-        count = result.rowcount if hasattr(result, 'rowcount') else 0
+        count = result.rowcount if hasattr(result, "rowcount") else 0
         if count > 0:
             logger.info(f"Cleaned up {count} orphaned blobs")
         return count
