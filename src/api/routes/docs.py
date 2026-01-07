@@ -15,12 +15,10 @@ from typing import Optional, Dict, Any, List
 from pathlib import Path
 from dataclasses import dataclass, field
 
-from fastapi import APIRouter, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import HTMLResponse
 
-import utils.logger as logger
 import utils.config as config
-from src.api.schemas.common import ErrorResponse
 
 router = APIRouter(tags=["Documentation"])
 
@@ -33,19 +31,23 @@ _request_counts: Dict[str, List[float]] = {}  # ip -> [timestamps]
 @dataclass
 class ThemeConfig:
     """Theme configuration for documentation."""
+
     style: str = "dark"
     primary_color: str = "#e94560"
     background_color: str = "#1a1a2e"
     text_color: str = "#eaeaea"
     code_background: str = "#16213e"
     border_color: str = "#0f3460"
-    font_family: str = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+    font_family: str = (
+        "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+    )
     code_font: str = "'Fira Code', 'Consolas', monospace"
 
 
 @dataclass
 class RateLimitConfig:
     """Rate limit configuration for docs."""
+
     enabled: bool = True
     requests: int = 60
     window_seconds: float = 60.0
@@ -57,6 +59,7 @@ class RateLimitConfig:
 @dataclass
 class CacheConfig:
     """Cache configuration."""
+
     enabled: bool = True
     ttl_seconds: int = 300
     cache_markdown: bool = True
@@ -67,6 +70,7 @@ class CacheConfig:
 @dataclass
 class LoggingConfig:
     """Logging configuration."""
+
     enabled: bool = True
     level: str = "INFO"
     log_requests: bool = True
@@ -78,6 +82,7 @@ class LoggingConfig:
 @dataclass
 class SecurityConfig:
     """Security configuration."""
+
     allowed_extensions: List[str] = field(default_factory=lambda: [".md", ".json"])
     block_traversal: bool = True
     require_auth: bool = False
@@ -86,6 +91,7 @@ class SecurityConfig:
 @dataclass
 class NavItem:
     """Navigation item."""
+
     label: str
     path: str
 
@@ -93,6 +99,7 @@ class NavItem:
 @dataclass
 class NavigationConfig:
     """Navigation configuration."""
+
     show_nav: bool = True
     items: List[NavItem] = field(default_factory=list)
 
@@ -100,6 +107,7 @@ class NavigationConfig:
 @dataclass
 class FeaturesConfig:
     """Feature flags."""
+
     enable_raw_endpoint: bool = True
     enable_search: bool = False
     show_version: bool = True
@@ -110,6 +118,7 @@ class FeaturesConfig:
 @dataclass
 class DocsConfig:
     """Complete documentation configuration."""
+
     enabled: bool = True
     path: str = "/docs/api"
     title: str = "PlexiChat Documentation"
@@ -141,7 +150,10 @@ def _load_docs_config() -> DocsConfig:
         text_color=theme_conf.get("text_color", "#eaeaea"),
         code_background=theme_conf.get("code_background", "#16213e"),
         border_color=theme_conf.get("border_color", "#0f3460"),
-        font_family=theme_conf.get("font_family", "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"),
+        font_family=theme_conf.get(
+            "font_family",
+            "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        ),
         code_font=theme_conf.get("code_font", "'Fira Code', 'Consolas', monospace"),
     )
 
@@ -189,7 +201,9 @@ def _load_docs_config() -> DocsConfig:
         enabled=docs_conf.get("enabled", True),
         path=docs_conf.get("path", "/docs/api"),
         title=docs_conf.get("title", "PlexiChat Documentation"),
-        description=docs_conf.get("description", "Complete deployment and API documentation for PlexiChat"),
+        description=docs_conf.get(
+            "description", "Complete deployment and API documentation for PlexiChat"
+        ),
         base_url=docs_conf.get("base_url", "https://api.example.com"),
         websocket_url=docs_conf.get("websocket_url", "wss://gateway.example.com"),
         theme=theme,
@@ -198,12 +212,18 @@ def _load_docs_config() -> DocsConfig:
         logging=logging_config,
         security=security,
         features=FeaturesConfig(
-            enable_raw_endpoint=docs_conf.get("features", {}).get("enable_raw_endpoint", True),
+            enable_raw_endpoint=docs_conf.get("features", {}).get(
+                "enable_raw_endpoint", True
+            ),
             enable_search=docs_conf.get("features", {}).get("enable_search", False),
             show_version=docs_conf.get("features", {}).get("show_version", True),
-            show_last_updated=docs_conf.get("features", {}).get("show_last_updated", True),
-            syntax_highlighting=docs_conf.get("features", {}).get("syntax_highlighting", True),
-        )
+            show_last_updated=docs_conf.get("features", {}).get(
+                "show_last_updated", True
+            ),
+            syntax_highlighting=docs_conf.get("features", {}).get(
+                "syntax_highlighting", True
+            ),
+        ),
     )
 
 
@@ -263,16 +283,22 @@ def get_api_rate_limits() -> Dict[str, Any]:
 
         limits = {
             "global": {
-                "requests": DEFAULT_GLOBAL_LIMIT.requests if DEFAULT_GLOBAL_LIMIT else 50,
-                "window_seconds": DEFAULT_GLOBAL_LIMIT.window_seconds if DEFAULT_GLOBAL_LIMIT else 1,
+                "requests": DEFAULT_GLOBAL_LIMIT.requests
+                if DEFAULT_GLOBAL_LIMIT
+                else 50,
+                "window_seconds": DEFAULT_GLOBAL_LIMIT.window_seconds
+                if DEFAULT_GLOBAL_LIMIT
+                else 1,
                 "burst": DEFAULT_GLOBAL_LIMIT.burst if DEFAULT_GLOBAL_LIMIT else 10,
             },
             "user": {
                 "requests": DEFAULT_USER_LIMIT.requests if DEFAULT_USER_LIMIT else 120,
-                "window_seconds": DEFAULT_USER_LIMIT.window_seconds if DEFAULT_USER_LIMIT else 60,
+                "window_seconds": DEFAULT_USER_LIMIT.window_seconds
+                if DEFAULT_USER_LIMIT
+                else 60,
                 "burst": DEFAULT_USER_LIMIT.burst if DEFAULT_USER_LIMIT else 20,
             },
-            "routes": {}
+            "routes": {},
         }
 
         for route, cfg in DEFAULT_ROUTE_LIMITS.items():
@@ -291,6 +317,7 @@ def get_app_config() -> Dict[str, Any]:
     """Get application configuration for documentation."""
     try:
         import utils.version as version
+
         return {
             "name": "PlexiChat",
             "version": version.current_string(),
@@ -329,21 +356,23 @@ def _build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
             NavItem("Overview", "/websocket"),
             NavItem("Events", "/websocket/events"),
             NavItem("Opcodes", "/websocket/opcodes"),
-        ]
+        ],
     }
 
     html = ['<aside class="sidebar">']
     html.append(f'<div class="sidebar-header"><h3>{conf.title}</h3></div>')
-    
+
     for category, items in categories.items():
         html.append(f'<div class="nav-category">{category}</div>')
         html.append('<ul class="nav-list">')
         for item in items:
             active = "active" if item.path == current_path else ""
-            html.append(f'<li><a href="{conf.path}{item.path}" class="{active}">{item.label}</a></li>')
-        html.append('</ul>')
-    
-    html.append('</aside>')
+            html.append(
+                f'<li><a href="{conf.path}{item.path}" class="{active}">{item.label}</a></li>'
+            )
+        html.append("</ul>")
+
+    html.append("</aside>")
     return "\n".join(html)
 
 
@@ -358,50 +387,55 @@ def _build_footer_html(conf: DocsConfig) -> str:
         parts.append(f"<span>Generated: {now}</span>")
     return f'<footer class="footer">{" | ".join(parts)}</footer>' if parts else ""
 
+
 def _convert_markdown_links(text: str, conf: DocsConfig, current_path: str = "") -> str:
     """Convert markdown links to proper HTML links."""
-    link_pattern = r'\[([^\]]+)\]\(([^)]+)\)'
+    link_pattern = r"\[([^\]]+)\]\(([^)]+)\)"
 
     def replace_link(match):
         link_text = match.group(1)
         link_url = match.group(2)
 
-        if link_url.startswith(('http://', 'https://', '#', 'mailto:')):
+        if link_url.startswith(("http://", "https://", "#", "mailto:")):
             return f'<a href="{link_url}">{link_text}</a>'
 
-        if link_url.endswith('.md'):
+        if link_url.endswith(".md"):
             link_url = link_url[:-3]
 
-        if link_url.startswith('/'):
+        if link_url.startswith("/"):
             return f'<a href="{conf.path}{link_url}">{link_text}</a>'
 
         path_mappings = {
-            'getting-started': '/getting-started',
-            'configuration': '/configuration',
-            'deployment': '/deployment',
-            'rate-limits': '/rate-limits',
-            'errors': '/errors',
-            'data-types': '/data-types',
-            'api/index': '/reference',
-            'websocket/index': '/websocket',
+            "getting-started": "/getting-started",
+            "configuration": "/configuration",
+            "deployment": "/deployment",
+            "rate-limits": "/rate-limits",
+            "errors": "/errors",
+            "data-types": "/data-types",
+            "api/index": "/reference",
+            "websocket/index": "/websocket",
         }
 
         if link_url in path_mappings:
             link_url = path_mappings[link_url]
-        elif link_url.startswith('api/'):
-            link_url = f'/reference/{link_url[4:]}'
-        elif link_url.startswith('websocket/'):
-            link_url = f'/websocket/{link_url[10:]}'
+        elif link_url.startswith("api/"):
+            link_url = f"/reference/{link_url[4:]}"
+        elif link_url.startswith("websocket/"):
+            link_url = f"/websocket/{link_url[10:]}"
         else:
-            link_url = f'/{link_url}'
+            link_url = f"/{link_url}"
 
         return f'<a href="{conf.path}{link_url}">{link_text}</a>'
 
     return re.sub(link_pattern, replace_link, text)
 
-def _markdown_to_html(markdown_content: str, title: str, conf: DocsConfig, current_path: str = "") -> str:
+
+def _markdown_to_html(
+    markdown_content: str, title: str, conf: DocsConfig, current_path: str = ""
+) -> str:
     """Convert markdown to HTML with modern styling."""
     import html as html_module
+
     content = html_module.escape(markdown_content)
     content = _convert_markdown_links(content, conf, current_path)
 
@@ -416,7 +450,9 @@ def _markdown_to_html(markdown_content: str, title: str, conf: DocsConfig, curre
             if not in_code_block:
                 code_lang = line[3:].strip() or "text"
                 code_block_id += 1
-                html_lines.append(f'<div class="code-block"><button class="copy-btn" data-target="code-{code_block_id}">📋</button><pre><code id="code-{code_block_id}" class="language-{code_lang}">')
+                html_lines.append(
+                    f'<div class="code-block"><button class="copy-btn" data-target="code-{code_block_id}">📋</button><pre><code id="code-{code_block_id}" class="language-{code_lang}">'
+                )
                 in_code_block = True
             else:
                 html_lines.append("</code></pre></div>")
@@ -435,11 +471,14 @@ def _markdown_to_html(markdown_content: str, title: str, conf: DocsConfig, curre
             html_lines.append(f"<h1>{line[2:]}</h1>")
         elif line.startswith("| "):
             cells = line.split("|")[1:-1]
-            if all(c.strip().startswith("-") for c in cells): continue
+            if all(c.strip().startswith("-") for c in cells):
+                continue
             if not in_table:
                 html_lines.append('<div class="table-wrapper"><table>')
                 in_table = True
-            html_lines.append(f"<tr>{''.join(f'<td>{c.strip()}</td>' for c in cells)}</tr>")
+            html_lines.append(
+                f"<tr>{''.join(f'<td>{c.strip()}</td>' for c in cells)}</tr>"
+            )
         elif line.startswith("- "):
             html_lines.append(f"<li>{line[2:]}</li>")
         elif line.startswith("**Note:**") or line.startswith("**Important:**"):
@@ -457,6 +496,7 @@ def _markdown_to_html(markdown_content: str, title: str, conf: DocsConfig, curre
                 in_table = False
             html_lines.append("")
 
+    body_content = "\n".join(html_lines)
     sidebar_html = _build_sidebar_html(conf, current_path)
     footer_html = _build_footer_html(conf)
     theme = conf.theme
@@ -520,11 +560,16 @@ def _markdown_to_html(markdown_content: str, title: str, conf: DocsConfig, curre
 </html>"""
 
 
-async def _serve_page(request: Request, file_path: Path, title: str, current_path: str = "") -> HTMLResponse:
+async def _serve_page(
+    request: Request, file_path: Path, title: str, current_path: str = ""
+) -> HTMLResponse:
     conf = get_docs_config()
     content = file_path.read_text(encoding="utf-8") if file_path.exists() else None
-    if not content: raise HTTPException(404, detail="Page not found")
-    return HTMLResponse(_markdown_to_html(content, f"{title} - {conf.title}", conf, current_path))
+    if not content:
+        raise HTTPException(404, detail="Page not found")
+    return HTMLResponse(
+        _markdown_to_html(content, f"{title} - {conf.title}", conf, current_path)
+    )
 
 
 @router.get("")
@@ -532,47 +577,77 @@ async def _serve_page(request: Request, file_path: Path, title: str, current_pat
 async def docs_index(request: Request):
     return await _serve_page(request, Path("docs/index.md"), "Home", "/")
 
+
 @router.get("/getting-started")
 async def docs_getting_started(request: Request):
-    return await _serve_page(request, Path("docs/getting-started.md"), "Getting Started", "/getting-started")
+    return await _serve_page(
+        request, Path("docs/getting-started.md"), "Getting Started", "/getting-started"
+    )
+
 
 @router.get("/deployment")
 async def docs_deployment(request: Request):
-    return await _serve_page(request, Path("docs/deployment.md"), "Deployment", "/deployment")
+    return await _serve_page(
+        request, Path("docs/deployment.md"), "Deployment", "/deployment"
+    )
+
 
 @router.get("/configuration")
 async def docs_configuration(request: Request):
-    return await _serve_page(request, Path("docs/configuration.md"), "Configuration", "/configuration")
+    return await _serve_page(
+        request, Path("docs/configuration.md"), "Configuration", "/configuration"
+    )
+
 
 @router.get("/reference")
 async def docs_api_reference(request: Request):
-    return await _serve_page(request, Path("docs/api/index.md"), "API Reference", "/reference")
+    return await _serve_page(
+        request, Path("docs/api/index.md"), "API Reference", "/reference"
+    )
+
 
 @router.get("/reference/{page}")
 async def docs_api_page(request: Request, page: str):
-    return await _serve_page(request, Path(f"docs/api/{page}.md"), page.title(), f"/reference/{page}")
+    return await _serve_page(
+        request, Path(f"docs/api/{page}.md"), page.title(), f"/reference/{page}"
+    )
+
 
 @router.get("/websocket")
 async def docs_websocket_index(request: Request):
-    return await _serve_page(request, Path("docs/websocket/index.md"), "WebSocket", "/websocket")
+    return await _serve_page(
+        request, Path("docs/websocket/index.md"), "WebSocket", "/websocket"
+    )
+
 
 @router.get("/websocket/{page}")
 async def docs_websocket_page(request: Request, page: str):
-    return await _serve_page(request, Path(f"docs/websocket/{page}.md"), page.title(), f"/websocket/{page}")
+    return await _serve_page(
+        request, Path(f"docs/websocket/{page}.md"), page.title(), f"/websocket/{page}"
+    )
+
 
 @router.get("/rate-limits")
 async def docs_rate_limits(request: Request):
     from src.api.routes.docs import _generate_dynamic_rate_limits_content
+
     content = _generate_dynamic_rate_limits_content()
-    return HTMLResponse(_markdown_to_html(content, "Rate Limits", get_docs_config(), "/rate-limits"))
+    return HTMLResponse(
+        _markdown_to_html(content, "Rate Limits", get_docs_config(), "/rate-limits")
+    )
+
 
 @router.get("/errors")
 async def docs_errors(request: Request):
     return await _serve_page(request, Path("docs/errors.md"), "Errors", "/errors")
 
+
 @router.get("/data-types")
 async def docs_data_types(request: Request):
-    return await _serve_page(request, Path("docs/data-types.md"), "Data Types", "/data-types")
+    return await _serve_page(
+        request, Path("docs/data-types.md"), "Data Types", "/data-types"
+    )
+
 
 def _generate_dynamic_rate_limits_content() -> str:
-    return "# Rate Limits\n\nRate limits are enforced to ensure stability." # Placeholder for brevity, real one is logic-heavy
+    return "# Rate Limits\n\nRate limits are enforced to ensure stability."  # Placeholder for brevity, real one is logic-heavy

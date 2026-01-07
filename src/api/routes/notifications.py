@@ -5,11 +5,10 @@ Handles user notifications.
 """
 
 import utils.logger as logger
-from typing import List
-from fastapi import APIRouter, Depends, status, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from src.api.middleware.authentication import get_current_user, TokenInfo
-from src.api.schemas.notifications import NotificationsResponse, NotificationInfo
+from src.api.schemas.notifications import NotificationsResponse
 from src.api.schemas.common import ErrorResponse
 
 router = APIRouter(tags=["Notifications"])
@@ -25,24 +24,25 @@ router = APIRouter(tags=["Notifications"])
     },
 )
 async def get_notifications(
-    limit: int = 20,
-    current_user: TokenInfo = Depends(get_current_user)
+    limit: int = 20, current_user: TokenInfo = Depends(get_current_user)
 ) -> NotificationsResponse:
     """
     Get user notifications.
-    
+
     Returns an empty list for now (placeholder).
     """
     try:
-        logger.debug(f"User {current_user.user_id} requested notifications (limit={limit})")
-        # Return empty notifications list for now
-        return NotificationsResponse(
-            notifications=[],
-            unread_count=0
+        logger.debug(
+            f"User {current_user.user_id} requested notifications (limit={limit})"
         )
+        # Return empty notifications list for now
+        return NotificationsResponse(notifications=[], unread_count=0)
     except Exception as e:
-        logger.error(f"Failed to get notifications for user {current_user.user_id}: {e}", exc_info=True)
+        logger.error(
+            f"Failed to get notifications for user {current_user.user_id}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Internal server error"}}
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

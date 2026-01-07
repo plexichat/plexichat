@@ -2,8 +2,7 @@
 Server routes - Server/guild management endpoints.
 """
 
-
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Depends, File, UploadFile
 
 import src.api as api
@@ -27,7 +26,11 @@ from src.api.schemas.servers import (
 )
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 from src.core.servers.models import ChannelType
-from src.core.database import cached, invalidate_pattern, invalidate_user_servers, invalidate_server_channels, invalidate_server
+from src.core.database import (
+    invalidate_user_servers,
+    invalidate_server_channels,
+    invalidate_server,
+)
 
 import utils.config as config
 import utils.logger as logger
@@ -45,7 +48,9 @@ def _server_to_response(server) -> ServerResponse:
         icon_url=getattr(server, "icon_url", None),
         owner_id=SnowflakeID(server.owner_id),
         member_count=getattr(server, "member_count", 0),
-        default_channel_id=SnowflakeID(default_channel_id) if default_channel_id else None,
+        default_channel_id=SnowflakeID(default_channel_id)
+        if default_channel_id
+        else None,
         created_at=server.created_at,
     )
 
@@ -63,7 +68,9 @@ def _channel_to_response(channel) -> ChannelResponse:
         channel_type=channel_type or "text",
         topic=getattr(channel, "topic", None),
         position=getattr(channel, "position", 0),
-        category_id=SnowflakeID(channel.category_id) if getattr(channel, "category_id", None) else None,
+        category_id=SnowflakeID(channel.category_id)
+        if getattr(channel, "category_id", None)
+        else None,
         nsfw=getattr(channel, "nsfw", False),
         slowmode_seconds=getattr(channel, "slowmode_seconds", 0),
         created_at=channel.created_at,
@@ -113,17 +120,19 @@ def _channel_to_dict(channel) -> dict:
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_servers(current_user: TokenInfo = Depends(get_current_user)) -> List[ServerResponse]:
+async def get_servers(
+    current_user: TokenInfo = Depends(get_current_user),
+) -> List[ServerResponse]:
     """
     Get all servers the user is a member of.
-    
+
     Returns a list of servers the authenticated user belongs to.
     """
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Servers module not available"}}
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
         )
 
     try:
@@ -131,16 +140,18 @@ async def get_servers(current_user: TokenInfo = Depends(get_current_user)) -> Li
         if servers is None:
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": "Failed to fetch servers"}}
+                detail={"error": {"code": 500, "message": "Failed to fetch servers"}},
             )
         return [_server_to_response(s) for s in servers]
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to fetch servers for user {current_user.user_id}: {e}", exc_info=True)
+        logger.error(
+            f"Failed to fetch servers for user {current_user.user_id}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -155,26 +166,23 @@ async def get_servers(current_user: TokenInfo = Depends(get_current_user)) -> Li
     },
 )
 async def create_server(
-    body: ServerCreateRequest,
-    current_user: TokenInfo = Depends(get_current_user)
+    body: ServerCreateRequest, current_user: TokenInfo = Depends(get_current_user)
 ) -> ServerResponse:
     """
     Create a new server.
-    
+
     Creates a server with the authenticated user as owner.
     """
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Servers module not available"}}
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
         )
 
     try:
         server = servers_mod.create_server(
-            owner_id=current_user.user_id,
-            name=body.name,
-            description=body.description
+            owner_id=current_user.user_id, name=body.name, description=body.description
         )
         # Invalidate user's server list cache
         invalidate_user_servers(current_user.user_id)
@@ -183,14 +191,15 @@ async def create_server(
         exc_name = type(e).__name__
         if "Limit" in exc_name:
             raise HTTPException(
-                status_code=400,
-                detail={"error": {"code": 400, "message": str(e)}}
+                status_code=400, detail={"error": {"code": 400, "message": str(e)}}
             )
-        
-        logger.error(f"Failed to create server for user {current_user.user_id}: {e}", exc_info=True)
+
+        logger.error(
+            f"Failed to create server for user {current_user.user_id}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -206,17 +215,19 @@ async def create_server(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_server(server_id: str, current_user: TokenInfo = Depends(get_current_user)) -> ServerResponse:
+async def get_server(
+    server_id: str, current_user: TokenInfo = Depends(get_current_user)
+) -> ServerResponse:
     """
     Get server by ID.
-    
+
     Returns server information if the user is a member.
     """
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Servers module not available"}}
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
         )
 
     try:
@@ -225,14 +236,14 @@ async def get_server(server_id: str, current_user: TokenInfo = Depends(get_curre
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid server ID"}}
+                detail={"error": {"code": 400, "message": "Invalid server ID"}},
             )
 
         server = servers_mod.get_server(sid, current_user.user_id)
         if not server:
             raise HTTPException(
                 status_code=404,
-                detail={"error": {"code": 404, "message": "Server not found"}}
+                detail={"error": {"code": 404, "message": "Server not found"}},
             )
         return _server_to_response(server)
     except HTTPException:
@@ -242,18 +253,17 @@ async def get_server(server_id: str, current_user: TokenInfo = Depends(get_curre
         if "NotFound" in exc_name:
             raise HTTPException(
                 status_code=404,
-                detail={"error": {"code": 404, "message": "Server not found"}}
+                detail={"error": {"code": 404, "message": "Server not found"}},
             )
         elif "Access" in exc_name or "Permission" in exc_name:
             raise HTTPException(
                 status_code=403,
-                detail={"error": {"code": 403, "message": "Access denied"}}
+                detail={"error": {"code": 403, "message": "Access denied"}},
             )
-        
+
         logger.error(f"Failed to get server {server_id}: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -272,18 +282,18 @@ async def get_server(server_id: str, current_user: TokenInfo = Depends(get_curre
 async def update_server(
     server_id: str,
     body: ServerUpdateRequest,
-    current_user: TokenInfo = Depends(get_current_user)
+    current_user: TokenInfo = Depends(get_current_user),
 ) -> ServerResponse:
     """
     Update server settings.
-    
+
     Updates server information. Requires manage server permission.
     """
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Servers module not available"}}
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
         )
 
     try:
@@ -292,7 +302,7 @@ async def update_server(
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid server ID"}}
+                detail={"error": {"code": 400, "message": "Invalid server ID"}},
             )
 
         update_data = body.model_dump(exclude_unset=True)
@@ -310,18 +320,16 @@ async def update_server(
         if "NotFound" in exc_name:
             raise HTTPException(
                 status_code=404,
-                detail={"error": {"code": 404, "message": "Server not found"}}
+                detail={"error": {"code": 404, "message": "Server not found"}},
             )
         elif "Permission" in exc_name:
             raise HTTPException(
-                status_code=403,
-                detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
             )
-        
+
         logger.error(f"Failed to update server {server_id}: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -337,17 +345,19 @@ async def update_server(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def delete_server(server_id: str, current_user: TokenInfo = Depends(get_current_user)) -> SuccessResponse:
+async def delete_server(
+    server_id: str, current_user: TokenInfo = Depends(get_current_user)
+) -> SuccessResponse:
     """
     Delete a server.
-    
+
     Permanently deletes the server. Only the owner can delete.
     """
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Servers module not available"}}
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
         )
 
     try:
@@ -356,7 +366,7 @@ async def delete_server(server_id: str, current_user: TokenInfo = Depends(get_cu
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid server ID"}}
+                detail={"error": {"code": 400, "message": "Invalid server ID"}},
             )
 
         servers_mod.delete_server(current_user.user_id, sid)
@@ -370,18 +380,16 @@ async def delete_server(server_id: str, current_user: TokenInfo = Depends(get_cu
         if "NotFound" in exc_name:
             raise HTTPException(
                 status_code=404,
-                detail={"error": {"code": 404, "message": "Server not found"}}
+                detail={"error": {"code": 404, "message": "Server not found"}},
             )
         elif "Permission" in exc_name or "Owner" in exc_name:
             raise HTTPException(
-                status_code=403,
-                detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
             )
-        
+
         logger.error(f"Failed to delete server {server_id}: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -397,17 +405,19 @@ async def delete_server(server_id: str, current_user: TokenInfo = Depends(get_cu
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_server_channels(server_id: str, current_user: TokenInfo = Depends(get_current_user)) -> List[ChannelResponse]:
+async def get_server_channels(
+    server_id: str, current_user: TokenInfo = Depends(get_current_user)
+) -> List[ChannelResponse]:
     """
     Get all channels in a server.
-    
+
     Returns channels the user has access to view.
     """
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Servers module not available"}}
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
         )
 
     try:
@@ -416,14 +426,14 @@ async def get_server_channels(server_id: str, current_user: TokenInfo = Depends(
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid server ID"}}
+                detail={"error": {"code": 400, "message": "Invalid server ID"}},
             )
 
         channels = servers_mod.get_channels(current_user.user_id, sid)
         if channels is None:
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": "Failed to fetch channels"}}
+                detail={"error": {"code": 500, "message": "Failed to fetch channels"}},
             )
         return [_channel_to_response(c) for c in channels]
     except HTTPException:
@@ -433,18 +443,19 @@ async def get_server_channels(server_id: str, current_user: TokenInfo = Depends(
         if "NotFound" in exc_name:
             raise HTTPException(
                 status_code=404,
-                detail={"error": {"code": 404, "message": "Server not found"}}
+                detail={"error": {"code": 404, "message": "Server not found"}},
             )
         elif "Access" in exc_name:
             raise HTTPException(
                 status_code=403,
-                detail={"error": {"code": 403, "message": "Access denied"}}
+                detail={"error": {"code": 403, "message": "Access denied"}},
             )
-        
-        logger.error(f"Failed to fetch channels for server {server_id}: {e}", exc_info=True)
+
+        logger.error(
+            f"Failed to fetch channels for server {server_id}: {e}", exc_info=True
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -464,7 +475,7 @@ async def get_server_members(
     server_id: str,
     limit: int = 100,
     after: Optional[str] = None,
-    current_user: TokenInfo = Depends(get_current_user)
+    current_user: TokenInfo = Depends(get_current_user),
 ) -> List[MemberResponse]:
     """Get server members."""
     servers_mod = api.get_servers()
@@ -474,7 +485,7 @@ async def get_server_members(
     if not servers_mod:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Servers module not available"}}
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
         )
 
     try:
@@ -483,12 +494,12 @@ async def get_server_members(
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid server ID"}}
+                detail={"error": {"code": 400, "message": "Invalid server ID"}},
             )
 
         members = servers_mod.get_members(current_user.user_id, sid)
         result = []
-        for m in (members or []):
+        for m in members or []:
             user_id = getattr(m, "user_id", 0)
 
             # Get user info
@@ -512,19 +523,25 @@ async def get_server_members(
                         status = getattr(pres, "status", None)
                         if status and hasattr(status, "value"):
                             status = status.value
-                        presence_data = PresenceResponse(status=str(status) if status else "offline")
+                        presence_data = PresenceResponse(
+                            status=str(status) if status else "offline"
+                        )
                 except Exception as e:
                     logger.warning(f"Failed to get presence for user {user_id}: {e}")
 
-            result.append(MemberResponse(
-                user_id=SnowflakeID(user_id),
-                username=username or f"User {user_id}",
-                nickname=getattr(m, "nickname", None),
-                avatar_url=avatar_url,
-                joined_at=getattr(m, "joined_at", None),
-                roles=[SnowflakeID(r) for r in getattr(m, "roles", [])] if hasattr(m, "roles") else [],
-                presence=presence_data
-            ))
+            result.append(
+                MemberResponse(
+                    user_id=SnowflakeID(user_id),
+                    username=username or f"User {user_id}",
+                    nickname=getattr(m, "nickname", None),
+                    avatar_url=avatar_url,
+                    joined_at=getattr(m, "joined_at", None),
+                    roles=[SnowflakeID(r) for r in getattr(m, "roles", [])]
+                    if hasattr(m, "roles")
+                    else [],
+                    presence=presence_data,
+                )
+            )
         return result
     except HTTPException:
         raise
@@ -533,22 +550,24 @@ async def get_server_members(
         if "NotFound" in exc_name:
             raise HTTPException(
                 status_code=404,
-                detail={"error": {"code": 404, "message": "Server not found"}}
+                detail={"error": {"code": 404, "message": "Server not found"}},
             )
         elif "Access" in exc_name:
             raise HTTPException(
                 status_code=403,
-                detail={"error": {"code": 403, "message": "Access denied"}}
+                detail={"error": {"code": 403, "message": "Access denied"}},
             )
-        
-        logger.error(f"Failed to fetch members for server {server_id}: {e}", exc_info=True)
+
+        logger.error(
+            f"Failed to fetch members for server {server_id}: {e}", exc_info=True
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
 # ==================== Member Management ====================
+
 
 @router.delete(
     "/{server_id}/members/{member_id}",
@@ -563,20 +582,18 @@ async def get_server_members(
     },
 )
 async def kick_member(
-    server_id: str,
-    member_id: str,
-    current_user: TokenInfo = Depends(get_current_user)
+    server_id: str, member_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> SuccessResponse:
     """
     Kick a member from a server.
-    
+
     Removes the member from the server. Requires kick members permission.
     """
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Servers module not available"}}
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
         )
 
     try:
@@ -586,7 +603,7 @@ async def kick_member(
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid ID"}}
+                detail={"error": {"code": 400, "message": "Invalid ID"}},
             )
 
         servers_mod.kick_member(current_user.user_id, sid, mid)
@@ -598,18 +615,19 @@ async def kick_member(
         if "NotFound" in exc_name:
             raise HTTPException(
                 status_code=404,
-                detail={"error": {"code": 404, "message": "Member not found"}}
+                detail={"error": {"code": 404, "message": "Member not found"}},
             )
         elif "Permission" in exc_name or "Hierarchy" in exc_name or "Owner" in exc_name:
             raise HTTPException(
-                status_code=403,
-                detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
             )
-        
-        logger.error(f"Failed to kick member {member_id} from server {server_id}: {e}", exc_info=True)
+
+        logger.error(
+            f"Failed to kick member {member_id} from server {server_id}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -629,18 +647,18 @@ async def assign_role_to_member(
     server_id: str,
     member_id: str,
     role_id: str,
-    current_user: TokenInfo = Depends(get_current_user)
+    current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
     """
     Assign a role to a member.
-    
+
     Adds the specified role to the member. Requires manage roles permission.
     """
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Servers module not available"}}
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
         )
 
     try:
@@ -651,7 +669,7 @@ async def assign_role_to_member(
         except ValueError:
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid ID"}}
+                detail={"error": {"code": 400, "message": "Invalid ID"}},
             )
 
         servers_mod.assign_role(current_user.user_id, sid, mid, rid)
@@ -663,20 +681,21 @@ async def assign_role_to_member(
         if "NotFound" in exc_name:
             raise HTTPException(
                 status_code=404,
-                detail={"error": {"code": 404, "message": "Member or role not found"}}
+                detail={"error": {"code": 404, "message": "Member or role not found"}},
             )
         elif "Permission" in exc_name or "Hierarchy" in exc_name:
             raise HTTPException(
-                status_code=403,
-                detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
             )
         elif "Exists" in exc_name:
             return SuccessResponse(success=True)  # Already has role, treat as success
-        
-        logger.error(f"Failed to assign role {role_id} to member {member_id} in server {server_id}: {e}", exc_info=True)
+
+        logger.error(
+            f"Failed to assign role {role_id} to member {member_id} in server {server_id}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -696,18 +715,18 @@ async def remove_role_from_member(
     server_id: str,
     member_id: str,
     role_id: str,
-    current_user: TokenInfo = Depends(get_current_user)
+    current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
     """
     Remove a role from a member.
-    
+
     Removes the specified role from the member. Requires manage roles permission.
     """
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Servers module not available"}}
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
         )
 
     try:
@@ -718,7 +737,7 @@ async def remove_role_from_member(
         except ValueError:
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid ID"}}
+                detail={"error": {"code": 400, "message": "Invalid ID"}},
             )
 
         servers_mod.remove_role(current_user.user_id, sid, mid, rid)
@@ -730,22 +749,26 @@ async def remove_role_from_member(
         if "NotFound" in exc_name:
             raise HTTPException(
                 status_code=404,
-                detail={"error": {"code": 404, "message": "Member or role not found"}}
+                detail={"error": {"code": 404, "message": "Member or role not found"}},
             )
-        elif "Permission" in exc_name or "Hierarchy" in exc_name or "Default" in exc_name:
+        elif (
+            "Permission" in exc_name or "Hierarchy" in exc_name or "Default" in exc_name
+        ):
             raise HTTPException(
-                status_code=403,
-                detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
             )
-        
-        logger.error(f"Failed to remove role {role_id} from member {member_id} in server {server_id}: {e}", exc_info=True)
+
+        logger.error(
+            f"Failed to remove role {role_id} from member {member_id} in server {server_id}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
 # ==================== Channel Management ====================
+
 
 @router.post(
     "/{server_id}/channels",
@@ -762,25 +785,25 @@ async def remove_role_from_member(
 async def create_server_channel(
     server_id: str,
     body: ChannelCreateRequest,
-    current_user: TokenInfo = Depends(get_current_user)
+    current_user: TokenInfo = Depends(get_current_user),
 ) -> ChannelResponse:
     """Create a channel in a server."""
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Servers module not available"}}
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
         )
 
     try:
-        try:
-            sid = int(server_id)
-        except (ValueError, TypeError):
-            raise HTTPException(
-                status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid server ID"}}
-            )
+        sid = int(server_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid server ID"}},
+        )
 
+    try:
         # Build kwargs, only including supported parameters
         kwargs = {
             "user_id": current_user.user_id,
@@ -804,11 +827,12 @@ async def create_server_channel(
         channel = servers_mod.create_channel(**kwargs)
         # Invalidate server's channel list cache
         invalidate_server_channels(sid)
-        
+
         response = _channel_to_response(channel)
 
         # Broadcast CHANNEL_CREATE event via WebSocket (fire and forget)
         import asyncio
+
         async def dispatch_channel_create():
             try:
                 from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
@@ -818,7 +842,7 @@ async def create_server_channel(
                 if ws_is_setup():
                     dispatcher = get_dispatcher()
                     user_ids = servers_mod.get_member_user_ids(sid)
-                    
+
                     if user_ids:
                         event = Event(
                             event_type=EventType.CHANNEL_CREATE,
@@ -839,42 +863,44 @@ async def create_server_channel(
         if "unexpected keyword argument" in str(e):
             try:
                 channel = servers_mod.create_channel(
-                    user_id=current_user.user_id,
-                    server_id=sid,
-                    name=body.name
+                    user_id=current_user.user_id, server_id=sid, name=body.name
                 )
                 # Invalidate server's channel list cache
                 invalidate_server_channels(sid)
                 return _channel_to_response(channel)
             except Exception as inner_e:
-                logger.error(f"Failed to create channel in server {server_id} (fallback): {inner_e}", exc_info=True)
+                logger.error(
+                    f"Failed to create channel in server {server_id} (fallback): {inner_e}",
+                    exc_info=True,
+                )
                 raise HTTPException(
                     status_code=500,
-                    detail={"error": {"code": 500, "message": str(inner_e)}}
+                    detail={"error": {"code": 500, "message": str(inner_e)}},
                 )
-        
-        logger.error(f"Failed to create channel in server {server_id}: {e}", exc_info=True)
+
+        logger.error(
+            f"Failed to create channel in server {server_id}: {e}", exc_info=True
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
     except Exception as e:
         exc_name = type(e).__name__
         if "NotFound" in exc_name:
             raise HTTPException(
                 status_code=404,
-                detail={"error": {"code": 404, "message": "Server not found"}}
+                detail={"error": {"code": 404, "message": "Server not found"}},
             )
         elif "Permission" in exc_name:
             raise HTTPException(
-                status_code=403,
-                detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
             )
-        
-        logger.error(f"Failed to create channel in server {server_id}: {e}", exc_info=True)
+
+        logger.error(
+            f"Failed to create channel in server {server_id}: {e}", exc_info=True
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -890,13 +916,15 @@ async def create_server_channel(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_server_invites(server_id: str, current_user: TokenInfo = Depends(get_current_user)) -> List[InviteResponse]:
+async def get_server_invites(
+    server_id: str, current_user: TokenInfo = Depends(get_current_user)
+) -> List[InviteResponse]:
     """Get all invites for a server."""
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Servers module not available"}}
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
         )
 
     try:
@@ -905,7 +933,7 @@ async def get_server_invites(server_id: str, current_user: TokenInfo = Depends(g
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid server ID"}}
+                detail={"error": {"code": 400, "message": "Invalid server ID"}},
             )
 
         invites = servers_mod.get_invites(current_user.user_id, sid)
@@ -913,8 +941,12 @@ async def get_server_invites(server_id: str, current_user: TokenInfo = Depends(g
             InviteResponse(
                 code=inv.code,
                 server_id=SnowflakeID(inv.server_id),
-                channel_id=SnowflakeID(inv.channel_id) if hasattr(inv, "channel_id") else None,
-                inviter_id=SnowflakeID(inv.inviter_id) if hasattr(inv, "inviter_id") else None,
+                channel_id=SnowflakeID(inv.channel_id)
+                if hasattr(inv, "channel_id")
+                else None,
+                inviter_id=SnowflakeID(inv.inviter_id)
+                if hasattr(inv, "inviter_id")
+                else None,
                 uses=getattr(inv, "uses", 0),
                 max_uses=getattr(inv, "max_uses", 0),
                 max_age=getattr(inv, "max_age", 86400),
@@ -931,22 +963,23 @@ async def get_server_invites(server_id: str, current_user: TokenInfo = Depends(g
         if "NotFound" in exc_name:
             raise HTTPException(
                 status_code=404,
-                detail={"error": {"code": 404, "message": "Server not found"}}
+                detail={"error": {"code": 404, "message": "Server not found"}},
             )
         elif "Permission" in exc_name:
             raise HTTPException(
-                status_code=403,
-                detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
             )
-        
-        logger.error(f"Failed to fetch invites for server {server_id}: {e}", exc_info=True)
+
+        logger.error(
+            f"Failed to fetch invites for server {server_id}: {e}", exc_info=True
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
 # ==================== Role Management ====================
+
 
 @router.get(
     "/{server_id}/roles",
@@ -960,16 +993,24 @@ async def get_server_invites(server_id: str, current_user: TokenInfo = Depends(g
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_server_roles(server_id: str, current_user: TokenInfo = Depends(get_current_user)) -> List[RoleResponse]:
+async def get_server_roles(
+    server_id: str, current_user: TokenInfo = Depends(get_current_user)
+) -> List[RoleResponse]:
     """Get all roles in a server."""
     servers_mod = api.get_servers()
     if not servers_mod:
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Servers module not available"}})
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
+        )
 
     try:
         sid = int(server_id)
     except (ValueError, TypeError):
-        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid server ID"}})
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid server ID"}},
+        )
 
     try:
         roles = servers_mod.get_roles(current_user.user_id, sid)
@@ -990,10 +1031,18 @@ async def get_server_roles(server_id: str, current_user: TokenInfo = Depends(get
     except Exception as e:
         exc_name = type(e).__name__
         if "NotFound" in exc_name:
-            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Server not found"}})
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "Server not found"}},
+            )
         elif "Access" in exc_name:
-            raise HTTPException(status_code=403, detail={"error": {"code": 403, "message": "Access denied"}})
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+            raise HTTPException(
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Access denied"}},
+            )
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
 
 
 @router.post(
@@ -1011,18 +1060,18 @@ async def get_server_roles(server_id: str, current_user: TokenInfo = Depends(get
 async def create_role(
     server_id: str,
     body: RoleCreateRequest,
-    current_user: TokenInfo = Depends(get_current_user)
+    current_user: TokenInfo = Depends(get_current_user),
 ) -> RoleResponse:
     """
     Create a new role in a server.
-    
+
     Creates a new role with specified permissions. Requires manage roles permission.
     """
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Servers module not available"}}
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
         )
 
     try:
@@ -1031,7 +1080,7 @@ async def create_role(
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid server ID"}}
+                detail={"error": {"code": 400, "message": "Invalid server ID"}},
             )
 
         role = servers_mod.create_role(
@@ -1041,7 +1090,7 @@ async def create_role(
             color=body.color,
             permissions=body.permissions,
             hoist=body.hoist,
-            mentionable=body.mentionable
+            mentionable=body.mentionable,
         )
         return RoleResponse(
             id=SnowflakeID(role.id),
@@ -1060,18 +1109,16 @@ async def create_role(
         if "NotFound" in exc_name:
             raise HTTPException(
                 status_code=404,
-                detail={"error": {"code": 404, "message": "Server not found"}}
+                detail={"error": {"code": 404, "message": "Server not found"}},
             )
         elif "Permission" in exc_name:
             raise HTTPException(
-                status_code=403,
-                detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
             )
-        
+
         logger.error(f"Failed to create role in server {server_id}: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -1091,18 +1138,18 @@ async def update_role(
     server_id: str,
     role_id: str,
     body: RoleUpdateRequest,
-    current_user: TokenInfo = Depends(get_current_user)
+    current_user: TokenInfo = Depends(get_current_user),
 ) -> RoleResponse:
     """
     Update a role in a server.
-    
+
     Modifies an existing role. Requires manage roles permission.
     """
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Servers module not available"}}
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
         )
 
     try:
@@ -1112,7 +1159,7 @@ async def update_role(
         except ValueError:
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid ID"}}
+                detail={"error": {"code": 400, "message": "Invalid ID"}},
             )
 
         # Note: manager.update_role doesn't need server_id as role_id is unique
@@ -1136,18 +1183,18 @@ async def update_role(
         if "NotFound" in exc_name:
             raise HTTPException(
                 status_code=404,
-                detail={"error": {"code": 404, "message": "Role not found"}}
+                detail={"error": {"code": 404, "message": "Role not found"}},
             )
         elif "Permission" in exc_name or "Default" in exc_name:
             raise HTTPException(
-                status_code=403,
-                detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
             )
-        
-        logger.error(f"Failed to update role {role_id} in server {server_id}: {e}", exc_info=True)
+
+        logger.error(
+            f"Failed to update role {role_id} in server {server_id}: {e}", exc_info=True
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -1164,30 +1211,28 @@ async def update_role(
     },
 )
 async def delete_role(
-    server_id: str,
-    role_id: str,
-    current_user: TokenInfo = Depends(get_current_user)
+    server_id: str, role_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> SuccessResponse:
     """
     Delete a role from a server.
-    
+
     Removes the role from the server and all members. Requires manage roles permission.
     """
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Servers module not available"}}
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
         )
 
     try:
         try:
-            sid = int(server_id)
+            int(server_id)
             rid = int(role_id)
         except ValueError:
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid ID"}}
+                detail={"error": {"code": 400, "message": "Invalid ID"}},
             )
 
         servers_mod.delete_role(current_user.user_id, rid)
@@ -1199,22 +1244,23 @@ async def delete_role(
         if "NotFound" in exc_name:
             raise HTTPException(
                 status_code=404,
-                detail={"error": {"code": 404, "message": "Role not found"}}
+                detail={"error": {"code": 404, "message": "Role not found"}},
             )
         elif "Permission" in exc_name or "Default" in exc_name:
             raise HTTPException(
-                status_code=403,
-                detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
             )
-        
-        logger.error(f"Failed to delete role {role_id} in server {server_id}: {e}", exc_info=True)
+
+        logger.error(
+            f"Failed to delete role {role_id} in server {server_id}: {e}", exc_info=True
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
 # ==================== Ban Management ====================
+
 
 @router.get(
     "/{server_id}/bans",
@@ -1229,19 +1275,18 @@ async def delete_role(
     },
 )
 async def get_server_bans(
-    server_id: str,
-    current_user: TokenInfo = Depends(get_current_user)
+    server_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> List[BanResponse]:
     """
     Get all bans in a server.
-    
+
     Returns a list of users who are banned from the server. Requires ban members permission.
     """
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Servers module not available"}}
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
         )
 
     try:
@@ -1250,7 +1295,7 @@ async def get_server_bans(
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid server ID"}}
+                detail={"error": {"code": 400, "message": "Invalid server ID"}},
             )
 
         bans = servers_mod.get_bans(current_user.user_id, sid)
@@ -1270,18 +1315,16 @@ async def get_server_bans(
         if "NotFound" in exc_name:
             raise HTTPException(
                 status_code=404,
-                detail={"error": {"code": 404, "message": "Server not found"}}
+                detail={"error": {"code": 404, "message": "Server not found"}},
             )
         elif "Permission" in exc_name:
             raise HTTPException(
-                status_code=403,
-                detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
             )
-        
+
         logger.error(f"Failed to get bans for server {server_id}: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -1301,18 +1344,18 @@ async def ban_member(
     server_id: str,
     user_id: str,
     body: Optional[BanCreateRequest] = None,
-    current_user: TokenInfo = Depends(get_current_user)
+    current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
     """
     Ban a user from a server.
-    
+
     Prevents a user from joining or seeing the server. Requires ban members permission.
     """
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Servers module not available"}}
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
         )
 
     try:
@@ -1322,13 +1365,19 @@ async def ban_member(
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid ID"}}
+                detail={"error": {"code": 400, "message": "Invalid ID"}},
             )
 
         reason = body.reason if body else None
         delete_message_days = body.delete_message_days if body else 0
 
-        servers_mod.ban_member(current_user.user_id, sid, uid, reason=reason, delete_message_days=delete_message_days)
+        servers_mod.ban_member(
+            current_user.user_id,
+            sid,
+            uid,
+            reason=reason,
+            delete_message_days=delete_message_days,
+        )
         return SuccessResponse(success=True)
     except HTTPException:
         raise
@@ -1337,18 +1386,18 @@ async def ban_member(
         if "NotFound" in exc_name:
             raise HTTPException(
                 status_code=404,
-                detail={"error": {"code": 404, "message": "Server or user not found"}}
+                detail={"error": {"code": 404, "message": "Server or user not found"}},
             )
         elif "Permission" in exc_name:
             raise HTTPException(
-                status_code=403,
-                detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
             )
-        
-        logger.error(f"Failed to ban user {user_id} from server {server_id}: {e}", exc_info=True)
+
+        logger.error(
+            f"Failed to ban user {user_id} from server {server_id}: {e}", exc_info=True
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -1365,20 +1414,18 @@ async def ban_member(
     },
 )
 async def unban_member(
-    server_id: str,
-    user_id: str,
-    current_user: TokenInfo = Depends(get_current_user)
+    server_id: str, user_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> SuccessResponse:
     """
     Unban a user from a server.
-    
+
     Allows a previously banned user to join the server again. Requires ban members permission.
     """
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Servers module not available"}}
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
         )
 
     try:
@@ -1388,7 +1435,7 @@ async def unban_member(
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid ID"}}
+                detail={"error": {"code": 400, "message": "Invalid ID"}},
             )
 
         servers_mod.unban_member(current_user.user_id, sid, uid)
@@ -1400,22 +1447,24 @@ async def unban_member(
         if "NotFound" in exc_name:
             raise HTTPException(
                 status_code=404,
-                detail={"error": {"code": 404, "message": "Ban not found"}}
+                detail={"error": {"code": 404, "message": "Ban not found"}},
             )
         elif "Permission" in exc_name:
             raise HTTPException(
-                status_code=403,
-                detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
             )
-        
-        logger.error(f"Failed to unban user {user_id} from server {server_id}: {e}", exc_info=True)
+
+        logger.error(
+            f"Failed to unban user {user_id} from server {server_id}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
 # ==================== Misc ====================
+
 
 @router.post(
     "/{server_id}/leave",
@@ -1430,19 +1479,18 @@ async def unban_member(
     },
 )
 async def leave_server(
-    server_id: str,
-    current_user: TokenInfo = Depends(get_current_user)
+    server_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> SuccessResponse:
     """
     Leave a server.
-    
+
     Removes the current user from the server. Owners cannot leave their own server.
     """
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Servers module not available"}}
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
         )
 
     try:
@@ -1451,7 +1499,7 @@ async def leave_server(
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid server ID"}}
+                detail={"error": {"code": 400, "message": "Invalid server ID"}},
             )
 
         servers_mod.leave_server(current_user.user_id, sid)
@@ -1465,22 +1513,27 @@ async def leave_server(
         if "NotFound" in exc_name:
             raise HTTPException(
                 status_code=404,
-                detail={"error": {"code": 404, "message": "Server not found"}}
+                detail={"error": {"code": 404, "message": "Server not found"}},
             )
         elif "Owner" in exc_name:
             raise HTTPException(
                 status_code=403,
-                detail={"error": {"code": 403, "message": "Owners cannot leave their own server"}}
+                detail={
+                    "error": {
+                        "code": 403,
+                        "message": "Owners cannot leave their own server",
+                    }
+                },
             )
-        
+
         logger.error(f"Failed to leave server {server_id}: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
 # ==================== Audit Log ====================
+
 
 @router.get(
     "/{server_id}/audit-logs",
@@ -1495,20 +1548,18 @@ async def leave_server(
     },
 )
 async def get_audit_log(
-    server_id: str,
-    limit: int = 50,
-    current_user: TokenInfo = Depends(get_current_user)
+    server_id: str, limit: int = 50, current_user: TokenInfo = Depends(get_current_user)
 ) -> List[AuditLogEntryResponse]:
     """
     Get audit log entries for a server.
-    
+
     Returns a list of administrative actions taken in the server. Requires view audit log permission.
     """
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Servers module not available"}}
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
         )
 
     try:
@@ -1517,7 +1568,7 @@ async def get_audit_log(
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid server ID"}}
+                detail={"error": {"code": 400, "message": "Invalid server ID"}},
             )
 
         entries = servers_mod.get_audit_log(current_user.user_id, sid, limit=limit)
@@ -1526,9 +1577,13 @@ async def get_audit_log(
                 id=SnowflakeID(e.id),
                 server_id=SnowflakeID(e.server_id),
                 user_id=SnowflakeID(e.user_id),
-                action=e.action_type.value if hasattr(e.action_type, "value") else str(e.action_type),
+                action=e.action_type.value
+                if hasattr(e.action_type, "value")
+                else str(e.action_type),
                 target_type=getattr(e, "target_type", None),
-                target_id=SnowflakeID(e.target_id) if getattr(e, "target_id", None) else None,
+                target_id=SnowflakeID(e.target_id)
+                if getattr(e, "target_id", None)
+                else None,
                 changes=getattr(e, "changes", None),
                 reason=getattr(e, "reason", None),
                 created_at=getattr(e, "created_at", None),
@@ -1542,22 +1597,23 @@ async def get_audit_log(
         if "NotFound" in exc_name:
             raise HTTPException(
                 status_code=404,
-                detail={"error": {"code": 404, "message": "Server not found"}}
+                detail={"error": {"code": 404, "message": "Server not found"}},
             )
         elif "Permission" in exc_name:
             raise HTTPException(
-                status_code=403,
-                detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
             )
-        
-        logger.error(f"Failed to get audit log for server {server_id}: {e}", exc_info=True)
+
+        logger.error(
+            f"Failed to get audit log for server {server_id}: {e}", exc_info=True
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
 # ==================== Webhook Management ====================
+
 
 @router.get(
     "/{server_id}/webhooks",
@@ -1572,19 +1628,18 @@ async def get_audit_log(
     },
 )
 async def get_server_webhooks(
-    server_id: str,
-    current_user: TokenInfo = Depends(get_current_user)
+    server_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> List[WebhookResponse]:
     """
     Get all webhooks in a server.
-    
+
     Returns a list of webhooks created in the server. Requires manage webhooks permission.
     """
     webhooks_mod = api.get_webhooks()
     if not webhooks_mod:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Webhooks module not available"}}
+            detail={"error": {"code": 500, "message": "Webhooks module not available"}},
         )
 
     try:
@@ -1593,7 +1648,7 @@ async def get_server_webhooks(
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid server ID"}}
+                detail={"error": {"code": 400, "message": "Invalid server ID"}},
             )
 
         webhooks = webhooks_mod.get_server_webhooks(current_user.user_id, sid)
@@ -1602,7 +1657,9 @@ async def get_server_webhooks(
                 id=SnowflakeID(w.id),
                 channel_id=SnowflakeID(w.channel_id),
                 server_id=SnowflakeID(w.server_id),
-                creator_id=SnowflakeID(w.creator_id) if getattr(w, "creator_id", 0) else None,
+                creator_id=SnowflakeID(w.creator_id)
+                if getattr(w, "creator_id", 0)
+                else None,
                 name=w.name,
                 avatar_url=w.avatar_url,
                 created_at=w.created_at,
@@ -1616,18 +1673,18 @@ async def get_server_webhooks(
         if "NotFound" in exc_name:
             raise HTTPException(
                 status_code=404,
-                detail={"error": {"code": 404, "message": "Server not found"}}
+                detail={"error": {"code": 404, "message": "Server not found"}},
             )
         elif "Permission" in exc_name:
             raise HTTPException(
-                status_code=403,
-                detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
             )
-        
-        logger.error(f"Failed to get webhooks for server {server_id}: {e}", exc_info=True)
+
+        logger.error(
+            f"Failed to get webhooks for server {server_id}: {e}", exc_info=True
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -1662,11 +1719,11 @@ def _get_icon_size_limit() -> int:
 async def upload_server_icon(
     server_id: str,
     file: UploadFile = File(...),
-    current_user: TokenInfo = Depends(get_current_user)
+    current_user: TokenInfo = Depends(get_current_user),
 ) -> ServerResponse:
     """
     Upload a server icon.
-    
+
     Uploads and sets a new icon for the server. Requires manage server permission.
     """
     servers_mod = api.get_servers()
@@ -1675,12 +1732,12 @@ async def upload_server_icon(
     if not servers_mod:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Servers module not available"}}
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
         )
     if not media:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Media module not available"}}
+            detail={"error": {"code": 500, "message": "Media module not available"}},
         )
 
     try:
@@ -1689,7 +1746,7 @@ async def upload_server_icon(
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid server ID"}}
+                detail={"error": {"code": 400, "message": "Invalid server ID"}},
             )
 
         # Check permission
@@ -1697,7 +1754,7 @@ async def upload_server_icon(
         if not server:
             raise HTTPException(
                 status_code=404,
-                detail={"error": {"code": 404, "message": "Server not found"}}
+                detail={"error": {"code": 404, "message": "Server not found"}},
             )
 
         servers_mod.require_permission(current_user.user_id, sid, "server.manage")
@@ -1708,11 +1765,13 @@ async def upload_server_icon(
             user_id=current_user.user_id,
             file_data=content,
             filename=file.filename or f"server_icon_{sid}",
-            content_type=file.content_type
+            content_type=file.content_type,
         )
 
         # Update server with new icon URL
-        server = servers_mod.update_server(current_user.user_id, sid, icon_url=result.url)
+        server = servers_mod.update_server(
+            current_user.user_id, sid, icon_url=result.url
+        )
         return _server_to_response(server)
     except HTTPException:
         raise
@@ -1720,17 +1779,16 @@ async def upload_server_icon(
         exc_name = type(e).__name__
         if "Size" in exc_name or "Type" in exc_name:
             raise HTTPException(
-                status_code=400,
-                detail={"error": {"code": 400, "message": str(e)}}
+                status_code=400, detail={"error": {"code": 400, "message": str(e)}}
             )
         elif "Blocked" in exc_name or "Malware" in exc_name:
             raise HTTPException(
-                status_code=400,
-                detail={"error": {"code": 400, "message": str(e)}}
+                status_code=400, detail={"error": {"code": 400, "message": str(e)}}
             )
-        
-        logger.error(f"Server icon upload failed for server {server_id}: {e}", exc_info=True)
+
+        logger.error(
+            f"Server icon upload failed for server {server_id}: {e}", exc_info=True
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": "Upload failed"}}
+            status_code=500, detail={"error": {"code": 500, "message": "Upload failed"}}
         )

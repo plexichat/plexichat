@@ -14,6 +14,7 @@ router = APIRouter(tags=["Health"])
 
 class HealthResponse(BaseModel):
     """Health check response."""
+
     status: str
     version: str
 
@@ -29,7 +30,7 @@ class HealthResponse(BaseModel):
 async def health_check() -> HealthResponse:
     """
     Check API health status.
-    
+
     Returns the current health status and API version.
     """
     try:
@@ -37,11 +38,11 @@ async def health_check() -> HealthResponse:
             ver = version.current_string()
         except RuntimeError:
             ver = "unknown"
-        
+
         return HealthResponse(status="healthy", version=ver)
     except Exception as e:
         logger.error(f"Health check failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": "Internal server error"}}
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

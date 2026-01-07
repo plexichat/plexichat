@@ -20,7 +20,12 @@ from .version import router as version_router
 from .settings import router as settings_router
 from .feedback import router as feedback_router
 from .notifications import router as notifications_router
-from .docs import router as docs_router, is_docs_enabled, clear_docs_cache, get_docs_stats
+from .docs import (
+    router as docs_router,
+    is_docs_enabled,
+    clear_docs_cache,
+    get_docs_stats,
+)
 from .telemetry import router as telemetry_router
 from .admin import router as admin_router
 from .features import router as features_router
@@ -37,6 +42,7 @@ from src.api.schemas.common import ErrorResponse
 
 class RootResponse(BaseModel):
     """API root response schema."""
+
     version: str
     status: str
     message: str
@@ -59,16 +65,15 @@ def create_api_router() -> APIRouter:
         """API v1 root endpoint."""
         try:
             return RootResponse(
-                version="v1",
-                status="online",
-                message="PlexiChat API v1 is operational"
+                version="v1", status="online", message="PlexiChat API v1 is operational"
             )
         except Exception as e:
             logger.error(f"API root endpoint failed: {e}", exc_info=True)
             from fastapi import HTTPException, status
+
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={"error": {"code": 500, "message": "Internal server error"}}
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )
 
     api_router.include_router(health_router, tags=["Health"])
@@ -79,11 +84,15 @@ def create_api_router() -> APIRouter:
     api_router.include_router(emojis_router, prefix="/servers", tags=["Emojis"])
     api_router.include_router(channels_router, prefix="/channels", tags=["Channels"])
     api_router.include_router(messages_router, tags=["Messages"])
-    api_router.include_router(relationships_router, prefix="/relationships", tags=["Relationships"])
+    api_router.include_router(
+        relationships_router, prefix="/relationships", tags=["Relationships"]
+    )
     api_router.include_router(presence_router, tags=["Presence"])
     api_router.include_router(reactions_router, tags=["Reactions"])
     api_router.include_router(webhooks_router, prefix="/webhooks", tags=["Webhooks"])
-    api_router.include_router(settings_router, prefix="/users/@me/settings", tags=["Settings"])
+    api_router.include_router(
+        settings_router, prefix="/users/@me/settings", tags=["Settings"]
+    )
     api_router.include_router(feedback_router, tags=["Feedback"])
     api_router.include_router(notifications_router, tags=["Notifications"])
     api_router.include_router(telemetry_router, tags=["Telemetry"])

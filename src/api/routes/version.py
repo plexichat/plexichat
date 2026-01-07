@@ -54,11 +54,13 @@ def _version_to_info(ver) -> VersionInfo:
         )
 
 
-@router.get("/version", response_model=ServerVersionResponse, summary="Get server version")
+@router.get(
+    "/version", response_model=ServerVersionResponse, summary="Get server version"
+)
 async def get_server_version() -> ServerVersionResponse:
     """
     Get server version information.
-    
+
     Returns the current server version and minimum supported client version.
     Clients should call this on startup to verify compatibility.
     """
@@ -68,14 +70,16 @@ async def get_server_version() -> ServerVersionResponse:
 
         return ServerVersionResponse(
             version=_version_to_info(current),
-            min_supported_version=_version_to_info(min_supported) if min_supported else None,
+            min_supported_version=_version_to_info(min_supported)
+            if min_supported
+            else None,
             api_version="v1",
         )
     except Exception as e:
         logger.error(f"Error in get_server_version: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}}
+            detail={"error": {"code": 500, "message": str(e)}},
         )
 
 
@@ -89,10 +93,12 @@ async def get_server_version() -> ServerVersionResponse:
         500: {"model": VersionErrorResponse, "description": "Internal server error"},
     },
 )
-async def negotiate_version(request: VersionNegotiateRequest) -> VersionNegotiateResponse:
+async def negotiate_version(
+    request: VersionNegotiateRequest,
+) -> VersionNegotiateResponse:
     """
     Negotiate version compatibility with the server.
-    
+
     Clients should call this endpoint to check if their version is compatible.
     The server will indicate if an update is required or recommended.
     """
@@ -100,7 +106,9 @@ async def negotiate_version(request: VersionNegotiateRequest) -> VersionNegotiat
         try:
             client_ver = version_util.parse(request.client_version)
         except InvalidVersionError as e:
-            logger.warning(f"Invalid version format negotiated: {request.client_version}")
+            logger.warning(
+                f"Invalid version format negotiated: {request.client_version}"
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
@@ -123,14 +131,17 @@ async def negotiate_version(request: VersionNegotiateRequest) -> VersionNegotiat
             update_recommended = False
             if is_compatible:
                 comparison = version_util.compare(
-                    request.client_version,
-                    version_util.current_string()
+                    request.client_version, version_util.current_string()
                 )
                 update_recommended = comparison < 0
 
             message = None
             if not is_compatible:
-                min_version_str = version_util.format_version(min_supported) if min_supported else "latest"
+                min_version_str = (
+                    version_util.format_version(min_supported)
+                    if min_supported
+                    else "latest"
+                )
                 message = (
                     f"Client version {request.client_version} is no longer supported. "
                     f"Please update to at least {min_version_str}."
@@ -140,7 +151,9 @@ async def negotiate_version(request: VersionNegotiateRequest) -> VersionNegotiat
                 compatible=is_compatible,
                 server_version=_version_to_info(server_ver),
                 client_version=_version_to_info(client_ver),
-                min_supported_version=_version_to_info(min_supported) if min_supported else None,
+                min_supported_version=_version_to_info(min_supported)
+                if min_supported
+                else None,
                 update_required=not is_compatible,
                 update_recommended=update_recommended,
                 update_url=_update_url,
@@ -148,7 +161,9 @@ async def negotiate_version(request: VersionNegotiateRequest) -> VersionNegotiat
             )
 
             if not is_compatible:
-                logger.info(f"Client version {request.client_version} is outdated. Min supported: {version_util.format_version(min_supported) if min_supported else 'N/A'}")
+                logger.info(
+                    f"Client version {request.client_version} is outdated. Min supported: {version_util.format_version(min_supported) if min_supported else 'N/A'}"
+                )
                 raise HTTPException(
                     status_code=status.HTTP_426_UPGRADE_REQUIRED,
                     detail={
@@ -156,7 +171,9 @@ async def negotiate_version(request: VersionNegotiateRequest) -> VersionNegotiat
                             "code": "VERSION_OUTDATED",
                             "message": response.message,
                             "client_version": request.client_version,
-                            "min_version": version_util.format_version(min_supported) if min_supported is not None else None,
+                            "min_version": version_util.format_version(min_supported)
+                            if min_supported is not None
+                            else None,
                             "server_version": version_util.current_string(),
                             "update_url": _update_url,
                         }
@@ -175,15 +192,17 @@ async def negotiate_version(request: VersionNegotiateRequest) -> VersionNegotiat
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error in negotiate_version business logic: {e}", exc_info=True)
+            logger.error(
+                f"Error in negotiate_version business logic: {e}", exc_info=True
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail={
                     "error": {
                         "code": "INTERNAL_SERVER_ERROR",
-                        "message": f"Failed to negotiate version: {str(e)}"
+                        "message": f"Failed to negotiate version: {str(e)}",
                     }
-                }
+                },
             )
     except HTTPException:
         raise
@@ -191,12 +210,7 @@ async def negotiate_version(request: VersionNegotiateRequest) -> VersionNegotiat
         logger.error(f"Unexpected error in negotiate_version: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "error": {
-                    "code": "INTERNAL_SERVER_ERROR",
-                    "message": str(e)
-                }
-            }
+            detail={"error": {"code": "INTERNAL_SERVER_ERROR", "message": str(e)}},
         )
 
 
@@ -204,10 +218,10 @@ async def negotiate_version(request: VersionNegotiateRequest) -> VersionNegotiat
 async def get_server_status() -> ServerStatusResponse:
     """
     Get current server status.
-    
+
     Returns the server's operational state, version, and any maintenance announcements.
     Clients should poll this endpoint periodically to stay informed of server state changes.
-    
+
     Recommended polling interval: 60 seconds during normal operation,
     5 seconds when state is not 'running'.
     """
@@ -227,11 +241,12 @@ async def get_server_status() -> ServerStatusResponse:
         logger.error(f"Error in get_server_status: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}}
+            detail={"error": {"code": 500, "message": str(e)}},
         )
 
 
 # Internal functions for server state management (called by system/admin)
+
 
 def set_server_state(
     state: ServerState,
@@ -241,7 +256,7 @@ def set_server_state(
 ):
     """
     Set the server state (internal use).
-    
+
     Args:
         state: New server state
         message: Optional maintenance/status message

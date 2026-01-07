@@ -5,11 +5,9 @@ Authentication routes - Register, login, logout endpoints.
 import os
 import sys
 import httpx
-import secrets
 from urllib.parse import urlencode
-from typing import Dict, Any, List, Optional
+from typing import List, Optional
 from fastapi import APIRouter, Request, HTTPException, Depends, Query
-from fastapi.responses import RedirectResponse
 
 import src.api as api
 import utils.logger as logger
@@ -32,6 +30,25 @@ from src.api.schemas.auth import (
     PasswordRequirementsResponse,
 )
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
+
+# Import typed auth exceptions for proper error handling
+from src.core.auth.exceptions import (
+    AuthError,
+    InvalidCredentialsError,
+    AccountLockedError,
+    AccountDisabledError,
+    EmailNotVerifiedError,
+    TokenExpiredError,
+    TokenInvalidError,
+    TwoFactorRequiredError,
+    TwoFactorInvalidError,
+    UserExistsError,
+    UserNotFoundError,
+    WeakPasswordError,
+    InvalidUsernameError,
+    InvalidEmailError,
+    TwoFactorSetupError,
+)
 
 # Import OAuth security module
 from src.core.auth.oauth import (
@@ -79,7 +96,10 @@ def _user_to_response(user) -> UserResponse:
     summary="Register a new user",
     responses={
         400: {"model": ErrorResponse, "description": "Invalid registration data"},
-        401: {"model": ErrorResponse, "description": "Invalid credentials or session expired"},
+        401: {
+            "model": ErrorResponse,
+            "description": "Invalid credentials or session expired",
+        },
         409: {"model": ErrorResponse, "description": "User already exists"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
@@ -87,7 +107,7 @@ def _user_to_response(user) -> UserResponse:
 async def register(request: Request, body: RegisterRequest) -> LoginResponse:
     """
     Register a new user account.
-    
+
     Creates a new user with the provided credentials and returns a session token.
     If alpha registration mode is enabled, automatically grants alpha tier and badge.
     """
@@ -96,69 +116,75 @@ async def register(request: Request, body: RegisterRequest) -> LoginResponse:
         logger.error("Auth module not available")
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Auth module not available"}}
+            detail={"error": {"code": 500, "message": "Auth module not available"}},
         )
 
     ip_address = request.client.host if request.client else None
 
     try:
-        try:
-            user = auth.register(
-                username=body.username,
-                email=body.email,
-                password=body.password,
-                ip_address=ip_address
-            )
-        except Exception as e:
-            exc_name = type(e).__name__
-            if "AlreadyExists" in exc_name or "Exists" in exc_name:
-                logger.warning(f"Registration failed: User '{body.username}' or email '{body.email}' already exists")
-                raise HTTPException(
-                    status_code=409,
-                    detail={"error": {"code": 409, "message": "Username or email already exists"}}
-                )
-            elif "Invalid" in exc_name or "Requirement" in exc_name or "Weak" in exc_name:
-                logger.warning(f"Registration failed for '{body.username}': {e}")
-                raise HTTPException(
-                    status_code=400,
-                    detail={"error": {"code": 400, "message": str(e)}}
-                )
-            raise
-
-        # Apply alpha tester features if enabled
-        features = api.get_features()
-        if features:
-            try:
-                features.apply_new_user_features(user.id)
-            except Exception as fe:
-                logger.debug(f"Failed to apply new user features for user {user.id}: {fe}")
-
-        try:
-            result = auth.login(
-                username=body.username,
-                password=body.password,
-                ip_address=ip_address
-            )
-        except Exception as le:
-            logger.error(f"Auto-login failed after registration for user {user.id}: {le}")
-            raise HTTPException(
-                status_code=401,
-                detail={"error": {"code": 401, "message": "Auto-login failed after registration"}}
-            )
-
-        return LoginResponse(
-            token=result.token,
-            expires_at=getattr(result, "expires_at", None),
-            user=_user_to_response(user)
+        user = auth.register(
+            username=body.username,
+            email=body.email,
+            password=body.password,
+            ip_address=ip_address,
         )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error in register for '{body.username}': {e}", exc_info=True)
+    except UserExistsError:
+        logger.warning(
+            f"Registration failed: User '{body.username}' or email '{body.email}' already exists"
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=409,
+            detail={
+                "error": {
+                    "code": 409,
+                    "message": "Username or email already exists",
+                }
+            },
         )
+    except (InvalidUsernameError, InvalidEmailError, WeakPasswordError) as e:
+        logger.warning(f"Registration failed for '{body.username}': {e}")
+        raise HTTPException(
+            status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+        )
+    except Exception as e:
+        logger.error(
+            f"Unexpected error in register for '{body.username}': {e}", exc_info=True
+        )
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+    # Apply alpha tester features if enabled
+    features = api.get_features()
+    if features:
+        try:
+            features.apply_new_user_features(user.id)
+        except Exception as fe:
+            logger.debug(
+                f"Failed to apply new user features for user {user.id}: {fe}"
+            )
+
+    try:
+        result = auth.login(
+            username=body.username, password=body.password, ip_address=ip_address
+        )
+    except Exception as le:
+        logger.error(
+            f"Auto-login failed after registration for user {user.id}: {le}"
+        )
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "error": {
+                    "code": 401,
+                    "message": "Auto-login failed after registration",
+                }
+            },
+        )
+
+    return LoginResponse(
+        status="success", token=result.token, user=_user_to_response(user)
+    )
 
 
 @router.post(
@@ -167,14 +193,17 @@ async def register(request: Request, body: RegisterRequest) -> LoginResponse:
     summary="User login",
     responses={
         401: {"model": ErrorResponse, "description": "Invalid credentials"},
-        403: {"model": ErrorResponse, "description": "Account locked or email not verified"},
+        403: {
+            "model": ErrorResponse,
+            "description": "Account locked or email not verified",
+        },
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
 async def login(request: Request, body: LoginRequest) -> LoginResponse:
     """
     Authenticate a user.
-    
+
     Returns a session token on success, or a 2FA challenge if enabled.
     """
     auth = api.get_auth()
@@ -182,70 +211,69 @@ async def login(request: Request, body: LoginRequest) -> LoginResponse:
         logger.error("Auth module not available")
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Auth module not available"}}
+            detail={"error": {"code": 500, "message": "Auth module not available"}},
         )
 
     ip_address = request.client.host if request.client else None
     user_agent = request.headers.get("User-Agent")
 
     try:
-        try:
-            result = auth.login(
-                username=body.username,
-                password=body.password,
-                ip_address=ip_address,
-                user_agent=user_agent
-            )
-        except Exception as e:
-            exc_name = type(e).__name__
-            if "Credentials" in exc_name:
-                logger.warning(f"Login failed for '{body.username}': Invalid credentials")
-                raise HTTPException(
-                    status_code=401,
-                    detail={"error": {"code": 401, "message": "Invalid credentials"}}
-                )
-            elif "Locked" in exc_name:
-                logger.warning(f"Login failed for '{body.username}': Account locked")
-                raise HTTPException(
-                    status_code=403,
-                    detail={"error": {"code": 403, "message": str(e)}}
-                )
-            elif "Verified" in exc_name:
-                logger.warning(f"Login failed for '{body.username}': Email not verified")
-                raise HTTPException(
-                    status_code=403,
-                    detail={"error": {"code": 403, "message": str(e)}}
-                )
-            raise
-
-        if result.status.value == "two_factor_required":
-            logger.info(f"2FA challenge issued for user '{body.username}'")
-            return LoginResponse(
-                status="two_factor_required",
-                token=None,
-                user=None,
-                challenge_token=result.challenge_token,
-                methods=result.methods,
-                expires_in=result.expires_in,
-            )
-
-        logger.info(f"User '{body.username}' logged in successfully (ID: {getattr(result.user, 'id', 'unknown')})")
-        return LoginResponse(
-            status="success",
-            token=result.token,
-            user=_user_to_response(result.user) if result.user else None,
-            challenge_token=None,
-            methods=None,
-            expires_in=None,
+        result = auth.login(
+            username=body.username,
+            password=body.password,
+            ip_address=ip_address,
+            user_agent=user_agent,
         )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error in login for '{body.username}': {e}", exc_info=True)
+    except InvalidCredentialsError:
+        logger.warning(
+            f"Login failed for '{body.username}': Invalid credentials"
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid credentials"}},
         )
+    except AccountLockedError as e:
+        logger.warning(f"Login failed for '{body.username}': Account locked")
+        raise HTTPException(
+            status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+        )
+    except (EmailNotVerifiedError, AccountDisabledError) as e:
+        logger.warning(
+            f"Login failed for '{body.username}': {type(e).__name__}"
+        )
+        raise HTTPException(
+            status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+        )
+    except Exception as e:
+        logger.error(
+            f"Unexpected error in login for '{body.username}': {e}", exc_info=True
+        )
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+    if result.status.value == "two_factor_required":
+        logger.info(f"2FA challenge issued for user '{body.username}'")
+        return LoginResponse(
+            status="two_factor_required",
+            token=None,
+            user=None,
+            challenge_token=result.challenge_token,
+            methods=result.methods,
+            expires_in=result.expires_in,
+        )
+
+    logger.info(
+        f"User '{body.username}' logged in successfully (ID: {getattr(result.user, 'id', 'unknown')})"
+    )
+    return LoginResponse(
+        status="success",
+        token=result.token,
+        user=_user_to_response(result.user) if result.user else None,
+        challenge_token=None,
+        methods=None,
+        expires_in=None,
+    )
 
 
 # OAuth Providers Configuration
@@ -275,7 +303,7 @@ OAUTH_PROVIDERS = {
         "scopes": ["openid", "email", "profile", "User.Read"],
         "supports_pkce": True,
         "supports_nonce": True,  # OpenID Connect
-    }
+    },
 }
 
 
@@ -289,42 +317,56 @@ OAUTH_PROVIDERS = {
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def oauth_login_init(request: Request, provider: str, redirect_uri: str) -> OAuthLoginResponse:
+async def oauth_login_init(
+    request: Request, provider: str, redirect_uri: str
+) -> OAuthLoginResponse:
     """
     Initiate an OAuth login flow with secure server-side state management.
-    
+
     Security features:
     - Server-side state storage (CSRF protection)
     - PKCE support for providers that support it
     - Nonce for OpenID Connect providers
     - Rate limiting per IP address
-    
+
     Returns the authorization URL to redirect the user to.
     """
     if provider not in OAUTH_PROVIDERS:
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": f"Unsupported OAuth provider: {provider}"}}
+            detail={
+                "error": {
+                    "code": 400,
+                    "message": f"Unsupported OAuth provider: {provider}",
+                }
+            },
         )
 
     # Get config for provider
     oauth_config = config_util.get("oauth", {}) if config_util else {}
     provider_config = oauth_config.get(provider, {})
-    
+
     client_id = provider_config.get("client_id")
     if not client_id:
         logger.error(f"OAuth client_id not configured for {provider}")
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": f"OAuth not configured for {provider}"}}
+            detail={
+                "error": {
+                    "code": 500,
+                    "message": f"OAuth not configured for {provider}",
+                }
+            },
         )
 
     provider_info = OAUTH_PROVIDERS[provider]
     ip_address = request.client.host if request.client else None
-    
+
     # Check if PKCE is enabled in config (default: True for supported providers)
-    pkce_enabled = oauth_config.get("pkce_enabled", True) and provider_info.get("supports_pkce", False)
-    
+    pkce_enabled = oauth_config.get("pkce_enabled", True) and provider_info.get(
+        "supports_pkce", False
+    )
+
     # Generate PKCE pair if enabled, using config for parameters
     pkce_challenge = None
     code_verifier = None
@@ -333,7 +375,7 @@ async def oauth_login_init(request: Request, provider: str, redirect_uri: str) -
         pkce = generate_pkce_pair(config=pkce_config)
         pkce_challenge = pkce.code_challenge
         code_verifier = pkce.code_verifier
-    
+
     # Create server-side state with optional nonce for OIDC providers
     include_nonce = provider_info.get("supports_nonce", False)
     oauth_state = create_oauth_state(
@@ -343,15 +385,20 @@ async def oauth_login_init(request: Request, provider: str, redirect_uri: str) -
         pkce_challenge=pkce_challenge,
         ip_address=ip_address,
     )
-    
+
     if not oauth_state:
         # Could be rate limited or state manager not initialized
         logger.warning(f"Failed to create OAuth state for {provider} from {ip_address}")
         raise HTTPException(
             status_code=429,
-            detail={"error": {"code": 429, "message": "Too many pending OAuth requests. Please try again later."}}
+            detail={
+                "error": {
+                    "code": 429,
+                    "message": "Too many pending OAuth requests. Please try again later.",
+                }
+            },
         )
-    
+
     # Build authorization URL parameters
     params = {
         "client_id": client_id,
@@ -360,37 +407,37 @@ async def oauth_login_init(request: Request, provider: str, redirect_uri: str) -
         "scope": " ".join(provider_info["scopes"]),
         "state": oauth_state.state_token,
     }
-    
+
     # Add PKCE parameters if enabled
     if pkce_enabled and pkce_challenge:
         params["code_challenge"] = pkce_challenge
         params["code_challenge_method"] = "S256"
-    
+
     # Add nonce for OIDC providers
     if include_nonce and oauth_state.nonce_value:
         params["nonce"] = oauth_state.nonce_value
-    
+
     # Provider-specific parameters
     if provider == "google":
         params["access_type"] = "offline"
         params["prompt"] = "select_account"
-    
+
     # URL-encode parameters properly
     query_string = urlencode(params)
     auth_url = f"{provider_info['auth_url']}?{query_string}"
-    
+
     logger.info(f"OAuth login initiated for {provider} from {ip_address}")
-    
+
     # Return state token and code_verifier (client needs verifier for token exchange)
-    response = OAuthLoginResponse(url=auth_url, state=oauth_state.state_token)
-    
+    response = OAuthLoginResponse(url=auth_url, state=oauth_state.state_token or "")
+
     # If PKCE is enabled, we need to return the code_verifier to the client
     # The client must store this and send it back during callback
     # We store the challenge server-side, client keeps the verifier
     if code_verifier:
         # Add code_verifier to response - client must include this in callback
         response.code_verifier = code_verifier
-    
+
     return response
 
 
@@ -410,11 +457,13 @@ async def oauth_callback(
     code: str,
     state: str,
     redirect_uri: str,
-    code_verifier: Optional[str] = Query(None, description="PKCE code verifier (required if PKCE was used)"),
+    code_verifier: Optional[str] = Query(
+        None, description="PKCE code verifier (required if PKCE was used)"
+    ),
 ) -> LoginResponse:
     """
     Handle OAuth callback and complete login with secure state verification.
-    
+
     Security features:
     - Server-side state verification (CSRF protection)
     - PKCE verification if enabled
@@ -423,12 +472,20 @@ async def oauth_callback(
     if provider not in OAUTH_PROVIDERS:
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": f"Unsupported OAuth provider: {provider}"}}
+            detail={
+                "error": {
+                    "code": 400,
+                    "message": f"Unsupported OAuth provider: {provider}",
+                }
+            },
         )
 
     auth = api.get_auth()
     if not auth:
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module unavailable"}})
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Auth module unavailable"}},
+        )
 
     # Verify state server-side (CSRF protection)
     valid, state_record, error_msg = verify_oauth_state(
@@ -436,30 +493,43 @@ async def oauth_callback(
         provider=provider,
         redirect_uri=redirect_uri,
     )
-    
+
     if not valid:
         logger.warning(f"OAuth state verification failed for {provider}: {error_msg}")
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": f"Security verification failed: {error_msg}"}}
+            detail={
+                "error": {
+                    "code": 400,
+                    "message": f"Security verification failed: {error_msg}",
+                }
+            },
         )
-    
+
     # Verify PKCE if it was used
-    if state_record.pkce_challenge:
+    if state_record and state_record.pkce_challenge:
         if not code_verifier:
-            logger.warning(f"OAuth PKCE verification failed for {provider}: missing code_verifier")
+            logger.warning(
+                f"OAuth PKCE verification failed for {provider}: missing code_verifier"
+            )
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "PKCE code_verifier required"}}
+                detail={
+                    "error": {"code": 400, "message": "PKCE code_verifier required"}
+                },
             )
         # Get PKCE config for verification
         oauth_config = config_util.get("oauth", {}) if config_util else {}
         pkce_config = oauth_config.get("pkce", {})
-        if not verify_pkce(code_verifier, state_record.pkce_challenge, config=pkce_config):
-            logger.warning(f"OAuth PKCE verification failed for {provider}: invalid code_verifier")
+        if not verify_pkce(
+            code_verifier, state_record.pkce_challenge, config=pkce_config
+        ):
+            logger.warning(
+                f"OAuth PKCE verification failed for {provider}: invalid code_verifier"
+            )
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "PKCE verification failed"}}
+                detail={"error": {"code": 400, "message": "PKCE verification failed"}},
             )
 
     # Get config for provider
@@ -467,9 +537,17 @@ async def oauth_callback(
     provider_config = oauth_config.get(provider, {})
     client_id = provider_config.get("client_id")
     client_secret = provider_config.get("client_secret")
-    
+
     if not client_id or not client_secret:
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": f"OAuth not configured for {provider}"}})
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": {
+                    "code": 500,
+                    "message": f"OAuth not configured for {provider}",
+                }
+            },
+        )
 
     provider_info = OAUTH_PROVIDERS[provider]
 
@@ -482,37 +560,59 @@ async def oauth_callback(
             "grant_type": "authorization_code",
             "redirect_uri": redirect_uri,
         }
-        
+
         # Include PKCE verifier in token exchange if used
-        if code_verifier and state_record.pkce_challenge:
+        if code_verifier and state_record and state_record.pkce_challenge:
             token_data["code_verifier"] = code_verifier
-        
+
         headers = {"Accept": "application/json"}
-        
+
         try:
-            token_resp = await client.post(provider_info["token_url"], data=token_data, headers=headers)
+            token_resp = await client.post(
+                provider_info["token_url"], data=token_data, headers=headers
+            )
             token_resp.raise_for_status()
             token_result = token_resp.json()
             access_token = token_result.get("access_token")
             if not access_token:
-                logger.error(f"Failed to get access token from {provider}: {token_result}")
-                raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Failed to get access token"}})
+                logger.error(
+                    f"Failed to get access token from {provider}: {token_result}"
+                )
+                raise HTTPException(
+                    status_code=401,
+                    detail={
+                        "error": {"code": 401, "message": "Failed to get access token"}
+                    },
+                )
         except httpx.HTTPStatusError as e:
-            logger.error(f"Token exchange failed with {provider}: {e.response.status_code} - {e.response.text}")
-            raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Token exchange failed"}})
+            logger.error(
+                f"Token exchange failed with {provider}: {e.response.status_code} - {e.response.text}"
+            )
+            raise HTTPException(
+                status_code=401,
+                detail={"error": {"code": 401, "message": "Token exchange failed"}},
+            )
         except Exception as e:
             logger.error(f"Error during token exchange with {provider}: {e}")
-            raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Token exchange failed"}})
+            raise HTTPException(
+                status_code=401,
+                detail={"error": {"code": 401, "message": "Token exchange failed"}},
+            )
 
         # 2. Get user info
         user_info_headers = {"Authorization": f"Bearer {access_token}"}
         try:
-            user_info_resp = await client.get(provider_info["user_info_url"], headers=user_info_headers)
+            user_info_resp = await client.get(
+                provider_info["user_info_url"], headers=user_info_headers
+            )
             user_info_resp.raise_for_status()
             user_info = user_info_resp.json()
         except Exception as e:
             logger.error(f"Error fetching user info from {provider}: {e}")
-            raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Failed to fetch user info"}})
+            raise HTTPException(
+                status_code=401,
+                detail={"error": {"code": 401, "message": "Failed to fetch user info"}},
+            )
 
         # 3. Process user info based on provider
         external_id = None
@@ -530,10 +630,15 @@ async def oauth_callback(
             # GitHub might not return email in main user info if private
             if not email:
                 try:
-                    emails_resp = await client.get("https://api.github.com/user/emails", headers=user_info_headers)
+                    emails_resp = await client.get(
+                        "https://api.github.com/user/emails", headers=user_info_headers
+                    )
                     if emails_resp.status_code == 200:
                         emails = emails_resp.json()
-                        primary_email = next((e["email"] for e in emails if e["primary"]), emails[0]["email"] if emails else None)
+                        primary_email = next(
+                            (e["email"] for e in emails if e["primary"]),
+                            emails[0]["email"] if emails else None,
+                        )
                         email = primary_email
                 except Exception:
                     pass
@@ -544,7 +649,10 @@ async def oauth_callback(
 
         if not external_id:
             logger.error(f"Could not identify user from {provider} response")
-            raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Could not identify user"}})
+            raise HTTPException(
+                status_code=401,
+                detail={"error": {"code": 401, "message": "Could not identify user"}},
+            )
 
         # 4. Perform OAuth login via AuthManager
         ip_address = request.client.host if request.client else None
@@ -557,11 +665,13 @@ async def oauth_callback(
                 email=email,
                 username_hint=username_hint,
                 ip_address=ip_address,
-                user_agent=user_agent
+                user_agent=user_agent,
             )
         except Exception as e:
             logger.error(f"OAuth login failed for {provider}:{external_id}: {e}")
-            raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": str(e)}})
+            raise HTTPException(
+                status_code=401, detail={"error": {"code": 401, "message": str(e)}}
+            )
 
         if result.status.value == "two_factor_required":
             return LoginResponse(
@@ -593,7 +703,7 @@ async def oauth_callback(
 async def complete_2fa(body: TwoFactorRequest) -> LoginResponse:
     """
     Complete two-factor authentication.
-    
+
     Validates the 2FA code and returns a session token on success.
     """
     auth = api.get_auth()
@@ -601,39 +711,43 @@ async def complete_2fa(body: TwoFactorRequest) -> LoginResponse:
         logger.error("Auth module not available")
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Auth module not available"}}
+            detail={"error": {"code": 500, "message": "Auth module not available"}},
         )
 
     try:
-        try:
-            result = auth.complete_2fa(body.challenge_token, body.code)
-        except Exception as e:
-            exc_name = type(e).__name__
-            if "Invalid" in exc_name or "Expired" in exc_name:
-                logger.warning(f"2FA completion failed: {e}")
-                raise HTTPException(
-                    status_code=401,
-                    detail={"error": {"code": 401, "message": str(e)}}
-                )
-            raise
-
-        logger.info(f"2FA completed successfully for user ID: {getattr(result.user, 'id', 'unknown')}")
-        return LoginResponse(
-            status="success",
-            token=result.token,
-            user=_user_to_response(result.user) if result.user else None,
-            challenge_token=None,
-            methods=None,
-            expires_in=None,
+        result = auth.complete_2fa(body.challenge_token, body.code)
+    except (TokenInvalidError, TokenExpiredError) as e:
+        logger.warning(f"2FA completion failed: {e}")
+        raise HTTPException(
+            status_code=401, detail={"error": {"code": 401, "message": str(e)}}
         )
-    except HTTPException:
-        raise
+    except TwoFactorInvalidError:
+        logger.warning("2FA completion failed: Invalid code")
+        raise HTTPException(
+            status_code=401, detail={"error": {"code": 401, "message": "Invalid 2FA code"}}
+        )
+    except UserNotFoundError:
+        logger.warning("2FA completion failed: User not found")
+        raise HTTPException(
+            status_code=401, detail={"error": {"code": 401, "message": "Invalid challenge"}}
+        )
     except Exception as e:
         logger.error(f"Unexpected error in complete_2fa: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
+
+    logger.info(
+        f"2FA completed successfully for user ID: {getattr(result.user, 'id', 'unknown')}"
+    )
+    return LoginResponse(
+        status="success",
+        token=result.token,
+        user=_user_to_response(result.user) if result.user else None,
+        challenge_token=None,
+        methods=None,
+        expires_in=None,
+    )
 
 
 @router.post(
@@ -645,10 +759,12 @@ async def complete_2fa(body: TwoFactorRequest) -> LoginResponse:
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def logout(current_user: TokenInfo = Depends(get_current_user)) -> SuccessResponse:
+async def logout(
+    current_user: TokenInfo = Depends(get_current_user),
+) -> SuccessResponse:
     """
     Logout current session.
-    
+
     Revokes the current session token.
     """
     auth = api.get_auth()
@@ -656,15 +772,19 @@ async def logout(current_user: TokenInfo = Depends(get_current_user)) -> Success
         logger.error("Auth module not available")
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Auth module not available"}}
+            detail={"error": {"code": 500, "message": "Auth module not available"}},
         )
 
     if current_user.session_id:
         try:
             auth.revoke_session(current_user.user_id, current_user.session_id)
-            logger.info(f"User {current_user.user_id} logged out session {current_user.session_id}")
+            logger.info(
+                f"User {current_user.user_id} logged out session {current_user.session_id}"
+            )
         except Exception as e:
-            logger.debug(f"Failed to revoke session {current_user.session_id} during logout: {e}")
+            logger.debug(
+                f"Failed to revoke session {current_user.session_id} during logout: {e}"
+            )
 
     return SuccessResponse(success=True)
 
@@ -679,7 +799,9 @@ async def logout(current_user: TokenInfo = Depends(get_current_user)) -> Success
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_2fa_status(current_user: TokenInfo = Depends(get_current_user)) -> TwoFactorStatusResponse:
+async def get_2fa_status(
+    current_user: TokenInfo = Depends(get_current_user),
+) -> TwoFactorStatusResponse:
     """
     Get current 2FA status for the user.
     """
@@ -688,26 +810,29 @@ async def get_2fa_status(current_user: TokenInfo = Depends(get_current_user)) ->
         logger.error("Auth module not available")
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Auth module not available"}}
+            detail={"error": {"code": 500, "message": "Auth module not available"}},
         )
 
     try:
         status = auth.get_2fa_status(current_user.user_id)
         return TwoFactorStatusResponse(
-            enabled=status.enabled,
-            backup_codes_remaining=status.backup_codes_remaining
+            enabled=status.enabled, backup_codes_remaining=status.backup_codes_remaining
+        )
+    except UserNotFoundError:
+        logger.warning(
+            f"2FA status check failed: User {current_user.user_id} not found"
+        )
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "User not found"}},
         )
     except Exception as e:
-        if "NotFound" in type(e).__name__:
-            logger.warning(f"2FA status check failed: User {current_user.user_id} not found")
-            raise HTTPException(
-                status_code=404,
-                detail={"error": {"code": 404, "message": "User not found"}}
-            )
-        logger.error(f"Failed to get 2FA status for user {current_user.user_id}: {e}", exc_info=True)
+        logger.error(
+            f"Failed to get 2FA status for user {current_user.user_id}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -720,7 +845,9 @@ async def get_2fa_status(current_user: TokenInfo = Depends(get_current_user)) ->
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_sessions_list(current_user: TokenInfo = Depends(get_current_user)) -> List[SessionResponse]:
+async def get_sessions_list(
+    current_user: TokenInfo = Depends(get_current_user),
+) -> List[SessionResponse]:
     """
     Get all active sessions for the current user.
     """
@@ -729,7 +856,7 @@ async def get_sessions_list(current_user: TokenInfo = Depends(get_current_user))
         logger.error("Auth module not available")
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Auth module not available"}}
+            detail={"error": {"code": 500, "message": "Auth module not available"}},
         )
 
     try:
@@ -737,20 +864,23 @@ async def get_sessions_list(current_user: TokenInfo = Depends(get_current_user))
         return [
             SessionResponse(
                 id=SnowflakeID(s.id),
+                device_id=getattr(s, "device_id", None),
                 ip_address=getattr(s, "ip_address", None),
                 user_agent=getattr(s, "user_agent", None),
                 created_at=getattr(s, "created_at", 0),
                 expires_at=getattr(s, "expires_at", 0),
                 last_activity=getattr(s, "last_activity", 0),
-                current=s.id == current_user.session_id
+                current=s.id == current_user.session_id,
             )
             for s in sessions
         ]
     except Exception as e:
-        logger.error(f"Failed to list sessions for user {current_user.user_id}: {e}", exc_info=True)
+        logger.error(
+            f"Failed to list sessions for user {current_user.user_id}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -765,7 +895,9 @@ async def get_sessions_list(current_user: TokenInfo = Depends(get_current_user))
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def revoke_session(session_id: str, current_user: TokenInfo = Depends(get_current_user)) -> SuccessResponse:
+async def revoke_session(
+    session_id: str, current_user: TokenInfo = Depends(get_current_user)
+) -> SuccessResponse:
     """
     Revoke a specific session.
     """
@@ -774,39 +906,37 @@ async def revoke_session(session_id: str, current_user: TokenInfo = Depends(get_
         logger.error("Auth module not available")
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Auth module not available"}}
+            detail={"error": {"code": 500, "message": "Auth module not available"}},
         )
 
     try:
-        try:
-            sid = int(session_id)
-        except ValueError:
-            logger.warning(f"Invalid session ID format: {session_id}")
-            raise HTTPException(
-                status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid session ID"}}
-            )
-
-        try:
-            auth.revoke_session(current_user.user_id, sid)
-            logger.info(f"User {current_user.user_id} revoked session {sid}")
-            return SuccessResponse(success=True)
-        except Exception as e:
-            exc_name = type(e).__name__
-            if "NotFound" in exc_name:
-                logger.warning(f"Session {sid} not found for user {current_user.user_id}")
-                raise HTTPException(
-                    status_code=404,
-                    detail={"error": {"code": 404, "message": "Session not found"}}
-                )
-            raise
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to revoke session {session_id} for user {current_user.user_id}: {e}", exc_info=True)
+        sid = int(session_id)
+    except ValueError:
+        logger.warning(f"Invalid session ID format: {session_id}")
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid session ID"}},
+        )
+
+    try:
+        auth.revoke_session(current_user.user_id, sid)
+        logger.info(f"User {current_user.user_id} revoked session {sid}")
+        return SuccessResponse(success=True)
+    except UserNotFoundError:
+        logger.warning(
+            f"Session {sid} not found for user {current_user.user_id}"
+        )
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Session not found"}},
+        )
+    except Exception as e:
+        logger.error(
+            f"Failed to revoke session {session_id} for user {current_user.user_id}: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -815,17 +945,22 @@ async def revoke_session(session_id: str, current_user: TokenInfo = Depends(get_
     response_model=TwoFactorSetupResponse,
     summary="Enable 2FA",
     responses={
-        400: {"model": ErrorResponse, "description": "Password required or invalid data"},
+        400: {
+            "model": ErrorResponse,
+            "description": "Password required or invalid data",
+        },
         401: {"model": ErrorResponse, "description": "Invalid password"},
         404: {"model": ErrorResponse, "description": "User not found"},
         409: {"model": ErrorResponse, "description": "2FA is already enabled"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def enable_2fa(body: TwoFactorSetupRequest, current_user: TokenInfo = Depends(get_current_user)) -> TwoFactorSetupResponse:
+async def enable_2fa(
+    body: TwoFactorSetupRequest, current_user: TokenInfo = Depends(get_current_user)
+) -> TwoFactorSetupResponse:
     """
     Enable 2FA - returns QR code and secret.
-    
+
     Requires password confirmation. Returns setup data for authenticator app.
     """
     auth = api.get_auth()
@@ -833,14 +968,14 @@ async def enable_2fa(body: TwoFactorSetupRequest, current_user: TokenInfo = Depe
         logger.error("Auth module not available")
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Auth module not available"}}
+            detail={"error": {"code": 500, "message": "Auth module not available"}},
         )
 
     password = body.password
     if not password:
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": "Password required"}}
+            detail={"error": {"code": 400, "message": "Password required"}},
         )
 
     try:
@@ -849,30 +984,38 @@ async def enable_2fa(body: TwoFactorSetupRequest, current_user: TokenInfo = Depe
             logger.warning(f"User {current_user.user_id} not found during 2FA enable")
             raise HTTPException(
                 status_code=404,
-                detail={"error": {"code": 404, "message": "User not found"}}
+                detail={"error": {"code": 404, "message": "User not found"}},
             )
 
         # Check if already enabled
         if getattr(user, "totp_enabled", False):
-            logger.warning(f"User {current_user.user_id} attempted to enable 2FA but it is already enabled")
+            logger.warning(
+                f"User {current_user.user_id} attempted to enable 2FA but it is already enabled"
+            )
             raise HTTPException(
                 status_code=409,
-                detail={"error": {"code": 409, "message": "2FA is already enabled"}}
+                detail={"error": {"code": 409, "message": "2FA is already enabled"}},
             )
 
         # Verify password by attempting a login (this validates credentials)
         try:
             auth.login(user.username, password)
-        except Exception as login_err:
-            if "Credentials" in type(login_err).__name__ or "Invalid" in type(login_err).__name__:
-                logger.warning(f"2FA enable failed for user {current_user.user_id}: Invalid password")
-                raise HTTPException(
-                    status_code=401,
-                    detail={"error": {"code": 401, "message": "Invalid password"}}
-                )
-            # If it's a 2FA required error, password was correct
-            if "TwoFactor" not in type(login_err).__name__:
-                raise
+        except InvalidCredentialsError:
+            logger.warning(
+                f"2FA enable failed for user {current_user.user_id}: Invalid password"
+            )
+            raise HTTPException(
+                status_code=401,
+                detail={"error": {"code": 401, "message": "Invalid password"}},
+            )
+        except TwoFactorRequiredError:
+            # Password was correct, 2FA just required - this is fine
+            pass
+        except (AccountLockedError, AccountDisabledError) as e:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": {"code": 403, "message": str(e)}},
+            )
 
         # Setup 2FA - returns TwoFactorSetup object
         result = auth.setup_2fa(current_user.user_id)
@@ -880,26 +1023,27 @@ async def enable_2fa(body: TwoFactorSetupRequest, current_user: TokenInfo = Depe
         return TwoFactorSetupResponse(
             secret=result.secret,
             qr_uri=result.qr_uri,
-            backup_codes=result.backup_codes or []
+            backup_codes=result.backup_codes or [],
         )
     except HTTPException:
         raise
-    except Exception as e:
-        exc_name = type(e).__name__
-        if "Invalid" in exc_name or "Credentials" in exc_name:
-            raise HTTPException(
-                status_code=401,
-                detail={"error": {"code": 401, "message": "Invalid password"}}
-            )
-        elif "Already" in exc_name or "Enabled" in exc_name:
+    except AuthError as e:
+        # Handle any remaining auth errors
+        if "already" in str(e).lower():
             raise HTTPException(
                 status_code=409,
-                detail={"error": {"code": 409, "message": "2FA is already enabled"}}
+                detail={"error": {"code": 409, "message": "2FA is already enabled"}},
             )
-        logger.error(f"Failed to enable 2FA for user {current_user.user_id}: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=400,
+            detail={"error": {"code": 400, "message": str(e)}},
+        )
+    except Exception as e:
+        logger.error(
+            f"Failed to enable 2FA for user {current_user.user_id}: {e}", exc_info=True
+        )
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -908,15 +1052,20 @@ async def enable_2fa(body: TwoFactorSetupRequest, current_user: TokenInfo = Depe
     response_model=SuccessResponse,
     summary="Confirm 2FA setup",
     responses={
-        400: {"model": ErrorResponse, "description": "Valid 6-digit code required or 2FA setup not started"},
+        400: {
+            "model": ErrorResponse,
+            "description": "Valid 6-digit code required or 2FA setup not started",
+        },
         401: {"model": ErrorResponse, "description": "Invalid code"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def confirm_2fa_setup(body: TwoFactorConfirmRequest, current_user: TokenInfo = Depends(get_current_user)) -> SuccessResponse:
+async def confirm_2fa_setup(
+    body: TwoFactorConfirmRequest, current_user: TokenInfo = Depends(get_current_user)
+) -> SuccessResponse:
     """
     Confirm 2FA setup with TOTP code.
-    
+
     Validates the code from authenticator app to complete 2FA setup.
     """
     auth = api.get_auth()
@@ -924,52 +1073,53 @@ async def confirm_2fa_setup(body: TwoFactorConfirmRequest, current_user: TokenIn
         logger.error("Auth module not available")
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Auth module not available"}}
+            detail={"error": {"code": 500, "message": "Auth module not available"}},
         )
 
     code = body.code
     if not code or len(code) != 6:
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": "Valid 6-digit code required"}}
+            detail={"error": {"code": 400, "message": "Valid 6-digit code required"}},
         )
 
     try:
-        # confirm_2fa returns bool
-        try:
-            success = auth.confirm_2fa(current_user.user_id, code)
-        except Exception as e:
-            exc_name = type(e).__name__
-            if "Invalid" in exc_name:
-                logger.warning(f"2FA confirm failed for user {current_user.user_id}: Invalid code")
-                raise HTTPException(
-                    status_code=401,
-                    detail={"error": {"code": 401, "message": "Invalid code"}}
-                )
-            elif "NotFound" in exc_name or "Setup" in exc_name:
-                logger.warning(f"2FA confirm failed for user {current_user.user_id}: Setup not started")
-                raise HTTPException(
-                    status_code=400,
-                    detail={"error": {"code": 400, "message": "2FA setup not started"}}
-                )
-            raise
-
-        if success:
-            logger.info(f"2FA confirmed and enabled for user {current_user.user_id}")
-            return SuccessResponse(success=True)
-        else:
-            logger.warning(f"2FA confirm failed for user {current_user.user_id}: Invalid code (bool return)")
-            raise HTTPException(
-                status_code=401,
-                detail={"error": {"code": 401, "message": "Invalid code"}}
-            )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error in confirm_2fa_setup for user {current_user.user_id}: {e}", exc_info=True)
+        success = auth.confirm_2fa(current_user.user_id, code)
+    except TwoFactorInvalidError:
+        logger.warning(
+            f"2FA confirm failed for user {current_user.user_id}: Invalid code"
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid code"}},
+        )
+    except (UserNotFoundError, TwoFactorSetupError):
+        logger.warning(
+            f"2FA confirm failed for user {current_user.user_id}: Setup not started"
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "2FA setup not started"}},
+        )
+    except Exception as e:
+        logger.error(
+            f"Unexpected error in confirm_2fa_setup for user {current_user.user_id}: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+    if success:
+        logger.info(f"2FA confirmed and enabled for user {current_user.user_id}")
+        return SuccessResponse(success=True)
+    else:
+        logger.warning(
+            f"2FA confirm failed for user {current_user.user_id}: Invalid code"
+        )
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid code"}},
         )
 
 
@@ -978,15 +1128,20 @@ async def confirm_2fa_setup(body: TwoFactorConfirmRequest, current_user: TokenIn
     response_model=SuccessResponse,
     summary="Disable 2FA",
     responses={
-        400: {"model": ErrorResponse, "description": "Password or code required or 2FA not enabled"},
+        400: {
+            "model": ErrorResponse,
+            "description": "Password or code required or 2FA not enabled",
+        },
         401: {"model": ErrorResponse, "description": "Invalid password or code"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def disable_2fa(body: TwoFactorDisableRequest, current_user: TokenInfo = Depends(get_current_user)) -> SuccessResponse:
+async def disable_2fa(
+    body: TwoFactorDisableRequest, current_user: TokenInfo = Depends(get_current_user)
+) -> SuccessResponse:
     """
     Disable 2FA.
-    
+
     Requires password and current 2FA code for security.
     """
     auth = api.get_auth()
@@ -994,7 +1149,7 @@ async def disable_2fa(body: TwoFactorDisableRequest, current_user: TokenInfo = D
         logger.error("Auth module not available")
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Auth module not available"}}
+            detail={"error": {"code": 500, "message": "Auth module not available"}},
         )
 
     password = body.password
@@ -1003,36 +1158,54 @@ async def disable_2fa(body: TwoFactorDisableRequest, current_user: TokenInfo = D
     if not password:
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": "Password required"}}
+            detail={"error": {"code": 400, "message": "Password required"}},
         )
     if not code:
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": "2FA code required"}}
+            detail={"error": {"code": 400, "message": "2FA code required"}},
         )
 
     try:
         auth.disable_2fa(current_user.user_id, password, code)
         logger.info(f"2FA disabled for user {current_user.user_id}")
         return SuccessResponse(success=True)
-    except Exception as e:
-        exc_name = type(e).__name__
-        if "Invalid" in exc_name or "Credentials" in exc_name:
-            logger.warning(f"2FA disable failed for user {current_user.user_id}: Invalid password or code")
-            raise HTTPException(
-                status_code=401,
-                detail={"error": {"code": 401, "message": "Invalid password or code"}}
+    except InvalidCredentialsError:
+        logger.warning(
+            f"2FA disable failed for user {current_user.user_id}: Invalid password"
+        )
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid password"}},
+        )
+    except TwoFactorInvalidError:
+        logger.warning(
+            f"2FA disable failed for user {current_user.user_id}: Invalid 2FA code"
+        )
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid 2FA code"}},
+        )
+    except AuthError as e:
+        if "not enabled" in str(e).lower():
+            logger.warning(
+                f"2FA disable failed for user {current_user.user_id}: 2FA not enabled"
             )
-        elif "NotEnabled" in exc_name or "Disabled" in exc_name:
-            logger.warning(f"2FA disable failed for user {current_user.user_id}: 2FA not enabled")
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "2FA is not enabled"}}
+                detail={"error": {"code": 400, "message": "2FA is not enabled"}},
             )
-        logger.error(f"Unexpected error in disable_2fa for user {current_user.user_id}: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=400,
+            detail={"error": {"code": 400, "message": str(e)}},
+        )
+    except Exception as e:
+        logger.error(
+            f"Unexpected error in disable_2fa for user {current_user.user_id}: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -1045,7 +1218,9 @@ async def disable_2fa(body: TwoFactorDisableRequest, current_user: TokenInfo = D
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def revoke_all_sessions(body: RevokeAllSessionsRequest, current_user: TokenInfo = Depends(get_current_user)) -> RevokeAllSessionsResponse:
+async def revoke_all_sessions(
+    body: RevokeAllSessionsRequest, current_user: TokenInfo = Depends(get_current_user)
+) -> RevokeAllSessionsResponse:
     """
     Revoke all sessions except optionally the current one.
     """
@@ -1054,7 +1229,7 @@ async def revoke_all_sessions(body: RevokeAllSessionsRequest, current_user: Toke
         logger.error("Auth module not available")
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Auth module not available"}}
+            detail={"error": {"code": 500, "message": "Auth module not available"}},
         )
 
     except_current = body.except_current
@@ -1069,15 +1244,21 @@ async def revoke_all_sessions(body: RevokeAllSessionsRequest, current_user: Toke
                 auth.revoke_session(current_user.user_id, s.id)
                 revoked += 1
             except Exception as e:
-                logger.debug(f"Failed to revoke session {s.id} for user {current_user.user_id}: {e}")
-        
-        logger.info(f"User {current_user.user_id} revoked {revoked} sessions (except_current={except_current})")
+                logger.debug(
+                    f"Failed to revoke session {s.id} for user {current_user.user_id}: {e}"
+                )
+
+        logger.info(
+            f"User {current_user.user_id} revoked {revoked} sessions (except_current={except_current})"
+        )
         return RevokeAllSessionsResponse(success=True, revoked_count=revoked)
     except Exception as e:
-        logger.error(f"Failed to revoke all sessions for user {current_user.user_id}: {e}", exc_info=True)
+        logger.error(
+            f"Failed to revoke all sessions for user {current_user.user_id}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -1092,7 +1273,7 @@ async def revoke_all_sessions(body: RevokeAllSessionsRequest, current_user: Toke
 async def get_password_requirements() -> PasswordRequirementsResponse:
     """
     Get server password requirements.
-    
+
     Returns the password policy configuration so clients can validate
     passwords before submission and display requirements to users.
     """
@@ -1111,15 +1292,31 @@ async def get_password_requirements() -> PasswordRequirementsResponse:
             try:
                 # Try to get the nested authentication.password config
                 auth_config = config_util.get("authentication", {})
-                password_config = auth_config.get("password", {}) if isinstance(auth_config, dict) else {}
+                password_config = (
+                    auth_config.get("password", {})
+                    if isinstance(auth_config, dict)
+                    else {}
+                )
 
                 return PasswordRequirementsResponse(
-                    min_length=password_config.get("min_length", defaults["min_length"]),
-                    max_length=password_config.get("max_length", defaults["max_length"]),
-                    require_uppercase=password_config.get("require_uppercase", defaults["require_uppercase"]),
-                    require_lowercase=password_config.get("require_lowercase", defaults["require_lowercase"]),
-                    require_digit=password_config.get("require_digit", defaults["require_digit"]),
-                    require_special=password_config.get("require_special", defaults["require_special"]),
+                    min_length=password_config.get(
+                        "min_length", defaults["min_length"]
+                    ),
+                    max_length=password_config.get(
+                        "max_length", defaults["max_length"]
+                    ),
+                    require_uppercase=password_config.get(
+                        "require_uppercase", defaults["require_uppercase"]
+                    ),
+                    require_lowercase=password_config.get(
+                        "require_lowercase", defaults["require_lowercase"]
+                    ),
+                    require_digit=password_config.get(
+                        "require_digit", defaults["require_digit"]
+                    ),
+                    require_special=password_config.get(
+                        "require_special", defaults["require_special"]
+                    ),
                 )
             except Exception as ce:
                 logger.debug(f"Failed to load password requirements from config: {ce}")
@@ -1128,6 +1325,5 @@ async def get_password_requirements() -> PasswordRequirementsResponse:
     except Exception as e:
         logger.error(f"Failed to get password requirements: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )

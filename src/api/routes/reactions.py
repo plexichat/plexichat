@@ -2,7 +2,7 @@
 Reaction routes - Message reaction endpoints.
 """
 
-from typing import List, Optional, Dict
+from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Depends, Query
 
 import src.api as api
@@ -14,7 +14,9 @@ import utils.logger as logger
 router = APIRouter(tags=["Reactions"])
 
 
-async def _dispatch_reaction_event(event_type: str, user_id: int, message_id: int, channel_id: int, emoji: str):
+async def _dispatch_reaction_event(
+    event_type: str, user_id: int, message_id: int, channel_id: int, emoji: str
+):
     """Helper to dispatch reaction events via WebSocket."""
     try:
         from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
@@ -42,7 +44,11 @@ async def _dispatch_reaction_event(event_type: str, user_id: int, message_id: in
             return
 
         # Create and dispatch the event
-        evt_type = EventType.MESSAGE_REACTION_ADD if event_type == "add" else EventType.MESSAGE_REACTION_REMOVE
+        evt_type = (
+            EventType.MESSAGE_REACTION_ADD
+            if event_type == "add"
+            else EventType.MESSAGE_REACTION_REMOVE
+        )
         event = Event(
             event_type=evt_type,
             data={
@@ -50,7 +56,7 @@ async def _dispatch_reaction_event(event_type: str, user_id: int, message_id: in
                 "message_id": str(message_id),
                 "channel_id": str(channel_id),
                 "emoji": emoji,
-            }
+            },
         )
         await dispatcher.dispatch_event(event, participant_ids)
 
@@ -63,7 +69,10 @@ async def _dispatch_reaction_event(event_type: str, user_id: int, message_id: in
     response_model=SuccessResponse,
     summary="Add reaction",
     responses={
-        400: {"model": ErrorResponse, "description": "Invalid message ID or channel ID or emoji"},
+        400: {
+            "model": ErrorResponse,
+            "description": "Invalid message ID or channel ID or emoji",
+        },
         401: {"model": ErrorResponse, "description": "Not authenticated"},
         403: {"model": ErrorResponse, "description": "Access denied"},
         404: {"model": ErrorResponse, "description": "Message not found"},
@@ -75,11 +84,11 @@ async def add_reaction(
     channel_id: str,
     message_id: str,
     emoji: str,
-    current_user: TokenInfo = Depends(get_current_user)
+    current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
     """
     Add a reaction to a message.
-    
+
     Adds the specified emoji reaction to the message.
     """
     reactions = api.get_reactions()
@@ -87,7 +96,9 @@ async def add_reaction(
         logger.error("Reactions module not available")
         raise HTTPException(
             status_code=503,
-            detail={"error": {"code": 503, "message": "Reactions module not available"}}
+            detail={
+                "error": {"code": 503, "message": "Reactions module not available"}
+            },
         )
 
     try:
@@ -97,7 +108,7 @@ async def add_reaction(
             logger.warning(f"Invalid message ID format for reaction: {message_id}")
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid message ID"}}
+                detail={"error": {"code": 400, "message": "Invalid message ID"}},
             )
 
         try:
@@ -106,18 +117,21 @@ async def add_reaction(
             logger.warning(f"Invalid channel ID format for reaction: {channel_id}")
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid channel ID"}}
+                detail={"error": {"code": 400, "message": "Invalid channel ID"}},
             )
 
         try:
             # URL decode the emoji if needed (handles encoded emojis like %F0%9F%A5%BA)
             import urllib.parse
+
             decoded_emoji = urllib.parse.unquote(emoji)
-            
+
             reactions.add_reaction(current_user.user_id, mid, decoded_emoji)
 
             # Dispatch WebSocket event
-            await _dispatch_reaction_event("add", current_user.user_id, mid, cid, decoded_emoji)
+            await _dispatch_reaction_event(
+                "add", current_user.user_id, mid, cid, decoded_emoji
+            )
 
             return SuccessResponse(success=True)
         except Exception as e:
@@ -125,39 +139,54 @@ async def add_reaction(
             if "NotFound" in exc_name:
                 raise HTTPException(
                     status_code=404,
-                    detail={"error": {"code": 404, "message": "Message not found"}}
+                    detail={"error": {"code": 404, "message": "Message not found"}},
                 )
             elif "Exists" in exc_name:
                 return SuccessResponse(success=True)
             elif "Permission" in exc_name:
-                logger.warning(f"User {current_user.user_id} denied permission to react to message {mid}")
+                logger.warning(
+                    f"User {current_user.user_id} denied permission to react to message {mid}"
+                )
                 raise HTTPException(
-                    status_code=403,
-                    detail={"error": {"code": 403, "message": str(e)}}
+                    status_code=403, detail={"error": {"code": 403, "message": str(e)}}
                 )
             elif "Invalid" in exc_name or "Limit" in exc_name:
                 raise HTTPException(
-                    status_code=400,
-                    detail={"error": {"code": 400, "message": str(e)}}
+                    status_code=400, detail={"error": {"code": 400, "message": str(e)}}
                 )
             elif "Blocked" in exc_name:
                 raise HTTPException(
                     status_code=403,
-                    detail={"error": {"code": 403, "message": "Cannot react to this message"}}
+                    detail={
+                        "error": {
+                            "code": 403,
+                            "message": "Cannot react to this message",
+                        }
+                    },
                 )
-            
-            logger.error(f"Failed to add reaction to message {mid} for user {current_user.user_id}: {e}", exc_info=True)
+
+            logger.error(
+                f"Failed to add reaction to message {mid} for user {current_user.user_id}: {e}",
+                exc_info=True,
+            )
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": f"Failed to add reaction: {str(e)}"}}
+                detail={
+                    "error": {
+                        "code": 500,
+                        "message": f"Failed to add reaction: {str(e)}",
+                    }
+                },
             )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error in add_reaction for message {message_id}: {e}", exc_info=True)
+        logger.error(
+            f"Unexpected error in add_reaction for message {message_id}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -166,7 +195,10 @@ async def add_reaction(
     response_model=SuccessResponse,
     summary="Remove reaction",
     responses={
-        400: {"model": ErrorResponse, "description": "Invalid message ID or channel ID or emoji"},
+        400: {
+            "model": ErrorResponse,
+            "description": "Invalid message ID or channel ID or emoji",
+        },
         401: {"model": ErrorResponse, "description": "Not authenticated"},
         404: {"model": ErrorResponse, "description": "Message not found"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
@@ -177,11 +209,11 @@ async def remove_reaction(
     channel_id: str,
     message_id: str,
     emoji: str,
-    current_user: TokenInfo = Depends(get_current_user)
+    current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
     """
     Remove own reaction from a message.
-    
+
     Removes the specified emoji reaction from the message.
     """
     reactions = api.get_reactions()
@@ -189,56 +221,70 @@ async def remove_reaction(
         logger.error("Reactions module not available")
         raise HTTPException(
             status_code=503,
-            detail={"error": {"code": 503, "message": "Reactions module not available"}}
+            detail={
+                "error": {"code": 503, "message": "Reactions module not available"}
+            },
         )
 
     try:
         try:
             mid = int(message_id)
         except (ValueError, TypeError):
-            logger.warning(f"Invalid message ID format for reaction removal: {message_id}")
+            logger.warning(
+                f"Invalid message ID format for reaction removal: {message_id}"
+            )
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid message ID"}}
+                detail={"error": {"code": 400, "message": "Invalid message ID"}},
             )
 
         try:
             cid = int(channel_id)
         except (ValueError, TypeError):
-            logger.warning(f"Invalid channel ID format for reaction removal: {channel_id}")
+            logger.warning(
+                f"Invalid channel ID format for reaction removal: {channel_id}"
+            )
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid channel ID"}}
+                detail={"error": {"code": 400, "message": "Invalid channel ID"}},
             )
 
         try:
             # URL decode the emoji if needed
             import urllib.parse
+
             decoded_emoji = urllib.parse.unquote(emoji)
-            
+
             reactions.remove_reaction(current_user.user_id, mid, decoded_emoji)
 
             # Dispatch WebSocket event
-            await _dispatch_reaction_event("remove", current_user.user_id, mid, cid, decoded_emoji)
+            await _dispatch_reaction_event(
+                "remove", current_user.user_id, mid, cid, decoded_emoji
+            )
 
             return SuccessResponse(success=True)
         except Exception as e:
             exc_name = type(e).__name__
             if "NotFound" in exc_name:
                 return SuccessResponse(success=True)
-            
-            logger.error(f"Failed to remove reaction from message {mid} for user {current_user.user_id}: {e}", exc_info=True)
+
+            logger.error(
+                f"Failed to remove reaction from message {mid} for user {current_user.user_id}: {e}",
+                exc_info=True,
+            )
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": "Failed to remove reaction"}}
+                detail={"error": {"code": 500, "message": "Failed to remove reaction"}},
             )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error in remove_reaction for message {message_id}: {e}", exc_info=True)
+        logger.error(
+            f"Unexpected error in remove_reaction for message {message_id}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -259,11 +305,11 @@ async def get_reaction_users(
     emoji: str,
     limit: int = Query(default=50, ge=1, le=100),
     after: Optional[str] = Query(default=None),
-    current_user: TokenInfo = Depends(get_current_user)
+    current_user: TokenInfo = Depends(get_current_user),
 ) -> List[ReactionUserResponse]:
     """
     Get users who reacted with an emoji.
-    
+
     Returns a list of users who added the specified reaction.
     """
     reactions = api.get_reactions()
@@ -271,17 +317,21 @@ async def get_reaction_users(
         logger.error("Reactions module not available")
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Reactions module not available"}}
+            detail={
+                "error": {"code": 500, "message": "Reactions module not available"}
+            },
         )
 
     try:
         try:
             mid = int(message_id)
         except (ValueError, TypeError):
-            logger.warning(f"Invalid message ID format for reaction users: {message_id}")
+            logger.warning(
+                f"Invalid message ID format for reaction users: {message_id}"
+            )
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid message ID"}}
+                detail={"error": {"code": 400, "message": "Invalid message ID"}},
             )
 
         try:
@@ -290,7 +340,7 @@ async def get_reaction_users(
             logger.warning(f"Invalid 'after' ID format for reaction users: {after}")
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid after ID"}}
+                detail={"error": {"code": 400, "message": "Invalid after ID"}},
             )
 
         try:
@@ -299,13 +349,12 @@ async def get_reaction_users(
                 message_id=mid,
                 emoji=emoji,
                 limit=limit,
-                after_user_id=after_id
+                after_user_id=after_id,
             )
 
             return [
                 ReactionUserResponse(
-                    user_id=SnowflakeID(u.user_id),
-                    reacted_at=u.reacted_at
+                    user_id=SnowflakeID(u.user_id), reacted_at=u.reacted_at
                 )
                 for u in users
             ]
@@ -314,21 +363,30 @@ async def get_reaction_users(
             if "NotFound" in exc_name:
                 raise HTTPException(
                     status_code=404,
-                    detail={"error": {"code": 404, "message": "Message not found"}}
+                    detail={"error": {"code": 404, "message": "Message not found"}},
                 )
-            
-            logger.error(f"Failed to fetch reaction users for message {mid}: {e}", exc_info=True)
+
+            logger.error(
+                f"Failed to fetch reaction users for message {mid}: {e}", exc_info=True
+            )
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": f"Failed to fetch reaction users: {str(e)}"}}
+                detail={
+                    "error": {
+                        "code": 500,
+                        "message": f"Failed to fetch reaction users: {str(e)}",
+                    }
+                },
             )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error in get_reaction_users for message {message_id}: {e}", exc_info=True)
+        logger.error(
+            f"Unexpected error in get_reaction_users for message {message_id}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -346,11 +404,11 @@ async def get_reaction_users(
 async def get_reactions(
     channel_id: str,
     message_id: str,
-    current_user: TokenInfo = Depends(get_current_user)
+    current_user: TokenInfo = Depends(get_current_user),
 ) -> List[ReactionResponse]:
     """
     Get all reactions on a message.
-    
+
     Returns a list of all emoji reactions with counts.
     """
     reactions = api.get_reactions()
@@ -358,7 +416,9 @@ async def get_reactions(
         logger.error("Reactions module not available")
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Reactions module not available"}}
+            detail={
+                "error": {"code": 500, "message": "Reactions module not available"}
+            },
         )
 
     try:
@@ -368,18 +428,14 @@ async def get_reactions(
             logger.warning(f"Invalid message ID format for reactions: {message_id}")
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid message ID"}}
+                detail={"error": {"code": 400, "message": "Invalid message ID"}},
             )
 
         try:
             result = reactions.get_reactions(current_user.user_id, mid)
 
             return [
-                ReactionResponse(
-                    emoji=r.emoji,
-                    count=r.count,
-                    me=r.me
-                )
+                ReactionResponse(emoji=r.emoji, count=r.count, me=r.me)
                 for r in result.reactions
             ]
         except Exception as e:
@@ -387,19 +443,28 @@ async def get_reactions(
             if "NotFound" in exc_name:
                 raise HTTPException(
                     status_code=404,
-                    detail={"error": {"code": 404, "message": "Message not found"}}
+                    detail={"error": {"code": 404, "message": "Message not found"}},
                 )
-            
-            logger.error(f"Failed to fetch reactions for message {mid}: {e}", exc_info=True)
+
+            logger.error(
+                f"Failed to fetch reactions for message {mid}: {e}", exc_info=True
+            )
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": f"Failed to fetch reactions: {str(e)}"}}
+                detail={
+                    "error": {
+                        "code": 500,
+                        "message": f"Failed to fetch reactions: {str(e)}",
+                    }
+                },
             )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error in get_reactions for message {message_id}: {e}", exc_info=True)
+        logger.error(
+            f"Unexpected error in get_reactions for message {message_id}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )

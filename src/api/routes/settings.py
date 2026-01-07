@@ -2,8 +2,7 @@
 User Settings routes - Cloud-synced key-value store for user preferences.
 """
 
-from fastapi import APIRouter, HTTPException, Depends, status
-from typing import Dict
+from fastapi import APIRouter, HTTPException, Depends
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
@@ -24,10 +23,12 @@ router = APIRouter(tags=["User Settings"])
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_all_settings(current_user: TokenInfo = Depends(get_current_user)) -> SettingsResponse:
+async def get_all_settings(
+    current_user: TokenInfo = Depends(get_current_user),
+) -> SettingsResponse:
     """
     Get all settings for the current user.
-    
+
     Returns all key-value pairs stored for the user.
     """
     settings_module = api.get_settings()
@@ -35,7 +36,7 @@ async def get_all_settings(current_user: TokenInfo = Depends(get_current_user)) 
         logger.error("Settings module not available")
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Settings module not available"}}
+            detail={"error": {"code": 500, "message": "Settings module not available"}},
         )
 
     try:
@@ -47,13 +48,15 @@ async def get_all_settings(current_user: TokenInfo = Depends(get_current_user)) 
         return SettingsResponse(
             settings=settings,
             count=count,
-            limit=100  # Default limit from SettingsConfig
+            limit=100,  # Default limit from SettingsConfig
         )
     except Exception as e:
-        logger.error(f"Failed to get settings for user {current_user.user_id}: {e}", exc_info=True)
+        logger.error(
+            f"Failed to get settings for user {current_user.user_id}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -67,10 +70,12 @@ async def get_all_settings(current_user: TokenInfo = Depends(get_current_user)) 
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_setting(key: str, current_user: TokenInfo = Depends(get_current_user)) -> SettingResponse:
+async def get_setting(
+    key: str, current_user: TokenInfo = Depends(get_current_user)
+) -> SettingResponse:
     """
     Get a specific setting by key.
-    
+
     Returns the setting value and metadata.
     """
     settings_module = api.get_settings()
@@ -78,7 +83,7 @@ async def get_setting(key: str, current_user: TokenInfo = Depends(get_current_us
         logger.error("Settings module not available")
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Settings module not available"}}
+            detail={"error": {"code": 500, "message": "Settings module not available"}},
         )
 
     try:
@@ -90,22 +95,26 @@ async def get_setting(key: str, current_user: TokenInfo = Depends(get_current_us
             logger.warning(f"Setting '{key}' not found for user {current_user.user_id}")
             raise HTTPException(
                 status_code=404,
-                detail={"error": {"code": 404, "message": f"Setting '{key}' not found"}}
+                detail={
+                    "error": {"code": 404, "message": f"Setting '{key}' not found"}
+                },
             )
 
         return SettingResponse(
             key=setting.key,
             value=setting.value,
             created_at=setting.created_at,
-            updated_at=setting.updated_at
+            updated_at=setting.updated_at,
         )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to get setting '{key}' for user {current_user.user_id}: {e}", exc_info=True)
+        logger.error(
+            f"Failed to get setting '{key}' for user {current_user.user_id}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -114,19 +123,20 @@ async def get_setting(key: str, current_user: TokenInfo = Depends(get_current_us
     response_model=SettingResponse,
     summary="Set a setting",
     responses={
-        400: {"model": ErrorResponse, "description": "Limit exceeded or invalid key/value"},
+        400: {
+            "model": ErrorResponse,
+            "description": "Limit exceeded or invalid key/value",
+        },
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
 async def set_setting(
-    key: str,
-    body: SettingValue,
-    current_user: TokenInfo = Depends(get_current_user)
+    key: str, body: SettingValue, current_user: TokenInfo = Depends(get_current_user)
 ) -> SettingResponse:
     """
     Set a setting value.
-    
+
     Creates or updates the setting with the given key.
     """
     settings_module = api.get_settings()
@@ -134,7 +144,7 @@ async def set_setting(
         logger.error("Settings module not available")
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Settings module not available"}}
+            detail={"error": {"code": 500, "message": "Settings module not available"}},
         )
 
     try:
@@ -142,11 +152,15 @@ async def set_setting(
             setting = settings_module.set_setting(current_user.user_id, key, body.value)
         except Exception as e:
             exc_name = type(e).__name__
-            if any(x in exc_name for x in ["LimitExceeded", "KeyTooLong", "ValueTooLong", "KeyReserved"]):
-                logger.warning(f"Failed to set setting '{key}' for user {current_user.user_id}: {e}")
+            if any(
+                x in exc_name
+                for x in ["LimitExceeded", "KeyTooLong", "ValueTooLong", "KeyReserved"]
+            ):
+                logger.warning(
+                    f"Failed to set setting '{key}' for user {current_user.user_id}: {e}"
+                )
                 raise HTTPException(
-                    status_code=400,
-                    detail={"error": {"code": 400, "message": str(e)}}
+                    status_code=400, detail={"error": {"code": 400, "message": str(e)}}
                 )
             raise
 
@@ -156,15 +170,17 @@ async def set_setting(
             key=setting.key,
             value=setting.value,
             created_at=setting.created_at,
-            updated_at=setting.updated_at
+            updated_at=setting.updated_at,
         )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to set setting '{key}' for user {current_user.user_id}: {e}", exc_info=True)
+        logger.error(
+            f"Failed to set setting '{key}' for user {current_user.user_id}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -179,12 +195,11 @@ async def set_setting(
     },
 )
 async def delete_setting(
-    key: str,
-    current_user: TokenInfo = Depends(get_current_user)
+    key: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> SuccessResponse:
     """
     Delete a setting.
-    
+
     Removes the setting with the given key.
     """
     settings_module = api.get_settings()
@@ -192,17 +207,21 @@ async def delete_setting(
         logger.error("Settings module not available")
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Settings module not available"}}
+            detail={"error": {"code": 500, "message": "Settings module not available"}},
         )
 
     try:
         deleted = settings_module.delete_setting(current_user.user_id, key)
 
         if not deleted:
-            logger.warning(f"Setting '{key}' not found for user {current_user.user_id} during delete")
+            logger.warning(
+                f"Setting '{key}' not found for user {current_user.user_id} during delete"
+            )
             raise HTTPException(
                 status_code=404,
-                detail={"error": {"code": 404, "message": f"Setting '{key}' not found"}}
+                detail={
+                    "error": {"code": 404, "message": f"Setting '{key}' not found"}
+                },
             )
 
         logger.info(f"Deleted setting '{key}' for user {current_user.user_id}")
@@ -211,8 +230,10 @@ async def delete_setting(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to delete setting '{key}' for user {current_user.user_id}: {e}", exc_info=True)
+        logger.error(
+            f"Failed to delete setting '{key}' for user {current_user.user_id}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )

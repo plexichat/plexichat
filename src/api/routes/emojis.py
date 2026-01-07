@@ -2,14 +2,17 @@
 Emoji routes - Custom emoji management endpoints.
 """
 
-from typing import List, Optional, Any, Dict
+from typing import List
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
-from pydantic import BaseModel, Field, ConfigDict, field_serializer
 
 import src.api as api
 import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
-from src.api.schemas.emojis import EmojiResponse, EmojiCountsResponse, EmojiUpdateRequest
+from src.api.schemas.emojis import (
+    EmojiResponse,
+    EmojiCountsResponse,
+    EmojiUpdateRequest,
+)
 from src.api.schemas.common import ErrorResponse, SuccessResponse
 
 router = APIRouter(tags=["Emojis"])
@@ -40,12 +43,11 @@ def _emoji_to_response(emoji) -> EmojiResponse:
     },
 )
 async def get_server_emojis(
-    server_id: str,
-    current_user: TokenInfo = Depends(get_current_user)
+    server_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> List[EmojiResponse]:
     """
     Get all custom emojis for a server.
-    
+
     Returns a list of custom emojis available in the server.
     """
     reactions = api.get_reactions()
@@ -55,7 +57,9 @@ async def get_server_emojis(
         logger.error("Reactions module not available")
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Reactions module not available"}}
+            detail={
+                "error": {"code": 500, "message": "Reactions module not available"}
+            },
         )
 
     try:
@@ -65,7 +69,7 @@ async def get_server_emojis(
             logger.warning(f"Invalid server ID format: {server_id}")
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid server ID"}}
+                detail={"error": {"code": 400, "message": "Invalid server ID"}},
             )
 
         # Check if user is member of server
@@ -73,18 +77,32 @@ async def get_server_emojis(
             try:
                 member = servers.get_member(sid, current_user.user_id)
                 if not member:
-                    logger.warning(f"User {current_user.user_id} attempted to access emojis for server {sid} they are not in")
+                    logger.warning(
+                        f"User {current_user.user_id} attempted to access emojis for server {sid} they are not in"
+                    )
                     raise HTTPException(
                         status_code=403,
-                        detail={"error": {"code": 403, "message": "Not a member of this server"}}
+                        detail={
+                            "error": {
+                                "code": 403,
+                                "message": "Not a member of this server",
+                            }
+                        },
                     )
             except HTTPException:
                 raise
             except Exception as e:
-                logger.error(f"Error checking membership for server {sid}: {e}", exc_info=True)
+                logger.error(
+                    f"Error checking membership for server {sid}: {e}", exc_info=True
+                )
                 raise HTTPException(
                     status_code=500,
-                    detail={"error": {"code": 500, "message": "Failed to verify server membership"}}
+                    detail={
+                        "error": {
+                            "code": 500,
+                            "message": "Failed to verify server membership",
+                        }
+                    },
                 )
 
         try:
@@ -94,15 +112,22 @@ async def get_server_emojis(
             logger.error(f"Failed to fetch emojis for server {sid}: {e}", exc_info=True)
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": f"Failed to fetch emojis: {str(e)}"}}
+                detail={
+                    "error": {
+                        "code": 500,
+                        "message": f"Failed to fetch emojis: {str(e)}",
+                    }
+                },
             )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error in get_server_emojis for server {server_id}: {e}", exc_info=True)
+        logger.error(
+            f"Unexpected error in get_server_emojis for server {server_id}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -117,12 +142,11 @@ async def get_server_emojis(
     },
 )
 async def get_emoji_counts(
-    server_id: str,
-    current_user: TokenInfo = Depends(get_current_user)
+    server_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> EmojiCountsResponse:
     """
     Get emoji counts and limits for a server.
-    
+
     Returns current emoji counts and maximum limits.
     """
     reactions = api.get_reactions()
@@ -132,7 +156,9 @@ async def get_emoji_counts(
         logger.error("Reactions module not available")
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Reactions module not available"}}
+            detail={
+                "error": {"code": 500, "message": "Reactions module not available"}
+            },
         )
 
     try:
@@ -142,43 +168,66 @@ async def get_emoji_counts(
             logger.warning(f"Invalid server ID format for counts: {server_id}")
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid server ID"}}
+                detail={"error": {"code": 400, "message": "Invalid server ID"}},
             )
 
         if servers:
             try:
                 member = servers.get_member(sid, current_user.user_id)
                 if not member:
-                    logger.warning(f"User {current_user.user_id} attempted to access emoji counts for server {sid} they are not in")
+                    logger.warning(
+                        f"User {current_user.user_id} attempted to access emoji counts for server {sid} they are not in"
+                    )
                     raise HTTPException(
                         status_code=403,
-                        detail={"error": {"code": 403, "message": "Not a member of this server"}}
+                        detail={
+                            "error": {
+                                "code": 403,
+                                "message": "Not a member of this server",
+                            }
+                        },
                     )
             except HTTPException:
                 raise
             except Exception as e:
-                logger.error(f"Error checking membership for server {sid}: {e}", exc_info=True)
+                logger.error(
+                    f"Error checking membership for server {sid}: {e}", exc_info=True
+                )
                 raise HTTPException(
                     status_code=500,
-                    detail={"error": {"code": 500, "message": "Failed to verify server membership"}}
+                    detail={
+                        "error": {
+                            "code": 500,
+                            "message": "Failed to verify server membership",
+                        }
+                    },
                 )
 
         try:
             counts = reactions.get_emoji_counts(sid)
             return EmojiCountsResponse(**counts)
         except Exception as e:
-            logger.error(f"Failed to fetch emoji counts for server {sid}: {e}", exc_info=True)
+            logger.error(
+                f"Failed to fetch emoji counts for server {sid}: {e}", exc_info=True
+            )
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": f"Failed to fetch emoji counts: {str(e)}"}}
+                detail={
+                    "error": {
+                        "code": 500,
+                        "message": f"Failed to fetch emoji counts: {str(e)}",
+                    }
+                },
             )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error in get_emoji_counts for server {server_id}: {e}", exc_info=True)
+        logger.error(
+            f"Unexpected error in get_emoji_counts for server {server_id}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -193,13 +242,11 @@ async def get_emoji_counts(
     },
 )
 async def get_emoji(
-    server_id: str,
-    emoji_id: str,
-    current_user: TokenInfo = Depends(get_current_user)
+    server_id: str, emoji_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> EmojiResponse:
     """
     Get a specific custom emoji.
-    
+
     Returns emoji details if found and user has access.
     """
     reactions = api.get_reactions()
@@ -208,7 +255,9 @@ async def get_emoji(
         logger.error("Reactions module not available")
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Reactions module not available"}}
+            detail={
+                "error": {"code": 500, "message": "Reactions module not available"}
+            },
         )
 
     try:
@@ -218,7 +267,7 @@ async def get_emoji(
             logger.warning(f"Invalid emoji ID format: {emoji_id}")
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid emoji ID"}}
+                detail={"error": {"code": 400, "message": "Invalid emoji ID"}},
             )
 
         try:
@@ -226,7 +275,7 @@ async def get_emoji(
             if not emoji:
                 raise HTTPException(
                     status_code=404,
-                    detail={"error": {"code": 404, "message": "Emoji not found"}}
+                    detail={"error": {"code": 404, "message": "Emoji not found"}},
                 )
 
             # Verify emoji belongs to the server
@@ -234,7 +283,7 @@ async def get_emoji(
                 logger.warning(f"Emoji {eid} does not belong to server {server_id}")
                 raise HTTPException(
                     status_code=404,
-                    detail={"error": {"code": 404, "message": "Emoji not found"}}
+                    detail={"error": {"code": 404, "message": "Emoji not found"}},
                 )
 
             return _emoji_to_response(emoji)
@@ -244,15 +293,21 @@ async def get_emoji(
             logger.error(f"Failed to fetch emoji {emoji_id}: {e}", exc_info=True)
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": f"Failed to fetch emoji: {str(e)}"}}
+                detail={
+                    "error": {
+                        "code": 500,
+                        "message": f"Failed to fetch emoji: {str(e)}",
+                    }
+                },
             )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error in get_emoji for emoji {emoji_id}: {e}", exc_info=True)
+        logger.error(
+            f"Unexpected error in get_emoji for emoji {emoji_id}: {e}", exc_info=True
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -270,12 +325,14 @@ async def get_emoji(
 async def create_emoji(
     server_id: str,
     name: str = Form(..., description="Emoji name (2-32 alphanumeric characters)"),
-    image: UploadFile = File(..., description="Emoji image (PNG, GIF, or WebP, max 256KB)"),
-    current_user: TokenInfo = Depends(get_current_user)
+    image: UploadFile = File(
+        ..., description="Emoji image (PNG, GIF, or WebP, max 256KB)"
+    ),
+    current_user: TokenInfo = Depends(get_current_user),
 ) -> EmojiResponse:
     """
     Create a custom emoji for a server.
-    
+
     Uploads an image and creates a new custom emoji.
     Requires server.manage permission.
     """
@@ -285,7 +342,9 @@ async def create_emoji(
         logger.error("Reactions module not available")
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Reactions module not available"}}
+            detail={
+                "error": {"code": 500, "message": "Reactions module not available"}
+            },
         )
 
     try:
@@ -295,17 +354,21 @@ async def create_emoji(
             logger.warning(f"Invalid server ID format for emoji creation: {server_id}")
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid server ID"}}
+                detail={"error": {"code": 400, "message": "Invalid server ID"}},
             )
 
         # Read image data
         try:
             image_data = await image.read()
         except Exception as e:
-            logger.error(f"Failed to read image upload for server {sid}: {e}", exc_info=True)
+            logger.error(
+                f"Failed to read image upload for server {sid}: {e}", exc_info=True
+            )
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": f"Failed to read image: {str(e)}"}}
+                detail={
+                    "error": {"code": 400, "message": f"Failed to read image: {str(e)}"}
+                },
             )
 
         content_type = image.content_type or "application/octet-stream"
@@ -322,45 +385,49 @@ async def create_emoji(
         except Exception as e:
             exc_name = type(e).__name__
             if "Permission" in exc_name:
-                logger.warning(f"User {current_user.user_id} denied permission to create emoji in server {sid}")
+                logger.warning(
+                    f"User {current_user.user_id} denied permission to create emoji in server {sid}"
+                )
                 raise HTTPException(
-                    status_code=403,
-                    detail={"error": {"code": 403, "message": str(e)}}
+                    status_code=403, detail={"error": {"code": 403, "message": str(e)}}
                 )
             elif "Limit" in exc_name:
                 logger.warning(f"Emoji limit reached for server {sid}")
                 raise HTTPException(
-                    status_code=400,
-                    detail={"error": {"code": 400, "message": str(e)}}
+                    status_code=400, detail={"error": {"code": 400, "message": str(e)}}
                 )
             elif "Name" in exc_name or "Invalid" in exc_name:
                 raise HTTPException(
-                    status_code=400,
-                    detail={"error": {"code": 400, "message": str(e)}}
+                    status_code=400, detail={"error": {"code": 400, "message": str(e)}}
                 )
             elif "Size" in exc_name or "File" in exc_name:
                 raise HTTPException(
-                    status_code=400,
-                    detail={"error": {"code": 400, "message": str(e)}}
+                    status_code=400, detail={"error": {"code": 400, "message": str(e)}}
                 )
             elif "Exists" in exc_name:
                 raise HTTPException(
-                    status_code=409,
-                    detail={"error": {"code": 409, "message": str(e)}}
+                    status_code=409, detail={"error": {"code": 409, "message": str(e)}}
                 )
-            
+
             logger.error(f"Failed to create emoji in server {sid}: {e}", exc_info=True)
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": f"Failed to create emoji: {str(e)}"}}
+                detail={
+                    "error": {
+                        "code": 500,
+                        "message": f"Failed to create emoji: {str(e)}",
+                    }
+                },
             )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error in create_emoji for server {server_id}: {e}", exc_info=True)
+        logger.error(
+            f"Unexpected error in create_emoji for server {server_id}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -380,11 +447,11 @@ async def update_emoji(
     server_id: str,
     emoji_id: str,
     body: EmojiUpdateRequest,
-    current_user: TokenInfo = Depends(get_current_user)
+    current_user: TokenInfo = Depends(get_current_user),
 ) -> EmojiResponse:
     """
     Update a custom emoji.
-    
+
     Currently only supports renaming the emoji.
     Requires server.manage permission.
     """
@@ -394,7 +461,9 @@ async def update_emoji(
         logger.error("Reactions module not available")
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Reactions module not available"}}
+            detail={
+                "error": {"code": 500, "message": "Reactions module not available"}
+            },
         )
 
     try:
@@ -404,7 +473,7 @@ async def update_emoji(
             logger.warning(f"Invalid emoji ID format for update: {emoji_id}")
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid emoji ID"}}
+                detail={"error": {"code": 400, "message": "Invalid emoji ID"}},
             )
 
         try:
@@ -419,37 +488,37 @@ async def update_emoji(
             if "NotFound" in exc_name:
                 raise HTTPException(
                     status_code=404,
-                    detail={"error": {"code": 404, "message": "Emoji not found"}}
+                    detail={"error": {"code": 404, "message": "Emoji not found"}},
                 )
             elif "Permission" in exc_name:
-                logger.warning(f"User {current_user.user_id} denied permission to update emoji {eid}")
+                logger.warning(
+                    f"User {current_user.user_id} denied permission to update emoji {eid}"
+                )
                 raise HTTPException(
-                    status_code=403,
-                    detail={"error": {"code": 403, "message": str(e)}}
+                    status_code=403, detail={"error": {"code": 403, "message": str(e)}}
                 )
             elif "Name" in exc_name or "Invalid" in exc_name:
                 raise HTTPException(
-                    status_code=400,
-                    detail={"error": {"code": 400, "message": str(e)}}
+                    status_code=400, detail={"error": {"code": 400, "message": str(e)}}
                 )
             elif "Exists" in exc_name:
                 raise HTTPException(
-                    status_code=409,
-                    detail={"error": {"code": 409, "message": str(e)}}
+                    status_code=409, detail={"error": {"code": 409, "message": str(e)}}
                 )
-            
+
             logger.error(f"Failed to update emoji {eid}: {e}", exc_info=True)
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": f"Update failed: {str(e)}"}}
+                detail={"error": {"code": 500, "message": f"Update failed: {str(e)}"}},
             )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error in update_emoji for emoji {emoji_id}: {e}", exc_info=True)
+        logger.error(
+            f"Unexpected error in update_emoji for emoji {emoji_id}: {e}", exc_info=True
+        )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
 
 
@@ -465,13 +534,11 @@ async def update_emoji(
     },
 )
 async def delete_emoji(
-    server_id: str,
-    emoji_id: str,
-    current_user: TokenInfo = Depends(get_current_user)
+    server_id: str, emoji_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> SuccessResponse:
     """
     Delete a custom emoji.
-    
+
     Permanently removes the emoji from the server.
     Requires server.manage permission.
     """
@@ -481,7 +548,9 @@ async def delete_emoji(
         logger.error("Reactions module not available")
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Reactions module not available"}}
+            detail={
+                "error": {"code": 500, "message": "Reactions module not available"}
+            },
         )
 
     try:
@@ -491,7 +560,7 @@ async def delete_emoji(
             logger.warning(f"Invalid emoji ID format for deletion: {emoji_id}")
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid emoji ID"}}
+                detail={"error": {"code": 400, "message": "Invalid emoji ID"}},
             )
 
         try:
@@ -502,26 +571,29 @@ async def delete_emoji(
             if "NotFound" in exc_name:
                 raise HTTPException(
                     status_code=404,
-                    detail={"error": {"code": 404, "message": "Emoji not found"}}
+                    detail={"error": {"code": 404, "message": "Emoji not found"}},
                 )
             elif "Permission" in exc_name:
-                logger.warning(f"User {current_user.user_id} denied permission to delete emoji {eid}")
-                raise HTTPException(
-                    status_code=403,
-                    detail={"error": {"code": 403, "message": str(e)}}
+                logger.warning(
+                    f"User {current_user.user_id} denied permission to delete emoji {eid}"
                 )
-            
+                raise HTTPException(
+                    status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                )
+
             logger.error(f"Failed to delete emoji {eid}: {e}", exc_info=True)
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": f"Deletion failed: {str(e)}"}}
+                detail={
+                    "error": {"code": 500, "message": f"Deletion failed: {str(e)}"}
+                },
             )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error in delete_emoji for emoji {emoji_id}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}}
+        logger.error(
+            f"Unexpected error in delete_emoji for emoji {emoji_id}: {e}", exc_info=True
         )
-
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )

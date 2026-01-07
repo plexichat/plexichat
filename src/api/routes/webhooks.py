@@ -2,12 +2,12 @@
 Webhook routes - Webhook management and execution endpoints.
 """
 
-from typing import Optional, Dict, List
+from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, status
 
 import utils.logger as logger
 import src.api as api
-from src.api.middleware.authentication import get_current_user, get_optional_user, TokenInfo
+from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 from src.api.schemas.webhooks import (
     WebhookCreateRequest,
@@ -35,10 +35,13 @@ def _webhook_to_response(webhook, include_token: bool = False) -> WebhookRespons
             created_at=webhook.created_at,
         )
     except Exception as e:
-        logger.error(f"Failed to convert webhook {getattr(webhook, 'id', 'unknown')} to response: {e}", exc_info=True)
+        logger.error(
+            f"Failed to convert webhook {getattr(webhook, 'id', 'unknown')} to response: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": "Internal server error"}}
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -47,7 +50,10 @@ def _webhook_to_response(webhook, include_token: bool = False) -> WebhookRespons
     response_model=WebhookResponse,
     summary="Create a webhook",
     responses={
-        400: {"model": ErrorResponse, "description": "Invalid ID format or name/avatar too long"},
+        400: {
+            "model": ErrorResponse,
+            "description": "Invalid ID format or name/avatar too long",
+        },
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {"model": ErrorResponse, "description": "Permission denied"},
         404: {"model": ErrorResponse, "description": "Channel not found"},
@@ -55,12 +61,11 @@ def _webhook_to_response(webhook, include_token: bool = False) -> WebhookRespons
     },
 )
 async def create_webhook(
-    body: WebhookCreateRequest,
-    current_user: TokenInfo = Depends(get_current_user)
+    body: WebhookCreateRequest, current_user: TokenInfo = Depends(get_current_user)
 ) -> WebhookResponse:
     """
     Create a new webhook.
-    
+
     Creates a webhook for the specified channel. Returns the token only on creation.
     """
     webhooks = api.get_webhooks()
@@ -68,17 +73,19 @@ async def create_webhook(
         logger.error("Webhooks module not available")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": "Internal server error"}}
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
     try:
         try:
             cid = int(body.channel_id)
         except ValueError:
-            logger.warning(f"User {current_user.user_id} provided invalid channel ID for webhook creation: {body.channel_id}")
+            logger.warning(
+                f"User {current_user.user_id} provided invalid channel ID for webhook creation: {body.channel_id}"
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": {"code": 400, "message": "Invalid channel ID"}}
+                detail={"error": {"code": 400, "message": "Invalid channel ID"}},
             )
 
         try:
@@ -86,49 +93,65 @@ async def create_webhook(
                 user_id=current_user.user_id,
                 channel_id=cid,
                 name=body.name,
-                avatar_url=body.avatar_url
+                avatar_url=body.avatar_url,
             )
-            logger.info(f"User {current_user.user_id} created webhook {webhook.id} in channel {cid}")
+            logger.info(
+                f"User {current_user.user_id} created webhook {webhook.id} in channel {cid}"
+            )
             return _webhook_to_response(webhook, include_token=True)
         except Exception as e:
             exc_name = type(e).__name__
             if "NotFound" in exc_name:
-                logger.warning(f"Channel {cid} not found for webhook creation by user {current_user.user_id}")
+                logger.warning(
+                    f"Channel {cid} not found for webhook creation by user {current_user.user_id}"
+                )
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail={"error": {"code": 404, "message": "Channel not found"}}
+                    detail={"error": {"code": 404, "message": "Channel not found"}},
                 )
             elif "Permission" in exc_name:
-                logger.warning(f"Permission denied for user {current_user.user_id} creating webhook in channel {cid}: {e}")
+                logger.warning(
+                    f"Permission denied for user {current_user.user_id} creating webhook in channel {cid}: {e}"
+                )
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail={"error": {"code": 403, "message": str(e)}}
+                    detail={"error": {"code": 403, "message": str(e)}},
                 )
             elif "Limit" in exc_name:
-                logger.warning(f"Webhook limit reached for channel {cid} (user: {current_user.user_id})")
+                logger.warning(
+                    f"Webhook limit reached for channel {cid} (user: {current_user.user_id})"
+                )
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={"error": {"code": 400, "message": str(e)}}
+                    detail={"error": {"code": 400, "message": str(e)}},
                 )
             elif "Name" in exc_name or "Avatar" in exc_name:
-                logger.warning(f"Invalid name/avatar for webhook creation in channel {cid} (user: {current_user.user_id}): {e}")
+                logger.warning(
+                    f"Invalid name/avatar for webhook creation in channel {cid} (user: {current_user.user_id}): {e}"
+                )
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={"error": {"code": 400, "message": str(e)}}
+                    detail={"error": {"code": 400, "message": str(e)}},
                 )
-            
-            logger.error(f"Unexpected error in create_webhook for channel {cid} by user {current_user.user_id}: {e}", exc_info=True)
+
+            logger.error(
+                f"Unexpected error in create_webhook for channel {cid} by user {current_user.user_id}: {e}",
+                exc_info=True,
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={"error": {"code": 500, "message": "Internal server error"}}
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected top-level error in create_webhook for user {current_user.user_id}: {e}", exc_info=True)
+        logger.error(
+            f"Unexpected top-level error in create_webhook for user {current_user.user_id}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": "Internal server error"}}
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -144,12 +167,11 @@ async def create_webhook(
     },
 )
 async def get_webhook(
-    webhook_id: str,
-    current_user: TokenInfo = Depends(get_current_user)
+    webhook_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> WebhookResponse:
     """
     Get webhook by ID.
-    
+
     Returns webhook information without the token.
     """
     webhooks = api.get_webhooks()
@@ -157,43 +179,53 @@ async def get_webhook(
         logger.error("Webhooks module not available")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": "Internal server error"}}
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
     try:
         try:
             wid = int(webhook_id)
         except ValueError:
-            logger.warning(f"User {current_user.user_id} provided invalid webhook ID: {webhook_id}")
+            logger.warning(
+                f"User {current_user.user_id} provided invalid webhook ID: {webhook_id}"
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": {"code": 400, "message": "Invalid webhook ID"}}
+                detail={"error": {"code": 400, "message": "Invalid webhook ID"}},
             )
 
         try:
             webhook = webhooks.get_webhook(wid, current_user.user_id)
             if not webhook:
-                logger.warning(f"Webhook {wid} not found for user {current_user.user_id}")
+                logger.warning(
+                    f"Webhook {wid} not found for user {current_user.user_id}"
+                )
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail={"error": {"code": 404, "message": "Webhook not found"}}
+                    detail={"error": {"code": 404, "message": "Webhook not found"}},
                 )
             return _webhook_to_response(webhook)
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error fetching webhook {wid} for user {current_user.user_id}: {e}", exc_info=True)
+            logger.error(
+                f"Error fetching webhook {wid} for user {current_user.user_id}: {e}",
+                exc_info=True,
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={"error": {"code": 500, "message": "Internal server error"}}
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected top-level error in get_webhook for user {current_user.user_id}: {e}", exc_info=True)
+        logger.error(
+            f"Unexpected top-level error in get_webhook for user {current_user.user_id}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": "Internal server error"}}
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -202,7 +234,10 @@ async def get_webhook(
     response_model=WebhookResponse,
     summary="Update a webhook",
     responses={
-        400: {"model": ErrorResponse, "description": "Invalid webhook ID or name too long"},
+        400: {
+            "model": ErrorResponse,
+            "description": "Invalid webhook ID or name too long",
+        },
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {"model": ErrorResponse, "description": "Permission denied"},
         404: {"model": ErrorResponse, "description": "Webhook or channel not found"},
@@ -212,11 +247,11 @@ async def get_webhook(
 async def update_webhook(
     webhook_id: str,
     body: WebhookUpdateRequest,
-    current_user: TokenInfo = Depends(get_current_user)
+    current_user: TokenInfo = Depends(get_current_user),
 ) -> WebhookResponse:
     """
     Update a webhook.
-    
+
     Allows changing name, avatar, or channel.
     """
     webhooks = api.get_webhooks()
@@ -224,17 +259,19 @@ async def update_webhook(
         logger.error("Webhooks module not available")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": "Internal server error"}}
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
     try:
         try:
             wid = int(webhook_id)
         except ValueError:
-            logger.warning(f"User {current_user.user_id} provided invalid webhook ID for update: {webhook_id}")
+            logger.warning(
+                f"User {current_user.user_id} provided invalid webhook ID for update: {webhook_id}"
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": {"code": 400, "message": "Invalid webhook ID"}}
+                detail={"error": {"code": 400, "message": "Invalid webhook ID"}},
             )
 
         try:
@@ -243,43 +280,55 @@ async def update_webhook(
                 webhook_id=wid,
                 name=body.name,
                 avatar_url=body.avatar_url,
-                channel_id=int(body.channel_id) if body.channel_id else None
+                channel_id=int(body.channel_id) if body.channel_id else None,
             )
             logger.info(f"User {current_user.user_id} updated webhook {wid}")
             return _webhook_to_response(webhook)
         except Exception as e:
             exc_name = type(e).__name__
             if "NotFound" in exc_name:
-                logger.warning(f"Webhook or channel not found during update of {wid} by user {current_user.user_id}: {e}")
+                logger.warning(
+                    f"Webhook or channel not found during update of {wid} by user {current_user.user_id}: {e}"
+                )
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail={"error": {"code": 404, "message": str(e)}}
+                    detail={"error": {"code": 404, "message": str(e)}},
                 )
             elif "Permission" in exc_name:
-                logger.warning(f"Permission denied for user {current_user.user_id} updating webhook {wid}: {e}")
+                logger.warning(
+                    f"Permission denied for user {current_user.user_id} updating webhook {wid}: {e}"
+                )
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail={"error": {"code": 403, "message": str(e)}}
+                    detail={"error": {"code": 403, "message": str(e)}},
                 )
             elif "Name" in exc_name or "Avatar" in exc_name:
-                logger.warning(f"Invalid name/avatar for webhook update {wid} by user {current_user.user_id}: {e}")
+                logger.warning(
+                    f"Invalid name/avatar for webhook update {wid} by user {current_user.user_id}: {e}"
+                )
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={"error": {"code": 400, "message": str(e)}}
+                    detail={"error": {"code": 400, "message": str(e)}},
                 )
-            
-            logger.error(f"Unexpected error in update_webhook for {wid} by user {current_user.user_id}: {e}", exc_info=True)
+
+            logger.error(
+                f"Unexpected error in update_webhook for {wid} by user {current_user.user_id}: {e}",
+                exc_info=True,
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={"error": {"code": 500, "message": "Internal server error"}}
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected top-level error in update_webhook for user {current_user.user_id}: {e}", exc_info=True)
+        logger.error(
+            f"Unexpected top-level error in update_webhook for user {current_user.user_id}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": "Internal server error"}}
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -296,8 +345,7 @@ async def update_webhook(
     },
 )
 async def delete_webhook(
-    webhook_id: str,
-    current_user: TokenInfo = Depends(get_current_user)
+    webhook_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> SuccessResponse:
     """
     Delete a webhook.
@@ -307,17 +355,19 @@ async def delete_webhook(
         logger.error("Webhooks module not available")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": "Internal server error"}}
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
     try:
         try:
             wid = int(webhook_id)
         except ValueError:
-            logger.warning(f"User {current_user.user_id} provided invalid webhook ID for deletion: {webhook_id}")
+            logger.warning(
+                f"User {current_user.user_id} provided invalid webhook ID for deletion: {webhook_id}"
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": {"code": 400, "message": "Invalid webhook ID"}}
+                detail={"error": {"code": 400, "message": "Invalid webhook ID"}},
             )
 
         try:
@@ -327,30 +377,40 @@ async def delete_webhook(
         except Exception as e:
             exc_name = type(e).__name__
             if "NotFound" in exc_name:
-                logger.warning(f"Webhook {wid} not found for deletion by user {current_user.user_id}")
+                logger.warning(
+                    f"Webhook {wid} not found for deletion by user {current_user.user_id}"
+                )
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail={"error": {"code": 404, "message": "Webhook not found"}}
+                    detail={"error": {"code": 404, "message": "Webhook not found"}},
                 )
             elif "Permission" in exc_name:
-                logger.warning(f"Permission denied for user {current_user.user_id} deleting webhook {wid}: {e}")
+                logger.warning(
+                    f"Permission denied for user {current_user.user_id} deleting webhook {wid}: {e}"
+                )
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail={"error": {"code": 403, "message": str(e)}}
+                    detail={"error": {"code": 403, "message": str(e)}},
                 )
-            
-            logger.error(f"Unexpected error in delete_webhook for {wid} by user {current_user.user_id}: {e}", exc_info=True)
+
+            logger.error(
+                f"Unexpected error in delete_webhook for {wid} by user {current_user.user_id}: {e}",
+                exc_info=True,
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={"error": {"code": 500, "message": "Internal server error"}}
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected top-level error in delete_webhook for user {current_user.user_id}: {e}", exc_info=True)
+        logger.error(
+            f"Unexpected top-level error in delete_webhook for user {current_user.user_id}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": "Internal server error"}}
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -359,7 +419,10 @@ async def delete_webhook(
     response_model=WebhookMessageResponse,
     summary="Execute a webhook",
     responses={
-        400: {"model": ErrorResponse, "description": "Invalid webhook ID or request body"},
+        400: {
+            "model": ErrorResponse,
+            "description": "Invalid webhook ID or request body",
+        },
         401: {"model": ErrorResponse, "description": "Invalid token"},
         404: {"model": ErrorResponse, "description": "Webhook not found"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
@@ -369,11 +432,11 @@ async def execute_webhook(
     webhook_id: str,
     token: str,
     body: WebhookExecuteRequest,
-    thread_id: Optional[str] = None
+    thread_id: Optional[str] = None,
 ) -> WebhookMessageResponse:
     """
     Execute a webhook.
-    
+
     Sends a message to the webhook's channel using its token.
     """
     webhooks = api.get_webhooks()
@@ -381,7 +444,7 @@ async def execute_webhook(
         logger.error("Webhooks module not available")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": "Internal server error"}}
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
     try:
@@ -389,10 +452,12 @@ async def execute_webhook(
             wid = int(webhook_id)
             tid = int(thread_id) if thread_id else None
         except ValueError:
-            logger.warning(f"Invalid ID format in execute_webhook: webhook_id={webhook_id}, thread_id={thread_id}")
+            logger.warning(
+                f"Invalid ID format in execute_webhook: webhook_id={webhook_id}, thread_id={thread_id}"
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": {"code": 400, "message": "Invalid ID format"}}
+                detail={"error": {"code": 400, "message": "Invalid ID format"}},
             )
 
         try:
@@ -403,9 +468,9 @@ async def execute_webhook(
                 username=body.username,
                 avatar_url=body.avatar_url,
                 embeds=body.embeds,
-                thread_id=tid or (int(body.thread_id) if body.thread_id else None)
+                thread_id=tid or (int(body.thread_id) if body.thread_id else None),
             )
-            
+
             logger.debug(f"Executed webhook {wid}")
             return WebhookMessageResponse(
                 id=SnowflakeID(message.id),
@@ -414,7 +479,7 @@ async def execute_webhook(
                 content=message.content,
                 username=getattr(message, "username", None),
                 avatar_url=getattr(message, "avatar_url", None),
-                created_at=message.created_at
+                created_at=message.created_at,
             )
         except Exception as e:
             exc_name = type(e).__name__
@@ -422,31 +487,38 @@ async def execute_webhook(
                 logger.warning(f"Webhook {wid} not found for execution")
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail={"error": {"code": 404, "message": "Webhook not found"}}
+                    detail={"error": {"code": 404, "message": "Webhook not found"}},
                 )
             elif "InvalidToken" in exc_name:
                 logger.warning(f"Invalid token provided for webhook {wid} execution")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail={"error": {"code": 401, "message": "Invalid webhook token"}}
+                    detail={"error": {"code": 401, "message": "Invalid webhook token"}},
                 )
             elif "Validation" in exc_name or "Empty" in exc_name:
-                logger.warning(f"Validation error during execution of webhook {wid}: {e}")
+                logger.warning(
+                    f"Validation error during execution of webhook {wid}: {e}"
+                )
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={"error": {"code": 400, "message": str(e)}}
+                    detail={"error": {"code": 400, "message": str(e)}},
                 )
-            
-            logger.error(f"Unexpected error in execute_webhook for {wid}: {e}", exc_info=True)
+
+            logger.error(
+                f"Unexpected error in execute_webhook for {wid}: {e}", exc_info=True
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={"error": {"code": 500, "message": "Internal server error"}}
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected top-level error in execute_webhook for {webhook_id}: {e}", exc_info=True)
+        logger.error(
+            f"Unexpected top-level error in execute_webhook for {webhook_id}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": "Internal server error"}}
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
