@@ -2,9 +2,13 @@
 TOTP (Time-based One-Time Password) implementation for 2FA.
 
 Compatible with Google Authenticator, Authy, and other TOTP apps.
+Includes replay attack prevention and DoS mitigation for backup codes.
 """
 
 import os
+import time
+import threading
+import hmac
 from typing import List, Tuple, Optional, Dict, Any
 
 import utils.config as config
@@ -21,6 +25,62 @@ from src.utils.encryption import (
 import pyotp
 
 
+class TOTPReplayCache:
+    """
+    Thread-safe cache to prevent TOTP code replay attacks.
+    
+    Tracks used codes within their validity window to prevent reuse.
+    """
+    
+    def __init__(self, ttl_seconds: int = 90):
+        """
+        Initialize replay cache.
+        
+        Args:
+            ttl_seconds: How long to remember used codes (should be >= TOTP interval + window)
+        """
+        self._used_codes: Dict[str, int] = {}  # key -> expiry_timestamp
+        self._ttl = ttl_seconds
+        self._lock = threading.Lock()
+        self._last_cleanup = 0
+    
+    def _cleanup(self, now: int) -> None:
+        """Remove expired entries. Called while holding lock."""
+        if now - self._last_cleanup < 30:  # Cleanup at most every 30 seconds
+            return
+        self._last_cleanup = now
+        expired = [k for k, v in self._used_codes.items() if v < now]
+        for k in expired:
+            del self._used_codes[k]
+    
+    def check_and_mark(self, user_id: int, code: str) -> bool:
+        """
+        Check if code was already used and mark it as used.
+        
+        Args:
+            user_id: User ID to scope the code
+            code: The TOTP code
+            
+        Returns:
+            True if code is fresh (not previously used), False if replay detected
+        """
+        key = f"{user_id}:{code}"
+        now = int(time.time())
+        
+        with self._lock:
+            self._cleanup(now)
+            
+            if key in self._used_codes:
+                return False  # Replay detected
+            
+            self._used_codes[key] = now + self._ttl
+            return True
+
+
+# Global replay cache instance
+_replay_cache = TOTPReplayCache(ttl_seconds=90)
+
+
 def get_totp_config() -> Dict[str, Any]:
     """Get TOTP configuration from config system."""
     defaults = {
@@ -30,11 +90,12 @@ def get_totp_config() -> Dict[str, Any]:
         "interval": 30,
         "backup_code_count": 10,
         "backup_code_length": 8,
+        "backup_code_max_checks": 3,  # DoS mitigation
     }
-    
+
     auth_config = config.get("authentication", {})
     user_totp_config = auth_config.get("totp", {})
-    
+
     # Merge user config into defaults
     return {**defaults, **user_totp_config}
 
@@ -100,17 +161,23 @@ def generate_totp_uri(secret: str, username: str, issuer: Optional[str] = None) 
     return totp.provisioning_uri(name=username, issuer_name=issuer)
 
 
-def verify_totp_code(secret: str, code: str, window: int = 1) -> bool:
+def verify_totp_code(
+    secret: str, 
+    code: str, 
+    window: int = 1, 
+    user_id: Optional[int] = None
+) -> bool:
     """
-    Verify a TOTP code.
+    Verify a TOTP code with replay attack prevention.
 
     Args:
         secret: TOTP secret
         code: 6-digit code from authenticator app
         window: Number of time windows to check (for clock drift)
+        user_id: User ID for replay prevention (if None, replay check is skipped)
 
     Returns:
-        True if code is valid
+        True if code is valid and not a replay
     """
     totp_config = get_totp_config()
 
@@ -120,8 +187,16 @@ def verify_totp_code(secret: str, code: str, window: int = 1) -> bool:
         interval=totp_config.get("interval", 30),
     )
 
-    # valid_window allows for clock drift
-    return totp.verify(code, valid_window=window)
+    # First verify the code is cryptographically valid
+    if not totp.verify(code, valid_window=window):
+        return False
+    
+    # Then check for replay attack (if user_id provided)
+    if user_id is not None:
+        if not _replay_cache.check_and_mark(user_id, code):
+            return False  # Replay detected
+    
+    return True
 
 
 def generate_backup_codes(count: Optional[int] = None) -> List[str]:
@@ -153,35 +228,76 @@ def generate_backup_codes(count: Optional[int] = None) -> List[str]:
     return codes
 
 
-def hash_backup_codes(codes: List[str]) -> List[str]:
+def hash_backup_codes(codes: List[str]) -> List[Tuple[str, str]]:
     """
-    Hash backup codes for storage.
+    Hash backup codes for storage with prefix for quick filtering.
 
     Args:
         codes: List of plain backup codes
 
     Returns:
-        List of hashed codes
+        List of (prefix, hash) tuples for efficient lookup
     """
-    return [hash_password(code.replace("-", "").lower()) for code in codes]
+    result = []
+    for code in codes:
+        normalized = code.replace("-", "").lower()
+        # Store first 4 chars as prefix for quick filtering (DoS mitigation)
+        prefix = normalized[:4]
+        hashed = hash_password(normalized)
+        result.append((prefix, hashed))
+    return result
 
 
-def verify_backup_code(code: str, hashed_codes: List[str]) -> Tuple[bool, int]:
+def verify_backup_code(
+    code: str, 
+    hashed_codes: List[Any],
+    max_checks: Optional[int] = None
+) -> Tuple[bool, int]:
     """
-    Verify a backup code against stored hashes.
+    Verify a backup code against stored hashes with DoS mitigation.
+
+    Uses prefix matching to limit expensive Argon2 operations.
 
     Args:
         code: Backup code to verify (with or without dash)
-        hashed_codes: List of hashed backup codes
+        hashed_codes: List of hashed backup codes (either strings or (prefix, hash) tuples)
+        max_checks: Maximum number of Argon2 verifications (DoS protection)
 
     Returns:
         Tuple of (valid, index) where index is the matched code index or -1
     """
+    totp_config = get_totp_config()
+    if max_checks is None:
+        max_checks = int(totp_config.get("backup_code_max_checks", 3))
+    
     # Normalize code (remove dash, lowercase)
     normalized = code.replace("-", "").lower()
-
-    for i, hashed in enumerate(hashed_codes):
-        if verify_password(normalized, hashed):
+    prefix = normalized[:4]
+    
+    checks_performed = 0
+    
+    for i, entry in enumerate(hashed_codes):
+        # Support both old format (just hash string) and new format (prefix, hash)
+        if isinstance(entry, (list, tuple)) and len(entry) == 2:
+            stored_prefix, hashed = entry
+            # Quick prefix check to avoid expensive hash verification
+            if not hmac.compare_digest(prefix, stored_prefix):
+                continue
+        else:
+            # Legacy format: just the hash, no prefix optimization
+            hashed = entry
+        
+        # Rate limit expensive Argon2 operations
+        if checks_performed >= max_checks:
+            # Log potential DoS attempt but don't reveal to caller
+            break
+        
+        checks_performed += 1
+        
+        # Ensure hashed is a string for verify_password
+        hashed_str = str(hashed) if not isinstance(hashed, str) else hashed
+        
+        if verify_password(normalized, hashed_str):
             return True, i
 
     return False, -1

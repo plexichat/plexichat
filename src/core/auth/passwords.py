@@ -178,7 +178,7 @@ def validate_email(email: str) -> bool:
         True if email format is valid with a recognized TLD
     """
     import utils.logger as logger
-    
+
     # Basic email regex - not exhaustive but catches most issues
     pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.([a-zA-Z]{2,})$"
     match = re.match(pattern, email)

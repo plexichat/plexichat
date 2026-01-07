@@ -38,13 +38,13 @@ DEFAULT_MAX_VERIFIER_LENGTH = 128
 @dataclass
 class PKCEChallenge:
     """PKCE challenge pair for OAuth2 authorization."""
-    
+
     code_verifier: str
     """The secret verifier (43-128 URL-safe chars). Keep this secret until token exchange."""
-    
+
     code_challenge: str
     """The challenge to send with authorization request (BASE64URL(SHA256(verifier)))."""
-    
+
     code_challenge_method: str = "S256"
     """The challenge method. Always S256 (SHA-256) for security."""
 
@@ -55,7 +55,7 @@ def generate_pkce_pair(
 ) -> PKCEChallenge:
     """
     Generate a PKCE code verifier and challenge pair.
-    
+
     Args:
         verifier_length: Length of random bytes for verifier (default from config or 64).
                         Results in ~86 character verifier after base64 encoding.
@@ -64,10 +64,10 @@ def generate_pkce_pair(
                 - verifier_length: Default length of random bytes
                 - min_verifier_length: Minimum verifier length (default 43)
                 - max_verifier_length: Maximum verifier length (default 128)
-    
+
     Returns:
         PKCEChallenge with code_verifier and code_challenge.
-    
+
     Security:
         - Uses os.urandom for cryptographically secure random bytes
         - SHA-256 for challenge derivation (S256 method)
@@ -75,42 +75,49 @@ def generate_pkce_pair(
     """
     # Get configuration values
     cfg = config or {}
-    default_length = cfg.get("verifier_length", DEFAULT_VERIFIER_LENGTH)
-    min_length = cfg.get("min_verifier_length", DEFAULT_MIN_VERIFIER_LENGTH)
-    max_length = cfg.get("max_verifier_length", DEFAULT_MAX_VERIFIER_LENGTH)
-    
+    default_length: int = cfg.get("verifier_length") or DEFAULT_VERIFIER_LENGTH
+    min_length: int = cfg.get("min_verifier_length") or DEFAULT_MIN_VERIFIER_LENGTH
+    max_length: int = cfg.get("max_verifier_length") or DEFAULT_MAX_VERIFIER_LENGTH
+
     # Use provided length or default
-    if verifier_length is None:
-        verifier_length = default_length
-    
+    actual_length: int = (
+        verifier_length if verifier_length is not None else default_length
+    )
+
     # Enforce security bounds
-    if verifier_length < 32:
-        logger.debug(f"PKCE verifier_length {verifier_length} too small, using 32")
-        verifier_length = 32  # Minimum for security
-    if verifier_length > 96:
-        logger.debug(f"PKCE verifier_length {verifier_length} too large, using 96")
-        verifier_length = 96  # Keep verifier under 128 chars
-    
+    if actual_length < 32:
+        logger.debug(f"PKCE verifier_length {actual_length} too small, using 32")
+        actual_length = 32  # Minimum for security
+    if actual_length > 96:
+        logger.debug(f"PKCE verifier_length {actual_length} too large, using 96")
+        actual_length = 96  # Keep verifier under 128 chars
+
     # Generate random bytes and encode as URL-safe base64
-    random_bytes = os.urandom(verifier_length)
+    random_bytes = os.urandom(actual_length)
     code_verifier = base64.urlsafe_b64encode(random_bytes).decode("utf-8").rstrip("=")
-    
+
     # Ensure verifier is within RFC 7636 bounds (43-128 chars)
     if len(code_verifier) < min_length:
         # Pad with more random chars if needed (shouldn't happen with length >= 32)
-        logger.debug(f"PKCE verifier too short ({len(code_verifier)}), padding to {min_length}")
+        logger.debug(
+            f"PKCE verifier too short ({len(code_verifier)}), padding to {min_length}"
+        )
         extra = secrets.token_urlsafe(16)
         code_verifier = code_verifier + extra
-    
+
     if len(code_verifier) > max_length:
-        logger.debug(f"PKCE verifier too long ({len(code_verifier)}), truncating to {max_length}")
+        logger.debug(
+            f"PKCE verifier too long ({len(code_verifier)}), truncating to {max_length}"
+        )
         code_verifier = code_verifier[:max_length]
-    
+
     # Generate challenge: BASE64URL(SHA256(verifier))
     code_challenge = _create_s256_challenge(code_verifier)
-    
-    logger.debug(f"Generated PKCE pair: verifier_len={len(code_verifier)}, challenge_len={len(code_challenge)}")
-    
+
+    logger.debug(
+        f"Generated PKCE pair: verifier_len={len(code_verifier)}, challenge_len={len(code_challenge)}"
+    )
+
     return PKCEChallenge(
         code_verifier=code_verifier,
         code_challenge=code_challenge,
@@ -125,62 +132,64 @@ def verify_pkce(
 ) -> bool:
     """
     Verify a PKCE code verifier against the stored challenge.
-    
+
     Args:
         code_verifier: The verifier sent during token exchange.
         stored_challenge: The challenge that was stored during authorization.
         config: Optional PKCE configuration dict with keys:
                 - min_verifier_length: Minimum verifier length (default 43)
                 - max_verifier_length: Maximum verifier length (default 128)
-    
+
     Returns:
         True if SHA256(code_verifier) matches stored_challenge.
-    
+
     Security:
         Uses constant-time comparison to prevent timing attacks.
     """
     if not code_verifier or not stored_challenge:
         logger.debug("PKCE verification failed: empty verifier or challenge")
         return False
-    
+
     # Get configuration values
     cfg = config or {}
     min_length = cfg.get("min_verifier_length", DEFAULT_MIN_VERIFIER_LENGTH)
     max_length = cfg.get("max_verifier_length", DEFAULT_MAX_VERIFIER_LENGTH)
-    
+
     # Validate verifier length per RFC 7636
     if len(code_verifier) < min_length or len(code_verifier) > max_length:
-        logger.debug(f"PKCE verification failed: verifier length {len(code_verifier)} outside bounds [{min_length}, {max_length}]")
+        logger.debug(
+            f"PKCE verification failed: verifier length {len(code_verifier)} outside bounds [{min_length}, {max_length}]"
+        )
         return False
-    
+
     # Compute challenge from verifier
     computed_challenge = _create_s256_challenge(code_verifier)
-    
+
     # Constant-time comparison
     result = secrets.compare_digest(computed_challenge, stored_challenge)
-    
+
     if not result:
         logger.debug("PKCE verification failed: challenge mismatch")
     else:
         logger.debug("PKCE verification successful")
-    
+
     return result
 
 
 def _create_s256_challenge(code_verifier: str) -> str:
     """
     Create S256 challenge from verifier.
-    
+
     Args:
         code_verifier: The code verifier string.
-    
+
     Returns:
         BASE64URL(SHA256(ASCII(code_verifier))) without padding.
     """
     # SHA-256 hash of the ASCII verifier
     digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
-    
+
     # BASE64URL encode without padding
     challenge = base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
-    
+
     return challenge

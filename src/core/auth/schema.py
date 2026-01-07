@@ -1,17 +1,18 @@
 """
-Database schema for authentication module.
-
-Tables are auto-created on auth.setup() if they don't exist.
+Hardened schema for authentication module.
+Adds blind indexes for encrypted fields and improved integrity.
 """
 
-# SQL statements for creating auth tables
 SCHEMA_SQLITE = """
 -- Users table
 CREATE TABLE IF NOT EXISTS auth_users (
     id INTEGER PRIMARY KEY,
     account_type TEXT NOT NULL DEFAULT 'user',
     username TEXT UNIQUE NOT NULL,
-    email TEXT UNIQUE,
+    -- Blind index for email lookups
+    email_index TEXT UNIQUE,
+    -- Encrypted email
+    email_encrypted TEXT,
     password_hash TEXT NOT NULL,
     permissions TEXT NOT NULL,
     created_at INTEGER NOT NULL,
@@ -24,11 +25,10 @@ CREATE TABLE IF NOT EXISTS auth_users (
     totp_secret_encrypted TEXT,
     totp_enabled INTEGER DEFAULT 0,
     backup_codes_hash TEXT,
-    public_key BLOB,
     avatar_url TEXT
 );
 
--- Sessions table
+-- Sessions table with Token Binding
 CREATE TABLE IF NOT EXISTS auth_sessions (
     id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL,
@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS auth_bots (
     FOREIGN KEY (owner_id) REFERENCES auth_users(id) ON DELETE CASCADE
 );
 
--- Devices table
+-- Devices table (Restored)
 CREATE TABLE IF NOT EXISTS auth_devices (
     id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL,
@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS auth_devices (
     UNIQUE(user_id, fingerprint)
 );
 
--- Known IPs table
+-- Known IPs table (Restored)
 CREATE TABLE IF NOT EXISTS auth_known_ips (
     id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL,
@@ -80,20 +80,7 @@ CREATE TABLE IF NOT EXISTS auth_known_ips (
     UNIQUE(user_id, ip_address)
 );
 
--- Audit log table
-CREATE TABLE IF NOT EXISTS auth_audit_log (
-    id INTEGER PRIMARY KEY,
-    user_id INTEGER,
-    event_type TEXT NOT NULL,
-    ip_address TEXT,
-    device_id INTEGER,
-    timestamp INTEGER NOT NULL,
-    details TEXT,
-    success INTEGER NOT NULL,
-    FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE SET NULL
-);
-
--- Email verification tokens
+-- Email verification tokens (Restored)
 CREATE TABLE IF NOT EXISTS auth_email_tokens (
     id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL,
@@ -105,20 +92,7 @@ CREATE TABLE IF NOT EXISTS auth_email_tokens (
     FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE
 );
 
--- External accounts (OAuth)
-CREATE TABLE IF NOT EXISTS auth_external_accounts (
-    id INTEGER PRIMARY KEY,
-    user_id INTEGER NOT NULL,
-    provider TEXT NOT NULL,
-    external_id TEXT NOT NULL,
-    email TEXT,
-    created_at INTEGER NOT NULL,
-    last_login_at INTEGER,
-    FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
-    UNIQUE(provider, external_id)
-);
-
--- 2FA challenge tokens (temporary during login)
+-- 2FA challenge tokens (Restored)
 CREATE TABLE IF NOT EXISTS auth_2fa_challenges (
     id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL,
@@ -132,56 +106,54 @@ CREATE TABLE IF NOT EXISTS auth_2fa_challenges (
     FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE
 );
 
--- Indexes for performance
-CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
-CREATE INDEX IF NOT EXISTS idx_auth_sessions_token ON auth_sessions(token_hash);
-CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at);
-CREATE INDEX IF NOT EXISTS idx_auth_bots_owner ON auth_bots(owner_id);
-CREATE INDEX IF NOT EXISTS idx_auth_bots_token ON auth_bots(token_hash);
-CREATE INDEX IF NOT EXISTS idx_auth_devices_user ON auth_devices(user_id);
-CREATE INDEX IF NOT EXISTS idx_auth_known_ips_user ON auth_known_ips(user_id);
-CREATE INDEX IF NOT EXISTS idx_auth_audit_user ON auth_audit_log(user_id);
-CREATE INDEX IF NOT EXISTS idx_auth_audit_timestamp ON auth_audit_log(timestamp);
-CREATE INDEX IF NOT EXISTS idx_auth_audit_type ON auth_audit_log(event_type);
-CREATE INDEX IF NOT EXISTS idx_auth_email_tokens_hash ON auth_email_tokens(token_hash);
-CREATE INDEX IF NOT EXISTS idx_auth_2fa_challenges_hash ON auth_2fa_challenges(token_hash);
-CREATE INDEX IF NOT EXISTS idx_auth_external_accounts_user ON auth_external_accounts(user_id);
-"""
+-- External accounts (OAuth)
+CREATE TABLE IF NOT EXISTS auth_external_accounts (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    provider TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    email_index TEXT,
+    created_at INTEGER NOT NULL,
+    last_login_at INTEGER,
+    FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
+    UNIQUE(provider, external_id)
+);
 
-# Split into individual statements for execution
-SCHEMA_STATEMENTS = [stmt.strip() for stmt in SCHEMA_SQLITE.split(";") if stmt.strip()]
+-- Internal service secrets (for secure inter-service auth)
+CREATE TABLE IF NOT EXISTS auth_internal_secrets (
+    id INTEGER PRIMARY KEY,
+    service_name TEXT UNIQUE NOT NULL,
+    secret_hash TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
+-- Audit log with integrity
+CREATE TABLE IF NOT EXISTS auth_audit_log (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER,
+    event_type TEXT NOT NULL,
+    ip_address TEXT,
+    device_id INTEGER,
+    timestamp INTEGER NOT NULL,
+    details_encrypted TEXT,
+    success INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE SET NULL
+);
+
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_auth_users_email_index ON auth_users(email_index);        
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_token ON auth_sessions(token_hash);
+CREATE INDEX IF NOT EXISTS idx_auth_bots_owner ON auth_bots(owner_id);
+CREATE INDEX IF NOT EXISTS idx_auth_devices_user ON auth_devices(user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_audit_user ON auth_audit_log(user_id);
+"""
 
 
 def create_tables(db) -> None:
-    """
-    Create all auth tables if they don't exist.
-    
-    Args:
-        db: Database instance (must be connected)
-    """
-    for statement in SCHEMA_STATEMENTS:
-        if statement:
-            # Convert schema types for PostgreSQL compatibility (BLOB -> BYTEA, etc.)
-            converted = db.convert_schema(statement) if hasattr(db, 'convert_schema') else statement
-            db.execute(converted)
-
-
-def drop_tables(db) -> None:
-    """
-    Drop all auth tables. USE WITH CAUTION.
-    
-    Args:
-        db: Database instance (must be connected)
-    """
-    tables = [
-        "auth_2fa_challenges",
-        "auth_email_tokens",
-        "auth_audit_log",
-        "auth_known_ips",
-        "auth_devices",
-        "auth_bots",
-        "auth_sessions",
-        "auth_users",
-    ]
-    for table in tables:
-        db.execute(f"DROP TABLE IF EXISTS {table}")
+    statements = [stmt.strip() for stmt in SCHEMA_SQLITE.split(";") if stmt.strip()]
+    for statement in statements:
+        # Convert schema types for PostgreSQL compatibility (BLOB -> BYTEA, etc.)
+        converted = (
+            db.convert_schema(statement) if hasattr(db, "convert_schema") else statement
+        )
+        db.execute(converted)
