@@ -12,7 +12,6 @@ from starlette.types import ASGIApp, Receive, Send, Scope
 import traceback
 import src.api as api
 import utils.config as config
-import utils.logger as logger
 
 
 ERROR_MAPPINGS = {
@@ -88,6 +87,7 @@ def _get_cors_headers(request: Request) -> dict:
 
 class ErrorHandlingMiddleware:
     """Middleware to catch all exceptions and return JSON responses."""
+
     def __init__(self, app: ASGIApp):
         self.app = app
 
@@ -101,34 +101,36 @@ class ErrorHandlingMiddleware:
         except Exception as exc:
             # Determine status code and message
             status_code = get_status_code_for_exception(exc)
-            
+
             # Don't leak details for 500 errors in production
             debug = False
             try:
                 debug = config.get("api", {}).get("debug", False)
             except Exception:
                 pass
-                
+
             message = str(exc)
             if status_code == 500 and not debug:
                 message = "Internal server error"
-            
+
             # Check for self-test debug mode
             request = Request(scope, receive)
             include_traceback = False
-            
+
             # Only allow traceback capture if:
             # 1. Config says it's enabled
             # 2. Request is from localhost
             # 3. Secure internal secret is present and matches
             selftest_config = config.get("selftest", {})
-            is_local = request.client.host in ("127.0.0.1", "::1") if request.client else False
-            
+            is_local = (
+                request.client.host in ("127.0.0.1", "::1") if request.client else False
+            )
+
             internal_secret = api.get_internal_secret()
             provided_secret = request.headers.get("X-Plexichat-Internal-Secret")
             is_selftest = (
-                internal_secret is not None 
-                and provided_secret == internal_secret 
+                internal_secret is not None
+                and provided_secret == internal_secret
                 and is_local
             )
 
@@ -138,19 +140,17 @@ class ErrorHandlingMiddleware:
 
             # Get CORS headers
             headers = _get_cors_headers(request)
-            
+
             # Create response content
             content = format_error_response(status_code, message)
             if include_traceback:
                 content["error"]["traceback"] = "".join(traceback.format_exc())
-            
+
             # Create response
             response = JSONResponse(
-                status_code=status_code,
-                content=content,
-                headers=headers
+                status_code=status_code, content=content, headers=headers
             )
-            
+
             await response(scope, receive, send)
 
 
@@ -164,16 +164,20 @@ def setup_exception_handlers(app: FastAPI):
         headers = _get_cors_headers(request)
 
         if isinstance(detail, dict) and "error" in detail:
-            return JSONResponse(status_code=exc.status_code, content=detail, headers=headers)
+            return JSONResponse(
+                status_code=exc.status_code, content=detail, headers=headers
+            )
 
         return JSONResponse(
             status_code=exc.status_code,
             content=format_error_response(exc.status_code, str(detail)),
-            headers=headers
+            headers=headers,
         )
 
     @app.exception_handler(RequestValidationError)
-    async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    async def validation_exception_handler(
+        request: Request, exc: RequestValidationError
+    ):
         """Handle request validation errors."""
         errors = exc.errors()
         headers = _get_cors_headers(request)
@@ -190,7 +194,7 @@ def setup_exception_handlers(app: FastAPI):
         return JSONResponse(
             status_code=400,
             content=format_error_response(400, message),
-            headers=headers
+            headers=headers,
         )
 
     @app.exception_handler(Exception)
@@ -203,5 +207,5 @@ def setup_exception_handlers(app: FastAPI):
         return JSONResponse(
             status_code=status_code,
             content=format_error_response(status_code, message),
-            headers=headers
+            headers=headers,
         )

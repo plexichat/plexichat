@@ -16,23 +16,32 @@ def _get_logger():
     """Get the logger module dynamically to ensure we use the configured instance."""
     try:
         import utils.logger as logger
+
         return logger
     except ImportError:
         return None
 
 
-def _submit_server_telemetry(endpoint: str, method: str, response_time_ms: float, status_code: int):
+def _submit_server_telemetry(
+    endpoint: str, method: str, response_time_ms: float, status_code: int
+):
     """Submit server-side telemetry data."""
     try:
         from src.core import telemetry
+
         if telemetry.is_setup():
-            telemetry.submit_response_times([{
-                "endpoint": endpoint,
-                "method": method,
-                "response_time_ms": response_time_ms,
-                "status_code": status_code,
-                "timestamp": int(time.time() * 1000)
-            }], client_id="server")
+            telemetry.submit_response_times(
+                [
+                    {
+                        "endpoint": endpoint,
+                        "method": method,
+                        "response_time_ms": response_time_ms,
+                        "status_code": status_code,
+                        "timestamp": int(time.time() * 1000),
+                    }
+                ],
+                client_id="server",
+            )
     except Exception:
         pass  # Don't let telemetry errors affect requests
 
@@ -88,7 +97,7 @@ SKIP_PATHS = frozenset(["/api/v1/health", "/health", "/favicon.ico"])
 class LoggingMiddleware:
     """
     ASGI middleware for logging HTTP requests and responses with accurate timing.
-    
+
     This implementation uses raw ASGI to measure the complete request duration,
     including the time to fully send the response body to the client.
     The previous BaseHTTPMiddleware approach only measured until the response
@@ -158,5 +167,7 @@ class LoggingMiddleware:
             # Log error with timing
             end_time = time.perf_counter()
             duration_ms = (end_time - start_time) * 1000
-            _log_error(f"{method} {path} - ERROR - {duration_ms:.2f}ms - {client_ip} - {str(e)}")
+            _log_error(
+                f"{method} {path} - ERROR - {duration_ms:.2f}ms - {client_ip} - {str(e)}"
+            )
             raise

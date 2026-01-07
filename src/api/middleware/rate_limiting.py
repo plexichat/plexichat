@@ -44,24 +44,42 @@ def get_user_info_from_request(request: Request) -> Dict[str, Any]:
             uid = getattr(user, "user_id", None) or getattr(user, "id", None)
             perms = getattr(user, "permissions", {})
             print(f"[DEBUG] RateLimit User found in state: {uid}, perms: {perms}")
-        user_info["user_id"] = getattr(user, "user_id", None) or getattr(user, "id", None)
+        user_info["user_id"] = getattr(user, "user_id", None) or getattr(
+            user, "id", None
+        )
         token_type = getattr(user, "token_type", "")
         user_info["is_bot"] = token_type == "bot"
         permissions = getattr(user, "permissions", {})
         if isinstance(permissions, dict):
             user_info["is_admin"] = (
-                permissions.get("admin.*", False) or
-                permissions.get("*", False) or
-                permissions.get("admin", False)
+                permissions.get("admin.*", False)
+                or permissions.get("*", False)
+                or permissions.get("admin", False)
             )
     elif "pytest" in sys.modules:
         print("[DEBUG] RateLimit: No user found in request state")
+
+    # Secure bypass check
+    import utils.config as config
+    import utils.logger as logger
+
+    bypass_secret = config.get("rate_limiting.bypass_secret")
     internal_header = request.headers.get("X-Internal-Request")
     if internal_header and internal_header.lower() == "true":
-        user_info["is_internal"] = True
+        # Only allow X-Internal-Request if it's actually from an internal IP or has secret
+        # For now, we trust it IF a secret is also provided or we're in dev
+        if bypass_secret and request.headers.get("X-RateLimit-Bypass") == bypass_secret:
+            user_info["is_internal"] = True
+
     bypass_header = request.headers.get("X-RateLimit-Bypass")
-    if bypass_header:
+    if bypass_secret and bypass_header == bypass_secret:
         user_info["is_internal"] = True
+    elif not bypass_secret and bypass_header:
+        # If no secret configured, don't allow bypass via header
+        logger.warning(
+            f"Rate limit bypass attempted without configured secret from {user_info['ip_address']}"
+        )
+
     return user_info
 
 

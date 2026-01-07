@@ -3,267 +3,80 @@ Authentication middleware - Token validation and user extraction.
 """
 
 from typing import Optional
-from fastapi import Request, HTTPException, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import Request, HTTPException
+from fastapi.security import HTTPBearer
 from starlette.types import ASGIApp, Receive, Send, Scope
 
 import src.api as api
 from src.core.auth.models import TokenInfo
 
-
 security = HTTPBearer(auto_error=False)
 
 
 class AuthenticationMiddleware:
-    """ASGI middleware for token validation."""
+    """ASGI middleware for hardened token validation."""
 
     def __init__(self, app: ASGIApp):
-        import sys
-        if "pytest" in sys.modules:
-            print("[DEBUG] AuthMiddleware: initialized")
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        import sys
-        if "pytest" in sys.modules and scope["type"] == "http":
-            print(f"[DEBUG] AuthMiddleware: __call__ for {scope.get('path')}")
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
 
-        # Ensure scope["state"] exists before creating Request
         if "state" not in scope:
             scope["state"] = {}
 
         request = Request(scope, receive)
-        await self._process_auth(request)
-        await self.app(scope, receive, send)
 
-    async def _process_auth(self, request: Request) -> None:
-        """Process authentication header and attach user info to request state."""
-        import sys
-        if "pytest" in sys.modules:
-            print(f"[DEBUG] AuthMiddleware: Headers: {dict(request.headers)}")
-        
-        # Mark request as self-test if secure internal secret matches
-        is_local = request.client.host in ("127.0.0.1", "::1") if request.client else False
+        # 1. Check for Internal Service Authentication (No magic bypasses)
         internal_secret = api.get_internal_secret()
         provided_secret = request.headers.get("X-Plexichat-Internal-Secret")
-        
-        is_selftest = (
-            internal_secret is not None 
-            and provided_secret == internal_secret 
-            and is_local
-        )
-        
-        # Ensure scope["state"] exists and update it directly
-        if "state" not in request.scope:
-            request.scope["state"] = {}
-        
-        request.scope["state"]["is_selftest"] = is_selftest
-        request.state.is_selftest = is_selftest
+        is_internal = internal_secret and provided_secret == internal_secret
 
-        if is_selftest:
-            import utils.logger as logger
-            logger.info(f"Self-test request detected: {request.method} {request.url.path}")
-            # Ensure it's set in the scope that will be passed to the next app
-            request.scope["state"]["is_selftest"] = True
+        scope["state"]["is_internal"] = is_internal
 
-        # Get all Authorization headers
-        auth_headers = request.headers.getlist("Authorization")
-        if not auth_headers:
-            request.state.user = None
-            return
+        # 2. Extract and Verify Bearer Token
+        auth_header = request.headers.get("Authorization")
+        if auth_header:
+            token = self._extract_token(auth_header)
+            if token:
+                auth = api.get_auth()
+                if auth:
+                    try:
+                        ip = request.client.host if request.client else None
+                        ua = request.headers.get("User-Agent")
+                        token_info = auth.verify_token(token, ip, ua)
 
-        # Multiple Authorization headers are a security risk
-        if len(auth_headers) > 1:
-            import sys
-            if "pytest" in sys.modules:
-                print("[DEBUG] AuthMiddleware: multiple Authorization headers rejected")
-            request.state.user = None
-            return
+                        scope["state"]["user"] = token_info
+                    except Exception as e:
+                        scope["state"]["auth_error"] = str(e)
 
-        auth_header = auth_headers[0]
-        token = self._extract_token(auth_header)
-        if not token:
-            request.state.user = None
-            request.state.auth_error = "Invalid token format"
-            return
-
-        auth = api.get_auth()
-        if not auth:
-            import sys
-            if "pytest" in sys.modules:
-                print("[DEBUG] AuthMiddleware: auth module NOT available")
-            request.state.user = None
-            request.state.auth_error = "Authentication module not available"
-            return
-
-        try:
-            ip_address: Optional[str] = request.client.host if request.client else None
-            user_agent: Optional[str] = request.headers.get("User-Agent")
-            
-            token_info = None
-            try:
-                token_info = auth.verify_token(token, ip_address, user_agent, is_selftest=request.state.is_selftest)
-            except Exception as e:
-                # If self-test, we might be using a placeholder token but already have the user in scope from a previous login
-                if request.state.is_selftest and "user" in request.scope.get("state", {}):
-                    token_info = request.scope["state"]["user"]
-                    import sys
-                    if "pytest" in sys.modules:
-                        print(f"[DEBUG] AuthMiddleware: using cached user from scope for self-test")
-                else:
-                    raise e
-
-            if token_info:
-                import sys
-                if "pytest" in sys.modules:
-                    print(f"[DEBUG] AuthMiddleware: verified token for user {token_info.user_id} with permissions: {token_info.permissions}")
-                
-                # Ensure scope["state"] exists and update it directly
-                if "state" not in request.scope:
-                    request.scope["state"] = {}
-                request.scope["state"]["user"] = token_info
-                request.state.user = token_info
-        except Exception as e:
-            import sys
-            if "pytest" in sys.modules:
-                print(f"[DEBUG] AuthMiddleware: verification failed: {e}")
-            request.state.user = None
-            request.state.auth_error = str(e)
+        await self.app(scope, receive, send)
 
     def _extract_token(self, auth_header: str) -> Optional[str]:
-        """Extract token from Authorization header."""
-        import sys
-        # Use exact split to catch extra spaces if required by tests
-        parts = auth_header.split(' ')
-        if "pytest" in sys.modules:
-            print(f"[DEBUG] AuthMiddleware: Extract parts: {parts}")
-        if len(parts) != 2:
-            return None
-
-        scheme = parts[0]
-        if scheme not in ("Bearer", "Bot"):
-            import sys
-            if "pytest" in sys.modules:
-                print(f"[DEBUG] AuthMiddleware: invalid scheme case or type: {scheme}")
-            return None
-
-        return parts[1]
-
-
-async def get_current_user(
-    request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
-) -> TokenInfo:
-    """Dependency to get current authenticated user."""
-    # Check for multiple Authorization headers (security risk)
-    if len(request.headers.getlist("Authorization")) > 1:
-        raise HTTPException(
-            status_code=401,
-            detail={"error": {"code": 401, "message": "Multiple Authorization headers not allowed"}},
-        )
-
-    if hasattr(request.state, "user"):
-        if request.state.user:
-            return request.state.user
-        
-        # If middleware explicitly set user to None, but Authorization header exists,
-        # it means AuthenticationMiddleware already rejected it (e.g. invalid case).
-        auth_headers = request.headers.getlist("Authorization")
-        if auth_headers:
-            error_msg = getattr(request.state, "auth_error", "Invalid authentication credentials")
-            if "module not available" in error_msg:
-                raise HTTPException(
-                    status_code=500,
-                    detail={"error": {"code": 500, "message": error_msg}},
-                )
-            raise HTTPException(
-                status_code=401,
-                detail={"error": {"code": 401, "message": error_msg}},
-            )
-
-    if not credentials:
-        raise HTTPException(
-            status_code=401,
-            detail={"error": {"code": 401, "message": "Authentication required"}},
-        )
-
-    # If we get here, it means AuthenticationMiddleware did not run or did not set state.user.
-    # We should still be strict about case.
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header:
-        parts = auth_header.split(' ')
-        if len(parts) != 2 or parts[0] not in ("Bearer", "Bot"):
-            raise HTTPException(
-                status_code=401,
-                detail={"error": {"code": 401, "message": "Invalid authentication scheme"}},
-            )
-
-    auth = api.get_auth()
-    if not auth:
-        raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": "Auth module not available"}},
-        )
-
-    try:
-        ip_address: Optional[str] = request.client.host if request.client else None
-        user_agent: Optional[str] = request.headers.get("User-Agent")
-        token_info: TokenInfo = auth.verify_token(
-            credentials.credentials, ip_address, user_agent
-        )
-
-        request.state.user = token_info
-        return token_info
-    except Exception as e:
-        error_msg = str(e)
-        if "expired" in error_msg.lower():
-            raise HTTPException(
-                status_code=401,
-                detail={"error": {"code": 401, "message": "Token expired"}},
-            )
-        elif "revoked" in error_msg.lower():
-            raise HTTPException(
-                status_code=401,
-                detail={"error": {"code": 401, "message": "Token revoked"}},
-            )
-        else:
-            raise HTTPException(
-                status_code=401,
-                detail={"error": {"code": 401, "message": "Invalid token"}},
-            )
-
-
-async def get_optional_user(
-    request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
-) -> Optional[TokenInfo]:
-    """Dependency to get current user if authenticated, None otherwise."""
-    # Check for multiple Authorization headers
-    if len(request.headers.getlist("Authorization")) > 1:
+        parts = auth_header.split(" ")
+        if len(parts) == 2 and parts[0] in ("Bearer", "Bot"):
+            return parts[1]
         return None
 
-    if hasattr(request.state, "user") and request.state.user:
-        user: TokenInfo = request.state.user
-        return user
 
-    if not credentials:
-        return None
+async def get_current_user(request: Request) -> TokenInfo:
+    """Dependency for mandatory authentication."""
 
-    auth = api.get_auth()
-    if not auth:
-        return None
+    user = request.scope.get("state", {}).get("user")
 
-    try:
-        ip_address: Optional[str] = request.client.host if request.client else None
-        user_agent: Optional[str] = request.headers.get("User-Agent")
-        token_info: TokenInfo = auth.verify_token(
-            credentials.credentials, ip_address, user_agent
+    if not user:
+        error = request.scope.get("state", {}).get(
+            "auth_error", "Authentication required"
         )
 
-        request.state.user = token_info
-        return token_info
-    except Exception:
-        return None
+        raise HTTPException(status_code=401, detail={"error": {"message": error}})
+
+    return user
+
+
+async def get_optional_user(request: Request) -> Optional[TokenInfo]:
+    """Dependency for optional authentication."""
+
+    return request.scope.get("state", {}).get("user")
