@@ -741,6 +741,9 @@ class PlexiChatServer:
 
         # Use home folder logs dir or fallback to project logs
         log_dir = storage_config.get("logs_dir", os.path.join(project_root, "logs"))
+        
+        # Expand ~ to home directory
+        log_dir = os.path.expanduser(log_dir)
 
         logger.setup(
             log_dir=log_dir,
@@ -1431,6 +1434,7 @@ Examples:
     log_config = config.get("logging", {})
     storage_config = config.get("storage", {})
     log_dir = storage_config.get("logs_dir", os.path.join(project_root, "logs"))
+    log_dir = os.path.expanduser(log_dir)  # Expand ~ to home directory
     
     early_logs.append(("info", f"Initializing logger..."))
     early_logs.append(("info", f"  Log directory: {log_dir}"))
