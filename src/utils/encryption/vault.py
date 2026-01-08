@@ -39,28 +39,32 @@ class HardwareVault:
     def get_kek(self) -> bytes:
         """
         Get the Key Encryption Key (KEK).
-        Derived from TPM hardware or PLEXICHAT_SYSTEM_KEY env var.
+        Derived from PLEXICHAT_SYSTEM_KEY env var, TPM hardware, or machine-local file.
         
-        For single-machine deployments, auto-generates and persists a key.
-        For distributed deployments, requires PLEXICHAT_SYSTEM_KEY to be set.
+        Prioritizes:
+        1. PLEXICHAT_SYSTEM_KEY (Explicitly provided, best for consistency)
+        2. TPM 2.0 (Hardware-bound security)
+        3. Machine-local file (Fallback for simple deployments)
         """
         if self._master_key:
             return self._master_key
 
-        # 1. Try TPM 2.0 (High Priority)
+        # 1. Check for explicit environment key (Highest Priority for consistency)
+        system_key = os.environ.get("PLEXICHAT_SYSTEM_KEY")
+        if system_key:
+            self._master_key = hashlib.sha512(system_key.encode()).digest()[:32]
+            logger.info("Using environment-provided system encryption key")
+            return self._master_key
+
+        # 2. Try TPM 2.0
         if self._tpm_available:
             try:
                 self._master_key = self._get_tpm_key()
                 if self._master_key:
+                    logger.info("Using TPM-derived hardware encryption key")
                     return self._master_key
             except Exception as e:
                 logger.error(f"TPM key retrieval failed: {e}")
-
-        # 2. Check for explicit environment key (required for distributed deployments)
-        system_key = os.environ.get("PLEXICHAT_SYSTEM_KEY")
-        if system_key:
-            self._master_key = hashlib.sha512(system_key.encode()).digest()[:32]
-            return self._master_key
 
         # 3. Single-machine mode: auto-generate and persist a machine-local key
         key_file = self._get_machine_key_path()
@@ -68,7 +72,7 @@ class HardwareVault:
             try:
                 self._master_key = key_file.read_bytes()
                 if len(self._master_key) == 32:
-                    logger.debug("Loaded machine-local encryption key")
+                    logger.debug("Loaded machine-local encryption key from file")
                     return self._master_key
             except Exception as e:
                 logger.error(f"Failed to read machine key: {e}")
