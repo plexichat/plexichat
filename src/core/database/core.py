@@ -162,16 +162,10 @@ class Database:
             logger.error(f"Query failed: {e}")
             # PostgreSQL requires rollback on ANY error before continuing
             if self.type == "postgres":
-                if self._local.in_transaction:
-                    # If we're in a managed transaction, we must ROLLBACK 
-                    # but we also need to inform the transaction manager 
-                    # that the transaction is now invalid.
-                    # For now, we do a full rollback to be safe.
-                    conn.rollback()
-                    self._local.in_transaction = False
-                    self._local.transaction_depth = 0
-                else:
-                    conn.rollback()
+                conn.rollback()
+                # Clear transaction state on error to prevent InFailedSqlTransaction
+                self._local.in_transaction = False
+                self._local.transaction_depth = 0
             elif not self._local.in_transaction:
                 conn.rollback()
             cursor.close()
@@ -271,7 +265,9 @@ class Database:
             query = f"INSERT INTO {safe_table} ({safe_cols}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
 
         cursor = self.execute(query, values)
-        return cursor.rowcount > 0
+        count = cursor.rowcount
+        cursor.close()
+        return count > 0
 
     def upsert(
         self,
@@ -305,7 +301,8 @@ class Database:
         )
         query = f"INSERT INTO {safe_table} ({safe_cols}) VALUES ({placeholders}) ON CONFLICT ({conflict_cols}) DO UPDATE SET {updates}"
 
-        self.execute(query, values)
+        cursor = self.execute(query, values)
+        cursor.close()
 
     def close(self) -> None:
         """Close the thread-local connection or return to pool."""
@@ -331,12 +328,10 @@ class Database:
         except Exception as e:
             logger.error(f"Batch query failed: {e}")
             if self.type == "postgres":
-                if self._local.in_transaction:
-                    conn.rollback()
-                    self._local.in_transaction = False
-                    self._local.transaction_depth = 0
-                else:
-                    conn.rollback()
+                conn.rollback()
+                # Clear transaction state on error to prevent InFailedSqlTransaction
+                self._local.in_transaction = False
+                self._local.transaction_depth = 0
             elif not self._local.in_transaction:
                 conn.rollback()
             cursor.close()
