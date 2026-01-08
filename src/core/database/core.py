@@ -160,7 +160,19 @@ class Database:
             return cursor
         except Exception as e:
             logger.error(f"Query failed: {e}")
-            if not self._local.in_transaction:
+            # PostgreSQL requires rollback on ANY error before continuing
+            if self.type == "postgres":
+                if self._local.in_transaction:
+                    # If we're in a managed transaction, we must ROLLBACK 
+                    # but we also need to inform the transaction manager 
+                    # that the transaction is now invalid.
+                    # For now, we do a full rollback to be safe.
+                    conn.rollback()
+                    self._local.in_transaction = False
+                    self._local.transaction_depth = 0
+                else:
+                    conn.rollback()
+            elif not self._local.in_transaction:
                 conn.rollback()
             cursor.close()
             raise
@@ -318,7 +330,14 @@ class Database:
             return cursor
         except Exception as e:
             logger.error(f"Batch query failed: {e}")
-            if not self._local.in_transaction:
+            if self.type == "postgres":
+                if self._local.in_transaction:
+                    conn.rollback()
+                    self._local.in_transaction = False
+                    self._local.transaction_depth = 0
+                else:
+                    conn.rollback()
+            elif not self._local.in_transaction:
                 conn.rollback()
             cursor.close()
             raise
