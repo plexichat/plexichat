@@ -372,8 +372,8 @@ class AuthManager(BaseManager):
     ) -> Session:
         sid = self._generate_id()
         now = self._get_timestamp()
-        # Increase session lifetime to 30 days
-        expire_hours = self._config.get("sessions.expire_hours", 720) 
+        # Get session lifetime from config (default 30 days)
+        expire_hours = self._config.get("sessions.expire_hours", 720)
         expires = now + (expire_hours * 3600 * 1000)
         token, token_hash = create_session_token(sid)
         self._db.execute(
@@ -1071,11 +1071,16 @@ class AuthManager(BaseManager):
         row = self._db.fetch_one("SELECT * FROM auth_users WHERE id = ?", (user_id,))
         if not row:
             return None
-        email = (
-            self.crypto.decrypt_data(row["email_encrypted"], context=str(user_id))
-            if row.get("email_encrypted")
-            else None
-        )
+            
+        email = None
+        if row.get("email_encrypted"):
+            try:
+                email = self.crypto.decrypt_data(row["email_encrypted"], context=str(user_id))
+            except Exception as e:
+                logger.error(f"Decryption failed for user {user_id}: {e}")
+                # Don't return a magic string that could be treated as a valid email
+                email = None
+
         return User(
             id=row["id"],
             account_type=AccountType(row["account_type"]),
@@ -1100,15 +1105,34 @@ class AuthManager(BaseManager):
     def get_users_bulk(self, user_ids: List[int]) -> Dict[int, User]:
         if not user_ids:
             return {}
+        
         placeholders = ",".join("?" for _ in user_ids)
         rows = self._db.fetch_all(
-            f"SELECT id FROM auth_users WHERE id IN ({placeholders})", tuple(user_ids)
+            f"SELECT * FROM auth_users WHERE id IN ({placeholders})", tuple(user_ids)
         )
+        
         result = {}
-        for r in rows:
-            u = self.get_user(r["id"])
-            if u:
-                result[r["id"]] = u
+        for row in rows:
+            user_id = row["id"]
+            email = None
+            if row.get("email_encrypted"):
+                try:
+                    email = self.crypto.decrypt_data(row["email_encrypted"], context=str(user_id))
+                except Exception as e:
+                    logger.error(f"Decryption failed for user {user_id} in bulk fetch: {e}")
+            
+            result[user_id] = User(
+                id=user_id,
+                account_type=AccountType(row["account_type"]),
+                username=row["username"],
+                email=email,
+                permissions=permissions_from_json(row["permissions"]),
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+                email_verified=bool(row["email_verified"]),
+                account_locked=bool(row["account_locked"]),
+                totp_enabled=bool(row["totp_enabled"]),
+            )
         return result
 
     def grant_permission(self, user_id: int, permission: str) -> bool:

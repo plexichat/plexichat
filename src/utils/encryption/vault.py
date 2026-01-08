@@ -19,7 +19,12 @@ class HardwareVault:
     def __init__(self):
         self._master_key: Optional[bytes] = None
         self._tpm_available = False
-        self._init_tpm()
+        
+        # Prioritize environment key over hardware even during initialization
+        if "PLEXICHAT_SYSTEM_KEY" in os.environ:
+            logger.info("PLEXICHAT_SYSTEM_KEY found, skipping TPM detection")
+        else:
+            self._init_tpm()
 
     def _init_tpm(self):
         """Try to initialize TPM 2.0 connection."""
@@ -52,7 +57,7 @@ class HardwareVault:
         # 1. Check for explicit environment key (Highest Priority for consistency)
         system_key = os.environ.get("PLEXICHAT_SYSTEM_KEY")
         if system_key:
-            self._master_key = hashlib.sha512(system_key.encode()).digest()[:32]
+            self._master_key = hashlib.sha512(system_key.encode("utf-8")).digest()[:32]
             logger.info("Using environment-provided system encryption key")
             return self._master_key
 
