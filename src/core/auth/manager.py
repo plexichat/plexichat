@@ -372,7 +372,9 @@ class AuthManager(BaseManager):
     ) -> Session:
         sid = self._generate_id()
         now = self._get_timestamp()
-        expires = now + (7 * 24 * 3600 * 1000)
+        # Increase session lifetime to 30 days
+        expire_hours = self._config.get("sessions.expire_hours", 720) 
+        expires = now + (expire_hours * 3600 * 1000)
         token, token_hash = create_session_token(sid)
         self._db.execute(
             "INSERT INTO auth_sessions (id, user_id, token_hash, device_id, ip_address, user_agent, created_at, expires_at, last_activity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -427,9 +429,23 @@ class AuthManager(BaseManager):
             and row["ip_address"] != ip_address
         ):
             raise TokenInvalidError("IP Binding Mismatch")
+        now = self._get_timestamp()
+        updates = ["last_activity = ?"]
+        params = [now]
+
+        # Extend session if enabled
+        if self._config.get("sessions.extend_on_activity", True):
+            extend_threshold = self._config.get("sessions.extend_threshold_hours", 24) * 3600 * 1000
+            if (row["expires_at"] - now) < extend_threshold:
+                expire_hours = self._config.get("sessions.expire_hours", 720)
+                new_expires = now + (expire_hours * 3600 * 1000)
+                updates.append("expires_at = ?")
+                params.append(new_expires)
+
+        params.append(row["id"])
         self._db.execute(
-            "UPDATE auth_sessions SET last_activity = ? WHERE id = ?",
-            (self._get_timestamp(), row["id"]),
+            f"UPDATE auth_sessions SET {', '.join(updates)} WHERE id = ?",
+            tuple(params),
         )
 
         # Get rate limit tier (simplified for now)
