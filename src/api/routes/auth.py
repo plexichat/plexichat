@@ -304,6 +304,14 @@ OAUTH_PROVIDERS = {
         "supports_pkce": True,
         "supports_nonce": True,  # OpenID Connect
     },
+    "gitlab": {
+        "auth_url": "https://gitlab.com/oauth/authorize",
+        "token_url": "https://gitlab.com/oauth/token",
+        "user_info_url": "https://gitlab.com/api/v4/user",
+        "scopes": ["read_user", "openid", "profile", "email"],
+        "supports_pkce": True,
+        "supports_nonce": True,
+    },
 }
 
 
