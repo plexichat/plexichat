@@ -22,10 +22,11 @@ CREATE TABLE IF NOT EXISTS auth_users (
     locked_until INTEGER,
     failed_login_attempts INTEGER DEFAULT 0,
     last_login_at INTEGER,
-    totp_secret_encrypted TEXT,
     totp_enabled INTEGER DEFAULT 0,
     backup_codes_hash TEXT,
-    avatar_url TEXT
+    avatar_url TEXT,
+    age_verified INTEGER DEFAULT 0,
+    date_of_birth TEXT
 );
 
 -- Sessions table with Token Binding

@@ -18,8 +18,26 @@ def run_all_migrations(db: Any) -> None:
     _migrate_media_deduplication_v2(db)
     _migrate_threads_conversation_id(db)
     _migrate_srv_members_updated_at(db)
+    _migrate_auth_users_age_verified(db)
 
     logger.info("All migrations completed.")
+
+
+def _migrate_auth_users_age_verified(db: Any) -> None:
+    """Add age_verified and date_of_birth columns to auth_users if missing."""
+    try:
+        if not db.table_exists("auth_users"):
+            return
+
+        if not _column_exists(db, "auth_users", "age_verified"):
+            logger.info("Migration: Adding age_verified to auth_users")
+            db.execute("ALTER TABLE auth_users ADD COLUMN age_verified INTEGER DEFAULT 0")
+            
+        if not _column_exists(db, "auth_users", "date_of_birth"):
+            logger.info("Migration: Adding date_of_birth to auth_users")
+            db.execute("ALTER TABLE auth_users ADD COLUMN date_of_birth TEXT")
+    except Exception as e:
+        logger.error(f"Migration failed (auth_users_age_verified): {e}")
 
 
 def _migrate_threads_conversation_id(db: Any) -> None:

@@ -37,7 +37,7 @@ from .config import (
 )
 from .manager import RateLimitManager
 from .decorators import rate_limit, custom_rate_limit
-from .middleware import RateLimitMiddleware, RateLimitMiddlewareASGI
+from .middleware import RateLimitMiddlewareASGI
 
 __all__ = [
     "setup",
@@ -56,7 +56,6 @@ __all__ = [
     "RateLimitHeaders",
     "BucketType",
     "RateLimitAlgorithm",
-    "RateLimitMiddleware",
     "RateLimitMiddlewareASGI",
     "rate_limit",
     "custom_rate_limit",

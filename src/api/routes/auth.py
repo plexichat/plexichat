@@ -84,6 +84,7 @@ def _user_to_response(user) -> UserResponse:
             created_at=user.created_at,
             email_verified=getattr(user, "email_verified", False),
             totp_enabled=getattr(user, "totp_enabled", False),
+            age_verified=getattr(user, "age_verified", False),
         )
     except Exception as e:
         logger.error(f"Error converting user object to response: {e}")
@@ -127,6 +128,8 @@ async def register(request: Request, body: RegisterRequest) -> LoginResponse:
             email=body.email,
             password=body.password,
             ip_address=ip_address,
+            age=body.age,
+            dob=body.dob,
         )
     except UserExistsError:
         logger.warning(
@@ -141,7 +144,8 @@ async def register(request: Request, body: RegisterRequest) -> LoginResponse:
                 }
             },
         )
-    except (InvalidUsernameError, InvalidEmailError, WeakPasswordError) as e:
+    except (InvalidUsernameError, InvalidEmailError, WeakPasswordError, AuthError) as e:
+        # AuthError could be age-related
         logger.warning(f"Registration failed for '{body.username}': {e}")
         raise HTTPException(
             status_code=400, detail={"error": {"code": 400, "message": str(e)}}
@@ -679,6 +683,14 @@ async def oauth_callback(
             logger.error(f"OAuth login failed for {provider}:{external_id}: {e}")
             raise HTTPException(
                 status_code=401, detail={"error": {"code": 401, "message": str(e)}}
+            )
+
+        if result.status.value == "failed":
+            # Handle specific failure cases like age verification
+            error_code = 400 if "Age" in str(result.message) else 401
+            raise HTTPException(
+                status_code=error_code,
+                detail={"error": {"code": error_code, "message": result.message}},
             )
 
         if result.status.value == "two_factor_required":
@@ -1286,50 +1298,33 @@ async def get_password_requirements() -> PasswordRequirementsResponse:
     passwords before submission and display requirements to users.
     """
     try:
-        # Default requirements (should match main.py defaults)
-        defaults = {
-            "min_length": 12,
-            "max_length": 128,
-            "require_uppercase": True,
-            "require_lowercase": True,
-            "require_digit": True,
-            "require_special": True,
-        }
-
+        # Get authentication config directly from config utility to avoid duplication
+        auth_config = {}
         if config_util:
-            try:
-                # Try to get the nested authentication.password config
-                auth_config = config_util.get("authentication", {})
-                password_config = (
-                    auth_config.get("password", {})
-                    if isinstance(auth_config, dict)
-                    else {}
-                )
+            auth_config = config_util.get("authentication", {})
+            if not isinstance(auth_config, dict):
+                auth_config = {}
+        
+        password_config = auth_config.get("password", {})
+        if not isinstance(password_config, dict):
+            password_config = {}
+            
+        accounts_config = auth_config.get("accounts", {})
+        if not isinstance(accounts_config, dict):
+            accounts_config = {}
 
-                return PasswordRequirementsResponse(
-                    min_length=password_config.get(
-                        "min_length", defaults["min_length"]
-                    ),
-                    max_length=password_config.get(
-                        "max_length", defaults["max_length"]
-                    ),
-                    require_uppercase=password_config.get(
-                        "require_uppercase", defaults["require_uppercase"]
-                    ),
-                    require_lowercase=password_config.get(
-                        "require_lowercase", defaults["require_lowercase"]
-                    ),
-                    require_digit=password_config.get(
-                        "require_digit", defaults["require_digit"]
-                    ),
-                    require_special=password_config.get(
-                        "require_special", defaults["require_special"]
-                    ),
-                )
-            except Exception as ce:
-                logger.debug(f"Failed to load password requirements from config: {ce}")
-
-        return PasswordRequirementsResponse(**defaults)
+        # Default values matching main.py
+        return PasswordRequirementsResponse(
+            min_length=password_config.get("min_length", 12),
+            max_length=password_config.get("max_length", 128),
+            require_uppercase=password_config.get("require_uppercase", True),
+            require_lowercase=password_config.get("require_lowercase", True),
+            require_digit=password_config.get("require_digit", True),
+            require_special=password_config.get("require_special", True),
+            age_gate_enabled=accounts_config.get("age_gate_enabled", False),
+            age_verification_type=accounts_config.get("age_verification_type", "boolean"),
+            minimum_age=accounts_config.get("minimum_age", 13),
+        )
     except Exception as e:
         logger.error(f"Failed to get password requirements: {e}", exc_info=True)
         raise HTTPException(

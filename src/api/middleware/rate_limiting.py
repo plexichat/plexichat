@@ -7,8 +7,15 @@ import sys
 
 from fastapi import Request
 
+import utils.config as config
 from src.core.ratelimit import RateLimitMiddlewareASGI as RateLimitMiddleware
 from src.core.ratelimit.middleware import extract_route_info
+from src.utils.net import get_client_ip
+
+
+def extract_ip(request: Request) -> str:
+    """Extract IP address using consolidated utility."""
+    return get_client_ip(request)
 
 
 def get_user_info_from_request(request: Request) -> Dict[str, Any]:
@@ -23,7 +30,7 @@ def get_user_info_from_request(request: Request) -> Dict[str, Any]:
     """
     user_info = {
         "user_id": None,
-        "ip_address": None,
+        "ip_address": extract_ip(request),
         "is_bot": False,
         "is_admin": False,
         "is_internal": False,
@@ -31,19 +38,8 @@ def get_user_info_from_request(request: Request) -> Dict[str, Any]:
         "webhook_id": None,
     }
 
-    # Extract IP address
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        user_info["ip_address"] = forwarded.split(",")[0].strip()
-    elif request.client:
-        user_info["ip_address"] = request.client.host
-
     if hasattr(request.state, "user") and request.state.user:
         user = request.state.user
-        if "pytest" in sys.modules:
-            uid = getattr(user, "user_id", None) or getattr(user, "id", None)
-            perms = getattr(user, "permissions", {})
-            print(f"[DEBUG] RateLimit User found in state: {uid}, perms: {perms}")
         user_info["user_id"] = getattr(user, "user_id", None) or getattr(
             user, "id", None
         )
@@ -54,31 +50,16 @@ def get_user_info_from_request(request: Request) -> Dict[str, Any]:
             user_info["is_admin"] = (
                 permissions.get("admin.*", False)
                 or permissions.get("*", False)
-                or permissions.get("admin", False)
             )
-    elif "pytest" in sys.modules:
-        print("[DEBUG] RateLimit: No user found in request state")
 
     # Secure bypass check
-    import utils.config as config
-    import utils.logger as logger
-
     bypass_secret = config.get("rate_limiting.bypass_secret")
-    internal_header = request.headers.get("X-Internal-Request")
-    if internal_header and internal_header.lower() == "true":
-        # Only allow X-Internal-Request if it's actually from an internal IP or has secret
-        # For now, we trust it IF a secret is also provided or we're in dev
-        if bypass_secret and request.headers.get("X-RateLimit-Bypass") == bypass_secret:
-            user_info["is_internal"] = True
-
     bypass_header = request.headers.get("X-RateLimit-Bypass")
+    
     if bypass_secret and bypass_header == bypass_secret:
         user_info["is_internal"] = True
-    elif not bypass_secret and bypass_header:
-        # If no secret configured, don't allow bypass via header
-        logger.warning(
-            f"Rate limit bypass attempted without configured secret from {user_info['ip_address']}"
-        )
+    elif getattr(request.state, "is_selftest", False):
+        user_info["is_internal"] = True
 
     return user_info
 
@@ -105,7 +86,7 @@ def create_rate_limit_middleware(
         "/docs",
         "/redoc",
         "/openapi.json",
-        "/docs/api",  # API documentation has its own rate limiting
+        # Removed /docs/api to allow centralized rate limiting for documentation
     ]
     all_excludes = list(set(default_excludes + (exclude_paths or [])))
     user_info_getter = custom_user_info_getter or get_user_info_from_request

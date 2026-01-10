@@ -4,6 +4,7 @@ Hardened AuthManager - Secure authentication logic.
 
 import time
 import json
+import secrets
 from typing import Optional, List, Dict, Any
 
 import utils.config as config
@@ -89,6 +90,7 @@ class AuthManager(BaseManager):
                 "updated_at",
                 "email_verified",
                 "account_locked",
+                "age_verified",
             ],
             (
                 0,
@@ -99,6 +101,7 @@ class AuthManager(BaseManager):
                 permissions_to_json({}),
                 now,
                 now,
+                1,
                 1,
                 1,
             ),
@@ -158,7 +161,47 @@ class AuthManager(BaseManager):
         password: str,
         device_info: Optional[Dict[str, str]] = None,
         ip_address: Optional[str] = None,
+        age: Optional[int] = None,
+        dob: Optional[str] = None,
     ) -> User:
+        # Generate ID first to use as encryption context
+        user_id = self._generate_id()
+
+        # Configuration check for age gate
+        accounts_config = self._config.get("accounts", {})
+        age_gate_enabled = accounts_config.get("age_gate_enabled", False)
+        min_age = accounts_config.get("minimum_age", 13)
+        verification_type = accounts_config.get("age_verification_type", "boolean")
+        
+        age_verified = 0
+        stored_dob = None
+
+        if age_gate_enabled:
+            if verification_type == "dob":
+                if not dob:
+                    raise AuthError("Date of birth is required", "dob")
+                # Basic DOB validation (calculate age from YYYY-MM-DD)
+                try:
+                    from datetime import datetime
+                    birth_date = datetime.strptime(dob, "%Y-%m-%d")
+                    today = datetime.today()
+                    calculated_age = today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
+                    if calculated_age < min_age:
+                        raise AuthError(f"Minimum age requirement not met ({min_age})", "age")
+                    age_verified = 1
+                    # Encrypt DOB for storage using user_id as context
+                    stored_dob = self.crypto.encrypt_data(dob, context=str(user_id))
+                except ValueError:
+                    raise AuthError("Invalid date format. Use YYYY-MM-DD", "dob")
+            else:
+                # Boolean/Age mode
+                if age is None:
+                    raise AuthError("Age is required", "age")
+                if age < min_age:
+                    raise AuthError(f"Minimum age requirement not met ({min_age})", "age")
+                age_verified = 1
+                stored_dob = None # Do not store DOB in boolean mode
+        
         valid, issues = validate_username(username)
         if not valid:
             raise InvalidUsernameError(f"Invalid: {issues}", issues)
@@ -180,14 +223,13 @@ class AuthManager(BaseManager):
         ):
             raise UserExistsError("Email registered", "email")
 
-        user_id = self._generate_id()
         now = self._get_timestamp()
         email_encrypted = self.crypto.encrypt_data(email, context=str(user_id))
         password_hash = self.crypto.hash_password(password)
-        require_ver = self._get_config("accounts.require_email_verification", False)
+        require_ver = accounts_config.get("require_email_verification", False)
 
         self._db.execute(
-            "INSERT INTO auth_users (id, account_type, username, email_index, email_encrypted, password_hash, permissions, created_at, updated_at, email_verified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO auth_users (id, account_type, username, email_index, email_encrypted, password_hash, permissions, created_at, updated_at, email_verified, age_verified, date_of_birth) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 user_id,
                 AccountType.USER.value,
@@ -198,7 +240,9 @@ class AuthManager(BaseManager):
                 permissions_to_json(DEFAULT_USER_PERMISSIONS),
                 now,
                 now,
-                0 if require_ver else 1,
+                1 if not require_ver else 0,
+                age_verified,
+                stored_dob,
             ),
         )
 
@@ -220,6 +264,8 @@ class AuthManager(BaseManager):
             created_at=now,
             updated_at=now,
             email_verified=not require_ver,
+            age_verified=bool(age_verified),
+            date_of_birth=dob if (age_gate_enabled and verification_type == "dob") else None,
         )
 
     def verify_email(self, token: str) -> bool:
@@ -1073,13 +1119,22 @@ class AuthManager(BaseManager):
             return None
             
         email = None
-        if row.get("email_encrypted"):
+        if row["email_encrypted"]:
             try:
                 email = self.crypto.decrypt_data(row["email_encrypted"], context=str(user_id))
             except Exception as e:
                 logger.error(f"Decryption failed for user {user_id}: {e}")
                 # Don't return a magic string that could be treated as a valid email
                 email = None
+        
+        dob = None
+        if row["date_of_birth"]:
+            try:
+                # Decrypt DOB using user_id as context
+                dob = self.crypto.decrypt_data(row["date_of_birth"], context=str(user_id))
+            except Exception:
+                # Fallback or silent failure for PII
+                pass
 
         return User(
             id=row["id"],
@@ -1092,6 +1147,8 @@ class AuthManager(BaseManager):
             email_verified=bool(row["email_verified"]),
             account_locked=bool(row["account_locked"]),
             totp_enabled=bool(row["totp_enabled"]),
+            age_verified=bool(row["age_verified"]),
+            date_of_birth=row["date_of_birth"],
         )
 
     def get_user_by_username(self, username: str) -> Optional[User]:
@@ -1115,12 +1172,19 @@ class AuthManager(BaseManager):
         for row in rows:
             user_id = row["id"]
             email = None
-            if row.get("email_encrypted"):
+            if row["email_encrypted"]:
                 try:
                     email = self.crypto.decrypt_data(row["email_encrypted"], context=str(user_id))
                 except Exception as e:
                     logger.error(f"Decryption failed for user {user_id} in bulk fetch: {e}")
             
+            dob = None
+            if row["date_of_birth"]:
+                try:
+                    dob = self.crypto.decrypt_data(row["date_of_birth"], context=str(user_id))
+                except Exception:
+                    pass
+
             result[user_id] = User(
                 id=user_id,
                 account_type=AccountType(row["account_type"]),
@@ -1132,6 +1196,8 @@ class AuthManager(BaseManager):
                 email_verified=bool(row["email_verified"]),
                 account_locked=bool(row["account_locked"]),
                 totp_enabled=bool(row["totp_enabled"]),
+                age_verified=bool(row["age_verified"]),
+                date_of_birth=dob,
             )
         return result
 
@@ -1154,6 +1220,106 @@ class AuthManager(BaseManager):
         username_hint: Optional[str] = None,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
+        age: Optional[int] = None,
+        dob: Optional[str] = None,
     ) -> AuthResult:
-        # Simplified OAuth login stub
-        return AuthResult(status=AuthStatus.FAILED, message="Not fully implemented")
+        """Handle OAuth login flow: verify external ID, link or create user, and start session."""
+        # 1. Check if we already have this external account linked
+        row = self._db.fetch_one(
+            "SELECT user_id FROM auth_external_accounts WHERE provider = ? AND external_id = ?",
+            (provider, external_id),
+        )
+
+        user_id = None
+        if row:
+            user_id = row["user_id"]
+        else:
+            # 2. Not linked. Check if a user with this email already exists to auto-link
+            if email:
+                email_index = self.crypto.blind_index(email, "user_email")
+                user_row = self._db.fetch_one(
+                    "SELECT id FROM auth_users WHERE email_index = ?", (email_index,)
+                )
+                if user_row:
+                    user_id = user_row["id"]
+                    # Link existing user to this provider
+                    self._db.insert_or_ignore(
+                        "auth_external_accounts",
+                        ["id", "user_id", "provider", "external_id", "email_index", "created_at"],
+                        (self._generate_id(), user_id, provider, external_id, email_index, self._get_timestamp())
+                    )
+
+        # 3. If still no user, create a new one
+        if not user_id:
+            # Check age gate before attempting registration
+            accounts_config = self._config.get("accounts", {})
+            if accounts_config.get("age_gate_enabled", False):
+                if age is None and dob is None:
+                    # Signal to client that age/DOB is needed for new registration
+                    return AuthResult(status=AuthStatus.FAILED, message="Age verification required")
+
+            # Use username_hint or derive from email/external_id
+            base_username = username_hint or (email.split("@")[0] if email else f"{provider}_{external_id[:8]}")
+            
+            # Ensure username uniqueness
+            username = base_username
+            attempts = 0
+            while attempts < 10 and self._db.fetch_one("SELECT id FROM auth_users WHERE username = ?", (username,)):
+                username = f"{base_username}{secrets.token_hex(2)}"
+                attempts += 1
+            
+            # Use a random strong password for OAuth-only accounts
+            random_password = secrets.token_urlsafe(32)
+            
+            try:
+                user = self.register(
+                    username=username,
+                    email=email or f"{external_id}@{provider}.internal",
+                    password=random_password,
+                    ip_address=ip_address,
+                    age=age,
+                    dob=dob
+                )
+                user_id = user.id
+                
+                # Link the new user
+                email_index = self.crypto.blind_index(email or f"{external_id}@{provider}.internal", "user_email")
+                self._db.insert_or_ignore(
+                    "auth_external_accounts",
+                    ["id", "user_id", "provider", "external_id", "email_index", "created_at"],
+                    (self._generate_id(), user_id, provider, external_id, email_index, self._get_timestamp())
+                )
+            except AuthError as e:
+                # If registration fails (e.g. age gate), we pass that up
+                self._log_audit(AuditEventType.LOGIN_FAILED, None, False, ip_address, details={"error": str(e), "provider": provider})
+                return AuthResult(status=AuthStatus.FAILED, message=str(e))
+
+        # 4. Success - load user and start session
+        user_obj = self.get_user(user_id)
+        if not user_obj:
+            return AuthResult(status=AuthStatus.FAILED, message="User creation failed")
+            
+        if user_obj.account_locked:
+            return AuthResult(status=AuthStatus.FAILED, message="Account locked")
+
+        session = self._create_session(user_id, None, ip_address, user_agent)
+        
+        # Update last login
+        now = self._get_timestamp()
+        self._db.execute(
+            "UPDATE auth_users SET last_login_at = ?, failed_login_attempts = 0 WHERE id = ?",
+            (now, user_id)
+        )
+        self._db.execute(
+            "UPDATE auth_external_accounts SET last_login_at = ? WHERE user_id = ? AND provider = ?",
+            (now, user_id, provider)
+        )
+
+        self._log_audit(AuditEventType.LOGIN_SUCCESS, user_id, True, ip_address, details={"provider": provider})
+        
+        return AuthResult(
+            status=AuthStatus.SUCCESS,
+            token=session.token,
+            user=user_obj,
+            session=session
+        )

@@ -73,6 +73,8 @@ class User:
     last_login_at: Optional[int] = None
     totp_enabled: bool = False
     public_key: Optional[bytes] = None
+    age_verified: bool = False
+    date_of_birth: Optional[str] = None # ISO format YYYY-MM-DD
 
     # Not stored, only set on specific operations
     password_hash: Optional[str] = field(default=None, repr=False)
