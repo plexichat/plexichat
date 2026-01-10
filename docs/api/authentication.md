@@ -13,6 +13,8 @@ Register a new user account.
 | username | string | Yes | 3-32 characters | Unique username |
 | email | string | Yes | Valid email format | Email address |
 | password | string | Yes | See requirements | Password |
+| age | integer | No | >0 | Age (required if age gate enabled in boolean mode) |
+| dob | string | No | YYYY-MM-DD | Date of birth (required if age gate enabled in dob mode) |
 
 ### Password Requirements
 
@@ -48,7 +50,8 @@ Check current requirements via `GET /auth/password-requirements`.
     "avatar_url": null,
     "created_at": 1704067200,
     "email_verified": false,
-    "totp_enabled": false
+    "totp_enabled": false,
+    "age_verified": false
   }
 }
 ```
@@ -94,7 +97,8 @@ Authenticate a user and obtain a session token.
     "avatar_url": null,
     "created_at": 1704067200,
     "email_verified": true,
-    "totp_enabled": false
+    "totp_enabled": false,
+    "age_verified": true
   }
 }
 ```
@@ -391,7 +395,10 @@ Get server password policy (no authentication required).
   "require_uppercase": true,
   "require_lowercase": true,
   "require_digit": true,
-  "require_special": true
+  "require_special": true,
+  "age_gate_enabled": false,
+  "age_verification_type": "boolean",
+  "minimum_age": 13
 }
 ```
 

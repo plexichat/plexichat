@@ -25,7 +25,6 @@ router = APIRouter(tags=["Documentation"])
 # Module state
 _docs_cache: Dict[str, tuple] = {}  # path -> (content, timestamp)
 _html_cache: Dict[str, tuple] = {}  # path -> (html, timestamp)
-_request_counts: Dict[str, List[float]] = {}  # ip -> [timestamps]
 
 
 @dataclass
@@ -629,8 +628,6 @@ async def docs_websocket_page(request: Request, page: str):
 
 @router.get("/rate-limits")
 async def docs_rate_limits(request: Request):
-    from src.api.routes.docs import _generate_dynamic_rate_limits_content
-
     content = _generate_dynamic_rate_limits_content()
     return HTMLResponse(
         _markdown_to_html(content, "Rate Limits", get_docs_config(), "/rate-limits")

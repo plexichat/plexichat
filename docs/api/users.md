@@ -22,7 +22,8 @@ Authorization: Bearer <token>
   "avatar_url": "https://cdn.example.com/avatars/123.png",
   "created_at": 1704067200,
   "email_verified": true,
-  "totp_enabled": false
+  "totp_enabled": false,
+  "age_verified": false
 }
 ```
 
@@ -37,6 +38,7 @@ Authorization: Bearer <token>
 | created_at | int | Unix timestamp of account creation |
 | email_verified | bool | Email verification status |
 | totp_enabled | bool | 2FA enabled status |
+| age_verified | bool | Age verification status |
 
 ## PATCH /users/@me
 
@@ -315,7 +317,8 @@ Returned for the authenticated user (`/users/@me`).
   "avatar_url": "https://cdn.example.com/avatars/123.png",
   "created_at": 1704067200,
   "email_verified": true,
-  "totp_enabled": false
+  "totp_enabled": false,
+  "age_verified": false
 }
 ```
 
