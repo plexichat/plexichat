@@ -130,6 +130,8 @@ def register(
     password: str,
     device_info: Optional[Dict[str, str]] = None,
     ip_address: Optional[str] = None,
+    age: Optional[int] = None,
+    dob: Optional[str] = None,
 ) -> User:
     """
     Register a new user account.
@@ -140,6 +142,8 @@ def register(
         password: Password (will be validated for strength)
         device_info: Optional device information
         ip_address: Optional IP address
+        age: Optional user age
+        dob: Optional date of birth
 
     Returns:
         Created User object
@@ -150,7 +154,9 @@ def register(
         InvalidUsernameError: Username format invalid
         InvalidEmailError: Email format invalid
     """
-    return _get_manager().register(username, email, password, device_info, ip_address)
+    return _get_manager().register(
+        username, email, password, device_info, ip_address, age, dob
+    )
 
 
 def verify_email(token: str) -> bool:
@@ -467,6 +473,8 @@ def oauth_login(
     username_hint: Optional[str] = None,
     ip_address: Optional[str] = None,
     user_agent: Optional[str] = None,
+    age: Optional[int] = None,
+    dob: Optional[str] = None,
 ) -> AuthResult:
     """
     Login or register via OAuth provider.
@@ -482,6 +490,8 @@ def oauth_login(
         username_hint=username_hint,
         ip_address=ip_address,
         user_agent=user_agent,
+        age=age,
+        dob=dob,
     )
 
 
