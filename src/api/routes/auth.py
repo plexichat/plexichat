@@ -122,13 +122,22 @@ async def register(request: Request, body: RegisterRequest) -> LoginResponse:
 
     ip_address = request.client.host if request.client else None
 
+    # Handle age_verified boolean as an alternative to explicit age
+    age = body.age
+    if age is None and body.age_verified is True:
+        # Get minimum age from config or default to 13
+        min_age = 13
+        if config_util:
+            min_age = config_util.get("authentication.accounts.minimum_age", 13)
+        age = min_age
+
     try:
         user = auth.register(
             username=body.username,
             email=body.email,
             password=body.password,
             ip_address=ip_address,
-            age=body.age,
+            age=age,
             dob=body.dob,
         )
     except UserExistsError:

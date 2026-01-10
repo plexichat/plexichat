@@ -13,6 +13,7 @@ class RegisterRequest(BaseModel):
     email: EmailStr = Field(..., description="Email address")
     password: str = Field(..., description="Password")
     age: Optional[int] = Field(None, description="User age (required if age gate enabled in boolean mode)")
+    age_verified: Optional[bool] = Field(None, description="Simple age verification check (alternative to age field)")
     dob: Optional[str] = Field(None, description="User date of birth YYYY-MM-DD (required if age gate enabled in dob mode)")
 
 
