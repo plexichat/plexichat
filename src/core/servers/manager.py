@@ -2245,7 +2245,7 @@ class ServerManager(BaseManager):
 
         # If cached as member, return True immediately
         if cached is True:
-            logger.info(
+            logger.debug(
                 f"[Instance:{self.instance_id}] _is_member: user {uid} is cached as member of server {sid}"
             )
             return True
@@ -2261,7 +2261,7 @@ class ServerManager(BaseManager):
             if row:
                 owner_id = int(row["owner_id"])
                 self._cache_set(self._server_owner_cache, sid, owner_id)
-                logger.info(
+                logger.debug(
                     f"[Instance:{self.instance_id}] _is_member: fetched owner_id {owner_id} for server {sid}"
                 )
             else:
@@ -2270,7 +2270,7 @@ class ServerManager(BaseManager):
                 )
 
         if owner_id == uid:
-            logger.info(
+            logger.debug(
                 f"[Instance:{self.instance_id}] _is_member: user {uid} is recognized as owner of server {sid} (owner_id={owner_id})"
             )
             self._cache_set(self._member_cache, cache_key, True)
@@ -2278,12 +2278,12 @@ class ServerManager(BaseManager):
 
         # If it was cached as False and we verified they aren't the owner, respect cache
         if cached is False:
-            logger.info(
+            logger.debug(
                 f"[Instance:{self.instance_id}] _is_member: user {uid} is cached as NOT a member of server {sid}"
             )
             return False
 
-        logger.info(
+        logger.debug(
             f"[Instance:{self.instance_id}] _is_member: checking DB for membership: sid={sid}, uid={uid}"
         )
         row = self._db.fetch_one(
@@ -2293,11 +2293,11 @@ class ServerManager(BaseManager):
 
         is_member = row is not None
         if not is_member:
-            logger.info(
+            logger.debug(
                 f"[Instance:{self.instance_id}] _is_member: user {uid} is NOT a member of server {sid} (owner is {owner_id})"
             )
         else:
-            logger.info(
+            logger.debug(
                 f"[Instance:{self.instance_id}] _is_member: user {uid} found in srv_members for server {sid}"
             )
 

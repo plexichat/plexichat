@@ -82,8 +82,8 @@ def create_api_router() -> APIRouter:
     api_router.include_router(users_router, prefix="/users", tags=["Users"])
     api_router.include_router(servers_router, prefix="/servers", tags=["Servers"])
     api_router.include_router(emojis_router, prefix="/servers", tags=["Emojis"])
-    api_router.include_router(channels_router, prefix="/channels", tags=["Channels"])
     api_router.include_router(messages_router, tags=["Messages"])
+    api_router.include_router(channels_router, prefix="/channels", tags=["Channels"])
     api_router.include_router(
         relationships_router, prefix="/relationships", tags=["Relationships"]
     )
