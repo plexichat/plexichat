@@ -73,12 +73,12 @@ class RedisStorage(RateLimitStorage):
         if not client or not is_available():
             return []
 
+        # get_key adds self._key_prefix
         full_prefix = self._get_key(prefix)
         try:
+            # client.keys returns keys relative to client.key_prefix
             keys = client.keys(f"{full_prefix}*")
-            # Remove our prefix from the keys
-            prefix_len = len(self._get_key(""))
-            return [k[prefix_len:] for k in keys]
+            return keys
         except RedisOperationError:
             return []
 
@@ -90,16 +90,11 @@ class RedisStorage(RateLimitStorage):
 
         full_prefix = self._get_key(prefix)
         try:
+            # client.keys returns keys relative to its own prefix
             keys = client.keys(f"{full_prefix}*")
             if keys:
-                # RedisClient.keys returns keys WITHOUT its own prefix,
-                # but client.delete expects the keys as passed to it (which it will prefix).
-                # Actually, RedisClient.keys implementation:
-                # return [k[prefix_len:] if k.startswith(self.key_prefix) else k for k in keys]
-                # So the keys are relative to the RedisClient prefix.
-                # client.delete prefixes them again.
-                # This is a bit recursive with my _get_key.
-
+                # RedisClient.delete expects keys WITHOUT its own prefix,
+                # which is what client.keys returns.
                 return client.delete(*keys)
             return 0
         except RedisOperationError:
