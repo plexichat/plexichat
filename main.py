@@ -33,7 +33,7 @@ import utils.validator as validator  # noqa: E402
 import utils.version as version  # noqa: E402
 
 # Global Version Definition
-VERSION = "a.1.0-31"
+VERSION = "a.1.0-32"
 
 
 class PlexiChatServer:
@@ -94,6 +94,10 @@ class PlexiChatServer:
                     "max_bots_per_user": 5,
                     "username_min_length": 3,
                     "username_max_length": 32,
+                    "age_gate_enabled": False,
+                    "minimum_age": 13,
+                    # "boolean" (store only verified bit) or "dob" (store date of birth)
+                    "age_verification_type": "boolean",
                 },
                 "sessions": {
                     "token_bytes": 32,
@@ -124,6 +128,49 @@ class PlexiChatServer:
                     "require_special": True,
                 },
                 "bots": {"token_bytes": 48, "require_owner_2fa": False},
+            },
+            "applications": {
+                "max_applications_per_user": 25,
+                "max_commands_per_app": 100,
+                "interaction_timeout": 900,
+                "webhook_signature_secret": secrets.token_hex(32),
+                "oauth": {
+                    "code_expiry_seconds": 600,
+                    "token_expiry_seconds": 604800,
+                    "refresh_enabled": True,
+                },
+                "rate_limits": {
+                    "requests_per_minute": 60,
+                }
+            },
+            "polls": {
+                "max_options": 10,
+                "min_options": 2,
+                "max_question_length": 300,
+                "max_option_length": 100,
+                "min_duration_hours": 1,
+                "max_duration_hours": 168,
+            },
+            "emojis": {
+                "max_emojis_per_server": 50,
+                "max_animated_emojis_per_server": 50,
+                "max_emoji_size": 262144,
+                "emoji_min_name_length": 2,
+                "emoji_max_name_length": 32,
+                "allowed_formats": ["image/png", "image/jpeg", "image/gif", "image/webp"],
+            },
+            "search": {
+                "enabled": True,
+                "backend": "sqlite_fts5",
+                "result_limit": 100,
+                "batch_size": 100,
+                "write_time_indexing": True,
+                "discovery": {
+                    "enabled": True,
+                    "min_members_for_listing": 10,
+                    "max_tags": 10,
+                    "bump_cooldown_hours": 4,
+                }
             },
             # OAuth configuration for external identity providers
             # SECURITY: Store client_secret values in environment variables for production:
@@ -282,11 +329,37 @@ class PlexiChatServer:
                     "Accept",
                     "Origin",
                 ],
+                # Trusted proxies for IP extraction (empty = none)
+                "trusted_proxies": [],
+                # Whether to trust X-Forwarded-For (requires trusted_proxies to be set for security)
+                "trust_x_forwarded_for": False,
                 "docs_url": "/docs",
                 "redoc_url": "/redoc",
                 "openapi_url": "/openapi.json",
             },
             "server": {"host": "0.0.0.0", "port": 8000, "workers": 1, "reload": False},
+            "servers": {
+                "server_name_min_length": 2,
+                "server_name_max_length": 100,
+                "channel_name_max_length": 100,
+                "role_name_max_length": 100,
+                "invite_code_length": 8,
+                "events": {
+                    "max_event_duration_hours": 168,
+                    "max_recurring_instances": 50,
+                },
+                "onboarding": {
+                    "max_onboarding_steps": 10,
+                    "max_welcome_channels": 5,
+                    "max_step_options": 25,
+                },
+                "templates": {
+                    "template_code_length": 8,
+                    "max_channels_in_template": 100,
+                    "max_roles_in_template": 50,
+                    "max_templates_per_user": 25,
+                }
+            },
             "websocket": {
                 "heartbeat_interval_ms": 45000,
                 "session_timeout_ms": 60000,
@@ -697,7 +770,7 @@ class PlexiChatServer:
 
     def _apply_env_overrides(self) -> None:
         """Apply environment variable overrides to configuration."""
-        # DATABASE_URL override (format: postgres://user:pass@host:port/dbname or sqlite:///path)
+        # ... (keep existing env overrides)
         database_url = os.getenv("DATABASE_URL")
         if database_url:
             db_config = config.get("database", {})
@@ -733,6 +806,41 @@ class PlexiChatServer:
             log_config = config.get("logging", {})
             log_config["level"] = log_level.upper()
             config.set("logging", log_config)
+
+    def validate_config(self) -> None:
+        """Validate current configuration against required keys and types."""
+        defaults = self.get_default_config()
+        current = config.get_all()
+        
+        missing = []
+        type_mismatches = []
+        
+        def check_recursive(d_dict, c_dict, path=""):
+            for k, v in d_dict.items():
+                current_path = f"{path}.{k}" if path else k
+                if k not in c_dict:
+                    missing.append(current_path)
+                    continue
+                
+                if isinstance(v, dict) and isinstance(c_dict[k], dict):
+                    check_recursive(v, c_dict[k], current_path)
+                elif v is not None and c_dict[k] is not None:
+                    if not isinstance(c_dict[k], type(v)):
+                        type_mismatches.append(
+                            f"{current_path}: expected {type(v).__name__}, got {type(c_dict[k]).__name__}"
+                        )
+        
+        check_recursive(defaults, current)
+        
+        if missing:
+            logger.warning(f"Missing configuration keys: {', '.join(missing)}")
+            # For some critical keys we might want to raise an error, 
+            # but for now we'll just log warnings as defaults are applied by the config util.
+            
+        if type_mismatches:
+            error_msg = f"Configuration type mismatches: {', '.join(type_mismatches)}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
 
     def setup_logging(self) -> None:
         """Setup logging with configured settings."""
@@ -792,6 +900,19 @@ class PlexiChatServer:
         internal_secret = secrets.token_hex(32)
         api.set_internal_secret(internal_secret)
         logger.info("Internal security secret generated for self-test")
+
+        # Persist long-lived secrets if they don't exist
+        app_config = config.get("applications", {})
+        if not app_config.get("webhook_signature_secret"):
+            app_config["webhook_signature_secret"] = secrets.token_hex(32)
+            config.set("applications", app_config)
+            logger.info("Generated and persisted webhook_signature_secret")
+
+        rl_config = config.get("rate_limiting", {})
+        if not rl_config.get("bypass_secret"):
+            rl_config["bypass_secret"] = secrets.token_hex(32)
+            config.set("rate_limiting", rl_config)
+            logger.info("Generated and persisted rate-limit bypass_secret")
 
         failed_modules = []
 
@@ -1460,6 +1581,16 @@ Examples:
 
     # Security warnings for default/placeholder keys
     _check_security_keys()
+
+    # Validate configuration
+    try:
+        server.validate_config()
+        logger.info("Configuration validated successfully")
+    except Exception as e:
+        logger.error(f"Configuration validation failed: {e}")
+        # Default to strict config unless explicitly disabled
+        if os.getenv("NO_STRICT_CONFIG") != "true":
+            sys.exit(1)
 
     # Setup utilities
     server.setup_utilities()
