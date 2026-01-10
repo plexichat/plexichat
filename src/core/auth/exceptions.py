@@ -10,7 +10,9 @@ from typing import Optional, List
 class AuthError(Exception):
     """Base exception for all authentication errors."""
 
-    pass
+    def __init__(self, message: str, field: Optional[str] = None):
+        super().__init__(message)
+        self.field = field
 
 
 class InvalidCredentialsError(AuthError):

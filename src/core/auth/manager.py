@@ -180,13 +180,12 @@ class AuthManager(BaseManager):
             if verification_type == "dob":
                 if not dob:
                     raise AuthError("Date of birth is required", "dob")
-                # Basic DOB validation (calculate age from YYYY-MM-DD)
                 try:
                     from datetime import datetime
                     birth_date = datetime.strptime(dob, "%Y-%m-%d")
                     today = datetime.today()
-                    calculated_age = today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
-                    if calculated_age < min_age:
+                    calc_age = today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
+                    if calc_age < min_age:
                         raise AuthError(f"Minimum age requirement not met ({min_age})", "age")
                     age_verified = 1
                     # Encrypt DOB for storage using user_id as context
@@ -195,12 +194,13 @@ class AuthManager(BaseManager):
                     raise AuthError("Invalid date format. Use YYYY-MM-DD", "dob")
             else:
                 # Boolean/Age mode
-                if age is None:
-                    raise AuthError("Age is required", "age")
-                if age < min_age:
-                    raise AuthError(f"Minimum age requirement not met ({min_age})", "age")
-                age_verified = 1
-                stored_dob = None # Do not store DOB in boolean mode
+                if age is not None:
+                    if age < min_age:
+                        raise AuthError(f"Minimum age requirement not met ({min_age})", "age")
+                    age_verified = 1
+                else:
+                    # If neither age nor dob is provided but gate is enabled
+                    raise AuthError("Age verification required", "age")
         
         valid, issues = validate_username(username)
         if not valid:

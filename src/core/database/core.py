@@ -226,13 +226,17 @@ class Database:
             self._local.in_transaction = True
 
         self._local.transaction_depth += 1
-        conn.execute(f"SAVEPOINT sp_{self._local.transaction_depth}")
+        cursor = conn.cursor()
+        cursor.execute(f"SAVEPOINT sp_{self._local.transaction_depth}")
+        cursor.close()
 
     def commit(self) -> None:
         """Commit the current transaction level."""
         conn = self._get_conn()
         if self._local.transaction_depth > 0:
-            conn.execute(f"RELEASE SAVEPOINT sp_{self._local.transaction_depth}")
+            cursor = conn.cursor()
+            cursor.execute(f"RELEASE SAVEPOINT sp_{self._local.transaction_depth}")
+            cursor.close()
             self._local.transaction_depth -= 1
 
             if self._local.transaction_depth == 0:
@@ -243,7 +247,9 @@ class Database:
         """Rollback the current transaction level."""
         conn = self._get_conn()
         if self._local.transaction_depth > 0:
-            conn.execute(f"ROLLBACK TO SAVEPOINT sp_{self._local.transaction_depth}")
+            cursor = conn.cursor()
+            cursor.execute(f"ROLLBACK TO SAVEPOINT sp_{self._local.transaction_depth}")
+            cursor.close()
             self._local.transaction_depth -= 1
 
             if self._local.transaction_depth == 0:
