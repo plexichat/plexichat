@@ -78,7 +78,8 @@ class FileEncryptor:
         from pathlib import Path
 
         self.keyring = keyring or Keyring(
-            Path.home() / ".plexichat" / "data" / "file_keyring.json"
+            Path.home() / ".plexichat" / "data" / "file_keyring.json",
+            env_var="PLEXICHAT_MEDIA_KEY"
         )
         self._ensure_key()
 
@@ -345,7 +346,8 @@ class StreamingFileEncryptor:
         from pathlib import Path
 
         self.keyring = keyring or Keyring(
-            Path.home() / ".plexichat" / "data" / "file_keyring.json"
+            Path.home() / ".plexichat" / "data" / "file_keyring.json",
+            env_var="PLEXICHAT_MEDIA_KEY"
         )
         self.chunk_size = chunk_size
         self._ensure_key()

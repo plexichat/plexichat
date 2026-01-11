@@ -131,7 +131,11 @@ class MediaManager(BaseManager):
 
     def _load_config(self) -> Dict[str, Any]:
         """Load media configuration from global config."""
-        cfg = config.get("media", {})
+        # Try 'media' first, then 'storage' as fallback
+        cfg = config.get("media")
+        if cfg is None:
+            cfg = config.get("storage", {})
+            
         if not isinstance(cfg, dict):
             cfg = {}
 
@@ -180,6 +184,16 @@ class MediaManager(BaseManager):
 
         # Wrap with encryption if enabled
         if encrypt_at_rest:
+            # Task #6: Ensure media encryption uses app's signing keys if no env var set
+            signing_key = self._config.get("signing_key")
+            if signing_key and signing_key not in ["", "CHANGE_THIS_SIGNING_KEY", "change-me", "changeme"]:
+                if "PLEXICHAT_MEDIA_KEY" not in os.environ:
+                    # Derive a 32-byte key from the signing key for initial keyring setup
+                    derived_key = hashlib.sha256(signing_key.encode()).digest()
+                    import base64
+                    os.environ["PLEXICHAT_MEDIA_KEY"] = base64.b64encode(derived_key).decode()
+                    logger.debug("Derived PLEXICHAT_MEDIA_KEY from signing_key")
+            
             storage = wrap_storage_with_encryption(storage, enabled=True)
             logger.info(f"File encryption at rest enabled for {backend} storage")
 

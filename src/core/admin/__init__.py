@@ -1106,11 +1106,11 @@ def review_hash_report(
     if action == "block":
         # Block the hash
         try:
-            db.execute(
-                """INSERT OR REPLACE INTO media_blocked_hashes 
-                   (hash_value, reason, blocked_at, blocked_by, auto_blocked)
-                   VALUES (?, ?, ?, ?, 0)""",
-                (hash_value, notes or "Blocked by admin", now, admin_id),
+            db.upsert(
+                "media_blocked_hashes",
+                ["hash_value", "reason", "blocked_at", "blocked_by", "auto_blocked"],
+                (hash_value, notes or "Blocked by admin", now, admin_id, 0),
+                conflict_columns=["hash_value"]
             )
         except Exception as e:
             logger.error(f"Failed to block hash: {e}")
@@ -1156,11 +1156,11 @@ def block_hash(
     now = int(time.time() * 1000)
 
     try:
-        db.execute(
-            """INSERT OR REPLACE INTO media_blocked_hashes 
-               (hash_value, hash_type, phash_threshold, reason, blocked_at, blocked_by, auto_blocked)
-               VALUES (?, ?, ?, ?, ?, ?, 0)""",
-            (hash_value, hash_type, phash_threshold, reason, now, admin_id),
+        db.upsert(
+            "media_blocked_hashes",
+            ["hash_value", "hash_type", "phash_threshold", "reason", "blocked_at", "blocked_by", "auto_blocked"],
+            (hash_value, hash_type, phash_threshold, reason, now, admin_id, 0),
+            conflict_columns=["hash_value"]
         )
         return True
     except Exception as e:
@@ -1225,11 +1225,11 @@ def block_user(
         expires_at = now + (duration_hours * 3600 * 1000)
 
     try:
-        db.execute(
-            """INSERT OR REPLACE INTO media_blocked_users 
-               (user_id, reason, blocked_at, blocked_by, expires_at)
-               VALUES (?, ?, ?, ?, ?)""",
+        db.upsert(
+            "media_blocked_users",
+            ["user_id", "reason", "blocked_at", "blocked_by", "expires_at"],
             (user_id, reason, now, admin_id, expires_at),
+            conflict_columns=["user_id"]
         )
         logger.info(f"Admin {admin_id} blocked user {user_id} from uploads: {reason}")
         return True

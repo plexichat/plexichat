@@ -57,8 +57,9 @@ class Keyring:
     Thread-safe within a process and uses file locking for multi-process safety.
     """
 
-    def __init__(self, keyring_path: Path):
+    def __init__(self, keyring_path: Path, env_var: Optional[str] = None):
         self.path = keyring_path
+        self.env_var = env_var
         self.lock_path = keyring_path.with_suffix(".lock")
         self.current_version: int = 0
         self.keys: Dict[int, bytes] = {}
@@ -68,6 +69,25 @@ class Keyring:
 
     def _get_kek(self) -> bytes:
         return vault.get_kek()
+
+    def _get_env_key(self) -> Optional[bytes]:
+        if not self.env_var:
+            return None
+        
+        val = os.environ.get(self.env_var)
+        if not val:
+            return None
+            
+        try:
+            # Expecting Base64 encoded 32-byte key
+            key = base64.b64decode(val)
+            if len(key) != 32:
+                logger.warning(f"Environment variable {self.env_var} must be a 32-byte key (Base64 encoded)")
+                return None
+            return key
+        except Exception as e:
+            logger.warning(f"Failed to decode environment variable {self.env_var}: {e}")
+            return None
 
     def _with_file_lock(self, func, *args, **kwargs):
         """Execute function with both thread and file lock."""
@@ -151,11 +171,21 @@ class Keyring:
         """Get a specific key version or the current one."""
         def _get_key_impl():
             if not self.keys:
-                new_key = AESGCM.generate_key(bit_length=256)
-                self.current_version = 1
-                self.keys[1] = new_key
-                self.rotated_at = int(time.time())
-                self._save_without_lock()
+                # 1. Try environment variable override
+                env_key = self._get_env_key()
+                if env_key:
+                    self.current_version = 1
+                    self.keys[1] = env_key
+                    self.rotated_at = int(time.time())
+                    logger.info(f"Initialized keyring with key from environment variable {self.env_var}")
+                    self._save_without_lock()
+                else:
+                    # 2. Generate new random key
+                    new_key = AESGCM.generate_key(bit_length=256)
+                    self.current_version = 1
+                    self.keys[1] = new_key
+                    self.rotated_at = int(time.time())
+                    self._save_without_lock()
 
             v = version if version is not None and version != 0 else self.current_version
             key = self.keys.get(v)
@@ -226,7 +256,8 @@ class EncryptionManager:
             salt_len=16,
         )
         self.keyring = Keyring(
-            Path.home() / ".plexichat" / "data" / "system_keyring.json"
+            Path.home() / ".plexichat" / "data" / "system_keyring.json",
+            env_var="PLEXICHAT_ENCRYPTION_KEY"
         )
 
     def hash_password(self, password: str) -> str:
@@ -429,7 +460,8 @@ class MessageEncryptor:
 
     def __init__(self):
         self.keyring = Keyring(
-            Path.home() / ".plexichat" / "data" / "message_keyring.json"
+            Path.home() / ".plexichat" / "data" / "message_keyring.json",
+            env_var="PLEXICHAT_MESSAGE_KEY"
         )
 
     def encrypt_message(self, content: str, message_id: Optional[int] = None) -> str:

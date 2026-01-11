@@ -349,7 +349,7 @@ class MigrationManager:
                         migration.checksum
                     )
                 
-                # Record migration start (uses INSERT OR REPLACE to handle retries)
+                # Record migration start (uses upsert to handle retries)
                 self.tracker.record_migration_start(
                     migration.version,
                     migration.name,

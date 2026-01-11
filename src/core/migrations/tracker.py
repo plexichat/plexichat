@@ -58,7 +58,7 @@ class MigrationTracker:
         Record the start of a migration.
         
         Handles both initial migrations and retries of failed migrations by using
-        INSERT OR REPLACE to avoid UNIQUE constraint violations.
+        upsert to avoid UNIQUE constraint violations.
         
         Args:
             version: Migration version (e.g., '001')
@@ -70,22 +70,16 @@ class MigrationTracker:
         """
         self.ensure_table_exists()
         
-        # Use INSERT OR REPLACE to handle both new migrations and retries of failed ones
-        self.db.execute(
-            """
-            INSERT OR REPLACE INTO migrations_history 
-            (version, name, checksum, status, applied_by, created_at, updated_at)
-            VALUES (
-                ?,
-                ?,
-                ?,
-                'running',
-                'system',
-                COALESCE((SELECT created_at FROM migrations_history WHERE version = ?), CURRENT_TIMESTAMP),
-                CURRENT_TIMESTAMP
-            )
-            """,
-            (version, name, checksum, version)
+        # Use upsert to handle both new migrations and retries of failed ones
+        # Get existing created_at if it exists to preserve it
+        existing = self.get_migration_status(version)
+        created_at = existing.get('created_at') if existing else datetime.utcnow()
+        
+        self.db.upsert(
+            "migrations_history",
+            ["version", "name", "checksum", "status", "applied_by", "created_at", "updated_at"],
+            (version, name, checksum, 'running', 'system', created_at, datetime.utcnow()),
+            conflict_columns=["version"]
         )
 
     def record_migration_success(self, version: str, execution_time_ms: int, 

@@ -576,10 +576,9 @@ class DeduplicationManager:
         now = int(time.time() * 1000)
 
         try:
-            self._db.execute(
-                """INSERT OR REPLACE INTO media_blocked_hashes 
-                   (hash_value, hash_type, phash_threshold, reason, blocked_at, blocked_by, auto_blocked)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            self._db.upsert(
+                "media_blocked_hashes",
+                ["hash_value", "hash_type", "phash_threshold", "reason", "blocked_at", "blocked_by", "auto_blocked"],
                 (
                     hash_value,
                     hash_type,
@@ -589,6 +588,7 @@ class DeduplicationManager:
                     blocked_by,
                     1 if auto else 0,
                 ),
+                conflict_columns=["hash_value"]
             )
 
             # Update all pending reports for this hash
@@ -635,11 +635,11 @@ class DeduplicationManager:
             expires_at = now + (duration_hours * 3600 * 1000)
 
         try:
-            self._db.execute(
-                """INSERT OR REPLACE INTO media_blocked_users 
-                   (user_id, reason, blocked_at, blocked_by, expires_at)
-                   VALUES (?, ?, ?, ?, ?)""",
+            self._db.upsert(
+                "media_blocked_users",
+                ["user_id", "reason", "blocked_at", "blocked_by", "expires_at"],
                 (user_id, reason, now, blocked_by, expires_at),
+                conflict_columns=["user_id"]
             )
             logger.info(f"User {user_id} blocked from uploads: {reason}")
             return True

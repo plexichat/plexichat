@@ -135,8 +135,8 @@ class ChunkedUploadManager:
 
     def _ensure_temp_dir(self) -> str:
         """Ensure temp directory exists."""
-        storage_config = config.get("storage", {})
-        temp_dir = storage_config.get("temp_dir", tempfile.gettempdir())
+        media_config = config.get("media", {})
+        temp_dir = media_config.get("temp_dir", tempfile.gettempdir())
         upload_temp = os.path.join(temp_dir, "chunked_uploads")
         os.makedirs(upload_temp, exist_ok=True)
         return upload_temp

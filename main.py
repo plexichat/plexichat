@@ -386,12 +386,6 @@ class PlexiChatServer:
                 "environment": "development",
             },
             "versioning": {"min_supported_version": VERSION, "update_url": None},
-            "storage": {
-                "data_dir": str(home_dir / "data"),
-                "logs_dir": str(home_dir / "logs"),
-                "media_dir": str(home_dir / "media"),
-                "temp_dir": str(home_dir / "temp"),
-            },
             "rate_limiting": {
                 "enabled": True,
                 # Global rate limit (per user, across all requests)
@@ -445,6 +439,11 @@ class PlexiChatServer:
                 "rate_limit": {"max_per_hour": 5, "max_per_day": 20},
             },
             "media": {
+                # Directories
+                "data_dir": str(home_dir / "data"),
+                "logs_dir": str(home_dir / "logs"),
+                "media_dir": str(home_dir / "media"),
+                "temp_dir": str(home_dir / "temp"),
                 # Primary storage backend: "local", "s3", or "database"
                 "storage_backend": "local",
                 # Client-side encryption at rest
@@ -1074,10 +1073,10 @@ class PlexiChatServer:
     def setup_logging(self) -> None:
         """Setup logging with configured settings."""
         log_config = config.get("logging", {})
-        storage_config = config.get("storage", {})
+        media_config = config.get("media", {})
 
         # Use home folder logs dir or fallback to project logs
-        log_dir = storage_config.get("logs_dir", os.path.join(project_root, "logs"))
+        log_dir = media_config.get("logs_dir", os.path.join(project_root, "logs"))
         
         # Expand ~ to home directory
         log_dir = os.path.expanduser(log_dir)
@@ -1799,8 +1798,8 @@ Examples:
 
     # Setup logging - NOW we can use logger
     log_config = config.get("logging", {})
-    storage_config = config.get("storage", {})
-    log_dir = storage_config.get("logs_dir", os.path.join(project_root, "logs"))
+    media_config = config.get("media", {})
+    log_dir = media_config.get("logs_dir", os.path.join(project_root, "logs"))
     log_dir = os.path.expanduser(log_dir)  # Expand ~ to home directory
     
     early_logs.append(("info", f"Initializing logger..."))
@@ -1947,11 +1946,11 @@ def _check_security_keys() -> None:
             if is_message_key_auto_generated():
                 warnings.append(
                     "MESSAGE ENCRYPTION: Using auto-generated key. "
-                    "BACK UP ~/.plexichat/data/.message_encryption_key - without it, encrypted messages cannot be recovered!"
+                    "Set PLEXICHAT_MESSAGE_KEY env var or back up ~/.plexichat/data/message_keyring.json"
                 )
         except Exception:
             warnings.append(
-                "messaging.encrypt_messages is enabled (back up ~/.plexichat/data/.message_encryption_key)"
+                "messaging.encrypt_messages is enabled (ensure PLEXICHAT_MESSAGE_KEY is set or back up message_keyring.json)"
             )
 
     # Log warnings

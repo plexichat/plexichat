@@ -81,11 +81,16 @@ class S3Storage(StorageBackendBase):
 
         try:
             self._client = boto3.client(**client_kwargs)
-            self._client.head_bucket(Bucket=bucket)
+            # Try to validate bucket existence, but don't fail if HeadBucket is unsupported
+            try:
+                self._client.head_bucket(Bucket=bucket)
+            except Exception as head_err:
+                logger.warning(f"S3 HeadBucket failed (might be unsupported by provider): {head_err}")
+            
             endpoint_info = f" (endpoint: {endpoint_url})" if endpoint_url else ""
             logger.info(f"Connected to S3 storage: bucket={bucket}{endpoint_info}")
         except Exception as e:
-            logger.error(f"Failed to connect to S3: {e}")
+            logger.error(f"Failed to initialize S3 client: {e}")
             raise StorageConnectionError(f"Failed to connect to S3: {e}", "s3")
 
     def _full_path(self, path: str) -> str:

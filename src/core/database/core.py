@@ -206,6 +206,30 @@ class Database:
             
             return stats
 
+    @property
+    def transaction_depth(self) -> int:
+        """Get the current thread's transaction depth, initializing if needed."""
+        if not hasattr(self._local, "transaction_depth"):
+            self._local.transaction_depth = 0
+        return self._local.transaction_depth
+
+    @transaction_depth.setter
+    def transaction_depth(self, value: int):
+        """Set the current thread's transaction depth."""
+        self._local.transaction_depth = value
+
+    @property
+    def in_transaction(self) -> bool:
+        """Get the current thread's transaction status, initializing if needed."""
+        if not hasattr(self._local, "in_transaction"):
+            self._local.in_transaction = False
+        return self._local.in_transaction
+
+    @in_transaction.setter
+    def in_transaction(self, value: bool):
+        """Set the current thread's transaction status."""
+        self._local.in_transaction = value
+
     def _get_conn(self) -> DbConnection:
         """Get or create a thread-local database connection.
         
@@ -217,11 +241,9 @@ class Database:
         
         Automatically generates and sets a correlation ID if none exists for request tracing.
         """
-        # Ensure thread-local state is initialized
-        if not hasattr(self._local, "transaction_depth"):
-            self._local.transaction_depth = 0
-        if not hasattr(self._local, "in_transaction"):
-            self._local.in_transaction = False
+        # Ensure thread-local state is initialized via properties
+        _ = self.transaction_depth
+        _ = self.in_transaction
 
         # Ensure correlation ID is set for this request/thread
         if self.get_correlation_id() is None:
@@ -366,8 +388,8 @@ class Database:
 
             self._local.connection = conn
             # Initialize thread-local state
-            self._local.transaction_depth = 0
-            self._local.in_transaction = False
+            self.transaction_depth = 0
+            self.in_transaction = False
             return conn
 
     def _connect_sqlite(self) -> DbConnection:
@@ -739,7 +761,7 @@ class Database:
         Raises:
             RuntimeError: If transaction state cannot be recovered.
         """
-        if self.type != "postgres" or self._local.transaction_depth == 0:
+        if self.type != "postgres" or self.transaction_depth == 0:
             return
         
         conn = self._get_conn()
@@ -803,8 +825,8 @@ class Database:
         finally:
             cursor.close()
             # Reset transaction state
-            self._local.transaction_depth = 0
-            self._local.in_transaction = False
+            self.transaction_depth = 0
+            self.in_transaction = False
 
     def execute(
         self, query: str, params: Optional[Tuple] = None, auto_commit: bool = True
@@ -826,14 +848,12 @@ class Database:
         Raises:
             Any database exception from failed query execution
         """
-        # Ensure thread-local state is initialized
-        if not hasattr(self._local, "transaction_depth"):
-            self._local.transaction_depth = 0
-        if not hasattr(self._local, "in_transaction"):
-            self._local.in_transaction = False
+        # Ensure thread-local state is initialized via properties
+        _ = self.transaction_depth
+        _ = self.in_transaction
 
         # Validate transaction state before executing
-        if self._local.transaction_depth > 0:
+        if self.transaction_depth > 0:
             self._validate_transaction_state()
         
         conn = self._get_conn()
@@ -877,7 +897,7 @@ class Database:
                 )
                 logger.warning(f"Slow query detected {slow_context}")
 
-            if auto_commit and not self._local.in_transaction:
+            if auto_commit and not self.in_transaction:
                 conn.commit()
             return cursor
         except Exception as e:
@@ -920,29 +940,29 @@ class Database:
             try:
                 if self.type == "postgres":
                     # PostgreSQL requires rollback on ANY error
-                    if self._local.transaction_depth > 0:
+                    if self.transaction_depth > 0:
                         # Attempt to rollback to last savepoint
                         try:
-                            cursor.execute(f"ROLLBACK TO SAVEPOINT sp_{self._local.transaction_depth}")
-                            logger.debug(f"Rolled back to savepoint sp_{self._local.transaction_depth}")
+                            cursor.execute(f"ROLLBACK TO SAVEPOINT sp_{self.transaction_depth}")
+                            logger.debug(f"Rolled back to savepoint sp_{self.transaction_depth}")
                         except Exception as inner_e:
                             # Savepoint rollback failed, rollback entire transaction
                             logger.warning(f"Savepoint rollback failed: {inner_e}, rolling back transaction")
                             conn.rollback()
-                            self._local.transaction_depth = 0
-                            self._local.in_transaction = False
+                            self.transaction_depth = 0
+                            self.in_transaction = False
                     else:
                         # Not in nested transaction, simple rollback
                         conn.rollback()
-                        self._local.in_transaction = False
-                elif not self._local.in_transaction:
+                        self.in_transaction = False
+                elif not self.in_transaction:
                     # SQLite: only rollback if not explicitly in transaction
                     conn.rollback()
             except Exception as cleanup_e:
                 logger.error(f"Error during transaction cleanup: {cleanup_e}")
                 # Force state reset on cleanup failure
-                self._local.transaction_depth = 0
-                self._local.in_transaction = False
+                self.transaction_depth = 0
+                self.in_transaction = False
             finally:
                 cursor.close()
             
@@ -997,14 +1017,14 @@ class Database:
     def begin_transaction(self) -> None:
         """Begin a transaction using SAVEPOINT for nesting support."""
         conn = self._get_conn()
-        if self._local.transaction_depth == 0:
+        if self.transaction_depth == 0:
             if self.type == "sqlite":
                 conn.execute("BEGIN")
-            self._local.in_transaction = True
+            self.in_transaction = True
 
-        self._local.transaction_depth += 1
+        self.transaction_depth += 1
         cursor = conn.cursor()
-        cursor.execute(f"SAVEPOINT sp_{self._local.transaction_depth}")
+        cursor.execute(f"SAVEPOINT sp_{self.transaction_depth}")
         cursor.close()
 
     def commit(self) -> None:
@@ -1014,11 +1034,11 @@ class Database:
         rolls back the entire transaction and resets state.
         """
         conn = self._get_conn()
-        if self._local.transaction_depth > 0:
+        if self.transaction_depth > 0:
             cursor = conn.cursor()
             try:
-                cursor.execute(f"RELEASE SAVEPOINT sp_{self._local.transaction_depth}")
-                logger.debug(f"Released savepoint sp_{self._local.transaction_depth}")
+                cursor.execute(f"RELEASE SAVEPOINT sp_{self.transaction_depth}")
+                logger.debug(f"Released savepoint sp_{self.transaction_depth}")
                 cursor.close()
             except Exception as e:
                 # Savepoint release failed, rollback entire transaction
@@ -1031,15 +1051,15 @@ class Database:
                     logger.error(f"Failed to rollback transaction: {rollback_e}")
                 finally:
                     # Reset state on any error
-                    self._local.transaction_depth = 0
-                    self._local.in_transaction = False
+                    self.transaction_depth = 0
+                    self.in_transaction = False
                 raise
             
-            self._local.transaction_depth -= 1
+            self.transaction_depth -= 1
 
-            if self._local.transaction_depth == 0:
+            if self.transaction_depth == 0:
                 conn.commit()
-                self._local.in_transaction = False
+                self.in_transaction = False
         else:
             conn.commit()
 
@@ -1050,11 +1070,11 @@ class Database:
         rolls back the entire transaction and resets state.
         """
         conn = self._get_conn()
-        if self._local.transaction_depth > 0:
+        if self.transaction_depth > 0:
             cursor = conn.cursor()
             try:
-                cursor.execute(f"ROLLBACK TO SAVEPOINT sp_{self._local.transaction_depth}")
-                logger.debug(f"Rolled back to savepoint sp_{self._local.transaction_depth}")
+                cursor.execute(f"ROLLBACK TO SAVEPOINT sp_{self.transaction_depth}")
+                logger.debug(f"Rolled back to savepoint sp_{self.transaction_depth}")
                 cursor.close()
             except Exception as e:
                 # Savepoint rollback failed, rollback entire transaction
@@ -1068,15 +1088,15 @@ class Database:
                     raise
                 finally:
                     # Reset state on any error
-                    self._local.transaction_depth = 0
-                    self._local.in_transaction = False
+                    self.transaction_depth = 0
+                    self.in_transaction = False
                 return
             
-            self._local.transaction_depth -= 1
+            self.transaction_depth -= 1
 
-            if self._local.transaction_depth == 0:
+            if self.transaction_depth == 0:
                 conn.rollback()
-                self._local.in_transaction = False
+                self.in_transaction = False
         else:
             try:
                 conn.rollback()
@@ -1084,7 +1104,7 @@ class Database:
                 logger.error(f"Rollback failed: {e}")
                 raise
             finally:
-                self._local.in_transaction = False
+                self.in_transaction = False
 
     def insert_or_ignore(self, table: str, columns: List[str], values: Tuple) -> bool:
         """Secure cross-database INSERT OR IGNORE."""
@@ -1233,8 +1253,8 @@ class Database:
         
         # Clear all thread-local state
         self._local.connection = None
-        self._local.transaction_depth = 0
-        self._local.in_transaction = False
+        self.transaction_depth = 0
+        self.in_transaction = False
         logger.debug(f"Thread {thread_name} cleared thread-local connection state")
 
     def execute_many(self, query: str, params_list: List[Tuple]) -> DbCursor:
@@ -1254,14 +1274,12 @@ class Database:
         Raises:
             Any database exception from failed query execution
         """
-        # Ensure thread-local state is initialized
-        if not hasattr(self._local, "transaction_depth"):
-            self._local.transaction_depth = 0
-        if not hasattr(self._local, "in_transaction"):
-            self._local.in_transaction = False
+        # Ensure thread-local state is initialized via properties
+        _ = self.transaction_depth
+        _ = self.in_transaction
 
         # Validate transaction state before executing
-        if self._local.transaction_depth > 0:
+        if self.transaction_depth > 0:
             self._validate_transaction_state()
         
         conn = self._get_conn()
@@ -1300,7 +1318,7 @@ class Database:
                 )
                 logger.warning(f"Slow batch query detected {slow_context}")
             
-            if not self._local.in_transaction:
+            if not self.in_transaction:
                 conn.commit()
             return cursor
         except Exception as e:
@@ -1344,29 +1362,29 @@ class Database:
             try:
                 if self.type == "postgres":
                     # PostgreSQL requires rollback on ANY error
-                    if self._local.transaction_depth > 0:
+                    if self.transaction_depth > 0:
                         # Attempt to rollback to last savepoint
                         try:
-                            cursor.execute(f"ROLLBACK TO SAVEPOINT sp_{self._local.transaction_depth}")
-                            logger.debug(f"Rolled back to savepoint sp_{self._local.transaction_depth}")
+                            cursor.execute(f"ROLLBACK TO SAVEPOINT sp_{self.transaction_depth}")
+                            logger.debug(f"Rolled back to savepoint sp_{self.transaction_depth}")
                         except Exception as inner_e:
                             # Savepoint rollback failed, rollback entire transaction
                             logger.warning(f"Savepoint rollback failed: {inner_e}, rolling back transaction")
                             conn.rollback()
-                            self._local.transaction_depth = 0
-                            self._local.in_transaction = False
+                            self.transaction_depth = 0
+                            self.in_transaction = False
                     else:
                         # Not in nested transaction, simple rollback
                         conn.rollback()
-                        self._local.in_transaction = False
-                elif not self._local.in_transaction:
+                        self.in_transaction = False
+                elif not self.in_transaction:
                     # SQLite: only rollback if not explicitly in transaction
                     conn.rollback()
             except Exception as cleanup_e:
                 logger.error(f"Error during transaction cleanup: {cleanup_e}")
                 # Force state reset on cleanup failure
-                self._local.transaction_depth = 0
-                self._local.in_transaction = False
+                self.transaction_depth = 0
+                self.in_transaction = False
             finally:
                 cursor.close()
             
