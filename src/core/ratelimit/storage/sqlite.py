@@ -73,12 +73,11 @@ class SQLiteStorage(RateLimitStorage):
 
         data_json = json.dumps(state_copy)
 
-        self._db.execute(
-            """
-            INSERT OR REPLACE INTO ratelimit_buckets (key, bucket_type, tokens, last_update, expires_at, data)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """,
-            (key, bucket_type, tokens, last_update, expires_at, data_json),
+        self._db.upsert(
+            "ratelimit_buckets",
+            ["key", "bucket_type", "tokens", "last_update", "expires_at", "data"],
+            (key, bucket_type, float(tokens), float(last_update), float(expires_at), data_json),
+            conflict_columns=["key"]
         )
 
     def delete_bucket(self, key: str) -> bool:
@@ -168,9 +167,10 @@ class SQLiteStorage(RateLimitStorage):
         # tokens = MIN(capacity, current_tokens + (now - last_update) * refill_rate)
 
         # First, ensure entry exists
-        self._db.execute(
-            "INSERT OR IGNORE INTO ratelimit_buckets (key, tokens, last_update, expires_at) VALUES (?, ?, ?, ?)",
-            (key, float(capacity), now, expires_at),
+        self._db.insert_or_ignore(
+            "ratelimit_buckets",
+            ["key", "tokens", "last_update", "expires_at"],
+            (key, float(capacity), float(now), float(expires_at))
         )
 
         # Atomic update with consumption check
