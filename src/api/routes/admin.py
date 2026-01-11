@@ -12,8 +12,10 @@ in place (VPN, firewall, reverse proxy auth, etc.)
 
 from fastapi import APIRouter, HTTPException, status, Request, Response
 from fastapi.responses import HTMLResponse
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union, Any
 import time
+import os
+from pathlib import Path
 
 import src.api as api
 import utils.config as config
@@ -60,24 +62,24 @@ router = APIRouter(tags=["Admin Management"])
 
 def _check_host_restriction(request: Request) -> None:
     """Check if client IP is allowed to access admin UI."""
-    # Bypass all restrictions for secure self-test requests or localhost
+    # Bypass all restrictions for secure self-test requests
     is_selftest = request.scope.get("state", {}).get("is_selftest", False)
-    # Check request.state as well for robustness
     if not is_selftest:
         is_selftest = getattr(request.state, "is_selftest", False)
+    
+    # Check for internal secret as a reliable bypass for local automation
+    if not is_selftest:
+        internal_secret = api.get_internal_secret()
+        provided_secret = request.headers.get("X-Plexichat-Internal-Secret")
+        is_selftest = internal_secret and provided_secret == internal_secret
 
-    client_ip = request.client.host if request.client else "unknown"
-    is_local = client_ip in ("127.0.0.1", "localhost", "::1")
-
-    if is_selftest or is_local:
-        if is_selftest:
-            logger.info(
-                f"Admin host restriction bypass (is_selftest=True): {request.method} {request.url.path}"
-            )
+    if is_selftest:
+        logger.info(
+            f"Admin host restriction bypass (is_selftest=True): {request.method} {request.url.path}"
+        )
         return
 
     admin_config = config.get("admin_ui", {})
-
     if not admin_config.get("enabled", False):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -86,13 +88,32 @@ def _check_host_restriction(request: Request) -> None:
 
     host_restriction = admin_config.get("host_restriction", {})
     if host_restriction.get("enabled", True):
+        # Extract real client IP using consolidated utility which handles trusted proxies securely
+        from src.utils.net import get_client_ip
+        client_ip = get_client_ip(request)
+        
+        # Security: Additional verification for trust_x_forwarded_for configuration
+        api_config = config.get("api", {})
+        if api_config.get("trust_x_forwarded_for", False):
+            trusted_proxies = api_config.get("trusted_proxies", [])
+            
+            # Fail closed: if trust is enabled but no proxies are defined, deny access
+            if not trusted_proxies:
+                logger.error("Admin access blocked: api.trust_x_forwarded_for is enabled but api.trusted_proxies is empty.")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={"error": {"code": 403, "message": "Security configuration error: Proxy trust mismatch"}},
+                )
+            
+            # Warn if wildcard is used
+            if "*" in trusted_proxies:
+                logger.warning("SECURITY WARNING: Admin access using wildcard (*) trusted proxy. This allows IP spoofing.")
+
         allowed_hosts = host_restriction.get(
             "allowed_hosts", ["127.0.0.1", "localhost", "::1"]
         )
-        client_ip = request.client.host if request.client else "unknown"
 
         from src.core import admin
-
         if not admin.check_host_restriction(client_ip, allowed_hosts):
             logger.warning(f"Admin access denied from {client_ip}")
             raise HTTPException(
@@ -112,6 +133,34 @@ def _check_host_restriction(request: Request) -> None:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={"error": {"code": 403, "message": "Origin not allowed"}},
             )
+
+
+def _load_admin_template(template_name: str) -> str:
+    """Load an admin UI template from the templates directory with path sanitization."""
+    # Security: prevent path traversal by only allowing specific template filenames
+    allowed_templates = ["login.html", "dashboard.html"]
+    if template_name not in allowed_templates:
+        logger.warning(f"Blocked unauthorized admin template access: {template_name}")
+        return "<h1>Access Denied</h1><p>Unauthorized template requested.</p>"
+
+    # Template directory is relative to this file
+    template_dir = Path(__file__).parent.parent / "templates" / "admin"
+    template_path = (template_dir / template_name).resolve()
+
+    # Security: Ensure resolved path is within the template directory
+    if not str(template_path).startswith(str(template_dir.resolve())):
+        logger.warning(f"Blocked path traversal attempt for template: {template_name}")
+        return "<h1>Access Denied</h1><p>Unauthorized path requested.</p>"
+
+    if not template_path.exists():
+        logger.error(f"Admin template not found: {template_path}")
+        return "<h1>Template Error</h1><p>Admin UI template not found.</p>"
+
+    try:
+        return template_path.read_text(encoding="utf-8")
+    except Exception as e:
+        logger.error(f"Error reading admin template {template_name}: {e}")
+        return f"<h1>Template Error</h1><p>Failed to load template: {e}</p>"
 
 
 def _get_admin_from_token(request: Request) -> int:
@@ -399,7 +448,7 @@ async def get_dashboard(request: Request) -> AdminDashboardResponse:
     "/tickets",
     response_model=List[TicketResponse],
     summary="Get feedback tickets",
-    responses={
+    responses=    {
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {
             "model": ErrorResponse,
@@ -453,7 +502,7 @@ async def get_tickets(
     "/tickets/{ticket_id}",
     response_model=TicketResponse,
     summary="Get a single ticket",
-    responses={
+    responses=    {
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {
             "model": ErrorResponse,
@@ -510,7 +559,7 @@ async def get_ticket(ticket_id: int, request: Request) -> TicketResponse:
     "/tickets/{ticket_id}/status",
     response_model=SuccessResponse,
     summary="Update ticket status",
-    responses={
+    responses=    {
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {
             "model": ErrorResponse,
@@ -564,7 +613,7 @@ async def update_ticket_status(
     "/tickets/{ticket_id}/notes",
     response_model=List[NoteResponse],
     summary="Get internal notes for a ticket",
-    responses={
+    responses=    {
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {
             "model": ErrorResponse,
@@ -623,7 +672,7 @@ async def get_ticket_notes(ticket_id: int, request: Request) -> List[NoteRespons
     "/tickets/{ticket_id}/notes",
     response_model=NoteResponse,
     summary="Add internal note to a ticket",
-    responses={
+    responses=    {
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {
             "model": ErrorResponse,
@@ -692,7 +741,7 @@ async def add_ticket_note(
     "/telemetry/stats",
     response_model=TelemetryStatsResponse,
     summary="Get telemetry statistics",
-    responses={
+    responses=    {
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {
             "model": ErrorResponse,
@@ -776,7 +825,7 @@ async def get_telemetry_stats(
     "/telemetry/history",
     response_model=TelemetryHistoryResponse,
     summary="Get telemetry history for an endpoint",
-    responses={
+    responses=    {
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {
             "model": ErrorResponse,
@@ -834,7 +883,7 @@ async def get_telemetry_history(
     "/telemetry/reset",
     response_model=TelemetryResetResponse,
     summary="Reset all telemetry statistics",
-    responses={
+    responses=    {
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {
             "model": ErrorResponse,
@@ -878,7 +927,7 @@ async def reset_telemetry_stats(request: Request) -> TelemetryResetResponse:
     "/telemetry/export",
     response_model=TelemetryExportResponse,
     summary="Export telemetry statistics",
-    responses={
+    responses=    {
         200: {
             "description": "Exported statistics in the requested format",
             "content": {
@@ -990,7 +1039,7 @@ async def export_telemetry_stats(
             return Response(
                 content=output.getvalue(),
                 media_type="text/csv",
-                headers={
+                headers=    {
                     "Content-Disposition": f"attachment; filename=telemetry_{export_time.replace(' ', '_').replace(':', '-')}.csv"
                 },
             )
@@ -1001,7 +1050,7 @@ async def export_telemetry_stats(
                 f"Generated: {export_time}",
                 f"Time Range: Last {hours} hours",
                 "",
-                f"{'Endpoint':<50} {'Method':<8} {'Count':>8} {'Avg':>10} {'P95':>10} {'Error%':>8}",
+                f"{ 'Endpoint':<50} {'Method':<8} {'Count':>8} {'Avg':>10} {'P95':>10} {'Error%':>8}",
                 f"{'-' * 50} {'-' * 8} {'-' * 8} {'-' * 10} {'-' * 10} {'-' * 8}",
             ]
             for s in stats:
@@ -1037,7 +1086,7 @@ async def export_telemetry_stats(
             return Response(
                 content="\n".join(lines),
                 media_type="text/plain",
-                headers={
+                headers=    {
                     "Content-Disposition": f"attachment; filename=telemetry_{export_time.replace(' ', '_').replace(':', '-')}.txt"
                 },
             )
@@ -1080,9 +1129,9 @@ async def export_telemetry_stats(
                     <td class="{latency_class}">{s.avg_response_time_ms:.1f}</td>
                     <td>{s.min_response_time_ms:.1f}</td>
                     <td>{s.max_response_time_ms:.1f}</td>
-                    <td>{s.p50_response_time_ms:.1f}</td>
-                    <td class="{latency_class}">{s.p95_response_time_ms:.1f}</td>
-                    <td>{s.p99_response_time_ms:.1f}</td>
+                    <td>{s.p50_ms:.1f}</td>
+                    <td class="{latency_class}">{s.p95_ms:.1f}</td>
+                    <td>{s.p99_ms:.1f}</td>
                     <td class="{error_class}">{s.error_rate * 100:.1f}%</td>
                 </tr>"""
 
@@ -1126,7 +1175,7 @@ async def export_telemetry_stats(
             return Response(
                 content=html,
                 media_type="text/html",
-                headers={
+                headers=    {
                     "Content-Disposition": f"attachment; filename=telemetry_{export_time.replace(' ', '_').replace(':', '-')}.html"
                 },
             )
@@ -1137,7 +1186,7 @@ async def export_telemetry_stats(
             )
             raise HTTPException(
                 status_code=400,
-                detail={
+                detail=    {
                     "error": {
                         "code": 400,
                         "message": f"Unsupported format: {format}. Use json, csv, txt, or html",
@@ -1170,7 +1219,7 @@ async def export_telemetry_stats(
     "/hash-reports",
     response_model=List[HashReportResponse],
     summary="Get hash reports",
-    responses={
+    responses=    {
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {
             "model": ErrorResponse,
@@ -1233,7 +1282,7 @@ async def get_hash_reports(
     "/hash-reports/counts",
     response_model=HashReportCountsResponse,
     summary="Get hash report counts",
-    responses={
+    responses=    {
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {
             "model": ErrorResponse,
@@ -1268,7 +1317,7 @@ async def get_hash_report_counts(request: Request) -> HashReportCountsResponse:
     "/hash-reports/{report_id}/review",
     response_model=HashReportReviewResponse,
     summary="Review a hash report",
-    responses={
+    responses=    {
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {
             "model": ErrorResponse,
@@ -1326,7 +1375,7 @@ async def review_hash_report(
     "/blocked-hashes",
     response_model=List[BlockedHashResponse],
     summary="Get blocked hashes",
-    responses={
+    responses=    {
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {
             "model": ErrorResponse,
@@ -1375,7 +1424,7 @@ async def get_blocked_hashes(
     "/blocked-hashes",
     response_model=BlockHashResponse,
     summary="Manually block a hash",
-    responses={
+    responses=    {
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {
             "model": ErrorResponse,
@@ -1439,7 +1488,7 @@ async def block_hash_manually(
     "/blocked-hashes/{hash_value}",
     response_model=SuccessResponse,
     summary="Unblock a hash",
-    responses={
+    responses=    {
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {
             "model": ErrorResponse,
@@ -1490,7 +1539,7 @@ async def unblock_hash(hash_value: str, request: Request) -> SuccessResponse:
     "/blocked-users",
     response_model=List[BlockedUserResponse],
     summary="Get blocked users",
-    responses={
+    responses=    {
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {
             "model": ErrorResponse,
@@ -1538,7 +1587,7 @@ async def get_blocked_users(
     "/blocked-users",
     response_model=BlockUserResponse,
     summary="Block a user from uploading",
-    responses={
+    responses=    {
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {
             "model": ErrorResponse,
@@ -1596,7 +1645,7 @@ async def block_user(
     "/blocked-users/{user_id}",
     response_model=SuccessResponse,
     summary="Unblock a user from uploading",
-    responses={
+    responses=    {
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {
             "model": ErrorResponse,
@@ -1645,7 +1694,7 @@ async def unblock_user(user_id: int, request: Request) -> SuccessResponse:
     "/users/search",
     response_model=UserSearchListResponse,
     summary="Search users",
-    responses={
+    responses=    {
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {
             "model": ErrorResponse,
@@ -1712,7 +1761,7 @@ async def admin_user_search(
     "/users/{user_id}",
     response_model=UserDetailsResponse,
     summary="Get user details",
-    responses={
+    responses=    {
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {
             "model": ErrorResponse,
@@ -1779,7 +1828,7 @@ async def get_user_details(user_id: int, request: Request) -> UserDetailsRespons
     "/users/{user_id}/tier",
     response_model=UserTierUpdateResponse,
     summary="Update user tier",
-    responses={
+    responses=    {
         400: {"model": ErrorResponse, "description": "Invalid user ID"},
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {
@@ -1852,7 +1901,7 @@ async def update_user_tier(
     "/users/{user_id}/badges/{badge}",
     response_model=UserBadgeUpdateResponse,
     summary="Add user badge",
-    responses={
+    responses=    {
         400: {"model": ErrorResponse, "description": "Invalid user ID"},
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {
@@ -1923,7 +1972,7 @@ async def add_user_badge(
     "/users/{user_id}/badges/{badge}",
     response_model=UserBadgeUpdateResponse,
     summary="Remove user badge",
-    responses={
+    responses=    {
         400: {"model": ErrorResponse, "description": "Invalid user ID"},
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {
@@ -1996,7 +2045,7 @@ async def remove_user_badge(
     "/tiers",
     response_model=AvailableTiersResponse,
     summary="Get available tiers",
-    responses={
+    responses=    {
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {
             "model": ErrorResponse,
@@ -2042,7 +2091,7 @@ async def get_available_tiers(request: Request) -> AvailableTiersResponse:
     "/badges",
     response_model=AvailableBadgesResponse,
     summary="Get available badges",
-    responses={
+    responses=    {
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {
             "model": ErrorResponse,
@@ -2085,1096 +2134,115 @@ async def get_available_badges(request: Request) -> AvailableBadgesResponse:
         )
 
 
-# ==================== Admin UI HTML ====================
-
-ADMIN_LOGIN_HTML = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PlexiChat Admin Login</title>
-    <style>
-        :root { --bg: #1a1a2e; --card: #16213e; --accent: #e94560; --text: #eaeaea; --border: #0f3460; --error: #ef4444; }
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; display: flex; align-items: center; justify-content: center; }
-        .login-card { background: var(--card); border-radius: 12px; padding: 40px; width: 100%; max-width: 400px; border: 1px solid var(--border); }
-        h1 { color: var(--accent); margin-bottom: 8px; font-size: 24px; }
-        .subtitle { color: #888; margin-bottom: 24px; }
-        .form-group { margin-bottom: 16px; }
-        label { display: block; margin-bottom: 6px; font-size: 14px; color: #aaa; }
-        input { width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 16px; }
-        input:focus { outline: none; border-color: var(--accent); }
-        button { width: 100%; padding: 12px; background: var(--accent); color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; margin-top: 8px; }
-        button:hover { opacity: 0.9; }
-        button:disabled { opacity: 0.5; cursor: not-allowed; }
-        .error { color: var(--error); font-size: 14px; margin-top: 12px; display: none; }
-        .otp-setup { display: none; text-align: center; }
-        .otp-setup img { max-width: 200px; margin: 16px 0; background: white; padding: 8px; border-radius: 8px; }
-        .otp-setup .secret { font-family: monospace; background: var(--bg); padding: 8px; border-radius: 4px; margin: 8px 0; word-break: break-all; }
-        .warning { background: #fbbf24; color: #000; padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 14px; }
-    </style>
-</head>
-<body>
-    <div class="login-card">
-        <div id="login-form">
-            <h1>PlexiChat Admin</h1>
-            <p class="subtitle">Sign in to access the admin panel</p>
-            <form onsubmit="login(event)">
-                <div class="form-group">
-                    <label for="username">Username</label>
-                    <input type="text" id="username" required autocomplete="username">
-                </div>
-                <div class="form-group">
-                    <label for="password">Password</label>
-                    <input type="password" id="password" required autocomplete="current-password">
-                </div>
-                <button type="submit" id="login-btn">Sign In</button>
-            </form>
-            <div class="error" id="login-error"></div>
-        </div>
-        <div id="otp-setup" class="otp-setup">
-            <h1>Setup 2FA</h1>
-            <p class="subtitle">Scan this QR code with your authenticator app</p>
-            <div class="warning">2FA is required for admin access. This is a one-time setup.</div>
-            <img id="qr-code" src="" alt="QR Code">
-            <p>Or enter this secret manually:</p>
-            <div class="secret" id="otp-secret"></div>
-            <form onsubmit="verifyOTP(event, true)">
-                <div class="form-group">
-                    <label for="setup-code">Enter code from app</label>
-                    <input type="text" id="setup-code" required maxlength="6" pattern="[0-9]{6}" autocomplete="one-time-code">
-                </div>
-                <button type="submit">Verify & Enable 2FA</button>
-            </form>
-            <div class="error" id="setup-error"></div>
-        </div>
-        <div id="otp-verify" class="otp-setup">
-            <h1>Enter 2FA Code</h1>
-            <p class="subtitle">Enter the code from your authenticator app</p>
-            <form onsubmit="verifyOTP(event, false)">
-                <div class="form-group">
-                    <label for="verify-code">6-digit code</label>
-                    <input type="text" id="verify-code" required maxlength="6" pattern="[0-9]{6}" autocomplete="one-time-code">
-                </div>
-                <button type="submit">Verify</button>
-            </form>
-            <div class="error" id="verify-error"></div>
-        </div>
-    </div>
-    <script>
-        let adminId = null;
-        async function login(e) {
-            e.preventDefault();
-            const btn = document.getElementById('login-btn');
-            const err = document.getElementById('login-error');
-            btn.disabled = true; err.style.display = 'none';
-            try {
-                const res = await fetch('/api/v1/admin/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        username: document.getElementById('username').value,
-                        password: document.getElementById('password').value
-                    })
-                });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.detail || 'Login failed');
-                if (data.status === 'otp_setup_required') {
-                    adminId = data.admin_id;
-                    document.getElementById('login-form').style.display = 'none';
-                    document.getElementById('otp-setup').style.display = 'block';
-                    document.getElementById('qr-code').src = '/api/v1/qr?size=200x200&data=' + encodeURIComponent(data.otp_qr_uri);
-                    document.getElementById('otp-secret').textContent = data.otp_secret;
-                } else if (data.status === 'otp_required') {
-                    adminId = data.admin_id;
-                    document.getElementById('login-form').style.display = 'none';
-                    document.getElementById('otp-verify').style.display = 'block';
-                } else if (data.token) {
-                    localStorage.setItem('plexichat-admin-token', data.token);
-                    window.location.href = '/api/v1/admin/ui';
-                }
-            } catch (e) { err.textContent = e.message; err.style.display = 'block'; }
-            btn.disabled = false;
-        }
-        async function verifyOTP(e, isSetup) {
-            e.preventDefault();
-            const code = document.getElementById(isSetup ? 'setup-code' : 'verify-code').value;
-            const err = document.getElementById(isSetup ? 'setup-error' : 'verify-error');
-            err.style.display = 'none';
-            try {
-                const res = await fetch('/api/v1/admin/verify-otp', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ admin_id: adminId, code: code, is_setup: isSetup })
-                });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.detail || 'Verification failed');
-                localStorage.setItem('plexichat-admin-token', data.token);
-                window.location.href = '/api/v1/admin/ui';
-            } catch (e) { err.textContent = e.message; err.style.display = 'block'; }
-        }
-        // Check if already logged in
-        const token = localStorage.getItem('plexichat-admin-token');
-        if (token) {
-            fetch('/api/v1/admin/dashboard', { headers: { 'Authorization': 'Bearer ' + token } })
-                .then(r => { if (r.ok) window.location.href = '/api/v1/admin/ui'; });
-        }
-    </script>
-</body>
-</html>
-"""
-
-
-ADMIN_DASHBOARD_HTML = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PlexiChat Admin Dashboard</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>
-        :root { --bg: #1a1a2e; --card: #16213e; --accent: #e94560; --text: #eaeaea; --border: #0f3460; --good: #4ade80; --warn: #fbbf24; --bad: #ef4444; }
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
-        .header { background: var(--card); padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); }
-        .header h1 { color: var(--accent); font-size: 20px; }
-        .logout-btn { background: transparent; border: 1px solid var(--border); color: var(--text); padding: 8px 16px; border-radius: 4px; cursor: pointer; }
-        .logout-btn:hover { border-color: var(--accent); }
-        .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
-        .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
-        .card { background: var(--card); border-radius: 8px; padding: 20px; border: 1px solid var(--border); }
-        .card h3 { font-size: 12px; color: #888; margin-bottom: 8px; text-transform: uppercase; }
-        .card .value { font-size: 28px; font-weight: bold; color: var(--accent); }
-        .card .value.good { color: var(--good); }
-        .card .value.warn { color: var(--warn); }
-        .card .value.bad { color: var(--bad); }
-        .card .subtitle { font-size: 11px; color: #666; margin-top: 4px; }
-        .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
-        .tab { padding: 10px 20px; background: var(--card); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; color: var(--text); }
-        .tab.active { background: var(--accent); border-color: var(--accent); }
-        table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 8px; overflow: hidden; }
-        th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--border); }
-        th { background: var(--border); font-weight: 600; font-size: 12px; text-transform: uppercase; }
-        .status { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; }
-        .status.open { background: #fbbf24; color: #000; }
-        .status.in_progress { background: #3b82f6; color: #fff; }
-        .status.resolved { background: #4ade80; color: #000; }
-        .status.closed { background: #6b7280; color: #fff; }
-        #error { color: #ef4444; padding: 16px; background: rgba(239,68,68,0.1); border-radius: 8px; margin-bottom: 16px; display: none; }
-        .loading { text-align: center; padding: 40px; color: #888; }
-        .chart-container { background: var(--card); border-radius: 8px; padding: 20px; border: 1px solid var(--border); margin-bottom: 16px; }
-        .chart-container h3 { font-size: 14px; color: #888; margin-bottom: 16px; text-transform: uppercase; }
-        .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
-        .chart-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 16px; }
-        @media (max-width: 1200px) { .chart-row-3 { grid-template-columns: 1fr 1fr; } }
-        @media (max-width: 900px) { .chart-row, .chart-row-3 { grid-template-columns: 1fr; } }
-        .latency-good { color: var(--good); }
-        .latency-warn { color: var(--warn); }
-        .latency-bad { color: var(--bad); }
-        .endpoint-row { cursor: pointer; transition: background 0.2s; }
-        .endpoint-row:hover { background: rgba(233,69,96,0.1); }
-        .endpoint-row.selected { background: rgba(233,69,96,0.2); }
-        .emoji-cell { font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif; }
-        #history-chart-container { display: none; }
-        .summary-row { display: flex; gap: 24px; margin-bottom: 16px; flex-wrap: wrap; }
-        .summary-item { display: flex; align-items: center; gap: 8px; font-size: 14px; }
-        .summary-dot { width: 12px; height: 12px; border-radius: 50%; }
-        .filter-row { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; }
-        .filter-row select, .filter-row input { padding: 8px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); }
-        .filter-row select:focus, .filter-row input:focus { outline: none; border-color: var(--accent); }
-        .refresh-btn { padding: 8px 16px; background: var(--accent); border: none; border-radius: 4px; color: white; cursor: pointer; }
-        .refresh-btn:hover { opacity: 0.9; }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>PlexiChat Admin</h1>
-        <button class="logout-btn" onclick="logout()">Logout</button>
-    </div>
-    <div class="container">
-        <div id="error"></div>
-        <div id="loading" class="loading">Verifying session...</div>
-        <div id="content" style="display:none">
-            <div class="cards" id="stats"></div>
-            <div class="tabs">
-                <button class="tab active" onclick="showTab('tickets', this)">Tickets</button>
-                <button class="tab" onclick="showTab('telemetry', this)">Telemetry</button>
-                <button class="tab" onclick="showTab('hash-reports', this)">Hash Reports</button>
-                <button class="tab" onclick="showTab('user-tiers', this)">User Tiers</button>
-            </div>
-            <div id="tickets-tab">
-                <table id="tickets-table">
-                    <thead><tr><th>ID</th><th>User</th><th>Category</th><th>Status</th><th>Created</th></tr></thead>
-                    <tbody></tbody>
-                </table>
-            </div>
-            <div id="hash-reports-tab" style="display:none">
-                <div class="filter-row">
-                    <select id="hash-status-filter" onchange="loadHashReports()">
-                        <option value="">All Status</option>
-                        <option value="pending">Pending</option>
-                        <option value="reviewed">Reviewed</option>
-                        <option value="blocked">Blocked</option>
-                        <option value="cleared">Cleared</option>
-                    </select>
-                    <button class="refresh-btn" onclick="loadHashReports()">Refresh</button>
-                    <button class="refresh-btn" onclick="showBlockHashModal()" style="background:#ef4444;margin-left:auto">Block Hash</button>
-                </div>
-                <div class="cards" id="hash-report-stats"></div>
-                <h3 style="margin:16px 0 8px;color:#888;font-size:14px">PENDING REPORTS</h3>
-                <table id="hash-reports-table">
-                    <thead><tr><th>Hash</th><th>Reporter</th><th>Reason</th><th>Status</th><th>Reported</th><th>Actions</th></tr></thead>
-                    <tbody></tbody>
-                </table>
-                <h3 style="margin:24px 0 8px;color:#888;font-size:14px">BLOCKED HASHES</h3>
-                <table id="blocked-hashes-table">
-                    <thead><tr><th>Hash</th><th>Reason</th><th>Blocked At</th><th>Auto</th><th>Actions</th></tr></thead>
-                    <tbody></tbody>
-                </table>
-            </div>
-            <!-- Block Hash Modal -->
-            <div id="block-hash-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center">
-                <div style="background:var(--card);border-radius:12px;padding:24px;width:100%;max-width:500px;border:1px solid var(--border)">
-                    <h2 style="color:var(--accent);margin-bottom:16px">Block Hash</h2>
-                    <div class="form-group" style="margin-bottom:16px">
-                        <label style="display:block;margin-bottom:6px;color:#aaa">SHA-256 Hash</label>
-                        <input type="text" id="block-hash-value" style="width:100%;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:monospace" placeholder="Enter 64-character hash">
-                    </div>
-                    <div class="form-group" style="margin-bottom:16px">
-                        <label style="display:block;margin-bottom:6px;color:#aaa">Reason</label>
-                        <input type="text" id="block-hash-reason" style="width:100%;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text)" placeholder="Reason for blocking">
-                    </div>
-                    <div style="display:flex;gap:12px;justify-content:flex-end">
-                        <button onclick="hideBlockHashModal()" style="padding:10px 20px;background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--text);cursor:pointer">Cancel</button>
-                        <button onclick="blockHashManually()" style="padding:10px 20px;background:var(--accent);border:none;border-radius:4px;color:white;cursor:pointer">Block Hash</button>
-                    </div>
-                </div>
-            </div>
-            <div id="telemetry-tab" style="display:none">
-                <div class="filter-row">
-                    <select id="time-range" onchange="loadTelemetryStats()">
-                        <option value="1">Last 1 hour</option>
-                        <option value="6">Last 6 hours</option>
-                        <option value="24" selected>Last 24 hours</option>
-                        <option value="72">Last 3 days</option>
-                        <option value="168">Last 7 days</option>
-                    </select>
-                    <select id="telemetry-source" onchange="loadTelemetryStats()">
-                        <option value="">All Sources</option>
-                        <option value="server">Server-side Only</option>
-                        <option value="client">Client-side Only</option>
-                    </select>
-                    <button class="refresh-btn" onclick="loadTelemetryStats()">Refresh</button>
-                    <select id="export-format" style="margin-left:auto">
-                        <option value="json">JSON</option>
-                        <option value="csv">CSV</option>
-                        <option value="html">HTML</option>
-                        <option value="txt">Text</option>
-                    </select>
-                    <button class="refresh-btn" onclick="exportStats()" style="background:#3b82f6">Export</button>
-                    <button class="refresh-btn" onclick="resetStats()" style="background:#ef4444">Reset All</button>
-                </div>
-                <div class="cards" id="telemetry-summary"></div>
-                <div class="chart-row">
-                    <div class="chart-container">
-                        <h3>Latency Distribution (Avg vs P95)</h3>
-                        <canvas id="latency-chart"></canvas>
-                    </div>
-                    <div class="chart-container">
-                        <h3>Request Volume</h3>
-                        <canvas id="count-chart"></canvas>
-                    </div>
-                </div>
-                <div class="chart-row">
-                    <div class="chart-container">
-                        <h3>Error Rate by Endpoint</h3>
-                        <canvas id="error-chart"></canvas>
-                    </div>
-                    <div class="chart-container">
-                        <h3>Slowest Endpoints (P95)</h3>
-                        <canvas id="slow-chart"></canvas>
-                    </div>
-                </div>
-                <div class="chart-container" id="history-chart-container">
-                    <h3>Latency History: <span id="history-endpoint"></span></h3>
-                    <canvas id="history-chart"></canvas>
-                </div>
-                <table id="telemetry-table">
-                    <thead><tr><th>Endpoint</th><th>Method</th><th>Count</th><th>Avg (ms)</th><th>P50 (ms)</th><th>P95 (ms)</th><th>P99 (ms)</th><th>Error %</th></tr></thead>
-                    <tbody></tbody>
-                </table>
-            </div>
-            <div id="user-tiers-tab" style="display:none">
-                <div class="filter-row">
-                    <input type="text" id="user-search" placeholder="Search by username or ID..." style="flex:1;max-width:400px" onkeyup="if(event.key==='Enter')searchUsers()">
-                    <button class="refresh-btn" onclick="searchUsers()">Search</button>
-                </div>
-                <div id="user-search-results" style="margin-bottom:24px"></div>
-                <div id="user-details" style="display:none">
-                    <div class="card" style="margin-bottom:16px">
-                        <h3>USER DETAILS</h3>
-                        <div id="user-info" style="margin-top:12px"></div>
-                    </div>
-                    <div class="card" style="margin-bottom:16px">
-                        <h3>CHANGE TIER</h3>
-                        <div style="display:flex;gap:12px;margin-top:12px;flex-wrap:wrap">
-                            <select id="tier-select" style="padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text)">
-                                <option value="free">Free</option>
-                                <option value="alpha">Alpha</option>
-                                <option value="beta">Beta</option>
-                                <option value="premium">Premium</option>
-                                <option value="staff">Staff</option>
-                            </select>
-                            <button class="refresh-btn" onclick="updateUserTier()">Update Tier</button>
-                        </div>
-                    </div>
-                    <div class="card">
-                        <h3>BADGES</h3>
-                        <div id="user-badges" style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"></div>
-                        <div style="display:flex;gap:12px;margin-top:16px;flex-wrap:wrap">
-                            <select id="badge-select" style="padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text)">
-                                <option value="alpha_tester">Alpha Tester</option>
-                                <option value="early_supporter">Early Supporter</option>
-                                <option value="staff">Staff</option>
-                                <option value="verified">Verified</option>
-                                <option value="bug_hunter">Bug Hunter</option>
-                                <option value="contributor">Contributor</option>
-                                <option value="moderator">Moderator</option>
-                                <option value="partner">Partner</option>
-                            </select>
-                            <button class="refresh-btn" onclick="addBadge()" style="background:#4ade80">Add Badge</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    <script>
-        const token = localStorage.getItem('plexichat-admin-token');
-        let latencyChart = null, countChart = null, historyChart = null, errorChart = null, slowChart = null;
-        let telemetryData = [];
-        
-        if (!token) {
-            window.location.replace('/api/v1/admin');
-        }
-        
-        function formatEndpoint(endpoint) {
-            // Decode URL-encoded emojis and normalize display
-            try {
-                let decoded = decodeURIComponent(endpoint);
-                // Replace {id} placeholders with cleaner display
-                decoded = decoded.replace(/\\{id\\}/g, ':id');
-                // Replace {emoji} placeholder
-                decoded = decoded.replace(/\\{emoji\\}/g, ':emoji');
-                return decoded;
-            } catch (e) {
-                return endpoint;
-            }
-        }
-        
-        function shortEndpoint(endpoint) {
-            // Shorten endpoint for chart labels
-            let short = formatEndpoint(endpoint).replace('/api/v1', '');
-            if (short.length > 25) short = short.substring(0, 22) + '...';
-            return short;
-        }
-        
-        function getLatencyClass(ms) {
-            if (ms < 100) return 'latency-good';
-            if (ms < 500) return 'latency-warn';
-            return 'latency-bad';
-        }
-        
-        function getLatencyColor(ms) {
-            if (ms < 100) return '#4ade80';
-            if (ms < 500) return '#fbbf24';
-            return '#ef4444';
-        }
-        
-        function getValueClass(ms) {
-            if (ms < 100) return 'good';
-            if (ms < 500) return 'warn';
-            return 'bad';
-        }
-        
-        async function loadTelemetryStats() {
-            const hours = document.getElementById('time-range')?.value || 24;
-            const source = document.getElementById('telemetry-source')?.value || '';
-            try {
-                let url = `/api/v1/admin/telemetry/stats?hours=${hours}`;
-                if (source) url += `&source=${source}`;
-                
-                const res = await fetch(url, {
-                    headers: { 'Authorization': 'Bearer ' + token }
-                });
-                if (!res.ok) return;
-                const data = await res.json();
-                telemetryData = data.stats || [];
-                renderTelemetrySummary();
-                renderTelemetryTable();
-                renderCharts();
-            } catch (e) {
-                console.error('Failed to load telemetry stats:', e);
-            }
-        }
-        
-        function renderTelemetrySummary() {
-            const container = document.getElementById('telemetry-summary');
-            if (!telemetryData.length) {
-                container.innerHTML = '';
-                return;
-            }
-            
-            const totalRequests = telemetryData.reduce((sum, t) => sum + t.count, 0);
-            const avgLatency = telemetryData.reduce((sum, t) => sum + t.avg_ms * t.count, 0) / totalRequests;
-            const maxP95 = Math.max(...telemetryData.map(t => t.p95_ms));
-            const avgErrorRate = telemetryData.reduce((sum, t) => sum + t.error_rate * t.count, 0) / totalRequests;
-            const slowEndpoints = telemetryData.filter(t => t.avg_ms > 500).length;
-            const errorEndpoints = telemetryData.filter(t => t.error_rate > 5).length;
-            
-            container.innerHTML = `
-                <div class="card"><h3>Total Requests</h3><div class="value">${totalRequests.toLocaleString()}</div></div>
-                <div class="card"><h3>Avg Latency</h3><div class="value ${getValueClass(avgLatency)}">${avgLatency.toFixed(0)}ms</div></div>
-                <div class="card"><h3>Max P95</h3><div class="value ${getValueClass(maxP95)}">${maxP95.toFixed(0)}ms</div></div>
-                <div class="card"><h3>Avg Error Rate</h3><div class="value ${avgErrorRate > 5 ? 'bad' : avgErrorRate > 1 ? 'warn' : 'good'}">${avgErrorRate.toFixed(1)}%</div></div>
-                <div class="card"><h3>Slow Endpoints</h3><div class="value ${slowEndpoints > 0 ? 'bad' : 'good'}">${slowEndpoints}</div><div class="subtitle">&gt;500ms avg</div></div>
-                <div class="card"><h3>Error Endpoints</h3><div class="value ${errorEndpoints > 0 ? 'bad' : 'good'}">${errorEndpoints}</div><div class="subtitle">&gt;5% errors</div></div>
-            `;
-        }
-        
-        function renderTelemetryTable() {
-            const tbody = document.querySelector('#telemetry-table tbody');
-            if (!telemetryData.length) {
-                tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#888">No telemetry data</td></tr>';
-                return;
-            }
-            // Sort by avg latency descending for visibility of slow endpoints
-            const sorted = [...telemetryData].sort((a, b) => b.avg_ms - a.avg_ms);
-            tbody.innerHTML = sorted.map((t, i) => {
-                const displayEndpoint = formatEndpoint(t.endpoint);
-                const avgClass = getLatencyClass(t.avg_ms);
-                const p95Class = getLatencyClass(t.p95_ms);
-                const errorClass = t.error_rate > 10 ? 'latency-bad' : (t.error_rate > 1 ? 'latency-warn' : 'latency-good');
-                return `<tr class="endpoint-row" onclick="showHistory('${encodeURIComponent(t.endpoint)}', '${t.method}', ${i})">
-                    <td class="emoji-cell">${displayEndpoint}</td>
-                    <td>${t.method}</td>
-                    <td>${t.count.toLocaleString()}</td>
-                    <td class="${avgClass}">${t.avg_ms.toFixed(1)}</td>
-                    <td>${(t.p50_ms || 0).toFixed(1)}</td>
-                    <td class="${p95Class}">${t.p95_ms.toFixed(1)}</td>
-                    <td>${(t.p99_ms || 0).toFixed(1)}</td>
-                    <td class="${errorClass}">${t.error_rate.toFixed(1)}%</td>
-                </tr>`;
-            }).join('');
-        }
-        
-        function renderCharts() {
-            if (!telemetryData.length) return;
-            
-            // Sort by request count for main charts
-            const byCount = [...telemetryData].sort((a, b) => b.count - a.count).slice(0, 10);
-            // Sort by P95 latency for slow endpoints chart
-            const byP95 = [...telemetryData].sort((a, b) => b.p95_ms - a.p95_ms).slice(0, 8);
-            // Sort by error rate for error chart
-            const byError = [...telemetryData].filter(t => t.error_rate > 0).sort((a, b) => b.error_rate - a.error_rate).slice(0, 8);
-            
-            const labels = byCount.map(t => shortEndpoint(t.endpoint));
-            const avgData = byCount.map(t => t.avg_ms);
-            const p95Data = byCount.map(t => t.p95_ms);
-            const countData = byCount.map(t => t.count);
-            
-            const chartOptions = {
-                responsive: true,
-                maintainAspectRatio: true,
-                plugins: { legend: { labels: { color: '#eaeaea' } } },
-                scales: {
-                    x: { ticks: { color: '#888', maxRotation: 45 }, grid: { color: '#0f3460' } },
-                    y: { ticks: { color: '#888' }, grid: { color: '#0f3460' } }
-                }
-            };
-            
-            const horizontalOptions = {
-                ...chartOptions,
-                indexAxis: 'y',
-                scales: {
-                    x: { ticks: { color: '#888' }, grid: { color: '#0f3460' } },
-                    y: { ticks: { color: '#888', font: { size: 10 } }, grid: { color: '#0f3460' } }
-                }
-            };
-            
-            // Latency chart - Avg vs P95 comparison
-            if (latencyChart) latencyChart.destroy();
-            latencyChart = new Chart(document.getElementById('latency-chart'), {
-                type: 'bar',
-                data: {
-                    labels,
-                    datasets: [
-                        { label: 'Avg (ms)', data: avgData, backgroundColor: '#3b82f6', borderRadius: 4 },
-                        { label: 'P95 (ms)', data: p95Data, backgroundColor: '#e94560', borderRadius: 4 }
-                    ]
-                },
-                options: horizontalOptions
-            });
-            
-            // Request count chart - Doughnut
-            if (countChart) countChart.destroy();
-            countChart = new Chart(document.getElementById('count-chart'), {
-                type: 'doughnut',
-                data: {
-                    labels,
-                    datasets: [{ 
-                        data: countData, 
-                        backgroundColor: ['#e94560','#3b82f6','#4ade80','#fbbf24','#8b5cf6','#06b6d4','#f97316','#ec4899','#84cc16','#6366f1']
-                    }]
-                },
-                options: { 
-                    responsive: true, 
-                    plugins: { 
-                        legend: { position: 'right', labels: { color: '#eaeaea', font: { size: 10 } } }
-                    }
-                }
-            });
-            
-            // Error rate chart
-            if (errorChart) errorChart.destroy();
-            if (byError.length > 0) {
-                errorChart = new Chart(document.getElementById('error-chart'), {
-                    type: 'bar',
-                    data: {
-                        labels: byError.map(t => shortEndpoint(t.endpoint)),
-                        datasets: [{
-                            label: 'Error Rate %',
-                            data: byError.map(t => t.error_rate),
-                            backgroundColor: byError.map(t => t.error_rate > 10 ? '#ef4444' : t.error_rate > 5 ? '#fbbf24' : '#4ade80'),
-                            borderRadius: 4
-                        }]
-                    },
-                    options: horizontalOptions
-                });
-            } else {
-                // No errors - show empty state
-                const ctx = document.getElementById('error-chart').getContext('2d');
-                ctx.fillStyle = '#888';
-                ctx.font = '14px sans-serif';
-                ctx.textAlign = 'center';
-                ctx.fillText('No errors recorded', ctx.canvas.width / 2, ctx.canvas.height / 2);
-            }
-            
-            // Slowest endpoints chart (P95)
-            if (slowChart) slowChart.destroy();
-            slowChart = new Chart(document.getElementById('slow-chart'), {
-                type: 'bar',
-                data: {
-                    labels: byP95.map(t => shortEndpoint(t.endpoint)),
-                    datasets: [{
-                        label: 'P95 Latency (ms)',
-                        data: byP95.map(t => t.p95_ms),
-                        backgroundColor: byP95.map(t => getLatencyColor(t.p95_ms)),
-                        borderRadius: 4
-                    }]
-                },
-                options: horizontalOptions
-            });
-        }
-        
-        async function showHistory(endpoint, method, rowIndex) {
-            document.querySelectorAll('.endpoint-row').forEach((r, i) => r.classList.toggle('selected', i === rowIndex));
-            document.getElementById('history-chart-container').style.display = 'block';
-            // Decode the endpoint for display (it was encoded in the onclick)
-            const decodedEndpoint = decodeURIComponent(endpoint);
-            document.getElementById('history-endpoint').textContent = formatEndpoint(decodedEndpoint) + ' (' + method + ')';
-            
-            const hours = document.getElementById('time-range')?.value || 24;
-            const bucketMinutes = hours <= 6 ? 5 : hours <= 24 ? 15 : 60;
-            
-            try {
-                const res = await fetch(`/api/v1/admin/telemetry/history?endpoint=${endpoint}&method=${method}&hours=${hours}&bucket_minutes=${bucketMinutes}`, {
-                    headers: { 'Authorization': 'Bearer ' + token }
-                });
-                if (!res.ok) return;
-                const data = await res.json();
-                const history = data.history || [];
-                
-                if (history.length === 0) {
-                    document.getElementById('history-chart-container').innerHTML = '<h3>Latency History: ' + formatEndpoint(decodedEndpoint) + '</h3><p style="color:#888;text-align:center;padding:40px">No history data available</p><canvas id="history-chart"></canvas>';
-                    return;
-                }
-                
-                if (historyChart) historyChart.destroy();
-                historyChart = new Chart(document.getElementById('history-chart'), {
-                    type: 'line',
-                    data: {
-                        labels: history.map(h => {
-                            const d = new Date(h.timestamp);
-                            return hours <= 24 ? d.toLocaleTimeString() : d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-                        }),
-                        datasets: [
-                            { label: 'Avg (ms)', data: history.map(h => h.avg_response_time_ms), borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', tension: 0.3, fill: true },
-                            { label: 'Max (ms)', data: history.map(h => h.max_response_time_ms), borderColor: '#e94560', tension: 0.3, fill: false, borderDash: [5,5] },
-                            { label: 'Min (ms)', data: history.map(h => h.min_response_time_ms), borderColor: '#4ade80', tension: 0.3, fill: false, borderDash: [2,2] }
-                        ]
-                    },
-                    options: {
-                        responsive: true,
-                        interaction: { intersect: false, mode: 'index' },
-                        plugins: { 
-                            legend: { labels: { color: '#eaeaea' } },
-                            tooltip: {
-                                callbacks: {
-                                    afterBody: function(context) {
-                                        const idx = context[0].dataIndex;
-                                        return 'Requests: ' + history[idx].count;
-                                    }
-                                }
-                            }
-                        },
-                        scales: {
-                            x: { ticks: { color: '#888', maxTicksLimit: 12, maxRotation: 45 }, grid: { color: '#0f3460' } },
-                            y: { ticks: { color: '#888' }, grid: { color: '#0f3460' }, title: { display: true, text: 'Latency (ms)', color: '#888' } }
-                        }
-                    }
-                });
-            } catch (e) {
-                console.error('Failed to load history:', e);
-            }
-        }
-        
-        async function verifyAndLoad() {
-            try {
-                const res = await fetch('/api/v1/admin/dashboard', { 
-                    headers: { 'Authorization': 'Bearer ' + token },
-                    method: 'GET'
-                });
-                
-                if (res.status === 401) {
-                    localStorage.removeItem('plexichat-admin-token');
-                    window.location.replace('/api/v1/admin');
-                    return;
-                }
-                
-                if (!res.ok) throw new Error('Failed to load dashboard');
-                
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('content').style.display = 'block';
-                
-                const data = await res.json();
-                document.getElementById('stats').innerHTML = `
-                    <div class="card"><h3>Open</h3><div class="value">${data.tickets.open}</div></div>
-                    <div class="card"><h3>In Progress</h3><div class="value">${data.tickets.in_progress}</div></div>
-                    <div class="card"><h3>Resolved</h3><div class="value">${data.tickets.resolved}</div></div>
-                    <div class="card"><h3>Total</h3><div class="value">${data.tickets.total}</div></div>
-                `;
-                
-                const ticketsRes = await fetch('/api/v1/admin/tickets?limit=20', { 
-                    headers: { 'Authorization': 'Bearer ' + token } 
-                });
-                if (ticketsRes.status === 401) {
-                    localStorage.removeItem('plexichat-admin-token');
-                    window.location.replace('/api/v1/admin');
-                    return;
-                }
-                const tickets = await ticketsRes.json();
-                document.querySelector('#tickets-table tbody').innerHTML = tickets.map(t => 
-                    `<tr><td>${t.id}</td><td>${t.username}</td><td>${t.category || '-'}</td><td><span class="status ${t.status}">${t.status}</span></td><td>${new Date(t.created_at).toLocaleString()}</td></tr>`
-                ).join('') || '<tr><td colspan="5" style="text-align:center;color:#888">No tickets</td></tr>';
-                
-                // Load full telemetry stats for charts
-                await loadTelemetryStats();
-            } catch (e) { 
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('error').style.display = 'block'; 
-                document.getElementById('error').textContent = 'Error loading data: ' + e.message; 
-            }
-        }
-        
-        function showTab(name, btn) {
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            btn.classList.add('active');
-            document.getElementById('tickets-tab').style.display = name === 'tickets' ? 'block' : 'none';
-            document.getElementById('telemetry-tab').style.display = name === 'telemetry' ? 'block' : 'none';
-            document.getElementById('hash-reports-tab').style.display = name === 'hash-reports' ? 'block' : 'none';
-            document.getElementById('user-tiers-tab').style.display = name === 'user-tiers' ? 'block' : 'none';
-            if (name === 'telemetry' && !telemetryData.length) loadTelemetryStats();
-            if (name === 'hash-reports') loadHashReports();
-        }
-        
-        // ==================== Hash Reports Functions ====================
-        let hashReportsData = [];
-        let blockedHashesData = [];
-        
-        async function loadHashReports() {
-            const statusFilter = document.getElementById('hash-status-filter')?.value || '';
-            try {
-                // Load report counts
-                const countsRes = await fetch('/api/v1/admin/hash-reports/counts', {
-                    headers: { 'Authorization': 'Bearer ' + token }
-                });
-                if (countsRes.ok) {
-                    const counts = await countsRes.json();
-                    document.getElementById('hash-report-stats').innerHTML = `
-                        <div class="card"><h3>Pending</h3><div class="value ${counts.pending > 0 ? 'warn' : ''}">${counts.pending}</div></div>
-                        <div class="card"><h3>Blocked</h3><div class="value">${counts.blocked}</div></div>
-                        <div class="card"><h3>Cleared</h3><div class="value">${counts.cleared}</div></div>
-                        <div class="card"><h3>Total Reports</h3><div class="value">${counts.total}</div></div>
-                    `;
-                }
-                
-                // Load reports
-                let url = '/api/v1/admin/hash-reports?limit=50';
-                if (statusFilter) url += `&status_filter=${statusFilter}`;
-                const reportsRes = await fetch(url, {
-                    headers: { 'Authorization': 'Bearer ' + token }
-                });
-                if (reportsRes.ok) {
-                    hashReportsData = await reportsRes.json();
-                    renderHashReportsTable();
-                }
-                
-                // Load blocked hashes
-                const blockedRes = await fetch('/api/v1/admin/blocked-hashes?limit=50', {
-                    headers: { 'Authorization': 'Bearer ' + token }
-                });
-                if (blockedRes.ok) {
-                    blockedHashesData = await blockedRes.json();
-                    renderBlockedHashesTable();
-                }
-            } catch (e) {
-                console.error('Failed to load hash reports:', e);
-            }
-        }
-        
-        function renderHashReportsTable() {
-            const tbody = document.querySelector('#hash-reports-table tbody');
-            if (!hashReportsData.length) {
-                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#888">No reports</td></tr>';
-                return;
-            }
-            tbody.innerHTML = hashReportsData.map(r => {
-                const shortHash = r.hash_value.substring(0, 16) + '...';
-                const statusClass = r.status === 'pending' ? 'warn' : r.status === 'blocked' ? 'bad' : r.status === 'cleared' ? 'good' : '';
-                const date = new Date(r.reported_at).toLocaleString();
-                const actions = r.status === 'pending' ? `
-                    <button onclick="reviewReport(${r.id}, 'block')" style="padding:4px 8px;background:#ef4444;border:none;border-radius:4px;color:white;cursor:pointer;margin-right:4px">Block</button>
-                    <button onclick="reviewReport(${r.id}, 'clear')" style="padding:4px 8px;background:#4ade80;border:none;border-radius:4px;color:#000;cursor:pointer;margin-right:4px">Clear</button>
-                    <button onclick="reviewReport(${r.id}, 'dismiss')" style="padding:4px 8px;background:#6b7280;border:none;border-radius:4px;color:white;cursor:pointer">Dismiss</button>
-                ` : '<span style="color:#888">Reviewed</span>';
-                return `<tr>
-                    <td style="font-family:monospace;font-size:12px" title="${r.hash_value}">${shortHash}</td>
-                    <td>${r.reporter_username || 'Unknown'}</td>
-                    <td>${r.reason}</td>
-                    <td><span class="status ${r.status}" style="background:${r.status === 'pending' ? '#fbbf24' : r.status === 'blocked' ? '#ef4444' : r.status === 'cleared' ? '#4ade80' : '#6b7280'};color:${r.status === 'pending' || r.status === 'cleared' ? '#000' : '#fff'}">${r.status}</span></td>
-                    <td>${date}</td>
-                    <td>${actions}</td>
-                </tr>`;
-            }).join('');
-        }
-        
-        function renderBlockedHashesTable() {
-            const tbody = document.querySelector('#blocked-hashes-table tbody');
-            if (!blockedHashesData.length) {
-                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#888">No blocked hashes</td></tr>';
-                return;
-            }
-            tbody.innerHTML = blockedHashesData.map(h => {
-                const shortHash = h.hash_value.substring(0, 16) + '...';
-                const date = new Date(h.blocked_at).toLocaleString();
-                return `<tr>
-                    <td style="font-family:monospace;font-size:12px" title="${h.hash_value}">${shortHash}</td>
-                    <td>${h.reason}</td>
-                    <td>${date}</td>
-                    <td>${h.auto_blocked ? '<span style="color:#fbbf24">Auto</span>' : 'Manual'}</td>
-                    <td><button onclick="unblockHash('${h.hash_value}')" style="padding:4px 8px;background:#3b82f6;border:none;border-radius:4px;color:white;cursor:pointer">Unblock</button></td>
-                </tr>`;
-            }).join('');
-        }
-        
-        async function reviewReport(reportId, action) {
-            const notes = action === 'block' ? prompt('Enter reason for blocking (optional):') : null;
-            try {
-                const res = await fetch(`/api/v1/admin/hash-reports/${reportId}/review`, {
-                    method: 'POST',
-                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action, notes })
-                });
-                if (!res.ok) throw new Error('Review failed');
-                loadHashReports();
-            } catch (e) {
-                alert('Failed to review report: ' + e.message);
-            }
-        }
-        
-        async function unblockHash(hashValue) {
-            if (!confirm('Are you sure you want to unblock this hash?')) return;
-            try {
-                const res = await fetch(`/api/v1/admin/blocked-hashes/${hashValue}`, {
-                    method: 'DELETE',
-                    headers: { 'Authorization': 'Bearer ' + token }
-                });
-                if (!res.ok) throw new Error('Unblock failed');
-                loadHashReports();
-            } catch (e) {
-                alert('Failed to unblock hash: ' + e.message);
-            }
-        }
-        
-        function showBlockHashModal() {
-            document.getElementById('block-hash-modal').style.display = 'flex';
-        }
-        
-        function hideBlockHashModal() {
-            document.getElementById('block-hash-modal').style.display = 'none';
-            document.getElementById('block-hash-value').value = '';
-            document.getElementById('block-hash-reason').value = '';
-        }
-        
-        async function blockHashManually() {
-            const hashValue = document.getElementById('block-hash-value').value.trim();
-            const reason = document.getElementById('block-hash-reason').value.trim();
-            if (!hashValue || hashValue.length < 64) {
-                alert('Please enter a valid SHA-256 hash (64 characters)');
-                return;
-            }
-            if (!reason) {
-                alert('Please enter a reason');
-                return;
-            }
-            try {
-                const res = await fetch('/api/v1/admin/blocked-hashes', {
-                    method: 'POST',
-                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ hash_value: hashValue, reason })
-                });
-                if (!res.ok) throw new Error('Block failed');
-                hideBlockHashModal();
-                loadHashReports();
-            } catch (e) {
-                alert('Failed to block hash: ' + e.message);
-            }
-        }
-        
-        async function exportStats() {
-            const hours = document.getElementById('time-range')?.value || 24;
-            const format = document.getElementById('export-format')?.value || 'json';
-            try {
-                const res = await fetch(`/api/v1/admin/telemetry/export?format=${format}&hours=${hours}`, {
-                    headers: { 'Authorization': 'Bearer ' + token }
-                });
-                if (!res.ok) throw new Error('Export failed');
-                
-                if (format === 'json') {
-                    const data = await res.json();
-                    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `telemetry_${new Date().toISOString().slice(0,19).replace(/[T:]/g, '-')}.json`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                } else {
-                    const blob = await res.blob();
-                    const disposition = res.headers.get('Content-Disposition');
-                    let filename = `telemetry_export.${format}`;
-                    if (disposition) {
-                        const match = disposition.match(/filename=([^;]+)/);
-                        if (match) filename = match[1];
-                    }
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = filename;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                }
-            } catch (e) {
-                alert('Export failed: ' + e.message);
-            }
-        }
-        
-        async function resetStats() {
-            if (!confirm('Are you sure you want to reset ALL telemetry statistics? This cannot be undone.')) return;
-            try {
-                const res = await fetch('/api/v1/admin/telemetry/reset', {
-                    method: 'POST',
-                    headers: { 'Authorization': 'Bearer ' + token }
-                });
-                const data = await res.json();
-                if (data.success) {
-                    alert(`Reset complete. Deleted ${data.deleted_count} records.`);
-                    loadTelemetryStats();
-                } else {
-                    alert('Reset failed: ' + (data.message || 'Unknown error'));
-                }
-            } catch (e) {
-                alert('Reset failed: ' + e.message);
-            }
-        }
-        
-        // ==================== User Tier Functions ====================
-        let selectedUserId = null;
-        let selectedUserData = null;
-        
-        async function searchUsers() {
-            const query = document.getElementById('user-search').value.trim();
-            if (!query || query.length < 2) {
-                document.getElementById('user-search-results').innerHTML = '<p style="color:#888">Enter at least 2 characters to search</p>';
-                return;
-            }
-            
-            try {
-                const res = await fetch(`/api/v1/admin/users/search?q=${encodeURIComponent(query)}&limit=20`, {
-                    headers: { 'Authorization': 'Bearer ' + token }
-                });
-                if (!res.ok) throw new Error('Search failed');
-                const data = await res.json();
-                
-                if (!data.users || data.users.length === 0) {
-                    document.getElementById('user-search-results').innerHTML = '<p style="color:#888">No users found</p>';
-                    return;
-                }
-                
-                let html = '<table><thead><tr><th>ID</th><th>Username</th><th>Tier</th><th>Badges</th><th>Actions</th></tr></thead><tbody>';
-                for (const user of data.users) {
-                    const badges = user.badges.length > 0 ? user.badges.join(', ') : '-';
-                    html += `<tr>
-                        <td style="font-family:monospace;font-size:12px">${user.id}</td>
-                        <td>${escapeHtml(user.username)}</td>
-                        <td><span class="status" style="background:var(--accent)">${user.tier}</span></td>
-                        <td style="font-size:12px">${escapeHtml(badges)}</td>
-                        <td><button class="refresh-btn" onclick="selectUser('${user.id}')" style="padding:4px 12px;font-size:12px">Edit</button></td>
-                    </tr>`;
-                }
-                html += '</tbody></table>';
-                document.getElementById('user-search-results').innerHTML = html;
-            } catch (e) {
-                document.getElementById('user-search-results').innerHTML = `<p style="color:var(--bad)">Error: ${e.message}</p>`;
-            }
-        }
-        
-        async function selectUser(userId) {
-            selectedUserId = userId;
-            try {
-                const res = await fetch(`/api/v1/admin/users/${userId}`, {
-                    headers: { 'Authorization': 'Bearer ' + token }
-                });
-                if (!res.ok) throw new Error('Failed to load user');
-                selectedUserData = await res.json();
-                
-                document.getElementById('user-info').innerHTML = `
-                    <p><strong>ID:</strong> <span style="font-family:monospace">${selectedUserData.id}</span></p>
-                    <p><strong>Username:</strong> ${escapeHtml(selectedUserData.username)}</p>
-                    <p><strong>Email:</strong> ${selectedUserData.email || '-'}</p>
-                    <p><strong>Current Tier:</strong> <span class="status" style="background:var(--accent)">${selectedUserData.tier}</span></p>
-                    <p><strong>Created:</strong> ${new Date(selectedUserData.created_at).toLocaleString()}</p>
-                `;
-                
-                document.getElementById('tier-select').value = selectedUserData.tier;
-                renderUserBadges();
-                document.getElementById('user-details').style.display = 'block';
-            } catch (e) {
-                alert('Error loading user: ' + e.message);
-            }
-        }
-        
-        function renderUserBadges() {
-            const container = document.getElementById('user-badges');
-            if (!selectedUserData.badges || selectedUserData.badges.length === 0) {
-                container.innerHTML = '<span style="color:#888">No badges</span>';
-                return;
-            }
-            container.innerHTML = selectedUserData.badges.map(badge => 
-                `<span class="status" style="background:var(--good);color:#000;cursor:pointer" onclick="removeBadge('${badge}')" title="Click to remove">${badge} ×</span>`
-            ).join('');
-        }
-        
-        async function updateUserTier() {
-            if (!selectedUserId) return;
-            const tier = document.getElementById('tier-select').value;
-            
-            try {
-                const res = await fetch(`/api/v1/admin/users/${selectedUserId}/tier`, {
-                    method: 'PUT',
-                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ tier })
-                });
-                if (!res.ok) throw new Error('Failed to update tier');
-                
-                selectedUserData.tier = tier;
-                document.getElementById('user-info').querySelector('.status').textContent = tier;
-                alert('Tier updated successfully!');
-            } catch (e) {
-                alert('Error: ' + e.message);
-            }
-        }
-        
-        async function addBadge() {
-            if (!selectedUserId) return;
-            const badge = document.getElementById('badge-select').value;
-            
-            if (selectedUserData.badges.includes(badge)) {
-                alert('User already has this badge');
-                return;
-            }
-            
-            try {
-                const res = await fetch(`/api/v1/admin/users/${selectedUserId}/badges/${badge}`, {
-                    method: 'POST',
-                    headers: { 'Authorization': 'Bearer ' + token }
-                });
-                if (!res.ok) throw new Error('Failed to add badge');
-                const data = await res.json();
-                
-                selectedUserData.badges = data.badges;
-                renderUserBadges();
-            } catch (e) {
-                alert('Error: ' + e.message);
-            }
-        }
-        
-        async function removeBadge(badge) {
-            if (!selectedUserId) return;
-            if (!confirm(`Remove badge "${badge}" from this user?`)) return;
-            
-            try {
-                const res = await fetch(`/api/v1/admin/users/${selectedUserId}/badges/${badge}`, {
-                    method: 'DELETE',
-                    headers: { 'Authorization': 'Bearer ' + token }
-                });
-                if (!res.ok) throw new Error('Failed to remove badge');
-                const data = await res.json();
-                
-                selectedUserData.badges = data.badges;
-                renderUserBadges();
-            } catch (e) {
-                alert('Error: ' + e.message);
-            }
-        }
-        
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-        
-        function logout() {
-            fetch('/api/v1/admin/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
-            localStorage.removeItem('plexichat-admin-token');
-            window.location.replace('/api/v1/admin');
-        }
-        
-        verifyAndLoad();
-    </script>
-</body>
-</html>
-"""
+# ==================== Database Monitoring Routes ====================
 
 
 @router.get(
-    "",
+    "/database/pool-health",
+    summary="Get database connection pool health",
+    responses=    {
+        200: {
+            "description": "Pool health statistics",
+            "content": {
+                "application/json": {
+                    "schema": {"$ref": "#/components/schemas/TelemetryExportResponse"}
+                },
+                "text/csv": {"schema": {"type": "string"}},
+                "text/plain": {"schema": {"type": "string"}},
+                "text/html": {"schema": {"type": "string"}},
+            },
+        },
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {
+            "model": ErrorResponse,
+            "description": "Access denied (host restriction)",
+        },
+        404: {"model": ErrorResponse, "description": "Admin UI disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_database_pool_health(request: Request) -> Dict[str, Any]:
+    """Get database connection pool health and monitoring statistics.
+    
+    Returns comprehensive pool utilization metrics including:
+    - Current connection counts (active, idle, total)
+    - Pool configuration (min/max connections)
+    - Performance metrics (acquisition time, pool wait time)
+    - Connection age tracking and warnings
+    - Overall pool health status
+    """
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
+
+    try:
+        db = api.get_database()
+        if not db:
+            logger.error(f"Database module not available for pool health check (admin {admin_id})")
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Database not initialized"}},
+            )
+
+        stats = db.get_pool_stats()
+        
+        # Determine health status
+        is_healthy = True
+        health_issues = []
+        
+        # Check pool utilization
+        if isinstance(stats.get("active_connections"), int) and isinstance(stats.get("max_connections"), int):
+            utilization = stats["active_connections"] / stats["max_connections"] if stats["max_connections"] > 0 else 0
+            if utilization > 0.9:
+                is_healthy = False
+                health_issues.append(f"Pool utilization critical: {utilization * 100:.1f}%")
+            elif utilization > 0.75:
+                health_issues.append(f"Pool utilization high: {utilization * 100:.1f}%")
+        
+        # Check for old connections
+        if stats.get("old_connections"):
+            is_healthy = False
+            health_issues.append(f"{len(stats['old_connections'])} long-lived connections detected")
+        
+        # Check pool waits (connection exhaustion events)
+        if stats.get("total_pool_waits", 0) > 0:
+            is_healthy = False
+            health_issues.append(f"Pool exhaustion detected: {stats['total_pool_waits']} wait events")
+        
+        # Check acquisition time (if it's taking too long)
+        avg_acq_time = stats.get("avg_acquisition_time", 0)
+        if avg_acq_time > 1.0:  # More than 1 second
+            is_healthy = False
+            health_issues.append(f"High acquisition time: {avg_acq_time:.3f}s average")
+        
+        response = {
+            **stats,
+            "status": "healthy" if is_healthy else "warning" if health_issues else "healthy",
+            "health_issues": health_issues,
+        }
+        
+        logger.info(f"Admin {admin_id} retrieved database pool health - Status: {response['status']}")
+        return response
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Failed to get database pool health for admin {admin_id}: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+
+# ==================== Admin UI Routes ====================
+
+
+@router.get(
+    "/login",
     response_class=HTMLResponse,
     summary="Admin login page",
-    responses={
+    responses=    {
         200: {"description": "Admin login page HTML"},
         403: {
             "model": ErrorResponse,
@@ -3186,15 +2254,17 @@ ADMIN_DASHBOARD_HTML = """
 async def admin_login_page(request: Request):
     """Serve the admin login page."""
     _check_host_restriction(request)
-    return HTMLResponse(content=ADMIN_LOGIN_HTML)
+    content = _load_admin_template("login.html")
+    return HTMLResponse(content=content)
 
 
 @router.get(
-    "/ui",
+    "/dashboard",
     response_class=HTMLResponse,
     summary="Admin dashboard page",
-    responses={
+    responses=    {
         200: {"description": "Admin dashboard page HTML"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {
             "model": ErrorResponse,
             "description": "Access denied (host restriction)",
@@ -3205,4 +2275,5 @@ async def admin_login_page(request: Request):
 async def admin_dashboard_page(request: Request):
     """Serve the admin dashboard page."""
     _check_host_restriction(request)
-    return HTMLResponse(content=ADMIN_DASHBOARD_HTML)
+    content = _load_admin_template("dashboard.html")
+    return HTMLResponse(content=content)
