@@ -229,3 +229,6 @@ class RateLimitMiddlewareASGI:
             await send(message)
 
         await self.app(scope, receive, send_wrapper)
+
+# Alias for backward compatibility with tests
+RateLimitMiddleware = RateLimitMiddlewareASGI

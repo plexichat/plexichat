@@ -6,6 +6,7 @@ and database interactions.
 """
 
 import json
+import re
 import secrets
 import string
 from typing import Optional, List, Dict, Any, Union
@@ -172,12 +173,36 @@ class ServerManager(BaseManager):
 
         return name
 
-    def _validate_channel_name(self, name: str) -> str:
-        """Validate and sanitize channel name."""
+    def _validate_channel_name(
+        self, name: str, channel_type: ChannelType = ChannelType.TEXT
+    ) -> str:
+        """Validate and sanitize channel name.
+        
+        Text and announcement channels are strictly lowercase, alphanumeric, and hyphenated (no unicode).
+        Voice and stage channels allow spaces and mixed case but are also sanitized for security.
+        """
         if not name or not name.strip():
             raise InvalidChannelNameError("Channel name cannot be empty")
 
-        name = name.strip().lower().replace(" ", "-")
+        name = name.strip()
+        
+        # Strict ASCII-only hyphenated naming for text-based channels
+        if channel_type in (ChannelType.TEXT, ChannelType.ANNOUNCEMENT):
+            # Convert to lowercase, replace multiple spaces/non-alphanumeric with single hyphen
+            name = name.lower()
+            name = re.sub(r"[^a-z0-9]+", "-", name)
+            # Remove leading/trailing hyphens
+            name = name.strip("-")
+            
+            if not name:
+                raise InvalidChannelNameError("Channel name must contain alphanumeric characters")
+        else:
+            # Voice/Stage: Allow more characters but collapse multiple spaces and remove dangerous ones
+            name = re.sub(r"\s+", " ", name)
+            # Remove non-printable and potentially dangerous characters (keep ASCII mostly)
+            name = re.sub(r"[^\x20-\x7E]", "", name)
+            name = name.strip()
+
         max_len = self._config.get("channel_name_max_length", 100)
 
         if len(name) > max_len:
@@ -583,7 +608,7 @@ class ServerManager(BaseManager):
 
         self.require_permission(user_id, server_id, "channels.manage")
 
-        name = self._validate_channel_name(name)
+        name = self._validate_channel_name(name, channel_type)
 
         if category_id:
             cat = self._db.fetch_one(
@@ -816,7 +841,7 @@ class ServerManager(BaseManager):
         changes = {}
 
         if name is not None:
-            name = self._validate_channel_name(name)
+            name = self._validate_channel_name(name, channel.channel_type)
             updates.append("name = ?")
             params.append(name)
             changes["name"] = {"old": channel.name, "new": name}

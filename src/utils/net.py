@@ -14,7 +14,8 @@ def get_client_ip(request: Request) -> str:
     trusted_proxies = set(config.get("api.trusted_proxies", []))
     
     # If the direct client is trusted, check X-Forwarded-For
-    if trust_x_forwarded and client_ip in trusted_proxies:
+    # Support '*' as a wildcard to trust all proxies (dangerous, should warn in logs)
+    if trust_x_forwarded and (client_ip in trusted_proxies or "*" in trusted_proxies):
         forwarded = request.headers.get("X-Forwarded-For")
         if forwarded:
             # First IP in the list is the original client
