@@ -33,7 +33,7 @@ import utils.validator as validator  # noqa: E402
 import utils.version as version  # noqa: E402
 
 # Global Version Definition
-VERSION = "a.1.0-32"
+VERSION = "a.1.0-33"
 
 
 class PlexiChatServer:
@@ -85,7 +85,15 @@ class PlexiChatServer:
                     "dbname": "plexichat",
                     "sslmode": "prefer",
                 },
-                "connection_pool": {"min_connections": 1, "max_connections": 10},
+                "connection_pool": {
+                    "min_connections": 1,
+                    "max_connections": 10,
+                    "connect_timeout": 10,
+                    "max_idle_time": 300,
+                    "validation_interval": 60,
+                    "enable_validation": True,
+                    "validation_query": "SELECT 1",
+                },
             },
             "authentication": {
                 "accounts": {
@@ -725,6 +733,21 @@ class PlexiChatServer:
                 # Rate limits for feature management endpoints (admin only)
                 "admin_rate_limit": {"max_per_minute": 30, "max_per_hour": 200},
             },
+            "monitoring": {
+                "enabled": True,
+                "log_interval": 300,
+                "metrics_enabled": True,
+                "alert_thresholds": {
+                    "cpu_percent": 80,
+                    "memory_percent": 85,
+                    "db_pool_saturation_percent": 75,
+                    "query_time_ms": 5000,
+                    "db_errors_per_minute": 10,
+                    "api_response_time_ms": 2000,
+                    "error_rate_percent": 5,
+                    "active_connections": 1000,
+                },
+            },
         }
 
     def setup_directories(self) -> None:
@@ -769,17 +792,55 @@ class PlexiChatServer:
         return config_path
 
     def _apply_env_overrides(self) -> None:
-        """Apply environment variable overrides to configuration."""
-        # ... (keep existing env overrides)
+        """Apply environment variable overrides to configuration.
+        
+        Supports the following environment variables:
+        
+        DATABASE CONFIGURATION:
+        - DATABASE_URL: Full PostgreSQL or SQLite connection string
+        - POSTGRES_HOST: PostgreSQL host (default: localhost)
+        - POSTGRES_PORT: PostgreSQL port (default: 5432)
+        - POSTGRES_USER: PostgreSQL username (default: postgres)
+        - POSTGRES_PASSWORD: PostgreSQL password (required for production)
+        - POSTGRES_DBNAME: PostgreSQL database name (default: plexichat)
+        - POSTGRES_SSLMODE: PostgreSQL SSL mode (default: prefer)
+        
+        DATABASE CONNECTION POOL:
+        - DB_POOL_MIN_CONNECTIONS: Minimum connections (default: 1)
+        - DB_POOL_MAX_CONNECTIONS: Maximum connections (default: 10)
+        - DB_POOL_CONNECT_TIMEOUT: Connection timeout in seconds (default: 10)
+        - DB_POOL_MAX_IDLE_TIME: Idle timeout in seconds (default: 300)
+        - DB_POOL_VALIDATION_INTERVAL: Validation check interval in seconds (default: 60)
+        - DB_POOL_ENABLE_VALIDATION: Enable connection validation (default: true)
+        - DB_POOL_VALIDATION_QUERY: Query for validation (default: SELECT 1)
+        
+        MONITORING:
+        - MONITORING_ENABLED: Enable monitoring (default: true)
+        - MONITORING_LOG_INTERVAL: Metrics log interval in seconds (default: 300)
+        - MONITORING_METRICS_ENABLED: Enable metrics collection (default: true)
+        - MONITORING_ALERT_CPU_THRESHOLD: CPU alert threshold % (default: 80)
+        - MONITORING_ALERT_MEMORY_THRESHOLD: Memory alert threshold % (default: 85)
+        - MONITORING_ALERT_DB_POOL_THRESHOLD: DB pool saturation % (default: 75)
+        - MONITORING_ALERT_QUERY_TIME_MS: Query timeout alert in ms (default: 5000)
+        - MONITORING_ALERT_DB_ERRORS_PER_MINUTE: DB error rate alert (default: 10)
+        - MONITORING_ALERT_API_RESPONSE_TIME_MS: API response time alert (default: 2000)
+        - MONITORING_ALERT_ERROR_RATE_PERCENT: Error rate alert % (default: 5)
+        - MONITORING_ALERT_ACTIVE_CONNECTIONS: Connection count alert (default: 1000)
+        
+        LOGGING:
+        - LOG_LEVEL: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        """
+        import urllib.parse
+        
+        db_config = config.get("database", {})
+        
+        # Handle DATABASE_URL (takes precedence over individual env vars)
         database_url = os.getenv("DATABASE_URL")
         if database_url:
-            db_config = config.get("database", {})
             if database_url.startswith("postgres://") or database_url.startswith(
                 "postgresql://"
             ):
                 # Parse PostgreSQL URL
-                import urllib.parse
-
                 parsed = urllib.parse.urlparse(database_url)
                 db_config["type"] = "postgres"
                 db_config["postgres"] = {
@@ -798,8 +859,176 @@ class PlexiChatServer:
             elif database_url.startswith("sqlite:///"):
                 db_config["type"] = "sqlite"
                 db_config["path"] = database_url[10:]  # Remove sqlite:///
-            config.set("database", db_config)
-
+        else:
+            # Handle individual PostgreSQL environment variables
+            if not db_config.get("postgres"):
+                db_config["postgres"] = {}
+            
+            postgres_config = db_config["postgres"]
+            
+            # PostgreSQL connection credentials
+            postgres_host = os.getenv("POSTGRES_HOST")
+            if postgres_host:
+                postgres_config["host"] = postgres_host
+            
+            postgres_port = os.getenv("POSTGRES_PORT")
+            if postgres_port:
+                try:
+                    postgres_config["port"] = int(postgres_port)
+                except ValueError:
+                    logger.warning(f"Invalid POSTGRES_PORT value: {postgres_port}, using default")
+            
+            postgres_user = os.getenv("POSTGRES_USER")
+            if postgres_user:
+                postgres_config["user"] = postgres_user
+            
+            postgres_password = os.getenv("POSTGRES_PASSWORD")
+            if postgres_password:
+                postgres_config["password"] = postgres_password
+            
+            postgres_dbname = os.getenv("POSTGRES_DBNAME")
+            if postgres_dbname:
+                postgres_config["dbname"] = postgres_dbname
+            
+            postgres_sslmode = os.getenv("POSTGRES_SSLMODE")
+            if postgres_sslmode:
+                postgres_config["sslmode"] = postgres_sslmode
+        
+        # Initialize connection pool config if not present
+        if "connection_pool" not in db_config:
+            db_config["connection_pool"] = {}
+        
+        pool_config = db_config["connection_pool"]
+        
+        # Connection pool environment variables
+        db_pool_min = os.getenv("DB_POOL_MIN_CONNECTIONS")
+        if db_pool_min:
+            try:
+                pool_config["min_connections"] = int(db_pool_min)
+            except ValueError:
+                logger.warning(f"Invalid DB_POOL_MIN_CONNECTIONS value: {db_pool_min}")
+        
+        db_pool_max = os.getenv("DB_POOL_MAX_CONNECTIONS")
+        if db_pool_max:
+            try:
+                pool_config["max_connections"] = int(db_pool_max)
+            except ValueError:
+                logger.warning(f"Invalid DB_POOL_MAX_CONNECTIONS value: {db_pool_max}")
+        
+        db_pool_timeout = os.getenv("DB_POOL_CONNECT_TIMEOUT")
+        if db_pool_timeout:
+            try:
+                pool_config["connect_timeout"] = int(db_pool_timeout)
+            except ValueError:
+                logger.warning(f"Invalid DB_POOL_CONNECT_TIMEOUT value: {db_pool_timeout}")
+        
+        db_pool_idle = os.getenv("DB_POOL_MAX_IDLE_TIME")
+        if db_pool_idle:
+            try:
+                pool_config["max_idle_time"] = int(db_pool_idle)
+            except ValueError:
+                logger.warning(f"Invalid DB_POOL_MAX_IDLE_TIME value: {db_pool_idle}")
+        
+        db_pool_validation_interval = os.getenv("DB_POOL_VALIDATION_INTERVAL")
+        if db_pool_validation_interval:
+            try:
+                pool_config["validation_interval"] = int(db_pool_validation_interval)
+            except ValueError:
+                logger.warning(f"Invalid DB_POOL_VALIDATION_INTERVAL value: {db_pool_validation_interval}")
+        
+        db_pool_enable_validation = os.getenv("DB_POOL_ENABLE_VALIDATION")
+        if db_pool_enable_validation:
+            pool_config["enable_validation"] = db_pool_enable_validation.lower() in ("true", "1", "yes")
+        
+        db_pool_validation_query = os.getenv("DB_POOL_VALIDATION_QUERY")
+        if db_pool_validation_query:
+            pool_config["validation_query"] = db_pool_validation_query
+        
+        config.set("database", db_config)
+        
+        # Monitoring configuration environment variables
+        monitoring_config = config.get("monitoring", {})
+        
+        monitoring_enabled = os.getenv("MONITORING_ENABLED")
+        if monitoring_enabled:
+            monitoring_config["enabled"] = monitoring_enabled.lower() in ("true", "1", "yes")
+        
+        monitoring_log_interval = os.getenv("MONITORING_LOG_INTERVAL")
+        if monitoring_log_interval:
+            try:
+                monitoring_config["log_interval"] = int(monitoring_log_interval)
+            except ValueError:
+                logger.warning(f"Invalid MONITORING_LOG_INTERVAL value: {monitoring_log_interval}")
+        
+        monitoring_metrics = os.getenv("MONITORING_METRICS_ENABLED")
+        if monitoring_metrics:
+            monitoring_config["metrics_enabled"] = monitoring_metrics.lower() in ("true", "1", "yes")
+        
+        # Initialize alert thresholds if not present
+        if "alert_thresholds" not in monitoring_config:
+            monitoring_config["alert_thresholds"] = {}
+        
+        alert_thresholds = monitoring_config["alert_thresholds"]
+        
+        # Individual alert threshold environment variables
+        cpu_threshold = os.getenv("MONITORING_ALERT_CPU_THRESHOLD")
+        if cpu_threshold:
+            try:
+                alert_thresholds["cpu_percent"] = float(cpu_threshold)
+            except ValueError:
+                logger.warning(f"Invalid MONITORING_ALERT_CPU_THRESHOLD value: {cpu_threshold}")
+        
+        memory_threshold = os.getenv("MONITORING_ALERT_MEMORY_THRESHOLD")
+        if memory_threshold:
+            try:
+                alert_thresholds["memory_percent"] = float(memory_threshold)
+            except ValueError:
+                logger.warning(f"Invalid MONITORING_ALERT_MEMORY_THRESHOLD value: {memory_threshold}")
+        
+        db_pool_threshold = os.getenv("MONITORING_ALERT_DB_POOL_THRESHOLD")
+        if db_pool_threshold:
+            try:
+                alert_thresholds["db_pool_saturation_percent"] = float(db_pool_threshold)
+            except ValueError:
+                logger.warning(f"Invalid MONITORING_ALERT_DB_POOL_THRESHOLD value: {db_pool_threshold}")
+        
+        query_time = os.getenv("MONITORING_ALERT_QUERY_TIME_MS")
+        if query_time:
+            try:
+                alert_thresholds["query_time_ms"] = int(query_time)
+            except ValueError:
+                logger.warning(f"Invalid MONITORING_ALERT_QUERY_TIME_MS value: {query_time}")
+        
+        db_errors = os.getenv("MONITORING_ALERT_DB_ERRORS_PER_MINUTE")
+        if db_errors:
+            try:
+                alert_thresholds["db_errors_per_minute"] = int(db_errors)
+            except ValueError:
+                logger.warning(f"Invalid MONITORING_ALERT_DB_ERRORS_PER_MINUTE value: {db_errors}")
+        
+        api_response_time = os.getenv("MONITORING_ALERT_API_RESPONSE_TIME_MS")
+        if api_response_time:
+            try:
+                alert_thresholds["api_response_time_ms"] = int(api_response_time)
+            except ValueError:
+                logger.warning(f"Invalid MONITORING_ALERT_API_RESPONSE_TIME_MS value: {api_response_time}")
+        
+        error_rate = os.getenv("MONITORING_ALERT_ERROR_RATE_PERCENT")
+        if error_rate:
+            try:
+                alert_thresholds["error_rate_percent"] = float(error_rate)
+            except ValueError:
+                logger.warning(f"Invalid MONITORING_ALERT_ERROR_RATE_PERCENT value: {error_rate}")
+        
+        active_connections = os.getenv("MONITORING_ALERT_ACTIVE_CONNECTIONS")
+        if active_connections:
+            try:
+                alert_thresholds["active_connections"] = int(active_connections)
+            except ValueError:
+                logger.warning(f"Invalid MONITORING_ALERT_ACTIVE_CONNECTIONS value: {active_connections}")
+        
+        config.set("monitoring", monitoring_config)
+        
         # LOG_LEVEL override
         log_level = os.getenv("LOG_LEVEL")
         if log_level:
@@ -921,9 +1150,26 @@ class PlexiChatServer:
         self.db = Database()
 
         # Run migrations
-        from src.core.database.migrations import run_all_migrations
+        from src.core.migrations import run_migrations
 
-        run_all_migrations(self.db)
+        try:
+            migration_result = run_migrations(self.db)
+            if migration_result['success']:
+                logger.info(
+                    f"Migrations applied successfully: "
+                    f"{migration_result['applied_count']} applied, "
+                    f"{migration_result['failed_count']} failed"
+                )
+            else:
+                logger.error(
+                    f"Migration process had failures: "
+                    f"{migration_result['applied_count']} applied, "
+                    f"{migration_result['failed_count']} failed"
+                )
+        except Exception as e:
+            logger.error(f"Critical error during migrations: {e}")
+            raise
+        
         self.db.connect()
 
         # Initialize Redis if enabled

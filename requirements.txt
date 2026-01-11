@@ -13,6 +13,7 @@ uvicorn[standard]>=0.27.0
 starlette>=0.35.0
 
 # Database
+sqlalchemy>=2.0.0          # SQL toolkit and ORM
 psycopg2-binary>=2.9.9     # PostgreSQL sync driver (optional)
 redis>=5.0.0               # Redis client for caching/sessions
 hiredis>=2.3.0             # Redis parser (optional, for performance)
@@ -52,4 +53,11 @@ qrcode[pil]>=7.4.2
 
 # S3/MinIO Storage (optional, for cloud media storage)
 boto3>=1.34.0              # AWS S3 SDK (also works with MinIO)
+
+# Testing & Development (optional, for running tests)
+pytest>=7.0.0              # Testing framework
+pytest-asyncio>=0.21.0     # Async test support
+pytest-cov>=4.0.0          # Code coverage
+psutil>=5.9.0              # System and process utilities (for performance tests)
+fakeredis>=2.10.0          # In-memory Redis for testing
 
