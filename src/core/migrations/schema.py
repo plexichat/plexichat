@@ -58,7 +58,7 @@ def create_tables(db):
     Raises:
         Exception: If table creation fails
     """
-    schema = SCHEMA_SQLITE if db.engine == 'sqlite' else SCHEMA_POSTGRESQL
+    schema = SCHEMA_SQLITE if db.type == 'sqlite' else SCHEMA_POSTGRESQL
     
     # Split statements and execute each one
     statements = [
