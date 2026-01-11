@@ -217,6 +217,12 @@ class Database:
         
         Automatically generates and sets a correlation ID if none exists for request tracing.
         """
+        # Ensure thread-local state is initialized
+        if not hasattr(self._local, "transaction_depth"):
+            self._local.transaction_depth = 0
+        if not hasattr(self._local, "in_transaction"):
+            self._local.in_transaction = False
+
         # Ensure correlation ID is set for this request/thread
         if self.get_correlation_id() is None:
             correlation_id = self._generate_correlation_id()
