@@ -359,6 +359,12 @@ def three_users(user_pool):
     return user_pool.get_user(), user_pool.get_user(), user_pool.get_user()
 
 
+@pytest.fixture
+def db(postgres_db):
+    """Alias for postgres_db fixture to support tests expecting 'db' parameter."""
+    return postgres_db
+
+
 # =============================================================================
 # Legacy Compatibility Fixtures
 # =============================================================================
@@ -723,6 +729,53 @@ def auth_headers(test_user_with_token):
 
 
 # =============================================================================
+# Production Simulation Fixtures
+# =============================================================================
+
+
+@pytest.fixture
+def multiprocess_config(postgres_config):
+    """Configuration for multi-process testing with shared PostgreSQL pool settings."""
+    return {
+        **postgres_config,
+        'pool_size': 20,
+        'max_overflow': 10,
+        'pool_timeout': 30,
+        'pool_recycle': 3600,
+    }
+
+
+@pytest.fixture
+def worker_pool(multiprocess_config):
+    """Creates a pool of worker processes that share the same PostgreSQL connection pool configuration."""
+    from src.tests.test_production_simulation import ProductionSimulator
+    
+    simulator = ProductionSimulator(
+        db_config=multiprocess_config,
+        worker_count=4,
+        queries_per_worker=50
+    )
+    yield simulator
+    # Cleanup
+    simulator.terminate_all_workers()
+    simulator.join_all_workers(timeout=10)
+
+
+@pytest.fixture
+def redis_with_postgres(postgres_config):
+    """Sets up both Redis and PostgreSQL for integrated testing."""
+    import fakeredis
+    
+    fake_redis = fakeredis.FakeRedis()
+    
+    # Return both Redis and PostgreSQL config for integrated testing
+    return {
+        'redis': fake_redis,
+        'postgres_config': postgres_config,
+    }
+
+
+# =============================================================================
 # Test Configuration
 # =============================================================================
 
@@ -761,6 +814,9 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "embeds: Embeds module tests")
     config.addinivalue_line("markers", "automod: Auto-moderation module tests")
     config.addinivalue_line("markers", "performance: Performance and load tests")
+    config.addinivalue_line("markers", "production_simulation: Production environment simulation tests")
+    config.addinivalue_line("markers", "multiprocess: Tests using multiple processes")
+    config.addinivalue_line("markers", "requires_postgres: Tests requiring PostgreSQL Docker container")
 
 
 def pytest_collection_modifyitems(config, items):

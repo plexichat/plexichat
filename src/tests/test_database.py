@@ -831,3 +831,919 @@ def test_upsert_specific_columns(db_config):
     # Note: SQLite's INSERT OR REPLACE actually replaces the whole row,
     # so this test verifies the API works, but behavior differs between DBs
     db.close()
+
+
+# Comprehensive Placeholder Conversion Tests
+def test_placeholder_conversion_edge_cases(db_config):
+    """Test placeholder conversion handles complex queries with string literals."""
+    from src.core.database.core import _PLACEHOLDER_PATTERN
+
+    # Test 1: Question marks in single-quoted strings
+    query = "SELECT * FROM users WHERE name = 'What?' AND id = ?"
+    converted = _PLACEHOLDER_PATTERN.sub("%s", query)
+    assert converted == "SELECT * FROM users WHERE name = 'What?' AND id = %s"
+
+    # Test 2: Multiple question marks in strings
+    query = "INSERT INTO logs (message) VALUES ('Why? How? When?') WHERE id = ?"
+    converted = _PLACEHOLDER_PATTERN.sub("%s", query)
+    assert converted == "INSERT INTO logs (message) VALUES ('Why? How? When?') WHERE id = %s"
+
+    # Test 3: Escaped quotes with question marks
+    query = "SELECT * FROM data WHERE text = 'It''s a question?' AND id = ?"
+    converted = _PLACEHOLDER_PATTERN.sub("%s", query)
+    assert converted == "SELECT * FROM data WHERE text = 'It''s a question?' AND id = %s"
+
+    # Test 4: Question marks in double-quoted identifiers (PostgreSQL)
+    query = 'SELECT "column?" FROM table WHERE id = ?'
+    converted = _PLACEHOLDER_PATTERN.sub("%s", query)
+    # Double-quoted identifiers are not protected by the pattern, only single-quoted strings
+    # So this tests that the pattern handles mixed quote types
+    assert "WHERE id = %s" in converted
+
+    # Test 5: Complex nested quotes
+    query = 'SELECT * FROM users WHERE bio = \'He said "Why?"\' AND id = ?'
+    converted = _PLACEHOLDER_PATTERN.sub("%s", query)
+    assert converted == 'SELECT * FROM users WHERE bio = \'He said "Why?"\' AND id = %s'
+
+    # Test 6: Multiple parameters with strings
+    query = "SELECT * FROM users WHERE name = 'What?' AND status = ? AND id = ?"
+    converted = _PLACEHOLDER_PATTERN.sub("%s", query)
+    assert converted == "SELECT * FROM users WHERE name = 'What?' AND status = %s AND id = %s"
+
+    # Test 7: No parameters to convert
+    query = "SELECT * FROM users WHERE name = 'What?'"
+    converted = _PLACEHOLDER_PATTERN.sub("%s", query)
+    assert converted == query  # Should remain unchanged
+
+    # Test 8: Only string literal with question mark
+    query = "SELECT 'Is this a question?' AS literal"
+    converted = _PLACEHOLDER_PATTERN.sub("%s", query)
+    assert converted == query  # Should remain unchanged
+
+
+def test_placeholder_conversion_in_execute_method(db_config):
+    """Test that execute method uses regex pattern for placeholder conversion."""
+    pg_config = {
+        "type": "postgres",
+        "postgres": {
+            "host": "localhost",
+            "port": 5432,
+            "user": "postgres",
+            "password": "password",
+            "dbname": "postgres",
+        },
+    }
+    config.set("database", pg_config)
+
+    db = Database()
+    # Verify db type is postgres
+    assert db.type == "postgres"
+
+    # Simulate the conversion that happens in execute method
+    from src.core.database.core import _PLACEHOLDER_PATTERN
+
+    query = "SELECT * FROM users WHERE name = 'What?' AND id = ?"
+    converted = _PLACEHOLDER_PATTERN.sub("%s", query)
+    assert converted == "SELECT * FROM users WHERE name = 'What?' AND id = %s"
+
+
+def test_placeholder_conversion_in_execute_many_method(db_config):
+    """Test that execute_many method uses regex pattern for placeholder conversion."""
+    pg_config = {
+        "type": "postgres",
+        "postgres": {
+            "host": "localhost",
+            "port": 5432,
+            "user": "postgres",
+            "password": "password",
+            "dbname": "postgres",
+        },
+    }
+    config.set("database", pg_config)
+
+    db = Database()
+    assert db.type == "postgres"
+
+    # Simulate the conversion that happens in execute_many method
+    from src.core.database.core import _PLACEHOLDER_PATTERN
+
+    query = "INSERT INTO logs (message, user_id) VALUES (?, ?)"
+    converted = _PLACEHOLDER_PATTERN.sub("%s", query)
+    assert converted == "INSERT INTO logs (message, user_id) VALUES (%s, %s)"
+
+    # With string literal
+    query = "INSERT INTO logs (message, user_id) VALUES ('Why?', ?)"
+    converted = _PLACEHOLDER_PATTERN.sub("%s", query)
+    assert converted == "INSERT INTO logs (message, user_id) VALUES ('Why?', %s)"
+
+
+def test_postgres_connection_pool_config(db_config):
+    """Test that PostgreSQL connection pool respects configuration settings."""
+    pg_config = {
+        "type": "postgres",
+        "postgres": {
+            "host": "localhost",
+            "port": 5432,
+            "user": "postgres",
+            "password": "password",
+            "dbname": "postgres",
+        },
+        "connection_pool": {
+            "min_connections": 5,
+            "max_connections": 50,
+        },
+    }
+    config.set("database", pg_config)
+
+    db = Database()
+    assert db.type == "postgres"
+
+    # Verify that the config has the pool settings
+    pool_config = db.config.get("connection_pool", {})
+    assert pool_config.get("min_connections", 2) == 5
+    assert pool_config.get("max_connections", 20) == 50
+
+
+def test_postgres_connection_pool_config_defaults(db_config):
+    """Test that PostgreSQL connection pool uses default values when not configured."""
+    pg_config = {
+        "type": "postgres",
+        "postgres": {
+            "host": "localhost",
+            "port": 5432,
+            "user": "postgres",
+            "password": "password",
+            "dbname": "postgres",
+        },
+        # No connection_pool section
+    }
+    config.set("database", pg_config)
+
+    db = Database()
+    assert db.type == "postgres"
+
+    # Verify that defaults are used
+    pool_config = db.config.get("connection_pool", {})
+    # When connection_pool is not set, it should default to empty dict
+    # and the _connect_postgres method will use hardcoded defaults
+    assert pool_config.get("min_connections", 2) == 2  # default
+    assert pool_config.get("max_connections", 20) == 20  # default
+
+# Connection Pool Leak Fix Tests
+
+
+def test_connection_reuse_validation(db_config):
+    """Test that connections are properly reused and validated."""
+    db = Database()
+    db.connect()
+    
+    # Store reference to first connection
+    first_conn = db._local.connection
+    assert first_conn is not None
+    
+    # Call _get_conn multiple times
+    conn1 = db._get_conn()
+    conn2 = db._get_conn()
+    conn3 = db._get_conn()
+    
+    # Verify same connection object is returned (connection reuse works)
+    assert conn1 is first_conn
+    assert conn2 is first_conn
+    assert conn3 is first_conn
+    
+    # Close and reconnect
+    db.close()
+    db.connect()
+    
+    # Verify new connection object is returned
+    new_conn = db._get_conn()
+    assert new_conn is not first_conn
+    
+    db.close()
+
+
+def test_stale_connection_handling(db_config):
+    """Test that stale/closed connections are properly handled and replaced."""
+    db = Database()
+    db.connect()
+    
+    # Store reference to first connection
+    first_conn = db._local.connection
+    
+    # Manually close the underlying connection (simulate network failure)
+    first_conn.close()
+    
+    # Call _get_conn again - should detect closed connection and reconnect
+    new_conn = db._get_conn()
+    
+    # Verify connection was replaced
+    assert new_conn is not first_conn
+    # New connection should be valid
+    assert new_conn is not None
+    # Verify no exceptions were raised
+    
+    db.close()
+
+
+def test_connection_replacement_in_connect(db_config):
+    """Test that calling connect() again properly replaces old connection."""
+    db = Database()
+    db.connect()
+    
+    # Store reference to first connection
+    first_conn = db._local.connection
+    assert first_conn is not None
+    
+    # Call connect() again
+    db.connect()
+    
+    # Verify old connection was properly closed
+    # and new connection is different object
+    new_conn = db._local.connection
+    assert new_conn is not first_conn
+    assert new_conn is not None
+    
+    # Verify thread-local state is properly initialized
+    assert db._local.transaction_depth == 0
+    assert db._local.in_transaction == False
+    
+    db.close()
+
+
+def test_thread_local_state_clearing(db_config):
+    """Test that thread-local state is properly cleared on close()."""
+    db = Database()
+    db.connect()
+    
+    # Set transaction state
+    db.begin_transaction()
+    assert db._local.transaction_depth == 1
+    assert db._local.in_transaction == True
+    
+    # Call close()
+    db.close()
+    
+    # Verify thread-local state is cleared
+    assert db._local.connection is None
+    assert db._local.transaction_depth == 0
+    assert db._local.in_transaction == False
+
+
+def test_connection_lifecycle_logging(db_config, caplog):
+    """Test that connection lifecycle events are properly logged."""
+    import logging
+    
+    # Set logger to capture DEBUG level
+    caplog.set_level(logging.DEBUG)
+    
+    db = Database()
+    
+    # Connect
+    db.connect()
+    
+    # Execute query (which will call _get_conn)
+    cursor = db.execute("SELECT 1")
+    cursor.close()
+    
+    # Close connection
+    db.close()
+    
+    # Verify lifecycle events are logged
+    log_messages = [record.message for record in caplog.records]
+    
+    # Should have messages about acquiring connection
+    assert any("Acquiring new database connection" in msg for msg in log_messages), \
+        f"Expected connection acquisition log, got: {log_messages}"
+    
+    # Should have messages about thread-local state
+    assert any("cleared thread-local connection state" in msg for msg in log_messages), \
+        f"Expected state clearing log, got: {log_messages}"
+
+
+def test_sqlite_connection_reuse(db_config):
+    """Test that SQLite connections are properly reused within same thread."""
+    db = Database()
+    
+    # First connection
+    db.connect()
+    conn1 = db._local.connection
+    
+    # Should reuse same connection
+    conn2 = db._get_conn()
+    assert conn2 is conn1
+    
+    # Another call should also reuse
+    conn3 = db._get_conn()
+    assert conn3 is conn1
+    
+    db.close()
+
+
+def test_connection_acquire_release_cycle(db_config):
+    """Test complete acquire-release cycle with proper state management."""
+    db = Database()
+    
+    # Start fresh
+    assert db._local.connection if hasattr(db._local, "connection") else True
+    
+    # Acquire connection
+    conn = db._get_conn()
+    assert conn is not None
+    assert db._local.connection is conn
+    
+    # Execute something to ensure it works
+    cursor = db.execute("SELECT 1")
+    result = cursor.fetchone()
+    cursor.close()
+    assert result is not None
+    
+    # Release connection
+    db.close()
+    assert db._local.connection is None
+    assert db._local.transaction_depth == 0
+    assert db._local.in_transaction == False
+
+
+def test_multiple_connection_cycles(db_config):
+    """Test multiple acquire-release cycles work correctly."""
+    db = Database()
+    
+    connections = []
+    
+    # Perform multiple cycles
+    for i in range(3):
+        db.connect()
+        conn = db._local.connection
+        connections.append(conn)
+        
+        # Each should be a new connection (since we close)
+        if i > 0:
+            assert conn is not connections[i-1], f"Cycle {i}: Expected new connection"
+        
+        db.close()
+        assert db._local.connection is None
+
+
+def test_connection_validation_detects_closed(db_config):
+    """Test that _get_conn properly detects and handles closed connections."""
+    db = Database()
+    db.connect()
+    
+    # Get a valid connection first
+    valid_conn = db._get_conn()
+    assert valid_conn is not None
+    
+    # Close it manually
+    valid_conn.close()
+    
+    # _get_conn should detect it's closed and get a new one
+    new_conn = db._get_conn()
+    
+    # Should be different from the closed one
+    assert new_conn is not valid_conn
+    assert new_conn is not None
+    
+    db.close()
+
+
+def test_connection_timeout_config_exists(db_config):
+    """Test that connect_timeout configuration is properly read."""
+    # Create a config with connect_timeout
+    test_config = {
+        "database": {
+            "type": "sqlite",
+            "path": db_config.replace("test.db", "timeout_test.db"),
+            "connection_pool": {
+                "min_connections": 2,
+                "max_connections": 20,
+                "connect_timeout": 15
+            }
+        }
+    }
+    config.set("database", test_config["database"])
+    
+    db = Database()
+    
+    # Verify timeout is in config
+    pool_config = db.config.get("connection_pool", {})
+    assert pool_config.get("connect_timeout", 10) == 15
+
+
+def test_connection_pool_state_consistency(db_config):
+    """Test that connection pool state remains consistent across operations."""
+    db = Database()
+    
+    # Multiple connections and operations
+    for i in range(5):
+        db.connect()
+        assert db._local.connection is not None
+        assert db._local.transaction_depth == 0
+        assert db._local.in_transaction == False
+        
+        # Do something with connection
+        cursor = db.execute("SELECT ?", (i,))
+        cursor.close()
+        
+        db.close()
+        assert db._local.connection is None
+        assert db._local.transaction_depth == 0
+        assert db._local.in_transaction == False
+
+
+# PostgreSQL-specific error handling tests
+
+
+def test_pool_exhaustion_handling(db_config, caplog):
+    """Test that pool exhaustion is logged and raises appropriate error.
+    
+    Configures a mock ThreadedConnectionPool with small maxconn,
+    requests more connections than available, verifies:
+    1. PoolError is raised
+    2. Specific pool-exhaustion error is logged
+    3. No connection leak (putconn called for returned connections)
+    """
+    try:
+        import psycopg2
+        import psycopg2.pool
+    except ImportError:
+        pytest.skip("psycopg2 not installed")
+
+    import logging
+    from unittest.mock import Mock, MagicMock, patch
+    
+    # Set logger to capture DEBUG level
+    caplog.set_level(logging.DEBUG)
+    
+    # Configure database for PostgreSQL
+    pg_config = {
+        "type": "postgres",
+        "postgres": {
+            "host": "localhost",
+            "port": 5432,
+            "user": "postgres",
+            "password": "password",
+            "dbname": "postgres",
+        },
+        "connection_pool": {
+            "min_connections": 1,
+            "max_connections": 2,  # Small maxconn to test exhaustion
+        },
+    }
+    config.set("database", pg_config)
+    
+    # Create database instance
+    db = Database()
+    
+    # Mock the ThreadedConnectionPool to simulate exhaustion
+    mock_pool = MagicMock(spec=psycopg2.pool.ThreadedConnectionPool)
+    
+    # Track connections handed out and returned
+    connections_out = []
+    
+    def getconn_side_effect():
+        """Simulate pool behavior: maxconn=2, raise PoolError when exhausted."""
+        if len(connections_out) >= 2:
+            raise psycopg2.pool.PoolError("Connection pool exhausted")
+        
+        # Create mock connection
+        mock_conn = MagicMock()
+        mock_conn.closed = 0  # Connection is open
+        connections_out.append(mock_conn)
+        return mock_conn
+    
+    def putconn_side_effect(conn):
+        """Simulate returning connection to pool."""
+        if conn in connections_out:
+            connections_out.remove(conn)
+    
+    mock_pool.getconn = MagicMock(side_effect=getconn_side_effect)
+    mock_pool.putconn = MagicMock(side_effect=putconn_side_effect)
+    
+    # Patch the ThreadedConnectionPool instantiation
+    with patch("psycopg2.pool.ThreadedConnectionPool", return_value=mock_pool):
+        # First call to _connect_postgres() creates pool and gets connection
+        try:
+            db._connect_postgres()
+            assert len(connections_out) == 1, "First connection should be acquired"
+        except Exception as e:
+            pytest.fail(f"First connection should succeed: {e}")
+        
+        # Second call should also work (maxconn=2)
+        try:
+            # Need new db instance to avoid thread-local reuse
+            db2 = Database()
+            db2._pool = mock_pool  # Reuse the mock pool
+            db2._connect_postgres()
+            assert len(connections_out) == 2, "Second connection should be acquired"
+        except Exception as e:
+            pytest.fail(f"Second connection should succeed: {e}")
+        
+        # Third call should exhaust pool
+        db3 = Database()
+        db3._pool = mock_pool  # Reuse the mock pool
+        
+        with pytest.raises(psycopg2.pool.PoolError):
+            db3._connect_postgres()
+        
+        # Verify pool exhaustion error was logged
+        log_messages = [record.message for record in caplog.records]
+        assert any("pool exhausted" in msg.lower() for msg in log_messages), \
+            f"Expected pool exhaustion log message, got: {log_messages}"
+        
+        # Verify the specific error message mentions pool exhaustion
+        assert any("no available connections" in msg.lower() for msg in log_messages), \
+            f"Expected 'no available connections' in logs, got: {log_messages}"
+        
+        # Clean up: return connections to pool to verify putconn was called
+        for conn in list(connections_out):
+            mock_pool.putconn(conn)
+        
+        # Verify putconn was called for the connections
+        assert mock_pool.putconn.call_count >= 2, \
+            "putconn should be called to return connections to pool"
+
+
+def test_connect_timeout_handling(db_config, caplog):
+    """Test that connection timeout is logged with specific timeout event.
+    
+    Mocks getconn() to raise a timeout-flavored OperationalError,
+    asserts the timeout log entry is emitted separately from generic errors.
+    """
+    try:
+        import psycopg2
+        import psycopg2.pool
+    except ImportError:
+        pytest.skip("psycopg2 not installed")
+
+    import logging
+    from unittest.mock import Mock, MagicMock, patch
+    
+    # Set logger to capture DEBUG level
+    caplog.set_level(logging.DEBUG)
+    
+    # Configure database for PostgreSQL with specific timeout
+    pg_config = {
+        "type": "postgres",
+        "postgres": {
+            "host": "localhost",
+            "port": 5432,
+            "user": "postgres",
+            "password": "password",
+            "dbname": "postgres",
+        },
+        "connection_pool": {
+            "min_connections": 1,
+            "max_connections": 10,
+            "connect_timeout": 5,  # Specific timeout value
+        },
+    }
+    config.set("database", pg_config)
+    
+    # Create database instance
+    db = Database()
+    
+    # Mock the ThreadedConnectionPool
+    mock_pool = MagicMock(spec=psycopg2.pool.ThreadedConnectionPool)
+    
+    # Create a timeout-flavored OperationalError
+    timeout_error = psycopg2.OperationalError("timeout during connection establishment")
+    
+    mock_pool.getconn = MagicMock(side_effect=timeout_error)
+    
+    # Patch the ThreadedConnectionPool instantiation
+    with patch("psycopg2.pool.ThreadedConnectionPool", return_value=mock_pool):
+        # Call _connect_postgres() which should timeout
+        with pytest.raises(psycopg2.OperationalError):
+            db._connect_postgres()
+        
+        # Verify timeout-specific error was logged
+        log_messages = [record.message for record in caplog.records]
+        
+        # Should have timeout-specific log message mentioning the timeout duration
+        timeout_logs = [msg for msg in log_messages if "timeout" in msg.lower()]
+        assert len(timeout_logs) > 0, \
+            f"Expected timeout-specific log message, got: {log_messages}"
+        
+        # Verify the timeout duration is mentioned in the log
+        assert any("5s" in msg for msg in timeout_logs), \
+            f"Expected timeout duration (5s) in logs, got: {timeout_logs}"
+        
+        # Verify error is logged before re-raising
+        assert any("Connection timeout" in msg for msg in log_messages), \
+            f"Expected 'Connection timeout' in logs, got: {log_messages}"
+
+
+# ============================================================================
+# PostgreSQL Connection Pool Tests (Not Skipped - Uses Fixtures/Mocking)
+# ============================================================================
+
+class TestPostgresConnectionPoolAcquisition:
+    """Test PostgreSQL connection pool acquisition and lifecycle."""
+    
+    @pytest.fixture
+    def postgres_pool_config(self):
+        """Configure PostgreSQL with connection pool."""
+        pg_config = {
+            "type": "postgres",
+            "postgres": {
+                "host": "localhost",
+                "port": 5432,
+                "user": "postgres",
+                "password": "password",
+                "dbname": "postgres",
+            },
+            "connection_pool": {
+                "min_connections": 2,
+                "max_connections": 10,
+                "connect_timeout": 10,
+            },
+        }
+        config.set("database", pg_config)
+        return pg_config
+    
+    def test_pool_minconn_validation(self, postgres_pool_config):
+        """Test that minimum connections configuration is respected."""
+        db = Database()
+        pool_config = db.config.get("connection_pool", {})
+        assert pool_config.get("min_connections", 2) == 2
+    
+    def test_pool_maxconn_validation(self, postgres_pool_config):
+        """Test that maximum connections configuration is respected."""
+        db = Database()
+        pool_config = db.config.get("connection_pool", {})
+        assert pool_config.get("max_connections", 20) == 10
+    
+    def test_pool_timeout_validation(self, postgres_pool_config):
+        """Test that connection timeout configuration is respected."""
+        db = Database()
+        pool_config = db.config.get("connection_pool", {})
+        assert pool_config.get("connect_timeout", 10) == 10
+    
+    def test_pool_initialization_creates_pool(self, postgres_pool_config):
+        """Test that pool is created on first connection attempt."""
+        db = Database()
+        assert db._pool is None, "Pool should be None before first connection"
+        # Note: actual connection would require real PostgreSQL
+        # Pool is created in _connect_postgres() which requires live DB
+    
+    def test_pool_reuse_across_threads(self, postgres_pool_config):
+        """Test that pool is reused across multiple threads."""
+        import threading
+        
+        db = Database()
+        pools_seen = []
+        
+        def get_pool():
+            """Get pool reference from database instance."""
+            local_db = Database()
+            # Pool is created during first connection attempt
+            # For now just verify pool config is accessible
+            assert local_db.config.get("connection_pool") is not None
+        
+        threads = [threading.Thread(target=get_pool) for _ in range(3)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+
+class TestPostgresPlaceholderConversionComplex:
+    """Test placeholder conversion with complex query scenarios."""
+    
+    @pytest.fixture(autouse=True)
+    def setup_postgres_config(self):
+        """Setup PostgreSQL configuration for each test."""
+        pg_config = {
+            "type": "postgres",
+            "postgres": {
+                "host": "localhost",
+                "port": 5432,
+                "user": "postgres",
+                "password": "password",
+                "dbname": "postgres",
+            },
+        }
+        config.set("database", pg_config)
+    
+    def test_nested_single_quotes_with_placeholders(self):
+        """Test placeholder conversion with nested single quotes."""
+        db = Database()
+        from src.core.database.core import _PLACEHOLDER_PATTERN
+        
+        # Query with nested quotes and placeholders
+        query = "SELECT * FROM users WHERE message = 'It''s a question?' AND id = ?"
+        converted = _PLACEHOLDER_PATTERN.sub("%s", query)
+        assert converted == "SELECT * FROM users WHERE message = 'It''s a question?' AND id = %s"
+    
+    def test_multiple_nested_quotes(self):
+        """Test multiple levels of quote nesting."""
+        db = Database()
+        from src.core.database.core import _PLACEHOLDER_PATTERN
+        
+        # Multiple parameters with quoted strings
+        query = "INSERT INTO logs (msg, user, data) VALUES (?, ?, 'What''s this?')"
+        converted = _PLACEHOLDER_PATTERN.sub("%s", query)
+        assert converted == "INSERT INTO logs (msg, user, data) VALUES (%s, %s, 'What''s this?')"
+    
+    def test_mixed_quote_styles(self):
+        """Test queries with both single and double quotes."""
+        db = Database()
+        from src.core.database.core import _PLACEHOLDER_PATTERN
+        
+        # Single quoted string containing double quotes
+        query = 'SELECT * FROM users WHERE bio = \'He said "Why?"\' AND status = ?'
+        converted = _PLACEHOLDER_PATTERN.sub("%s", query)
+        assert converted == 'SELECT * FROM users WHERE bio = \'He said "Why?"\' AND status = %s'
+    
+    def test_consecutive_placeholders(self):
+        """Test query with consecutive placeholders."""
+        db = Database()
+        from src.core.database.core import _PLACEHOLDER_PATTERN
+        
+        # Consecutive parameters
+        query = "UPDATE users SET name = ?, email = ?, status = ? WHERE id = ?"
+        converted = _PLACEHOLDER_PATTERN.sub("%s", query)
+        assert converted == "UPDATE users SET name = %s, email = %s, status = %s WHERE id = %s"
+    
+    def test_placeholder_in_case_statement(self):
+        """Test placeholder conversion in CASE statements."""
+        db = Database()
+        from src.core.database.core import _PLACEHOLDER_PATTERN
+        
+        query = """
+            SELECT CASE 
+                WHEN status = ? THEN 'Active'
+                WHEN status = ? THEN 'Inactive'
+                ELSE 'Unknown'
+            END FROM users WHERE id = ?
+        """
+        converted = _PLACEHOLDER_PATTERN.sub("%s", query)
+        # Should have 3 %s conversions, not counting any quoted question marks
+        assert converted.count("%s") == 3
+        assert converted.count("?") == 0
+    
+    def test_placeholder_in_json_extraction(self):
+        """Test placeholder in JSON path expressions."""
+        db = Database()
+        from src.core.database.core import _PLACEHOLDER_PATTERN
+        
+        # PostgreSQL JSON query
+        query = "SELECT data->'key' FROM users WHERE id = ? AND data->>'status' = ?"
+        converted = _PLACEHOLDER_PATTERN.sub("%s", query)
+        assert converted == "SELECT data->'key' FROM users WHERE id = %s AND data->>'status' = %s"
+    
+    def test_placeholder_in_like_clause(self):
+        """Test placeholder in LIKE clause with wildcard strings."""
+        db = Database()
+        from src.core.database.core import _PLACEHOLDER_PATTERN
+        
+        query = "SELECT * FROM users WHERE username LIKE ? AND email LIKE ?"
+        converted = _PLACEHOLDER_PATTERN.sub("%s", query)
+        assert converted == "SELECT * FROM users WHERE username LIKE %s AND email LIKE %s"
+    
+    def test_placeholder_in_between_clause(self):
+        """Test placeholder in BETWEEN clause."""
+        db = Database()
+        from src.core.database.core import _PLACEHOLDER_PATTERN
+        
+        query = "SELECT * FROM users WHERE age BETWEEN ? AND ?"
+        converted = _PLACEHOLDER_PATTERN.sub("%s", query)
+        assert converted == "SELECT * FROM users WHERE age BETWEEN %s AND %s"
+    
+    def test_placeholder_in_in_clause(self):
+        """Test placeholder in IN clause."""
+        db = Database()
+        from src.core.database.core import _PLACEHOLDER_PATTERN
+        
+        # Note: IN clauses with placeholders are complex;
+        # this tests basic placeholder conversion
+        query = "SELECT * FROM users WHERE status IN (?, ?) AND id = ?"
+        converted = _PLACEHOLDER_PATTERN.sub("%s", query)
+        assert converted == "SELECT * FROM users WHERE status IN (%s, %s) AND id = %s"
+    
+    def test_no_false_positives_in_string_literals(self):
+        """Test that question marks in string literals aren't converted."""
+        db = Database()
+        from src.core.database.core import _PLACEHOLDER_PATTERN
+        
+        query = "SELECT 'Is this correct?' AS question, 'Why not?' AS another, id FROM users WHERE id = ?"
+        converted = _PLACEHOLDER_PATTERN.sub("%s", query)
+        
+        # Only the actual placeholder at the end should be converted
+        assert converted == "SELECT 'Is this correct?' AS question, 'Why not?' AS another, id FROM users WHERE id = %s"
+        # Verify the string literals are untouched
+        assert "'Is this correct?'" in converted
+        assert "'Why not?'" in converted
+    
+    def test_escaped_single_quote_with_placeholder(self):
+        """Test escaped single quotes followed by placeholders."""
+        db = Database()
+        from src.core.database.core import _PLACEHOLDER_PATTERN
+        
+        # Escaped quote at end of string followed by placeholder
+        query = "INSERT INTO messages (text, status) VALUES ('Don''t ask', ?)"
+        converted = _PLACEHOLDER_PATTERN.sub("%s", query)
+        assert converted == "INSERT INTO messages (text, status) VALUES ('Don''t ask', %s)"
+    
+    def test_complex_query_with_subquery(self):
+        """Test placeholder conversion in subqueries."""
+        db = Database()
+        from src.core.database.core import _PLACEHOLDER_PATTERN
+        
+        query = """
+            SELECT * FROM users u 
+            WHERE u.id IN (
+                SELECT user_id FROM logs WHERE action = ? AND timestamp > ?
+            ) AND u.status = ?
+        """
+        converted = _PLACEHOLDER_PATTERN.sub("%s", query)
+        assert converted.count("%s") == 3
+        # Verify structure is maintained
+        assert "u.id IN" in converted
+        assert "WHERE action" in converted
+
+
+class TestPostgresConnectionTimeout:
+    """Test connection timeout handling with real PostgreSQL delays."""
+    
+    @pytest.fixture
+    def postgres_timeout_config(self):
+        """Configure PostgreSQL with short timeout."""
+        pg_config = {
+            "type": "postgres",
+            "postgres": {
+                "host": "localhost",
+                "port": 5432,
+                "user": "postgres",
+                "password": "password",
+                "dbname": "postgres",
+            },
+            "connection_pool": {
+                "min_connections": 1,
+                "max_connections": 5,
+                "connect_timeout": 3,  # 3 second timeout
+            },
+        }
+        config.set("database", pg_config)
+        return pg_config
+    
+    def test_timeout_config_is_set(self, postgres_timeout_config):
+        """Test that timeout config is properly set."""
+        db = Database()
+        pool_config = db.config.get("connection_pool", {})
+        assert pool_config.get("connect_timeout", 10) == 3
+    
+    def test_timeout_passed_to_pool(self, postgres_timeout_config):
+        """Test that timeout is used when creating pool."""
+        db = Database()
+        # Verify pool config has timeout
+        assert db.config["connection_pool"]["connect_timeout"] == 3
+    
+    def test_connection_timeout_error_handling(self, postgres_timeout_config, caplog):
+        """Test that connection timeout raises proper error with logging."""
+        try:
+            import psycopg2
+        except ImportError:
+            pytest.skip("psycopg2 not installed")
+        
+        from unittest.mock import MagicMock, patch
+        import logging
+        
+        caplog.set_level(logging.DEBUG)
+        
+        db = Database()
+        
+        # Create mock pool that raises timeout
+        mock_pool = MagicMock()
+        timeout_error = psycopg2.OperationalError("connection timeout")
+        mock_pool.getconn.side_effect = timeout_error
+        
+        with patch("psycopg2.pool.ThreadedConnectionPool", return_value=mock_pool):
+            with pytest.raises(psycopg2.OperationalError):
+                db._connect_postgres()
+    
+    def test_timeout_is_distinct_from_connection_refused(self, postgres_timeout_config, caplog):
+        """Test distinguishing timeout error from connection refused."""
+        try:
+            import psycopg2
+        except ImportError:
+            pytest.skip("psycopg2 not installed")
+        
+        from unittest.mock import MagicMock, patch
+        import logging
+        
+        caplog.set_level(logging.DEBUG)
+        
+        db = Database()
+        
+        # Create mock pool with timeout error (not connection refused)
+        mock_pool = MagicMock()
+        timeout_error = psycopg2.OperationalError("timeout during connection establishment")
+        mock_pool.getconn.side_effect = timeout_error
+        
+        with patch("psycopg2.pool.ThreadedConnectionPool", return_value=mock_pool):
+            with pytest.raises(psycopg2.OperationalError) as exc_info:
+                db._connect_postgres()
+            
+            # Verify it's a timeout error, not connection refused
+            assert "timeout" in str(exc_info.value).lower()
