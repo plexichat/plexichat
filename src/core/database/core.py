@@ -826,6 +826,12 @@ class Database:
         Raises:
             Any database exception from failed query execution
         """
+        # Ensure thread-local state is initialized
+        if not hasattr(self._local, "transaction_depth"):
+            self._local.transaction_depth = 0
+        if not hasattr(self._local, "in_transaction"):
+            self._local.in_transaction = False
+
         # Validate transaction state before executing
         if self._local.transaction_depth > 0:
             self._validate_transaction_state()
@@ -1248,6 +1254,12 @@ class Database:
         Raises:
             Any database exception from failed query execution
         """
+        # Ensure thread-local state is initialized
+        if not hasattr(self._local, "transaction_depth"):
+            self._local.transaction_depth = 0
+        if not hasattr(self._local, "in_transaction"):
+            self._local.in_transaction = False
+
         # Validate transaction state before executing
         if self._local.transaction_depth > 0:
             self._validate_transaction_state()
