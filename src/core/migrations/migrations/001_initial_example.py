@@ -33,16 +33,29 @@ def up(db):
     """
     
     # Example: Create a settings table
-    sql = """
-    CREATE TABLE IF NOT EXISTS application_settings (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        key VARCHAR(255) NOT NULL UNIQUE,
-        value TEXT,
-        description TEXT,
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )
-    """
+    db_type = getattr(db, "type", "sqlite")
+    if db_type == "postgres":
+        sql = """
+        CREATE TABLE IF NOT EXISTS application_settings (
+            id SERIAL PRIMARY KEY,
+            key VARCHAR(255) NOT NULL UNIQUE,
+            value TEXT,
+            description TEXT,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    else:
+        sql = """
+        CREATE TABLE IF NOT EXISTS application_settings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            key VARCHAR(255) NOT NULL UNIQUE,
+            value TEXT,
+            description TEXT,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
     
     db.execute(sql)
     
@@ -55,10 +68,17 @@ def up(db):
     db.execute(index_sql)
     
     # Example: Insert initial data using parameterized query
-    insert_sql = """
-    INSERT OR IGNORE INTO application_settings (key, value, description)
-    VALUES (?, ?, ?)
-    """
+    if db_type == "postgres":
+        insert_sql = """
+        INSERT INTO application_settings (key, value, description)
+        VALUES (?, ?, ?)
+        ON CONFLICT (key) DO NOTHING
+        """
+    else:
+        insert_sql = """
+        INSERT OR IGNORE INTO application_settings (key, value, description)
+        VALUES (?, ?, ?)
+        """
     
     db.execute(
         insert_sql,

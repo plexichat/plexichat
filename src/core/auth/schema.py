@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS auth_users (
     failed_login_attempts INTEGER DEFAULT 0,
     last_login_at INTEGER,
     totp_enabled INTEGER DEFAULT 0,
+    totp_secret_encrypted TEXT,
     backup_codes_hash TEXT,
     avatar_url TEXT,
     age_verified INTEGER DEFAULT 0,

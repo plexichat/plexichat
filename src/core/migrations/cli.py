@@ -32,11 +32,78 @@ from . import run_migrations, rollback, get_status
 from .manager import MigrationManager
 
 
+import utils.config as config
+import utils.logger as logger
+
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-logger = logging.getLogger(__name__)
+# We still use the standard logger for the CLI itself, 
+# but we must initialize the app's logger for modules that use it.
+cli_logger = logging.getLogger(__name__)
+
+
+def setup_config():
+    """Ensure config is setup for the CLI."""
+    try:
+        # Try to use existing config if possible
+        config.get("database")
+    except RuntimeError:
+        # Not setup, so setup with defaults
+        config.setup(config_path="config/config.yaml", default_config={
+            "database": {
+                "type": "sqlite",
+                "path": "data/plexichat.db"
+            },
+            "logging": {
+                "level": "INFO"
+            }
+        })
+        
+        # Initialize logger
+        log_config = config.get("logging", {})
+        logger.setup(
+            log_dir="logs",
+            level=log_config.get("level", "INFO")
+        )
+        
+        # Apply environment variable overrides (simpler version of main.py)
+        import urllib.parse
+        db_config = config.get("database", {})
+        database_url = os.getenv("DATABASE_URL")
+        if database_url:
+            if database_url.startswith("postgres://") or database_url.startswith("postgresql://"):
+                parsed = urllib.parse.urlparse(database_url)
+                db_config["type"] = "postgres"
+                db_config["postgres"] = {
+                    "host": parsed.hostname or "localhost",
+                    "port": parsed.port or 5432,
+                    "user": parsed.username or "postgres",
+                    "password": parsed.password or "",
+                    "dbname": parsed.path.lstrip("/") if parsed.path else "plexichat",
+                    "sslmode": "prefer",
+                }
+                if parsed.query:
+                    params = urllib.parse.parse_qs(parsed.query)
+                    if "sslmode" in params:
+                        db_config["postgres"]["sslmode"] = params["sslmode"][0]
+            elif database_url.startswith("sqlite:///"):
+                db_config["type"] = "sqlite"
+                db_config["path"] = database_url[10:]
+            
+            config.set("database", db_config)
+        elif os.getenv("POSTGRES_HOST"):
+            # Minimal support for other PG env vars if needed
+            if "postgres" not in db_config:
+                db_config["postgres"] = {}
+            db_config["type"] = "postgres"
+            db_config["postgres"]["host"] = os.getenv("POSTGRES_HOST")
+            db_config["postgres"]["user"] = os.getenv("POSTGRES_USER", "postgres")
+            db_config["postgres"]["password"] = os.getenv("POSTGRES_PASSWORD", "")
+            db_config["postgres"]["dbname"] = os.getenv("POSTGRES_DBNAME", "plexichat")
+            config.set("database", db_config)
 
 
 def create_migration(name: str) -> None:
@@ -222,6 +289,7 @@ def validate_migrations(db) -> None:
 
 def main():
     """Main CLI entry point."""
+    setup_config()
     parser = argparse.ArgumentParser(
         description='Database migration management CLI'
     )
