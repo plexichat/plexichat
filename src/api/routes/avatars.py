@@ -59,9 +59,31 @@ async def get_user_avatar(user_id: str):
         try:
             result = avatars.get_user_avatar_data(uid)
             if not result:
-                raise HTTPException(
-                    status_code=404,
-                    detail={"error": {"code": 404, "message": "Avatar not found"}},
+                # Generate a default SVG avatar if none exists
+                from src.core.avatars import generate_default_svg
+                
+                # Try to get username for initials (match frontend logic)
+                initials = "UC"
+                try:
+                    auth_mod = api.get_auth()
+                    if auth_mod:
+                        user = auth_mod.get_user(uid)
+                        if user:
+                            username = getattr(user, "username", "User").strip()
+                            if username:
+                                initials = username[:min(2, len(username))].upper()
+                except Exception:
+                    pass
+
+                svg_content = generate_default_svg(uid, initials)
+                return Response(
+                    content=svg_content,
+                    media_type="image/svg+xml",
+                    headers={
+                        "Cache-Control": "public, max-age=3600",  # Cache for 1 hour
+                        "Access-Control-Allow-Origin": "*",
+                        "Cross-Origin-Resource-Policy": "cross-origin",
+                    },
                 )
         except HTTPException:
             raise

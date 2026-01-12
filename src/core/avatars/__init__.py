@@ -672,3 +672,19 @@ def delete_server_icon(server_id: int) -> bool:
         logger.info(f"Icon deleted for server {server_id}")
 
     return deleted > 0
+
+
+def generate_default_svg(user_id: int, initials: str) -> str:
+    """Generate a colorful SVG placeholder avatar based on user ID."""
+    # Match frontend colors in ui.js:getAvatarColor
+    colors = ["#e94560", "#4ade80", "#fbbf24", "#60a5fa", "#a78bfa", "#f472b6"]
+
+    # Match frontend logic: index = parseInt(String(id).slice(-2), 16) % colors.length
+    # user_id is already int, so we can just use modulo
+    color = colors[user_id % len(colors)]
+
+    return f"""<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+        <rect width="128" height="128" fill="{color}"/>
+        <text x="50%" y="50%" font-family="Arial, sans-serif" font-size="48" font-weight="bold" 
+              fill="white" text-anchor="middle" dominant-baseline="central">{initials}</text>
+    </svg>"""
