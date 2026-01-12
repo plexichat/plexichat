@@ -84,6 +84,9 @@ class MessageResponse(BaseModel):
         0, description="Number of users who received the message"
     )
     read_count: int = Field(0, description="Number of users who read the message")
+    read_by: List[str] = Field(
+        default_factory=list, description="List of usernames who have read the message"
+    )
     author_username: Optional[str] = Field(None, description="Author's username")
     author_avatar_url: Optional[str] = Field(None, description="Author's avatar URL")
     reactions: List[ReactionResponse] = Field(

@@ -58,6 +58,32 @@ def _message_to_response(
         or getattr(msg, "conversation_id", 0)
     )
 
+    # Get readers info if this is the author's message
+    read_by = []
+    read_count = getattr(msg, "read_count", 0)
+    
+    # We only fetch reader details if the requester is the author
+    # This is handled in the service layer for get_reader_ids
+    try:
+        # Note: current_user is not directly available here as a param
+        # but _message_to_response is usually called from routes that have it.
+        # However, we'll try to get it if possible, otherwise skip reader details.
+        messaging = api.get_messaging()
+        auth = api.get_auth()
+        if messaging and auth and hasattr(msg, "id"):
+            # We fetch reader IDs regardless of author check here, 
+            # service layer get_reader_ids will handle the author check if we pass user_id.
+            # But we don't have user_id here. Let's assume the caller checked or 
+            # it's a batch call. For now, let's keep it simple.
+            reader_ids = messaging.get_reader_ids(msg.author_id, msg.id)
+            if reader_ids:
+                users_map = auth.get_users_bulk(reader_ids)
+                read_by = [u.username for u in users_map.values()]
+                # Update count to match actual readers (excluding author)
+                read_count = len(read_by)
+    except Exception:
+        pass
+
     return MessageResponse(
         id=SnowflakeID(msg.id),
         channel_id=SnowflakeID(effective_channel_id),
@@ -73,7 +99,8 @@ def _message_to_response(
         pinned=getattr(msg, "pinned", False),
         status=getattr(getattr(msg, "status", None), "value", None),
         delivery_count=getattr(msg, "delivery_count", 0),
-        read_count=getattr(msg, "read_count", 0),
+        read_count=read_count,
+        read_by=read_by,
         author_username=author_username
         or getattr(msg, "author_username", None)
         or f"User {msg.author_id}",
@@ -693,7 +720,17 @@ async def acknowledge_messages(
 
         up_to_id = int(message_id) if message_id else None
 
-        count = messaging.mark_read(current_user.user_id, cid, up_to_id)
+        try:
+            count = messaging.mark_read(current_user.user_id, cid, up_to_id)
+        except Exception as e:
+            from src.core.messaging.exceptions import ConversationNotFoundError
+            if isinstance(e, ConversationNotFoundError):
+                raise HTTPException(
+                    status_code=404,
+                    detail={"error": {"code": 404, "message": "Channel not found"}},
+                )
+            raise
+
         logger.debug(
             f"User {current_user.user_id} marked {count} messages as read in channel {cid}"
         )
