@@ -1,0 +1,232 @@
+# ============================================================================
+# PlexiChat Server Configuration
+# ============================================================================
+# This configuration file supports environment variable overrides for production deployments.
+# Environment variables take precedence over values defined here.
+
+# ============================================================================
+# AUTHENTICATION CONFIGURATION
+# ============================================================================
+authentication:
+  sessions:
+    expire_hours: 168
+    extend_on_activity: true
+    extend_threshold_hours: 24
+    token_bytes: 32
+
+# ============================================================================
+# DATABASE CONFIGURATION
+# ============================================================================
+# Supports both SQLite and PostgreSQL backends.
+# 
+# SQLite:
+#   - Default development database
+#   - No external dependencies required
+#   - Single-file storage
+#
+# PostgreSQL (Production Recommended):
+#   - Scalable multi-client support
+#   - Enterprise features and reliability
+#   - Environment variables support for credentials
+#
+# Environment Variables:
+#   DATABASE_URL: Full connection string (postgres://user:pass@host:5432/dbname)
+#   Or individual PostgreSQL variables:
+#     POSTGRES_HOST: Database host (default: localhost)
+#     POSTGRES_PORT: Database port (default: 5432)
+#     POSTGRES_USER: Database user (default: postgres)
+#     POSTGRES_PASSWORD: Database password (required for PostgreSQL)
+#     POSTGRES_DBNAME: Database name (default: plexichat)
+#     POSTGRES_SSLMODE: SSL mode - disable|allow|prefer|require|verify-ca|verify-full (default: prefer)
+#
+database:
+  # Database type: 'sqlite' or 'postgres'
+  type: sqlite
+  
+  # SQLite configuration
+  # Path to SQLite database file (relative or absolute)
+  path: 'data/test_database.db'
+  
+  # PostgreSQL configuration (used when type: postgres)
+  postgres:
+    # Host address or domain name
+    # Override: POSTGRES_HOST environment variable
+    host: localhost
+    
+    # Port number for PostgreSQL server
+    # Override: POSTGRES_PORT environment variable
+    port: 5432
+    
+    # Database username
+    # Override: POSTGRES_USER environment variable
+    user: postgres
+    
+    # Database password
+    # Override: POSTGRES_PASSWORD environment variable
+    # WARNING: Do not commit passwords to version control.
+    #          Use environment variables in production.
+    password: ''
+    
+    # Database name
+    # Override: POSTGRES_DBNAME environment variable
+    dbname: plexichat
+    
+    # SSL mode for database connection security
+    # Options:
+    #   disable      - No SSL, unencrypted connection
+    #   allow        - Try non-SSL first, fall back to SSL if needed
+    #   prefer       - Try SSL first, fall back to non-SSL (RECOMMENDED)
+    #   require      - SSL required, connection fails if unavailable
+    #   verify-ca    - SSL required, verify CA certificate
+    #   verify-full  - SSL required, verify CA and hostname
+    # Override: POSTGRES_SSLMODE environment variable
+    sslmode: prefer
+
+  # Connection pool configuration for managing database connections
+  # Improves performance by reusing connections instead of creating new ones
+  connection_pool:
+    # Minimum number of connections to maintain in the pool
+    # Override: DB_POOL_MIN_CONNECTIONS environment variable
+    min_connections: 1
+    
+    # Maximum number of connections allowed in the pool
+    # Limits resource usage and prevents connection exhaustion
+    # Override: DB_POOL_MAX_CONNECTIONS environment variable
+    max_connections: 10
+    
+    # Connection timeout in seconds
+    # Maximum time to wait when acquiring a connection from the pool
+    # Override: DB_POOL_CONNECT_TIMEOUT environment variable
+    connect_timeout: 10
+    
+    # Connection idle timeout in seconds
+    # Connections inactive for this duration are closed
+    # Helps free up database resources
+    # Override: DB_POOL_MAX_IDLE_TIME environment variable
+    max_idle_time: 300
+    
+    # Connection validation interval in seconds
+    # How often to check if idle connections are still valid
+    # Prevents "stale connection" errors
+    # Override: DB_POOL_VALIDATION_INTERVAL environment variable
+    validation_interval: 60
+    
+    # Enable validation queries before using connections
+    # Ensures connection is alive before returning from pool
+    # Slight performance cost for reliability
+    # Override: DB_POOL_ENABLE_VALIDATION environment variable
+    enable_validation: true
+    
+    # SQL query to validate connection health (PostgreSQL example)
+    # For SQLite, this is ignored
+    # Override: DB_POOL_VALIDATION_QUERY environment variable
+    validation_query: "SELECT 1"
+
+# ============================================================================
+# MONITORING CONFIGURATION
+# ============================================================================
+# Configure system monitoring, metrics collection, and alerting thresholds.
+# Enables visibility into server health, performance, and resource usage.
+#
+# Environment Variables:
+#   MONITORING_ENABLED: Enable/disable all monitoring (true|false)
+#   MONITORING_LOG_INTERVAL: Metrics logging interval in seconds
+#   MONITORING_METRICS_ENABLED: Enable metrics collection (true|false)
+#
+monitoring:
+  # Enable or disable all monitoring features
+  # Override: MONITORING_ENABLED environment variable
+  enabled: true
+  
+  # Interval (in seconds) for logging system metrics and health status
+  # Shorter intervals provide more frequent updates but increase log volume
+  # Recommended: 300 (5 minutes) for production, 60 for development
+  # Override: MONITORING_LOG_INTERVAL environment variable
+  log_interval: 300
+  
+  # Enable metrics collection and aggregation
+  # Provides detailed performance data for analysis
+  # Override: MONITORING_METRICS_ENABLED environment variable
+  metrics_enabled: true
+  
+  # Alerting thresholds for automatic alerts when conditions are breached
+  alert_thresholds:
+    # CPU usage percentage threshold (0-100)
+    # Alert triggered when CPU exceeds this percentage
+    # Override: MONITORING_ALERT_CPU_THRESHOLD environment variable
+    cpu_percent: 80
+    
+    # Memory usage percentage threshold (0-100)
+    # Alert triggered when memory exceeds this percentage
+    # Override: MONITORING_ALERT_MEMORY_THRESHOLD environment variable
+    memory_percent: 85
+    
+    # Database connection pool saturation threshold (0-100)
+    # Alert triggered when used connections exceed this percentage of max
+    # Override: MONITORING_ALERT_DB_POOL_THRESHOLD environment variable
+    db_pool_saturation_percent: 75
+    
+    # Database query response time threshold in milliseconds
+    # Alert triggered when query time exceeds this value
+    # Override: MONITORING_ALERT_QUERY_TIME_MS environment variable
+    query_time_ms: 5000
+    
+    # Number of database connection errors per minute to trigger alert
+    # Override: MONITORING_ALERT_DB_ERRORS_PER_MINUTE environment variable
+    db_errors_per_minute: 10
+    
+    # API response time threshold in milliseconds
+    # Alert triggered when API endpoints exceed this response time
+    # Override: MONITORING_ALERT_API_RESPONSE_TIME_MS environment variable
+    api_response_time_ms: 2000
+    
+    # HTTP error rate threshold (percentage)
+    # Alert triggered when error rate exceeds this percentage
+    # Override: MONITORING_ALERT_ERROR_RATE_PERCENT environment variable
+    error_rate_percent: 5
+    
+        # Active connections threshold
+    
+        # Alert triggered when active connections exceed this number
+    
+        # Override: MONITORING_ALERT_ACTIVE_CONNECTIONS environment variable
+    
+        active_connections: 1000
+    
+    
+    
+    # ============================================================================
+    
+    # API CONFIGURATION
+    
+    # ============================================================================
+    
+    api:
+    
+      # List of allowed origins for CORS. Empty list = no CORS allowed.
+    
+      # Use '*' only with allow_wildcard_cors: true
+    
+      cors_origins:
+    
+        - "https://plexichat-app.tail79f345.ts.net:8443"
+    
+        - "https://plexichat-app.tail79f345.ts.net"
+    
+        - "http://localhost:8443"
+    
+        - "http://localhost:5000"
+    
+      
+    
+      # Set to true to allow '*' in cors_origins (NOT RECOMMENDED for production)
+    
+      allow_wildcard_cors: false
+    
+      
+    
+      # Allow cookies to be sent with cross-origin requests
+    
+      cors_allow_credentials: true
+    
+    
