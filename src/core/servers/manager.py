@@ -2583,11 +2583,19 @@ class ServerManager(BaseManager):
                 changes = None
 
         action_val = row.get("action_type") or row.get("action")
-        try:
-            action_type = AuditLogAction(action_val)
-        except (ValueError, KeyError):
-            # Fallback to SERVER_UPDATE if unknown
-            action_type = AuditLogAction.SERVER_UPDATE
+        action_type = AuditLogAction.SERVER_UPDATE
+        if action_val:
+            if isinstance(action_val, str):
+                action_val = action_val.lower().replace("-", "_")
+            
+            try:
+                action_type = AuditLogAction(action_val)
+            except (ValueError, KeyError):
+                # Try to find by name if value doesn't match
+                try:
+                    action_type = AuditLogAction[action_val.upper()]
+                except (ValueError, KeyError):
+                    action_type = AuditLogAction.SERVER_UPDATE
 
         return AuditLogEntry(
             id=row["id"],
