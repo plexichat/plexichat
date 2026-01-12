@@ -701,10 +701,15 @@ async def acknowledge_messages(
             )
 
         # Check if this is a voice channel - voice channels don't have messages to ack
+        conv_id = cid # Default to channel ID (for DMs)
         if servers_mod:
             try:
                 channel = servers_mod.get_channel(cid, current_user.user_id)
                 if channel:
+                    # For server channels, use the linked conversation_id
+                    if hasattr(channel, "conversation_id") and channel.conversation_id:
+                        conv_id = channel.conversation_id
+                    
                     channel_type = getattr(channel, "channel_type", None)
                     # Handle both enum and string types
                     channel_type_str = (
@@ -721,7 +726,7 @@ async def acknowledge_messages(
         up_to_id = int(message_id) if message_id else None
 
         try:
-            count = messaging.mark_read(current_user.user_id, cid, up_to_id)
+            count = messaging.mark_read(current_user.user_id, conv_id, up_to_id)
         except Exception as e:
             from src.core.messaging.exceptions import ConversationNotFoundError, ConversationAccessDeniedError
             if isinstance(e, ConversationNotFoundError):
