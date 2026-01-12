@@ -438,6 +438,11 @@ def get_message_status(user_id: int, message_id: int) -> List[MessageStatus]:
     return _get_manager().get_message_status(user_id, message_id)
 
 
+def get_reader_ids(user_id: int, message_id: int) -> List[int]:
+    """Get IDs of users who have read a message (sender only)."""
+    return _get_manager().get_reader_ids(user_id, message_id)
+
+
 # === Content Filtering ===
 
 
@@ -605,6 +610,7 @@ __all__ = [
     "mark_read",
     "get_unread_count",
     "get_message_status",
+    "get_reader_ids",
     # Content Filtering
     "get_user_filter_settings",
     "update_user_filter_settings",

@@ -245,6 +245,14 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
         )
         return {row["conversation_id"]: row["unread_count"] for row in rows}
 
+    def get_reader_ids(self, message_id: SnowflakeID) -> List[SnowflakeID]:
+        """Get IDs of users who have read a message."""
+        rows = self._fetch_all(
+            "SELECT user_id FROM msg_message_status WHERE message_id = ? AND status = 'read' ORDER BY timestamp ASC",
+            (message_id,),
+        )
+        return [row["user_id"] for row in rows]
+
     def row_to_model(self, row: Dict[str, Any]) -> MessageStatus:
         """Convert database row to MessageStatus model."""
         return MessageStatus(

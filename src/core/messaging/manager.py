@@ -579,8 +579,12 @@ class MessagingManager(BaseManager):
     def get_message_status(
         self, user_id: SnowflakeID, message_id: SnowflakeID
     ) -> List[MessageStatus]:
-        """Get delivery/read status for a message."""
+        """Get delivery/read status for a message (sender only)."""
         return self._message_status_svc.get_message_status(user_id, message_id)
+
+    def get_reader_ids(self, user_id: SnowflakeID, message_id: SnowflakeID) -> List[SnowflakeID]:
+        """Get IDs of users who have read a message (sender only)."""
+        return self._message_status_svc.get_reader_ids(user_id, message_id)
 
     # === Pins ===
 

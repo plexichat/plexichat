@@ -120,6 +120,18 @@ class MessageStatusService(BaseService):
         rows = self._repo.get_all_by_message(message_id)
         return [self._repo.row_to_model(row) for row in rows]
 
+    def get_reader_ids(self, user_id: SnowflakeID, message_id: SnowflakeID) -> List[SnowflakeID]:
+        """Get IDs of users who have read a message (sender only)."""
+        msg_row = self._message_repo.get_by_id(message_id)
+        if not msg_row:
+            return []
+            
+        # Security: only the author can see who read their message
+        if msg_row["author_id"] != user_id:
+            return []
+            
+        return self._repo.get_reader_ids(message_id)
+
     def get_batch_status_info(
         self, user_id: SnowflakeID, message_ids: List[SnowflakeID]
     ) -> Dict[SnowflakeID, Dict[str, Any]]:
