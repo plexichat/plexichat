@@ -1260,6 +1260,29 @@ class ServerManager(BaseManager):
             server_id, user_id, AuditLogAction.MEMBER_JOIN, "member", user_id
         )
 
+        # Add user to all existing channel conversations in this server
+        if self._messaging:
+            try:
+                # Fetch all text channels for this server
+                channels = self._db.fetch_all(
+                    "SELECT conversation_id FROM srv_channels WHERE server_id = ? AND channel_type = ? AND deleted = 0",
+                    (server_id, ChannelType.TEXT.value)
+                )
+                for ch in channels:
+                    if ch["conversation_id"]:
+                        try:
+                            # Use default role for participant
+                            from src.core.messaging.models import ParticipantRole
+                            self._messaging.add_participant(
+                                conversation_id=ch["conversation_id"],
+                                user_id=user_id,
+                                role=ParticipantRole.USER
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to add new member {user_id} to conversation {ch['conversation_id']}: {e}")
+            except Exception as e:
+                logger.error(f"Error adding member {user_id} to server conversations: {e}")
+
         logger.debug(f"Added member {user_id} to server {server_id}")
 
         result = self.get_member(server_id, user_id)

@@ -46,6 +46,8 @@ async def get_user_avatar(user_id: str):
             detail={"error": {"code": 500, "message": "Avatars module not available"}},
         )
 
+    from fastapi.concurrency import run_in_threadpool
+
     try:
         try:
             uid = int(user_id)
@@ -57,7 +59,7 @@ async def get_user_avatar(user_id: str):
             )
 
         try:
-            result = avatars.get_user_avatar_data(uid)
+            result = await run_in_threadpool(avatars.get_user_avatar_data, uid)
             if not result:
                 # Generate a default SVG avatar if none exists
                 from src.core.avatars import generate_default_svg
@@ -67,7 +69,8 @@ async def get_user_avatar(user_id: str):
                 try:
                     auth_mod = api.get_auth()
                     if auth_mod:
-                        user = auth_mod.get_user(uid)
+                        # Use threadpool for user lookup too
+                        user = await run_in_threadpool(auth_mod.get_user, uid)
                         if user:
                             username = getattr(user, "username", "User").strip()
                             if username:

@@ -42,18 +42,20 @@ async def generate_qr(
             detail={"error": {"code": 400, "message": "Data is required"}},
         )
 
-    try:
-        try:
-            width, height = map(int, size.split("x"))
-        except (ValueError, AttributeError):
-            width, height = 200, 200
+    from fastapi.concurrency import run_in_threadpool
 
-        # Limit size to reasonable values
-        width = max(10, min(1000, width))
-        height = max(10, min(1000, height))
-
-        # Create QR code
+    def _generate():
         try:
+            try:
+                width, height = map(int, size.split("x"))
+            except (ValueError, AttributeError):
+                width, height = 200, 200
+
+            # Limit size to reasonable values
+            width = max(10, min(1000, width))
+            height = max(10, min(1000, height))
+
+            # Create QR code
             qr = qrcode.QRCode(
                 version=None,  # Automatically determine version
                 error_correction=qrcode.ERROR_CORRECT_L,
@@ -66,32 +68,30 @@ async def generate_qr(
             img = qr.make_image(fill_color="black", back_color="white")
 
             # Resize to requested dimensions if supported (PIL image)
-            # PyPNGImage doesn't have resize, but PilImage does
             if hasattr(img, "resize") and callable(getattr(img, "resize", None)):
-                img = img.resize((width, height))  # type: ignore[union-attr]
+                img = img.resize((width, height))
 
             img_io = io.BytesIO()
             save_format = "PNG" if format.lower() == "png" else "JPEG"
             img.save(img_io, save_format)
-            img_io.seek(0)
-
-            content_type = "image/png" if save_format == "PNG" else "image/jpeg"
-            return Response(content=img_io.getvalue(), media_type=content_type)
+            return img_io.getvalue(), "image/png" if save_format == "PNG" else "image/jpeg"
         except Exception as e:
-            logger.error(f"Failed to generate QR code: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={
-                    "error": {
-                        "code": 500,
-                        "message": f"Failed to generate QR code: {str(e)}",
-                    }
-                },
-            )
-    except HTTPException:
-        raise
+            logger.error(f"Failed to generate QR code in thread: {e}", exc_info=True)
+            raise e
+
+    try:
+        image_bytes, content_type = await run_in_threadpool(_generate)
+        return Response(
+            content=image_bytes, 
+            media_type=content_type,
+            headers={
+                "Cache-Control": "public, max-age=86400",  # Cache for 24 hours
+                "Access-Control-Allow-Origin": "*",
+            }
+        )
     except Exception as e:
-        logger.error(f"Unexpected error in generate_qr: {e}", exc_info=True)
+        if isinstance(e, HTTPException):
+            raise
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": str(e)}},
