@@ -723,11 +723,16 @@ async def acknowledge_messages(
         try:
             count = messaging.mark_read(current_user.user_id, cid, up_to_id)
         except Exception as e:
-            from src.core.messaging.exceptions import ConversationNotFoundError
+            from src.core.messaging.exceptions import ConversationNotFoundError, ConversationAccessDeniedError
             if isinstance(e, ConversationNotFoundError):
                 raise HTTPException(
                     status_code=404,
                     detail={"error": {"code": 404, "message": "Channel not found"}},
+                )
+            if isinstance(e, ConversationAccessDeniedError):
+                raise HTTPException(
+                    status_code=403,
+                    detail={"error": {"code": 403, "message": "Access denied"}},
                 )
             raise
 
