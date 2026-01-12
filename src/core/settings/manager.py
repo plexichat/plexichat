@@ -135,7 +135,7 @@ class SettingsManager(BaseManager):
             )
 
         # Insert new
-        setting_id = SnowflakeID.generate()
+        setting_id = self._generate_id()
         db_type = getattr(self._db, "type", "sqlite")
         
         self._db.execute(
