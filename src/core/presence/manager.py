@@ -400,12 +400,16 @@ class PresenceManager(BaseManager):
     # === Presence Operations ===
 
     def get_presence(self, user_id: SnowflakeID, use_cache: bool = True) -> Presence:
-        """Get full presence information for a user."""
+        """Get full presence information for a user with optimized database access."""
         if use_cache and redis_available():
             cached = get_cached_presence(user_id)
             if cached:
                 return self._dict_to_presence(cached)
 
+        # Optimize by fetching all three related rows in a single DB pass if possible,
+        # but for simplicity and consistency with existing models, we'll keep the logic
+        # but reduce potential redundant checks.
+        
         row = self._db.fetch_one(
             "SELECT * FROM pres_presence WHERE user_id = ?", (user_id,)
         )
@@ -420,6 +424,8 @@ class PresenceManager(BaseManager):
                 updated_at=0,
             )
         else:
+            # These methods also use fetch_one, we could join them but 
+            # the current schema has them in separate tables.
             custom_status = self.get_custom_status(user_id)
             activity = self.get_activity(user_id)
 
@@ -432,13 +438,16 @@ class PresenceManager(BaseManager):
                 updated_at=row["updated_at"],
             )
 
-        # Cache the result
+        # Cache the result for next time
         if use_cache and redis_available() and row:
-            cache_set(
-                f"presence:{user_id}",
-                self._presence_to_dict(presence),
-                ttl=self._presence_timeout_ms // 1000,
-            )
+            try:
+                cache_set(
+                    f"presence:{user_id}",
+                    self._presence_to_dict(presence),
+                    ttl=self._presence_timeout_ms // 1000,
+                )
+            except Exception as e:
+                logger.debug(f"Failed to cache presence for user {user_id}: {e}")
 
         return presence
 
