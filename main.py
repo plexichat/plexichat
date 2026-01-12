@@ -320,6 +320,9 @@ class PlexiChatServer:
                     "http://127.0.0.1:5000",
                     "http://localhost:8000",
                     "http://127.0.0.1:8000",
+                    "https://plexichat-app.tail79f345.ts.net:8443",
+                    "https://plexichat-app.tail79f345.ts.net",
+                    "http://localhost:8443",
                 ],
                 "cors_allow_credentials": True,
                 "cors_allow_methods": [
