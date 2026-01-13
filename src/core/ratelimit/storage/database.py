@@ -1,24 +1,26 @@
 """
-SQLite storage backend for rate limiting.
-Thread-safe and multi-process safe using atomic SQL.
+Relational database storage backend for rate limiting.
+Supports both SQLite and PostgreSQL via the Database abstraction.
 """
 
 import time
+import json
 from typing import Optional, List, Dict, Any
 from src.core.database import Database
 from .base import RateLimitStorage
 
 
-class SQLiteStorage(RateLimitStorage):
-    """Atomic SQLite storage for rate limit buckets."""
+class DatabaseStorage(RateLimitStorage):
+    """Atomic relational database storage for rate limit buckets."""
 
     def __init__(self, db: Optional[Database] = None):
-        """Initialize SQLite storage."""
+        """Initialize database storage."""
         self._db = db or Database()
         self._ensure_table()
 
     def _ensure_table(self):
         """Create the rate limit table if it doesn't exist."""
+        # Database.execute handles placeholder conversion if needed
         self._db.execute("""
             CREATE TABLE IF NOT EXISTS ratelimit_buckets (
                 key TEXT PRIMARY KEY,
@@ -29,13 +31,21 @@ class SQLiteStorage(RateLimitStorage):
                 data TEXT
             )
         """)
-        self._db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_ratelimit_expires ON ratelimit_buckets(expires_at)"
-        )
+        # Database class handles index creation differences if any (usually similar)
+        if self._db.type == "sqlite":
+            self._db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ratelimit_expires ON ratelimit_buckets(expires_at)"
+            )
+        else:
+            # PostgreSQL syntax
+            self._db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ratelimit_expires ON ratelimit_buckets(expires_at)"
+            )
 
     def _cleanup(self):
         """Remove expired buckets."""
         now = time.time()
+        # Database.execute converts ? to %s for PostgreSQL
         self._db.execute("DELETE FROM ratelimit_buckets WHERE expires_at < ?", (now,))
 
     def get_bucket(self, key: str) -> Optional[Dict[str, Any]]:
@@ -48,9 +58,6 @@ class SQLiteStorage(RateLimitStorage):
         if not row:
             return None
 
-        # Merge basic fields with extra data if any
-        import json
-
         data = json.loads(row["data"]) if row["data"] else {}
         data.update({"tokens": row["tokens"], "last_update": row["last_update"]})
         return data
@@ -59,13 +66,10 @@ class SQLiteStorage(RateLimitStorage):
         self, key: str, state: Dict[str, Any], ttl: Optional[float] = None
     ) -> None:
         """Set bucket state."""
-        import json
-
         now = time.time()
         expires_at = now + (ttl or 86400)
 
         # Separate tokens and last_update from other data
-        # Work on a copy to avoid side effects
         state_copy = state.copy()
         tokens = state_copy.pop("tokens", 0.0)
         last_update = state_copy.pop("last_update", now)
@@ -104,8 +108,7 @@ class SQLiteStorage(RateLimitStorage):
         self._db.execute("DELETE FROM ratelimit_buckets")
 
     def increment(self, key: str, field: str, amount: int = 1) -> int:
-        """Increment a field (non-atomic for extra fields in SQLite, use with caution)."""
-        # This is not ideal for extra fields, but most logic should use eval_token_bucket
+        """Increment a field (non-atomic for extra fields)."""
         state = self.get_bucket(key) or {}
         val = state.get(field, 0) + amount
         state[field] = val
@@ -148,8 +151,8 @@ class SQLiteStorage(RateLimitStorage):
         return original_len - len(lst)
 
     def acquire_lock(self, key: str, timeout: float = 1.0) -> Optional[str]:
-        """SQLite handles concurrency via its own locking."""
-        return "sqlite-lock"
+        """Database handles concurrency via its own locking mechanisms."""
+        return f"{self._db.type}-lock"
 
     def release_lock(self, key: str, token: Optional[str] = None) -> None:
         """Release lock."""
@@ -158,13 +161,9 @@ class SQLiteStorage(RateLimitStorage):
     def eval_token_bucket(
         self, key: str, capacity: int, refill_rate: float, cost: int, ttl: int = 86400
     ) -> tuple:
-        """Atomically evaluate token bucket using a single SQL statement."""
+        """Atomically evaluate token bucket using a transaction."""
         now = time.time()
         expires_at = now + ttl
-
-        # 1. Try to insert or update the bucket atomically
-        # We use a CASE expression to handle the math
-        # tokens = MIN(capacity, current_tokens + (now - last_update) * refill_rate)
 
         # First, ensure entry exists
         self._db.insert_or_ignore(
@@ -173,10 +172,6 @@ class SQLiteStorage(RateLimitStorage):
             (key, float(capacity), float(now), float(expires_at))
         )
 
-        # Atomic update with consumption check
-        # We do this in a loop or transaction if needed, but a single UPDATE is atomic in SQLite
-        # We need to know if it was successful (tokens >= cost)
-
         self._db.begin_transaction()
         try:
             row = self._db.fetch_one(
@@ -184,7 +179,6 @@ class SQLiteStorage(RateLimitStorage):
                 (key,),
             )
             if not row:
-                # Should not happen due to INSERT OR IGNORE above
                 self._db.rollback()
                 return True, capacity, 0.0
 

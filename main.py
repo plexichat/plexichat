@@ -690,7 +690,7 @@ class PlexiChatServer:
                         "max_voice_minutes_per_day": 120,
                         "max_video_minutes_per_day": 60,
                         "max_file_uploads_per_day": 50,
-                        "max_file_size_mb": 10,
+                        "max_file_size_mb": 50,
                         "max_servers": 100,
                         "max_message_length": 2000,
                         "max_reactions_per_message": 20,
@@ -1364,7 +1364,7 @@ class PlexiChatServer:
                 from src.core.ratelimit.storage import (
                     RedisStorage,
                     MemoryStorage,
-                    SQLiteStorage,
+                    DatabaseStorage,
                 )
                 from src.core.database.redis_client import (
                     is_available as redis_is_available,
@@ -1376,9 +1376,10 @@ class PlexiChatServer:
                         storage = RedisStorage()
                         logger.info("Using Redis storage for rate limiting")
                     elif self.db:
-                        storage = SQLiteStorage(self.db)
+                        storage = DatabaseStorage(self.db)
+                        db_type = self.db.type.capitalize()
                         logger.info(
-                            "Using SQLite storage for rate limiting (shared across workers)"
+                            f"Using {db_type} storage for rate limiting (shared across workers)"
                         )
                     else:
                         storage = MemoryStorage()
