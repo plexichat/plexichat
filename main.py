@@ -323,6 +323,8 @@ class PlexiChatServer:
                     "https://plexichat-app.tail79f345.ts.net:8443",
                     "https://plexichat-app.tail79f345.ts.net",
                     "http://localhost:8443",
+                    "https://linuxofuser.pythonanywhere.com",
+                    "http://linuxofuser.pythonanywhere.com",
                 ],
                 "cors_allow_credentials": True,
                 "cors_allow_methods": [
