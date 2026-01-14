@@ -745,11 +745,28 @@ class Database:
 
     def _convert_placeholders(self, query: str) -> str:
         """
-        Convert ? placeholders to %s for PostgreSQL compatibility.
-        Uses regex to safely ignore ? inside single-quoted strings and double-quoted identifiers.
+        Convert ? placeholders to %s and handle SQLite-specific syntax for PostgreSQL compatibility.
+        Uses regex to safely ignore special patterns inside single-quoted strings and double-quoted identifiers.
         Returns unchanged query for SQLite.
         """
         if self.type == "postgres":
+            # 1. Convert INSERT OR IGNORE to INSERT ... ON CONFLICT DO NOTHING
+            if "INSERT OR IGNORE" in query.upper():
+                query = re.sub(r"INSERT OR IGNORE INTO", "INSERT INTO", query, flags=re.IGNORECASE)
+                # Only append if not already there (to avoid double DO NOTHING if called from insert_or_ignore)
+                if "ON CONFLICT DO NOTHING" not in query.upper():
+                    query = query.strip()
+                    if query.endswith(";"):
+                        query = query[:-1] + " ON CONFLICT DO NOTHING;"
+                    else:
+                        query = query + " ON CONFLICT DO NOTHING"
+            
+            # 2. Convert abs(random()) to floor(random() * ...) for PostgreSQL
+            # Note: PostgreSQL random() returns [0, 1.0)
+            if "abs(random())" in query.lower():
+                query = re.sub(r"abs\(random\(\)\)", "floor(random() * 9223372036854775807)::bigint", query, flags=re.IGNORECASE)
+
+            # 3. Convert ? placeholders to %s
             return _PLACEHOLDER_PATTERN.sub(lambda m: m.group(1) if m.group(1) else "%s", query)
         return query
 
