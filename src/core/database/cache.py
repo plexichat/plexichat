@@ -38,6 +38,25 @@ _cache_stats = {
     "errors": 0,
 }
 
+# Simple in-memory fallback cache
+_mem_cache: Dict[str, Tuple[float, Any]] = {}
+_MEM_CACHE_MAX_SIZE = 1000
+
+def _mem_cache_get(key: str) -> Optional[Any]:
+    if key in _mem_cache:
+        expiry, value = _mem_cache[key]
+        if expiry > time.time():
+            return value
+        del _mem_cache[key]
+    return None
+
+def _mem_cache_set(key: str, value: Any, ttl: int):
+    if len(_mem_cache) >= _MEM_CACHE_MAX_SIZE:
+        # Very simple eviction: clear half the cache if it gets too big
+        keys = list(_mem_cache.keys())
+        for k in keys[:_MEM_CACHE_MAX_SIZE // 2]:
+            del _mem_cache[k]
+    _mem_cache[key] = (time.time() + ttl, value)
 
 class CacheError(Exception):
     """Base exception for cache operations."""
@@ -119,8 +138,7 @@ def cached(
 
             # Check if Redis is available
             client = get_client()
-            if not client or not is_available():
-                return func(*args, **kwargs)
+            redis_ready = client and is_available()
 
             # Generate cache key
             key_prefix = prefix or f"cache:{func.__module__}.{func.__name__}"
@@ -129,18 +147,26 @@ def cached(
             else:
                 cache_key = _generate_cache_key(key_prefix, *args, **kwargs)
 
-            # Try to get from cache
-            try:
-                cached_value = client.get_json(cache_key)
+            # Try to get from cache (Redis then Memory)
+            if redis_ready:
+                try:
+                    cached_value = client.get_json(cache_key)
+                    if cached_value is not None:
+                        _cache_stats["hits"] += 1
+                        logger.info(
+                            f"CACHE HIT (Redis): {cache_key} (total hits: {_cache_stats['hits']})"
+                        )
+                        return cast(T, cached_value)
+                except RedisOperationError:
+                    _cache_stats["errors"] += 1
+            else:
+                cached_value = _mem_cache_get(cache_key)
                 if cached_value is not None:
                     _cache_stats["hits"] += 1
                     logger.info(
-                        f"CACHE HIT: {cache_key} (total hits: {_cache_stats['hits']})"
+                        f"CACHE HIT (Memory): {cache_key} (total hits: {_cache_stats['hits']})"
                     )
                     return cast(T, cached_value)
-            except RedisOperationError:
-                _cache_stats["errors"] += 1
-                # Fall through to execute function
 
             # Cache miss - execute function
             _cache_stats["misses"] += 1
@@ -150,15 +176,20 @@ def cached(
 
             result = func(*args, **kwargs)
 
-            # Store in cache
-            try:
-                cache_ttl = ttl if ttl is not None else client.ttl_cache
-                client.set_json(
-                    cache_key, cast(JsonSerializable, result), ttl=cache_ttl
-                )
-            except RedisOperationError as e:
-                _cache_stats["errors"] += 1
-                logger.warning(f"Failed to cache result for {cache_key}: {e}")
+            # Store in cache (Redis and/or Memory)
+            cache_ttl = ttl if ttl is not None else (client.ttl_cache if redis_ready else 300)
+            
+            if redis_ready:
+                try:
+                    client.set_json(
+                        cache_key, cast(JsonSerializable, result), ttl=cache_ttl
+                    )
+                except RedisOperationError as e:
+                    _cache_stats["errors"] += 1
+                    logger.warning(f"Failed to cache result for {cache_key}: {e}")
+            
+            # Always store in memory as well for fastest possible second-hit or as fallback
+            _mem_cache_set(cache_key, result, cache_ttl)
 
             return result
 
