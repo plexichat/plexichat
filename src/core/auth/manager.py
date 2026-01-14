@@ -13,6 +13,7 @@ import utils.logger as logger
 from src.core.base import BaseManager, SnowflakeID
 from src.utils.encryption import EncryptionManager
 
+from src.core.database import cached
 from .models import (
     User,
     Session,
