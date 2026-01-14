@@ -446,8 +446,8 @@ class Database:
             connect_timeout = pool_config.get("connect_timeout", 10)
 
             self._pool = psycopg2.pool.ThreadedConnectionPool(
-                minconn=pool_config.get("min_connections", 2),
-                maxconn=pool_config.get("max_connections", 20),
+                minconn=pool_config.get("min_connections", 10),
+                maxconn=pool_config.get("max_connections", 50),
                 connect_timeout=connect_timeout,
                 host=pg_config.get("host", "localhost"),
                 port=pg_config.get("port", 5432),
@@ -750,7 +750,12 @@ class Database:
         Returns unchanged query for SQLite.
         """
         if self.type == "postgres":
-            # 1. Convert INSERT OR IGNORE to INSERT ... ON CONFLICT DO NOTHING
+            # 1. Escape literal % for psycopg2 (must be %%)
+            # Only escape % that are not already part of a placeholder or escaped
+            # We do this before converting ? to %s
+            query = query.replace("%", "%%")
+
+            # 2. Convert INSERT OR IGNORE to INSERT ... ON CONFLICT DO NOTHING
             if "INSERT OR IGNORE" in query.upper():
                 query = re.sub(r"INSERT OR IGNORE INTO", "INSERT INTO", query, flags=re.IGNORECASE)
                 # Only append if not already there (to avoid double DO NOTHING if called from insert_or_ignore)
@@ -761,12 +766,12 @@ class Database:
                     else:
                         query = query + " ON CONFLICT DO NOTHING"
             
-            # 2. Convert abs(random()) to floor(random() * ...) for PostgreSQL
+            # 3. Convert abs(random()) to floor(random() * ...) for PostgreSQL
             # Note: PostgreSQL random() returns [0, 1.0)
             if "abs(random())" in query.lower():
                 query = re.sub(r"abs\(random\(\)\)", "floor(random() * 9223372036854775807)::bigint", query, flags=re.IGNORECASE)
 
-            # 3. Convert ? placeholders to %s
+            # 4. Convert ? placeholders to %s
             return _PLACEHOLDER_PATTERN.sub(lambda m: m.group(1) if m.group(1) else "%s", query)
         return query
 
