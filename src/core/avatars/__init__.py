@@ -680,8 +680,21 @@ def generate_default_svg(user_id: int, initials: str) -> str:
     colors = ["#e94560", "#4ade80", "#fbbf24", "#60a5fa", "#a78bfa", "#f472b6"]
 
     # Match frontend logic: index = parseInt(String(id).slice(-2), 16) % colors.length
-    # user_id is already int, so we can just use modulo
-    color = colors[user_id % len(colors)]
+    id_str = str(user_id)
+    try:
+        # Frontend does String(id).slice(-2) which is the last 2 characters
+        # then parseInt(..., 16) which is hex.
+        last_two = id_str[-2:] if len(id_str) >= 2 else id_str
+        
+        # We need to handle cases where last characters aren't valid hex digits
+        # (though Snowflake IDs usually are digits, so hex is safe)
+        hex_val = int(last_two, 16)
+        index = hex_val % len(colors)
+    except (ValueError, IndexError):
+        # Fallback to simple modulo if hex parsing fails
+        index = user_id % len(colors)
+        
+    color = colors[index]
 
     return f"""<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
         <rect width="128" height="128" fill="{color}"/>
