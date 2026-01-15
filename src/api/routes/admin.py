@@ -54,10 +54,123 @@ from src.api.schemas.admin import (
     AvailableTiersResponse,
     AvailableBadgesResponse,
     TelemetryEndpointStat,
+    IPBlockRequest,
+    BlockedIPResponse,
+    ForceLogoutRequest,
 )
 from src.api.schemas.common import ErrorResponse, SuccessResponse
 
 router = APIRouter(tags=["Admin Management"])
+
+
+# ==================== Security Tools Routes ====================
+
+
+@router.get(
+    "/security/blocked-ips",
+    response_model=List[BlockedIPResponse],
+    summary="Get blocked IPs",
+)
+async def get_blocked_ips(request: Request) -> List[BlockedIPResponse]:
+    """Get list of blocked IP addresses."""
+    _check_host_restriction(request)
+    _get_admin_from_token(request)
+
+    from src.core import auth
+    return [BlockedIPResponse(**ip) for ip in auth.get_blocked_ips()]
+
+
+@router.post(
+    "/security/block-ip",
+    response_model=SuccessResponse,
+    summary="Block an IP address",
+)
+async def block_ip(request: Request, body: IPBlockRequest) -> SuccessResponse:
+    """Block an IP address."""
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
+
+    from src.core import auth
+    auth.block_ip(body.ip_address, body.reason, admin_id, body.duration_hours)
+    return SuccessResponse(success=True)
+
+
+@router.delete(
+    "/security/unblock-ip/{ip_address:path}",
+    response_model=SuccessResponse,
+    summary="Unblock an IP address",
+)
+async def unblock_ip(request: Request, ip_address: str) -> SuccessResponse:
+    """Unblock an IP address."""
+    _check_host_restriction(request)
+    _get_admin_from_token(request)
+
+    from src.core import auth
+    auth.unblock_ip(ip_address)
+    return SuccessResponse(success=True)
+
+
+@router.post(
+    "/security/force-logout",
+    response_model=SuccessResponse,
+    summary="Force logout a user everywhere",
+)
+async def force_logout(request: Request, body: ForceLogoutRequest) -> SuccessResponse:
+    """Invalidate all sessions for a specific user and notify them via WebSocket."""
+    _check_host_restriction(request)
+    _get_admin_from_token(request)
+
+    from src.core import auth
+    auth.logout_all(body.user_id)
+
+    # Broadcast security logout event
+    try:
+        from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+        from src.core.events.models import Event
+        from src.core.events.types import EventType
+
+        if ws_is_setup():
+            dispatcher = get_dispatcher()
+            event = Event(
+                event_type=EventType.SECURITY_LOGOUT,
+                data={
+                    "user_id": str(body.user_id),
+                    "message": "As a security precaution, you have been logged out of all devices.",
+                }
+            )
+            await dispatcher.dispatch_event(event, [body.user_id])
+    except Exception as e:
+        logger.error(f"Failed to broadcast force logout: {e}")
+
+    return SuccessResponse(success=True)
+
+
+@router.post(
+    "/security/logout-all",
+    response_model=SuccessResponse,
+    summary="Logout ALL users everywhere",
+)
+async def logout_all_users(request: Request) -> SuccessResponse:
+    """Invalidate ALL active sessions for ALL users."""
+    _check_host_restriction(request)
+    _get_admin_from_token(request)
+
+    from src.core import auth
+    auth.logout_all_users()
+
+    # In a real scenario, we might want to broadcast to everyone, but closing WS connections is more effective
+    try:
+        from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+        if ws_is_setup():
+            dispatcher = get_dispatcher()
+            await dispatcher.close_all_connections(
+                close_code=4004, 
+                reason="Site-wide security reset. Please log in again."
+            )
+    except Exception as e:
+        logger.error(f"Failed to close all connections: {e}")
+
+    return SuccessResponse(success=True)
 
 
 def _check_host_restriction(request: Request) -> None:

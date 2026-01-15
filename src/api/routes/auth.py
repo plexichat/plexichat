@@ -1322,6 +1322,8 @@ async def get_password_requirements() -> PasswordRequirementsResponse:
         if not isinstance(accounts_config, dict):
             accounts_config = {}
 
+        from src.api.routes.docs import is_docs_enabled
+
         # Default values matching main.py
         return PasswordRequirementsResponse(
             min_length=password_config.get("min_length", 12),
@@ -1333,6 +1335,7 @@ async def get_password_requirements() -> PasswordRequirementsResponse:
             age_gate_enabled=accounts_config.get("age_gate_enabled", False),
             age_verification_type=accounts_config.get("age_verification_type", "boolean"),
             minimum_age=accounts_config.get("minimum_age", 13),
+            docs_enabled=is_docs_enabled(),
         )
     except Exception as e:
         logger.error(f"Failed to get password requirements: {e}", exc_info=True)

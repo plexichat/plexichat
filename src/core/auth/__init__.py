@@ -27,7 +27,7 @@ Usage:
     token_info = auth.verify_token(result.token)
 """
 
-from typing import Optional, List, Dict, Protocol
+from typing import Optional, List, Dict, Protocol, Any
 
 from .exceptions import (
     AuthError,
@@ -249,6 +249,11 @@ def logout_all(user_id: int, except_token: Optional[str] = None) -> int:
     return _get_manager().logout_all(user_id, except_token)
 
 
+def logout_all_users() -> int:
+    """Logout all sessions for all users."""
+    return _get_manager().logout_all_users()
+
+
 def get_sessions(user_id: int) -> List[Session]:
     """Get all active sessions for a user."""
     return _get_manager().get_sessions(user_id)
@@ -414,6 +419,34 @@ def rename_device(user_id: int, device_id: int, name: str) -> bool:
 def revoke_device(user_id: int, device_id: int) -> bool:
     """Revoke a device and all its sessions."""
     return _get_manager().revoke_device(user_id, device_id)
+
+
+# === IP Blacklisting ===
+
+
+def block_ip(
+    ip_address: str,
+    reason: Optional[str] = None,
+    blocked_by: Optional[int] = None,
+    duration_hours: Optional[int] = None,
+) -> bool:
+    """Block an IP address."""
+    return _get_manager().block_ip(ip_address, reason, blocked_by, duration_hours)
+
+
+def unblock_ip(ip_address: str) -> bool:
+    """Unblock an IP address."""
+    return _get_manager().unblock_ip(ip_address)
+
+
+def is_ip_blocked(ip_address: str) -> bool:
+    """Check if an IP address is blocked."""
+    return _get_manager().is_ip_blocked(ip_address)
+
+
+def get_blocked_ips() -> List[Dict[str, Any]]:
+    """Get all blocked IPs."""
+    return _get_manager().get_blocked_ips()
 
 
 # === Audit ===

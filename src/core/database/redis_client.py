@@ -15,6 +15,7 @@ Features:
 
 import json
 import time
+import dataclasses
 from typing import Any, Dict, List, Optional, Union, Set, cast
 
 import utils.config as config
@@ -22,7 +23,19 @@ import utils.logger as logger
 
 # Type aliases
 RedisValue = Union[str, bytes, int, float]
-JsonSerializable = Union[dict, list, str, int, float, bool, None]
+JsonSerializable = Union[dict, list, str, int, float, bool, None, object]
+
+
+class EnhancedJSONEncoder(json.JSONEncoder):
+    """JSON encoder that handles dataclasses and sets."""
+    def default(self, o):
+        if dataclasses.is_dataclass(o):
+            return dataclasses.asdict(o)
+        if isinstance(o, set):
+            return list(o)
+        if hasattr(o, "to_dict"):
+            return o.to_dict()
+        return super().default(o)
 
 
 class RedisError(Exception):
@@ -310,7 +323,7 @@ class RedisClient:
             ttl: Time-to-live in seconds (optional).
         """
         try:
-            json_str = json.dumps(value, separators=(",", ":"))
+            json_str = json.dumps(value, separators=(",", ":"), cls=EnhancedJSONEncoder)
             return self.set(key, json_str, ttl)
         except (TypeError, ValueError) as e:
             logger.error(f"JSON serialization failed for {key}: {e}")

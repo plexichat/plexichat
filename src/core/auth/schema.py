@@ -82,6 +82,15 @@ CREATE TABLE IF NOT EXISTS auth_known_ips (
     UNIQUE(user_id, ip_address)
 );
 
+-- IP Blacklist table
+CREATE TABLE IF NOT EXISTS auth_ip_blacklist (
+    ip_address TEXT PRIMARY KEY,
+    reason TEXT,
+    blocked_at INTEGER NOT NULL,
+    blocked_by INTEGER,
+    expires_at INTEGER
+);
+
 -- Email verification tokens (Restored)
 CREATE TABLE IF NOT EXISTS auth_email_tokens (
     id INTEGER PRIMARY KEY,

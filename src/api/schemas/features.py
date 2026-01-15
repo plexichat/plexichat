@@ -103,3 +103,12 @@ class BadgesResponse(BaseModel):
     badges: List[BadgeInfo] = Field(
         ..., description="List of available badges with details"
     )
+
+
+class ServerFeaturesResponse(BaseModel):
+    """Response for global server features and configuration."""
+    docs_enabled: bool = Field(..., description="Whether server-side documentation is enabled")
+    age_restriction_enabled: bool = Field(..., description="Whether age gate is enabled")
+    minimum_age: int = Field(..., description="Minimum age requirement if enabled")
+    registration_enabled: bool = Field(..., description="Whether new registrations are allowed")
+    version: str = Field(..., description="Server version")

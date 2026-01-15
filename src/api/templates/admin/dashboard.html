@@ -70,6 +70,55 @@
                 <button class="tab" onclick="showTab('hash-reports', this)">Hash Reports</button>
                 <button class="tab" onclick="showTab('database', this)">Database Health</button>
                 <button class="tab" onclick="showTab('user-tiers', this)">User Management</button>
+                <button class="tab" onclick="showTab('security', this)">Security Tools</button>
+            </div>
+
+            <div id="security-tab" class="tab-content" style="display: none;">
+                <div class="chart-row">
+                    <div class="card">
+                        <h3>IP Firewall</h3>
+                        <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+                            <input type="text" id="block-ip-address" placeholder="IP Address (e.g. 1.2.3.4)" style="flex: 1; background: var(--bg); color: white; border: 1px solid var(--border); padding: 8px; border-radius: 4px;">
+                            <input type="text" id="block-ip-reason" placeholder="Reason (optional)" style="flex: 1; background: var(--bg); color: white; border: 1px solid var(--border); padding: 8px; border-radius: 4px;">
+                            <button onclick="blockIP()" style="padding: 8px 16px; background: var(--accent); border: none; border-radius: 4px; color: white; cursor: pointer;">Block IP</button>
+                        </div>
+                        <div style="overflow: hidden; border-radius: 4px;">
+                            <table id="blocked-ips-table">
+                                <thead>
+                                    <tr>
+                                        <th>IP Address</th>
+                                        <th>Reason</th>
+                                        <th>Blocked At</th>
+                                        <th>Expires</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- Populated by JS -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h3>Disaster Response</h3>
+                        <p style="color: #888; font-size: 13px; margin-bottom: 16px;">Emergency tools for site-wide or per-user session invalidation.</p>
+                        
+                        <div style="padding: 16px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 16px; border-left: 4px solid var(--warn);">
+                            <h4>Force Logout User</h4>
+                            <p style="font-size: 12px; color: #666; margin-bottom: 12px;">Invalidates all active sessions for a specific user. They will be notified via WebSocket.</p>
+                            <div style="display: flex; gap: 8px;">
+                                <input type="text" id="force-logout-userid" placeholder="User ID..." style="flex: 1; background: var(--bg); color: white; border: 1px solid var(--border); padding: 8px; border-radius: 4px;">
+                                <button onclick="forceLogoutUser()" style="padding: 8px 16px; background: var(--warn); border: none; border-radius: 4px; color: #000; cursor: pointer;">Force Logout</button>
+                            </div>
+                        </div>
+
+                        <div style="padding: 16px; border: 1px solid var(--bad); border-radius: 8px; border-left: 4px solid var(--bad);">
+                            <h4 style="color: var(--bad)">Global Session Purge</h4>
+                            <p style="font-size: 12px; color: #666; margin-bottom: 12px;">DANGER: Immediately invalidates EVERY active session on the entire platform. All users will be logged out.</p>
+                            <button onclick="globalSessionPurge()" style="width: 100%; padding: 12px; background: var(--bad); border: none; border-radius: 4px; color: white; font-weight: bold; cursor: pointer;">PURGE ALL SESSIONS</button>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <div id="tickets-tab" class="tab-content">
@@ -676,9 +725,109 @@
             document.getElementById('hash-reports-tab').style.display = name === 'hash-reports' ? 'block' : 'none';
             document.getElementById('database-tab').style.display = name === 'database' ? 'block' : 'none';
             document.getElementById('user-tiers-tab').style.display = name === 'user-tiers' ? 'block' : 'none';
+            document.getElementById('security-tab').style.display = name === 'security' ? 'block' : 'none';
             if (name === 'telemetry' && !telemetryData.length) loadTelemetryStats();
             if (name === 'hash-reports') loadHashReports();
             if (name === 'database') loadDatabaseHealth();
+            if (name === 'security') loadSecurityTools();
+        }
+        
+        // ==================== Security Tools Functions ====================
+        async function loadSecurityTools() {
+            try {
+                const res = await fetch('/api/v1/admin/security/blocked-ips', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!res.ok) throw new Error('Failed to load blocked IPs');
+                const ips = await res.json();
+                
+                const tbody = document.querySelector('#blocked-ips-table tbody');
+                if (ips.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#888">No blocked IPs</td></tr>';
+                } else {
+                    tbody.innerHTML = ips.map(ip => `
+                        <tr>
+                            <td>${escapeHtml(ip.ip_address)}</td>
+                            <td>${escapeHtml(ip.reason || '-')}</td>
+                            <td>${new Date(ip.blocked_at).toLocaleString()}</td>
+                            <td>${ip.expires_at ? new Date(ip.expires_at).toLocaleString() : 'Permanent'}</td>
+                            <td><button onclick="unblockIP('${ip.ip_address}')" style="padding:4px 8px;background:#3b82f6;border:none;border-radius:4px;color:white;cursor:pointer">Unblock</button></td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function blockIP() {
+            const ip_address = document.getElementById('block-ip-address').value.trim();
+            const reason = document.getElementById('block-ip-reason').value.trim();
+            if (!ip_address) return alert('IP address is required');
+            
+            try {
+                const res = await fetch('/api/v1/admin/security/block-ip', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ip_address, reason })
+                });
+                if (!res.ok) throw new Error('Failed to block IP');
+                document.getElementById('block-ip-address').value = '';
+                document.getElementById('block-ip-reason').value = '';
+                loadSecurityTools();
+            } catch (e) {
+                alert(e.message);
+            }
+        }
+
+        async function unblockIP(ip_address) {
+            if (!confirm(`Unblock IP ${ip_address}?`)) return;
+            try {
+                const res = await fetch(`/api/v1/admin/security/unblock-ip/${encodeURIComponent(ip_address)}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!res.ok) throw new Error('Failed to unblock IP');
+                loadSecurityTools();
+            } catch (e) {
+                alert(e.message);
+            }
+        }
+
+        async function forceLogoutUser() {
+            const user_id = document.getElementById('force-logout-userid').value.trim();
+            if (!user_id) return alert('User ID is required');
+            if (!confirm(`Force logout user ${user_id} everywhere?`)) return;
+            
+            try {
+                const res = await fetch('/api/v1/admin/security/force-logout', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: parseInt(user_id) })
+                });
+                if (!res.ok) throw new Error('Failed to force logout');
+                document.getElementById('force-logout-userid').value = '';
+                alert('User sessions invalidated and notification sent.');
+            } catch (e) {
+                alert(e.message);
+            }
+        }
+
+        async function globalSessionPurge() {
+            const msg = 'DANGER: This will log out EVERY single user on the platform. This should only be used in case of severe security breach. Are you absolutely sure?';
+            if (!confirm(msg)) return;
+            if (!confirm('FINAL CONFIRMATION: Perform global session purge?')) return;
+            
+            try {
+                const res = await fetch('/api/v1/admin/security/logout-all', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!res.ok) throw new Error('Failed to perform global purge');
+                alert('Global session purge initiated.');
+            } catch (e) {
+                alert(e.message);
+            }
         }
         
         // ==================== Hash Reports Functions ====================

@@ -194,6 +194,9 @@ class PasswordRequirementsResponse(BaseModel):
     minimum_age: Optional[int] = Field(
         None, description="Minimum age required if age gate is enabled"
     )
+    docs_enabled: bool = Field(
+        False, description="Whether server-side documentation is enabled"
+    )
 
 
 class OAuthLoginResponse(BaseModel):

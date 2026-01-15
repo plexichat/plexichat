@@ -569,6 +569,12 @@ class AuthManager(BaseManager):
         )
         return 1
 
+    def logout_all_users(self) -> int:
+        """Invalidate ALL active sessions for ALL users."""
+        self._db.execute("UPDATE auth_sessions SET revoked = 1 WHERE revoked = 0")
+        logger.info("Site-wide session purge: all users logged out")
+        return 1
+
     def get_sessions(self, user_id: int) -> List[Session]:
         rows = self._db.fetch_all(
             "SELECT * FROM auth_sessions WHERE user_id = ? AND revoked = 0", (user_id,)
@@ -1066,6 +1072,46 @@ class AuthManager(BaseManager):
                 self._get_timestamp(),
             ),
         )
+
+    # === IP Blacklisting ===
+
+    def block_ip(self, ip_address: str, reason: Optional[str] = None, blocked_by: Optional[int] = None, duration_hours: Optional[int] = None) -> bool:
+        """Block an IP address."""
+        now = self._get_timestamp()
+        expires_at = now + (duration_hours * 3600 * 1000) if duration_hours else None
+        
+        self._db.upsert(
+            "auth_ip_blacklist",
+            ["ip_address", "reason", "blocked_at", "blocked_by", "expires_at"],
+            (ip_address, reason, now, blocked_by, expires_at),
+            conflict_columns=["ip_address"]
+        )
+        logger.info(f"IP {ip_address} blocked by {blocked_by}: {reason}")
+        return True
+
+    def unblock_ip(self, ip_address: str) -> bool:
+        """Unblock an IP address."""
+        self._db.execute("DELETE FROM auth_ip_blacklist WHERE ip_address = ?", (ip_address,))
+        logger.info(f"IP {ip_address} unblocked")
+        return True
+
+    def is_ip_blocked(self, ip_address: str) -> bool:
+        """Check if an IP address is blocked."""
+        row = self._db.fetch_one("SELECT expires_at FROM auth_ip_blacklist WHERE ip_address = ?", (ip_address,))
+        if not row:
+            return False
+        
+        expires_at = row["expires_at"]
+        if expires_at and expires_at < self._get_timestamp():
+            # Block expired, cleanup
+            self.unblock_ip(ip_address)
+            return False
+            
+        return True
+
+    def get_blocked_ips(self) -> List[Dict[str, Any]]:
+        """Get all blocked IPs."""
+        return self._db.fetch_all("SELECT * FROM auth_ip_blacklist ORDER BY blocked_at DESC")
 
     # === Audit & History ===
 

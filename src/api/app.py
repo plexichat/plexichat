@@ -13,6 +13,7 @@ from .middleware import (
     ErrorHandlingMiddleware,
     LoggingMiddleware,
     create_rate_limit_middleware,
+    IPBlockingMiddleware,
 )
 from .routes import create_api_router, create_docs_router, is_docs_enabled
 from .routes.docs import get_docs_config
@@ -48,7 +49,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     )
 
     # Middleware order matters! They run in REVERSE order of addition.
-    # Desired execution: Logging -> CORS -> Auth -> RateLimit -> app
+    # Desired execution: Logging -> CORS -> Auth -> IP Blocking -> RateLimit -> app
 
     if enable_rate_limiting:
         from src.core import ratelimit
@@ -57,6 +58,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             RateLimitMiddleware = create_rate_limit_middleware()
             app.add_middleware(RateLimitMiddleware)
 
+    app.add_middleware(IPBlockingMiddleware)
     app.add_middleware(AuthenticationMiddleware)
     app.add_middleware(ErrorHandlingMiddleware)
 
