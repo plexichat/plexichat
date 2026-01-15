@@ -498,47 +498,49 @@ async def get_server_members(
             )
 
         members = servers_mod.get_members(current_user.user_id, sid)
+        if not members:
+            return []
+
+        # Get all user IDs for bulk fetching
+        user_ids = [m.user_id for m in members]
+
+        # Bulk fetch user data
+        users_map = {}
+        if auth:
+            users_map = auth.get_users_bulk(user_ids)
+
+        # Bulk fetch presence data
+        presence_map = {}
+        if presence:
+            try:
+                presence_map = presence.get_visible_presences_bulk(current_user.user_id, user_ids)
+            except Exception as e:
+                logger.warning(f"Failed to get bulk presence for server {sid}: {e}")
+
         result = []
-        for m in members or []:
-            user_id = getattr(m, "user_id", 0)
-
-            # Get user info
-            username = None
-            avatar_url = None
-            if auth:
-                try:
-                    user = auth.get_user(user_id)
-                    if user:
-                        username = user.username
-                        avatar_url = getattr(user, "avatar_url", None)
-                except Exception:
-                    pass
-
-            # Get presence info - default to offline if not found
+        for m in members:
+            user_id = m.user_id
+            user = users_map.get(user_id)
+            
+            # Presence info
+            pres = presence_map.get(user_id)
             presence_data = PresenceResponse(status="offline")
-            if presence:
-                try:
-                    pres = presence.get_visible_presence(current_user.user_id, user_id)
-                    if pres:
-                        status = getattr(pres, "status", None)
-                        if status and hasattr(status, "value"):
-                            status = status.value
-                        presence_data = PresenceResponse(
-                            status=str(status) if status else "offline"
-                        )
-                except Exception as e:
-                    logger.warning(f"Failed to get presence for user {user_id}: {e}")
+            if pres:
+                status = getattr(pres, "status", None)
+                if status and hasattr(status, "value"):
+                    status = status.value
+                presence_data = PresenceResponse(
+                    status=str(status) if status else "offline"
+                )
 
             result.append(
                 MemberResponse(
                     user_id=SnowflakeID(user_id),
-                    username=username or f"User {user_id}",
-                    nickname=getattr(m, "nickname", None),
-                    avatar_url=avatar_url,
-                    joined_at=getattr(m, "joined_at", None),
-                    roles=[SnowflakeID(r) for r in getattr(m, "roles", [])]
-                    if hasattr(m, "roles")
-                    else [],
+                    username=user.username if user else f"User {user_id}",
+                    nickname=m.nickname,
+                    avatar_url=user.avatar_url if user else None,
+                    joined_at=m.joined_at,
+                    roles=[SnowflakeID(r) for r in (m.roles or [])],
                     presence=presence_data,
                 )
             )
@@ -1759,18 +1761,24 @@ async def upload_server_icon(
 
         servers_mod.require_permission(current_user.user_id, sid, "server.manage")
 
-        # Use media module for upload (handles validation and security)
+        # Use avatars module for upload (handles resizing and database storage)
+        avatars = api.get_avatars()
+        if not avatars:
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Avatars module not available"}}
+            )
+
         content = await file.read()
-        result = media.upload_file(
-            user_id=current_user.user_id,
-            file_data=content,
-            filename=file.filename or f"server_icon_{sid}",
+        result = avatars.upload_server_icon(
+            server_id=sid,
+            image_data=content,
             content_type=file.content_type,
         )
 
-        # Update server with new icon URL
+        # Update server with new icon URL from avatars module
         server = servers_mod.update_server(
-            current_user.user_id, sid, icon_url=result.url
+            current_user.user_id, sid, icon_url=result["url"]
         )
         return _server_to_response(server)
     except HTTPException:

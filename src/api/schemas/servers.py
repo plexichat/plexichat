@@ -60,7 +60,7 @@ class ChannelCreateRequest(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     name: str = Field(..., min_length=1, max_length=100, description="Channel name")
-    type: Optional[str] = Field(
+    channel_type: Optional[str] = Field(
         "text", description="Channel type: text, voice, category"
     )
     topic: Optional[str] = Field(None, max_length=1024, description="Channel topic")

@@ -161,10 +161,17 @@ class ContentFilterService(BaseService):
 
         # Validate using common validator (SQL injection, XSS)
         validation_result = validator.validate(content)
+        sanitized = validation_result.sanitized_value
+
         if not validation_result.is_valid:
             warnings.append("Content contained potentially unsafe patterns and was sanitized")
+            # Ensure we have SOME sanitized version if valid is False
+            if sanitized is None:
+                import html
+                sanitized = html.escape(content)
 
-        sanitized = validation_result.sanitized_value or content
+        if sanitized is None:
+            sanitized = content
 
         # Check for spoiler tags (single regex check)
         has_spoilers = bool(re.search(r"\|\|.+?\|\|", sanitized))

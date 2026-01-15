@@ -187,15 +187,21 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 "content": {"application/octet-stream": {}},
                 "description": "The attachment file content",
             },
+            307: {"description": "Redirect to S3 storage"},
             401: {"model": ErrorResponse, "description": "Not authenticated"},
             403: {"model": ErrorResponse, "description": "Access denied"},
             404: {"model": ErrorResponse, "description": "File not found"},
             500: {"model": ErrorResponse, "description": "Internal server error"},
         },
     )
-    async def serve_attachment(filename: str, request: Request) -> FileResponse:
-        """Serve uploaded attachment files. Requires authentication via Authorization header or cookie."""
+    async def serve_attachment(filename: str, request: Request):
+        """Serve uploaded attachment files. Handles local and S3 storage with redirect optimization."""
+        from fastapi.responses import FileResponse, RedirectResponse
+        from fastapi import status
+        import src.api as api_module
+
         try:
+            # --- Authentication ---
             # Try Authorization header first (preferred for API calls)
             auth_header: Optional[str] = request.headers.get("Authorization")
             token: Optional[str] = None
@@ -204,110 +210,101 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 token = auth_header[7:]
 
             # Fallback to cookie-based auth for <img> tags and direct browser access
-            # This is safe because cookies are HttpOnly and not exposed to JS
             if not token:
                 token = request.cookies.get("plexichat_token")
 
             if not token:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail={
-                        "error": {
-                            "code": 401,
-                            "message": "Authentication required. Use Authorization header or cookie.",
-                        }
-                    },
+                    detail={"error": {"code": 401, "message": "Authentication required"}}
                 )
 
             # Verify token
+            auth = api_module.get_auth()
+            if not auth:
+                raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module unavailable"}})
+            
             try:
-                import src.api as api_module
+                token_info: TokenInfo = auth.verify_token(token)
+                if not token_info:
+                    raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Invalid token"}})
+            except Exception:
+                raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Invalid token"}})
 
-                auth = api_module.get_auth()
-                if auth:
-                    token_info: TokenInfo = auth.verify_token(token)
-                    if not token_info:
-                        raise HTTPException(
-                            status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail={
-                                "error": {
-                                    "code": 401,
-                                    "message": "Invalid or expired token",
-                                }
-                            },
-                        )
-                else:
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail={
-                            "error": {
-                                "code": 500,
-                                "message": "Auth module not available",
-                            }
-                        },
-                    )
-            except HTTPException:
-                raise
-            except Exception as e:
-                logger.error(
-                    f"Token verification failed for media access: {e}", exc_info=True
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail={
-                        "error": {"code": 401, "message": "Invalid or expired token"}
-                    },
-                )
+            # --- File Lookup ---
+            db = api_module.get_db()
+            media = api_module.get_media()
+            if not db or not media:
+                raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Core modules unavailable"}})
 
-            # Serve the file
-            media_dir = Path.home() / ".plexichat" / "media" / "attachments"
-            file_path = media_dir / filename
+            # Find file in database
+            row = db.fetch_one(
+                "SELECT id, storage_backend, storage_path, content_type FROM media_files WHERE filename = ? AND deleted = 0",
+                (filename,)
+            )
+            
+            if not row:
+                raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "File not found"}})
 
-            # Security: prevent path traversal
-            try:
-                file_path = file_path.resolve()
-                if not str(file_path).startswith(str(media_dir.resolve())):
-                    logger.warning(
-                        f"Blocked path traversal attempt for filename: {filename}"
-                    )
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail={"error": {"code": 403, "message": "Access denied"}},
-                    )
-            except Exception as e:
-                logger.error(f"Path resolution error for media: {e}", exc_info=True)
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail={"error": {"code": 403, "message": "Access denied"}},
-                )
-
-            if not file_path.exists():
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail={"error": {"code": 404, "message": "File not found"}},
-                )
-
-            # Check if download is requested
+            file_id = row["id"]
+            backend = row["storage_backend"]
+            storage_path = row["storage_path"]
+            content_type = row["content_type"]
             download = request.query_params.get("download", "0") == "1"
 
-            # Determine media type for proper content-type header
-            import mimetypes
+            # --- S3 Storage Optimization: Redirect to signed URL ---
+            if backend == "s3":
+                try:
+                    # Generate a short-lived signed URL (5 minutes)
+                    signed = media.sign_url(file_id, expires_in=300)
+                    url = signed.url
+                    # Add download param to signed URL if requested
+                    if download:
+                        url += ("&" if "?" in url else "?") + f"response-content-disposition=attachment%3B%20filename%3D{filename}"
+                    
+                    return RedirectResponse(url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+                except Exception as e:
+                    logger.error(f"Failed to generate signed URL for {filename}: {e}")
+                    # Fallback to streaming if signing fails (slower but works)
+                    pass
 
-            media_type = (
-                mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
-            )
+            # --- Local/Fallback Storage: Stream via FileResponse ---
+            # Get actual file path for local storage
+            if backend == "local":
+                # Use base path from config
+                import utils.config as global_config
+                media_config = global_config.get("media", {})
+                base_path = Path(media_config.get("local_path", "uploads"))
+                file_path = base_path / storage_path
+                
+                if not file_path.exists():
+                    logger.error(f"Local file missing for database record: {storage_path}")
+                    raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "File not found"}})
+                
+                if download:
+                    return FileResponse(file_path, filename=filename, media_type="application/octet-stream")
+                return FileResponse(file_path, media_type=content_type)
 
-            if download:
-                response = FileResponse(
-                    file_path, filename=filename, media_type="application/octet-stream"
+            # --- Generic Fallback: Retrieve data via media module (slowest) ---
+            try:
+                data, ct = media.get_file_data(file_id)
+                from fastapi import Response
+                return Response(
+                    content=data,
+                    media_type=ct,
+                    headers={
+                        "Content-Disposition": f"attachment; filename={filename}" if download else "inline"
+                    }
                 )
-            else:
-                response = FileResponse(file_path, media_type=media_type)
+            except Exception as e:
+                logger.error(f"Generic retrieval failed for {filename}: {e}")
+                raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Retrieval failed"}})
 
-            # Add CORS headers to prevent OpaqueResponseBlocking
-            response.headers["Access-Control-Allow-Origin"] = "*"
-            response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
-            response.headers["Access-Control-Allow-Headers"] = (
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error serving attachment {filename}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}})
                 "Authorization, Content-Type"
             )
             # Cache for 24 hours

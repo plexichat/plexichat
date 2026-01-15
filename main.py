@@ -1515,6 +1515,7 @@ class PlexiChatServer:
             events_module=self._modules.get("events"),
             notifications_module=self._modules.get("notifications"),
             threads_module=self._modules.get("threads"),
+            telemetry_module=self._modules.get("telemetry"),
         )
 
         # Get rate limiting and docs settings from config
