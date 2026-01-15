@@ -289,13 +289,14 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             try:
                 data, ct = media.get_file_data(file_id)
                 from fastapi import Response
-                return Response(
+                response = Response(
                     content=data,
                     media_type=ct,
                     headers={
                         "Content-Disposition": f"attachment; filename={filename}" if download else "inline"
                     }
                 )
+                return response
             except Exception as e:
                 logger.error(f"Generic retrieval failed for {filename}: {e}")
                 raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Retrieval failed"}})
@@ -305,19 +306,5 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         except Exception as e:
             logger.error(f"Unexpected error serving attachment {filename}: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}})
-                "Authorization, Content-Type"
-            )
-            # Cache for 24 hours
-            response.headers["Cache-Control"] = "public, max-age=86400"
-
-            return response
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Error serving attachment {filename}: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={"error": {"code": 500, "message": "Internal server error"}},
-            )
 
     return app
