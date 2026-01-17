@@ -436,7 +436,7 @@ class MessagingManager(BaseManager):
         webhook_id: Optional[SnowflakeID] = None,
     ) -> Message:
         """Send a message to a conversation."""
-        msg = self._message_svc.send_message(
+        return self._message_svc.send_message(
             user_id,
             conversation_id,
             content,
@@ -446,16 +446,6 @@ class MessagingManager(BaseManager):
             embeds,
             webhook_id,
         )
-
-        # Update conversation's last message
-        self._conversation_svc.update_last_message(
-            conversation_id, msg.id, msg.created_at
-        )
-
-        # Create initial status
-        self._message_status_svc.create_initial_status(msg.id, user_id)
-
-        return msg
 
     def edit_message(
         self, user_id: SnowflakeID, message_id: SnowflakeID, content: str
