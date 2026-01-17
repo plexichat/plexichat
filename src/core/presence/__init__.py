@@ -74,6 +74,7 @@ __all__ = [
     "get_online_server_members",
     # Visibility
     "get_visible_presence",
+    "get_visible_presences_bulk",
     "can_see_presence",
 ]
 
@@ -238,6 +239,13 @@ def get_online_server_members(user_id: int, server_id: int) -> List[int]:
 def get_visible_presence(viewer_id: int, target_id: int) -> Presence:
     """Get presence as visible to a specific viewer (respects invisible mode and blocks)."""
     return _get_manager().get_visible_presence(viewer_id, target_id)
+
+
+def get_visible_presences_bulk(
+    viewer_id: int, target_ids: List[int]
+) -> Dict[int, Presence]:
+    """Get multiple presences as visible to a specific viewer."""
+    return _get_manager().get_visible_presences_bulk(viewer_id, target_ids)
 
 
 def can_see_presence(viewer_id: int, target_id: int) -> bool:

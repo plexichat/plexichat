@@ -76,6 +76,11 @@ class User:
     age_verified: bool = False
     date_of_birth: Optional[str] = None # ISO format YYYY-MM-DD
 
+    @property
+    def avatar_url(self) -> Optional[str]:
+        """Get the avatar URL for this user."""
+        return f"/api/v1/avatars/users/{self.id}"
+
     # Not stored, only set on specific operations
     password_hash: Optional[str] = field(default=None, repr=False)
     totp_secret_encrypted: Optional[str] = field(default=None, repr=False)

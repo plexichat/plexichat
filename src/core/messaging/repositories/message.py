@@ -58,6 +58,16 @@ class MessageRepository(BaseRepository[Message]):
             (msg_id,),
         )
 
+    def get_batch_by_ids(self, msg_ids: List[SnowflakeID]) -> List[Dict[str, Any]]:
+        """Get multiple messages by ID."""
+        if not msg_ids:
+            return []
+        in_clause, params = self._build_in_clause(msg_ids)
+        return self._fetch_all(
+            f"SELECT * FROM msg_messages WHERE id IN {in_clause}",
+            params,
+        )
+
     @cached(ttl=60, prefix="messages_list")
     def get_by_conversation(
         self,
