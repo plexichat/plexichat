@@ -586,6 +586,10 @@ class MessagingManager(BaseManager):
         """Get IDs of users who have read a message (sender only)."""
         return self._message_status_svc.get_reader_ids(user_id, message_id)
 
+    def get_batch_reader_ids(self, user_id: SnowflakeID, message_ids: List[SnowflakeID]) -> Dict[SnowflakeID, List[SnowflakeID]]:
+        """Get IDs of users who have read messages (batch, sender only)."""
+        return self._message_status_svc.get_batch_reader_ids(user_id, message_ids)
+
     # === Pins ===
 
     def pin_message(self, user_id: SnowflakeID, message_id: SnowflakeID) -> bool:

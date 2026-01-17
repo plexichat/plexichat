@@ -28,6 +28,7 @@ def _message_to_response(
     author_avatar_url: Optional[str] = None,
     channel_id: Optional[int] = None,
     reactions_data=None,
+    read_by_usernames: Optional[List[str]] = None,
 ) -> MessageResponse:
     """Convert message object to response model."""
     attachments = []
@@ -58,31 +59,9 @@ def _message_to_response(
         or getattr(msg, "conversation_id", 0)
     )
 
-    # Get readers info if this is the author's message
-    read_by = []
-    read_count = getattr(msg, "read_count", 0)
-    
-    # We only fetch reader details if the requester is the author
-    # This is handled in the service layer for get_reader_ids
-    try:
-        # Note: current_user is not directly available here as a param
-        # but _message_to_response is usually called from routes that have it.
-        # However, we'll try to get it if possible, otherwise skip reader details.
-        messaging = api.get_messaging()
-        auth = api.get_auth()
-        if messaging and auth and hasattr(msg, "id"):
-            # We fetch reader IDs regardless of author check here, 
-            # service layer get_reader_ids will handle the author check if we pass user_id.
-            # But we don't have user_id here. Let's assume the caller checked or 
-            # it's a batch call. For now, let's keep it simple.
-            reader_ids = messaging.get_reader_ids(msg.author_id, msg.id)
-            if reader_ids:
-                users_map = auth.get_users_bulk(reader_ids)
-                read_by = [u.username for u in users_map.values()]
-                # Update count to match actual readers (excluding author)
-                read_count = len(read_by)
-    except Exception:
-        pass
+    # Use provided reader usernames or fall back to msg attributes
+    read_by = read_by_usernames or []
+    read_count = len(read_by) if read_by_usernames is not None else getattr(msg, "read_count", 0)
 
     return MessageResponse(
         id=SnowflakeID(msg.id),
@@ -236,6 +215,33 @@ async def get_channel_messages(
                 # Fallback to empty reactions if batch fails
                 reactions_cache = {m.id: [] for m in messages}
 
+        # Bulk fetch reader information for messages authored by current user (sender only)
+        # This eliminates the N+1 problem in _message_to_response
+        readers_cache = {} # {message_id: [username, ...]}
+        if messaging and auth and messages:
+            try:
+                # Only check messages authored by current user
+                own_message_ids = [m.id for m in messages if m.author_id == current_user.user_id]
+                if own_message_ids:
+                    reader_ids_map = messaging.get_batch_reader_ids(current_user.user_id, own_message_ids)
+                    
+                    # Collect all unique reader IDs to fetch usernames in bulk
+                    all_reader_ids = set()
+                    for r_ids in reader_ids_map.values():
+                        all_reader_ids.update(r_ids)
+                    
+                    if all_reader_ids:
+                        reader_users = auth.get_users_bulk(list(all_reader_ids))
+                        
+                        # Build the readers cache with usernames
+                        for mid, r_ids in reader_ids_map.items():
+                            readers_cache[mid] = [
+                                reader_users[rid].username 
+                                for rid in r_ids if rid in reader_users
+                            ]
+            except Exception as e:
+                logger.warning(f"Failed to bulk fetch reader info: {e}")
+
         result = []
         for m in messages:
             author_info = author_cache.get(m.author_id, {})
@@ -245,6 +251,7 @@ async def get_channel_messages(
                     author_username=author_info.get("username"),
                     author_avatar_url=author_info.get("avatar_url"),
                     reactions_data=reactions_cache.get(m.id, []),
+                    read_by_usernames=readers_cache.get(m.id),
                 )
             )
 

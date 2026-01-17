@@ -4,6 +4,7 @@ Message repository - Data access for messages.
 
 from typing import Any, Dict, List, Optional
 
+from src.core.database import cached, invalidate_pattern
 from ..models import Message, MessageType
 from .base import BaseRepository
 from src.core.base import SnowflakeID
@@ -48,6 +49,7 @@ class MessageRepository(BaseRepository[Message]):
             ),
             auto_commit=auto_commit,
         )
+        self.invalidate_conversation_cache(conversation_id)
 
     def get_by_id(self, msg_id: SnowflakeID) -> Optional[Dict[str, Any]]:
         """Get message by ID."""
@@ -56,6 +58,7 @@ class MessageRepository(BaseRepository[Message]):
             (msg_id,),
         )
 
+    @cached(ttl=60, prefix="messages_list")
     def get_by_conversation(
         self,
         conversation_id: SnowflakeID,
@@ -82,6 +85,11 @@ class MessageRepository(BaseRepository[Message]):
         params.append(limit)
 
         return self._fetch_all(query, tuple(params))
+
+    def _get_conv_id(self, msg_id: SnowflakeID) -> Optional[SnowflakeID]:
+        """Get conversation ID for a message."""
+        row = self._fetch_one("SELECT conversation_id FROM msg_messages WHERE id = ?", (msg_id,))
+        return row["conversation_id"] if row else None
 
     def search(
         self,
@@ -119,6 +127,7 @@ class MessageRepository(BaseRepository[Message]):
         auto_commit: bool = True,
     ) -> None:
         """Update message content (edit)."""
+        cid = self._get_conv_id(msg_id)
         self._execute(
             """UPDATE msg_messages 
                SET content = ?, content_encrypted = NULL, updated_at = ?, edited = 1
@@ -126,24 +135,32 @@ class MessageRepository(BaseRepository[Message]):
             (content, updated_at, msg_id),
             auto_commit=auto_commit,
         )
+        if cid:
+            self.invalidate_conversation_cache(cid)
 
     def soft_delete(
         self, msg_id: SnowflakeID, deleted_at: int, auto_commit: bool = True
     ) -> None:
         """Soft delete a message."""
+        cid = self._get_conv_id(msg_id)
         self._execute(
             "UPDATE msg_messages SET deleted = 1, deleted_at = ?, content = '[deleted]' WHERE id = ?",
             (deleted_at, msg_id),
             auto_commit=auto_commit,
         )
+        if cid:
+            self.invalidate_conversation_cache(cid)
 
     def hard_delete(self, msg_id: SnowflakeID, auto_commit: bool = True) -> None:
         """Hard delete a message."""
+        cid = self._get_conv_id(msg_id)
         self._execute(
             "DELETE FROM msg_messages WHERE id = ?",
             (msg_id,),
             auto_commit=auto_commit,
         )
+        if cid:
+            self.invalidate_conversation_cache(cid)
 
     def exists_in_conversation(
         self, msg_id: SnowflakeID, conversation_id: SnowflakeID
@@ -164,6 +181,15 @@ class MessageRepository(BaseRepository[Message]):
             (conversation_id,),
         )
         return row["max_id"] if row else None
+
+    def invalidate_conversation_cache(self, conversation_id: SnowflakeID) -> None:
+        """Invalidate all message list caches for a conversation."""
+        try:
+            # Matches any pagination variant for this conversation
+            invalidate_pattern(f"messages_list:*conversation_id:{conversation_id}*")
+        except Exception as e:
+            from utils.logger import warning
+            warning(f"Failed to invalidate message cache for {conversation_id}: {e}")
 
     def row_to_model(
         self,

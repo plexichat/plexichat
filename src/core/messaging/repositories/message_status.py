@@ -253,6 +253,22 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
         )
         return [row["user_id"] for row in rows]
 
+    def get_batch_reader_ids(self, message_ids: List[SnowflakeID]) -> Dict[SnowflakeID, List[SnowflakeID]]:
+        """Get IDs of users who have read messages (batch)."""
+        if not message_ids:
+            return {}
+            
+        in_clause, params = self._build_in_clause(message_ids)
+        rows = self._fetch_all(
+            f"SELECT message_id, user_id FROM msg_message_status WHERE message_id IN {in_clause} AND status = 'read' ORDER BY timestamp ASC",
+            params,
+        )
+        
+        result: Dict[SnowflakeID, List[SnowflakeID]] = {mid: [] for mid in message_ids}
+        for row in rows:
+            result[row["message_id"]].append(row["user_id"])
+        return result
+
     def row_to_model(self, row: Dict[str, Any]) -> MessageStatus:
         """Convert database row to MessageStatus model."""
         return MessageStatus(

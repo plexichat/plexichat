@@ -443,6 +443,11 @@ def get_reader_ids(user_id: int, message_id: int) -> List[int]:
     return _get_manager().get_reader_ids(user_id, message_id)
 
 
+def get_batch_reader_ids(user_id: int, message_ids: List[int]) -> Dict[int, List[int]]:
+    """Get IDs of users who have read messages (batch, sender only)."""
+    return _get_manager().get_batch_reader_ids(user_id, message_ids)
+
+
 # === Content Filtering ===
 
 
