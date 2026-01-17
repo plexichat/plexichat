@@ -13,6 +13,7 @@ from src.api.schemas.relationships import (
     RelationshipResponse,
     DetailedRelationshipInfo,
     PresenceInfo,
+    RelationshipListResponse,
 )
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 import utils.logger as logger
