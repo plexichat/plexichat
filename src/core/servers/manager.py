@@ -62,7 +62,13 @@ from .permissions import (
     can_manage_role,
     can_manage_member,
 )
-from src.core.database import cache_get, cache_set, cache_delete, redis_available
+from src.core.database import (
+    cache_get,
+    cache_set,
+    cache_delete,
+    redis_available,
+    cached,
+)
 from src.core.database.collections import CappedDict
 
 
