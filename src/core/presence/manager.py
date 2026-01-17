@@ -873,8 +873,6 @@ class PresenceManager(BaseManager):
             if not is_blocked and self._relationships:
                 # Still need to check if THEY blocked US (not easily bulkable without more API)
                 is_blocked = self._relationships.is_blocked(target_id, viewer_id)
-                    viewer_id, target_id
-                )
 
             if is_blocked:
                 result[target_id] = Presence(
