@@ -51,6 +51,8 @@ class ServerResponse(BaseModel):
     default_channel_id: Optional[SnowflakeID] = Field(
         None, description="Default channel ID"
     )
+    verification_level: int = Field(0, description="Verification level required to join")
+    default_message_notifications: int = Field(0, description="Default notification level")
     created_at: int = Field(..., description="Creation timestamp")
 
 

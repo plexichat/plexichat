@@ -1161,33 +1161,42 @@ class AuthManager(BaseManager):
     # === Utility ===
 
     def get_user(self, user_id: int) -> Optional[User]:
+        """Get a user by ID (cached)."""
+        data = self._get_user_data_cached(user_id)
+        if not data:
+            return None
+        return self._dict_to_user(data)
+
+    @cached(ttl=60, prefix="user_data")
+    def _get_user_data_cached(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """Internal helper to fetch raw user data from DB for caching."""
         row = self._db.fetch_one("SELECT * FROM auth_users WHERE id = ?", (user_id,))
         if not row:
             return None
             
-        email = None
-        if row["email_encrypted"]:
+        user_dict = dict(row)
+        # Decrypt sensitive fields for the cached dictionary
+        if user_dict.get("email_encrypted"):
             try:
-                email = self.crypto.decrypt_data(row["email_encrypted"], context=str(user_id))
-            except Exception as e:
-                logger.error(f"Decryption failed for user {user_id}: {e}")
-                # Don't return a magic string that could be treated as a valid email
-                email = None
-        
-        dob = None
-        if row["date_of_birth"]:
-            try:
-                # Decrypt DOB using user_id as context
-                dob = self.crypto.decrypt_data(row["date_of_birth"], context=str(user_id))
+                user_dict["email"] = self.crypto.decrypt_data(user_dict["email_encrypted"], context=str(user_id))
             except Exception:
-                # Fallback or silent failure for PII
-                pass
+                user_dict["email"] = None
+        
+        if user_dict.get("date_of_birth"):
+            try:
+                user_dict["dob_decrypted"] = self.crypto.decrypt_data(user_dict["date_of_birth"], context=str(user_id))
+            except Exception:
+                user_dict["dob_decrypted"] = None
+                
+        return user_dict
 
+    def _dict_to_user(self, row: Dict[str, Any]) -> User:
+        """Convert a raw data dictionary to a User object."""
         return User(
             id=row["id"],
             account_type=AccountType(row["account_type"]),
             username=row["username"],
-            email=email,
+            email=row.get("email"),
             permissions=permissions_from_json(row["permissions"]),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -1195,7 +1204,7 @@ class AuthManager(BaseManager):
             account_locked=bool(row["account_locked"]),
             totp_enabled=bool(row["totp_enabled"]),
             age_verified=bool(row["age_verified"]),
-            date_of_birth=row["date_of_birth"],
+            date_of_birth=row.get("dob_decrypted") or row.get("date_of_birth"),
         )
 
     def get_user_by_username(self, username: str) -> Optional[User]:
@@ -1207,45 +1216,35 @@ class AuthManager(BaseManager):
         return self.get_user(row["id"])
 
     def get_users_bulk(self, user_ids: List[int]) -> Dict[int, User]:
+        """Get multiple users by ID (cached)."""
         if not user_ids:
             return {}
-        
-        placeholders = ",".join("?" for _ in user_ids)
-        rows = self._db.fetch_all(
-            f"SELECT * FROM auth_users WHERE id IN ({placeholders})", tuple(user_ids)
-        )
-        
-        result = {}
-        for row in rows:
-            user_id = row["id"]
-            email = None
-            if row["email_encrypted"]:
-                try:
-                    email = self.crypto.decrypt_data(row["email_encrypted"], context=str(user_id))
-                except Exception as e:
-                    logger.error(f"Decryption failed for user {user_id} in bulk fetch: {e}")
             
-            dob = None
-            if row["date_of_birth"]:
-                try:
-                    dob = self.crypto.decrypt_data(row["date_of_birth"], context=str(user_id))
-                except Exception:
-                    pass
-
-            result[user_id] = User(
-                id=user_id,
-                account_type=AccountType(row["account_type"]),
-                username=row["username"],
-                email=email,
-                permissions=permissions_from_json(row["permissions"]),
-                created_at=row["created_at"],
-                updated_at=row["updated_at"],
-                email_verified=bool(row["email_verified"]),
-                account_locked=bool(row["account_locked"]),
-                totp_enabled=bool(row["totp_enabled"]),
-                age_verified=bool(row["age_verified"]),
-                date_of_birth=dob,
+        result = {}
+        missing_ids = []
+        
+        for uid in user_ids:
+            # Check individual cache for each user
+            data = self._get_user_data_cached(uid)
+            if data:
+                result[uid] = self._dict_to_user(data)
+            else:
+                missing_ids.append(uid)
+        
+        if missing_ids:
+            # Fetch missing users in a single bulk query
+            placeholders = ",".join("?" for _ in missing_ids)
+            rows = self._db.fetch_all(
+                f"SELECT * FROM auth_users WHERE id IN ({placeholders})", tuple(missing_ids)
             )
+            
+            for row in rows:
+                user_id = row["id"]
+                # Convert to dict and add to cache
+                user_data = self._get_user_data_cached(user_id)
+                if user_data:
+                    result[user_id] = self._dict_to_user(user_data)
+                
         return result
 
     def grant_permission(self, user_id: int, permission: str) -> bool:

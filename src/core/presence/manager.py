@@ -853,18 +853,12 @@ class PresenceManager(BaseManager):
         result = {}
 
         # Pre-fetch blocked status for efficient bulk check
+        blocked_ids = set()
         if self._relationships:
-            # This assumes relationships module has a way to bulk check or we iterate
-            # For now, we iterate as optimizing relationships is a separate task,
-            # but usually the list of members is larger than list of blocks.
-            # Ideally relationships would have `get_blocked_ids(user_id)`
-            set(self._relationships.get_blocked_ids(viewer_id))
-            # Note: is_blocked_by_either handles both directions.
-            # We would need a bulk "is_blocked_by_either" check to be fully efficient,
-            # but standardizing on just checking if viewer has blocked them or vice versa is a start.
-            # For now, we'll iterate with the existing method if bulk check isn't available,
-            # or rely on `get_presences` being the main optimization.
-            pass
+            try:
+                blocked_ids = set(self._relationships.get_blocked_user_ids(viewer_id))
+            except Exception:
+                pass
 
         for p in presences:
             target_id = p.user_id
@@ -874,10 +868,11 @@ class PresenceManager(BaseManager):
                 result[target_id] = p
                 continue
 
-            # Check if blocked (this might still be N+1 for blocks, but fewer db hits than full presence fetch)
-            is_blocked = False
-            if self._relationships:
-                is_blocked = self._relationships.is_blocked_by_either(
+            # Check if blocked
+            is_blocked = target_id in blocked_ids
+            if not is_blocked and self._relationships:
+                # Still need to check if THEY blocked US (not easily bulkable without more API)
+                is_blocked = self._relationships.is_blocked(target_id, viewer_id)
                     viewer_id, target_id
                 )
 

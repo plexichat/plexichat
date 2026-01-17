@@ -53,6 +53,8 @@ def _server_to_response(server) -> ServerResponse:
         default_channel_id=SnowflakeID(default_channel_id)
         if default_channel_id
         else None,
+        verification_level=getattr(server, "verification_level", 0),
+        default_message_notifications=getattr(server, "default_message_notifications", 0),
         created_at=server.created_at,
     )
 
