@@ -119,20 +119,27 @@ class PresenceManager(BaseManager):
             except ValueError:
                 status = UserStatus.OFFLINE
 
-        self._validate_user(user_id)
-        self._ensure_presence_record(user_id)
-
+        # Fast path if we already have a record
         now = self._get_timestamp()
-
-        self._db.execute(
+        
+        # Use single UPDATE if record exists, or UPSERT if not
+        # This reduces 3 calls (validate, ensure, update) to 1 or 2
+        result = self._db.execute(
             "UPDATE pres_presence SET status = ?, last_seen = ?, updated_at = ? WHERE user_id = ?",
             (status.value, now, now, user_id),
         )
+        
+        if result.rowcount == 0:
+            # Fallback if no record exists (new user)
+            self._ensure_presence_record(user_id)
+            self._db.execute(
+                "UPDATE pres_presence SET status = ?, last_seen = ?, updated_at = ? WHERE user_id = ?",
+                (status.value, now, now, user_id),
+            )
 
-        # Invalidate/Update cache
+        # Update cache directly without full fetch
+        presence = self.get_presence(user_id, use_cache=False)
         if redis_available():
-            # We fetch full presence to cache it
-            presence = self.get_presence(user_id, use_cache=False)
             cache_set(
                 f"presence:{user_id}",
                 self._presence_to_dict(presence),
@@ -140,9 +147,7 @@ class PresenceManager(BaseManager):
             )
 
         logger.debug(f"User {user_id} status set to {status.value}")
-
-        result = self.get_presence(user_id)
-        return result
+        return presence
 
     def get_status(self, user_id: SnowflakeID) -> UserStatus:
         """Get user's current status."""
@@ -406,13 +411,20 @@ class PresenceManager(BaseManager):
             if cached:
                 return self._dict_to_presence(cached)
 
-        # Optimize by fetching all three related rows in a single DB pass if possible,
-        # but for simplicity and consistency with existing models, we'll keep the logic
-        # but reduce potential redundant checks.
-        
-        row = self._db.fetch_one(
-            "SELECT * FROM pres_presence WHERE user_id = ?", (user_id,)
-        )
+        # Optimize by fetching all three related rows in a single DB pass using JOINs
+        query = """
+            SELECT 
+                p.status, p.last_seen, p.updated_at,
+                cs.text as cs_text, cs.emoji as cs_emoji, cs.expires_at as cs_expires, cs.created_at as cs_created,
+                a.activity_type, a.name as act_name, a.details as act_details, a.url as act_url,
+                a.state as act_state, a.start_timestamp, a.end_timestamp,
+                a.large_image, a.large_text, a.small_image, a.small_text
+            FROM pres_presence p
+            LEFT JOIN pres_custom_status cs ON p.user_id = cs.user_id
+            LEFT JOIN pres_activity a ON p.user_id = a.user_id
+            WHERE p.user_id = ?
+        """
+        row = self._db.fetch_one(query, (user_id,))
 
         if not row:
             presence = Presence(
@@ -424,10 +436,32 @@ class PresenceManager(BaseManager):
                 updated_at=0,
             )
         else:
-            # These methods also use fetch_one, we could join them but 
-            # the current schema has them in separate tables.
-            custom_status = self.get_custom_status(user_id)
-            activity = self.get_activity(user_id)
+            # Build CustomStatus if data exists
+            custom_status = None
+            if row["cs_text"]:
+                custom_status = CustomStatus(
+                    text=row["cs_text"],
+                    emoji=row["cs_emoji"],
+                    expires_at=row["cs_expires"],
+                    created_at=row["cs_created"],
+                )
+
+            # Build Activity if data exists
+            activity = None
+            if row["act_name"]:
+                activity = Activity(
+                    activity_type=ActivityType(row["activity_type"]),
+                    name=row["act_name"],
+                    details=row["act_details"],
+                    url=row["act_url"],
+                    state=row["act_state"],
+                    start_timestamp=row["start_timestamp"],
+                    end_timestamp=row["end_timestamp"],
+                    large_image=row["large_image"],
+                    large_text=row["large_text"],
+                    small_image=row["small_image"],
+                    small_text=row["small_text"],
+                )
 
             presence = Presence(
                 user_id=user_id,
