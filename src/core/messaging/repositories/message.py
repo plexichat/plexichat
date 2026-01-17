@@ -227,6 +227,11 @@ class MessageRepository(BaseRepository[Message]):
             except Exception:
                 content = "[decryption failed]"
 
+        metadata = self._json_loads(row["metadata"]) if row.get("metadata") else None
+        embeds = []
+        if metadata and "embeds" in metadata:
+            embeds = metadata["embeds"]
+
         return Message(
             id=row["id"],
             conversation_id=row["conversation_id"],
@@ -244,5 +249,6 @@ class MessageRepository(BaseRepository[Message]):
             pinned=pin_info is not None,
             pinned_at=pin_info["pinned_at"] if pin_info else None,
             pinned_by=pin_info["pinned_by"] if pin_info else None,
-            metadata=self._json_loads(row["metadata"]) if row.get("metadata") else None,
+            metadata=metadata,
+            embeds=embeds,
         )
