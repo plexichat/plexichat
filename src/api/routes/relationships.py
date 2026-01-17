@@ -52,7 +52,6 @@ def _relationship_to_response(rel) -> RelationshipResponse:
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-@cached(ttl=30, prefix="relationships_api")
 async def get_relationships(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> List[DetailedRelationshipInfo]:

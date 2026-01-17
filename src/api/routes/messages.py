@@ -104,7 +104,6 @@ router = APIRouter(tags=["Messages"])
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-@cached(ttl=10, prefix="messages_api")
 async def get_channel_messages(
     channel_id: str,
     limit: int = Query(default=50, ge=1, le=100),
@@ -113,7 +112,7 @@ async def get_channel_messages(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> List[MessageResponse]:
     """
-    Get messages in a channel (cached for 10s).
+    Get messages in a channel.
 
     Returns messages with pagination support.
     Works for both server channels and DM conversations.
