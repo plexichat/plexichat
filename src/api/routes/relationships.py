@@ -91,27 +91,35 @@ async def get_relationships(
 
         # 2. Collect all involved user IDs for bulk fetching
         all_user_ids = set()
+        my_id = current_user.user_id
         
         friends_ids = []
         for f in friends:
-            uid = getattr(f, "friend_id", 0) or getattr(f, "user_id", 0)
-            friends_ids.append(uid)
-            all_user_ids.add(uid)
+            # In a friendship row, we are either user_id or friend_id. The friend is the other one.
+            f_uid = getattr(f, "user_id", 0)
+            f_fid = getattr(f, "friend_id", 0)
+            target_id = f_fid if f_uid == my_id else f_uid
+            
+            friends_ids.append(target_id)
+            all_user_ids.add(target_id)
             
         pending_in_ids = []
         for r in pending_in:
+            # Incoming: sender is the other person
             uid = getattr(r, "sender_id", 0)
             pending_in_ids.append(uid)
             all_user_ids.add(uid)
             
         pending_out_ids = []
         for r in pending_out:
+            # Outgoing: recipient is the other person
             uid = getattr(r, "recipient_id", 0)
             pending_out_ids.append(uid)
             all_user_ids.add(uid)
             
         blocked_ids = []
         for b in blocked:
+            # Blocked: blocked_id is the other person (unless we are blocked_id, but usually we list who WE blocked)
             uid = getattr(b, "blocked_id", 0)
             blocked_ids.append(uid)
             all_user_ids.add(uid)
@@ -124,8 +132,8 @@ async def get_relationships(
             if auth:
                 try:
                     users = auth.get_users_bulk(list(all_user_ids))
-                    for uid, u in users.items():
-                        user_info_map[uid] = {
+                    for uid_str, u in users.items():
+                        user_info_map[uid_str] = {
                             "username": u.username,
                             "avatar_url": getattr(u, "avatar_url", None)
                         }
@@ -135,12 +143,12 @@ async def get_relationships(
             if presence:
                 try:
                     # Use bulk presence fetch (internal to presence module)
-                    presences = presence.get_visible_presences_bulk(current_user.user_id, list(all_user_ids))
-                    for uid, p in presences.items():
-                        status = getattr(p, "status", None)
-                        if status and hasattr(status, "value"):
-                            status = status.value
-                        presence_map[uid] = PresenceInfo(status=status or "offline")
+                    presences = presence.get_visible_presences_bulk(my_id, list(all_user_ids))
+                    for p_uid, p in presences.items():
+                        p_status = getattr(p, "status", None)
+                        if p_status and hasattr(p_status, "value"):
+                            p_status = p_status.value
+                        presence_map[p_uid] = PresenceInfo(status=p_status or "offline")
                 except Exception as e:
                     logger.debug(f"Failed bulk presence fetch: {e}")
 
@@ -149,28 +157,29 @@ async def get_relationships(
 
         for idx, f in enumerate(friends):
             uid = friends_ids[idx]
-            info = user_info_map.get(uid, {})
+            # Robust lookup: check both string and int keys
+            info = user_info_map.get(uid) or user_info_map.get(str(uid)) or {}
             result.append(
                 DetailedRelationshipInfo(
                     user_id=str(uid),
                     username=info.get("username") or f"User {uid}",
                     avatar_url=info.get("avatar_url"),
                     status="friend",
-                    presence=presence_map.get(uid, PresenceInfo(status="offline")),
+                    presence=presence_map.get(uid) or presence_map.get(str(uid)) or PresenceInfo(status="offline"),
                     created_at=getattr(f, "created_at", None),
                 )
             )
 
         for idx, r in enumerate(pending_in):
             uid = pending_in_ids[idx]
-            info = user_info_map.get(uid, {})
+            info = user_info_map.get(uid) or user_info_map.get(str(uid)) or {}
             result.append(
                 DetailedRelationshipInfo(
                     user_id=str(uid),
                     username=info.get("username") or f"User {uid}",
                     avatar_url=info.get("avatar_url"),
                     status="pending_incoming",
-                    presence=presence_map.get(uid, PresenceInfo(status="offline")),
+                    presence=presence_map.get(uid) or presence_map.get(str(uid)) or PresenceInfo(status="offline"),
                     message=getattr(r, "message", None),
                     created_at=getattr(r, "created_at", None),
                 )
@@ -178,21 +187,21 @@ async def get_relationships(
 
         for idx, r in enumerate(pending_out):
             uid = pending_out_ids[idx]
-            info = user_info_map.get(uid, {})
+            info = user_info_map.get(uid) or user_info_map.get(str(uid)) or {}
             result.append(
                 DetailedRelationshipInfo(
                     user_id=str(uid),
                     username=info.get("username") or f"User {uid}",
                     avatar_url=info.get("avatar_url"),
                     status="pending_outgoing",
-                    presence=presence_map.get(uid, PresenceInfo(status="offline")),
+                    presence=presence_map.get(uid) or presence_map.get(str(uid)) or PresenceInfo(status="offline"),
                     created_at=getattr(r, "created_at", None),
                 )
             )
 
         for idx, b in enumerate(blocked):
             uid = blocked_ids[idx]
-            info = user_info_map.get(uid, {})
+            info = user_info_map.get(uid) or user_info_map.get(str(uid)) or {}
             result.append(
                 DetailedRelationshipInfo(
                     user_id=str(uid),

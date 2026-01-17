@@ -84,10 +84,18 @@ def _generate_cache_key(prefix: str, *args, **kwargs) -> str:
     key_parts = [prefix]
 
     def process_val(val):
-        if hasattr(val, "__class__") and val.__class__.__name__ in ("TokenInfo", "User"):
-            # Only use user_id to avoid cache fragmentation by session/expiry
-            uid = getattr(val, "user_id", None) or getattr(val, "id", "unknown")
-            return f"{val.__class__.__name__}:{uid}"
+        if hasattr(val, "__class__"):
+            class_name = val.__class__.__name__
+            if class_name in ("TokenInfo", "User"):
+                # Only use user_id to avoid cache fragmentation by session/expiry
+                uid = getattr(val, "user_id", None) or getattr(val, "id", "unknown")
+                return f"{class_name}:{uid}"
+            
+            # Check for core managers by looking at the module or base classes
+            from src.core.base import BaseManager
+            if isinstance(val, BaseManager):
+                return f"Manager:{class_name}"
+                
         if isinstance(val, (dict, list)):
             return f"{type(val).__name__}:{hashlib.md5(json.dumps(val, sort_keys=True).encode()).hexdigest()[:8]}"
         return f"{type(val).__name__}:{val}"
