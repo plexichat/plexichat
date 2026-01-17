@@ -185,8 +185,13 @@ class MessageRepository(BaseRepository[Message]):
     def invalidate_conversation_cache(self, conversation_id: SnowflakeID) -> None:
         """Invalidate all message list caches for a conversation."""
         try:
-            # Matches any pagination variant for this conversation
-            invalidate_pattern(f"messages_list:*conversation_id:{conversation_id}*")
+            # Matches any pagination variant for this conversation.
+            # Cache keys look like: messages_list:int:123:int:50...
+            pattern = f"messages_list:*:{conversation_id}:*"
+            count = invalidate_pattern(pattern)
+            if count > 0:
+                from utils.logger import debug
+                debug(f"Invalidated {count} message cache keys for conversation {conversation_id}")
         except Exception as e:
             from utils.logger import warning
             warning(f"Failed to invalidate message cache for {conversation_id}: {e}")
