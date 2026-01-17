@@ -225,6 +225,8 @@ class Member:
     joined_at: int
     updated_at: int
     nickname: Optional[str] = None
+    username: Optional[str] = None  # Populated via enrichment
+    avatar_url: Optional[str] = None  # Populated via enrichment
     roles: List[SnowflakeID] = field(default_factory=list)
     deaf: bool = False
     mute: bool = False
@@ -234,11 +236,6 @@ class Member:
     muted: bool = False
     deafened: bool = False
     inviter_id: Optional[SnowflakeID] = None
-
-    @property
-    def avatar_url(self) -> Optional[str]:
-        """Get the avatar URL for this member."""
-        return f"/api/v1/avatars/users/{self.user_id}"
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert member to dictionary including properties."""

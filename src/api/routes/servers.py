@@ -409,6 +409,7 @@ async def delete_server(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@cached(ttl=30, prefix="server_channels_api")
 async def get_server_channels(
     server_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> List[ChannelResponse]:
@@ -475,13 +476,14 @@ async def get_server_channels(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@cached(ttl=30, prefix="server_members_api")
 async def get_server_members(
     server_id: str,
     limit: int = 100,
     after: Optional[str] = None,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> List[MemberResponse]:
-    """Get server members."""
+    """Get server members (cached for 30s)."""
     servers_mod = api.get_servers()
     auth = api.get_auth()
     presence = api.get_presence()
@@ -501,29 +503,41 @@ async def get_server_members(
                 detail={"error": {"code": 400, "message": "Invalid server ID"}},
             )
 
-        members = servers_mod.get_members(current_user.user_id, sid)
+        # Reconstruct TokenInfo if it's a dict from cache
+        curr_user_id = current_user.user_id if hasattr(current_user, "user_id") else current_user.get("user_id")
+
+        members = servers_mod.get_members(curr_user_id, sid)
         if not members:
             return []
 
-        # Get all user IDs for bulk fetching
-        user_ids = [m.user_id for m in members]
+        # Get all user IDs for bulk fetching, handling both objects and dicts
+        user_ids = []
+        for m in members:
+            uid = getattr(m, "user_id", None) or m.get("user_id")
+            if uid:
+                user_ids.append(uid)
 
         # Bulk fetch user data
         users_map = {}
-        if auth:
+        if auth and user_ids:
             users_map = auth.get_users_bulk(user_ids)
 
         # Bulk fetch presence data
         presence_map = {}
-        if presence:
+        if presence and user_ids:
             try:
-                presence_map = presence.get_visible_presences_bulk(current_user.user_id, user_ids)
+                presence_map = presence.get_visible_presences_bulk(curr_user_id, user_ids)
             except Exception as e:
                 logger.warning(f"Failed to get bulk presence for server {sid}: {e}")
 
         result = []
         for m in members:
-            user_id = m.user_id
+            # Handle both objects and dicts (from cache)
+            user_id = getattr(m, "user_id", None) or m.get("user_id")
+            nickname = getattr(m, "nickname", None) or m.get("nickname")
+            joined_at = getattr(m, "joined_at", None) or m.get("joined_at")
+            roles = getattr(m, "roles", []) or m.get("roles", [])
+            
             user = users_map.get(user_id)
             
             # Presence info
@@ -541,35 +555,14 @@ async def get_server_members(
                 MemberResponse(
                     user_id=SnowflakeID(user_id),
                     username=user.username if user else f"User {user_id}",
-                    nickname=m.nickname,
-                    avatar_url=getattr(user, "avatar_url", None) or getattr(m, "avatar_url", None),
-                    joined_at=m.joined_at,
-                    roles=[SnowflakeID(r) for r in (m.roles or [])],
+                    nickname=nickname,
+                    avatar_url=getattr(user, "avatar_url", None),
+                    joined_at=joined_at,
+                    roles=[SnowflakeID(r) for r in (roles or [])],
                     presence=presence_data,
                 )
             )
         return result
-    except HTTPException:
-        raise
-    except Exception as e:
-        exc_name = type(e).__name__
-        if "NotFound" in exc_name:
-            raise HTTPException(
-                status_code=404,
-                detail={"error": {"code": 404, "message": "Server not found"}},
-            )
-        elif "Access" in exc_name:
-            raise HTTPException(
-                status_code=403,
-                detail={"error": {"code": 403, "message": "Access denied"}},
-            )
-
-        logger.error(
-            f"Failed to fetch members for server {server_id}: {e}", exc_info=True
-        )
-        raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
-        )
 
 
 # ==================== Member Management ====================

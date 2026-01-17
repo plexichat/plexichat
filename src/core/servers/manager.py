@@ -2545,7 +2545,11 @@ class ServerManager(BaseManager):
         )
 
     def _row_to_member(
-        self, row: Dict[str, Any], roles: Optional[List[SnowflakeID]] = None
+        self,
+        row: Dict[str, Any],
+        roles: Optional[List[SnowflakeID]] = None,
+        username: Optional[str] = None,
+        avatar_url: Optional[str] = None,
     ) -> Member:
         """Convert database row to Member model."""
         # Get role IDs
@@ -2562,6 +2566,8 @@ class ServerManager(BaseManager):
             server_id=row["server_id"],
             user_id=row["user_id"],
             nickname=row.get("nickname"),
+            username=username,
+            avatar_url=avatar_url,
             joined_at=row["joined_at"],
             updated_at=row.get("updated_at", row["joined_at"]),
             muted=bool(row.get("muted", False)),
