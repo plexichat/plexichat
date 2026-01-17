@@ -135,8 +135,12 @@ class MessageService(BaseService):
             )
 
             # Update conversation's last message (part of transaction)
-            self._conversation_repo.update_last_message(
-                conversation_id, msg_id, now, auto_commit=False
+            self._conversation_repo.update(
+                conversation_id, 
+                now, 
+                last_message_id=msg_id, 
+                last_message_at=now, 
+                auto_commit=False
             )
 
             # Create initial status (part of transaction)

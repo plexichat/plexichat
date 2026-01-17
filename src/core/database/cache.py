@@ -100,6 +100,23 @@ def _generate_cache_key(prefix: str, *args, **kwargs) -> str:
     return ":".join(key_parts)
 
 
+def _ensure_serializable(obj: Any) -> JsonSerializable:
+    """Ensure an object is JSON serializable, converting Pydantic models if needed."""
+    if obj is None or isinstance(obj, (bool, int, float, str)):
+        return obj
+    if isinstance(obj, (list, tuple)):
+        return [_ensure_serializable(item) for item in obj]
+    if isinstance(obj, dict):
+        return {str(k): _ensure_serializable(v) for k, v in obj.items()}
+    
+    # Handle Pydantic models (common in API responses)
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    if hasattr(obj, "dict"):
+        return obj.dict()
+        
+    return obj
+
 def cached(
     ttl: Optional[int] = None,
     prefix: Optional[str] = None,
@@ -179,6 +196,7 @@ def cached(
             )
 
             result = await func(*args, **kwargs)
+            serializable_result = _ensure_serializable(result)
 
             # Store in cache (Redis and/or Memory)
             cache_ttl = ttl if ttl is not None else (client.ttl_cache if redis_ready else 300)
@@ -186,14 +204,14 @@ def cached(
             if redis_ready:
                 try:
                     client.set_json(
-                        cache_key, cast(JsonSerializable, result), ttl=cache_ttl
+                        cache_key, cast(JsonSerializable, serializable_result), ttl=cache_ttl
                     )
                 except RedisOperationError as e:
                     _cache_stats["errors"] += 1
                     logger.warning(f"Failed to cache result for {cache_key}: {e}")
             
             # Always store in memory as well for fastest possible second-hit or as fallback
-            _mem_cache_set(cache_key, result, cache_ttl)
+            _mem_cache_set(cache_key, serializable_result, cache_ttl)
 
             return result
 
@@ -244,6 +262,7 @@ def cached(
             )
 
             result = func(*args, **kwargs)
+            serializable_result = _ensure_serializable(result)
 
             # Store in cache (Redis and/or Memory)
             cache_ttl = ttl if ttl is not None else (client.ttl_cache if redis_ready else 300)
@@ -251,14 +270,14 @@ def cached(
             if redis_ready:
                 try:
                     client.set_json(
-                        cache_key, cast(JsonSerializable, result), ttl=cache_ttl
+                        cache_key, cast(JsonSerializable, serializable_result), ttl=cache_ttl
                     )
                 except RedisOperationError as e:
                     _cache_stats["errors"] += 1
                     logger.warning(f"Failed to cache result for {cache_key}: {e}")
             
             # Always store in memory as well for fastest possible second-hit or as fallback
-            _mem_cache_set(cache_key, result, cache_ttl)
+            _mem_cache_set(cache_key, serializable_result, cache_ttl)
 
             return result
 
