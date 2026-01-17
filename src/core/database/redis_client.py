@@ -16,6 +16,7 @@ Features:
 import json
 import time
 import dataclasses
+from enum import Enum
 from typing import Any, Dict, List, Optional, Union, Set, cast
 
 import utils.config as config
@@ -27,10 +28,12 @@ JsonSerializable = Union[dict, list, str, int, float, bool, None, object]
 
 
 class EnhancedJSONEncoder(json.JSONEncoder):
-    """JSON encoder that handles dataclasses and sets."""
+    """JSON encoder that handles dataclasses, enums, and sets."""
     def default(self, o):
         if dataclasses.is_dataclass(o):
             return dataclasses.asdict(o)
+        if isinstance(o, Enum):
+            return o.value
         if isinstance(o, set):
             return list(o)
         if hasattr(o, "to_dict"):
