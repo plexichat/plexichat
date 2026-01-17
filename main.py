@@ -356,7 +356,7 @@ class PlexiChatServer:
                 "server_name_max_length": 100,
                 "channel_name_max_length": 100,
                 "role_name_max_length": 100,
-                "invite_code_length": 8,
+                "invite_code_length": 12,
                 "events": {
                     "max_event_duration_hours": 168,
                     "max_recurring_instances": 50,
