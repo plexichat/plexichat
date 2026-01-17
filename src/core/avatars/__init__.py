@@ -31,7 +31,6 @@ import utils.logger as logger
 import utils.config as config
 
 from src.utils.encryption import generate_snowflake_id
-from src.core.database import get_client, redis_available
 
 _db: Any = None
 _setup_complete = False
@@ -72,6 +71,7 @@ def _get_db():
 
 def _cache_binary(key: str, data: bytes, ttl: int = 3600) -> None:
     """Cache binary data in Redis."""
+    from src.core.database import get_client, redis_available
     if not redis_available():
         return
     try:
@@ -84,6 +84,7 @@ def _cache_binary(key: str, data: bytes, ttl: int = 3600) -> None:
 
 def _get_cached_binary(key: str) -> Optional[bytes]:
     """Get cached binary data from Redis."""
+    from src.core.database import get_client, redis_available
     if not redis_available():
         return None
     try:
@@ -97,6 +98,7 @@ def _get_cached_binary(key: str) -> Optional[bytes]:
 
 def _delete_cached_binary(key: str) -> None:
     """Delete cached binary data from Redis."""
+    from src.core.database import get_client, redis_available
     if not redis_available():
         return
     try:
