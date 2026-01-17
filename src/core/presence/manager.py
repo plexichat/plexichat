@@ -888,9 +888,14 @@ class PresenceManager(BaseManager):
 
         # Pre-fetch blocked status for efficient bulk check
         blocked_ids = set()
+        blocked_by_ids = set()
+        
         if self._relationships:
             try:
+                # Users WE blocked
                 blocked_ids = set(self._relationships.get_blocked_user_ids(viewer_id))
+                # Users who blocked US
+                blocked_by_ids = set(self._relationships.get_blocked_by_user_ids(viewer_id))
             except Exception:
                 pass
 
@@ -902,11 +907,8 @@ class PresenceManager(BaseManager):
                 result[target_id] = p
                 continue
 
-            # Check if blocked
-            is_blocked = target_id in blocked_ids
-            if not is_blocked and self._relationships:
-                # Still need to check if THEY blocked US (not easily bulkable without more API)
-                is_blocked = self._relationships.is_blocked(target_id, viewer_id)
+            # Check if blocked (either way) - all in memory now
+            is_blocked = (target_id in blocked_ids) or (target_id in blocked_by_ids)
 
             if is_blocked:
                 result[target_id] = Presence(
