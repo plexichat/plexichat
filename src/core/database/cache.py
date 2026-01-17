@@ -18,6 +18,8 @@ import hashlib
 import time
 import asyncio
 import inspect
+import dataclasses
+from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, cast
 from functools import wraps
 
@@ -100,20 +102,33 @@ def _generate_cache_key(prefix: str, *args, **kwargs) -> str:
     return ":".join(key_parts)
 
 
-def _ensure_serializable(obj: Any) -> JsonSerializable:
-    """Ensure an object is JSON serializable, converting Pydantic models if needed."""
+def _ensure_serializable(obj: Any) -> Any:
+    """Ensure an object is JSON serializable, recursively converting complex types."""
     if obj is None or isinstance(obj, (bool, int, float, str)):
         return obj
-    if isinstance(obj, (list, tuple)):
+    
+    if isinstance(obj, Enum):
+        return obj.value
+        
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        return _ensure_serializable(dataclasses.asdict(obj))
+        
+    if isinstance(obj, (list, tuple, set)):
         return [_ensure_serializable(item) for item in obj]
+        
     if isinstance(obj, dict):
         return {str(k): _ensure_serializable(v) for k, v in obj.items()}
     
     # Handle Pydantic models (common in API responses)
-    if hasattr(obj, "model_dump"):
-        return obj.model_dump()
-    if hasattr(obj, "dict"):
-        return obj.dict()
+    if hasattr(obj, "model_dump") and callable(obj.model_dump):
+        return _ensure_serializable(obj.model_dump())
+    if hasattr(obj, "dict") and callable(obj.dict):
+        return _ensure_serializable(obj.dict())
+        
+    # Last resort fallback for custom types that might behave like strings (e.g. SnowflakeID)
+    if hasattr(obj, "__str__") and not isinstance(obj, (dict, list, tuple)):
+        # Check if it's a simple custom type like SnowflakeID(str)
+        return str(obj)
         
     return obj
 
