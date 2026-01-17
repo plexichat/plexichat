@@ -163,28 +163,29 @@ def _reconstruct_object(data: Any) -> Any:
     if isinstance(data, list):
         return [_reconstruct_object(item) for item in data]
     
-    if not isinstance(data, dict) or "__type__" not in data:
-        return data
-    
-    type_name = data.pop("__type__")
-    cls = _get_type_from_name(type_name)
-    
-    if not cls:
-        return data
-        
-    # Recursively reconstruct children first
-    reconstructed_data = {k: _reconstruct_object(v) for k, v in data.items()}
-    
-    try:
-        # Handle Enum reconstruction (if the class is an Enum)
-        if issubclass(cls, Enum):
-            return cls(reconstructed_data)
+    if isinstance(data, dict):
+        if "__type__" in data:
+            type_name = data.pop("__type__")
+            cls = _get_type_from_name(type_name)
             
-        # Handle dataclass or Pydantic model
-        return cls(**reconstructed_data)
-    except Exception as e:
-        logger.debug(f"Failed to reconstruct {type_name}: {e}")
-        return reconstructed_data
+            if not cls:
+                return data
+                
+            # Reconstruct children of this object
+            reconstructed_params = {k: _reconstruct_object(v) for k, v in data.items()}
+            
+            try:
+                if issubclass(cls, Enum):
+                    return cls(reconstructed_params)
+                return cls(**reconstructed_params)
+            except Exception as e:
+                logger.debug(f"Failed to reconstruct {type_name}: {e}")
+                return reconstructed_params
+        else:
+            # Plain dict, but recurse into values
+            return {k: _reconstruct_object(v) for k, v in data.items()}
+            
+    return data
 
 def cached(
     ttl: Optional[int] = None,

@@ -1217,7 +1217,7 @@ class AuthManager(BaseManager):
         return self.get_user(row["id"])
 
     @cached(ttl=60, prefix="users_bulk")
-    def get_users_bulk(self, user_ids: List[int]) -> Dict[int, User]:
+    def get_users_bulk(self, user_ids: List[int]) -> Dict[str, User]:
         """Get multiple users by ID (bulk-cached)."""
         if not user_ids:
             return {}
@@ -1245,7 +1245,7 @@ class AuthManager(BaseManager):
                 except Exception:
                     user_dict["dob_decrypted"] = None
             
-            result[user_id] = self._dict_to_user(user_dict)
+            result[str(user_id)] = self._dict_to_user(user_dict)
                 
         return result
 

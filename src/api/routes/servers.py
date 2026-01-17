@@ -535,20 +535,22 @@ async def get_server_members(
         for m in members:
             # Handle both objects and dicts (from cache)
             if isinstance(m, dict):
-                user_id = int(m.get("user_id", 0))
+                raw_user_id = m.get("user_id", 0)
                 nickname = m.get("nickname")
                 joined_at = m.get("joined_at")
                 roles = m.get("roles", [])
             else:
-                user_id = int(getattr(m, "user_id", 0))
+                raw_user_id = getattr(m, "user_id", 0)
                 nickname = getattr(m, "nickname", None)
                 joined_at = getattr(m, "joined_at", None)
                 roles = getattr(m, "roles", [])
             
-            user = users_map.get(user_id)
+            # Robust lookup: check both string and int keys
+            user_id = int(raw_user_id)
+            user = users_map.get(user_id) or users_map.get(str(user_id))
             
             # Presence info
-            pres = presence_map.get(user_id)
+            pres = presence_map.get(user_id) or presence_map.get(str(user_id))
             presence_data = PresenceResponse(status="offline")
             if pres:
                 status = getattr(pres, "status", None)
