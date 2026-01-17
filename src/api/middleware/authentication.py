@@ -47,14 +47,6 @@ class AuthenticationMiddleware:
                         ip = request.client.host if request.client else None
                         ua = request.headers.get("User-Agent")
                         token_info = auth.verify_token(token, ip, ua)
-
-                        # If it's a dict (from cache), reconstruct the object
-                        if isinstance(token_info, dict):
-                            # Convert account_type string back to enum
-                            if "account_type" in token_info and isinstance(token_info["account_type"], str):
-                                token_info["account_type"] = AccountType(token_info["account_type"])
-                            token_info = TokenInfo(**token_info)
-
                         scope["state"]["user"] = token_info
                     except Exception as e:
                         import utils.logger as logger

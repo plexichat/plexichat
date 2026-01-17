@@ -111,7 +111,10 @@ def _ensure_serializable(obj: Any) -> Any:
         return obj.value
         
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
-        return _ensure_serializable(dataclasses.asdict(obj))
+        data = _ensure_serializable(dataclasses.asdict(obj))
+        if isinstance(data, dict):
+            data["__type__"] = f"{obj.__class__.__module__}.{obj.__class__.__name__}"
+        return data
         
     if isinstance(obj, (list, tuple, set)):
         return [_ensure_serializable(item) for item in obj]
@@ -121,16 +124,67 @@ def _ensure_serializable(obj: Any) -> Any:
     
     # Handle Pydantic models (common in API responses)
     if hasattr(obj, "model_dump") and callable(obj.model_dump):
-        return _ensure_serializable(obj.model_dump())
+        data = _ensure_serializable(obj.model_dump())
+        if isinstance(data, dict):
+            data["__type__"] = f"{obj.__class__.__module__}.{obj.__class__.__name__}"
+        return data
     if hasattr(obj, "dict") and callable(obj.dict):
-        return _ensure_serializable(obj.dict())
+        data = _ensure_serializable(obj.dict())
+        if isinstance(data, dict):
+            data["__type__"] = f"{obj.__class__.__module__}.{obj.__class__.__name__}"
+        return data
         
     # Last resort fallback for custom types that might behave like strings (e.g. SnowflakeID)
     if hasattr(obj, "__str__") and not isinstance(obj, (dict, list, tuple)):
-        # Check if it's a simple custom type like SnowflakeID(str)
         return str(obj)
         
     return obj
+
+# Type registry for reconstruction
+_TYPE_REGISTRY = {}
+
+def _get_type_from_name(type_name: str) -> Optional[type]:
+    """Dynamically load and cache types for reconstruction."""
+    if type_name in _TYPE_REGISTRY:
+        return _TYPE_REGISTRY[type_name]
+    
+    try:
+        module_path, class_name = type_name.rsplit(".", 1)
+        import importlib
+        module = importlib.import_module(module_path)
+        cls = getattr(module, class_name)
+        _TYPE_REGISTRY[type_name] = cls
+        return cls
+    except Exception:
+        return None
+
+def _reconstruct_object(data: Any) -> Any:
+    """Recursively reconstruct objects from dictionaries using __type__ hints."""
+    if isinstance(data, list):
+        return [_reconstruct_object(item) for item in data]
+    
+    if not isinstance(data, dict) or "__type__" not in data:
+        return data
+    
+    type_name = data.pop("__type__")
+    cls = _get_type_from_name(type_name)
+    
+    if not cls:
+        return data
+        
+    # Recursively reconstruct children first
+    reconstructed_data = {k: _reconstruct_object(v) for k, v in data.items()}
+    
+    try:
+        # Handle Enum reconstruction (if the class is an Enum)
+        if issubclass(cls, Enum):
+            return cls(reconstructed_data)
+            
+        # Handle dataclass or Pydantic model
+        return cls(**reconstructed_data)
+    except Exception as e:
+        logger.debug(f"Failed to reconstruct {type_name}: {e}")
+        return reconstructed_data
 
 def cached(
     ttl: Optional[int] = None,
@@ -146,19 +200,6 @@ def cached(
         prefix: Custom key prefix. Defaults to function name.
         key_builder: Custom function to build cache key from arguments.
         skip_cache_if: Function that returns True to skip caching for this call.
-
-    Usage:
-        @cached(ttl=300)
-        def get_user(user_id: int) -> dict:
-            return db.fetch_one("SELECT * FROM users WHERE id = ?", (user_id,))
-
-        @cached(ttl=60, prefix="server")
-        def get_server_info(server_id: int) -> dict:
-            return expensive_operation(server_id)
-
-        @cached(key_builder=lambda user_id, **kw: f"user:{user_id}")
-        def get_user_profile(user_id: int, include_stats: bool = False) -> dict:
-            ...
     """
 
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
@@ -192,7 +233,7 @@ def cached(
                         logger.info(
                             f"CACHE HIT (Redis): {cache_key} (total hits: {_cache_stats['hits']})"
                         )
-                        return cast(T, cached_value)
+                        return cast(T, _reconstruct_object(cached_value))
                 except RedisOperationError:
                     _cache_stats["errors"] += 1
             else:
@@ -202,7 +243,7 @@ def cached(
                     logger.info(
                         f"CACHE HIT (Memory): {cache_key} (total hits: {_cache_stats['hits']})"
                     )
-                    return cast(T, cached_value)
+                    return cast(T, _reconstruct_object(cached_value))
 
             # Cache miss - execute function
             _cache_stats["misses"] += 1
@@ -258,7 +299,7 @@ def cached(
                         logger.info(
                             f"CACHE HIT (Redis): {cache_key} (total hits: {_cache_stats['hits']})"
                         )
-                        return cast(T, cached_value)
+                        return cast(T, _reconstruct_object(cached_value))
                 except RedisOperationError:
                     _cache_stats["errors"] += 1
             else:
@@ -268,7 +309,7 @@ def cached(
                     logger.info(
                         f"CACHE HIT (Memory): {cache_key} (total hits: {_cache_stats['hits']})"
                     )
-                    return cast(T, cached_value)
+                    return cast(T, _reconstruct_object(cached_value))
 
             # Cache miss - execute function
             _cache_stats["misses"] += 1
