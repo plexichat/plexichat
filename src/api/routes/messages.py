@@ -103,6 +103,11 @@ def _message_to_response(
     )
 
 
+from src.core.database import cached
+
+router = APIRouter(tags=["Messages"])
+
+
 @router.get(
     "/channels/{channel_id}/messages",
     response_model=List[MessageResponse],
@@ -114,6 +119,7 @@ def _message_to_response(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@cached(ttl=10, prefix="messages_api")
 async def get_channel_messages(
     channel_id: str,
     limit: int = Query(default=50, ge=1, le=100),
@@ -122,7 +128,7 @@ async def get_channel_messages(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> List[MessageResponse]:
     """
-    Get messages in a channel.
+    Get messages in a channel (cached for 10s).
 
     Returns messages with pagination support.
     Works for both server channels and DM conversations.
@@ -130,10 +136,6 @@ async def get_channel_messages(
     servers_mod = api.get_servers()
     messaging = api.get_messaging()
     auth = api.get_auth()
-    try:
-        db = api.get_db()
-    except Exception:
-        db = None
 
     try:
         try:
@@ -149,35 +151,22 @@ async def get_channel_messages(
 
         messages = None
 
-        is_server_channel = False
-        is_dm_conversation = False
-        if db:
+        # Try server channel first (more common)
+        if servers_mod:
             try:
-                is_server_channel = (
-                    db.fetch_one("SELECT 1 FROM srv_channels WHERE id = ?", (cid,))
-                    is not None
+                messages = servers_mod.get_channel_messages(
+                    user_id=current_user.user_id,
+                    channel_id=cid,
+                    limit=limit,
+                    before_id=before_id,
+                    after_id=after_id,
                 )
-                if not is_server_channel:
-                    is_dm_conversation = (
-                        db.fetch_one(
-                            "SELECT 1 FROM msg_conversations WHERE id = ?", (cid,)
-                        )
-                        is not None
-                    )
             except Exception:
-                # If the cheap existence check fails, fall back to previous behavior
-                is_server_channel = False
-                is_dm_conversation = False
+                # If not a server channel or no access, fall back to messaging
+                messages = None
 
-        if is_server_channel and servers_mod:
-            messages = servers_mod.get_channel_messages(
-                user_id=current_user.user_id,
-                channel_id=cid,
-                limit=limit,
-                before_id=before_id,
-                after_id=after_id,
-            )
-        elif (is_dm_conversation or not db) and messaging:
+        # Fallback to DM/Conversation
+        if messages is None and messaging:
             try:
                 messages = messaging.get_messages(
                     user_id=current_user.user_id,
