@@ -97,7 +97,9 @@ async def get_user_avatar(user_id: str, request: Request):
                     pass
 
                 svg_content = generate_default_svg(uid, initials)
-                svg_etag = hashlib.sha256(svg_content).hexdigest()
+                # Ensure content is encoded before hashing
+                svg_bytes = svg_content.encode() if isinstance(svg_content, str) else svg_content
+                svg_etag = hashlib.sha256(svg_bytes).hexdigest()
                 
                 if etag_client == f'"{svg_etag}"':
                     return Response(status_code=304)
