@@ -561,7 +561,7 @@ async def get_server_members(
             result.append(
                 MemberResponse(
                     user_id=SnowflakeID(user_id),
-                    username=user.username if user else f"User {user_id}",
+                    username=str(user.username) if user else f"User {user_id}",
                     nickname=nickname,
                     avatar_url=getattr(user, "avatar_url", None),
                     joined_at=joined_at,
