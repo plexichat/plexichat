@@ -15,7 +15,7 @@ from .middleware import (
     create_rate_limit_middleware,
     IPBlockingMiddleware,
 )
-from .routes import create_api_router, create_docs_router, is_docs_enabled
+from .routes import create_api_router, create_docs_router, is_docs_enabled, admin_router
 from .routes.docs import get_docs_config
 
 import utils.logger as logger
@@ -77,6 +77,14 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
     api_router = create_api_router()
     app.include_router(api_router, prefix=config.api_prefix)
+
+    # Include Admin UI router at root level
+    import utils.config as global_config
+    admin_config = global_config.get("admin_ui", {})
+    if admin_config.get("enabled", False):
+        admin_path = admin_config.get("path", "/admin")
+        app.include_router(admin_router, prefix=admin_path)
+        logger.info(f"Admin UI enabled at {admin_path}")
 
     # Include WebSocket gateway router
     try:
