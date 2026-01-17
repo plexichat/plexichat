@@ -83,21 +83,20 @@ def _generate_cache_key(prefix: str, *args, **kwargs) -> str:
     # Build a string representation of arguments
     key_parts = [prefix]
 
+    def process_val(val):
+        if hasattr(val, "__class__") and val.__class__.__name__ in ("TokenInfo", "User"):
+            # Only use user_id to avoid cache fragmentation by session/expiry
+            uid = getattr(val, "user_id", None) or getattr(val, "id", "unknown")
+            return f"{val.__class__.__name__}:{uid}"
+        if isinstance(val, (dict, list)):
+            return f"{type(val).__name__}:{hashlib.md5(json.dumps(val, sort_keys=True).encode()).hexdigest()[:8]}"
+        return f"{type(val).__name__}:{val}"
+
     for arg in args:
-        if isinstance(arg, (dict, list)):
-            key_parts.append(
-                f"{type(arg).__name__}:{hashlib.md5(json.dumps(arg, sort_keys=True).encode()).hexdigest()[:8]}"
-            )
-        else:
-            key_parts.append(f"{type(arg).__name__}:{arg}")
+        key_parts.append(process_val(arg))
 
     for k, v in sorted(kwargs.items()):
-        if isinstance(v, (dict, list)):
-            key_parts.append(
-                f"{k}:{type(v).__name__}:{hashlib.md5(json.dumps(v, sort_keys=True).encode()).hexdigest()[:8]}"
-            )
-        else:
-            key_parts.append(f"{k}:{type(v).__name__}:{v}")
+        key_parts.append(f"{k}:{process_val(v)}")
 
     return ":".join(key_parts)
 

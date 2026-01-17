@@ -104,6 +104,7 @@ router = APIRouter(tags=["Messages"])
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@cached(ttl=10, prefix="messages_api")
 async def get_channel_messages(
     channel_id: str,
     limit: int = Query(default=50, ge=1, le=100),
@@ -269,6 +270,7 @@ async def get_channel_messages(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@cached(ttl=60, prefix="search_messages_api")
 async def search_messages(
     channel_id: str,
     content: str = Query(..., description="Search query"),
@@ -325,26 +327,32 @@ async def search_messages(
             except Exception:
                 pass
 
-        author_cache = {}  # {user_id: {"username": str, "avatar_url": str}}
+        # Bulk fetch all author info
+        author_ids = list(set(m.author_id for m in messages))
+        author_cache = {}
+        if auth and author_ids:
+            try:
+                users = auth.get_users_bulk(author_ids)
+                author_cache = {
+                    uid: {
+                        "username": u.username,
+                        "avatar_url": getattr(u, "avatar_url", None),
+                    }
+                    for uid, u in users.items()
+                }
+            except Exception:
+                pass
+
         result = []
         for m in messages:
             author_id = m.author_id
-            if author_id not in author_cache:
-                author_info = {"username": None, "avatar_url": None}
-                if auth:
-                    try:
-                        user = auth.get_user(author_id)
-                        if user:
-                            author_info["username"] = user.username
-                            author_info["avatar_url"] = getattr(
-                                user, "avatar_url", None
-                            )
-                    except Exception:
-                        pass
-                author_cache[author_id] = author_info
-            info = author_cache.get(author_id, {})
+            author_info = author_cache.get(author_id) or author_cache.get(str(author_id)) or {}
             result.append(
-                _message_to_response(m, info.get("username"), info.get("avatar_url"))
+                _message_to_response(
+                    m, 
+                    author_username=author_info.get("username"), 
+                    author_avatar_url=author_info.get("avatar_url")
+                )
             )
 
         return result

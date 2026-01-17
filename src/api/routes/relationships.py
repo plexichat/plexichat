@@ -37,7 +37,7 @@ def _relationship_to_response(rel) -> RelationshipResponse:
 
 @router.get(
     "/@me",
-    response_model=RelationshipListResponse,
+    response_model=List[DetailedRelationshipInfo],
     summary="Get my relationships",
     responses={
         401: {"model": ErrorResponse, "description": "Not authenticated"},
@@ -47,7 +47,7 @@ def _relationship_to_response(rel) -> RelationshipResponse:
 @cached(ttl=30, prefix="relationships_api")
 async def get_relationships(
     current_user: TokenInfo = Depends(get_current_user),
-) -> RelationshipListResponse:
+) -> List[DetailedRelationshipInfo]:
     """
     Get all relationships for current user (cached for 30s).
 
@@ -204,7 +204,7 @@ async def get_relationships(
                 )
             )
 
-        return RelationshipListResponse(relationships=result)
+        return result
     except HTTPException:
         raise
     except Exception as e:
