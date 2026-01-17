@@ -31,6 +31,7 @@ import utils.logger as logger
 import utils.config as config
 
 from src.utils.encryption import generate_snowflake_id
+from src.core.database import get_client, redis_available
 
 _db: Any = None
 _setup_complete = False
@@ -65,6 +66,59 @@ def _get_db():
     if _db is None:
         raise RuntimeError("Avatars database not set")
     return _db
+
+
+# === Caching Helpers ===
+
+def _cache_binary(key: str, data: bytes, ttl: int = 3600) -> None:
+    """Cache binary data in Redis."""
+    if not redis_available():
+        return
+    try:
+        client = get_client()
+        if client:
+            client.set_bin(key, data, ttl=ttl)
+    except Exception as e:
+        logger.debug(f"Failed to cache binary data for {key}: {e}")
+
+
+def _get_cached_binary(key: str) -> Optional[bytes]:
+    """Get cached binary data from Redis."""
+    if not redis_available():
+        return None
+    try:
+        client = get_client()
+        if client:
+            return client.get_bin(key)
+    except Exception as e:
+        logger.debug(f"Failed to get cached binary data for {key}: {e}")
+    return None
+
+
+def _delete_cached_binary(key: str) -> None:
+    """Delete cached binary data from Redis."""
+    if not redis_available():
+        return
+    try:
+        client = get_client()
+        if client:
+            client.delete(key)
+    except Exception as e:
+        logger.debug(f"Failed to delete cached binary data for {key}: {e}")
+
+
+def get_user_avatar_checksum(user_id: int) -> Optional[str]:
+    """Get avatar checksum for ETag."""
+    db = _get_db()
+    row = db.fetch_one("SELECT checksum FROM user_avatars WHERE user_id = ?", (user_id,))
+    return row["checksum"] if row else None
+
+
+def get_server_icon_checksum(server_id: int) -> Optional[str]:
+    """Get server icon checksum for ETag."""
+    db = _get_db()
+    row = db.fetch_one("SELECT checksum FROM server_icons WHERE server_id = ?", (server_id,))
+    return row["checksum"] if row else None
 
 
 def _get_config(key: str, default: Any = None) -> Any:
@@ -394,6 +448,10 @@ def upload_user_avatar(
         "UPDATE auth_users SET avatar_url = ? WHERE id = ?", (avatar_url, user_id)
     )
 
+    # Cache the binary data and checksum
+    _cache_binary(f"user_avatar_bin:{user_id}", processed_data)
+    _cache_binary(f"user_avatar_meta:{user_id}", f"{content_type}|{checksum}".encode())
+
     logger.info(
         f"Avatar uploaded for user {user_id}: {width}x{height}, {len(processed_data)} bytes"
     )
@@ -438,25 +496,38 @@ def get_user_avatar(user_id: int) -> Optional[Dict[str, Any]]:
     }
 
 
-def get_user_avatar_data(user_id: int) -> Optional[Tuple[bytes, str]]:
+def get_user_avatar_data(user_id: int) -> Optional[Tuple[bytes, str, str]]:
     """
-    Get user avatar binary data.
+    Get user avatar binary data (cached).
 
-    Returns: (avatar_bytes, content_type) or None
+    Returns: (avatar_bytes, content_type, checksum) or None
     """
+    # 1. Check cache
+    bin_data = _get_cached_binary(f"user_avatar_bin:{user_id}")
+    meta_data = _get_cached_binary(f"user_avatar_meta:{user_id}")
+    
+    if bin_data and meta_data:
+        try:
+            content_type, checksum = meta_data.decode().split("|")
+            return bin_data, content_type, checksum
+        except Exception:
+            pass # Fall back to DB if cache format is weird
+
+    # 2. Fetch from DB
     db = _get_db()
-
     row = db.fetch_one(
-        """
-        SELECT avatar_data, content_type FROM user_avatars WHERE user_id = ?
-    """,
+        "SELECT avatar_data, content_type, checksum FROM user_avatars WHERE user_id = ?",
         (user_id,),
     )
 
     if not row:
         return None
 
-    return row["avatar_data"], row["content_type"]
+    # 3. Cache result
+    _cache_binary(f"user_avatar_bin:{user_id}", row["avatar_data"])
+    _cache_binary(f"user_avatar_meta:{user_id}", f"{row['content_type']}|{row['checksum']}".encode())
+
+    return row["avatar_data"], row["content_type"], row["checksum"]
 
 
 def get_user_avatar_url(user_id: int) -> Optional[str]:
@@ -477,6 +548,10 @@ def delete_user_avatar(user_id: int) -> bool:
 
     # Clear avatar_url in auth_users
     db.execute("UPDATE auth_users SET avatar_url = NULL WHERE id = ?", (user_id,))
+
+    # Invalidate cache
+    _delete_cached_binary(f"user_avatar_bin:{user_id}")
+    _delete_cached_binary(f"user_avatar_meta:{user_id}")
 
     deleted = result.rowcount if hasattr(result, "rowcount") else 0
     if deleted:
@@ -583,6 +658,10 @@ def upload_server_icon(
         "UPDATE srv_servers SET icon_url = ? WHERE id = ?", (icon_url, server_id)
     )
 
+    # Cache the binary data and checksum
+    _cache_binary(f"server_icon_bin:{server_id}", processed_data)
+    _cache_binary(f"server_icon_meta:{server_id}", f"{content_type}|{checksum}".encode())
+
     logger.info(
         f"Icon uploaded for server {server_id}: {width}x{height}, {len(processed_data)} bytes"
     )
@@ -627,25 +706,38 @@ def get_server_icon(server_id: int) -> Optional[Dict[str, Any]]:
     }
 
 
-def get_server_icon_data(server_id: int) -> Optional[Tuple[bytes, str]]:
+def get_server_icon_data(server_id: int) -> Optional[Tuple[bytes, str, str]]:
     """
-    Get server icon binary data.
+    Get server icon binary data (cached).
 
-    Returns: (icon_bytes, content_type) or None
+    Returns: (icon_bytes, content_type, checksum) or None
     """
+    # 1. Check cache
+    bin_data = _get_cached_binary(f"server_icon_bin:{server_id}")
+    meta_data = _get_cached_binary(f"server_icon_meta:{server_id}")
+    
+    if bin_data and meta_data:
+        try:
+            content_type, checksum = meta_data.decode().split("|")
+            return bin_data, content_type, checksum
+        except Exception:
+            pass # Fall back to DB if cache format is weird
+
+    # 2. Fetch from DB
     db = _get_db()
-
     row = db.fetch_one(
-        """
-        SELECT icon_data, content_type FROM server_icons WHERE server_id = ?
-    """,
+        "SELECT icon_data, content_type, checksum FROM server_icons WHERE server_id = ?",
         (server_id,),
     )
 
     if not row:
         return None
 
-    return row["icon_data"], row["content_type"]
+    # 3. Cache result
+    _cache_binary(f"server_icon_bin:{server_id}", row["icon_data"])
+    _cache_binary(f"server_icon_meta:{server_id}", f"{row['content_type']}|{row['checksum']}".encode())
+
+    return row["icon_data"], row["content_type"], row["checksum"]
 
 
 def get_server_icon_url(server_id: int) -> Optional[str]:
@@ -666,6 +758,10 @@ def delete_server_icon(server_id: int) -> bool:
 
     # Clear icon_url in servers
     db.execute("UPDATE srv_servers SET icon_url = NULL WHERE id = ?", (server_id,))
+
+    # Invalidate cache
+    _delete_cached_binary(f"server_icon_bin:{server_id}")
+    _delete_cached_binary(f"server_icon_meta:{server_id}")
 
     deleted = result.rowcount if hasattr(result, "rowcount") else 0
     if deleted:

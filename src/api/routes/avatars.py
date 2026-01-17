@@ -2,8 +2,7 @@
 Avatar routes - Endpoints for user avatars and server icons.
 """
 
-from fastapi import APIRouter, HTTPException, Depends, File, UploadFile
-from fastapi.responses import Response
+from fastapi import APIRouter, HTTPException, Depends, File, UploadFile, Request, Response
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
@@ -19,12 +18,13 @@ router = APIRouter(tags=["Avatars"])
     summary="Get user avatar",
     responses={
         200: {
-            "description": "The avatar image file",
+            "description": "The user avatar image file",
             "content": {
                 "image/png": {},
                 "image/jpeg": {},
                 "image/gif": {},
                 "image/webp": {},
+                "image/svg+xml": {},
             },
         },
         400: {"model": ErrorResponse, "description": "Invalid user ID"},
@@ -32,7 +32,7 @@ router = APIRouter(tags=["Avatars"])
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_user_avatar(user_id: str):
+async def get_user_avatar(user_id: str, request: Request):
     """
     Get user avatar image.
 
@@ -58,6 +58,17 @@ async def get_user_avatar(user_id: str):
                 detail={"error": {"code": 400, "message": "Invalid user ID"}},
             )
 
+        # 1. Fast check for ETag
+        etag_client = request.headers.get("If-None-Match")
+        checksum = None
+        try:
+            checksum = await run_in_threadpool(avatars.get_user_avatar_checksum, uid)
+            if checksum and etag_client == f'"{checksum}"':
+                return Response(status_code=304)
+        except Exception:
+            pass
+
+        # 2. Fetch full data
         try:
             result = await run_in_threadpool(avatars.get_user_avatar_data, uid)
             if not result:
@@ -79,11 +90,17 @@ async def get_user_avatar(user_id: str):
                     pass
 
                 svg_content = generate_default_svg(uid, initials)
+                svg_etag = hashlib.sha256(svg_content).hexdigest()
+                
+                if etag_client == f'"{svg_etag}"':
+                    return Response(status_code=304)
+
                 return Response(
                     content=svg_content,
                     media_type="image/svg+xml",
                     headers={
                         "Cache-Control": "public, max-age=3600",  # Cache for 1 hour
+                        "ETag": f'"{svg_etag}"',
                         "Access-Control-Allow-Origin": "*",
                         "Cross-Origin-Resource-Policy": "cross-origin",
                     },
@@ -99,13 +116,14 @@ async def get_user_avatar(user_id: str):
                 detail={"error": {"code": 500, "message": "Failed to fetch avatar"}},
             )
 
-        avatar_data, content_type = result
+        avatar_data, content_type, checksum = result
 
         return Response(
             content=avatar_data,
             media_type=content_type,
             headers={
                 "Cache-Control": "public, max-age=86400",  # Cache for 24 hours
+                "ETag": f'"{checksum}"',
                 "Content-Length": str(len(avatar_data)),
                 # CORS headers to prevent OpaqueResponseBlocking
                 "Access-Control-Allow-Origin": "*",
@@ -304,7 +322,7 @@ async def delete_my_avatar(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_server_icon(server_id: str):
+async def get_server_icon(server_id: str, request: Request):
     """
     Get server icon image.
 
@@ -318,6 +336,8 @@ async def get_server_icon(server_id: str):
             detail={"error": {"code": 500, "message": "Avatars module not available"}},
         )
 
+    from fastapi.concurrency import run_in_threadpool
+
     try:
         try:
             sid = int(server_id)
@@ -328,8 +348,18 @@ async def get_server_icon(server_id: str):
                 detail={"error": {"code": 400, "message": "Invalid server ID"}},
             )
 
+        # 1. Fast check for ETag
+        etag_client = request.headers.get("If-None-Match")
         try:
-            result = avatars.get_server_icon_data(sid)
+            checksum = await run_in_threadpool(avatars.get_server_icon_checksum, sid)
+            if checksum and etag_client == f'"{checksum}"':
+                return Response(status_code=304)
+        except Exception:
+            pass
+
+        # 2. Fetch full data
+        try:
+            result = await run_in_threadpool(avatars.get_server_icon_data, sid)
             if not result:
                 raise HTTPException(
                     status_code=404,
@@ -346,13 +376,14 @@ async def get_server_icon(server_id: str):
                 detail={"error": {"code": 500, "message": "Failed to fetch icon"}},
             )
 
-        icon_data, content_type = result
+        icon_data, content_type, checksum = result
 
         return Response(
             content=icon_data,
             media_type=content_type,
             headers={
                 "Cache-Control": "public, max-age=86400",  # Cache for 24 hours
+                "ETag": f'"{checksum}"',
                 "Content-Length": str(len(icon_data)),
                 # CORS headers to prevent OpaqueResponseBlocking
                 "Access-Control-Allow-Origin": "*",
