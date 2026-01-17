@@ -1215,35 +1215,36 @@ class AuthManager(BaseManager):
             return None
         return self.get_user(row["id"])
 
+    @cached(ttl=60, prefix="users_bulk")
     def get_users_bulk(self, user_ids: List[int]) -> Dict[int, User]:
-        """Get multiple users by ID (cached)."""
+        """Get multiple users by ID (bulk-cached)."""
         if not user_ids:
             return {}
             
+        placeholders = ",".join("?" for _ in user_ids)
+        rows = self._db.fetch_all(
+            f"SELECT * FROM auth_users WHERE id IN ({placeholders})", tuple(user_ids)
+        )
+        
         result = {}
-        missing_ids = []
-        
-        for uid in user_ids:
-            # Check individual cache for each user
-            data = self._get_user_data_cached(uid)
-            if data:
-                result[uid] = self._dict_to_user(data)
-            else:
-                missing_ids.append(uid)
-        
-        if missing_ids:
-            # Fetch missing users in a single bulk query
-            placeholders = ",".join("?" for _ in missing_ids)
-            rows = self._db.fetch_all(
-                f"SELECT * FROM auth_users WHERE id IN ({placeholders})", tuple(missing_ids)
-            )
+        for row in rows:
+            user_id = row["id"]
+            user_dict = dict(row)
             
-            for row in rows:
-                user_id = row["id"]
-                # Convert to dict and add to cache
-                user_data = self._get_user_data_cached(user_id)
-                if user_data:
-                    result[user_id] = self._dict_to_user(user_data)
+            # Decrypt sensitive fields for individual users
+            if user_dict.get("email_encrypted"):
+                try:
+                    user_dict["email"] = self.crypto.decrypt_data(user_dict["email_encrypted"], context=str(user_id))
+                except Exception:
+                    user_dict["email"] = None
+            
+            if user_dict.get("date_of_birth"):
+                try:
+                    user_dict["dob_decrypted"] = self.crypto.decrypt_data(user_dict["date_of_birth"], context=str(user_id))
+                except Exception:
+                    user_dict["dob_decrypted"] = None
+            
+            result[user_id] = self._dict_to_user(user_dict)
                 
         return result
 
