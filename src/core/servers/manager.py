@@ -1327,8 +1327,26 @@ class ServerManager(BaseManager):
         params.append(limit)
 
         rows = self._db.fetch_all(query, tuple(params))
+        if not rows:
+            return []
 
-        return [self._row_to_member(row) for row in rows]
+        # Bulk fetch roles for all members to avoid N+1
+        member_ids = [row["id"] for row in rows]
+        placeholders = ",".join("?" for _ in member_ids)
+        role_rows = self._db.fetch_all(
+            f"SELECT member_id, role_id FROM srv_member_roles WHERE member_id IN ({placeholders})",
+            tuple(member_ids)
+        )
+        
+        # Map roles to members
+        roles_map = {}
+        for rr in role_rows:
+            mid = rr["member_id"]
+            if mid not in roles_map:
+                roles_map[mid] = []
+            roles_map[mid].append(rr["role_id"])
+
+        return [self._row_to_member(row, roles=roles_map.get(row["id"], [])) for row in rows]
 
     def get_member_user_ids(
         self,
@@ -2526,14 +2544,18 @@ class ServerManager(BaseManager):
             deleted=bool(row.get("deleted", False)),
         )
 
-    def _row_to_member(self, row: Dict[str, Any]) -> Member:
+    def _row_to_member(
+        self, row: Dict[str, Any], roles: Optional[List[SnowflakeID]] = None
+    ) -> Member:
         """Convert database row to Member model."""
         # Get role IDs
-        role_rows = self._db.fetch_all(
-            "SELECT role_id FROM srv_member_roles WHERE member_id = ?",
-            (row["id"],),
-        )
-        role_ids = [r["role_id"] for r in role_rows]
+        role_ids = roles
+        if role_ids is None:
+            role_rows = self._db.fetch_all(
+                "SELECT role_id FROM srv_member_roles WHERE member_id = ?",
+                (row["id"],),
+            )
+            role_ids = [r["role_id"] for r in role_rows]
 
         return Member(
             id=row["id"],
