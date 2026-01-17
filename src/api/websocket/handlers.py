@@ -531,7 +531,7 @@ class OpcodeHandler:
                     "user_id": str(u_id),
                     "username": user.username if user else f"User {u_id}",
                     "nickname": m.nickname,
-                    "avatar_url": user.avatar_url if user else None,
+                    "avatar_url": getattr(user, "avatar_url", None) or getattr(m, "avatar_url", None),
                     "joined_at": m.joined_at,
                     "roles": [str(r) for r in (m.roles or [])],
                     "presence": {"status": status}

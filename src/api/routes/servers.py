@@ -41,11 +41,13 @@ router = APIRouter(tags=["Servers"])
 def _server_to_response(server) -> ServerResponse:
     """Convert server object to response model."""
     default_channel_id = getattr(server, "default_channel_id", None)
+    # Use getattr to correctly pick up the icon_url property from the Server model
+    icon_url = getattr(server, "icon_url", None)
     return ServerResponse(
         id=SnowflakeID(server.id),
         name=server.name,
         description=getattr(server, "description", None),
-        icon_url=getattr(server, "icon_url", None),
+        icon_url=icon_url,
         owner_id=SnowflakeID(server.owner_id),
         member_count=getattr(server, "member_count", 0),
         default_channel_id=SnowflakeID(default_channel_id)
@@ -538,7 +540,7 @@ async def get_server_members(
                     user_id=SnowflakeID(user_id),
                     username=user.username if user else f"User {user_id}",
                     nickname=m.nickname,
-                    avatar_url=user.avatar_url if user else None,
+                    avatar_url=getattr(user, "avatar_url", None) or getattr(m, "avatar_url", None),
                     joined_at=m.joined_at,
                     roles=[SnowflakeID(r) for r in (m.roles or [])],
                     presence=presence_data,

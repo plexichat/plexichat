@@ -29,6 +29,7 @@ def _message_to_response(
     channel_id: Optional[int] = None,
     reactions_data=None,
     read_by_usernames: Optional[List[str]] = None,
+    include_readers: bool = True,
 ) -> MessageResponse:
     """Convert message object to response model."""
     attachments = []
@@ -62,6 +63,20 @@ def _message_to_response(
     # Use provided reader usernames or fall back to msg attributes
     read_by = read_by_usernames or []
     read_count = len(read_by) if read_by_usernames is not None else getattr(msg, "read_count", 0)
+    
+    # Only fetch reader info if explicitly requested and not already provided
+    if include_readers and read_by_usernames is None:
+        try:
+            messaging = api.get_messaging()
+            auth = api.get_auth()
+            if messaging and auth and hasattr(msg, "id"):
+                reader_ids = messaging.get_reader_ids(msg.author_id, msg.id)
+                if reader_ids:
+                    users_map = auth.get_users_bulk(reader_ids)
+                    read_by = [u.username for u in users_map.values()]
+                    read_count = len(read_by)
+        except Exception:
+            pass
 
     return MessageResponse(
         id=SnowflakeID(msg.id),
