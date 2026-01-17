@@ -109,7 +109,7 @@ def _get_user_cached(user_id: int):
 
 
 # Apply caching to the internal function (60s TTL for user data)
-_get_user_cached = cached(ttl=60, prefix="user")(_get_user_cached)
+_get_user_cached = cached(ttl=60, prefix="user_api")(_get_user_cached)
 
 
 @router.get(

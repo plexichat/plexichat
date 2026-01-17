@@ -1160,7 +1160,6 @@ class AuthManager(BaseManager):
 
     # === Utility ===
 
-    @cached(ttl=60, prefix="user")
     def get_user(self, user_id: int) -> Optional[User]:
         row = self._db.fetch_one("SELECT * FROM auth_users WHERE id = ?", (user_id,))
         if not row:
@@ -1207,7 +1206,6 @@ class AuthManager(BaseManager):
             return None
         return self.get_user(row["id"])
 
-    @cached(ttl=60, prefix="users_bulk")
     def get_users_bulk(self, user_ids: List[int]) -> Dict[int, User]:
         if not user_ids:
             return {}
