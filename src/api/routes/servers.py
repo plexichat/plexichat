@@ -535,12 +535,12 @@ async def get_server_members(
         for m in members:
             # Handle both objects and dicts (from cache)
             if isinstance(m, dict):
-                user_id = m.get("user_id")
+                user_id = int(m.get("user_id", 0))
                 nickname = m.get("nickname")
                 joined_at = m.get("joined_at")
                 roles = m.get("roles", [])
             else:
-                user_id = getattr(m, "user_id", None)
+                user_id = int(getattr(m, "user_id", 0))
                 nickname = getattr(m, "nickname", None)
                 joined_at = getattr(m, "joined_at", None)
                 roles = getattr(m, "roles", [])

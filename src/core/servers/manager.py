@@ -1303,6 +1303,7 @@ class ServerManager(BaseManager):
 
         return self._row_to_member(row)
 
+    @cached(ttl=30, prefix="server_members")
     def get_members(
         self,
         user_id: SnowflakeID,
