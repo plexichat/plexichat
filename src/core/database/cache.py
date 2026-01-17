@@ -16,6 +16,8 @@ Features:
 import json
 import hashlib
 import time
+import asyncio
+import inspect
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, cast
 from functools import wraps
 
@@ -128,6 +130,73 @@ def cached(
     """
 
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
+        is_async = inspect.iscoroutinefunction(func)
+
+        @wraps(func)
+        async def async_wrapper(*args, **kwargs) -> T:
+            global _cache_stats
+
+            # Check if we should skip caching
+            if skip_cache_if and skip_cache_if(*args, **kwargs):
+                return await func(*args, **kwargs)
+
+            # Check if Redis is available
+            client = get_client()
+            redis_ready = client and is_available()
+
+            # Generate cache key
+            key_prefix = prefix or f"cache:{func.__module__}.{func.__name__}"
+            if key_builder:
+                cache_key = key_builder(*args, **kwargs)
+            else:
+                cache_key = _generate_cache_key(key_prefix, *args, **kwargs)
+
+            # Try to get from cache (Redis then Memory)
+            if redis_ready:
+                try:
+                    cached_value = client.get_json(cache_key)
+                    if cached_value is not None:
+                        _cache_stats["hits"] += 1
+                        logger.info(
+                            f"CACHE HIT (Redis): {cache_key} (total hits: {_cache_stats['hits']})"
+                        )
+                        return cast(T, cached_value)
+                except RedisOperationError:
+                    _cache_stats["errors"] += 1
+            else:
+                cached_value = _mem_cache_get(cache_key)
+                if cached_value is not None:
+                    _cache_stats["hits"] += 1
+                    logger.info(
+                        f"CACHE HIT (Memory): {cache_key} (total hits: {_cache_stats['hits']})"
+                    )
+                    return cast(T, cached_value)
+
+            # Cache miss - execute function
+            _cache_stats["misses"] += 1
+            logger.info(
+                f"CACHE MISS: {cache_key} (total misses: {_cache_stats['misses']})"
+            )
+
+            result = await func(*args, **kwargs)
+
+            # Store in cache (Redis and/or Memory)
+            cache_ttl = ttl if ttl is not None else (client.ttl_cache if redis_ready else 300)
+            
+            if redis_ready:
+                try:
+                    client.set_json(
+                        cache_key, cast(JsonSerializable, result), ttl=cache_ttl
+                    )
+                except RedisOperationError as e:
+                    _cache_stats["errors"] += 1
+                    logger.warning(f"Failed to cache result for {cache_key}: {e}")
+            
+            # Always store in memory as well for fastest possible second-hit or as fallback
+            _mem_cache_set(cache_key, result, cache_ttl)
+
+            return result
+
         @wraps(func)
         def wrapper(*args, **kwargs) -> T:
             global _cache_stats
@@ -193,8 +262,10 @@ def cached(
 
             return result
 
+        final_wrapper = async_wrapper if is_async else wrapper
+
         # Add cache control methods to the wrapper
-        wrapper_any = cast(Any, wrapper)
+        wrapper_any = cast(Any, final_wrapper)
         wrapper_any.cache_key_prefix = (
             prefix or f"cache:{func.__module__}.{func.__name__}"
         )
@@ -204,7 +275,7 @@ def cached(
             else _generate_cache_key(wrapper_any.cache_key_prefix, *args, **kwargs)
         )
 
-        return wrapper
+        return final_wrapper
 
     return decorator
 

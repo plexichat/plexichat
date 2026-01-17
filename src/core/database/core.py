@@ -883,71 +883,114 @@ class Database:
         # Dialect-aware placeholder conversion
         query = self._convert_placeholders(query)
 
-        cursor = conn.cursor()
-        try:
-            # Track query execution time
+        # Implementation with automatic retry for connection issues
+        retry_count = 0
+        max_retries = 1
+        
+        while True:
+            cursor = conn.cursor()
             exec_start = time.time()
-            if params:
-                cursor.execute(query, params)
-            else:
-                cursor.execute(query)
-            exec_time_ms = (time.time() - exec_start) * 1000
-            
-            # Record query execution time
-            with self._pool_stats_lock:
-                self._query_execution_times.append((time.time(), exec_time_ms))
-            
-            # Log with structured data
-            params_count = len(params) if params else 0
-            query_preview = query[:100] if len(query) > 100 else query
-            context = self._format_log_context(
-                query=query_preview,
-                execution_time_ms=f"{exec_time_ms:.2f}",
-                params_count=params_count,
-                auto_commit=auto_commit,
-                thread_id=threading.current_thread().ident
-            )
-            logger.debug(f"Query executed successfully {context}")
-            
-            # Check for slow query
-            if exec_time_ms > self._slow_query_threshold_ms:
-                slow_context = self._format_log_context(
+            try:
+                # Track query execution time
+                if params:
+                    cursor.execute(query, params)
+                else:
+                    cursor.execute(query)
+                exec_time_ms = (time.time() - exec_start) * 1000
+                
+                # Record query execution time
+                with self._pool_stats_lock:
+                    self._query_execution_times.append((time.time(), exec_time_ms))
+                
+                # Log with structured data
+                params_count = len(params) if params else 0
+                query_preview = query[:100] if len(query) > 100 else query
+                context = self._format_log_context(
                     query=query_preview,
                     execution_time_ms=f"{exec_time_ms:.2f}",
-                    threshold_ms=self._slow_query_threshold_ms,
+                    params_count=params_count,
+                    auto_commit=auto_commit,
                     thread_id=threading.current_thread().ident
                 )
-                logger.warning(f"Slow query detected {slow_context}")
+                logger.debug(f"Query executed successfully {context}")
+                
+                # Check for slow query
+                if exec_time_ms > self._slow_query_threshold_ms:
+                    slow_context = self._format_log_context(
+                        query=query_preview,
+                        execution_time_ms=f"{exec_time_ms:.2f}",
+                        threshold_ms=self._slow_query_threshold_ms,
+                        thread_id=threading.current_thread().ident
+                    )
+                    logger.warning(f"Slow query detected {slow_context}")
 
-            if auto_commit and not self.in_transaction:
-                conn.commit()
-            return cursor
-        except Exception as e:
-            # Record execution time even on error
-            exec_time_ms = (time.time() - exec_start) * 1000
-            with self._pool_stats_lock:
-                self._query_execution_times.append((time.time(), exec_time_ms))
-            
-            error_msg = str(e).lower()
-            error_type = type(e).__name__
-            
-            # Record error count
-            with self._pool_stats_lock:
-                if error_type not in self._error_counts:
-                    self._error_counts[error_type] = []
-                self._error_counts[error_type].append((time.time(), error_type))
-            
-            # Calculate error rate
-            error_rate = self._calculate_error_rate()
-            query_preview = query[:100] if len(query) > 100 else query
-            error_context = self._format_log_context(
-                error_type=error_type,
-                error_message=str(e)[:100],
-                query=query_preview,
-                execution_time_ms=f"{exec_time_ms:.2f}",
-                error_rate_per_minute=f"{error_rate:.2f}",
-                thread_id=threading.current_thread().ident
-            )
+                if auto_commit and not self.in_transaction:
+                    conn.commit()
+                return cursor
+            except Exception as e:
+                cursor.close()
+                error_msg = str(e).lower()
+                error_type = type(e).__name__
+                
+                # Check if this is a connection-related error that can be retried
+                is_connection_error = False
+                if error_type == "OperationalError":
+                    conn_fragments = [
+                        "ssl connection has been closed unexpectedly",
+                        "connection already closed",
+                        "connection reset by peer",
+                        "broken pipe",
+                        "terminating connection due to idle timeout",
+                    ]
+                    if any(fragment in error_msg for fragment in conn_fragments):
+                        is_connection_error = True
+                
+                # Retry once if it's a connection error and NOT in a transaction
+                if is_connection_error and retry_count < max_retries and self.transaction_depth == 0:
+                    retry_count += 1
+                    logger.warning(
+                        f"Database connection error detected, attempting transparent retry ({retry_count}/{max_retries}): {e}"
+                    )
+                    
+                    # Force discard existing connection
+                    if self.type == "postgres" and self._pool:
+                        try:
+                            self._pool.putconn(conn, close=True)
+                        except Exception:
+                            pass
+                    else:
+                        try:
+                            conn.close()
+                        except Exception:
+                            pass
+                    
+                    self._local.connection = None
+                    # Re-acquire fresh connection
+                    conn = self._get_conn()
+                    continue
+
+                # Record execution time even on error
+                exec_time_ms = (time.time() - exec_start) * 1000
+                with self._pool_stats_lock:
+                    self._query_execution_times.append((time.time(), exec_time_ms))
+                
+                # Record error count
+                with self._pool_stats_lock:
+                    if error_type not in self._error_counts:
+                        self._error_counts[error_type] = []
+                    self._error_counts[error_type].append((time.time(), error_type))
+                
+                # Calculate error rate
+                error_rate = self._calculate_error_rate()
+                query_preview = query[:100] if len(query) > 100 else query
+                error_context = self._format_log_context(
+                    error_type=error_type,
+                    error_message=str(e)[:100],
+                    query=query_preview,
+                    execution_time_ms=f"{exec_time_ms:.2f}",
+                    error_rate_per_minute=f"{error_rate:.2f}",
+                    thread_id=threading.current_thread().ident
+                )
             logger.error(f"Query failed {error_context}")
             
             # Log high error rate warning
