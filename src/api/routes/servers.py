@@ -563,6 +563,27 @@ async def get_server_members(
                 )
             )
         return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "Server not found"}},
+            )
+        elif "Access" in exc_name:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Access denied"}},
+            )
+
+        logger.error(
+            f"Failed to fetch members for server {server_id}: {e}", exc_info=True
+        )
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
 
 
 # ==================== Member Management ====================
