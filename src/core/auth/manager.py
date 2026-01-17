@@ -439,6 +439,7 @@ class AuthManager(BaseManager):
             token=token,
         )
 
+    @cached(ttl=30, prefix="token_verify")
     def verify_token(
         self,
         token: str,
