@@ -71,11 +71,11 @@ def _get_db():
 
 def _cache_binary(key: str, data: bytes, ttl: int = 3600) -> None:
     """Cache binary data in Redis."""
-    from src.core.database import get_client, redis_available
+    from src.core.database import get_redis_client, redis_available
     if not redis_available():
         return
     try:
-        client = get_client()
+        client = get_redis_client()
         if client:
             client.set_bin(key, data, ttl=ttl)
     except Exception as e:
@@ -84,11 +84,11 @@ def _cache_binary(key: str, data: bytes, ttl: int = 3600) -> None:
 
 def _get_cached_binary(key: str) -> Optional[bytes]:
     """Get cached binary data from Redis."""
-    from src.core.database import get_client, redis_available
+    from src.core.database import get_redis_client, redis_available
     if not redis_available():
         return None
     try:
-        client = get_client()
+        client = get_redis_client()
         if client:
             return client.get_bin(key)
     except Exception as e:
@@ -98,11 +98,11 @@ def _get_cached_binary(key: str) -> Optional[bytes]:
 
 def _delete_cached_binary(key: str) -> None:
     """Delete cached binary data from Redis."""
-    from src.core.database import get_client, redis_available
+    from src.core.database import get_redis_client, redis_available
     if not redis_available():
         return
     try:
-        client = get_client()
+        client = get_redis_client()
         if client:
             client.delete(key)
     except Exception as e:
