@@ -110,17 +110,33 @@ def _delete_cached_binary(key: str) -> None:
 
 
 def get_user_avatar_checksum(user_id: int) -> Optional[str]:
-    """Get avatar checksum for ETag."""
+    """Get avatar checksum for ETag (cached)."""
+    cache_key = f"user_avatar_checksum:{user_id}"
+    cached_checksum = _get_cached_binary(cache_key)
+    if cached_checksum:
+        return cached_checksum.decode()
+
     db = _get_db()
     row = db.fetch_one("SELECT checksum FROM user_avatars WHERE user_id = ?", (user_id,))
-    return row["checksum"] if row else None
+    if row:
+        _cache_binary(cache_key, row["checksum"].encode(), ttl=3600)
+        return row["checksum"]
+    return None
 
 
 def get_server_icon_checksum(server_id: int) -> Optional[str]:
-    """Get server icon checksum for ETag."""
+    """Get server icon checksum for ETag (cached)."""
+    cache_key = f"server_icon_checksum:{server_id}"
+    cached_checksum = _get_cached_binary(cache_key)
+    if cached_checksum:
+        return cached_checksum.decode()
+
     db = _get_db()
     row = db.fetch_one("SELECT checksum FROM server_icons WHERE server_id = ?", (server_id,))
-    return row["checksum"] if row else None
+    if row:
+        _cache_binary(cache_key, row["checksum"].encode(), ttl=3600)
+        return row["checksum"]
+    return None
 
 
 def _get_config(key: str, default: Any = None) -> Any:

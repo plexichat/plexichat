@@ -232,7 +232,10 @@ async def get_channel_messages(
 
         result = []
         for m in messages:
-            author_info = author_cache.get(m.author_id, {})
+            # Robust lookup: check both string and int keys
+            author_id = m.author_id
+            author_info = author_cache.get(author_id) or author_cache.get(str(author_id)) or {}
+            
             result.append(
                 _message_to_response(
                     m,

@@ -36,25 +36,17 @@ def _relationship_to_response(rel) -> RelationshipResponse:
 
 @router.get(
     "/@me",
-    response_model=List[DetailedRelationshipInfo],
-    summary="Get my relationships",
-    responses={
-        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
-        500: {"model": ErrorResponse, "description": "Internal server error"},
-    },
-)
-@router.get(
-    "/@me",
-    response_model=List[DetailedRelationshipInfo],
+    response_model=RelationshipListResponse,
     summary="Get my relationships",
     responses={
         401: {"model": ErrorResponse, "description": "Not authenticated"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@cached(ttl=30, prefix="relationships_api")
 async def get_relationships(
     current_user: TokenInfo = Depends(get_current_user),
-) -> List[DetailedRelationshipInfo]:
+) -> RelationshipListResponse:
     """
     Get all relationships for current user (cached for 30s).
 
@@ -206,12 +198,12 @@ async def get_relationships(
                     username=info.get("username") or f"User {uid}",
                     avatar_url=info.get("avatar_url"),
                     status="blocked",
-                    presence=None,
+                    presence=PresenceInfo(status="offline"),
                     created_at=getattr(b, "created_at", None),
                 )
             )
 
-        return result
+        return RelationshipListResponse(relationships=result)
     except HTTPException:
         raise
     except Exception as e:
