@@ -10,8 +10,12 @@ from src.api.schemas.avatars import AvatarUploadResponse, IconUploadResponse
 from src.api.schemas.common import ErrorResponse, SuccessResponse
 import utils.logger as logger
 
+import hashlib
+
 router = APIRouter(tags=["Avatars"])
 
+# Local in-memory cache for checksums to avoid DB hits for ETags
+_avatar_checksum_cache = {} # {uid: checksum}
 
 @router.get(
     "/users/{user_id}",
@@ -46,8 +50,6 @@ async def get_user_avatar(user_id: str, request: Request):
             detail={"error": {"code": 500, "message": "Avatars module not available"}},
         )
 
-    from fastapi.concurrency import run_in_threadpool
-
     try:
         try:
             uid = int(user_id)
@@ -60,17 +62,23 @@ async def get_user_avatar(user_id: str, request: Request):
 
         # 1. Fast check for ETag
         etag_client = request.headers.get("If-None-Match")
-        checksum = None
-        try:
-            checksum = await run_in_threadpool(avatars.get_user_avatar_checksum, uid)
-            if checksum and etag_client == f'"{checksum}"':
-                return Response(status_code=304)
-        except Exception:
-            pass
+        
+        # Check local RAM cache for checksum first
+        checksum = _avatar_checksum_cache.get(uid)
+        if not checksum:
+            try:
+                checksum = avatars.get_user_avatar_checksum(uid)
+                if checksum:
+                    _avatar_checksum_cache[uid] = checksum
+            except Exception:
+                pass
 
-        # 2. Fetch full data
+        if checksum and etag_client == f'"{checksum}"':
+            return Response(status_code=304)
+
+        # 2. Fetch full data (no threadpool - the module handles caching internally)
         try:
-            result = await run_in_threadpool(avatars.get_user_avatar_data, uid)
+            result = avatars.get_user_avatar_data(uid)
             if not result:
                 # Generate a default SVG avatar if none exists
                 from src.core.avatars import generate_default_svg
@@ -80,8 +88,7 @@ async def get_user_avatar(user_id: str, request: Request):
                 try:
                     auth_mod = api.get_auth()
                     if auth_mod:
-                        # Use threadpool for user lookup too
-                        user = await run_in_threadpool(auth_mod.get_user, uid)
+                        user = auth_mod.get_user(uid)
                         if user:
                             username = getattr(user, "username", "User").strip()
                             if username:
@@ -99,7 +106,7 @@ async def get_user_avatar(user_id: str, request: Request):
                     content=svg_content,
                     media_type="image/svg+xml",
                     headers={
-                        "Cache-Control": "public, max-age=3600",  # Cache for 1 hour
+                        "Cache-Control": "public, max-age=3600",
                         "ETag": f'"{svg_etag}"',
                         "Access-Control-Allow-Origin": "*",
                         "Cross-Origin-Resource-Policy": "cross-origin",
@@ -117,15 +124,17 @@ async def get_user_avatar(user_id: str, request: Request):
             )
 
         avatar_data, content_type, checksum = result
+        
+        # Update local checksum cache
+        _avatar_checksum_cache[uid] = checksum
 
         return Response(
             content=avatar_data,
             media_type=content_type,
             headers={
-                "Cache-Control": "public, max-age=86400",  # Cache for 24 hours
+                "Cache-Control": "public, max-age=86400",
                 "ETag": f'"{checksum}"',
                 "Content-Length": str(len(avatar_data)),
-                # CORS headers to prevent OpaqueResponseBlocking
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Methods": "GET, OPTIONS",
                 "Cross-Origin-Resource-Policy": "cross-origin",
@@ -304,6 +313,9 @@ async def delete_my_avatar(
         )
 
 
+# Local in-memory cache for icon checksums
+_icon_checksum_cache = {} # {sid: checksum}
+
 @router.get(
     "/servers/{server_id}",
     summary="Get server icon",
@@ -336,8 +348,6 @@ async def get_server_icon(server_id: str, request: Request):
             detail={"error": {"code": 500, "message": "Avatars module not available"}},
         )
 
-    from fastapi.concurrency import run_in_threadpool
-
     try:
         try:
             sid = int(server_id)
@@ -350,16 +360,23 @@ async def get_server_icon(server_id: str, request: Request):
 
         # 1. Fast check for ETag
         etag_client = request.headers.get("If-None-Match")
-        try:
-            checksum = await run_in_threadpool(avatars.get_server_icon_checksum, sid)
-            if checksum and etag_client == f'"{checksum}"':
-                return Response(status_code=304)
-        except Exception:
-            pass
+        
+        # Check local RAM cache for checksum first
+        checksum = _icon_checksum_cache.get(sid)
+        if not checksum:
+            try:
+                checksum = avatars.get_server_icon_checksum(sid)
+                if checksum:
+                    _icon_checksum_cache[sid] = checksum
+            except Exception:
+                pass
+
+        if checksum and etag_client == f'"{checksum}"':
+            return Response(status_code=304)
 
         # 2. Fetch full data
         try:
-            result = await run_in_threadpool(avatars.get_server_icon_data, sid)
+            result = avatars.get_server_icon_data(sid)
             if not result:
                 raise HTTPException(
                     status_code=404,
@@ -377,15 +394,17 @@ async def get_server_icon(server_id: str, request: Request):
             )
 
         icon_data, content_type, checksum = result
+        
+        # Update local checksum cache
+        _icon_checksum_cache[sid] = checksum
 
         return Response(
             content=icon_data,
             media_type=content_type,
             headers={
-                "Cache-Control": "public, max-age=86400",  # Cache for 24 hours
+                "Cache-Control": "public, max-age=86400",
                 "ETag": f'"{checksum}"',
                 "Content-Length": str(len(icon_data)),
-                # CORS headers to prevent OpaqueResponseBlocking
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Methods": "GET, OPTIONS",
                 "Cross-Origin-Resource-Policy": "cross-origin",
