@@ -394,7 +394,8 @@
 
     <script>
         const token = localStorage.getItem('plexichat-admin-token');
-        if (!token) window.location.replace('/api/v1/admin');
+        console.log('Admin token length:', token ? token.length : 'null');
+        if (!token) window.location.replace('/api/v1/admin/login');
 
         let telemetryData = [];
         let latencyChart, countChart, errorChart, slowChart, historyChart;
@@ -677,8 +678,9 @@
                 });
                 
                 if (res.status === 401) {
+                    console.warn('Dashboard access denied: 401 Unauthorized');
                     localStorage.removeItem('plexichat-admin-token');
-                    window.location.replace('/api/v1/admin');
+                    window.location.replace('/api/v1/admin/login');
                     return;
                 }
                 
@@ -1394,7 +1396,7 @@
         function logout() {
             fetch('/api/v1/admin/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
             localStorage.removeItem('plexichat-admin-token');
-            window.location.replace('/api/v1/admin');
+            window.location.replace('/api/v1/admin/login');
         }
         
         verifyAndLoad();

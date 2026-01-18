@@ -614,13 +614,22 @@ def validate_session(token: str) -> Optional[int]:
 
     now = int(time.time() * 1000)
     row = db.fetch_one(
-        "SELECT admin_id FROM admin_sessions WHERE token = ? AND expires_at > ?",
-        (token, now),
+        "SELECT admin_id, expires_at FROM admin_sessions WHERE token = ?",
+        (token,),
     )
 
-    if row:
-        return row["admin_id"] if isinstance(row, dict) else row[0]
-    return None
+    if not row:
+        logger.warning(f"No admin session found for token (len={len(token)})")
+        return None
+
+    admin_id = row["admin_id"] if isinstance(row, dict) else row[0]
+    expires_at = row["expires_at"] if isinstance(row, dict) else row[1]
+
+    if expires_at <= now:
+        logger.warning(f"Admin session expired for admin {admin_id} (expired at {expires_at}, now {now})")
+        return None
+
+    return admin_id
 
 
 def logout(token: str) -> bool:
