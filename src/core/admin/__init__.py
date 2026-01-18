@@ -619,7 +619,7 @@ def validate_session(token: str) -> Optional[int]:
     
     # Debug: log token details (carefully)
     token_preview = f"{token[:4]}...{token[-4:]}" if len(token) > 8 else "***"
-    logger.debug(f"Validating admin session: token_len={len(token)}, preview={token_preview}")
+    logger.warning(f"Validating admin session: token_len={len(token)}, preview={token_preview}")
     
     row = db.fetch_one(
         "SELECT admin_id, expires_at FROM admin_sessions WHERE token = ?",

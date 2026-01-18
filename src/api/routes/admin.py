@@ -298,6 +298,13 @@ def _load_admin_template(template_name: str) -> str:
 def _get_admin_from_token(request: Request) -> int:
     """Get admin ID from Authorization header."""
     auth_header = request.headers.get("Authorization", "")
+    if not auth_header:
+        logger.warning("Missing Authorization header in admin request")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": {"code": 401, "message": "Authentication required"}},
+        )
+
     if not auth_header.startswith("Bearer "):
         actual_prefix = auth_header[:10] if auth_header else "empty"
         logger.warning(f"Invalid Authorization header format: '{actual_prefix}...' (expected 'Bearer ')")
@@ -308,7 +315,7 @@ def _get_admin_from_token(request: Request) -> int:
 
     token = auth_header[7:]
     token_preview = f"{token[:4]}...{token[-4:]}" if len(token) > 8 else "***"
-    logger.debug(f"Received admin token: len={len(token)}, preview={token_preview}")
+    logger.warning(f"Received admin token: len={len(token)}, preview={token_preview}")
 
     # Allow secure self-test requests from users with admin permissions
     # Use scope directly as request.state can be unreliable with BaseHTTPMiddleware
@@ -2423,10 +2430,20 @@ async def admin_login_page(request: Request):
     include_in_schema=False,
 )
 async def admin_ui_redirect(request: Request):
-    """Redirect to admin dashboard page."""
+    """Redirect to admin dashboard page if logged in, else login."""
     from fastapi.responses import RedirectResponse
+    
+    # Check if we have a session token in the header
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        return RedirectResponse(
+            url=request.url_for("admin_dashboard_page"),
+            status_code=status.HTTP_302_FOUND
+        )
+    
+    # Otherwise, go to login
     return RedirectResponse(
-        url=request.url_for("admin_dashboard_page"),
+        url=request.url_for("admin_login_page"),
         status_code=status.HTTP_302_FOUND
     )
 
