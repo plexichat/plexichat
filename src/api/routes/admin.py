@@ -305,7 +305,6 @@ def _get_admin_from_token(request: Request) -> int:
         )
 
     token = auth_header[7:]
-    logger.debug(f"Received admin token (len={len(token)})")
 
     # Allow secure self-test requests from users with admin permissions
     # Use scope directly as request.state can be unreliable with BaseHTTPMiddleware
@@ -2325,8 +2324,10 @@ async def get_database_pool_health(request: Request) -> Dict[str, Any]:
         health_issues = []
         
         # Check pool utilization
-        if isinstance(stats.get("active_connections"), int) and isinstance(stats.get("max_connections"), int):
-            utilization = stats["active_connections"] / stats["max_connections"] if stats["max_connections"] > 0 else 0
+        active = stats.get("active_connections")
+        max_conn = stats.get("max_connections")
+        if isinstance(active, (int, float)) and isinstance(max_conn, (int, float)) and max_conn > 0:
+            utilization = active / max_conn
             if utilization > 0.9:
                 is_healthy = False
                 health_issues.append(f"Pool utilization critical: {utilization * 100:.1f}%")

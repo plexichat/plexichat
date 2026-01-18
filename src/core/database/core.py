@@ -149,19 +149,16 @@ class Database:
             if self.type == "postgres" and self._pool:
                 try:
                     # For ThreadedConnectionPool, we can access these attributes
-                    stats["min_connections"] = self._pool.minconn
-                    stats["max_connections"] = self._pool.maxconn
+                    stats["min_connections"] = getattr(self._pool, "minconn", 0)
+                    stats["max_connections"] = getattr(self._pool, "maxconn", 0)
                     
                     # Use _pool for idle connections and _used for active connections
-                    if hasattr(self._pool, "_pool") and self._pool._pool:
-                        stats["idle_connections"] = len(self._pool._pool)
-                    else:
-                        stats["idle_connections"] = 0
+                    # Different versions of psycopg2 might use different internal names
+                    idle_list = getattr(self._pool, "_pool", [])
+                    stats["idle_connections"] = len(idle_list) if isinstance(idle_list, list) else 0
                     
-                    if hasattr(self._pool, "_used") and self._pool._used:
-                        stats["active_connections"] = len(self._pool._used)
-                    else:
-                        stats["active_connections"] = 0
+                    used_list = getattr(self._pool, "_used", {})
+                    stats["active_connections"] = len(used_list) if isinstance(used_list, (list, dict)) else 0
                     
                     # Total connections is the sum of idle and active
                     stats["total_connections"] = stats["idle_connections"] + stats["active_connections"]

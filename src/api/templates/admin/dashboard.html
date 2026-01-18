@@ -69,7 +69,8 @@
                 <button class="tab" onclick="showTab('telemetry', this)">System Telemetry</button>
                 <button class="tab" onclick="showTab('hash-reports', this)">Hash Reports</button>
                 <button class="tab" onclick="showTab('database', this)">Database Health</button>
-                <button class="tab" onclick="showTab('user-tiers', this)">User Management</button>
+                <button class="tab" onclick="showTab('users', this)">User Search</button>
+                <button class="tab" onclick="showTab('user-tools', this)">User Tools</button>
                 <button class="tab" onclick="showTab('security', this)">Security Tools</button>
             </div>
 
@@ -122,7 +123,7 @@
             </div>
 
             <div id="tickets-tab" class="tab-content">
-                <div class="card" style="padding: 0; overflow: hidden;">
+                <div class="card" style="padding: 0; overflow: hidden; margin-bottom: 24px;">
                     <table id="tickets-table">
                         <thead>
                             <tr>
@@ -131,12 +132,49 @@
                                 <th>Category</th>
                                 <th>Status</th>
                                 <th>Created</th>
+                                <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
                             <!-- Populated by JS -->
                         </tbody>
                     </table>
+                </div>
+
+                <div id="ticket-details" class="card" style="display: none; border-left: 4px solid var(--accent);">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px;">
+                        <div>
+                            <h2 id="ticket-title" style="color: var(--accent); margin-bottom: 4px;">Ticket #0</h2>
+                            <p id="ticket-meta" style="font-size: 13px; color: #888;"></p>
+                        </div>
+                        <div style="display: flex; gap: 12px;">
+                            <select id="ticket-status-select" style="background: var(--bg); color: white; border: 1px solid var(--border); padding: 8px; border-radius: 4px;">
+                                <option value="open">Open</option>
+                                <option value="in_progress">In Progress</option>
+                                <option value="resolved">Resolved</option>
+                                <option value="closed">Closed</option>
+                            </select>
+                            <button onclick="updateTicketStatus()" style="padding: 8px 16px; background: var(--accent); border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: 600;">Update Status</button>
+                        </div>
+                    </div>
+                    
+                    <div style="background: rgba(0,0,0,0.2); padding: 20px; border-radius: 8px; margin-bottom: 24px; white-space: pre-wrap; font-size: 15px; line-height: 1.6;" id="ticket-content"></div>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
+                        <div>
+                            <h3>Internal Notes</h3>
+                            <div id="ticket-notes" style="margin-top: 12px; max-height: 300px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;"></div>
+                            <div style="margin-top: 16px; display: flex; gap: 8px;">
+                                <input type="text" id="new-note-content" placeholder="Add an internal note..." style="flex: 1; background: var(--bg); color: white; border: 1px solid var(--border); padding: 8px; border-radius: 4px;">
+                                <button onclick="addTicketNote()" style="padding: 8px 16px; background: var(--good); border: none; border-radius: 4px; color: #000; cursor: pointer; font-weight: 600;">Add Note</button>
+                            </div>
+                        </div>
+                        <div style="border-left: 1px solid var(--border); padding-left: 24px;">
+                            <h3>User Information</h3>
+                            <div id="ticket-user-info" style="margin-top: 12px;"></div>
+                            <button onclick="showUserFromTicket()" style="margin-top: 16px; padding: 8px 16px; background: var(--border); border: none; border-radius: 4px; color: white; cursor: pointer; width: 100%;">Manage User &rarr;</button>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -239,14 +277,52 @@
                                 <th>Reporter</th>
                                 <th>Reason</th>
                                 <th>Status</th>
-                                <th>Date</th>
+                                <th>Reported</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
+
                         <tbody>
                             <!-- Populated by JS -->
                         </tbody>
                     </table>
+                </div>
+
+                <div id="hash-report-details" class="card" style="display: none; border-left: 4px solid var(--accent); margin-bottom: 24px;">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px;">
+                        <div>
+                            <h2 id="report-title" style="color: var(--accent); margin-bottom: 4px;">Report #0</h2>
+                            <p id="report-meta" style="font-size: 13px; color: #888;"></p>
+                        </div>
+                        <div style="display: flex; gap: 12px;" id="report-actions-container"></div>
+                    </div>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
+                        <div>
+                            <h3>Content Preview</h3>
+                            <div id="report-preview" style="margin-top: 12px; background: rgba(0,0,0,0.2); border-radius: 8px; min-height: 200px; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+                                <p style="color: #666;">No preview available</p>
+                            </div>
+                            <div style="margin-top: 12px; font-size: 13px; color: #888;">
+                                <p><strong>SHA-256:</strong> <span id="report-sha256" style="font-family: monospace; word-break: break-all;"></span></p>
+                                <p><strong>pHash:</strong> <span id="report-phash" style="font-family: monospace;"></span></p>
+                            </div>
+                        </div>
+                        <div style="border-left: 1px solid var(--border); padding-left: 24px;">
+                            <h3>Moderation Context</h3>
+                            <div style="margin-top: 12px; display: flex; flex-direction: column; gap: 12px;">
+                                <p><strong>Reporter Reason:</strong> <span id="report-reason-text"></span></p>
+                                <p><strong>Reporter Details:</strong> <span id="report-details-text"></span></p>
+                                <p><strong>Uploader ID:</strong> <span id="report-uploader-id" style="font-family: monospace;"></span></p>
+                                <p><strong>Message ID:</strong> <span id="report-message-id" style="font-family: monospace;"></span></p>
+                                <div style="margin-top: 12px; padding: 12px; background: rgba(233,69,96,0.1); border-radius: 6px;">
+                                    <p style="font-size: 13px; margin-bottom: 8px;"><strong>Admin Notes</strong></p>
+                                    <div id="report-admin-notes" style="font-size: 13px; margin-bottom: 12px; font-style: italic;"></div>
+                                    <textarea id="report-new-note" placeholder="Add moderation notes..." style="width: 100%; background: var(--bg); color: white; border: 1px solid var(--border); padding: 8px; border-radius: 4px; min-height: 60px; font-size: 13px;"></textarea>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="card" style="padding: 0; overflow: hidden;">
@@ -325,47 +401,79 @@
                 </div>
             </div>
 
-            <div id="user-tiers-tab" class="tab-content" style="display: none;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-                    <h3>User Management & Tiers</h3>
-                </div>
-
+            <div id="users-tab" class="tab-content" style="display: none;">
                 <div class="card" style="margin-bottom: 16px;">
-                    <h3>Search User</h3>
-                    <div style="display: flex; gap: 8px; margin-top: 8px;">
-                        <input type="text" id="user-search" placeholder="Username or User ID..." style="flex: 1; background: var(--bg); color: white; border: 1px solid var(--border); padding: 8px; border-radius: 4px;">
-                        <button onclick="searchUsers()" style="padding: 8px 24px; background: var(--accent); border: none; border-radius: 4px; color: white; cursor: pointer;">Search</button>
+                    <h3>Search Users</h3>
+                    <p style="color: #888; font-size: 13px; margin-bottom: 16px;">Lookup users by username or snowflake ID.</p>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="text" id="user-search" placeholder="Username or User ID..." style="flex: 1; background: var(--bg); color: white; border: 1px solid var(--border); padding: 10px; border-radius: 6px;">
+                        <button onclick="searchUsers()" style="padding: 10px 24px; background: var(--accent); border: none; border-radius: 6px; color: white; cursor: pointer; font-weight: 600;">Search</button>
                     </div>
-                    <div id="user-search-results" style="margin-top: 16px;"></div>
+                    <div id="user-search-results" style="margin-top: 20px;"></div>
                 </div>
 
                 <div id="user-details" class="card" style="display: none;">
-                    <div style="display: flex; justify-content: space-between;">
-                        <div id="user-info" style="flex: 1;"></div>
-                        <div style="flex: 1; border-left: 1px solid var(--border); padding-left: 24px;">
-                            <h3>Update Tier</h3>
-                            <div style="display: flex; gap: 8px; margin-top: 8px;">
-                                <select id="tier-select" style="flex: 1; background: var(--bg); color: white; border: 1px solid var(--border); padding: 8px; border-radius: 4px;">
-                                    <option value="free">Free</option>
-                                    <option value="pro">Pro</option>
-                                    <option value="enterprise">Enterprise</option>
-                                    <option value="admin">Admin</option>
-                                </select>
-                                <button onclick="updateUserTier()" style="padding: 8px 16px; background: var(--accent); border: none; border-radius: 4px; color: white; cursor: pointer;">Update Tier</button>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 32px;">
+                        <div id="user-info"></div>
+                        <div style="border-left: 1px solid var(--border); padding-left: 32px;">
+                            <h3 style="margin-bottom: 16px;">Administrative Actions</h3>
+                            
+                            <div style="margin-bottom: 24px;">
+                                <label style="display: block; font-size: 12px; color: #888; margin-bottom: 8px; text-transform: uppercase;">User Tier</label>
+                                <div style="display: flex; gap: 8px;">
+                                    <select id="tier-select" style="flex: 1; background: var(--bg); color: white; border: 1px solid var(--border); padding: 8px; border-radius: 4px;">
+                                        <option value="free">Free</option>
+                                        <option value="alpha">Alpha</option>
+                                        <option value="beta">Beta</option>
+                                        <option value="premium">Premium</option>
+                                        <option value="staff">Staff</option>
+                                    </select>
+                                    <button onclick="updateUserTier()" style="padding: 8px 16px; background: var(--accent); border: none; border-radius: 4px; color: white; cursor: pointer;">Update</button>
+                                </div>
                             </div>
 
-                            <h3 style="margin-top: 24px;">Manage Badges</h3>
-                            <div id="user-badges" style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px;"></div>
-                            <div style="display: flex; gap: 8px; margin-top: 16px;">
-                                <select id="badge-select" style="flex: 1; background: var(--bg); color: white; border: 1px solid var(--border); padding: 8px; border-radius: 4px;">
-                                    <option value="early_adopter">Early Adopter</option>
-                                    <option value="contributor">Contributor</option>
-                                    <option value="bug_hunter">Bug Hunter</option>
-                                    <option value="supporter">Supporter</option>
-                                    <option value="vip">VIP</option>
-                                </select>
-                                <button onclick="addBadge()" style="padding: 8px 16px; background: var(--good); border: none; border-radius: 4px; color: #000; cursor: pointer;">Add Badge</button>
+                            <div style="margin-bottom: 24px;">
+                                <label style="display: block; font-size: 12px; color: #888; margin-bottom: 8px; text-transform: uppercase;">Badges</label>
+                                <div id="user-badges" style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;"></div>
+                                <div style="display: flex; gap: 8px;">
+                                    <select id="badge-select" style="flex: 1; background: var(--bg); color: white; border: 1px solid var(--border); padding: 8px; border-radius: 4px;">
+                                        <option value="early_adopter">Early Adopter</option>
+                                        <option value="contributor">Contributor</option>
+                                        <option value="bug_hunter">Bug Hunter</option>
+                                        <option value="supporter">Supporter</option>
+                                        <option value="vip">VIP</option>
+                                        <option value="staff">Staff</option>
+                                    </select>
+                                    <button onclick="addBadge()" style="padding: 8px 16px; background: var(--good); border: none; border-radius: 4px; color: #000; cursor: pointer;">Add</button>
+                                </div>
                             </div>
+
+                            <div>
+                                <label style="display: block; font-size: 12px; color: #888; margin-bottom: 8px; text-transform: uppercase;">Security</label>
+                                <button onclick="forceLogoutSelectedUser()" style="width: 100%; padding: 10px; background: var(--warn); border: none; border-radius: 4px; color: #000; font-weight: 600; cursor: pointer;">Force Logout Everywhere</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="user-tools-tab" class="tab-content" style="display: none;">
+                <div class="chart-row">
+                    <div class="card">
+                        <h3>Bulk Moderation</h3>
+                        <p style="color: #888; font-size: 13px; margin-bottom: 16px;">Tools for performing actions on multiple users or site-wide.</p>
+                        <div style="padding: 16px; border: 1px solid var(--bad); border-radius: 8px; border-left: 4px solid var(--bad); margin-bottom: 16px;">
+                            <h4 style="color: var(--bad)">Global Session Purge</h4>
+                            <p style="font-size: 12px; color: #666; margin-bottom: 12px;">Immediately invalidates ALL active sessions for ALL users. Use only in case of major security breach.</p>
+                            <button onclick="globalSessionPurge()" style="width: 100%; padding: 12px; background: var(--bad); border: none; border-radius: 4px; color: white; font-weight: bold; cursor: pointer;">PURGE ALL SESSIONS</button>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h3>Quick Lookup</h3>
+                        <p style="color: #888; font-size: 13px; margin-bottom: 16px;">Fast tools for finding user identifiers.</p>
+                        <div style="display: flex; flex-direction: column; gap: 12px;">
+                            <button onclick="showTab('users', document.querySelector('[onclick*=\"users\"]'))" style="padding: 12px; background: var(--border); border: none; border-radius: 6px; color: white; cursor: pointer; text-align: left;">Find User ID by Username &rarr;</button>
+                            <button onclick="window.open('/api/v1/docs', '_blank')" style="padding: 12px; background: var(--border); border: none; border-radius: 6px; color: white; cursor: pointer; text-align: left;">View API Documentation &rarr;</button>
                         </div>
                     </div>
                 </div>
@@ -418,12 +526,12 @@
         }
 
         function formatEndpoint(ep) {
-            if (ep === '/') return '🏠 Home';
-            if (ep.includes('login')) return '🔑 Login';
-            if (ep.includes('admin')) return '🛡️ Admin';
-            if (ep.includes('tickets')) return '🎫 Tickets';
-            if (ep.includes('messages')) return '💬 Messages';
-            if (ep.includes('telemetry')) return '📊 Telemetry';
+            if (ep === '/') return 'Home';
+            if (ep.includes('login')) return 'Login';
+            if (ep.includes('admin')) return 'Admin';
+            if (ep.includes('tickets')) return 'Tickets';
+            if (ep.includes('messages')) return 'Messages';
+            if (ep.includes('telemetry')) return 'Telemetry';
             return ep;
         }
 
@@ -445,6 +553,114 @@
                 renderCharts();
             } catch (e) {
                 console.error('Failed to load telemetry stats:', e);
+            }
+        }
+
+        let selectedTicketId = null;
+        async function viewTicket(ticketId) {
+            selectedTicketId = ticketId;
+            try {
+                const res = await fetch(`/api/v1/admin/tickets/${ticketId}`, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!res.ok) throw new Error('Failed to load ticket details');
+                const ticket = await res.json();
+                
+                document.getElementById('ticket-title').textContent = `Ticket #${ticket.id}`;
+                document.getElementById('ticket-meta').textContent = `Submitted by ${ticket.username} (${ticket.user_id}) on ${new Date(ticket.created_at).toLocaleString()}`;
+                document.getElementById('ticket-content').textContent = ticket.content;
+                document.getElementById('ticket-status-select').value = ticket.status;
+                
+                document.getElementById('ticket-user-info').innerHTML = `
+                    <p><strong>Username:</strong> ${escapeHtml(ticket.username)}</p>
+                    <p><strong>User ID:</strong> <span style="font-family:monospace">${ticket.user_id}</span></p>
+                    <p><strong>Category:</strong> ${ticket.category || 'None'}</p>
+                    <p><strong>Rating:</strong> ${ticket.rating ? '⭐'.repeat(ticket.rating) : 'N/A'}</p>
+                `;
+                
+                // Load notes
+                loadTicketNotes(ticketId);
+                
+                document.getElementById('ticket-details').style.display = 'block';
+                document.getElementById('ticket-details').scrollIntoView({ behavior: 'smooth' });
+            } catch (e) {
+                alert(e.message);
+            }
+        }
+
+        async function loadTicketNotes(ticketId) {
+            try {
+                const res = await fetch(`/api/v1/admin/tickets/${ticketId}/notes`, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!res.ok) return;
+                const notes = await res.json();
+                const container = document.getElementById('ticket-notes');
+                
+                if (notes.length === 0) {
+                    container.innerHTML = '<p style="color:#666; font-size:13px; font-style:italic;">No internal notes yet.</p>';
+                } else {
+                    container.innerHTML = notes.map(n => `
+                        <div style="background:var(--bg); padding:10px; border-radius:6px; border-left:3px solid var(--good);">
+                            <div style="display:flex; justify-content:space-between; font-size:11px; color:#888; margin-bottom:4px;">
+                                <span>${escapeHtml(n.admin_username)}</span>
+                                <span>${new Date(n.created_at).toLocaleString()}</span>
+                            </div>
+                            <div style="font-size:13px;">${escapeHtml(n.content)}</div>
+                        </div>
+                    `).join('');
+                }
+            } catch (e) {
+                console.error('Failed to load notes:', e);
+            }
+        }
+
+        async function updateTicketStatus() {
+            if (!selectedTicketId) return;
+            const status = document.getElementById('ticket-status-select').value;
+            try {
+                const res = await fetch(`/api/v1/admin/tickets/${selectedTicketId}/status`, {
+                    method: 'PATCH',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status })
+                });
+                if (!res.ok) throw new Error('Failed to update status');
+                alert('Ticket status updated!');
+                // Refresh list
+                verifyAndLoad();
+            } catch (e) {
+                alert(e.message);
+            }
+        }
+
+        async function addTicketNote() {
+            if (!selectedTicketId) return;
+            const content = document.getElementById('new-note-content').value.trim();
+            if (!content) return;
+            
+            try {
+                const res = await fetch(`/api/v1/admin/tickets/${selectedTicketId}/notes`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content })
+                });
+                if (!res.ok) throw new Error('Failed to add note');
+                document.getElementById('new-note-content').value = '';
+                loadTicketNotes(selectedTicketId);
+            } catch (e) {
+                alert(e.message);
+            }
+        }
+
+        function showUserFromTicket() {
+            // Logic to switch to user search and show this user
+            // We need to extract the user ID from the UI since it might not be stored globally
+            const userIdMatch = document.getElementById('ticket-meta').textContent.match(/\((\d+)\)/);
+            if (userIdMatch) {
+                const userId = userIdMatch[1];
+                showTab('users', document.querySelector('[onclick*=\"users\"]'));
+                document.getElementById('user-search').value = userId;
+                searchUsers();
             }
         }
         
@@ -706,8 +922,15 @@
                 }
                 const tickets = await ticketsRes.json();
                 document.querySelector('#tickets-table tbody').innerHTML = tickets.map(t => 
-                    `<tr><td>${t.id}</td><td>${t.username}</td><td>${t.category || '-'}</td><td><span class="status ${t.status}">${t.status}</span></td><td>${new Date(t.created_at).toLocaleString()}</td></tr>`
-                ).join('') || '<tr><td colspan="5" style="text-align:center;color:#888">No tickets</td></tr>';
+                    `<tr>
+                        <td>${t.id}</td>
+                        <td>${t.username}</td>
+                        <td>${t.category || '-'}</td>
+                        <td><span class="status ${t.status}">${t.status}</span></td>
+                        <td>${new Date(t.created_at).toLocaleString()}</td>
+                        <td><button onclick="viewTicket('${t.id}')" style="padding:4px 12px; font-size:12px; background:var(--accent); border:none; border-radius:4px; color:white; cursor:pointer;">View</button></td>
+                    </tr>`
+                ).join('') || '<tr><td colspan="6" style="text-align:center;color:#888">No tickets</td></tr>';
                 
                 // Load full telemetry stats for charts
                 await loadTelemetryStats();
@@ -725,7 +948,8 @@
             document.getElementById('telemetry-tab').style.display = name === 'telemetry' ? 'block' : 'none';
             document.getElementById('hash-reports-tab').style.display = name === 'hash-reports' ? 'block' : 'none';
             document.getElementById('database-tab').style.display = name === 'database' ? 'block' : 'none';
-            document.getElementById('user-tiers-tab').style.display = name === 'user-tiers' ? 'block' : 'none';
+            document.getElementById('users-tab').style.display = name === 'users' ? 'block' : 'none';
+            document.getElementById('user-tools-tab').style.display = name === 'user-tools' ? 'block' : 'none';
             document.getElementById('security-tab').style.display = name === 'security' ? 'block' : 'none';
             if (name === 'telemetry' && !telemetryData.length) loadTelemetryStats();
             if (name === 'hash-reports') loadHashReports();
@@ -790,6 +1014,23 @@
                 });
                 if (!res.ok) throw new Error('Failed to unblock IP');
                 loadSecurityTools();
+            } catch (e) {
+                alert(e.message);
+            }
+        }
+
+        async function forceLogoutSelectedUser() {
+            if (!selectedUserId) return;
+            if (!confirm(`Force logout user ${selectedUserData.username} everywhere?`)) return;
+            
+            try {
+                const res = await fetch('/api/v1/admin/security/force-logout', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: parseInt(selectedUserId) })
+                });
+                if (!res.ok) throw new Error('Failed to force logout');
+                alert(`User ${selectedUserData.username} has been logged out from all devices.`);
             } catch (e) {
                 alert(e.message);
             }
@@ -883,18 +1124,19 @@
                 return;
             }
             tbody.innerHTML = hashReportsData.map(r => {
-                const shortHash = r.hash_value.substring(0, 16) + '...';
-                const statusClass = r.status === 'pending' ? 'warn' : r.status === 'blocked' ? 'bad' : r.status === 'cleared' ? 'good' : '';
-                const date = new Date(r.reported_at).toLocaleString();
-                const actions = r.status === 'pending' ? `
-                    <button onclick="reviewReport(${r.id}, 'block')" style="padding:4px 8px;background:#ef4444;border:none;border-radius:4px;color:white;cursor:pointer;margin-right:4px">Block</button>
-                    <button onclick="reviewReport(${r.id}, 'clear')" style="padding:4px 8px;background:#4ade80;border:none;border-radius:4px;color:#000;cursor:pointer;margin-right:4px">Clear</button>
-                    <button onclick="reviewReport(${r.id}, 'dismiss')" style="padding:4px 8px;background:#6b7280;border:none;border-radius:4px;color:white;cursor:pointer">Dismiss</button>
-                ` : '<span style="color:#888">Reviewed</span>';
+                const shortHash = (r.hash_value || '').substring(0, 16) + '...';
+                const date = r.reported_at ? new Date(r.reported_at).toLocaleString() : 'Unknown';
+                const actions = `
+                    <button onclick="viewHashReport('${r.id}')" style="padding:4px 8px;background:var(--accent);border:none;border-radius:4px;color:white;cursor:pointer;margin-right:4px">View</button>
+                    ${r.status === 'pending' ? `
+                        <button onclick="reviewReport(${r.id}, 'block')" style="padding:4px 8px;background:#ef4444;border:none;border-radius:4px;color:white;cursor:pointer;margin-right:4px">Block</button>
+                        <button onclick="reviewReport(${r.id}, 'clear')" style="padding:4px 8px;background:#4ade80;border:none;border-radius:4px;color:#000;cursor:pointer;margin-right:4px">Clear</button>
+                    ` : '<span style="color:#888; font-size:11px;">Reviewed</span>'}
+                `;
                 return `<tr>
-                    <td style="font-family:monospace;font-size:12px" title="${r.hash_value}">${shortHash}</td>
-                    <td>${r.reporter_username || 'Unknown'}</td>
-                    <td>${r.reason}</td>
+                    <td style="font-family:monospace;font-size:12px" title="${r.hash_value || ''}">${shortHash}</td>
+                    <td>${escapeHtml(r.reporter_username || 'Unknown')}</td>
+                    <td>${escapeHtml(r.reason || 'None')}</td>
                     <td><span class="status ${r.status}" style="background:${r.status === 'pending' ? '#fbbf24' : r.status === 'blocked' ? '#ef4444' : r.status === 'cleared' ? '#4ade80' : '#6b7280'};color:${r.status === 'pending' || r.status === 'cleared' ? '#000' : '#fff'}">${r.status}</span></td>
                     <td>${date}</td>
                     <td>${actions}</td>
@@ -921,8 +1163,58 @@
             }).join('');
         }
         
-        async function reviewReport(reportId, action) {
-            const notes = action === 'block' ? prompt('Enter reason for blocking (optional):') : null;
+        async function viewHashReport(reportId) {
+            try {
+                const res = await fetch(`/api/v1/admin/hash-reports?limit=100`, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!res.ok) throw new Error('Failed to load reports');
+                const reports = await res.json();
+                const r = reports.find(x => x.id == reportId);
+                if (!r) throw new Error('Report not found');
+
+                document.getElementById('report-title').textContent = `Report #${r.id}`;
+                document.getElementById('report-meta').textContent = `Reported by ${r.reporter_username || 'Unknown'} on ${new Date(r.reported_at).toLocaleString()}`;
+                
+                document.getElementById('report-sha256').textContent = r.hash_value;
+                document.getElementById('report-phash').textContent = r.phash_value || 'N/A';
+                document.getElementById('report-reason-text').textContent = r.reason;
+                document.getElementById('report-details-text').textContent = r.details || 'None provided';
+                document.getElementById('report-uploader-id').textContent = r.uploader_id || 'Unknown';
+                document.getElementById('report-message-id').textContent = r.message_id || 'N/A';
+                document.getElementById('report-admin-notes').textContent = r.admin_notes || 'No notes.';
+                
+                const previewContainer = document.getElementById('report-preview');
+                if (r.attachment_url) {
+                    previewContainer.innerHTML = `<img src="${r.attachment_url}" style="max-width: 100%; max-height: 400px; object-fit: contain;">`;
+                } else {
+                    previewContainer.innerHTML = '<p style="color: #666;">No image preview available</p>';
+                }
+
+                const actionsContainer = document.getElementById('report-actions-container');
+                if (r.status === 'pending') {
+                    actionsContainer.innerHTML = `
+                        <button onclick="reviewReportFromDetail('${r.id}', 'block')" style="padding: 8px 16px; background: var(--bad); border: none; border-radius: 4px; color: white; cursor: pointer;">Block Content</button>
+                        <button onclick="reviewReportFromDetail('${r.id}', 'clear')" style="padding: 8px 16px; background: var(--good); border: none; border-radius: 4px; color: #000; cursor: pointer;">Clear (False Positive)</button>
+                    `;
+                } else {
+                    actionsContainer.innerHTML = `<span class="status ${r.status}">Already ${r.status}</span>`;
+                }
+
+                document.getElementById('hash-report-details').style.display = 'block';
+                document.getElementById('hash-report-details').scrollIntoView({ behavior: 'smooth' });
+            } catch (e) {
+                alert(e.message);
+            }
+        }
+
+        async function reviewReportFromDetail(reportId, action) {
+            const notes = document.getElementById('report-new-note').value.trim();
+            await reviewReport(reportId, action, notes);
+        }
+
+        async function reviewReport(reportId, action, customNotes = null) {
+            const notes = customNotes || (action === 'block' ? prompt('Enter reason for blocking (optional):') : null);
             try {
                 const res = await fetch(`/api/v1/admin/hash-reports/${reportId}/review`, {
                     method: 'POST',
@@ -930,6 +1222,9 @@
                     body: JSON.stringify({ action, notes })
                 });
                 if (!res.ok) throw new Error('Review failed');
+                
+                // Refresh data
+                document.getElementById('hash-report-details').style.display = 'none';
                 loadHashReports();
             } catch (e) {
                 alert('Failed to review report: ' + e.message);
@@ -1296,17 +1591,28 @@
                 if (!res.ok) throw new Error('Failed to load user');
                 selectedUserData = await res.json();
                 
+                // Construct profile link (assuming standard client path)
+                const profileUrl = `/users/${selectedUserData.id}`;
+                
                 document.getElementById('user-info').innerHTML = `
-                    <p><strong>ID:</strong> <span style="font-family:monospace">${selectedUserData.id}</span></p>
-                    <p><strong>Username:</strong> ${escapeHtml(selectedUserData.username)}</p>
-                    <p><strong>Email:</strong> ${selectedUserData.email || '-'}</p>
-                    <p><strong>Current Tier:</strong> <span class="status" style="background:var(--accent)">${selectedUserData.tier}</span></p>
-                    <p><strong>Created:</strong> ${new Date(selectedUserData.created_at).toLocaleString()}</p>
+                    <h3 style="margin-bottom: 16px;">User Details</h3>
+                    <div style="display: flex; flex-direction: column; gap: 12px;">
+                        <p><strong>ID:</strong> <span style="font-family:monospace; color: var(--accent);">${selectedUserData.id}</span></p>
+                        <p><strong>Username:</strong> ${escapeHtml(selectedUserData.username)}</p>
+                        <p><strong>Email:</strong> ${selectedUserData.email || '-'}</p>
+                        <p><strong>Current Tier:</strong> <span class="status" style="background:var(--accent)">${selectedUserData.tier}</span></p>
+                        <p><strong>Account Created:</strong> ${new Date(selectedUserData.created_at).toLocaleString()}</p>
+                        <p><strong>Last Activity:</strong> ${selectedUserData.last_login ? new Date(selectedUserData.last_login).toLocaleString() : 'Never'}</p>
+                        <div style="margin-top: 8px;">
+                            <a href="${profileUrl}" target="_blank" class="refresh-btn" style="text-decoration: none; display: inline-block; padding: 8px 16px; font-size: 13px;">View Public Profile &rarr;</a>
+                        </div>
+                    </div>
                 `;
                 
                 document.getElementById('tier-select').value = selectedUserData.tier;
                 renderUserBadges();
                 document.getElementById('user-details').style.display = 'block';
+                document.getElementById('user-details').scrollIntoView({ behavior: 'smooth' });
             } catch (e) {
                 alert('Error loading user: ' + e.message);
             }

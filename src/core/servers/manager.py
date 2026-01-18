@@ -403,7 +403,7 @@ class ServerManager(BaseManager):
         if redis_available():
             cached = cache_get(cache_key)
             if cached:
-                logger.info(f"get_server: cache hit for {server_id}")
+                logger.debug(f"get_server: cache hit for {server_id}")
                 return self._dict_to_server(cached)
 
         row = self._db.fetch_one(

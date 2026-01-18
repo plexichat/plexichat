@@ -455,12 +455,20 @@ async def accept_friend_request(
         try:
             pending = relationships.get_pending_requests_incoming(current_user.user_id)
             request_id = None
+            
+            # Try to match by user_id provided (which could be the sender's user ID or the request ID itself)
+            try:
+                provided_id = int(user_id)
+            except (ValueError, TypeError):
+                provided_id = 0
+
             for r in pending:
-                if getattr(r, "sender_id", 0) == sender_id:
+                if r.id == provided_id or r.sender_id == provided_id:
                     request_id = r.id
                     break
 
             if not request_id:
+                logger.warning(f"Friend request from/with ID {user_id} not found for user {current_user.user_id}. Pending IDs: {[r.id for r in pending]}, Senders: {[r.sender_id for r in pending]}")
                 raise HTTPException(
                     status_code=404,
                     detail={

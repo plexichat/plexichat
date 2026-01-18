@@ -149,7 +149,7 @@ def get_internal_secret() -> Optional[str]:
     return _internal_secret
 
 
-def get_db() -> Optional[Any]:
+def get_database() -> Optional[Any]:
     """Get database instance."""
     if not _setup_complete:
         # If not setup but we have a database from somewhere else (like test runner)

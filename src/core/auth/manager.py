@@ -13,7 +13,7 @@ import utils.logger as logger
 from src.core.base import BaseManager, SnowflakeID
 from src.utils.encryption import EncryptionManager
 
-from src.core.database import cached
+from src.core.database import cached, invalidate_pattern
 from .models import (
     User,
     Session,
@@ -557,6 +557,9 @@ class AuthManager(BaseManager):
         return False
 
     def logout_all(self, user_id: int, except_token: Optional[str] = None) -> int:
+        # Clear token verification cache for immediate effect
+        invalidate_pattern("token_verify:*")
+        
         if except_token:
             parsed = parse_token(except_token)
             if parsed and parsed["token_type"] == "session":
@@ -572,6 +575,7 @@ class AuthManager(BaseManager):
 
     def logout_all_users(self) -> int:
         """Invalidate ALL active sessions for ALL users."""
+        invalidate_pattern("token_verify:*")
         self._db.execute("UPDATE auth_sessions SET revoked = 1 WHERE revoked = 0")
         logger.info("Site-wide session purge: all users logged out")
         return 1
@@ -596,6 +600,7 @@ class AuthManager(BaseManager):
         ]
 
     def revoke_session(self, user_id: int, session_id: int) -> bool:
+        invalidate_pattern("token_verify:*")
         self._db.execute(
             "UPDATE auth_sessions SET revoked = 1 WHERE id = ? AND user_id = ?",
             (session_id, user_id),

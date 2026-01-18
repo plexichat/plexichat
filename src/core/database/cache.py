@@ -238,7 +238,7 @@ def cached(
                     cached_value = client.get_json(cache_key)
                     if cached_value is not None:
                         _cache_stats["hits"] += 1
-                        logger.info(
+                        logger.debug(
                             f"CACHE HIT (Redis): {cache_key} (total hits: {_cache_stats['hits']})"
                         )
                         return cast(T, _reconstruct_object(cached_value))
@@ -248,14 +248,14 @@ def cached(
                 cached_value = _mem_cache_get(cache_key)
                 if cached_value is not None:
                     _cache_stats["hits"] += 1
-                    logger.info(
+                    logger.debug(
                         f"CACHE HIT (Memory): {cache_key} (total hits: {_cache_stats['hits']})"
                     )
                     return cast(T, _reconstruct_object(cached_value))
 
             # Cache miss - execute function
             _cache_stats["misses"] += 1
-            logger.info(
+            logger.debug(
                 f"CACHE MISS: {cache_key} (total misses: {_cache_stats['misses']})"
             )
 
@@ -304,7 +304,7 @@ def cached(
                     cached_value = client.get_json(cache_key)
                     if cached_value is not None:
                         _cache_stats["hits"] += 1
-                        logger.info(
+                        logger.debug(
                             f"CACHE HIT (Redis): {cache_key} (total hits: {_cache_stats['hits']})"
                         )
                         return cast(T, _reconstruct_object(cached_value))
@@ -314,14 +314,14 @@ def cached(
                 cached_value = _mem_cache_get(cache_key)
                 if cached_value is not None:
                     _cache_stats["hits"] += 1
-                    logger.info(
+                    logger.debug(
                         f"CACHE HIT (Memory): {cache_key} (total hits: {_cache_stats['hits']})"
                     )
                     return cast(T, _reconstruct_object(cached_value))
 
             # Cache miss - execute function
             _cache_stats["misses"] += 1
-            logger.info(
+            logger.debug(
                 f"CACHE MISS: {cache_key} (total misses: {_cache_stats['misses']})"
             )
 
