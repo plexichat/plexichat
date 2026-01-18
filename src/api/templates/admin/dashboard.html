@@ -450,7 +450,13 @@
 
                             <div>
                                 <label style="display: block; font-size: 12px; color: #888; margin-bottom: 8px; text-transform: uppercase;">Security</label>
-                                <button onclick="forceLogoutSelectedUser()" style="width: 100%; padding: 10px; background: var(--warn); border: none; border-radius: 4px; color: #000; font-weight: 600; cursor: pointer;">Force Logout Everywhere</button>
+                                <div style="display: flex; flex-direction: column; gap: 8px;">
+                                    <button onclick="forceLogoutSelectedUser()" style="width: 100%; padding: 10px; background: var(--warn); border: none; border-radius: 4px; color: #000; font-weight: 600; cursor: pointer;">Force Logout Everywhere</button>
+                                    <div id="lock-actions" style="display: flex; gap: 8px;">
+                                        <button onclick="suspendUserPrompt()" style="flex: 1; padding: 10px; background: #f97316; border: none; border-radius: 4px; color: white; font-weight: 600; cursor: pointer;">Suspend Account</button>
+                                        <button id="unlock-btn" onclick="unlockUser()" style="flex: 1; padding: 10px; background: var(--good); border: none; border-radius: 4px; color: #000; font-weight: 600; cursor: pointer; display: none;">Unlock Account</button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1055,6 +1061,61 @@
             }
         }
 
+        async function suspendUserPrompt() {
+            if (!selectedUserId) return;
+            const duration = prompt('Enter suspension duration:\n- "perm" for permanent\n- "1h" for 1 hour\n- "1d" for 1 day\n- "7d" for 1 week', 'perm');
+            if (!duration) return;
+
+            let seconds = null;
+            if (duration !== 'perm') {
+                const match = duration.match(/^(\d+)([hdw])$/);
+                if (!match) return alert('Invalid duration format. Use "1h", "1d", "7d", etc.');
+                const value = parseInt(match[1]);
+                const unit = match[2];
+                if (unit === 'h') seconds = value * 3600;
+                if (unit === 'd') seconds = value * 86400;
+                if (unit === 'w') seconds = value * 604800;
+            }
+
+            await lockUser(selectedUserId, seconds);
+        }
+
+        async function lockUser(userId, durationSeconds = null) {
+            try {
+                const res = await fetch('/api/v1/admin/security/lock-user', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        user_id: parseInt(userId),
+                        duration_seconds: durationSeconds
+                    })
+                });
+                if (!res.ok) throw new Error('Failed to lock account');
+                alert(`Account for user ${userId} has been suspended.`);
+                // Refresh details
+                selectUser(userId);
+            } catch (e) {
+                alert(e.message);
+            }
+        }
+
+        async function unlockUser() {
+            if (!selectedUserId) return;
+            try {
+                const res = await fetch('/api/v1/admin/security/unlock-user', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: parseInt(selectedUserId) })
+                });
+                if (!res.ok) throw new Error('Failed to unlock account');
+                alert(`Account for user ${selectedUserId} has been unlocked.`);
+                // Refresh details
+                selectUser(selectedUserId);
+            } catch (e) {
+                alert(e.message);
+            }
+        }
+
         async function globalSessionPurge() {
             const msg = 'DANGER: This will log out EVERY single user on the platform. This should only be used in case of severe security breach. Are you absolutely sure?';
             if (!confirm(msg)) return;
@@ -1625,8 +1686,12 @@
                     </div>
                 `;
                 
-                document.getElementById('tier-select').value = selectedUserData.tier;
+                document.getElementById('tier-select').value = selectedUserData.tier || 'standard';
                 renderUserBadges();
+                
+                // Update unlock button visibility
+                document.getElementById('unlock-btn').style.display = selectedUserData.account_locked ? 'block' : 'none';
+                
                 document.getElementById('user-details').style.display = 'block';
                 document.getElementById('user-details').scrollIntoView({ behavior: 'smooth' });
             } catch (e) {

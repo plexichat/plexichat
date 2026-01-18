@@ -146,6 +146,40 @@ async def force_logout(request: Request, body: ForceLogoutRequest) -> SuccessRes
 
 
 @router.post(
+    "/security/lock-user",
+    response_model=SuccessResponse,
+    summary="Lock/Suspend a user account",
+)
+async def admin_lock_user(request: Request, body: UserLockRequest) -> SuccessResponse:
+    """Lock/suspend a user account and logout all sessions."""
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
+
+    from src.core import admin
+    admin.lock_user(body.user_id, body.duration_seconds)
+
+    logger.info(f"Admin {admin_id} locked user {body.user_id} (duration: {body.duration_seconds})")
+    return SuccessResponse(success=True)
+
+
+@router.post(
+    "/security/unlock-user",
+    response_model=SuccessResponse,
+    summary="Unlock/Unsuspend a user account",
+)
+async def admin_unlock_user(request: Request, body: ForceLogoutRequest) -> SuccessResponse:
+    """Unlock/unsuspend a user account."""
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
+
+    from src.core import admin
+    admin.unlock_user(body.user_id)
+
+    logger.info(f"Admin {admin_id} unlocked user {body.user_id}")
+    return SuccessResponse(success=True)
+
+
+@router.post(
     "/security/logout-all",
     response_model=SuccessResponse,
     summary="Logout ALL users everywhere",
@@ -1908,12 +1942,20 @@ async def admin_user_search(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_user_details(user_id: int, request: Request) -> UserDetailsResponse:
+async def get_user_details(user_id: str, request: Request) -> UserDetailsResponse:
     """Get user details by ID."""
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
 
     try:
+        try:
+            uid = int(user_id)
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid user ID format"}},
+            )
+
         admin_core = api.get_admin()
         if not admin_core:
             logger.error(
@@ -1924,7 +1966,7 @@ async def get_user_details(user_id: int, request: Request) -> UserDetailsRespons
                 detail={"error": {"code": 500, "message": "Internal server error"}},
             )
 
-        user = admin_core.get_user_details(user_id)
+        user = admin_core.get_user_details(uid)
         if not user:
             logger.warning(
                 f"Admin {admin_id} requested details for non-existent user {user_id}"

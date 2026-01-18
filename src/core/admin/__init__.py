@@ -1254,6 +1254,8 @@ class AdminUserDetail:
     badges: List[str]
     created_at: int
     last_login: Optional[int]
+    account_locked: bool = False
+    locked_until: Optional[int] = None
 
 
 def search_users(q: str, limit: int = 20, offset: int = 0) -> List[AdminUserDetail]:
@@ -1264,7 +1266,7 @@ def search_users(q: str, limit: int = 20, offset: int = 0) -> List[AdminUserDeta
         # Try to parse as ID first
         user_id = int(q)
         rows = db.fetch_all(
-            """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at 
+            """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at, u.account_locked, u.locked_until
                FROM auth_users u
                LEFT JOIN user_features f ON u.id = f.user_id
                WHERE u.id = ? LIMIT ? OFFSET ?""",
@@ -1273,7 +1275,7 @@ def search_users(q: str, limit: int = 20, offset: int = 0) -> List[AdminUserDeta
     except ValueError:
         # Search by username or email index
         rows = db.fetch_all(
-            """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at 
+            """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at, u.account_locked, u.locked_until
                FROM auth_users u
                LEFT JOIN user_features f ON u.id = f.user_id
                WHERE u.username LIKE ? OR u.email_index LIKE ? LIMIT ? OFFSET ?""",
@@ -1305,6 +1307,8 @@ def search_users(q: str, limit: int = 20, offset: int = 0) -> List[AdminUserDeta
                     badges=badges,
                     created_at=row["created_at"],
                     last_login=None,  # Not in search results for performance
+                    account_locked=bool(row.get("account_locked", 0)),
+                    locked_until=row.get("locked_until"),
                 )
             )
         else:
@@ -1329,6 +1333,8 @@ def search_users(q: str, limit: int = 20, offset: int = 0) -> List[AdminUserDeta
                     badges=badges,
                     created_at=row[5],
                     last_login=None,
+                    account_locked=bool(row[6]),
+                    locked_until=row[7],
                 )
             )
     return users
@@ -1339,7 +1345,7 @@ def get_user_details(user_id: int) -> Optional[AdminUserDetail]:
     db = _get_db()
 
     row = db.fetch_one(
-        """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at, u.last_login_at
+        """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at, u.last_login_at, u.account_locked, u.locked_until
            FROM auth_users u
            LEFT JOIN user_features f ON u.id = f.user_id
            WHERE u.id = ?""",
@@ -1370,6 +1376,8 @@ def get_user_details(user_id: int) -> Optional[AdminUserDetail]:
             badges=badges,
             created_at=row["created_at"],
             last_login=row.get("last_login_at"),
+            account_locked=bool(row.get("account_locked", 0)),
+            locked_until=row.get("locked_until"),
         )
     else:
         badges_json = row[4] or "[]"
@@ -1392,6 +1400,8 @@ def get_user_details(user_id: int) -> Optional[AdminUserDetail]:
             badges=badges,
             created_at=row[5],
             last_login=row[6],
+            account_locked=bool(row[7]),
+            locked_until=row[8],
         )
 
 
@@ -1568,6 +1578,37 @@ def set_admin(user_id: int, admin_status: bool) -> bool:
     except Exception as e:
         logger.error(f"Failed to set admin status: {e}")
         return False
+
+
+def lock_user(user_id: int, duration_seconds: Optional[int] = None) -> bool:
+    """Lock/suspend a user account."""
+    db = _get_db()
+    locked_until = (
+        int(time.time() + duration_seconds) if duration_seconds is not None else None
+    )
+
+    db.execute(
+        "UPDATE auth_users SET account_locked = 1, locked_until = ? WHERE id = ?",
+        (locked_until, user_id),
+    )
+
+    # Force logout everywhere
+    from src.core import auth
+
+    if auth:
+        auth.logout_all(user_id)
+
+    return True
+
+
+def unlock_user(user_id: int) -> bool:
+    """Unlock/unsuspend a user account."""
+    db = _get_db()
+    db.execute(
+        "UPDATE auth_users SET account_locked = 0, locked_until = NULL WHERE id = ?",
+        (user_id,),
+    )
+    return True
 
 
 __all__ = [

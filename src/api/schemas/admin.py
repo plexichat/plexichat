@@ -368,6 +368,12 @@ class ForceLogoutRequest(BaseModel):
     user_id: int = Field(..., description="User ID to logout")
 
 
+class UserLockRequest(BaseModel):
+    """Request to lock/suspend a user account."""
+    user_id: int = Field(..., description="User ID to lock")
+    duration_seconds: Optional[int] = Field(None, description="Lock duration in seconds (null for permanent)")
+
+
 class TelemetryExportResponse(BaseModel):
     """Telemetry export response (JSON format)."""
 
