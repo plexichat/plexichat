@@ -2413,8 +2413,17 @@ async def admin_login_page(request: Request):
 
 
 @router.get(
+    "/ui",
+    include_in_schema=False,
+)
+async def admin_ui_redirect(request: Request):
+    """Redirect to admin dashboard page."""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="dashboard")
+
+
+@router.get(
     "/dashboard",
-    response_class=HTMLResponse,
     summary="Admin dashboard page",
     responses=    {
         200: {"description": "Admin dashboard page HTML"},
