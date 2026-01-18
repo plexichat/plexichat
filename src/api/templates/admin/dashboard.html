@@ -528,7 +528,7 @@
                         <p style="color: #888; font-size: 13px; margin-bottom: 16px;">Fast tools for finding user identifiers.</p>
                         <div style="display: flex; flex-direction: column; gap: 12px;">
                             <button onclick="showTab('users', document.querySelector('[onclick*=\"users\"]'))" style="padding: 12px; background: var(--border); border: none; border-radius: 6px; color: white; cursor: pointer; text-align: left;">Find User ID by Username &rarr;</button>
-                            <button onclick="window.open('/api/v1/docs', '_blank')" style="padding: 12px; background: var(--border); border: none; border-radius: 6px; color: white; cursor: pointer; text-align: left;">View API Documentation &rarr;</button>
+                            <button onclick="window.open('/docs/api', '_blank')" style="padding: 12px; background: var(--border); border: none; border-radius: 6px; color: white; cursor: pointer; text-align: left;">View API Documentation &rarr;</button>
                         </div>
                     </div>
                 </div>
@@ -1764,11 +1764,18 @@
 
         function loadUserAvatar() {
             const preview = document.getElementById('user-avatar-preview');
-            // Check if we have an avatar URL in the response or try to construct it
-            // For now, we'll try to fetch it from the standard endpoint
             const avatarUrl = `/api/v1/media/avatars/${selectedUserId}`;
             
-            preview.innerHTML = `<img src="${avatarUrl}" onerror="this.parentElement.innerHTML='<span style=\\'color:#666\\'>No Avatar</span>'" style="width:100%;height:100%;object-fit:cover;">`;
+            preview.innerHTML = '';
+            const img = document.createElement('img');
+            img.src = avatarUrl;
+            img.style.width = '100%';
+            img.style.height = '100%';
+            img.style.objectFit = 'cover';
+            img.onerror = () => {
+                preview.innerHTML = '<span style="color:#666">No Avatar</span>';
+            };
+            preview.appendChild(img);
         }
 
         async function resetUserAvatar() {

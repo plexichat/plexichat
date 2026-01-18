@@ -1473,12 +1473,14 @@ def update_user_badges(user_id: int, badges: List[str], admin_id: int = 0) -> bo
     return True
 
 
-def add_user_badge(user_id: int, badge: str, admin_id: int = 0) -> bool:
+def add_user_badge(user_id: int, badge: str, admin_id: int = 0) -> Optional[List[str]]:
     """Add a badge to a user if they don't have it."""
     if _features:
         try:
             _features.add_badge(user_id, admin_id, badge)
-            return True
+            # Fetch updated badges to return
+            features = _features.get_user_features(user_id)
+            return features.badges if features else []
         except Exception as e:
             logger.warning(f"Failed to add badge via features module: {e}")
 
@@ -1488,7 +1490,7 @@ def add_user_badge(user_id: int, badge: str, admin_id: int = 0) -> bool:
     if not row:
         # Create entry
         update_user_badges(user_id, [badge], admin_id)
-        return True
+        return [badge]
 
     current_badges_json = (row["badges"] if isinstance(row, dict) else row[0]) or "[]"
     try:
@@ -1500,15 +1502,16 @@ def add_user_badge(user_id: int, badge: str, admin_id: int = 0) -> bool:
         badges_list.append(badge)
         update_user_badges(user_id, badges_list, admin_id)
 
-    return True
+    return badges_list
 
 
-def remove_user_badge(user_id: int, badge: str, admin_id: int = 0) -> bool:
+def remove_user_badge(user_id: int, badge: str, admin_id: int = 0) -> Optional[List[str]]:
     """Remove a badge from a user."""
     if _features:
         try:
             _features.remove_badge(user_id, admin_id, badge)
-            return True
+            features = _features.get_user_features(user_id)
+            return features.badges if features else []
         except Exception as e:
             logger.warning(f"Failed to remove badge via features module: {e}")
 
@@ -1516,7 +1519,7 @@ def remove_user_badge(user_id: int, badge: str, admin_id: int = 0) -> bool:
 
     row = db.fetch_one("SELECT badges FROM user_features WHERE user_id = ?", (user_id,))
     if not row:
-        return False
+        return None
 
     current_badges_json = (row["badges"] if isinstance(row, dict) else row[0]) or "[]"
     try:
@@ -1528,7 +1531,7 @@ def remove_user_badge(user_id: int, badge: str, admin_id: int = 0) -> bool:
         badges_list.remove(badge)
         update_user_badges(user_id, badges_list, admin_id)
 
-    return True
+    return badges_list
 
 
 def is_admin(user_id: int) -> bool:
