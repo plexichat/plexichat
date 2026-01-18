@@ -956,13 +956,19 @@ async def upload_attachment(
                 content_type=file.content_type,
             )
 
+            # Convert thumbnail keys from int to str for Pydantic schema
+            thumbnails_str = (
+                {str(k): v for k, v in result.thumbnails.items()}
+                if result.thumbnails
+                else None
+            )
             return AttachmentUploadResponse(
                 id=str(result.file_id),
                 filename=result.filename,
                 size=result.size,
                 content_type=result.content_type,
                 url=result.url,
-                thumbnails=result.thumbnails,
+                thumbnails=thumbnails_str,
             )
         except Exception as e:
             exc_name = type(e).__name__
