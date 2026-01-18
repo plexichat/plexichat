@@ -128,6 +128,7 @@
         const token = localStorage.getItem('plexichat-admin-token');
         console.log('Login page check - token present:', !!token);
         if (token) {
+            console.log('Checking existing session with token preview:', token.substring(0, 5));
             fetch('/api/v1/admin/dashboard', { headers: { 'Authorization': 'Bearer ' + token } })
                 .then(r => { 
                     if (r.ok) {

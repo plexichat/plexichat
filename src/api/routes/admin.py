@@ -299,10 +299,11 @@ def _get_admin_from_token(request: Request) -> int:
     """Get admin ID from Authorization header."""
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
-        logger.warning(f"Invalid Authorization header format: {auth_header[:15]}...")
+        actual_prefix = auth_header[:10] if auth_header else "empty"
+        logger.warning(f"Invalid Authorization header format: '{actual_prefix}...' (expected 'Bearer ')")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"error": {"code": 401, "message": "Invalid token"}},
+            detail={"error": {"code": 401, "message": f"Invalid token format (starts with {actual_prefix})"}},
         )
 
     token = auth_header[7:]
@@ -2377,16 +2378,16 @@ async def get_database_pool_health(request: Request) -> Dict[str, Any]:
 
 @router.get(
     "/",
-    response_class=HTMLResponse,
     summary="Admin root",
     include_in_schema=False,
 )
 async def admin_root(request: Request):
     """Redirect to admin login page."""
     from fastapi.responses import RedirectResponse
-    
-    # Use relative redirect to support different mount points
-    return RedirectResponse(url="login")
+    return RedirectResponse(
+        url=request.url_for("admin_login_page"),
+        status_code=status.HTTP_302_FOUND
+    )
 
 
 @router.get(
@@ -2424,7 +2425,10 @@ async def admin_login_page(request: Request):
 async def admin_ui_redirect(request: Request):
     """Redirect to admin dashboard page."""
     from fastapi.responses import RedirectResponse
-    return RedirectResponse(url="dashboard")
+    return RedirectResponse(
+        url=request.url_for("admin_dashboard_page"),
+        status_code=status.HTTP_302_FOUND
+    )
 
 
 @router.get(

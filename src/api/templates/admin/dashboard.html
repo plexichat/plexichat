@@ -672,6 +672,7 @@
         
         async function verifyAndLoad() {
             try {
+                console.log('Sending dashboard request with token preview:', token ? token.substring(0, 5) : 'null');
                 const res = await fetch('/api/v1/admin/dashboard', { 
                     headers: { 'Authorization': 'Bearer ' + token },
                     method: 'GET'
