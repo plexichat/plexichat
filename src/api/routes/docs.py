@@ -356,6 +356,9 @@ def _build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
             NavItem("Events", "/websocket/events"),
             NavItem("Opcodes", "/websocket/opcodes"),
         ],
+        "Help": [
+            NavItem("Security Logout", "/security-logout"),
+        ],
     }
 
     html = ['<aside class="sidebar">']
@@ -637,6 +640,13 @@ async def docs_rate_limits(request: Request):
 @router.get("/errors")
 async def docs_errors(request: Request):
     return await _serve_page(request, Path("docs/errors.md"), "Errors", "/errors")
+
+
+@router.get("/security-logout")
+async def docs_security_logout(request: Request):
+    return await _serve_page(
+        request, Path("docs/security-logout.md"), "Security Logout", "/security-logout"
+    )
 
 
 @router.get("/data-types")

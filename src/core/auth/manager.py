@@ -341,8 +341,11 @@ class AuthManager(BaseManager):
 
         user_id = row["id"]
         if row["account_locked"]:
-            if row["locked_until"] and row["locked_until"] > self._get_timestamp():
+            # Check if lock is permanent (no expiry) or active (expiry in future)
+            if not row["locked_until"] or row["locked_until"] > self._get_timestamp():
                 raise AccountLockedError("Account locked", row["locked_until"])
+            
+            # Auto-unlock only if lock has expired
             self._db.execute(
                 "UPDATE auth_users SET account_locked = 0, failed_login_attempts = 0 WHERE id = ?",
                 (user_id,),

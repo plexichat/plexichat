@@ -1112,7 +1112,15 @@
 
         async function suspendUserPrompt() {
             if (!selectedUserId) return;
-            const duration = prompt('Enter suspension duration:\n- "perm" for permanent\n- "1h" for 1 hour\n- "1d" for 1 day\n- "7d" for 1 week', 'perm');
+            const helpText = 'Enter suspension duration:\n\n' +
+                           '- "perm" : Permanent suspension\n' +
+                           '- "1h"   : 1 Hour\n' +
+                           '- "1d"   : 1 Day\n' +
+                           '- "7d"   : 1 Week\n' +
+                           '- "30d"  : 30 Days\n\n' +
+                           'Default is permanent if left blank.';
+            
+            const duration = prompt(helpText, 'perm');
             if (!duration) return;
 
             let seconds = null;
