@@ -367,12 +367,12 @@ class BlockedIPResponse(BaseModel):
 
 class ForceLogoutRequest(BaseModel):
     """Request to force logout a user."""
-    user_id: int = Field(..., description="User ID to logout")
+    user_id: str = Field(..., description="User ID to logout")
 
 
 class UserLockRequest(BaseModel):
     """Request to lock/suspend a user account."""
-    user_id: int = Field(..., description="User ID to lock")
+    user_id: str = Field(..., description="User ID to lock")
     duration_seconds: Optional[int] = Field(None, description="Lock duration in seconds (null for permanent)")
 
 

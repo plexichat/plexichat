@@ -121,8 +121,16 @@ async def force_logout(request: Request, body: ForceLogoutRequest) -> SuccessRes
     _check_host_restriction(request)
     _get_admin_from_token(request)
 
+    try:
+        user_id = int(body.user_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid user ID format"}},
+        )
+
     from src.core import auth
-    auth.logout_all(body.user_id)
+    auth.logout_all(user_id)
 
     # Broadcast security logout event
     try:
@@ -135,11 +143,11 @@ async def force_logout(request: Request, body: ForceLogoutRequest) -> SuccessRes
             event = Event(
                 event_type=EventType.SECURITY_LOGOUT,
                 data={
-                    "user_id": str(body.user_id),
+                    "user_id": str(user_id),
                     "message": "As a security precaution, you have been logged out of all devices.",
                 }
             )
-            await dispatcher.dispatch_event(event, [body.user_id])
+            await dispatcher.dispatch_event(event, [user_id])
     except Exception as e:
         logger.error(f"Failed to broadcast force logout: {e}")
 
@@ -156,10 +164,18 @@ async def admin_lock_user(request: Request, body: UserLockRequest) -> SuccessRes
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
 
-    from src.core import admin
-    admin.lock_user(body.user_id, body.duration_seconds)
+    try:
+        user_id = int(body.user_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid user ID format"}},
+        )
 
-    logger.info(f"Admin {admin_id} locked user {body.user_id} (duration: {body.duration_seconds})")
+    from src.core import admin
+    admin.lock_user(user_id, body.duration_seconds)
+
+    logger.info(f"Admin {admin_id} locked user {user_id} (duration: {body.duration_seconds})")
     return SuccessResponse(success=True)
 
 
@@ -173,10 +189,18 @@ async def admin_unlock_user(request: Request, body: ForceLogoutRequest) -> Succe
     _check_host_restriction(request)
     admin_id = _get_admin_from_token(request)
 
-    from src.core import admin
-    admin.unlock_user(body.user_id)
+    try:
+        user_id = int(body.user_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid user ID format"}},
+        )
 
-    logger.info(f"Admin {admin_id} unlocked user {body.user_id}")
+    from src.core import admin
+    admin.unlock_user(user_id)
+
+    logger.info(f"Admin {admin_id} unlocked user {user_id}")
     return SuccessResponse(success=True)
 
 
