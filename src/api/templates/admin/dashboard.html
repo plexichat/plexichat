@@ -412,29 +412,55 @@
                     <div id="user-search-results" style="margin-top: 20px;"></div>
                 </div>
 
-                <div id="user-details" class="card" style="display: none;">
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 32px;">
-                        <div id="user-info"></div>
-                        <div style="border-left: 1px solid var(--border); padding-left: 32px;">
-                            <h3 style="margin-bottom: 16px;">Administrative Actions</h3>
-                            
-                            <div style="margin-bottom: 24px;">
-                                <label style="display: block; font-size: 12px; color: #888; margin-bottom: 8px; text-transform: uppercase;">User Tier</label>
-                                <div style="display: flex; gap: 8px;">
-                                    <select id="tier-select" style="flex: 1; background: var(--bg); color: white; border: 1px solid var(--border); padding: 8px; border-radius: 4px;">
-                                        <option value="free">Free</option>
-                                        <option value="alpha">Alpha</option>
-                                        <option value="beta">Beta</option>
-                                        <option value="premium">Premium</option>
-                                        <option value="staff">Staff</option>
-                                    </select>
-                                    <button onclick="updateUserTier()" style="padding: 8px 16px; background: var(--accent); border: none; border-radius: 4px; color: white; cursor: pointer;">Update</button>
+                <div id="user-details" class="card" style="display: none; padding: 0; overflow: hidden;">
+                    <div style="background: rgba(0,0,0,0.2); padding: 16px; border-bottom: 1px solid var(--border);">
+                        <div style="display: flex; gap: 4px;">
+                            <button class="tab-btn active" onclick="showUserTab('overview', this)">Overview</button>
+                            <button class="tab-btn" onclick="showUserTab('badges', this)">Badges</button>
+                            <button class="tab-btn" onclick="showUserTab('security', this)">Security</button>
+                            <button class="tab-btn" onclick="showUserTab('avatar', this)">Avatar</button>
+                        </div>
+                    </div>
+
+                    <div style="padding: 24px;">
+                        <div id="user-tab-overview" class="user-tab-content">
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 32px;">
+                                <div id="user-info"></div>
+                                <div style="border-left: 1px solid var(--border); padding-left: 32px;">
+                                    <h3 style="margin-bottom: 16px;">Administrative Actions</h3>
+                                    
+                                    <div style="margin-bottom: 24px;">
+                                        <label style="display: block; font-size: 12px; color: #888; margin-bottom: 8px; text-transform: uppercase;">User Tier</label>
+                                        <div style="display: flex; gap: 8px;">
+                                            <select id="tier-select" style="flex: 1; background: var(--bg); color: white; border: 1px solid var(--border); padding: 8px; border-radius: 4px;">
+                                                <option value="free">Free</option>
+                                                <option value="alpha">Alpha</option>
+                                                <option value="beta">Beta</option>
+                                                <option value="premium">Premium</option>
+                                                <option value="staff">Staff</option>
+                                            </select>
+                                            <button onclick="updateUserTier()" style="padding: 8px 16px; background: var(--accent); border: none; border-radius: 4px; color: white; cursor: pointer;">Update</button>
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <label style="display: block; font-size: 12px; color: #888; margin-bottom: 8px; text-transform: uppercase;">Internal Notes</label>
+                                        <textarea id="user-internal-notes" placeholder="Add notes about this user..." style="width: 100%; min-height: 100px; background: var(--bg); color: white; border: 1px solid var(--border); padding: 8px; border-radius: 4px; font-size: 13px;"></textarea>
+                                        <button onclick="saveUserNotes()" style="margin-top: 8px; padding: 6px 12px; background: var(--border); border: none; border-radius: 4px; color: white; cursor: pointer; font-size: 12px;">Save Notes</button>
+                                    </div>
                                 </div>
                             </div>
+                        </div>
 
+                        <div id="user-tab-badges" class="user-tab-content" style="display: none;">
+                            <h3 style="margin-bottom: 16px;">Manage Badges</h3>
                             <div style="margin-bottom: 24px;">
-                                <label style="display: block; font-size: 12px; color: #888; margin-bottom: 8px; text-transform: uppercase;">Badges</label>
-                                <div id="user-badges" style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;"></div>
+                                <label style="display: block; font-size: 12px; color: #888; margin-bottom: 8px; text-transform: uppercase;">Active Badges</label>
+                                <div id="user-badges" style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; min-height: 40px; padding: 12px; background: var(--bg); border-radius: 8px;"></div>
+                            </div>
+                            
+                            <div style="margin-bottom: 24px;">
+                                <label style="display: block; font-size: 12px; color: #888; margin-bottom: 8px; text-transform: uppercase;">Add Badge</label>
                                 <div style="display: flex; gap: 8px;">
                                     <select id="badge-select" style="flex: 1; background: var(--bg); color: white; border: 1px solid var(--border); padding: 8px; border-radius: 4px;">
                                         <option value="early_adopter">Early Adopter</option>
@@ -443,19 +469,42 @@
                                         <option value="supporter">Supporter</option>
                                         <option value="vip">VIP</option>
                                         <option value="staff">Staff</option>
+                                        <option value="verified">Verified</option>
+                                        <option value="bot">Bot</option>
                                     </select>
-                                    <button onclick="addBadge()" style="padding: 8px 16px; background: var(--good); border: none; border-radius: 4px; color: #000; cursor: pointer;">Add</button>
+                                    <button onclick="addBadge()" style="padding: 8px 16px; background: var(--good); border: none; border-radius: 4px; color: #000; cursor: pointer;">Add Badge</button>
                                 </div>
                             </div>
+                        </div>
 
-                            <div>
-                                <label style="display: block; font-size: 12px; color: #888; margin-bottom: 8px; text-transform: uppercase;">Security</label>
-                                <div style="display: flex; flex-direction: column; gap: 8px;">
+                        <div id="user-tab-security" class="user-tab-content" style="display: none;">
+                            <h3 style="margin-bottom: 16px;">Security & Access Control</h3>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
+                                <div class="card" style="background: var(--bg); border: 1px solid var(--border);">
+                                    <h4 style="margin-bottom: 12px; color: var(--warn);">Session Management</h4>
+                                    <p style="font-size: 13px; color: #888; margin-bottom: 16px;">Invalidate all active sessions for this user. They will be forced to log in again.</p>
                                     <button onclick="forceLogoutSelectedUser()" style="width: 100%; padding: 10px; background: var(--warn); border: none; border-radius: 4px; color: #000; font-weight: 600; cursor: pointer;">Force Logout Everywhere</button>
+                                </div>
+                                <div class="card" style="background: var(--bg); border: 1px solid var(--border);">
+                                    <h4 style="margin-bottom: 12px; color: var(--bad);">Account Suspension</h4>
+                                    <p style="font-size: 13px; color: #888; margin-bottom: 16px;">Prevent this user from logging in or using the platform.</p>
                                     <div id="lock-actions" style="display: flex; gap: 8px;">
                                         <button onclick="suspendUserPrompt()" style="flex: 1; padding: 10px; background: #f97316; border: none; border-radius: 4px; color: white; font-weight: 600; cursor: pointer;">Suspend Account</button>
                                         <button id="unlock-btn" onclick="unlockUser()" style="flex: 1; padding: 10px; background: var(--good); border: none; border-radius: 4px; color: #000; font-weight: 600; cursor: pointer; display: none;">Unlock Account</button>
                                     </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="user-tab-avatar" class="user-tab-content" style="display: none;">
+                            <h3 style="margin-bottom: 16px;">Avatar Management</h3>
+                            <div style="display: flex; gap: 32px; align-items: flex-start;">
+                                <div id="user-avatar-preview" style="width: 256px; height: 256px; background: var(--bg); border-radius: 12px; display: flex; align-items: center; justify-content: center; overflow: hidden; border: 1px solid var(--border);">
+                                    <span style="color: #666;">No Avatar</span>
+                                </div>
+                                <div>
+                                    <p style="margin-bottom: 16px;"><strong>Current Avatar</strong></p>
+                                    <button onclick="resetUserAvatar()" style="padding: 10px 20px; background: var(--bad); border: none; border-radius: 4px; color: white; cursor: pointer;">Reset to Default</button>
                                 </div>
                             </div>
                         </div>
@@ -1692,11 +1741,49 @@
                 // Update unlock button visibility
                 document.getElementById('unlock-btn').style.display = selectedUserData.account_locked ? 'block' : 'none';
                 
+                // Reset tabs
+                showUserTab('overview', document.querySelector('.tab-btn'));
+                
+                // Load avatar
+                loadUserAvatar();
+                
                 document.getElementById('user-details').style.display = 'block';
                 document.getElementById('user-details').scrollIntoView({ behavior: 'smooth' });
             } catch (e) {
                 alert('Error loading user: ' + e.message);
             }
+        }
+
+        function showUserTab(tabName, btn) {
+            document.querySelectorAll('.user-tab-content').forEach(t => t.style.display = 'none');
+            document.getElementById(`user-tab-${tabName}`).style.display = 'block';
+            
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            if (btn) btn.classList.add('active');
+        }
+
+        function loadUserAvatar() {
+            const preview = document.getElementById('user-avatar-preview');
+            // Check if we have an avatar URL in the response or try to construct it
+            // For now, we'll try to fetch it from the standard endpoint
+            const avatarUrl = `/api/v1/media/avatars/${selectedUserId}`;
+            
+            preview.innerHTML = `<img src="${avatarUrl}" onerror="this.parentElement.innerHTML='<span style=\\'color:#666\\'>No Avatar</span>'" style="width:100%;height:100%;object-fit:cover;">`;
+        }
+
+        async function resetUserAvatar() {
+            if (!confirm('Are you sure you want to reset this user\'s avatar?')) return;
+            try {
+                // Assuming we'll add this endpoint or use a generic update
+                alert('Avatar reset not yet implemented in backend');
+            } catch (e) {
+                alert(e.message);
+            }
+        }
+
+        async function saveUserNotes() {
+            // Placeholder for future implementation
+            alert('Note saving not yet implemented in backend');
         }
         
         function renderUserBadges() {
