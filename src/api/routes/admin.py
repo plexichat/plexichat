@@ -2393,9 +2393,17 @@ async def admin_root(request: Request):
 )
 async def admin_login_page(request: Request):
     """Serve the admin login page."""
-    _check_host_restriction(request)
-    content = _load_admin_template("login.html")
-    return HTMLResponse(content=content)
+    try:
+        _check_host_restriction(request)
+        content = _load_admin_template("login.html")
+        return HTMLResponse(content=content)
+    except HTTPException as e:
+        if e.status_code == 403:
+            return HTMLResponse(
+                content="<h1>Access Denied</h1><p>Your IP address is not allowed to access the admin panel.</p>",
+                status_code=403
+            )
+        raise e
 
 
 @router.get(
@@ -2414,6 +2422,14 @@ async def admin_login_page(request: Request):
 )
 async def admin_dashboard_page(request: Request):
     """Serve the admin dashboard page."""
-    _check_host_restriction(request)
-    content = _load_admin_template("dashboard.html")
-    return HTMLResponse(content=content)
+    try:
+        _check_host_restriction(request)
+        content = _load_admin_template("dashboard.html")
+        return HTMLResponse(content=content)
+    except HTTPException as e:
+        if e.status_code == 403:
+            return HTMLResponse(
+                content="<h1>Access Denied</h1><p>Your IP address is not allowed to access the admin panel.</p>",
+                status_code=403
+            )
+        raise e
