@@ -605,6 +605,9 @@ def _create_session(admin_id: int, expires_hours: int = 8) -> str:
         (session_id, admin_id, token, now, expires),
     )
 
+    token_preview = f"{token[:4]}...{token[-4:]}"
+    logger.info(f"Created new admin session for admin {admin_id}: len={len(token)}, preview={token_preview}")
+
     return token
 
 
@@ -613,13 +616,18 @@ def validate_session(token: str) -> Optional[int]:
     db = _get_db()
 
     now = int(time.time() * 1000)
+    
+    # Debug: log token details (carefully)
+    token_preview = f"{token[:4]}...{token[-4:]}" if len(token) > 8 else "***"
+    logger.debug(f"Validating admin session: token_len={len(token)}, preview={token_preview}")
+    
     row = db.fetch_one(
         "SELECT admin_id, expires_at FROM admin_sessions WHERE token = ?",
         (token,),
     )
 
     if not row:
-        logger.warning(f"No admin session found for token (len={len(token)})")
+        logger.warning(f"No admin session found for token (len={len(token)}, preview={token_preview})")
         return None
 
     admin_id = row["admin_id"] if isinstance(row, dict) else row[0]

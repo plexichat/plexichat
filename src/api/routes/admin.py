@@ -299,12 +299,15 @@ def _get_admin_from_token(request: Request) -> int:
     """Get admin ID from Authorization header."""
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
+        logger.warning(f"Invalid Authorization header format: {auth_header[:15]}...")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"error": {"code": 401, "message": "Invalid token"}},
         )
 
     token = auth_header[7:]
+    token_preview = f"{token[:4]}...{token[-4:]}" if len(token) > 8 else "***"
+    logger.debug(f"Received admin token: len={len(token)}, preview={token_preview}")
 
     # Allow secure self-test requests from users with admin permissions
     # Use scope directly as request.state can be unreliable with BaseHTTPMiddleware
