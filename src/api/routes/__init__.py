@@ -99,6 +99,13 @@ def create_api_router() -> APIRouter:
     api_router.include_router(telemetry_router, tags=["Telemetry"])
     api_router.include_router(voice_router, tags=["Voice"])
 
+    # Include admin router with configurable path
+    admin_config = config.get("admin_ui", {})
+    if admin_config.get("enabled", False):
+        admin_path = admin_config.get("path", "/admin")
+        # Remove /api/v1 prefix since admin is mounted at root
+        api_router.include_router(admin_router, prefix=admin_path, tags=["Admin"])
+
     # Include features router (admin endpoints + user features)
     api_router.include_router(features_router, tags=["Features"])
 

@@ -80,20 +80,22 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     api_router = create_api_router()
     app.include_router(api_router, prefix=config.api_prefix)
 
-    # Include Admin UI router at root level
+    # Redirect root-level /admin to /api/v1/admin/login
     admin_config = global_config.get("admin_ui", {})
     if admin_config.get("enabled", False):
+        from fastapi.responses import RedirectResponse
         admin_path = admin_config.get("path", "/admin")
+        target_path = f"{config.api_prefix}{admin_path}/login"
         
-        # Add a redirect for the path without a trailing slash if it doesn't already have one
-        if not admin_path.endswith("/"):
-            from fastapi.responses import RedirectResponse
-            @app.get(admin_path, include_in_schema=False)
-            async def admin_no_slash_redirect():
-                return RedirectResponse(url=f"{admin_path}/")
+        @app.get(admin_path, include_in_schema=False)
+        async def admin_redirect():
+            return RedirectResponse(url=target_path)
+            
+        @app.get(f"{admin_path}/", include_in_schema=False)
+        async def admin_slash_redirect():
+            return RedirectResponse(url=target_path)
 
-        app.include_router(admin_router, prefix=admin_path)
-        logger.info(f"Admin UI enabled at {admin_path}")
+        logger.info(f"Admin UI redirects enabled: {admin_path} -> {target_path}")
 
     # Include WebSocket gateway router
     try:
