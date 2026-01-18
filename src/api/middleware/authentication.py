@@ -45,8 +45,13 @@ class AuthenticationMiddleware:
         if auth_header and not is_admin_path:
             token = self._extract_token(auth_header)
             if token:
+                # Optimized: Only attempt JWT verification if token looks like a JWT
+                # Admin tokens are opaque strings (approx 43 chars, no dots)
+                # This prevents "TokenInvalidError" log spam when admin tokens are sent to non-admin endpoints
+                is_jwt_format = len(token.split(".")) == 3
+                
                 auth = api.get_auth()
-                if auth:
+                if auth and is_jwt_format:
                     try:
                         ip = request.client.host if request.client else None
                         ua = request.headers.get("User-Agent")
@@ -54,8 +59,12 @@ class AuthenticationMiddleware:
                         scope["state"]["user"] = token_info
                     except Exception as e:
                         import utils.logger as logger
+                        # Only log legitimate auth errors, not format mismatches
                         logger.error(f"Authentication failed: {e}", exc_info=True)
                         scope["state"]["auth_error"] = str(e)
+                elif not is_jwt_format:
+                     # Identify as potentially admin-scoped for endpoints that handle dual auth
+                    scope["state"]["potential_admin_token"] = token
 
         await self.app(scope, receive, send)
 

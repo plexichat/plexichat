@@ -239,16 +239,29 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 )
 
             # Verify token
+            # Verify token
             auth = api_module.get_auth()
             if not auth:
                 raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module unavailable"}})
             
             try:
+                # Try validating as standard user token first
                 token_info: TokenInfo = auth.verify_token(token)
                 if not token_info:
-                    raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Invalid token"}})
+                    raise ValueError("Invalid user token")
             except Exception:
-                raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Invalid token"}})
+                # Fallback: Check if it's a valid ADMIN token
+                # This allows the Admin Dashboard to load user attachments without 401 errors
+                try:
+                    import src.api as api_module
+                    admin = api_module.get_admin()
+                    if admin and admin.validate_session(token):
+                        # Valid admin session - allow access
+                        pass 
+                    else:
+                         raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Invalid token"}})
+                except Exception:
+                    raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Invalid token"}})
 
             # --- File Lookup ---
             db = api_module.get_db()
