@@ -2449,7 +2449,7 @@ async def admin_ui_redirect(request: Request):
 
 
 @router.get(
-    "/dashboard",
+    "/ui-dashboard",
     summary="Admin dashboard page",
     responses=    {
         200: {"description": "Admin dashboard page HTML"},
