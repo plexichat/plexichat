@@ -232,9 +232,13 @@ def _check_host_restriction(request: Request) -> None:
                         detail={"error": {"code": 403, "message": "Access denied: Untrusted proxy"}},
                     )
 
-        allowed_hosts = host_restriction.get(
-            "allowed_hosts", ["127.0.0.1", "localhost", "::1"]
-        )
+                    allowed_hosts = host_restriction.get(
+
+                        "allowed_hosts", ["127.0.0.1", "localhost", "::1", "192.168.3.242"]
+
+                    )
+
+        
         from src.core import admin
         if not admin.check_host_restriction(client_ip, allowed_hosts):
             logger.warning(f"Admin access denied from {client_ip}")
