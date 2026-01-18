@@ -298,6 +298,8 @@ class UserDetailsResponse(BaseModel):
     badges: List[str] = Field(..., description="User badges")
     created_at: int = Field(..., description="Creation timestamp")
     last_login: Optional[int] = Field(None, description="Last login timestamp")
+    account_locked: bool = Field(False, description="Whether account is locked")
+    locked_until: Optional[int] = Field(None, description="Lock expiration timestamp")
 
 
 class UserTierUpdateResponse(BaseModel):

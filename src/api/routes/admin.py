@@ -886,9 +886,9 @@ async def add_ticket_note(
 
         logger.info(f"Admin {admin_id} added note to ticket {ticket_id}")
         return NoteResponse(
-            id=new_note.id,
-            ticket_id=new_note.ticket_id,
-            admin_id=new_note.admin_id,
+            id=str(new_note.id),
+            ticket_id=str(new_note.ticket_id),
+            admin_id=str(new_note.admin_id),
             admin_username=new_note.admin_username,
             content=new_note.content,
             created_at=new_note.created_at,
@@ -1906,7 +1906,7 @@ async def admin_user_search(
                     id=str(user.id),
                     username=user.username,
                     email=user.email,
-                    tier=user.tier,
+                    tier=user.tier or "standard",
                     badges=user.badges,
                     created_at=user.created_at,
                 )
