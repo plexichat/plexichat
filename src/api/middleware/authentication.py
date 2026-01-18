@@ -37,8 +37,12 @@ class AuthenticationMiddleware:
         scope["state"]["is_internal"] = is_internal
 
         # 2. Extract and Verify Bearer Token
+        # Skip for admin routes which manage their own sessions
+        path = scope.get("path", "")
+        is_admin_path = path.startswith("/admin/") or path.startswith("/api/v1/admin/")
+        
         auth_header = request.headers.get("Authorization")
-        if auth_header:
+        if auth_header and not is_admin_path:
             token = self._extract_token(auth_header)
             if token:
                 auth = api.get_auth()
