@@ -45,13 +45,15 @@ class AuthenticationMiddleware:
         if auth_header and not is_admin_path:
             token = self._extract_token(auth_header)
             if token:
-                # Optimized: Only attempt JWT verification if token looks like a JWT
-                # Admin tokens are opaque strings (approx 43 chars, no dots)
-                # This prevents "TokenInvalidError" log spam when admin tokens are sent to non-admin endpoints
-                is_jwt_format = len(token.split(".")) == 3
+                # Identify token format
+                # Session tokens: <id>.<secret> (2 parts)
+                # Bot/Email/2FA tokens: <type>.<id>.<secret> (3 parts)
+                # Admin tokens: opaque strings (approx 43 chars, no dots)
+                token_parts = token.split(".")
+                is_plexichat_token = len(token_parts) >= 2
                 
                 auth = api.get_auth()
-                if auth and is_jwt_format:
+                if auth and is_plexichat_token:
                     try:
                         ip = request.client.host if request.client else None
                         ua = request.headers.get("User-Agent")
@@ -62,7 +64,7 @@ class AuthenticationMiddleware:
                         # Only log legitimate auth errors, not format mismatches
                         logger.error(f"Authentication failed: {e}", exc_info=True)
                         scope["state"]["auth_error"] = str(e)
-                elif not is_jwt_format:
+                elif not is_plexichat_token:
                      # Identify as potentially admin-scoped for endpoints that handle dual auth
                     scope["state"]["potential_admin_token"] = token
 
