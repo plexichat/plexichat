@@ -84,6 +84,14 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     admin_config = global_config.get("admin_ui", {})
     if admin_config.get("enabled", False):
         admin_path = admin_config.get("path", "/admin")
+        
+        # Add a redirect for the path without a trailing slash if it doesn't already have one
+        if not admin_path.endswith("/"):
+            from fastapi.responses import RedirectResponse
+            @app.get(admin_path, include_in_schema=False)
+            async def admin_no_slash_redirect():
+                return RedirectResponse(url=f"{admin_path}/")
+
         app.include_router(admin_router, prefix=admin_path)
         logger.info(f"Admin UI enabled at {admin_path}")
 

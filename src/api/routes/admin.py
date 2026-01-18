@@ -199,12 +199,12 @@ def _check_host_restriction(request: Request) -> None:
             detail={"error": {"code": 404, "message": "Not found"}},
         )
 
+    # Extract real client IP using consolidated utility which handles trusted proxies securely
+    from src.utils.net import get_client_ip
+    client_ip = get_client_ip(request) or "unknown"
+
     host_restriction = admin_config.get("host_restriction", {})
     if host_restriction.get("enabled", True):
-        # Extract real client IP using consolidated utility which handles trusted proxies securely
-        from src.utils.net import get_client_ip
-        client_ip = get_client_ip(request)
-        
         # Security: Additional verification for trust_x_forwarded_for configuration
         api_config = config.get("api", {})
         if api_config.get("trust_x_forwarded_for", False):
@@ -232,13 +232,9 @@ def _check_host_restriction(request: Request) -> None:
                         detail={"error": {"code": 403, "message": "Access denied: Untrusted proxy"}},
                     )
 
-                    allowed_hosts = host_restriction.get(
-
-                        "allowed_hosts", ["127.0.0.1", "localhost", "::1", "192.168.3.242"]
-
-                    )
-
-        
+        allowed_hosts = host_restriction.get(
+            "allowed_hosts", ["127.0.0.1", "localhost", "::1", "192.168.3.242"]
+        )
         from src.core import admin
         if not admin.check_host_restriction(client_ip, allowed_hosts):
             logger.warning(f"Admin access denied from {client_ip}")
