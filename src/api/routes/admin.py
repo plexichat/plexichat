@@ -121,9 +121,12 @@ async def force_logout(request: Request, body: ForceLogoutRequest) -> SuccessRes
     _check_host_restriction(request)
     _get_admin_from_token(request)
 
+    logger.debug(f"Force logout requested for user_id raw: {body.user_id!r}")
+
     try:
         user_id = int(body.user_id)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as e:
+        logger.warning(f"Invalid user ID format for force logout: {body.user_id!r} - {e}")
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": 400, "message": "Invalid user ID format"}},
