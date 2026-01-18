@@ -1264,20 +1264,20 @@ def search_users(q: str, limit: int = 20, offset: int = 0) -> List[AdminUserDeta
         # Try to parse as ID first
         user_id = int(q)
         rows = db.fetch_all(
-            """SELECT u.id, u.username, u.email, f.rate_limit_tier as tier, f.badges, u.created_at 
+            """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at 
                FROM auth_users u
                LEFT JOIN user_features f ON u.id = f.user_id
                WHERE u.id = ? LIMIT ? OFFSET ?""",
             (user_id, limit, offset),
         )
     except ValueError:
-        # Search by username
+        # Search by username or email index
         rows = db.fetch_all(
-            """SELECT u.id, u.username, u.email, f.rate_limit_tier as tier, f.badges, u.created_at 
+            """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at 
                FROM auth_users u
                LEFT JOIN user_features f ON u.id = f.user_id
-               WHERE u.username LIKE ? LIMIT ? OFFSET ?""",
-            (f"%{q}%", limit, offset),
+               WHERE u.username LIKE ? OR u.email_index LIKE ? LIMIT ? OFFSET ?""",
+            (f"%{q}%", f"%{q}%", limit, offset),
         )
 
     users = []
@@ -1293,11 +1293,14 @@ def search_users(q: str, limit: int = 20, offset: int = 0) -> List[AdminUserDeta
             except Exception:
                 badges = []
 
+            # Return a placeholder for email since it is encrypted
+            email_display = "[Encrypted]" if row.get("email_index") else None
+
             users.append(
                 AdminUserDetail(
                     id=row["id"],
                     username=row["username"],
-                    email=row.get("email"),
+                    email=email_display,
                     tier=row.get("tier", "standard"),
                     badges=badges,
                     created_at=row["created_at"],
@@ -1315,11 +1318,13 @@ def search_users(q: str, limit: int = 20, offset: int = 0) -> List[AdminUserDeta
             except Exception:
                 badges = []
 
+            email_display = "[Encrypted]" if row[2] else None
+
             users.append(
                 AdminUserDetail(
                     id=row[0],
                     username=row[1],
-                    email=row[2],
+                    email=email_display,
                     tier=row[3] or "standard",
                     badges=badges,
                     created_at=row[5],
@@ -1334,7 +1339,7 @@ def get_user_details(user_id: int) -> Optional[AdminUserDetail]:
     db = _get_db()
 
     row = db.fetch_one(
-        """SELECT u.id, u.username, u.email, f.rate_limit_tier as tier, f.badges, u.created_at, u.last_login
+        """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at, u.last_login_at
            FROM auth_users u
            LEFT JOIN user_features f ON u.id = f.user_id
            WHERE u.id = ?""",
@@ -1355,14 +1360,16 @@ def get_user_details(user_id: int) -> Optional[AdminUserDetail]:
         except Exception:
             badges = []
 
+        email_display = "[Encrypted]" if row.get("email_index") else None
+
         return AdminUserDetail(
             id=row["id"],
             username=row["username"],
-            email=row.get("email"),
+            email=email_display,
             tier=row.get("tier", "standard"),
             badges=badges,
             created_at=row["created_at"],
-            last_login=row.get("last_login"),
+            last_login=row.get("last_login_at"),
         )
     else:
         badges_json = row[4] or "[]"
@@ -1375,10 +1382,12 @@ def get_user_details(user_id: int) -> Optional[AdminUserDetail]:
         except Exception:
             badges = []
 
+        email_display = "[Encrypted]" if row[2] else None
+
         return AdminUserDetail(
             id=row[0],
             username=row[1],
-            email=row[2],
+            email=email_display,
             tier=row[3] or "standard",
             badges=badges,
             created_at=row[5],

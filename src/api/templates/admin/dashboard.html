@@ -1119,25 +1119,29 @@
         
         function renderHashReportsTable() {
             const tbody = document.querySelector('#hash-reports-table tbody');
-            if (!hashReportsData.length) {
+            if (!hashReportsData || hashReportsData.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#888">No reports</td></tr>';
                 return;
             }
             tbody.innerHTML = hashReportsData.map(r => {
-                const shortHash = (r.hash_value || '').substring(0, 16) + '...';
+                if (!r) return '';
+                const id = r.id || '0';
+                const hash = r.hash_value || '';
+                const shortHash = hash.substring(0, 16) + (hash.length > 16 ? '...' : '');
                 const date = r.reported_at ? new Date(r.reported_at).toLocaleString() : 'Unknown';
+                const status = r.status || 'pending';
                 const actions = `
-                    <button onclick="viewHashReport('${r.id}')" style="padding:4px 8px;background:var(--accent);border:none;border-radius:4px;color:white;cursor:pointer;margin-right:4px">View</button>
-                    ${r.status === 'pending' ? `
-                        <button onclick="reviewReport(${r.id}, 'block')" style="padding:4px 8px;background:#ef4444;border:none;border-radius:4px;color:white;cursor:pointer;margin-right:4px">Block</button>
-                        <button onclick="reviewReport(${r.id}, 'clear')" style="padding:4px 8px;background:#4ade80;border:none;border-radius:4px;color:#000;cursor:pointer;margin-right:4px">Clear</button>
+                    <button onclick="viewHashReport('${id}')" style="padding:4px 8px;background:var(--accent);border:none;border-radius:4px;color:white;cursor:pointer;margin-right:4px">View</button>
+                    ${status === 'pending' ? `
+                        <button onclick="reviewReport(${id}, 'block')" style="padding:4px 8px;background:#ef4444;border:none;border-radius:4px;color:white;cursor:pointer;margin-right:4px">Block</button>
+                        <button onclick="reviewReport(${id}, 'clear')" style="padding:4px 8px;background:#4ade80;border:none;border-radius:4px;color:#000;cursor:pointer;margin-right:4px">Clear</button>
                     ` : '<span style="color:#888; font-size:11px;">Reviewed</span>'}
                 `;
                 return `<tr>
-                    <td style="font-family:monospace;font-size:12px" title="${r.hash_value || ''}">${shortHash}</td>
+                    <td style="font-family:monospace;font-size:12px" title="${escapeHtml(hash)}">${escapeHtml(shortHash || 'None')}</td>
                     <td>${escapeHtml(r.reporter_username || 'Unknown')}</td>
                     <td>${escapeHtml(r.reason || 'None')}</td>
-                    <td><span class="status ${r.status}" style="background:${r.status === 'pending' ? '#fbbf24' : r.status === 'blocked' ? '#ef4444' : r.status === 'cleared' ? '#4ade80' : '#6b7280'};color:${r.status === 'pending' || r.status === 'cleared' ? '#000' : '#fff'}">${r.status}</span></td>
+                    <td><span class="status ${status}" style="background:${status === 'pending' ? '#fbbf24' : status === 'blocked' ? '#ef4444' : status === 'cleared' ? '#4ade80' : '#6b7280'};color:${status === 'pending' || status === 'cleared' ? '#000' : '#fff'}">${status}</span></td>
                     <td>${date}</td>
                     <td>${actions}</td>
                 </tr>`;
@@ -1170,15 +1174,15 @@
                 });
                 if (!res.ok) throw new Error('Failed to load reports');
                 const reports = await res.json();
-                const r = reports.find(x => x.id == reportId);
+                const r = reports.find(x => String(x.id) === String(reportId));
                 if (!r) throw new Error('Report not found');
 
-                document.getElementById('report-title').textContent = `Report #${r.id}`;
-                document.getElementById('report-meta').textContent = `Reported by ${r.reporter_username || 'Unknown'} on ${new Date(r.reported_at).toLocaleString()}`;
+                document.getElementById('report-title').textContent = `Report #${r.id || '0'}`;
+                document.getElementById('report-meta').textContent = `Reported by ${r.reporter_username || 'Unknown'} on ${r.reported_at ? new Date(r.reported_at).toLocaleString() : 'Unknown'}`;
                 
-                document.getElementById('report-sha256').textContent = r.hash_value;
+                document.getElementById('report-sha256').textContent = r.hash_value || 'None';
                 document.getElementById('report-phash').textContent = r.phash_value || 'N/A';
-                document.getElementById('report-reason-text').textContent = r.reason;
+                document.getElementById('report-reason-text').textContent = r.reason || 'None provided';
                 document.getElementById('report-details-text').textContent = r.details || 'None provided';
                 document.getElementById('report-uploader-id').textContent = r.uploader_id || 'Unknown';
                 document.getElementById('report-message-id').textContent = r.message_id || 'N/A';
@@ -1192,13 +1196,14 @@
                 }
 
                 const actionsContainer = document.getElementById('report-actions-container');
-                if (r.status === 'pending') {
+                const status = r.status || 'pending';
+                if (status === 'pending') {
                     actionsContainer.innerHTML = `
                         <button onclick="reviewReportFromDetail('${r.id}', 'block')" style="padding: 8px 16px; background: var(--bad); border: none; border-radius: 4px; color: white; cursor: pointer;">Block Content</button>
                         <button onclick="reviewReportFromDetail('${r.id}', 'clear')" style="padding: 8px 16px; background: var(--good); border: none; border-radius: 4px; color: #000; cursor: pointer;">Clear (False Positive)</button>
                     `;
                 } else {
-                    actionsContainer.innerHTML = `<span class="status ${r.status}">Already ${r.status}</span>`;
+                    actionsContainer.innerHTML = `<span class="status ${status}">${status.charAt(0).toUpperCase() + status.slice(1)}</span>`;
                 }
 
                 document.getElementById('hash-report-details').style.display = 'block';
@@ -1566,13 +1571,24 @@
                 
                 let html = '<table><thead><tr><th>ID</th><th>Username</th><th>Tier</th><th>Badges</th><th>Actions</th></tr></thead><tbody>';
                 for (const user of data.users) {
-                    const badges = user.badges.length > 0 ? user.badges.join(', ') : '-';
+                    const badges = Array.isArray(user.badges) ? user.badges.join(', ') : '-';
+                    const userId = String(user.id);
                     html += `<tr>
-                        <td style="font-family:monospace;font-size:12px">${user.id}</td>
-                        <td>${escapeHtml(user.username)}</td>
-                        <td><span class="status" style="background:var(--accent)">${user.tier}</span></td>
+                        <td style="font-family:monospace;font-size:12px">${userId}</td>
+                        <td>
+                            <div style="display:flex; flex-direction:column;">
+                                <strong>${escapeHtml(user.username)}</strong>
+                                <span style="font-size:11px; color:#888">${escapeHtml(user.email || 'No Email')}</span>
+                            </div>
+                        </td>
+                        <td><span class="status" style="background:var(--accent)">${user.tier || 'standard'}</span></td>
                         <td style="font-size:12px">${escapeHtml(badges)}</td>
-                        <td><button class="refresh-btn" onclick="selectUser('${user.id}')" style="padding:4px 12px;font-size:12px">Edit</button></td>
+                        <td>
+                            <div style="display:flex; gap:4px;">
+                                <button class="refresh-btn" onclick="selectUser('${userId}')" style="padding:4px 8px;font-size:11px">Manage</button>
+                                <a href="/users/${userId}" target="_blank" style="padding:4px 8px;font-size:11px;background:var(--border);color:white;text-decoration:none;border-radius:4px;">Profile</a>
+                            </div>
+                        </td>
                     </tr>`;
                 }
                 html += '</tbody></table>';
@@ -1583,25 +1599,25 @@
         }
         
         async function selectUser(userId) {
-            selectedUserId = userId;
+            selectedUserId = String(userId);
             try {
-                const res = await fetch(`/api/v1/admin/users/${userId}`, {
+                const res = await fetch(`/api/v1/admin/users/${selectedUserId}`, {
                     headers: { 'Authorization': 'Bearer ' + token }
                 });
                 if (!res.ok) throw new Error('Failed to load user');
                 selectedUserData = await res.json();
                 
-                // Construct profile link (assuming standard client path)
-                const profileUrl = `/users/${selectedUserData.id}`;
+                // Construct profile link
+                const profileUrl = `/users/${selectedUserId}`;
                 
                 document.getElementById('user-info').innerHTML = `
                     <h3 style="margin-bottom: 16px;">User Details</h3>
                     <div style="display: flex; flex-direction: column; gap: 12px;">
-                        <p><strong>ID:</strong> <span style="font-family:monospace; color: var(--accent);">${selectedUserData.id}</span></p>
-                        <p><strong>Username:</strong> ${escapeHtml(selectedUserData.username)}</p>
-                        <p><strong>Email:</strong> ${selectedUserData.email || '-'}</p>
-                        <p><strong>Current Tier:</strong> <span class="status" style="background:var(--accent)">${selectedUserData.tier}</span></p>
-                        <p><strong>Account Created:</strong> ${new Date(selectedUserData.created_at).toLocaleString()}</p>
+                        <p><strong>ID:</strong> <span style="font-family:monospace; color: var(--accent);">${selectedUserId}</span></p>
+                        <p><strong>Username:</strong> ${escapeHtml(selectedUserData.username || 'Unknown')}</p>
+                        <p><strong>Email:</strong> ${escapeHtml(selectedUserData.email || 'None')}</p>
+                        <p><strong>Current Tier:</strong> <span class="status" style="background:var(--accent)">${escapeHtml(selectedUserData.tier || 'standard')}</span></p>
+                        <p><strong>Account Created:</strong> ${selectedUserData.created_at ? new Date(selectedUserData.created_at).toLocaleString() : 'Unknown'}</p>
                         <p><strong>Last Activity:</strong> ${selectedUserData.last_login ? new Date(selectedUserData.last_login).toLocaleString() : 'Never'}</p>
                         <div style="margin-top: 8px;">
                             <a href="${profileUrl}" target="_blank" class="refresh-btn" style="text-decoration: none; display: inline-block; padding: 8px 16px; font-size: 13px;">View Public Profile &rarr;</a>

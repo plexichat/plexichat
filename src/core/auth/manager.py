@@ -550,6 +550,8 @@ class AuthManager(BaseManager):
     def logout(self, token: str) -> bool:
         parsed = parse_token(token)
         if parsed and parsed["token_type"] == "session":
+            # Clear token verification cache for immediate effect
+            invalidate_pattern("token_verify:*")
             self._db.execute(
                 "UPDATE auth_sessions SET revoked = 1 WHERE id = ?", (parsed["id"],)
             )
