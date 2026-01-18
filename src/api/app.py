@@ -5,7 +5,9 @@ FastAPI application factory - Creates and configures the API application.
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import sys
+from pathlib import Path
 
+import utils.config as global_config
 from .config import get_api_config
 from .middleware import (
     AuthenticationMiddleware,
@@ -79,7 +81,6 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     app.include_router(api_router, prefix=config.api_prefix)
 
     # Include Admin UI router at root level
-    import utils.config as global_config
     admin_config = global_config.get("admin_ui", {})
     if admin_config.get("enabled", False):
         admin_path = admin_config.get("path", "/admin")
@@ -280,7 +281,6 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             # Get actual file path for local storage
             if backend == "local":
                 # Use base path from config
-                import utils.config as global_config
                 media_config = global_config.get("media", {})
                 base_path = Path(media_config.get("local_path", "uploads"))
                 file_path = base_path / storage_path

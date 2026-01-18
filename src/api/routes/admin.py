@@ -2365,6 +2365,20 @@ async def get_database_pool_health(request: Request) -> Dict[str, Any]:
 
 
 @router.get(
+    "/",
+    response_class=HTMLResponse,
+    summary="Admin root",
+    include_in_schema=False,
+)
+async def admin_root(request: Request):
+    """Redirect to admin login page."""
+    from fastapi.responses import RedirectResponse
+    
+    # Use relative redirect to support different mount points
+    return RedirectResponse(url="login")
+
+
+@router.get(
     "/login",
     response_class=HTMLResponse,
     summary="Admin login page",
