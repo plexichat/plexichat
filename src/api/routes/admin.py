@@ -329,6 +329,7 @@ def _get_admin_from_token(request: Request) -> int:
             user.permissions, "*"
         ):
             # Return user_id but treat as admin
+            logger.debug(f"Allowing admin access via internal secret for user {user.user_id}")
             return user.user_id
 
     from src.core import admin
@@ -336,6 +337,7 @@ def _get_admin_from_token(request: Request) -> int:
     admin_id = admin.validate_session(token)
 
     if not admin_id:
+        logger.warning(f"Admin session validation failed for token starting with: {token[:8]}...")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"error": {"code": 401, "message": "Invalid or expired token"}},
