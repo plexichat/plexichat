@@ -211,8 +211,9 @@ class HashReportCountsResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    open: int = Field(0, description="Open reports")
-    reviewed: int = Field(0, description="Reviewed reports")
+    pending: int = Field(0, description="Pending reports")
+    blocked: int = Field(0, description="Blocked reports")
+    cleared: int = Field(0, description="Cleared reports")
     total: int = Field(0, description="Total reports")
 
 

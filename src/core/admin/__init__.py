@@ -994,7 +994,7 @@ def get_hash_report_counts() -> Dict[str, int]:
     """Get counts of hash reports by status."""
     db = _get_db()
 
-    counts = {"pending": 0, "reviewed": 0, "blocked": 0, "cleared": 0, "total": 0}
+    counts = {"pending": 0, "blocked": 0, "cleared": 0, "total": 0}
 
     try:
         rows = db.fetch_all(

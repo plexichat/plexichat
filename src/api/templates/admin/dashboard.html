@@ -830,7 +830,8 @@
                         <p style="color: #888; font-size: 13px; margin-bottom: 16px;">Fast tools for finding user
                             identifiers.</p>
                         <div style="display: flex; flex-direction: column; gap: 12px;">
-                            <button onclick="showTab('users', document.querySelector('[onclick*=\" users\"]'))"
+                            <button
+                                onclick="showTab('users', document.querySelector('.tab[onclick*=\'users\']')); document.getElementById('user-search').focus();"
                                 style="padding: 12px; background: var(--border); border: none; border-radius: 6px; color: white; cursor: pointer; text-align: left;">Find
                                 User ID by Username &rarr;</button>
                             <button onclick="window.open('/docs/api', '_blank')"
@@ -1308,69 +1309,70 @@
                 document.getElementById('error').style.display = 'block';
                 document.getElementById('error').textContent = 'Error loading data: ' + e.message;
             }
-            function showTab(name, btn) {
-                // Update active tab button
-                if (btn) {
+        }
+
+        function showTab(name, btn) {
+            // Update active tab button
+            if (btn) {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                btn.classList.add('active');
+            } else {
+                // If no button passed (e.g. from sub-function), try to find it
+                const b = document.querySelector(`.tab[onclick*="'${name}'"]`);
+                if (b) {
                     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-                    btn.classList.add('active');
-                } else {
-                    // If no button passed (e.g. from sub-function), try to find it
-                    const b = document.querySelector(`.tab[onclick*="'${name}'"]`);
-                    if (b) {
-                        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-                        b.classList.add('active');
-                    }
-                }
-
-                // Hide all content first
-                document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
-
-                // Show content based on connection (Consolidated Tabs)
-                if (name === 'tickets') {
-                    document.getElementById('tickets-tab').style.display = 'block';
-                }
-                if (name === 'users') {
-                    document.getElementById('users-tab').style.display = 'block';
-                    document.getElementById('user-tools-tab').style.display = 'block'; // Merged
-                    loadUserSearch();
-                }
-                if (name === 'security') {
-                    document.getElementById('security-tab').style.display = 'block';
-                    document.getElementById('hash-reports-tab').style.display = 'block'; // Merged
-                    loadSecurityTools();
-                    loadHashReports();
-                }
-                if (name === 'telemetry') {
-                    document.getElementById('telemetry-tab').style.display = 'block';
-                    document.getElementById('database-tab').style.display = 'block'; // Merged
-                    if (!telemetryData.length) loadTelemetryStats();
-                    loadDatabaseHealth();
-                }
-
-                // Legacy/Direct access support (if calling showTab('database', null))
-                if (name === 'database') {
-                    // Redirect to telemetry tab visuals
-                    showTab('telemetry', document.querySelector(`.tab[onclick*="'telemetry'"]`));
-                }
-                if (name === 'hash-reports') {
-                    showTab('security', document.querySelector(`.tab[onclick*="'security'"]`));
+                    b.classList.add('active');
                 }
             }
 
-            // ==================== Security Tools Functions ====================
-            async function loadSecurityTools() {
-                try {
-                    const res = await fetch('/api/v1/admin/security/blocked-ips', {
-                        headers: { 'Authorization': 'Bearer ' + token }
-                    });
-                    if (!res.ok) throw new Error('Failed to load blocked IPs');
-                    const ips = await res.json();
+            // Hide all content first
+            document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
 
-                    const tbody = document.querySelector('#blocked-ips-table tbody');
-                    if (ips.length === 0) {
-                        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#888">No blocked IPs</td></tr>';
-                    } else {
-                        tbody.innerHTML = ips.map(ip => `
+            // Show content based on connection (Consolidated Tabs)
+            if (name === 'tickets') {
+                document.getElementById('tickets-tab').style.display = 'block';
+            }
+            if (name === 'users') {
+                document.getElementById('users-tab').style.display = 'block';
+                document.getElementById('user-tools-tab').style.display = 'block'; // Merged
+            }
+            if (name === 'security') {
+                document.getElementById('security-tab').style.display = 'block';
+                document.getElementById('hash-reports-tab').style.display = 'block'; // Merged
+                loadSecurityTools();
+                loadHashReports();
+            }
+            if (name === 'telemetry') {
+                document.getElementById('telemetry-tab').style.display = 'block';
+                document.getElementById('database-tab').style.display = 'block'; // Merged
+                if (!telemetryData.length) loadTelemetryStats();
+                loadDatabaseHealth();
+            }
+
+            // Legacy/Direct access support (if calling showTab('database', null))
+            if (name === 'database') {
+                // Redirect to telemetry tab visuals
+                showTab('telemetry', document.querySelector(`.tab[onclick*="'telemetry'"]`));
+            }
+            if (name === 'hash-reports') {
+                showTab('security', document.querySelector(`.tab[onclick*="'security'"]`));
+            }
+        }
+
+        // ==================== Security Tools Functions ====================
+        async function loadSecurityTools() {
+            try {
+                const res = await fetch('/api/v1/admin/security/blocked-ips', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!res.ok) throw new Error('Failed to load blocked IPs');
+                const ips = await res.json();
+
+                const tbody = document.querySelector('#blocked-ips-table tbody');
+                if (ips.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#888">No blocked IPs</td></tr>';
+                } else {
+                    tbody.innerHTML = ips.map(ip => `
                         <tr>
                             <td>${escapeHtml(ip.ip_address)}</td>
                             <td>${escapeHtml(ip.reason || '-')}</td>
@@ -1379,228 +1381,228 @@
                             <td><button onclick="unblockIP('${ip.ip_address}')" style="padding:4px 8px;background:#3b82f6;border:none;border-radius:4px;color:white;cursor:pointer">Unblock</button></td>
                         </tr>
                     `).join('');
-                    }
-                } catch (e) {
-                    console.error(e);
                 }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function blockIP() {
+            const ip_address = document.getElementById('block-ip-address').value.trim();
+            const reason = document.getElementById('block-ip-reason').value.trim();
+            if (!ip_address) return alert('IP address is required');
+
+            try {
+                const res = await fetch('/api/v1/admin/security/block-ip', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ip_address, reason })
+                });
+                if (!res.ok) throw new Error('Failed to block IP');
+                document.getElementById('block-ip-address').value = '';
+                document.getElementById('block-ip-reason').value = '';
+                loadSecurityTools();
+            } catch (e) {
+                alert(e.message);
+            }
+        }
+
+        async function unblockIP(ip_address) {
+            if (!confirm(`Unblock IP ${ip_address}?`)) return;
+            try {
+                const res = await fetch(`/api/v1/admin/security/unblock-ip/${encodeURIComponent(ip_address)}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!res.ok) throw new Error('Failed to unblock IP');
+                loadSecurityTools();
+            } catch (e) {
+                alert(e.message);
+            }
+        }
+
+        async function forceLogoutSelectedUser() {
+            if (!selectedUserId) return;
+            if (!confirm(`Force logout user ${selectedUserData.username} everywhere?`)) return;
+
+            try {
+                const res = await fetch('/api/v1/admin/security/force-logout', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: String(selectedUserId) })
+                });
+                if (!res.ok) throw new Error('Failed to force logout');
+                alert(`User ${selectedUserData.username} has been logged out from all devices.`);
+            } catch (e) {
+                alert(e.message);
+            }
+        }
+
+        async function forceLogoutUser() {
+            const user_id = document.getElementById('force-logout-userid').value.trim();
+            if (!user_id) return alert('User ID is required');
+            if (!confirm(`Force logout user ${user_id} everywhere?`)) return;
+
+            try {
+                const res = await fetch('/api/v1/admin/security/force-logout', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: String(user_id) })
+                });
+                if (!res.ok) throw new Error('Failed to force logout');
+                document.getElementById('force-logout-userid').value = '';
+                alert('User sessions invalidated and notification sent.');
+            } catch (e) {
+                alert(e.message);
+            }
+        }
+
+        async function suspendUserPrompt() {
+            if (!selectedUserId) return;
+            const helpText = 'Enter suspension duration:\n\n' +
+                '- "perm" : Permanent suspension\n' +
+                '- "1h"   : 1 Hour\n' +
+                '- "1d"   : 1 Day\n' +
+                '- "7d"   : 1 Week\n' +
+                '- "30d"  : 30 Days\n\n' +
+                'Default is permanent if left blank.';
+
+            const duration = prompt(helpText, 'perm');
+            if (!duration) return;
+
+            let seconds = null;
+            if (duration !== 'perm') {
+                const match = duration.match(/^(\d+)([hdw])$/);
+                if (!match) return alert('Invalid duration format. Use "1h", "1d", "7d", etc.');
+                const value = parseInt(match[1]);
+                const unit = match[2];
+                if (unit === 'h') seconds = value * 3600;
+                if (unit === 'd') seconds = value * 86400;
+                if (unit === 'w') seconds = value * 604800;
             }
 
-            async function blockIP() {
-                const ip_address = document.getElementById('block-ip-address').value.trim();
-                const reason = document.getElementById('block-ip-reason').value.trim();
-                if (!ip_address) return alert('IP address is required');
+            await lockUser(selectedUserId, seconds);
+        }
 
-                try {
-                    const res = await fetch('/api/v1/admin/security/block-ip', {
-                        method: 'POST',
-                        headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ ip_address, reason })
-                    });
-                    if (!res.ok) throw new Error('Failed to block IP');
-                    document.getElementById('block-ip-address').value = '';
-                    document.getElementById('block-ip-reason').value = '';
-                    loadSecurityTools();
-                } catch (e) {
-                    alert(e.message);
-                }
+        async function lockUser(userId, durationSeconds = null) {
+            try {
+                const res = await fetch('/api/v1/admin/security/lock-user', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_id: String(userId),
+                        duration_seconds: durationSeconds
+                    })
+                });
+                if (!res.ok) throw new Error('Failed to lock account');
+                alert(`Account for user ${userId} has been suspended.`);
+                // Refresh details
+                selectUser(userId);
+            } catch (e) {
+                alert(e.message);
             }
+        }
 
-            async function unblockIP(ip_address) {
-                if (!confirm(`Unblock IP ${ip_address}?`)) return;
-                try {
-                    const res = await fetch(`/api/v1/admin/security/unblock-ip/${encodeURIComponent(ip_address)}`, {
-                        method: 'DELETE',
-                        headers: { 'Authorization': 'Bearer ' + token }
-                    });
-                    if (!res.ok) throw new Error('Failed to unblock IP');
-                    loadSecurityTools();
-                } catch (e) {
-                    alert(e.message);
-                }
+        async function unlockUser() {
+            if (!selectedUserId) return;
+            try {
+                const res = await fetch('/api/v1/admin/security/unlock-user', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: String(selectedUserId) })
+                });
+                if (!res.ok) throw new Error('Failed to unlock account');
+                alert(`Account for user ${selectedUserId} has been unlocked.`);
+                // Refresh details
+                selectUser(selectedUserId);
+            } catch (e) {
+                alert(e.message);
             }
+        }
 
-            async function forceLogoutSelectedUser() {
-                if (!selectedUserId) return;
-                if (!confirm(`Force logout user ${selectedUserData.username} everywhere?`)) return;
+        async function globalSessionPurge() {
+            const msg = 'DANGER: This will log out EVERY single user on the platform. This should only be used in case of severe security breach. Are you absolutely sure?';
+            if (!confirm(msg)) return;
+            if (!confirm('FINAL CONFIRMATION: Perform global session purge?')) return;
 
-                try {
-                    const res = await fetch('/api/v1/admin/security/force-logout', {
-                        method: 'POST',
-                        headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ user_id: String(selectedUserId) })
-                    });
-                    if (!res.ok) throw new Error('Failed to force logout');
-                    alert(`User ${selectedUserData.username} has been logged out from all devices.`);
-                } catch (e) {
-                    alert(e.message);
-                }
+            try {
+                const res = await fetch('/api/v1/admin/security/logout-all', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!res.ok) throw new Error('Failed to perform global purge');
+                alert('Global session purge initiated.');
+            } catch (e) {
+                alert(e.message);
             }
+        }
 
-            async function forceLogoutUser() {
-                const user_id = document.getElementById('force-logout-userid').value.trim();
-                if (!user_id) return alert('User ID is required');
-                if (!confirm(`Force logout user ${user_id} everywhere?`)) return;
+        // ==================== Hash Reports Functions ====================
+        let hashReportsData = [];
+        let blockedHashesData = [];
 
-                try {
-                    const res = await fetch('/api/v1/admin/security/force-logout', {
-                        method: 'POST',
-                        headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ user_id: String(user_id) })
-                    });
-                    if (!res.ok) throw new Error('Failed to force logout');
-                    document.getElementById('force-logout-userid').value = '';
-                    alert('User sessions invalidated and notification sent.');
-                } catch (e) {
-                    alert(e.message);
-                }
-            }
-
-            async function suspendUserPrompt() {
-                if (!selectedUserId) return;
-                const helpText = 'Enter suspension duration:\n\n' +
-                    '- "perm" : Permanent suspension\n' +
-                    '- "1h"   : 1 Hour\n' +
-                    '- "1d"   : 1 Day\n' +
-                    '- "7d"   : 1 Week\n' +
-                    '- "30d"  : 30 Days\n\n' +
-                    'Default is permanent if left blank.';
-
-                const duration = prompt(helpText, 'perm');
-                if (!duration) return;
-
-                let seconds = null;
-                if (duration !== 'perm') {
-                    const match = duration.match(/^(\d+)([hdw])$/);
-                    if (!match) return alert('Invalid duration format. Use "1h", "1d", "7d", etc.');
-                    const value = parseInt(match[1]);
-                    const unit = match[2];
-                    if (unit === 'h') seconds = value * 3600;
-                    if (unit === 'd') seconds = value * 86400;
-                    if (unit === 'w') seconds = value * 604800;
-                }
-
-                await lockUser(selectedUserId, seconds);
-            }
-
-            async function lockUser(userId, durationSeconds = null) {
-                try {
-                    const res = await fetch('/api/v1/admin/security/lock-user', {
-                        method: 'POST',
-                        headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            user_id: String(userId),
-                            duration_seconds: durationSeconds
-                        })
-                    });
-                    if (!res.ok) throw new Error('Failed to lock account');
-                    alert(`Account for user ${userId} has been suspended.`);
-                    // Refresh details
-                    selectUser(userId);
-                } catch (e) {
-                    alert(e.message);
-                }
-            }
-
-            async function unlockUser() {
-                if (!selectedUserId) return;
-                try {
-                    const res = await fetch('/api/v1/admin/security/unlock-user', {
-                        method: 'POST',
-                        headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ user_id: String(selectedUserId) })
-                    });
-                    if (!res.ok) throw new Error('Failed to unlock account');
-                    alert(`Account for user ${selectedUserId} has been unlocked.`);
-                    // Refresh details
-                    selectUser(selectedUserId);
-                } catch (e) {
-                    alert(e.message);
-                }
-            }
-
-            async function globalSessionPurge() {
-                const msg = 'DANGER: This will log out EVERY single user on the platform. This should only be used in case of severe security breach. Are you absolutely sure?';
-                if (!confirm(msg)) return;
-                if (!confirm('FINAL CONFIRMATION: Perform global session purge?')) return;
-
-                try {
-                    const res = await fetch('/api/v1/admin/security/logout-all', {
-                        method: 'POST',
-                        headers: { 'Authorization': 'Bearer ' + token }
-                    });
-                    if (!res.ok) throw new Error('Failed to perform global purge');
-                    alert('Global session purge initiated.');
-                } catch (e) {
-                    alert(e.message);
-                }
-            }
-
-            // ==================== Hash Reports Functions ====================
-            let hashReportsData = [];
-            let blockedHashesData = [];
-
-            async function loadHashReports() {
-                const statusFilter = document.getElementById('hash-status-filter')?.value || '';
-                try {
-                    // Load report counts
-                    const countsRes = await fetch('/api/v1/admin/hash-reports/counts', {
-                        headers: { 'Authorization': 'Bearer ' + token }
-                    });
-                    if (countsRes.ok) {
-                        const counts = await countsRes.json();
-                        document.getElementById('hash-report-stats').innerHTML = `
+        async function loadHashReports() {
+            const statusFilter = document.getElementById('hash-status-filter')?.value || '';
+            try {
+                // Load report counts
+                const countsRes = await fetch('/api/v1/admin/hash-reports/counts', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (countsRes.ok) {
+                    const counts = await countsRes.json();
+                    document.getElementById('hash-report-stats').innerHTML = `
                         <div class="card"><h3>Pending</h3><div class="value ${counts.pending > 0 ? 'warn' : ''}">${counts.pending}</div></div>
                         <div class="card"><h3>Blocked</h3><div class="value">${counts.blocked}</div></div>
                         <div class="card"><h3>Cleared</h3><div class="value">${counts.cleared}</div></div>
                         <div class="card"><h3>Total Reports</h3><div class="value">${counts.total}</div></div>
                     `;
-                    }
-
-                    // Load reports
-                    let url = '/api/v1/admin/hash-reports?limit=50';
-                    if (statusFilter) url += `&status_filter=${statusFilter}`;
-                    const reportsRes = await fetch(url, {
-                        headers: { 'Authorization': 'Bearer ' + token }
-                    });
-                    if (reportsRes.ok) {
-                        hashReportsData = await reportsRes.json();
-                        renderHashReportsTable();
-                    }
-
-                    // Load blocked hashes
-                    const blockedRes = await fetch('/api/v1/admin/blocked-hashes?limit=50', {
-                        headers: { 'Authorization': 'Bearer ' + token }
-                    });
-                    if (blockedRes.ok) {
-                        blockedHashesData = await blockedRes.json();
-                        renderBlockedHashesTable();
-                    }
-                } catch (e) {
-                    console.error('Failed to load hash reports:', e);
                 }
+
+                // Load reports
+                let url = '/api/v1/admin/hash-reports?limit=50';
+                if (statusFilter) url += `&status_filter=${statusFilter}`;
+                const reportsRes = await fetch(url, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (reportsRes.ok) {
+                    hashReportsData = await reportsRes.json();
+                    renderHashReportsTable();
+                }
+
+                // Load blocked hashes
+                const blockedRes = await fetch('/api/v1/admin/blocked-hashes?limit=50', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (blockedRes.ok) {
+                    blockedHashesData = await blockedRes.json();
+                    renderBlockedHashesTable();
+                }
+            } catch (e) {
+                console.error('Failed to load hash reports:', e);
             }
+        }
 
-            function renderHashReportsTable() {
-                const tbody = document.querySelector('#hash-reports-table tbody');
-                if (!hashReportsData || hashReportsData.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#888">No reports</td></tr>';
-                    return;
-                }
-                tbody.innerHTML = hashReportsData.map(r => {
-                    if (!r) return '';
-                    const id = r.id || '0';
-                    const hash = r.hash_value || '';
-                    const shortHash = hash.substring(0, 16) + (hash.length > 16 ? '...' : '');
-                    const date = r.reported_at ? new Date(r.reported_at).toLocaleString() : 'Unknown';
-                    const status = r.status || 'pending';
-                    const actions = `
+        function renderHashReportsTable() {
+            const tbody = document.querySelector('#hash-reports-table tbody');
+            if (!hashReportsData || hashReportsData.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#888">No reports</td></tr>';
+                return;
+            }
+            tbody.innerHTML = hashReportsData.map(r => {
+                if (!r) return '';
+                const id = r.id || '0';
+                const hash = r.hash_value || '';
+                const shortHash = hash.substring(0, 16) + (hash.length > 16 ? '...' : '');
+                const date = r.reported_at ? new Date(r.reported_at).toLocaleString() : 'Unknown';
+                const status = r.status || 'pending';
+                const actions = `
                     <button onclick="viewHashReport('${id}')" style="padding:4px 8px;background:var(--accent);border:none;border-radius:4px;color:white;cursor:pointer;margin-right:4px">View</button>
                     ${status === 'pending' ? `
-                        <button onclick="reviewReport(${id}, 'block')" style="padding:4px 8px;background:#ef4444;border:none;border-radius:4px;color:white;cursor:pointer;margin-right:4px">Block</button>
-                        <button onclick="reviewReport(${id}, 'clear')" style="padding:4px 8px;background:#4ade80;border:none;border-radius:4px;color:#000;cursor:pointer;margin-right:4px">Clear</button>
+                        <button onclick="reviewReport('${id}', 'block')" style="padding:4px 8px;background:#ef4444;border:none;border-radius:4px;color:white;cursor:pointer;margin-right:4px">Block</button>
+                        <button onclick="reviewReport('${id}', 'clear')" style="padding:4px 8px;background:#4ade80;border:none;border-radius:4px;color:#000;cursor:pointer;margin-right:4px">Clear</button>
                     ` : '<span style="color:#888; font-size:11px;">Reviewed</span>'}
                 `;
-                    return `<tr>
+                return `<tr>
                     <td style="font-family:monospace;font-size:12px" title="${escapeHtml(hash)}">${escapeHtml(shortHash || 'None')}</td>
                     <td>${escapeHtml(r.reporter_username || 'Unknown')}</td>
                     <td>${escapeHtml(r.reason || 'None')}</td>
@@ -1608,252 +1610,252 @@
                     <td>${date}</td>
                     <td>${actions}</td>
                 </tr>`;
-                }).join('');
-            }
+            }).join('');
+        }
 
-            function renderBlockedHashesTable() {
-                const tbody = document.querySelector('#blocked-hashes-table tbody');
-                if (!blockedHashesData.length) {
-                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#888">No blocked hashes</td></tr>';
-                    return;
-                }
-                tbody.innerHTML = blockedHashesData.map(h => {
-                    const shortHash = h.hash_value.substring(0, 16) + '...';
-                    const date = new Date(h.blocked_at).toLocaleString();
-                    return `<tr>
+        function renderBlockedHashesTable() {
+            const tbody = document.querySelector('#blocked-hashes-table tbody');
+            if (!blockedHashesData.length) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#888">No blocked hashes</td></tr>';
+                return;
+            }
+            tbody.innerHTML = blockedHashesData.map(h => {
+                const shortHash = h.hash_value.substring(0, 16) + '...';
+                const date = new Date(h.blocked_at).toLocaleString();
+                return `<tr>
                     <td style="font-family:monospace;font-size:12px" title="${h.hash_value}">${shortHash}</td>
                     <td>${h.reason}</td>
                     <td>${date}</td>
                     <td>${h.auto_blocked ? '<span style="color:#fbbf24">Auto</span>' : 'Manual'}</td>
                     <td><button onclick="unblockHash('${h.hash_value}')" style="padding:4px 8px;background:#3b82f6;border:none;border-radius:4px;color:white;cursor:pointer">Unblock</button></td>
                 </tr>`;
-                }).join('');
-            }
+            }).join('');
+        }
 
-            async function viewHashReport(reportId) {
-                try {
-                    const res = await fetch(`/api/v1/admin/hash-reports?limit=100`, {
-                        headers: { 'Authorization': 'Bearer ' + token }
-                    });
-                    if (!res.ok) throw new Error('Failed to load reports');
-                    const reports = await res.json();
-                    const r = reports.find(x => String(x.id) === String(reportId));
-                    if (!r) throw new Error('Report not found');
+        async function viewHashReport(reportId) {
+            try {
+                const res = await fetch(`/api/v1/admin/hash-reports?limit=100`, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!res.ok) throw new Error('Failed to load reports');
+                const reports = await res.json();
+                const r = reports.find(x => String(x.id) === String(reportId));
+                if (!r) throw new Error('Report not found');
 
-                    document.getElementById('report-title').textContent = `Report #${r.id || '0'}`;
-                    document.getElementById('report-meta').textContent = `Reported by ${r.reporter_username || 'Unknown'} on ${r.reported_at ? new Date(r.reported_at).toLocaleString() : 'Unknown'}`;
+                document.getElementById('report-title').textContent = `Report #${r.id || '0'}`;
+                document.getElementById('report-meta').textContent = `Reported by ${r.reporter_username || 'Unknown'} on ${r.reported_at ? new Date(r.reported_at).toLocaleString() : 'Unknown'}`;
 
-                    document.getElementById('report-sha256').textContent = r.hash_value || 'None';
-                    document.getElementById('report-phash').textContent = r.phash_value || 'N/A';
-                    document.getElementById('report-reason-text').textContent = r.reason || 'None provided';
-                    document.getElementById('report-details-text').textContent = r.details || 'None provided';
-                    document.getElementById('report-uploader-id').textContent = r.uploader_id || 'Unknown';
-                    document.getElementById('report-message-id').textContent = r.message_id || 'N/A';
-                    document.getElementById('report-admin-notes').textContent = r.admin_notes || 'No notes.';
+                document.getElementById('report-sha256').textContent = r.hash_value || 'None';
+                document.getElementById('report-phash').textContent = r.phash_value || 'N/A';
+                document.getElementById('report-reason-text').textContent = r.reason || 'None provided';
+                document.getElementById('report-details-text').textContent = r.details || 'None provided';
+                document.getElementById('report-uploader-id').textContent = r.uploader_id || 'Unknown';
+                document.getElementById('report-message-id').textContent = r.message_id || 'N/A';
+                document.getElementById('report-admin-notes').textContent = r.admin_notes || 'No notes.';
 
-                    const previewContainer = document.getElementById('report-preview');
-                    if (r.attachment_url) {
-                        previewContainer.innerHTML = `<img src="${r.attachment_url}" style="max-width: 100%; max-height: 400px; object-fit: contain;">`;
-                    } else {
-                        previewContainer.innerHTML = '<p style="color: #666;">No image preview available</p>';
-                    }
+                const previewContainer = document.getElementById('report-preview');
+                if (r.attachment_url) {
+                    previewContainer.innerHTML = `<img src="${r.attachment_url}" style="max-width: 100%; max-height: 400px; object-fit: contain;">`;
+                } else {
+                    previewContainer.innerHTML = '<p style="color: #666;">No image preview available</p>';
+                }
 
-                    const actionsContainer = document.getElementById('report-actions-container');
-                    const status = r.status || 'pending';
-                    if (status === 'pending') {
-                        actionsContainer.innerHTML = `
+                const actionsContainer = document.getElementById('report-actions-container');
+                const status = r.status || 'pending';
+                if (status === 'pending') {
+                    actionsContainer.innerHTML = `
                         <button onclick="reviewReportFromDetail('${r.id}', 'block')" style="padding: 8px 16px; background: var(--bad); border: none; border-radius: 4px; color: white; cursor: pointer;">Block Content</button>
                         <button onclick="reviewReportFromDetail('${r.id}', 'clear')" style="padding: 8px 16px; background: var(--good); border: none; border-radius: 4px; color: #000; cursor: pointer;">Clear (False Positive)</button>
                     `;
-                    } else {
-                        actionsContainer.innerHTML = `<span class="status ${status}">${status.charAt(0).toUpperCase() + status.slice(1)}</span>`;
-                    }
-
-                    document.getElementById('hash-report-details').style.display = 'block';
-                    document.getElementById('hash-report-details').scrollIntoView({ behavior: 'smooth' });
-                } catch (e) {
-                    alert(e.message);
+                } else {
+                    actionsContainer.innerHTML = `<span class="status ${status}">${status.charAt(0).toUpperCase() + status.slice(1)}</span>`;
                 }
+
+                document.getElementById('hash-report-details').style.display = 'block';
+                document.getElementById('hash-report-details').scrollIntoView({ behavior: 'smooth' });
+            } catch (e) {
+                alert(e.message);
             }
+        }
 
-            async function reviewReportFromDetail(reportId, action) {
-                const notes = document.getElementById('report-new-note').value.trim();
-                await reviewReport(reportId, action, notes);
+        async function reviewReportFromDetail(reportId, action) {
+            const notes = document.getElementById('report-new-note').value.trim();
+            await reviewReport(reportId, action, notes);
+        }
+
+        async function reviewReport(reportId, action, customNotes = null) {
+            const notes = customNotes || (action === 'block' ? prompt('Enter reason for blocking (optional):') : null);
+            try {
+                const res = await fetch(`/api/v1/admin/hash-reports/${reportId}/review`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action, notes })
+                });
+                if (!res.ok) throw new Error('Review failed');
+
+                // Refresh data
+                document.getElementById('hash-report-details').style.display = 'none';
+                loadHashReports();
+            } catch (e) {
+                alert('Failed to review report: ' + e.message);
             }
+        }
 
-            async function reviewReport(reportId, action, customNotes = null) {
-                const notes = customNotes || (action === 'block' ? prompt('Enter reason for blocking (optional):') : null);
-                try {
-                    const res = await fetch(`/api/v1/admin/hash-reports/${reportId}/review`, {
-                        method: 'POST',
-                        headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ action, notes })
-                    });
-                    if (!res.ok) throw new Error('Review failed');
-
-                    // Refresh data
-                    document.getElementById('hash-report-details').style.display = 'none';
-                    loadHashReports();
-                } catch (e) {
-                    alert('Failed to review report: ' + e.message);
-                }
+        async function unblockHash(hashValue) {
+            if (!confirm('Are you sure you want to unblock this hash?')) return;
+            try {
+                const res = await fetch(`/api/v1/admin/blocked-hashes/${hashValue}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!res.ok) throw new Error('Unblock failed');
+                loadHashReports();
+            } catch (e) {
+                alert('Failed to unblock hash: ' + e.message);
             }
+        }
 
-            async function unblockHash(hashValue) {
-                if (!confirm('Are you sure you want to unblock this hash?')) return;
-                try {
-                    const res = await fetch(`/api/v1/admin/blocked-hashes/${hashValue}`, {
-                        method: 'DELETE',
-                        headers: { 'Authorization': 'Bearer ' + token }
-                    });
-                    if (!res.ok) throw new Error('Unblock failed');
-                    loadHashReports();
-                } catch (e) {
-                    alert('Failed to unblock hash: ' + e.message);
-                }
+        function showBlockHashModal() {
+            document.getElementById('block-hash-modal').style.display = 'flex';
+        }
+
+        function hideBlockHashModal() {
+            document.getElementById('block-hash-modal').style.display = 'none';
+            document.getElementById('block-hash-value').value = '';
+            document.getElementById('block-hash-reason').value = '';
+        }
+
+        async function blockHashManually() {
+            const hashValue = document.getElementById('block-hash-value').value.trim();
+            const reason = document.getElementById('block-hash-reason').value.trim();
+            if (!hashValue || hashValue.length < 64) {
+                alert('Please enter a valid SHA-256 hash (64 characters)');
+                return;
             }
-
-            function showBlockHashModal() {
-                document.getElementById('block-hash-modal').style.display = 'flex';
+            if (!reason) {
+                alert('Please enter a reason');
+                return;
             }
-
-            function hideBlockHashModal() {
-                document.getElementById('block-hash-modal').style.display = 'none';
-                document.getElementById('block-hash-value').value = '';
-                document.getElementById('block-hash-reason').value = '';
+            try {
+                const res = await fetch('/api/v1/admin/blocked-hashes', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ hash_value: hashValue, reason })
+                });
+                if (!res.ok) throw new Error('Block failed');
+                hideBlockHashModal();
+                loadHashReports();
+            } catch (e) {
+                alert('Failed to block hash: ' + e.message);
             }
+        }
 
-            async function blockHashManually() {
-                const hashValue = document.getElementById('block-hash-value').value.trim();
-                const reason = document.getElementById('block-hash-reason').value.trim();
-                if (!hashValue || hashValue.length < 64) {
-                    alert('Please enter a valid SHA-256 hash (64 characters)');
-                    return;
-                }
-                if (!reason) {
-                    alert('Please enter a reason');
-                    return;
-                }
-                try {
-                    const res = await fetch('/api/v1/admin/blocked-hashes', {
-                        method: 'POST',
-                        headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ hash_value: hashValue, reason })
-                    });
-                    if (!res.ok) throw new Error('Block failed');
-                    hideBlockHashModal();
-                    loadHashReports();
-                } catch (e) {
-                    alert('Failed to block hash: ' + e.message);
-                }
-            }
+        async function exportStats() {
+            const hours = document.getElementById('time-range')?.value || 24;
+            const format = document.getElementById('export-format')?.value || 'json';
+            try {
+                const res = await fetch(`/api/v1/admin/telemetry/export?format=${format}&hours=${hours}`, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!res.ok) throw new Error('Export failed');
 
-            async function exportStats() {
-                const hours = document.getElementById('time-range')?.value || 24;
-                const format = document.getElementById('export-format')?.value || 'json';
-                try {
-                    const res = await fetch(`/api/v1/admin/telemetry/export?format=${format}&hours=${hours}`, {
-                        headers: { 'Authorization': 'Bearer ' + token }
-                    });
-                    if (!res.ok) throw new Error('Export failed');
-
-                    if (format === 'json') {
-                        const data = await res.json();
-                        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = `telemetry_${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.json`;
-                        a.click();
-                        URL.revokeObjectURL(url);
-                    } else {
-                        const blob = await res.blob();
-                        const disposition = res.headers.get('Content-Disposition');
-                        let filename = `telemetry_export.${format}`;
-                        if (disposition) {
-                            const match = disposition.match(/filename=([^;]+)/);
-                            if (match) filename = match[1];
-                        }
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = filename;
-                        a.click();
-                        URL.revokeObjectURL(url);
-                    }
-                } catch (e) {
-                    alert('Export failed: ' + e.message);
-                }
-            }
-
-            async function resetStats() {
-                if (!confirm('Are you sure you want to reset ALL telemetry statistics? This cannot be undone.')) return;
-                try {
-                    const res = await fetch('/api/v1/admin/telemetry/reset', {
-                        method: 'POST',
-                        headers: { 'Authorization': 'Bearer ' + token }
-                    });
+                if (format === 'json') {
                     const data = await res.json();
-                    if (data.success) {
-                        alert(`Reset complete. Deleted ${data.deleted_count} records.`);
-                        loadTelemetryStats();
-                    } else {
-                        alert('Reset failed: ' + (data.message || 'Unknown error'));
+                    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `telemetry_${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                } else {
+                    const blob = await res.blob();
+                    const disposition = res.headers.get('Content-Disposition');
+                    let filename = `telemetry_export.${format}`;
+                    if (disposition) {
+                        const match = disposition.match(/filename=([^;]+)/);
+                        if (match) filename = match[1];
                     }
-                } catch (e) {
-                    alert('Reset failed: ' + e.message);
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    a.click();
+                    URL.revokeObjectURL(url);
                 }
+            } catch (e) {
+                alert('Export failed: ' + e.message);
             }
+        }
 
-            // ==================== Database Pool Monitoring Functions ====================
-            let poolHealthChart = null;
-            let acquisitionTimeChart = null;
-            let poolMonitoringInterval = null;
-
-            async function loadDatabaseHealth() {
-                try {
-                    const res = await fetch('/api/v1/admin/database/pool-health', {
-                        headers: { 'Authorization': 'Bearer ' + token }
-                    });
-                    if (!res.ok) throw new Error('Failed to load pool health');
-
-                    const stats = await res.json();
-                    renderPoolHealthStats(stats);
-                    renderPoolHealthCharts(stats);
-                    renderConnectionDetails(stats);
-
-                    if (stats.old_connections && stats.old_connections.length > 0) {
-                        renderOldConnections(stats.old_connections);
-                    }
-
-                    if (stats.health_issues && stats.health_issues.length > 0) {
-                        renderHealthAlerts(stats.health_issues);
-                    } else {
-                        document.getElementById('pool-health-alerts').style.display = 'none';
-                    }
-                } catch (e) {
-                    console.error('Failed to load database health:', e);
-                    alert('Error loading pool health: ' + e.message);
+        async function resetStats() {
+            if (!confirm('Are you sure you want to reset ALL telemetry statistics? This cannot be undone.')) return;
+            try {
+                const res = await fetch('/api/v1/admin/telemetry/reset', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                const data = await res.json();
+                if (data.success) {
+                    alert(`Reset complete. Deleted ${data.deleted_count} records.`);
+                    loadTelemetryStats();
+                } else {
+                    alert('Reset failed: ' + (data.message || 'Unknown error'));
                 }
+            } catch (e) {
+                alert('Reset failed: ' + e.message);
             }
+        }
 
-            function renderPoolHealthStats(stats) {
-                const container = document.getElementById('pool-health-stats');
-                const status_class = stats.status === 'healthy' ? 'good' : 'warn';
-                const status_color = stats.status === 'healthy' ? '#4ade80' : '#fbbf24';
+        // ==================== Database Pool Monitoring Functions ====================
+        let poolHealthChart = null;
+        let acquisitionTimeChart = null;
+        let poolMonitoringInterval = null;
 
-                let active = stats.active_connections;
-                let idle = stats.idle_connections;
+        async function loadDatabaseHealth() {
+            try {
+                const res = await fetch('/api/v1/admin/database/pool-health', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!res.ok) throw new Error('Failed to load pool health');
 
-                // Handle "unavailable" string values
-                if (typeof active === 'string') active = 'N/A';
-                if (typeof idle === 'string') idle = 'N/A';
+                const stats = await res.json();
+                renderPoolHealthStats(stats);
+                renderPoolHealthCharts(stats);
+                renderConnectionDetails(stats);
 
-                const utilization = typeof active === 'number' && typeof stats.max_connections === 'number' && stats.max_connections > 0
-                    ? ((active / stats.max_connections) * 100).toFixed(1) + '%'
-                    : 'N/A';
+                if (stats.old_connections && stats.old_connections.length > 0) {
+                    renderOldConnections(stats.old_connections);
+                }
 
-                container.innerHTML = `
+                if (stats.health_issues && stats.health_issues.length > 0) {
+                    renderHealthAlerts(stats.health_issues);
+                } else {
+                    document.getElementById('pool-health-alerts').style.display = 'none';
+                }
+            } catch (e) {
+                console.error('Failed to load database health:', e);
+                alert('Error loading pool health: ' + e.message);
+            }
+        }
+
+        function renderPoolHealthStats(stats) {
+            const container = document.getElementById('pool-health-stats');
+            const status_class = stats.status === 'healthy' ? 'good' : 'warn';
+            const status_color = stats.status === 'healthy' ? '#4ade80' : '#fbbf24';
+
+            let active = stats.active_connections;
+            let idle = stats.idle_connections;
+
+            // Handle "unavailable" string values
+            if (typeof active === 'string') active = 'N/A';
+            if (typeof idle === 'string') idle = 'N/A';
+
+            const utilization = typeof active === 'number' && typeof stats.max_connections === 'number' && stats.max_connections > 0
+                ? ((active / stats.max_connections) * 100).toFixed(1) + '%'
+                : 'N/A';
+
+            container.innerHTML = `
                 <div class="card">
                     <h3>Status</h3>
                     <div class="value ${status_class}" style="color:${status_color}">${stats.status.toUpperCase()}</div>
@@ -1880,163 +1882,163 @@
                     <div class="value">${stats.total_acquisitions.toLocaleString()}</div>
                 </div>
             `;
-            }
+        }
 
-            function renderPoolHealthCharts(stats) {
-                const chartOptions = {
-                    responsive: true,
-                    maintainAspectRatio: true,
-                    plugins: { legend: { labels: { color: '#eaeaea' } } }
-                };
+        function renderPoolHealthCharts(stats) {
+            const chartOptions = {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: { legend: { labels: { color: '#eaeaea' } } }
+            };
 
-                // Utilization gauge (doughnut chart)
-                const active = typeof stats.active_connections === 'number' ? stats.active_connections : 0;
-                const idle = typeof stats.idle_connections === 'number' ? stats.idle_connections : 0;
+            // Utilization gauge (doughnut chart)
+            const active = typeof stats.active_connections === 'number' ? stats.active_connections : 0;
+            const idle = typeof stats.idle_connections === 'number' ? stats.idle_connections : 0;
 
-                if (poolHealthChart) poolHealthChart.destroy();
-                poolHealthChart = new Chart(document.getElementById('pool-utilization-chart'), {
-                    type: 'doughnut',
-                    data: {
-                        labels: ['Active', 'Idle'],
-                        datasets: [{
-                            data: [active, idle],
-                            backgroundColor: ['#e94560', '#4ade80'],
-                            borderColor: '#16213e'
-                        }]
-                    },
-                    options: {
-                        ...chartOptions,
-                        plugins: {
-                            legend: { position: 'bottom', labels: { color: '#eaeaea' } }
+            if (poolHealthChart) poolHealthChart.destroy();
+            poolHealthChart = new Chart(document.getElementById('pool-utilization-chart'), {
+                type: 'doughnut',
+                data: {
+                    labels: ['Active', 'Idle'],
+                    datasets: [{
+                        data: [active, idle],
+                        backgroundColor: ['#e94560', '#4ade80'],
+                        borderColor: '#16213e'
+                    }]
+                },
+                options: {
+                    ...chartOptions,
+                    plugins: {
+                        legend: { position: 'bottom', labels: { color: '#eaeaea' } }
+                    }
+                }
+            });
+
+            // Acquisition time trend (simple bar chart showing recent avg)
+            if (acquisitionTimeChart) acquisitionTimeChart.destroy();
+            acquisitionTimeChart = new Chart(document.getElementById('acquisition-time-chart'), {
+                type: 'bar',
+                data: {
+                    labels: ['Current', 'Max Observed', 'Threshold (1s)'],
+                    datasets: [{
+                        label: 'Time (ms)',
+                        data: [
+                            stats.avg_acquisition_time * 1000,
+                            stats.max_acquisition_time * 1000,
+                            1000
+                        ],
+                        backgroundColor: [
+                            stats.avg_acquisition_time < 1 ? '#4ade80' : '#fbbf24',
+                            stats.max_acquisition_time < 1 ? '#4ade80' : '#fbbf24',
+                            '#0f3460'
+                        ],
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    ...chartOptions,
+                    scales: {
+                        y: {
+                            ticks: { color: '#888' },
+                            grid: { color: '#0f3460' },
+                            beginAtZero: true
                         }
                     }
-                });
+                }
+            });
+        }
 
-                // Acquisition time trend (simple bar chart showing recent avg)
-                if (acquisitionTimeChart) acquisitionTimeChart.destroy();
-                acquisitionTimeChart = new Chart(document.getElementById('acquisition-time-chart'), {
-                    type: 'bar',
-                    data: {
-                        labels: ['Current', 'Max Observed', 'Threshold (1s)'],
-                        datasets: [{
-                            label: 'Time (ms)',
-                            data: [
-                                stats.avg_acquisition_time * 1000,
-                                stats.max_acquisition_time * 1000,
-                                1000
-                            ],
-                            backgroundColor: [
-                                stats.avg_acquisition_time < 1 ? '#4ade80' : '#fbbf24',
-                                stats.max_acquisition_time < 1 ? '#4ade80' : '#fbbf24',
-                                '#0f3460'
-                            ],
-                            borderRadius: 4
-                        }]
-                    },
-                    options: {
-                        ...chartOptions,
-                        scales: {
-                            y: {
-                                ticks: { color: '#888' },
-                                grid: { color: '#0f3460' },
-                                beginAtZero: true
-                            }
-                        }
-                    }
-                });
-            }
+        function renderConnectionDetails(stats) {
+            const tbody = document.querySelector('#connections-table tbody');
+            const rows = [
+                ['Database Type', stats.database_type || 'unknown'],
+                ['Min Connections', stats.min_connections || 'N/A'],
+                ['Max Connections', stats.max_connections || 'N/A'],
+                ['Total Acquisitions', stats.total_acquisitions.toLocaleString()],
+                ['Pool Wait Events', stats.total_pool_waits || 0],
+                ['Avg Acquisition (ms)', (stats.avg_acquisition_time * 1000).toFixed(3)],
+                ['Max Acquisition (ms)', (stats.max_acquisition_time * 1000).toFixed(3)],
+                ['Avg Pool Wait (ms)', stats.avg_pool_wait_time ? (stats.avg_pool_wait_time * 1000).toFixed(3) : '0.000'],
+                ['Last Updated', new Date(stats.timestamp).toLocaleString()]
+            ];
 
-            function renderConnectionDetails(stats) {
-                const tbody = document.querySelector('#connections-table tbody');
-                const rows = [
-                    ['Database Type', stats.database_type || 'unknown'],
-                    ['Min Connections', stats.min_connections || 'N/A'],
-                    ['Max Connections', stats.max_connections || 'N/A'],
-                    ['Total Acquisitions', stats.total_acquisitions.toLocaleString()],
-                    ['Pool Wait Events', stats.total_pool_waits || 0],
-                    ['Avg Acquisition (ms)', (stats.avg_acquisition_time * 1000).toFixed(3)],
-                    ['Max Acquisition (ms)', (stats.max_acquisition_time * 1000).toFixed(3)],
-                    ['Avg Pool Wait (ms)', stats.avg_pool_wait_time ? (stats.avg_pool_wait_time * 1000).toFixed(3) : '0.000'],
-                    ['Last Updated', new Date(stats.timestamp).toLocaleString()]
-                ];
+            tbody.innerHTML = rows.map(([label, value]) =>
+                `<tr><td style="padding:8px;border-bottom:1px solid var(--border)">${label}</td><td style="padding:8px;border-bottom:1px solid var(--border);text-align:right;font-family:monospace">${value}</td></tr>`
+            ).join('');
+        }
 
-                tbody.innerHTML = rows.map(([label, value]) =>
-                    `<tr><td style="padding:8px;border-bottom:1px solid var(--border)">${label}</td><td style="padding:8px;border-bottom:1px solid var(--border);text-align:right;font-family:monospace">${value}</td></tr>`
-                ).join('');
-            }
+        function renderOldConnections(oldConnections) {
+            document.getElementById('old-connections-section').style.display = 'block';
+            const tbody = document.querySelector('#old-connections-table tbody');
 
-            function renderOldConnections(oldConnections) {
-                document.getElementById('old-connections-section').style.display = 'block';
-                const tbody = document.querySelector('#old-connections-table tbody');
-
-                tbody.innerHTML = oldConnections.map(conn =>
-                    `<tr><td style="padding:8px;border-bottom:1px solid var(--border);font-family:monospace;font-size:12px">${conn.connection_id}</td>
+            tbody.innerHTML = oldConnections.map(conn =>
+                `<tr><td style="padding:8px;border-bottom:1px solid var(--border);font-family:monospace;font-size:12px">${conn.connection_id}</td>
                 <td style="padding:8px;border-bottom:1px solid var(--border);text-align:right;color:#ef4444;font-weight:bold">${conn.age_seconds.toFixed(1)}</td>
                 <td style="padding:8px;border-bottom:1px solid var(--border);text-align:center;font-family:monospace;font-size:12px">${conn.thread_id || 'unknown'}</td></tr>`
-                ).join('');
+            ).join('');
+        }
+
+        function renderHealthAlerts(issues) {
+            document.getElementById('pool-health-alerts').style.display = 'block';
+            const list = document.getElementById('alerts-list');
+            list.innerHTML = issues.map(issue =>
+                `<li style="padding:6px 0;color:#ef4444">⚠ ${issue}</li>`
+            ).join('');
+        }
+
+        function startPoolMonitoring() {
+            if (poolMonitoringInterval) {
+                alert('Monitoring already running');
+                return;
             }
 
-            function renderHealthAlerts(issues) {
-                document.getElementById('pool-health-alerts').style.display = 'block';
-                const list = document.getElementById('alerts-list');
-                list.innerHTML = issues.map(issue =>
-                    `<li style="padding:6px 0;color:#ef4444">⚠ ${issue}</li>`
-                ).join('');
+            poolMonitoringInterval = setInterval(() => {
+                loadDatabaseHealth();
+            }, 5000); // Refresh every 5 seconds
+
+            alert('Pool monitoring started - updating every 5 seconds');
+            document.querySelector('[onclick*="startPoolMonitoring"]').disabled = true;
+        }
+
+        function stopPoolMonitoring() {
+            if (poolMonitoringInterval) {
+                clearInterval(poolMonitoringInterval);
+                poolMonitoringInterval = null;
+                alert('Pool monitoring stopped');
+                document.querySelector('[onclick*="startPoolMonitoring"]').disabled = false;
+            } else {
+                alert('Monitoring not running');
+            }
+        }
+
+        // ==================== User Tier Functions ====================
+        let selectedUserId = null;
+        let selectedUserData = null;
+
+        async function searchUsers() {
+            const query = document.getElementById('user-search').value.trim();
+            if (!query || query.length < 2) {
+                document.getElementById('user-search-results').innerHTML = '<p style="color:#888">Enter at least 2 characters to search</p>';
+                return;
             }
 
-            function startPoolMonitoring() {
-                if (poolMonitoringInterval) {
-                    alert('Monitoring already running');
+            try {
+                const res = await fetch(`/api/v1/admin/users/search?q=${encodeURIComponent(query)}&limit=20`, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!res.ok) throw new Error('Search failed');
+                const data = await res.json();
+
+                if (!data.users || data.users.length === 0) {
+                    document.getElementById('user-search-results').innerHTML = '<p style="color:#888">No users found</p>';
                     return;
                 }
 
-                poolMonitoringInterval = setInterval(() => {
-                    loadDatabaseHealth();
-                }, 5000); // Refresh every 5 seconds
-
-                alert('Pool monitoring started - updating every 5 seconds');
-                document.querySelector('[onclick*="startPoolMonitoring"]').disabled = true;
-            }
-
-            function stopPoolMonitoring() {
-                if (poolMonitoringInterval) {
-                    clearInterval(poolMonitoringInterval);
-                    poolMonitoringInterval = null;
-                    alert('Pool monitoring stopped');
-                    document.querySelector('[onclick*="startPoolMonitoring"]').disabled = false;
-                } else {
-                    alert('Monitoring not running');
-                }
-            }
-
-            // ==================== User Tier Functions ====================
-            let selectedUserId = null;
-            let selectedUserData = null;
-
-            async function searchUsers() {
-                const query = document.getElementById('user-search').value.trim();
-                if (!query || query.length < 2) {
-                    document.getElementById('user-search-results').innerHTML = '<p style="color:#888">Enter at least 2 characters to search</p>';
-                    return;
-                }
-
-                try {
-                    const res = await fetch(`/api/v1/admin/users/search?q=${encodeURIComponent(query)}&limit=20`, {
-                        headers: { 'Authorization': 'Bearer ' + token }
-                    });
-                    if (!res.ok) throw new Error('Search failed');
-                    const data = await res.json();
-
-                    if (!data.users || data.users.length === 0) {
-                        document.getElementById('user-search-results').innerHTML = '<p style="color:#888">No users found</p>';
-                        return;
-                    }
-
-                    let html = '<table><thead><tr><th>ID</th><th>Username</th><th>Tier</th><th>Badges</th><th>Actions</th></tr></thead><tbody>';
-                    for (const user of data.users) {
-                        const badges = Array.isArray(user.badges) ? user.badges.join(', ') : '-';
-                        const userId = String(user.id);
-                        html += `<tr>
+                let html = '<table><thead><tr><th>ID</th><th>Username</th><th>Tier</th><th>Badges</th><th>Actions</th></tr></thead><tbody>';
+                for (const user of data.users) {
+                    const badges = Array.isArray(user.badges) ? user.badges.join(', ') : '-';
+                    const userId = String(user.id);
+                    html += `<tr>
                         <td style="font-family:monospace;font-size:12px">${userId}</td>
                         <td>
                             <div style="display:flex; flex-direction:column;">
@@ -2053,27 +2055,27 @@
                             </div>
                         </td>
                     </tr>`;
-                    }
-                    html += '</tbody></table>';
-                    document.getElementById('user-search-results').innerHTML = html;
-                } catch (e) {
-                    document.getElementById('user-search-results').innerHTML = `<p style="color:var(--bad)">Error: ${e.message}</p>`;
                 }
+                html += '</tbody></table>';
+                document.getElementById('user-search-results').innerHTML = html;
+            } catch (e) {
+                document.getElementById('user-search-results').innerHTML = `<p style="color:var(--bad)">Error: ${e.message}</p>`;
             }
+        }
 
-            async function selectUser(userId) {
-                selectedUserId = String(userId);
-                try {
-                    const res = await fetch(`/api/v1/admin/users/${selectedUserId}`, {
-                        headers: { 'Authorization': 'Bearer ' + token }
-                    });
-                    if (!res.ok) throw new Error('Failed to load user');
-                    selectedUserData = await res.json();
+        async function selectUser(userId) {
+            selectedUserId = String(userId);
+            try {
+                const res = await fetch(`/api/v1/admin/users/${selectedUserId}`, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!res.ok) throw new Error('Failed to load user');
+                selectedUserData = await res.json();
 
-                    // Construct profile link
-                    const profileUrl = `/users/${selectedUserId}`;
+                // Construct profile link
+                const profileUrl = `/users/${selectedUserId}`;
 
-                    document.getElementById('user-info').innerHTML = `
+                document.getElementById('user-info').innerHTML = `
                     <h3 style="margin-bottom: 16px;">User Details</h3>
                     <div style="display: flex; flex-direction: column; gap: 12px;">
                         <p><strong>ID:</strong> <span style="font-family:monospace; color: var(--accent);">${selectedUserId}</span></p>
@@ -2088,151 +2090,151 @@
                     </div>
                 `;
 
-                    document.getElementById('tier-select').value = selectedUserData.tier || 'standard';
-                    renderUserBadges();
+                document.getElementById('tier-select').value = selectedUserData.tier || 'standard';
+                renderUserBadges();
 
-                    // Update unlock button visibility
-                    document.getElementById('unlock-btn').style.display = selectedUserData.account_locked ? 'block' : 'none';
+                // Update unlock button visibility
+                document.getElementById('unlock-btn').style.display = selectedUserData.account_locked ? 'block' : 'none';
 
-                    // Reset tabs
-                    showUserTab('overview', document.querySelector('.tab-btn'));
+                // Reset tabs
+                showUserTab('overview', document.querySelector('.tab-btn'));
 
-                    // Load avatar
-                    loadUserAvatar();
+                // Load avatar
+                loadUserAvatar();
 
-                    document.getElementById('user-details').style.display = 'block';
-                    document.getElementById('user-details').scrollIntoView({ behavior: 'smooth' });
-                } catch (e) {
-                    alert('Error loading user: ' + e.message);
-                }
+                document.getElementById('user-details').style.display = 'block';
+                document.getElementById('user-details').scrollIntoView({ behavior: 'smooth' });
+            } catch (e) {
+                alert('Error loading user: ' + e.message);
+            }
+        }
+
+        function showUserTab(tabName, btn) {
+            document.querySelectorAll('.user-tab-content').forEach(t => t.style.display = 'none');
+            document.getElementById(`user-tab-${tabName}`).style.display = 'block';
+
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            if (btn) btn.classList.add('active');
+        }
+
+        function loadUserAvatar() {
+            const preview = document.getElementById('user-avatar-preview');
+            const avatarUrl = `/api/v1/avatars/users/${selectedUserId}`;
+
+            preview.innerHTML = '';
+            const img = document.createElement('img');
+            img.src = avatarUrl;
+            img.style.width = '100%';
+            img.style.height = '100%';
+            img.style.objectFit = 'cover';
+            img.onerror = () => {
+                preview.innerHTML = '<span style="color:#666">No Avatar</span>';
+            };
+            preview.appendChild(img);
+        }
+
+        async function resetUserAvatar() {
+            if (!confirm('Are you sure you want to reset this user\'s avatar?')) return;
+            try {
+                // Assuming we'll add this endpoint or use a generic update
+                alert('Avatar reset not yet implemented in backend');
+            } catch (e) {
+                alert(e.message);
+            }
+        }
+
+        async function saveUserNotes() {
+            // Placeholder for future implementation
+            alert('Note saving not yet implemented in backend');
+        }
+
+        function renderUserBadges() {
+            const container = document.getElementById('user-badges');
+            if (!selectedUserData.badges || selectedUserData.badges.length === 0) {
+                container.innerHTML = '<span style="color:#888">No badges</span>';
+                return;
+            }
+            container.innerHTML = selectedUserData.badges.map(badge =>
+                `<span class="status" style="background:var(--good);color:#000;cursor:pointer" onclick="removeBadge('${badge}')" title="Click to remove">${badge} ×</span>`
+            ).join('');
+        }
+
+        async function updateUserTier() {
+            if (!selectedUserId) return;
+            const tier = document.getElementById('tier-select').value;
+
+            try {
+                const res = await fetch(`/api/v1/admin/users/${selectedUserId}/tier`, {
+                    method: 'PUT',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tier })
+                });
+                if (!res.ok) throw new Error('Failed to update tier');
+
+                selectedUserData.tier = tier;
+                document.getElementById('user-info').querySelector('.status').textContent = tier;
+                alert('Tier updated successfully!');
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        async function addBadge() {
+            if (!selectedUserId) return;
+            const badge = document.getElementById('badge-select').value;
+
+            if (selectedUserData.badges.includes(badge)) {
+                alert('User already has this badge');
+                return;
             }
 
-            function showUserTab(tabName, btn) {
-                document.querySelectorAll('.user-tab-content').forEach(t => t.style.display = 'none');
-                document.getElementById(`user-tab-${tabName}`).style.display = 'block';
+            try {
+                const res = await fetch(`/api/v1/admin/users/${selectedUserId}/badges/${badge}`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!res.ok) throw new Error('Failed to add badge');
+                const data = await res.json();
 
-                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-                if (btn) btn.classList.add('active');
+                selectedUserData.badges = data.badges;
+                renderUserBadges();
+            } catch (e) {
+                alert('Error: ' + e.message);
             }
+        }
 
-            function loadUserAvatar() {
-                const preview = document.getElementById('user-avatar-preview');
-                const avatarUrl = `/api/v1/media/avatars/${selectedUserId}`;
+        async function removeBadge(badge) {
+            if (!selectedUserId) return;
+            if (!confirm(`Remove badge "${badge}" from this user?`)) return;
 
-                preview.innerHTML = '';
-                const img = document.createElement('img');
-                img.src = avatarUrl;
-                img.style.width = '100%';
-                img.style.height = '100%';
-                img.style.objectFit = 'cover';
-                img.onerror = () => {
-                    preview.innerHTML = '<span style="color:#666">No Avatar</span>';
-                };
-                preview.appendChild(img);
+            try {
+                const res = await fetch(`/api/v1/admin/users/${selectedUserId}/badges/${badge}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!res.ok) throw new Error('Failed to remove badge');
+                const data = await res.json();
+
+                selectedUserData.badges = data.badges;
+                renderUserBadges();
+            } catch (e) {
+                alert('Error: ' + e.message);
             }
+        }
 
-            async function resetUserAvatar() {
-                if (!confirm('Are you sure you want to reset this user\'s avatar?')) return;
-                try {
-                    // Assuming we'll add this endpoint or use a generic update
-                    alert('Avatar reset not yet implemented in backend');
-                } catch (e) {
-                    alert(e.message);
-                }
-            }
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
 
-            async function saveUserNotes() {
-                // Placeholder for future implementation
-                alert('Note saving not yet implemented in backend');
-            }
+        function logout() {
+            fetch('/api/v1/admin/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
+            localStorage.removeItem('plexichat-admin-token');
+            window.location.replace('/api/v1/admin/login');
+        }
 
-            function renderUserBadges() {
-                const container = document.getElementById('user-badges');
-                if (!selectedUserData.badges || selectedUserData.badges.length === 0) {
-                    container.innerHTML = '<span style="color:#888">No badges</span>';
-                    return;
-                }
-                container.innerHTML = selectedUserData.badges.map(badge =>
-                    `<span class="status" style="background:var(--good);color:#000;cursor:pointer" onclick="removeBadge('${badge}')" title="Click to remove">${badge} ×</span>`
-                ).join('');
-            }
-
-            async function updateUserTier() {
-                if (!selectedUserId) return;
-                const tier = document.getElementById('tier-select').value;
-
-                try {
-                    const res = await fetch(`/api/v1/admin/users/${selectedUserId}/tier`, {
-                        method: 'PUT',
-                        headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ tier })
-                    });
-                    if (!res.ok) throw new Error('Failed to update tier');
-
-                    selectedUserData.tier = tier;
-                    document.getElementById('user-info').querySelector('.status').textContent = tier;
-                    alert('Tier updated successfully!');
-                } catch (e) {
-                    alert('Error: ' + e.message);
-                }
-            }
-
-            async function addBadge() {
-                if (!selectedUserId) return;
-                const badge = document.getElementById('badge-select').value;
-
-                if (selectedUserData.badges.includes(badge)) {
-                    alert('User already has this badge');
-                    return;
-                }
-
-                try {
-                    const res = await fetch(`/api/v1/admin/users/${selectedUserId}/badges/${badge}`, {
-                        method: 'POST',
-                        headers: { 'Authorization': 'Bearer ' + token }
-                    });
-                    if (!res.ok) throw new Error('Failed to add badge');
-                    const data = await res.json();
-
-                    selectedUserData.badges = data.badges;
-                    renderUserBadges();
-                } catch (e) {
-                    alert('Error: ' + e.message);
-                }
-            }
-
-            async function removeBadge(badge) {
-                if (!selectedUserId) return;
-                if (!confirm(`Remove badge "${badge}" from this user?`)) return;
-
-                try {
-                    const res = await fetch(`/api/v1/admin/users/${selectedUserId}/badges/${badge}`, {
-                        method: 'DELETE',
-                        headers: { 'Authorization': 'Bearer ' + token }
-                    });
-                    if (!res.ok) throw new Error('Failed to remove badge');
-                    const data = await res.json();
-
-                    selectedUserData.badges = data.badges;
-                    renderUserBadges();
-                } catch (e) {
-                    alert('Error: ' + e.message);
-                }
-            }
-
-            function escapeHtml(text) {
-                const div = document.createElement('div');
-                div.textContent = text;
-                return div.innerHTML;
-            }
-
-            function logout() {
-                fetch('/api/v1/admin/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
-                localStorage.removeItem('plexichat-admin-token');
-                window.location.replace('/api/v1/admin/login');
-            }
-
-            verifyAndLoad();
+        verifyAndLoad();
     </script>
 </body>
 
