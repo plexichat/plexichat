@@ -1983,7 +1983,7 @@ async def get_user_details(user_id: str, request: Request) -> UserDetailsRespons
             id=str(user.id),
             username=user.username,
             email=user.email,
-            tier=user.tier,
+            tier=user.tier or "standard",
             badges=user.badges,
             created_at=user.created_at,
             last_login=user.last_login,
