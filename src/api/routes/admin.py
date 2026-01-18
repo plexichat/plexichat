@@ -178,6 +178,37 @@ async def admin_lock_user(request: Request, body: UserLockRequest) -> SuccessRes
     from src.core import admin
     admin.lock_user(user_id, body.duration_seconds)
 
+    # Broadcast security logout event
+    try:
+        from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+        from src.core.events.models import Event
+        from src.core.events.types import EventType
+
+        if ws_is_setup():
+            dispatcher = get_dispatcher()
+            msg = "Your account has been suspended."
+            if body.duration_seconds:
+                # Format duration roughly
+                if body.duration_seconds >= 86400:
+                    msg += f" Suspension expires in {body.duration_seconds // 86400} days."
+                elif body.duration_seconds >= 3600:
+                    msg += f" Suspension expires in {body.duration_seconds // 3600} hours."
+                else:
+                    msg += f" Suspension expires in {body.duration_seconds} seconds."
+            else:
+                msg += " This suspension is permanent."
+
+            event = Event(
+                event_type=EventType.SECURITY_LOGOUT,
+                data={
+                    "user_id": str(user_id),
+                    "message": msg,
+                }
+            )
+            await dispatcher.dispatch_event(event, [user_id])
+    except Exception as e:
+        logger.error(f"Failed to broadcast lock user logout: {e}")
+
     logger.info(f"Admin {admin_id} locked user {user_id} (duration: {body.duration_seconds})")
     return SuccessResponse(success=True)
 
