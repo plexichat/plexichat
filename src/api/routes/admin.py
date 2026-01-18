@@ -2430,20 +2430,11 @@ async def admin_login_page(request: Request):
     include_in_schema=False,
 )
 async def admin_ui_redirect(request: Request):
-    """Redirect to admin dashboard page if logged in, else login."""
+    """Redirect to admin dashboard page. Frontend JS will handle authentication check."""
     from fastapi.responses import RedirectResponse
     
-    # Check if we have a session token in the header
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        return RedirectResponse(
-            url=request.url_for("admin_dashboard_page"),
-            status_code=status.HTTP_302_FOUND
-        )
-    
-    # Otherwise, go to login
     return RedirectResponse(
-        url=request.url_for("admin_login_page"),
+        url=request.url_for("admin_dashboard_page"),
         status_code=status.HTTP_302_FOUND
     )
 

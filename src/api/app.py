@@ -85,15 +85,15 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     if admin_config.get("enabled", False):
         from fastapi.responses import RedirectResponse
         admin_path = admin_config.get("path", "/admin")
-        target_path = f"{config.api_prefix}{admin_path}/login"
+        target_path = f"{config.api_prefix}{admin_path}/ui"
         
         @app.get(admin_path, include_in_schema=False)
         async def admin_redirect():
-            return RedirectResponse(url=target_path)
+            return RedirectResponse(url=target_path, status_code=302)
             
         @app.get(f"{admin_path}/", include_in_schema=False)
         async def admin_slash_redirect():
-            return RedirectResponse(url=target_path)
+            return RedirectResponse(url=target_path, status_code=302)
 
         logger.info(f"Admin UI redirects enabled: {admin_path} -> {target_path}")
 
