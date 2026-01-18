@@ -640,6 +640,8 @@ class PlexiChatServer:
                     "enabled": True,
                     "allowed_hosts": ["127.0.0.1", "localhost", "::1"],
                 },
+                # List of IP addresses or prefixes to explicitly block
+                "blocked_ips": [],
                 # Allowed origins for admin panel CORS (empty = use main api.cors_origins)
                 "allowed_origins": [],
                 # Rate limiting for admin login attempts

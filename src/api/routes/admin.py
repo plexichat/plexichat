@@ -203,6 +203,16 @@ def _check_host_restriction(request: Request) -> None:
     from src.utils.net import get_client_ip
     client_ip = get_client_ip(request) or "unknown"
 
+    # Check for explicitly blocked IPs or prefixes (e.g. to block tunnels)
+    blocked_ips = admin_config.get("blocked_ips", [])
+    for blocked in blocked_ips:
+        if client_ip == blocked or (blocked.endswith(".") and client_ip.startswith(blocked)):
+            logger.warning(f"Admin access blocked from configured blocked IP/prefix: {client_ip} (matches {blocked})")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": {"code": 403, "message": "Access from this network is restricted"}},
+            )
+
     host_restriction = admin_config.get("host_restriction", {})
     if host_restriction.get("enabled", True):
         # Security: Additional verification for trust_x_forwarded_for configuration
@@ -233,7 +243,7 @@ def _check_host_restriction(request: Request) -> None:
                     )
 
         allowed_hosts = host_restriction.get(
-            "allowed_hosts", ["127.0.0.1", "localhost", "::1", "192.168.3.242"]
+            "allowed_hosts", ["127.0.0.1", "localhost", "::1"]
         )
         from src.core import admin
         if not admin.check_host_restriction(client_ip, allowed_hosts):
