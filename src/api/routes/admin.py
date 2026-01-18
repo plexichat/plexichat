@@ -57,6 +57,7 @@ from src.api.schemas.admin import (
     IPBlockRequest,
     BlockedIPResponse,
     ForceLogoutRequest,
+    UserLockRequest,
 )
 from src.api.schemas.common import ErrorResponse, SuccessResponse
 
