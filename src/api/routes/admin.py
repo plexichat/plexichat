@@ -612,8 +612,8 @@ async def get_tickets(
         )
         return [
             TicketResponse(
-                id=t.id,
-                user_id=t.user_id,
+                id=str(t.id),
+                user_id=str(t.user_id),
                 username=t.username,
                 content=t.content,
                 category=t.category,
@@ -621,7 +621,7 @@ async def get_tickets(
                 status=t.status,
                 created_at=t.created_at,
                 resolved_at=t.resolved_at,
-                resolved_by=t.resolved_by,
+                resolved_by=str(t.resolved_by) if t.resolved_by else None,
             )
             for t in tickets
         ]
@@ -667,8 +667,8 @@ async def get_ticket(ticket_id: int, request: Request) -> TicketResponse:
             )
 
         return TicketResponse(
-            id=ticket.id,
-            user_id=ticket.user_id,
+            id=str(ticket.id),
+            user_id=str(ticket.user_id),
             username=ticket.username,
             content=ticket.content,
             category=ticket.category,
@@ -676,7 +676,7 @@ async def get_ticket(ticket_id: int, request: Request) -> TicketResponse:
             status=ticket.status,
             created_at=ticket.created_at,
             resolved_at=ticket.resolved_at,
-            resolved_by=ticket.resolved_by,
+            resolved_by=str(ticket.resolved_by) if ticket.resolved_by else None,
         )
     except HTTPException:
         raise
@@ -781,9 +781,9 @@ async def get_ticket_notes(ticket_id: int, request: Request) -> List[NoteRespons
 
         return [
             NoteResponse(
-                id=n.id,
-                ticket_id=n.ticket_id,
-                admin_id=n.admin_id,
+                id=str(n.id),
+                ticket_id=str(n.ticket_id),
+                admin_id=str(n.admin_id),
                 admin_username=n.admin_username,
                 content=n.content,
                 created_at=n.created_at,
@@ -1383,20 +1383,20 @@ async def get_hash_reports(
 
         return [
             HashReportResponse(
-                id=r.id,
+                id=str(r.id),
                 hash_value=r.hash_value,
                 phash_value=r.phash_value,
-                reporter_id=r.reporter_id,
+                reporter_id=str(r.reporter_id),
                 reporter_username=r.reporter_username,
                 reason=r.reason,
                 details=r.details,
                 status=r.status,
                 reported_at=r.reported_at,
                 reviewed_at=r.reviewed_at,
-                reviewed_by=r.reviewed_by,
+                reviewed_by=str(r.reviewed_by) if r.reviewed_by else None,
                 admin_notes=r.admin_notes,
-                uploader_id=r.uploader_id,
-                message_id=r.message_id,
+                uploader_id=str(r.uploader_id) if r.uploader_id else None,
+                message_id=str(r.message_id) if r.message_id else None,
                 attachment_url=r.attachment_url,
                 block_uploader=r.block_uploader,
             )
