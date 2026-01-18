@@ -126,16 +126,12 @@
         }
         // Check if already logged in
         const token = localStorage.getItem('plexichat-admin-token');
-        console.log('Login page check - token present:', !!token);
         if (token) {
-            console.log('Checking existing session with token preview:', token.substring(0, 5));
             fetch('/api/v1/admin/dashboard', { headers: { 'Authorization': 'Bearer ' + token } })
                 .then(r => { 
                     if (r.ok) {
-                        console.log('Session valid, redirecting to UI');
                         window.location.href = '/api/v1/admin/ui';
                     } else if (r.status === 401) {
-                        console.log('Session invalid, clearing token');
                         localStorage.removeItem('plexichat-admin-token');
                     }
                 });

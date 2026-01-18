@@ -394,7 +394,6 @@
 
     <script>
         const token = localStorage.getItem('plexichat-admin-token');
-        console.log('Admin token length:', token ? token.length : 'null');
         if (!token) window.location.replace('/api/v1/admin/login');
 
         let telemetryData = [];
@@ -672,7 +671,6 @@
         
         async function verifyAndLoad() {
             try {
-                console.log('Sending dashboard request with token preview:', token ? token.substring(0, 5) : 'null');
                 const res = await fetch('/api/v1/admin/dashboard', { 
                     headers: { 'Authorization': 'Bearer ' + token },
                     method: 'GET'

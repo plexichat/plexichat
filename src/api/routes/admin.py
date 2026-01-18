@@ -298,24 +298,14 @@ def _load_admin_template(template_name: str) -> str:
 def _get_admin_from_token(request: Request) -> int:
     """Get admin ID from Authorization header."""
     auth_header = request.headers.get("Authorization", "")
-    if not auth_header:
-        logger.warning("Missing Authorization header in admin request")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"error": {"code": 401, "message": "Authentication required"}},
-        )
-
     if not auth_header.startswith("Bearer "):
-        actual_prefix = auth_header[:10] if auth_header else "empty"
-        logger.warning(f"Invalid Authorization header format: '{actual_prefix}...' (expected 'Bearer ')")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"error": {"code": 401, "message": f"Invalid token format (starts with {actual_prefix})"}},
+            detail={"error": {"code": 401, "message": "Invalid token"}},
         )
 
     token = auth_header[7:]
-    token_preview = f"{token[:4]}...{token[-4:]}" if len(token) > 8 else "***"
-    logger.warning(f"Received admin token: len={len(token)}, preview={token_preview}")
+    logger.debug(f"Received admin token (len={len(token)})")
 
     # Allow secure self-test requests from users with admin permissions
     # Use scope directly as request.state can be unreliable with BaseHTTPMiddleware
