@@ -11,6 +11,7 @@ from fastapi import APIRouter, Request, HTTPException, Depends, Query
 
 import src.api as api
 import utils.logger as logger
+from utils.logger import mask_email, mask_string
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.auth import (
     RegisterRequest,
@@ -141,8 +142,10 @@ async def register(request: Request, body: RegisterRequest) -> LoginResponse:
             dob=body.dob,
         )
     except UserExistsError:
+        masked_username = mask_string(body.username)
+        masked_email_addr = mask_email(body.email)
         logger.warning(
-            f"Registration failed: User '{body.username}' or email '{body.email}' already exists"
+            f"Registration failed: User '{masked_username}' or email '{masked_email_addr}' already exists"
         )
         raise HTTPException(
             status_code=409,
@@ -155,16 +158,18 @@ async def register(request: Request, body: RegisterRequest) -> LoginResponse:
         )
     except (InvalidUsernameError, InvalidEmailError, WeakPasswordError, AuthError) as e:
         # AuthError could be age-related
-        logger.warning(f"Registration failed for '{body.username}': {e}")
+        masked_username = mask_string(body.username)
+        logger.warning(f"Registration failed for '{masked_username}': {e}")
         raise HTTPException(
             status_code=400, detail={"error": {"code": 400, "message": str(e)}}
         )
     except Exception as e:
+        masked_username = mask_string(body.username)
         logger.error(
-            f"Unexpected error in register for '{body.username}': {e}", exc_info=True
+            f"Unexpected error in register for '{masked_username}': {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": "Internal server error during registration"}}
         )
 
     # Apply alpha tester features if enabled
@@ -238,35 +243,40 @@ async def login(request: Request, body: LoginRequest) -> LoginResponse:
             user_agent=user_agent,
         )
     except InvalidCredentialsError:
+        masked_username = mask_string(body.username)
         logger.warning(
-            f"Login failed for '{body.username}': Invalid credentials"
+            f"Login failed for '{masked_username}': Invalid credentials"
         )
         raise HTTPException(
             status_code=401,
             detail={"error": {"code": 401, "message": "Invalid credentials"}},
         )
     except AccountLockedError as e:
-        logger.warning(f"Login failed for '{body.username}': Account locked")
+        masked_username = mask_string(body.username)
+        logger.warning(f"Login failed for '{masked_username}': Account locked")
         raise HTTPException(
-            status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+            status_code=403, detail={"error": {"code": 403, "message": "Account locked"}}
         )
     except (EmailNotVerifiedError, AccountDisabledError) as e:
+        masked_username = mask_string(body.username)
         logger.warning(
-            f"Login failed for '{body.username}': {type(e).__name__}"
+            f"Login failed for '{masked_username}': {type(e).__name__}"
         )
         raise HTTPException(
             status_code=403, detail={"error": {"code": 403, "message": str(e)}}
         )
     except Exception as e:
+        masked_username = mask_string(body.username)
         logger.error(
-            f"Unexpected error in login for '{body.username}': {e}", exc_info=True
+            f"Unexpected error in login for '{masked_username}': {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": "Internal server error during login"}}
         )
 
     if result.status.value == "two_factor_required":
-        logger.info(f"2FA challenge issued for user '{body.username}'")
+        masked_username = mask_string(body.username)
+        logger.info(f"2FA challenge issued for user '{masked_username}'")
         return LoginResponse(
             status="two_factor_required",
             token=None,
@@ -276,8 +286,9 @@ async def login(request: Request, body: LoginRequest) -> LoginResponse:
             expires_in=result.expires_in,
         )
 
+    masked_username = mask_string(body.username)
     logger.info(
-        f"User '{body.username}' logged in successfully (ID: {getattr(result.user, 'id', 'unknown')})"
+        f"User '{masked_username}' logged in successfully (ID: {getattr(result.user, 'id', 'unknown')})"
     )
     return LoginResponse(
         status="success",

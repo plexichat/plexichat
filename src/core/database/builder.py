@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from pydantic import BaseModel, ValidationError
 
 import utils.logger as logger
+from utils.logger import sanitize_data
 
 T = TypeVar('T', bound=BaseModel)
 
@@ -136,7 +137,13 @@ class Query(ABC):
             Query-specific results (rows for SELECT, row count for INSERT/UPDATE/DELETE)
         """
         sql, params = self.build()
-        logger.debug(f"Executing query: {sql} with params: {params}")
+        
+        # Sanitize params for logging
+        sanitized_params = [
+            sanitize_data(p.value if isinstance(p, Parameter) else p) 
+            for p in params
+        ]
+        logger.debug(f"Executing query: {sql} with params: {sanitized_params}")
         
         try:
             if self.db_type == "sqlite":

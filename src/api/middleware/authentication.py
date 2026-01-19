@@ -71,7 +71,9 @@ class AuthenticationMiddleware:
                     logger.error(f"Auth: Auth module NOT AVAILABLE for path {path}")
             else:
                 import utils.logger as logger
-                logger.debug(f"Auth: Failed to extract token from header '{auth_header[:15]}...' for path {path}")
+                from utils.logger import mask_string
+                masked_header = mask_string(auth_header)
+                logger.debug(f"Auth: Failed to extract token from header '{masked_header}' for path {path}")
 
         await self.app(scope, receive, send)
 

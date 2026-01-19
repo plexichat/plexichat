@@ -178,12 +178,14 @@ def validate_email(email: str) -> bool:
         True if email format is valid with a recognized TLD
     """
     import utils.logger as logger
+    from utils.logger import mask_email
 
     # Basic email regex - not exhaustive but catches most issues
     pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.([a-zA-Z]{2,})$"
     match = re.match(pattern, email)
     if not match:
-        logger.debug(f"Email validation failed (regex): {email}")
+        masked_email = mask_email(email)
+        logger.debug(f"Email validation failed (regex): {masked_email}")
         return False
 
     # Extract and validate TLD

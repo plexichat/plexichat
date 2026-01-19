@@ -2434,6 +2434,15 @@ async def get_database_pool_health(request: Request) -> Dict[str, Any]:
         is_healthy = True
         health_issues = []
         
+        # Check OS support
+        # NOTE: Proxmox containers (LXC) often report 'Linux' via platform.system().
+        # We only flag if it's completely unknown or empty.
+        import platform
+        current_os = platform.system()
+        if not current_os:
+            is_healthy = False
+            health_issues.append("UNSUPPORTED_OS: Unknown operating system")
+        
         # Check pool utilization
         active = stats.get("active_connections")
         max_conn = stats.get("max_connections")
