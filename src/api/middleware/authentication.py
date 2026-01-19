@@ -45,10 +45,7 @@ class AuthenticationMiddleware:
         if auth_header and not is_admin_path:
             token = self._extract_token(auth_header)
             if token:
-                # Identify token format
-                # Session tokens: <id>.<secret> (2 parts)
-                # Bot/Email/2FA tokens: <type>.<id>.<secret> (3 parts)
-                # Admin tokens: opaque strings (approx 43 chars, no dots)
+                import utils.logger as logger
                 token_parts = token.split(".")
                 is_plexichat_token = len(token_parts) >= 2
                 
@@ -60,20 +57,21 @@ class AuthenticationMiddleware:
                         token_info = auth.verify_token(token, ip, ua)
                         if token_info:
                             scope["state"]["user"] = token_info
+                            logger.debug(f"Auth: Successfully authenticated user {token_info.user_id} for path {path}")
                         else:
-                            import utils.logger as logger
                             logger.warning(f"Auth: verify_token returned None for path {path}")
                     except Exception as e:
-                        import utils.logger as logger
                         # Only log legitimate auth errors, not format mismatches
-                        logger.error(f"Authentication failed: {e}", exc_info=True)
+                        logger.error(f"Authentication failed for path {path}: {e}", exc_info=True)
                         scope["state"]["auth_error"] = str(e)
                 elif not is_plexichat_token:
-                     # Identify as potentially admin-scoped for endpoints that handle dual auth
+                    logger.debug(f"Auth: Identified potential admin token for path {path}")
                     scope["state"]["potential_admin_token"] = token
+                elif not auth:
+                    logger.error(f"Auth: Auth module NOT AVAILABLE for path {path}")
             else:
                 import utils.logger as logger
-                logger.debug(f"Auth: Failed to extract token from header for path {path}")
+                logger.debug(f"Auth: Failed to extract token from header '{auth_header[:15]}...' for path {path}")
 
         await self.app(scope, receive, send)
 
@@ -94,6 +92,9 @@ async def get_current_user(request: Request) -> TokenInfo:
         error = request.scope.get("state", {}).get(
             "auth_error", "Authentication required"
         )
+        
+        import utils.logger as logger
+        logger.debug(f"get_current_user: No user in state for path {request.url.path}. Error: {error}")
 
         raise HTTPException(status_code=401, detail={"error": {"message": error}})
 
