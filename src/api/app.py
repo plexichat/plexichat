@@ -14,6 +14,7 @@ from .middleware import (
     setup_exception_handlers,
     ErrorHandlingMiddleware,
     LoggingMiddleware,
+    SecurityHeadersMiddleware,
     create_rate_limit_middleware,
     IPBlockingMiddleware,
 )
@@ -63,6 +64,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     app.add_middleware(IPBlockingMiddleware)
     app.add_middleware(AuthenticationMiddleware)
     app.add_middleware(ErrorHandlingMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
 
     # CORS handles OPTIONS preflight
     app.add_middleware(

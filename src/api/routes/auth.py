@@ -818,6 +818,68 @@ async def logout(
     return SuccessResponse(success=True)
 
 
+@router.post(
+    "/refresh",
+    response_model=LoginResponse,
+    summary="Refresh session token",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired session"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def refresh_session(request: Request) -> LoginResponse:
+    """
+    Refresh the current session.
+
+    Validates the current session token and returns a potentially updated token.
+    If the session is near expiration, it will be extended.
+    """
+    auth = api.get_auth()
+    if not auth:
+        logger.error("Auth module not available")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Auth module not available"}},
+        )
+
+    # Get token from Authorization header
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Missing authentication token"}},
+        )
+
+    token = auth_header[7:]
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("User-Agent")
+
+    try:
+        # verify_token will handle extension if enabled
+        token_info = auth.verify_token(token, ip_address, user_agent)
+
+        # Get user object for response
+        user = auth.get_user(token_info.user_id)
+        if not user:
+            raise UserNotFoundError("User not found")
+
+        return LoginResponse(
+            status="success",
+            token=token,  # For now, we return the same token as it's just been extended in DB
+            user=_user_to_response(user),
+        )
+    except (TokenInvalidError, TokenExpiredError) as e:
+        logger.warning(f"Session refresh failed: {e}")
+        raise HTTPException(
+            status_code=401, detail={"error": {"code": 401, "message": str(e)}}
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error in refresh_session: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+
 @router.get(
     "/2fa/status",
     response_model=TwoFactorStatusResponse,

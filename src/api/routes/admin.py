@@ -20,6 +20,7 @@ from pathlib import Path
 import src.api as api
 import utils.config as config
 import utils.logger as logger
+from src.utils.security import generate_csp_nonce, build_admin_csp_header
 from src.api.schemas.admin import (
     AdminLoginRequest,
     AdminLoginResponse,
@@ -360,8 +361,8 @@ def _check_host_restriction(request: Request) -> None:
             )
 
 
-def _load_admin_template(template_name: str) -> str:
-    """Load an admin UI template from the templates directory with path sanitization."""
+def _load_admin_template(template_name: str, csp_nonce: Optional[str] = None) -> str:
+    """Load an admin UI template from the templates directory with path sanitization and CSP nonce injection."""
     # Security: prevent path traversal by only allowing specific template filenames
     allowed_templates = ["login.html", "dashboard.html"]
     if template_name not in allowed_templates:
@@ -382,7 +383,16 @@ def _load_admin_template(template_name: str) -> str:
         return "<h1>Template Error</h1><p>Admin UI template not found.</p>"
 
     try:
-        return template_path.read_text(encoding="utf-8")
+        content = template_path.read_text(encoding="utf-8")
+        
+        # Inject CSP nonce into template if provided
+        if csp_nonce:
+            # Replace <script> with <script nonce="...">
+            content = content.replace("<script>", f'<script nonce="{csp_nonce}">')
+            # Replace any placeholders if they exist
+            content = content.replace("{{ csp_nonce }}", csp_nonce)
+            
+        return content
     except Exception as e:
         logger.error(f"Error reading admin template {template_name}: {e}")
         return f"<h1>Template Error</h1><p>Failed to load template: {e}</p>"
@@ -2506,8 +2516,10 @@ async def admin_login_page(request: Request):
     """Serve the admin login page."""
     try:
         _check_host_restriction(request)
-        content = _load_admin_template("login.html")
-        return HTMLResponse(content=content)
+        nonce = generate_csp_nonce()
+        content = _load_admin_template("login.html", csp_nonce=nonce)
+        headers = {"Content-Security-Policy": build_admin_csp_header(nonce)}
+        return HTMLResponse(content=content, headers=headers)
     except HTTPException as e:
         if e.status_code == 403:
             return HTMLResponse(
@@ -2548,8 +2560,10 @@ async def admin_dashboard_page(request: Request):
     """Serve the admin dashboard page."""
     try:
         _check_host_restriction(request)
-        content = _load_admin_template("dashboard.html")
-        return HTMLResponse(content=content)
+        nonce = generate_csp_nonce()
+        content = _load_admin_template("dashboard.html", csp_nonce=nonce)
+        headers = {"Content-Security-Policy": build_admin_csp_header(nonce)}
+        return HTMLResponse(content=content, headers=headers)
     except HTTPException as e:
         if e.status_code == 403:
             return HTMLResponse(

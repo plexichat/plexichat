@@ -58,7 +58,7 @@ def get_user_info_from_request(request: Request) -> Dict[str, Any]:
     
     if bypass_secret and bypass_header == bypass_secret:
         user_info["is_internal"] = True
-    elif getattr(request.state, "is_selftest", False):
+    elif getattr(request.state, "is_internal", False):
         user_info["is_internal"] = True
 
     return user_info

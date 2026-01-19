@@ -1098,7 +1098,7 @@ class PlexiChatServer:
         )
 
     def setup_utilities(self) -> None:
-        """Setup validator and version utilities."""
+        """Setup validator, version and encryption utilities."""
         validator.setup()
 
         versioning_config = config.get("versioning", {})
@@ -1107,6 +1107,17 @@ class PlexiChatServer:
             min_supported_version=versioning_config.get(
                 "min_supported_version", VERSION
             ),
+        )
+
+        # Initialize encryption with config values
+        from src.utils import encryption
+        encryption_config = config.get("encryption", {})
+        encryption.setup(
+            worker_id=encryption_config.get("snowflake", {}).get("worker_id", 1) or 1,
+            datacenter_id=encryption_config.get("snowflake", {}).get("datacenter_id", 1) or 1,
+            argon2_time_cost=encryption_config.get("argon2", {}).get("time_cost", 2),
+            argon2_memory_cost=encryption_config.get("argon2", {}).get("memory_cost", 65536),
+            argon2_parallelism=encryption_config.get("argon2", {}).get("parallelism", 2),
         )
 
     def initialize_modules(

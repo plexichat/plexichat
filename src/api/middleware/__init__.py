@@ -9,6 +9,7 @@ from .authentication import (
 )
 from .error_handling import setup_exception_handlers, ErrorHandlingMiddleware
 from .logging import LoggingMiddleware
+from .security import SecurityHeadersMiddleware
 from .rate_limiting import (
     get_user_info_from_request,
     create_rate_limit_middleware,
@@ -23,6 +24,7 @@ __all__ = [
     "setup_exception_handlers",
     "ErrorHandlingMiddleware",
     "LoggingMiddleware",
+    "SecurityHeadersMiddleware",
     "RateLimitMiddleware",
     "get_user_info_from_request",
     "create_rate_limit_middleware",
