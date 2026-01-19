@@ -58,7 +58,11 @@ class AuthenticationMiddleware:
                         ip = request.client.host if request.client else None
                         ua = request.headers.get("User-Agent")
                         token_info = auth.verify_token(token, ip, ua)
-                        scope["state"]["user"] = token_info
+                        if token_info:
+                            scope["state"]["user"] = token_info
+                        else:
+                            import utils.logger as logger
+                            logger.warning(f"Auth: verify_token returned None for path {path}")
                     except Exception as e:
                         import utils.logger as logger
                         # Only log legitimate auth errors, not format mismatches
@@ -67,12 +71,16 @@ class AuthenticationMiddleware:
                 elif not is_plexichat_token:
                      # Identify as potentially admin-scoped for endpoints that handle dual auth
                     scope["state"]["potential_admin_token"] = token
+            else:
+                import utils.logger as logger
+                logger.debug(f"Auth: Failed to extract token from header for path {path}")
 
         await self.app(scope, receive, send)
 
     def _extract_token(self, auth_header: str) -> Optional[str]:
-        parts = auth_header.split(" ")
-        if len(parts) == 2 and parts[0] in ("Bearer", "Bot"):
+        # Split by any whitespace and handle case-insensitivity
+        parts = auth_header.split()
+        if len(parts) == 2 and parts[0].title() in ("Bearer", "Bot"):
             return parts[1]
         return None
 
