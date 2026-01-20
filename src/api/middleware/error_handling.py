@@ -12,7 +12,12 @@ from starlette.types import ASGIApp, Receive, Send, Scope
 import traceback
 import src.api as api
 import utils.config as config
-from utils.logger import sanitize_log_message
+try:
+    from utils.logger import sanitize_log_message
+except ImportError:
+    # Fallback if common-utils is not synced
+    def sanitize_log_message(message: str) -> str:
+        return message
 
 
 ERROR_MAPPINGS = {
