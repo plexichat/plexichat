@@ -23,14 +23,22 @@ class SecurityHeadersMiddleware:
                 # Check which headers are already present
                 present_headers = {h[0].lower() for h in headers}
                 
+                # Check if this is a media attachment request
+                path = scope.get("path", "")
+                is_media = path.startswith("/api/v1/media/")
+                
                 # Security Headers
                 security_headers = [
                     (b"X-Content-Type-Options", b"nosniff"),
-                    (b"X-Frame-Options", b"SAMEORIGIN"),
                     (b"X-XSS-Protection", b"1; mode=block"),
                     (b"Referrer-Policy", b"strict-origin-when-cross-origin"),
                     (b"X-Permitted-Cross-Domain-Policies", b"none"),
                 ]
+                
+                # Add X-Frame-Options: SAMEORIGIN only if not a media request
+                # For media, we rely on CSP frame-ancestors to be more flexible
+                if not is_media:
+                    security_headers.append((b"X-Frame-Options", b"SAMEORIGIN"))
                 
                 for name, value in security_headers:
                     if name.lower() not in present_headers:
