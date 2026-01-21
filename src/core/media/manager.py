@@ -125,6 +125,18 @@ class MediaManager(BaseManager):
         self._scanner = self._init_scanner()
         self._proxy = self._init_proxy()
 
+        # Initialize deduplication once
+        from .deduplication import setup as dedup_setup, DeduplicationManager
+        dedup_setup(db)
+        self._dedup_manager = DeduplicationManager(db)
+
+        # Initialize compression once
+        try:
+            from .compression import CompressionManager
+            self._compression_manager = CompressionManager()
+        except ImportError:
+            self._compression_manager = None
+
         create_tables(db)
 
         logger.info("Media module initialized")
@@ -595,26 +607,22 @@ class MediaManager(BaseManager):
             )
 
         # SECURITY: Check for blocked/duplicate content using deduplication module
-        dedup_manager = None
-        try:
-            from .deduplication import DeduplicationManager
+        dedup_result = None
+        if self._dedup_manager:
+            try:
+                dedup_result = self._dedup_manager.check_duplicate(file_data, content_type)
 
-            dedup_manager = DeduplicationManager(self._db)
-            dedup_result = dedup_manager.check_duplicate(file_data, content_type)
-
-            if dedup_result.is_blocked:
-                logger.warning(
-                    f"Blocked content upload attempt by user {user_id}: {dedup_result.block_reason}"
-                )
-                raise FileUploadError(
-                    f"This content has been blocked: {dedup_result.block_reason}",
-                    filename,
-                )
-        except ImportError:
-            dedup_result = None
-        except Exception as e:
-            logger.warning(f"Deduplication check failed: {e}")
-            dedup_result = None
+                if dedup_result.is_blocked:
+                    logger.warning(
+                        f"Blocked content upload attempt by user {user_id}: {dedup_result.block_reason}"
+                    )
+                    raise FileUploadError(
+                        f"This content has been blocked: {dedup_result.block_reason}",
+                        filename,
+                    )
+            except Exception as e:
+                logger.warning(f"Deduplication check failed: {e}")
+                dedup_result = None
 
         scan_status = ScanStatus.SKIPPED
         scan_result = None
@@ -632,12 +640,9 @@ class MediaManager(BaseManager):
         # OPTIMIZATION: Apply compression if enabled
         compressed_data = file_data
         compression_applied = False
-        try:
-            from .compression import CompressionManager
-
-            compression_manager = CompressionManager()
-            if compression_manager.is_enabled():
-                compression_result = compression_manager.compress(
+        if self._compression_manager and self._compression_manager.is_enabled():
+            try:
+                compression_result = self._compression_manager.compress(
                     file_data, content_type
                 )
                 if compression_result.success and compression_result.data:
@@ -651,10 +656,8 @@ class MediaManager(BaseManager):
                         # Update content type if format changed
                         if compression_result.format:
                             content_type = compression_result.format
-        except ImportError:
-            pass
-        except Exception as e:
-            logger.warning(f"Compression failed, using original: {e}")
+            except Exception as e:
+                logger.warning(f"Compression failed, using original: {e}")
 
         # Use compressed data for storage
         final_data = compressed_data
@@ -863,11 +866,14 @@ class MediaManager(BaseManager):
 
         try:
             results = self._image_processor.create_thumbnails(image_data, sizes)
-
-            for size, (thumb_data, width, height) in results.items():
+            
+            from concurrent.futures import ThreadPoolExecutor
+            
+            def store_thumb(size, data_tuple):
+                thumb_data, width, height = data_tuple
                 thumb_path = f"thumbnails/{file_id}/{size}.jpg"
                 self._storage.store(thumb_data, thumb_path, "image/jpeg")
-
+                
                 thumb_id = self._generate_id()
                 now = self._get_timestamp()
 
@@ -877,8 +883,17 @@ class MediaManager(BaseManager):
                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
                     (thumb_id, file_id, size, width, height, thumb_path, now),
                 )
+                return size, self._storage.get_url(thumb_path)
 
-                thumbnails[size] = self._storage.get_url(thumb_path)
+            with ThreadPoolExecutor(max_workers=len(results)) as executor:
+                futures = [executor.submit(store_thumb, size, data) for size, data in results.items()]
+                for future in futures:
+                    try:
+                        size, url = future.result()
+                        thumbnails[size] = url
+                    except Exception as fe:
+                        logger.warning(f"Failed to store thumbnail size: {fe}")
+
         except Exception as e:
             logger.warning(f"Failed to generate thumbnails: {e}")
 

@@ -244,14 +244,47 @@ class ImageProcessor:
         if sizes is None:
             sizes = [s.value for s in ThumbnailSize]
 
-        results = {}
-        for size in sizes:
-            try:
-                results[size] = self.create_thumbnail(image_data, size, output_format)
-            except ImageProcessingError:
-                logger.warning(f"Failed to create thumbnail at size {size}")
+        try:
+            # Open source image once
+            source_img = self._Image.open(io.BytesIO(image_data))
+            self._validate_image_dimensions(source_img)
+            
+            # Prepare image for JPEG if needed (transparency handle)
+            if output_format == "JPEG" and source_img.mode in ("RGBA", "LA", "P"):
+                background = self._Image.new("RGB", source_img.size, (255, 255, 255))
+                if source_img.mode == "P" and "transparency" in source_img.info:
+                    source_img = source_img.convert("RGBA")
+                background.paste(
+                    source_img, mask=source_img.split()[-1] if source_img.mode == "RGBA" else None
+                )
+                source_img = background
+            elif source_img.mode == "P" and "transparency" in source_img.info:
+                source_img = source_img.convert("RGBA")
 
-        return results
+            results = {}
+            for size in sizes:
+                try:
+                    # Use a copy for each thumbnail
+                    img = source_img.copy()
+                    img.thumbnail((size, size), self._Image.Resampling.LANCZOS)
+                    
+                    output = io.BytesIO()
+                    save_kwargs: Dict[str, Any] = {"format": output_format}
+
+                    if output_format in ("JPEG", "WEBP"):
+                        save_kwargs["quality"] = self._quality
+                    if self._optimize and output_format in ("JPEG", "PNG"):
+                        save_kwargs["optimize"] = True
+
+                    img.save(output, **save_kwargs)
+                    results[size] = (output.getvalue(), img.width, img.height)
+                except Exception as e:
+                    logger.warning(f"Failed to create thumbnail at size {size}: {e}")
+
+            return results
+        except Exception as e:
+            logger.error(f"Failed to process thumbnails: {e}")
+            return {}
 
     def resize(
         self,

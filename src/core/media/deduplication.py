@@ -146,6 +146,25 @@ CREATE INDEX IF NOT EXISTS idx_media_blocked_hashes_type ON media_blocked_hashes
 """
 
 
+def setup(db):
+    """Initialize the deduplication module."""
+    _create_tables(db)
+
+def _create_tables(db):
+    """Create deduplication tables."""
+    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    for statement in statements:
+        if statement:
+            try:
+                converted = (
+                    db.convert_schema(statement)
+                    if hasattr(db, "convert_schema")
+                    else statement
+                )
+                db.execute(converted)
+            except Exception as e:
+                logger.error(f"Failed to create deduplication table: {e}")
+
 class DeduplicationManager:
     """Manages file deduplication and content reporting."""
 
@@ -153,41 +172,8 @@ class DeduplicationManager:
         """Initialize deduplication manager."""
         self._db = db
         self._config = self._load_config()
-        self._create_tables()
 
     def _load_config(self) -> dict:
-        """Load deduplication configuration."""
-        media_config = config.get("media", {})
-        dedup_config = media_config.get("deduplication", {})
-        phash_config = media_config.get("phash", {})
-
-        return {
-            "enabled": dedup_config.get("enabled", True),
-            "hash_algorithm": dedup_config.get("hash_algorithm", "sha256"),
-            "min_size": dedup_config.get("min_size", 10240),  # 10KB minimum
-            "auto_block_threshold": dedup_config.get(
-                "auto_block_threshold", 5
-            ),  # Auto-block after 5 reports
-            # pHash settings from dedicated config section
-            "phash_enabled": phash_config.get("enabled", True),
-            "phash_threshold": phash_config.get("similarity_threshold", 10),
-            "phash_algorithm": phash_config.get("algorithm", "phash"),
-        }
-
-    def _create_tables(self):
-        """Create deduplication tables."""
-        statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
-        for statement in statements:
-            if statement:
-                try:
-                    converted = (
-                        self._db.convert_schema(statement)
-                        if hasattr(self._db, "convert_schema")
-                        else statement
-                    )
-                    self._db.execute(converted)
-                except Exception as e:
-                    logger.error(f"Failed to create deduplication table: {e}")
 
     def compute_hash(self, file_data: bytes) -> str:
         """Compute hash of file data."""
