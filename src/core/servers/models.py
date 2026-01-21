@@ -439,6 +439,8 @@ SERVER_PERMISSIONS = {
     # Invite management
     "invites.create": "Create invites",
     "invites.manage": "Manage and delete invites",
+    # Emoji management
+    "emojis.manage": "Create, edit, delete custom emojis",
     # Message permissions (per channel)
     "messages.send": "Send messages",
     "messages.read": "Read messages",
@@ -448,6 +450,7 @@ SERVER_PERMISSIONS = {
     "messages.mention_everyone": "Use @everyone and @here",
     "messages.add_reactions": "Add reactions",
     "messages.use_external_emojis": "Use external emojis",
+    "messages.bypass_slowmode": "Bypass channel slowmode",
     # Voice permissions
     "voice.connect": "Connect to voice channels",
     "voice.speak": "Speak in voice channels",

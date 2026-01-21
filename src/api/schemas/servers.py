@@ -197,6 +197,9 @@ class BanCreateRequest(BaseModel):
     )
 
 
+from .users import UserPublicResponse
+
+
 class AuditLogEntryResponse(BaseModel):
     """Audit log entry response."""
 
@@ -204,13 +207,15 @@ class AuditLogEntryResponse(BaseModel):
     id: SnowflakeID = Field(..., description="Entry ID")
     server_id: SnowflakeID = Field(..., description="Server ID")
     user_id: SnowflakeID = Field(..., description="User who performed action")
+    user: Optional[UserPublicResponse] = Field(default=None, description="User information")
     action: str = Field(..., description="Action type")
     target_type: Optional[str] = Field(default=None, description="Target object type")
     target_id: Optional[SnowflakeID] = Field(
         default=None, description="Target object ID"
     )
-    changes: Optional[List[Dict[str, Any]]] = Field(
-        default=None, description="List of changes"
+    target_name: Optional[str] = Field(default=None, description="Target object name")
+    changes: Optional[Dict[str, Any]] = Field(
+        default=None, description="Dictionary of changes"
     )
     reason: Optional[str] = Field(default=None, description="Reason for action")
     created_at: Optional[int] = Field(default=None, description="Creation timestamp")

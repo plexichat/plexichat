@@ -1561,6 +1561,54 @@ async def leave_server(
         )
 
 
+@router.get(
+    "/{server_id}/permissions",
+    response_model=Dict[str, bool],
+    summary="Get my permissions",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid server ID"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        404: {"model": ErrorResponse, "description": "Server not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_my_permissions(
+    server_id: str, current_user: TokenInfo = Depends(get_current_user)
+) -> Dict[str, bool]:
+    """
+    Get current user's permissions in a server.
+    """
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
+        )
+
+    try:
+        try:
+            sid = int(server_id)
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid server ID"}},
+            )
+
+        return servers_mod.get_permissions(current_user.user_id, sid)
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "Server not found"}},
+            )
+        
+        logger.error(f"Failed to get permissions for server {server_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+
 # ==================== Audit Log ====================
 
 
@@ -1585,6 +1633,8 @@ async def get_audit_log(
     Returns a list of administrative actions taken in the server. Requires view audit log permission.
     """
     servers_mod = api.get_servers()
+    auth_mod = api.get_auth()
+    
     if not servers_mod:
         raise HTTPException(
             status_code=500,
@@ -1601,24 +1651,72 @@ async def get_audit_log(
             )
 
         entries = servers_mod.get_audit_log(current_user.user_id, sid, limit=limit)
-        return [
-            AuditLogEntryResponse(
-                id=SnowflakeID(e.id),
-                server_id=SnowflakeID(e.server_id),
-                user_id=SnowflakeID(e.user_id),
-                action=e.action_type.value
-                if hasattr(e.action_type, "value")
-                else str(e.action_type),
-                target_type=getattr(e, "target_type", None),
-                target_id=SnowflakeID(e.target_id)
-                if getattr(e, "target_id", None)
-                else None,
-                changes=getattr(e, "changes", None),
-                reason=getattr(e, "reason", None),
-                created_at=getattr(e, "created_at", None),
+        if not entries:
+            return []
+
+        # Batch fetch user info
+        user_ids = set()
+        for e in entries:
+            user_ids.add(e.user_id)
+            if e.target_type == "member" and e.target_id:
+                user_ids.add(int(e.target_id))
+        
+        users_map = {}
+        if auth_mod:
+            users = auth_mod.get_users(list(user_ids))
+            for u in users:
+                from .users import _user_to_public_response
+                users_map[int(u.id)] = _user_to_public_response(u)
+
+        # Cache for roles and channels to avoid repeated lookups
+        role_map = {}
+        channel_map = {}
+
+        result = []
+        for e in entries:
+            target_name = None
+            if e.target_type == "member" and e.target_id:
+                target_user = users_map.get(int(e.target_id))
+                target_name = target_user.username if target_user else f"User {e.target_id}"
+            elif e.target_type == "role" and e.target_id:
+                rid = int(e.target_id)
+                if rid not in role_map:
+                    try:
+                        role = servers_mod.get_role(rid, current_user.user_id)
+                        role_map[rid] = role.name if role else None
+                    except:
+                        role_map[rid] = None
+                target_name = role_map[rid]
+            elif e.target_type == "channel" and e.target_id:
+                cid = int(e.target_id)
+                if cid not in channel_map:
+                    try:
+                        channel = servers_mod.get_channel(cid, current_user.user_id)
+                        channel_map[cid] = channel.name if channel else None
+                    except:
+                        channel_map[cid] = None
+                target_name = channel_map[cid]
+
+            result.append(
+                AuditLogEntryResponse(
+                    id=SnowflakeID(e.id),
+                    server_id=SnowflakeID(e.server_id),
+                    user_id=SnowflakeID(e.user_id),
+                    user=users_map.get(int(e.user_id)),
+                    action=e.action_type.value
+                    if hasattr(e.action_type, "value")
+                    else str(e.action_type),
+                    target_type=getattr(e, "target_type", None),
+                    target_id=SnowflakeID(e.target_id)
+                    if getattr(e, "target_id", None)
+                    else None,
+                    target_name=target_name,
+                    changes=getattr(e, "changes", None),
+                    reason=getattr(e, "reason", None),
+                    created_at=getattr(e, "created_at", None),
+                )
             )
-            for e in (entries or [])
-        ]
+        return result
     except HTTPException:
         raise
     except Exception as e:

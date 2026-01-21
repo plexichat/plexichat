@@ -708,10 +708,13 @@ async def acknowledge_messages(
 
         # Check if this is a voice channel - voice channels don't have messages to ack
         conv_id = cid # Default to channel ID (for DMs)
+        is_server_channel = False
         if servers_mod:
             try:
+                # Use a fast check first
                 channel = servers_mod.get_channel(cid, current_user.user_id)
                 if channel:
+                    is_server_channel = True
                     # For server channels, use the linked conversation_id
                     if hasattr(channel, "conversation_id") and channel.conversation_id:
                         conv_id = channel.conversation_id
@@ -732,7 +735,8 @@ async def acknowledge_messages(
         up_to_id = int(message_id) if message_id else None
 
         try:
-            count = messaging.mark_read(current_user.user_id, conv_id, up_to_id)
+            from starlette.concurrency import run_in_threadpool
+            count = await run_in_threadpool(messaging.mark_read, current_user.user_id, conv_id, up_to_id)
         except Exception as e:
             from src.core.messaging.exceptions import ConversationNotFoundError, ConversationAccessDeniedError
             if isinstance(e, ConversationNotFoundError):
@@ -747,10 +751,6 @@ async def acknowledge_messages(
                 )
             raise
 
-        logger.debug(
-            f"User {current_user.user_id} marked {count} messages as read in channel {cid}"
-        )
-
         # Broadcast read receipt event via WebSocket (fire and forget)
         import asyncio
 
@@ -762,22 +762,12 @@ async def acknowledge_messages(
 
                 if ws_is_setup():
                     dispatcher = get_dispatcher()
-                    servers_mod = api.get_servers()
-
                     user_ids = []
-                    if servers_mod:
-                        try:
-                            channel = servers_mod.get_channel(cid, current_user.user_id)
-                            if channel:
-                                server_id = getattr(channel, "server_id", None)
-                                if server_id:
-                                    user_ids = servers_mod.get_member_user_ids(
-                                        server_id
-                                    )
-                        except Exception:
-                            pass
-
-                    if not user_ids and messaging:
+                    
+                    # For DMs/Groups, notify all participants
+                    # For server channels, we only notify if it's a small set of people (optional)
+                    # or skip to save resources as server channels don't usually show read receipts
+                    if not is_server_channel:
                         try:
                             participants = messaging.get_participants(
                                 current_user.user_id, cid
@@ -785,7 +775,7 @@ async def acknowledge_messages(
                             user_ids = [p.user_id for p in (participants or [])]
                         except Exception:
                             pass
-
+                    
                     if user_ids:
                         event = Event(
                             event_type=EventType.MESSAGE_ACK,
@@ -799,7 +789,8 @@ async def acknowledge_messages(
             except Exception as e:
                 logger.debug(f"Failed to broadcast MESSAGE_ACK: {e}")
 
-        asyncio.create_task(dispatch_ack())
+        if count > 0 or up_to_id:
+            asyncio.create_task(dispatch_ack())
 
         return AckResponse(success=True, messages_marked=count)
     except HTTPException:

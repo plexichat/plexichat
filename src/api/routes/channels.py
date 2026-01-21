@@ -948,8 +948,10 @@ async def upload_attachment(
 
         # Use the media module for upload (handles size limits, security, and storage)
         try:
+            from starlette.concurrency import run_in_threadpool
             content = await file.read()
-            result = media.upload_file(
+            result = await run_in_threadpool(
+                media.upload_file,
                 user_id=current_user.user_id,
                 file_data=content,
                 filename=file.filename or "attachment",

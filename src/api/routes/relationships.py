@@ -253,8 +253,8 @@ async def _dispatch_relationship_event(
                 else EventType.RELATIONSHIP_REMOVE,
                 data=data,
             )
-            # Send to both users involved
-            await dispatcher.dispatch_event(event, [user_id, target_id])
+            # Send ONLY to the specified user. Callers call this twice if needed for both users.
+            await dispatcher.dispatch_event(event, [user_id])
     except Exception as e:
         import utils.logger as logger
 

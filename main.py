@@ -308,8 +308,8 @@ class PlexiChatServer:
                 "cache_max_items": 1000,
             },
             "api": {
-                "title": "PlexiChat API",
-                "description": "REST API for PlexiChat messaging platform",
+                "title": "Plexichat API",
+                "description": "REST API for Plexichat messaging platform",
                 "version": VERSION,
                 "api_prefix": "/api/v1",
                 "debug": True,
@@ -386,7 +386,7 @@ class PlexiChatServer:
                 "allowed_origins": [],
             },
             "application": {
-                "name": "PlexiChat",
+                "name": "Plexichat",
                 "version": VERSION,
                 "environment": "development",
             },

@@ -33,6 +33,7 @@ class UserPublicResponse(BaseModel):
     username: str = Field(..., description="Username")
     avatar_url: Optional[str] = Field(None, description="Avatar URL")
     created_at: int = Field(..., description="Account creation timestamp")
+    badges: list[str] = Field(default_factory=list, description="User profile badges")
 
 
 class UserAvatarResponse(BaseModel):

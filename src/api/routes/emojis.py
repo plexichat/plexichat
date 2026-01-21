@@ -334,9 +334,10 @@ async def create_emoji(
     Create a custom emoji for a server.
 
     Uploads an image and creates a new custom emoji.
-    Requires server.manage permission.
+    Requires emojis.manage or server.manage permission.
     """
     reactions = api.get_reactions()
+    servers_mod = api.get_servers()
 
     if not reactions:
         logger.error("Reactions module not available")
@@ -356,6 +357,16 @@ async def create_emoji(
                 status_code=400,
                 detail={"error": {"code": 400, "message": "Invalid server ID"}},
             )
+
+        # Check permissions
+        if servers_mod:
+            perms = servers_mod.get_permissions(current_user.user_id, sid)
+            from src.core.servers.permissions import has_permission
+            if not (has_permission(perms, "emojis.manage") or has_permission(perms, "server.manage")):
+                raise HTTPException(
+                    status_code=403,
+                    detail={"error": {"code": 403, "message": "Missing emojis.manage permission"}}
+                )
 
         # Read image data
         try:
@@ -453,9 +464,10 @@ async def update_emoji(
     Update a custom emoji.
 
     Currently only supports renaming the emoji.
-    Requires server.manage permission.
+    Requires emojis.manage or server.manage permission.
     """
     reactions = api.get_reactions()
+    servers_mod = api.get_servers()
 
     if not reactions:
         logger.error("Reactions module not available")
@@ -468,13 +480,24 @@ async def update_emoji(
 
     try:
         try:
+            sid = int(server_id)
             eid = int(emoji_id)
         except (ValueError, TypeError):
-            logger.warning(f"Invalid emoji ID format for update: {emoji_id}")
+            logger.warning(f"Invalid ID format for emoji update: {server_id}/{emoji_id}")
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid emoji ID"}},
+                detail={"error": {"code": 400, "message": "Invalid ID"}},
             )
+
+        # Check permissions
+        if servers_mod:
+            perms = servers_mod.get_permissions(current_user.user_id, sid)
+            from src.core.servers.permissions import has_permission
+            if not (has_permission(perms, "emojis.manage") or has_permission(perms, "server.manage")):
+                raise HTTPException(
+                    status_code=403,
+                    detail={"error": {"code": 403, "message": "Missing emojis.manage permission"}}
+                )
 
         try:
             emoji = reactions.update_custom_emoji(
@@ -540,9 +563,10 @@ async def delete_emoji(
     Delete a custom emoji.
 
     Permanently removes the emoji from the server.
-    Requires server.manage permission.
+    Requires emojis.manage or server.manage permission.
     """
     reactions = api.get_reactions()
+    servers_mod = api.get_servers()
 
     if not reactions:
         logger.error("Reactions module not available")
@@ -555,13 +579,24 @@ async def delete_emoji(
 
     try:
         try:
+            sid = int(server_id)
             eid = int(emoji_id)
         except (ValueError, TypeError):
-            logger.warning(f"Invalid emoji ID format for deletion: {emoji_id}")
+            logger.warning(f"Invalid ID format for emoji deletion: {server_id}/{emoji_id}")
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid emoji ID"}},
+                detail={"error": {"code": 400, "message": "Invalid ID"}},
             )
+
+        # Check permissions
+        if servers_mod:
+            perms = servers_mod.get_permissions(current_user.user_id, sid)
+            from src.core.servers.permissions import has_permission
+            if not (has_permission(perms, "emojis.manage") or has_permission(perms, "server.manage")):
+                raise HTTPException(
+                    status_code=403,
+                    detail={"error": {"code": 403, "message": "Missing emojis.manage permission"}}
+                )
 
         try:
             reactions.delete_custom_emoji(current_user.user_id, eid)
@@ -585,7 +620,9 @@ async def delete_emoji(
             raise HTTPException(
                 status_code=500,
                 detail={
-                    "error": {"code": 500, "message": f"Deletion failed: {str(e)}"}
+                    "error": {
+                        "code": 500,
+                        "message": f"Deletion failed: {str(e)}"}
                 },
             )
     except HTTPException:

@@ -517,22 +517,21 @@ class MediaManager(BaseManager):
         media_type = self._detect_media_type(content_type)
         file_size = len(file_data)
 
-        # Pre-validation (not needing lock)
+        # Pre-validation
         self._validate_content_type(content_type, media_type)
         self._validate_file_size(file_size, media_type)
 
-        with self._lock:
-            # Check rate limits under lock
-            self._check_rate_limit(user_id, file_size)
+        # Check rate limits
+        self._check_rate_limit(user_id, file_size)
 
-            # Delegate to internal logic
-            return self._do_upload(
-                user_id=user_id,
-                file_data=file_data,
-                filename=filename,
-                content_type=content_type,
-                media_type=media_type,
-            )
+        # Delegate to internal logic
+        return self._do_upload(
+            user_id=user_id,
+            file_data=file_data,
+            filename=filename,
+            content_type=content_type,
+            media_type=media_type,
+        )
 
     def _do_upload(
         self,
@@ -751,7 +750,11 @@ class MediaManager(BaseManager):
         if media_type == MediaType.IMAGE and self._image_processor:
             thumbnails = self._generate_thumbnails(file_id, final_data)
 
-        url = storage.get_url(storage_path)
+        # Use our API proxy URL instead of direct storage URL
+        # This ensures auth checks and signed URL redirection for S3
+        # Use filename as stored in DB (os.path.basename(storage_path))
+        stored_filename = os.path.basename(storage_path)
+        url = f"/api/v1/media/attachments/{stored_filename}"
 
         compression_info = (
             f", compressed from {file_size}" if compression_applied else ""
@@ -1046,7 +1049,38 @@ class MediaManager(BaseManager):
         if not file:
             raise MediaError("File not found")
 
-        url = self._storage.get_url(file.storage_path)
+        # Get correct storage for this file
+        storage = self._get_storage_by_backend(file.storage_backend.value)
+        
+        # Check if file is encrypted (requires server-side decryption)
+        is_encrypted = False
+        if hasattr(storage, "is_encrypted"):
+            is_encrypted = storage.is_encrypted(file.storage_path)
+
+        # If encrypted, we MUST serve it through our API proxy for decryption
+        if is_encrypted:
+            # Sign our proxy URL
+            proxy_url = f"/api/v1/media/attachments/{file.filename}"
+            return self._url_signer.sign_url(proxy_url, file_id, expires_in)
+
+        # If using S3 and not encrypted, prefer native S3 presigning
+        if file.storage_backend == StorageBackend.S3:
+            # Look for S3 client in the actual storage backend (might be wrapped in EncryptedStorage)
+            s3_backend = storage
+            if hasattr(storage, "_backend"): # EncryptedStorage wrapper
+                s3_backend = storage._backend
+                
+            if hasattr(s3_backend, "generate_presigned_url"):
+                url = s3_backend.generate_presigned_url(file.storage_path, expires_in or 3600)
+                return SignedUrl(
+                    url=url,
+                    expires_at=int(time.time() * 1000) + ((expires_in or 3600) * 1000),
+                    signature="native",
+                    file_id=file_id,
+                )
+
+        # Fallback to signing the default URL
+        url = storage.get_url(file.storage_path)
         return self._url_signer.sign_url(url, file_id, expires_in)
 
     def verify_signed_url(self, url: str) -> Tuple[bool, int]:

@@ -1289,6 +1289,9 @@ class ServerManager(BaseManager):
             except Exception as e:
                 logger.error(f"Error adding member {user_id} to server conversations: {e}")
 
+        # Invalidate member cache for the joining user
+        self._cache_invalidate(self._member_cache, (server_id, user_id))
+
         logger.debug(f"Added member {user_id} to server {server_id}")
 
         result = self.get_member(server_id, user_id)
@@ -1485,6 +1488,16 @@ class ServerManager(BaseManager):
             "DELETE FROM srv_members WHERE server_id = ? AND user_id = ?",
             (server_id, user_id),
         )
+
+        # Invalidate caches for the user leaving
+        self._cache_invalidate(self._member_cache, (server_id, user_id))
+        self._cache_invalidate(self._member_roles_cache, (server_id, user_id))
+        self._cache_invalidate(self._permission_cache, (user_id, server_id, None))
+
+        # Also invalidate any channel-specific permission caches
+        for key in list(self._permission_cache.keys()):
+            if key[0] == user_id and key[1] == server_id:
+                self._cache_invalidate(self._permission_cache, key)
 
         self._log_audit(
             server_id, user_id, AuditLogAction.MEMBER_LEAVE, "member", user_id
@@ -2213,7 +2226,24 @@ class ServerManager(BaseManager):
         if channel.channel_type != ChannelType.TEXT:
             raise ChannelTypeError("Can only send messages to text channels")
 
-        self.require_permission(user_id, channel.server_id, "messages.send", channel_id)
+        # Check permissions
+        permissions = self.get_permissions(user_id, channel.server_id, channel_id)
+        if not check_permission(permissions, "messages.send"):
+            raise PermissionDeniedError("Missing messages.send permission", "messages.send")
+
+        # Enforce slowmode
+        if channel.slowmode_seconds > 0:
+            # Bypass slowmode if user has bypass permission or management perms
+            can_bypass = check_permission(permissions, "messages.bypass_slowmode") or \
+                         check_permission(permissions, "messages.manage") or \
+                         check_permission(permissions, "channels.manage") or \
+                         check_permission(permissions, "administrator")
+            
+            if not can_bypass:
+                retry_after = self._check_slowmode(user_id, channel_id, channel.slowmode_seconds)
+                if retry_after:
+                    from src.core.ratelimit.exceptions import RateLimitError
+                    raise RateLimitError(f"Slowmode is enabled. Try again in {retry_after:.1f}s", retry_after)
 
         if not self._messaging:
             raise ServerError("Messaging module not available")
@@ -2229,6 +2259,30 @@ class ServerManager(BaseManager):
             reply_to_id=reply_to_id,
             attachments=attachments,
         )
+
+    def _check_slowmode(self, user_id: SnowflakeID, channel_id: SnowflakeID, slowmode_seconds: int) -> Optional[float]:
+        """Check if user is slowmoded in channel. Returns retry_after if limited."""
+        if slowmode_seconds <= 0:
+            return None
+            
+        key = f"slowmode:{channel_id}:{user_id}"
+        # Use Redis if available
+        if redis_available():
+            try:
+                from src.core.database import cache_get, cache_set
+                last_msg_time = cache_get(key)
+                now = self._get_timestamp() / 1000.0
+                if last_msg_time:
+                    try:
+                        elapsed = now - float(last_msg_time)
+                        if elapsed < slowmode_seconds:
+                            return slowmode_seconds - elapsed
+                    except (ValueError, TypeError):
+                        pass
+                cache_set(key, str(now), ttl=slowmode_seconds)
+            except Exception as e:
+                logger.debug(f"Slowmode check failed (Redis error): {e}")
+        return None
 
     def get_channel_messages(
         self,
