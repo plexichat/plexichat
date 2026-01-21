@@ -26,7 +26,7 @@ class SecurityHeadersMiddleware:
                 # Security Headers
                 security_headers = [
                     (b"X-Content-Type-Options", b"nosniff"),
-                    (b"X-Frame-Options", b"DENY"),
+                    (b"X-Frame-Options", b"SAMEORIGIN"),
                     (b"X-XSS-Protection", b"1; mode=block"),
                     (b"Referrer-Policy", b"strict-origin-when-cross-origin"),
                     (b"X-Permitted-Cross-Domain-Policies", b"none"),
