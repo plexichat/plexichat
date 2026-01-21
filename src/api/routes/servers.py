@@ -2,7 +2,7 @@
 Server routes - Server/guild management endpoints.
 """
 
-from typing import List, Optional
+from typing import List, Optional, Dict
 from fastapi import APIRouter, HTTPException, Depends, File, UploadFile
 
 import src.api as api
