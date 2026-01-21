@@ -21,6 +21,8 @@ from .config import APIConfig, get_api_config
 __all__ = [
     "create_app",
     "setup",
+    "get_db",
+    "get_database",
     "APIConfig",
     "get_api_config",
     "get_telemetry",
@@ -158,6 +160,10 @@ def get_database() -> Optional[Any]:
             return _db
         raise RuntimeError("API module not initialized. Call api.setup() first.")
     return _db
+
+
+# Alias for compatibility
+get_db = get_database
 
 
 def get_auth() -> Optional[Any]:
