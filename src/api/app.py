@@ -296,8 +296,14 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                         params["ResponseContentDisposition"] = f"attachment; filename={filename}"
                     
                     signed = media.sign_url(file_id, expires_in=300, params=params)
-                    logger.debug(f"Redirecting to S3: {signed.url}")
-                    return RedirectResponse(signed.url, status_code=status.HTTP_302_FOUND)
+                    
+                    # ONLY redirect if it's an external URL (Native S3)
+                    if signed.url.startswith("http"):
+                        logger.info(f"Redirecting to S3 native URL: {filename}")
+                        return RedirectResponse(signed.url, status_code=status.HTTP_303_SEE_OTHER)
+                    
+                    # If it's a local URL, it means it's encrypted and needs proxying/streaming
+                    logger.info(f"Serving encrypted S3 attachment via proxy: {filename}")
                 except Exception as e:
                     logger.error(f"Failed to generate signed URL for {filename}: {e}")
                     # Fallback to streaming if signing fails (slower but works)

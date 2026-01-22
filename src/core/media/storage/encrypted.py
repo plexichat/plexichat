@@ -6,7 +6,7 @@ Files are encrypted before upload and decrypted after download.
 """
 
 import io
-from typing import BinaryIO, Tuple
+from typing import BinaryIO, Tuple, Optional
 
 import utils.logger as logger
 
@@ -235,6 +235,21 @@ class EncryptedStorage(StorageBackendBase):
         """Check if a file is stored encrypted."""
         enc_path = path + ".enc"
         return self._backend.exists(enc_path)
+
+    def generate_presigned_url(
+        self, path: str, expires_in: int = 3600, params: Optional[dict] = None
+    ) -> str:
+        """
+        Generate a presigned URL.
+        Only works if the file is NOT encrypted.
+        """
+        if self.is_encrypted(path):
+            raise RuntimeError("Cannot generate presigned URL for encrypted file")
+
+        if hasattr(self._backend, "generate_presigned_url"):
+            return self._backend.generate_presigned_url(path, expires_in, params)
+
+        raise RuntimeError("Underlying backend does not support presigned URLs")
 
     def get_metadata(self, path: str) -> dict:
         """Get file metadata including encryption status."""

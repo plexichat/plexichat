@@ -216,6 +216,10 @@ class S3Storage(StorageBackendBase):
         except self._ClientError:
             return 0
 
+    def is_encrypted(self, path: str) -> bool:
+        """Check if file is encrypted."""
+        return False
+
     def get_metadata(self, path: str) -> dict:
         """Get file metadata."""
         key = self._full_path(path)

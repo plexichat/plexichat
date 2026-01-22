@@ -1070,9 +1070,7 @@ class MediaManager(BaseManager):
         storage = self._get_storage_by_backend(file.storage_backend.value)
         
         # Check if file is encrypted (requires server-side decryption)
-        is_encrypted = False
-        if hasattr(storage, "is_encrypted"):
-            is_encrypted = storage.is_encrypted(file.storage_path)
+        is_encrypted = storage.is_encrypted(file.storage_path)
 
         # If encrypted, we MUST serve it through our API proxy for decryption
         if is_encrypted:
@@ -1082,13 +1080,9 @@ class MediaManager(BaseManager):
 
         # If using S3 and not encrypted, prefer native S3 presigning
         if file.storage_backend == StorageBackend.S3:
-            # Look for S3 client in the actual storage backend (might be wrapped in EncryptedStorage)
-            s3_backend = storage
-            if hasattr(storage, "_backend"): # EncryptedStorage wrapper
-                s3_backend = storage._backend
-                
-            if hasattr(s3_backend, "generate_presigned_url"):
-                url = s3_backend.generate_presigned_url(
+            # Look for native signing capability (including through wrappers)
+            if hasattr(storage, "generate_presigned_url"):
+                url = storage.generate_presigned_url(
                     file.storage_path, 
                     expires_in or 3600,
                     params=params
@@ -1099,8 +1093,14 @@ class MediaManager(BaseManager):
                     signature="native",
                     file_id=file_id,
                 )
+            
+            # If S3 but no native signing available (unlikely), we MUST proxy it
+            # because direct S3 URLs will fail without a native signature
+            logger.warning(f"S3 native signing unavailable for {file.filename}, falling back to proxy")
+            proxy_url = f"/api/v1/media/attachments/{file.filename}"
+            return self._url_signer.sign_url(proxy_url, file_id, expires_in)
 
-        # Fallback to signing the default URL
+        # Fallback to signing the default URL (Local/Database storage)
         url = storage.get_url(file.storage_path)
         return self._url_signer.sign_url(url, file_id, expires_in)
 
