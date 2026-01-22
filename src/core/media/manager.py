@@ -1049,6 +1049,7 @@ class MediaManager(BaseManager):
         self,
         file_id: int,
         expires_in: Optional[int] = None,
+        params: Optional[dict] = None,
     ) -> SignedUrl:
         """
         Generate signed URL for file.
@@ -1056,6 +1057,7 @@ class MediaManager(BaseManager):
         Args:
             file_id: File ID
             expires_in: Expiration time in seconds
+            params: Optional storage-specific parameters
 
         Returns:
             SignedUrl object
@@ -1086,7 +1088,11 @@ class MediaManager(BaseManager):
                 s3_backend = storage._backend
                 
             if hasattr(s3_backend, "generate_presigned_url"):
-                url = s3_backend.generate_presigned_url(file.storage_path, expires_in or 3600)
+                url = s3_backend.generate_presigned_url(
+                    file.storage_path, 
+                    expires_in or 3600,
+                    params=params
+                )
                 return SignedUrl(
                     url=url,
                     expires_at=int(time.time() * 1000) + ((expires_in or 3600) * 1000),

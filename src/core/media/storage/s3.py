@@ -239,23 +239,29 @@ class S3Storage(StorageBackendBase):
                 "exists": False,
             }
 
-    def generate_presigned_url(self, path: str, expires_in: int = 3600) -> str:
+    def generate_presigned_url(
+        self, path: str, expires_in: int = 3600, params: Optional[dict] = None
+    ) -> str:
         """
         Generate a presigned URL for temporary access.
 
         Args:
             path: Storage path
             expires_in: URL expiration time in seconds
+            params: Optional extra parameters for the GET request (e.g. ResponseContentDisposition)
 
         Returns:
             Presigned URL
         """
         key = self._full_path(path)
+        get_params = {"Bucket": self._bucket, "Key": key}
+        if params:
+            get_params.update(params)
 
         try:
             url = self._client.generate_presigned_url(
                 "get_object",
-                Params={"Bucket": self._bucket, "Key": key},
+                Params=get_params,
                 ExpiresIn=expires_in,
             )
             return url

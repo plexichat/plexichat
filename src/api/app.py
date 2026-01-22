@@ -290,13 +290,13 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             if backend == "s3":
                 try:
                     # Generate a short-lived signed URL (5 minutes)
-                    signed = media.sign_url(file_id, expires_in=300)
-                    url = signed.url
-                    # Add download param to signed URL if requested
+                    # For S3, we MUST include the content-disposition in the signature
+                    params = {}
                     if download:
-                        url += ("&" if "?" in url else "?") + f"response-content-disposition=attachment%3B%20filename%3D{filename}"
+                        params["ResponseContentDisposition"] = f"attachment; filename={filename}"
                     
-                    return RedirectResponse(url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+                    signed = media.sign_url(file_id, expires_in=300, params=params)
+                    return RedirectResponse(signed.url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
                 except Exception as e:
                     logger.error(f"Failed to generate signed URL for {filename}: {e}")
                     # Fallback to streaming if signing fails (slower but works)

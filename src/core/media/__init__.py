@@ -274,18 +274,21 @@ def delete_file(user_id: int, file_id: int) -> bool:
 # === URL Signing ===
 
 
-def sign_url(file_id: int, expires_in: Optional[int] = None) -> SignedUrl:
+def sign_url(
+    file_id: int, expires_in: Optional[int] = None, params: Optional[dict] = None
+) -> SignedUrl:
     """
     Generate signed URL for file.
 
     Args:
         file_id: File ID
         expires_in: Expiration time in seconds
+        params: Optional storage-specific parameters
 
     Returns:
         SignedUrl object
     """
-    return _get_manager().sign_url(file_id, expires_in)
+    return _get_manager().sign_url(file_id, expires_in, params)
 
 
 def verify_signed_url(url: str) -> Tuple[bool, int]:
