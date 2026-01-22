@@ -296,6 +296,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                         params["ResponseContentDisposition"] = f"attachment; filename={filename}"
                     
                     signed = media.sign_url(file_id, expires_in=300, params=params)
+                    logger.debug(f"Redirecting to S3: {signed.url}")
                     return RedirectResponse(signed.url, status_code=status.HTTP_302_FOUND)
                 except Exception as e:
                     logger.error(f"Failed to generate signed URL for {filename}: {e}")
