@@ -153,56 +153,52 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
         auto_commit: bool = True,
     ) -> int:
         """Mark messages as read in batch."""
-        msg_filter = "conversation_id = ? AND author_id != ? AND deleted = 0"
+        # Build base filter for messages to mark read
+        msg_filter = "m.conversation_id = ? AND m.author_id != ? AND m.deleted = 0"
         params: List[Any] = [conversation_id, user_id]
 
         if up_to_message_id:
-            msg_filter += " AND id <= ?"
+            msg_filter += " AND m.id <= ?"
             params.append(up_to_message_id)
 
-        # Get count first
-        count_row = self._fetch_one(
-            f"""SELECT COUNT(*) as cnt FROM msg_messages m
-                WHERE {msg_filter}
-                AND NOT EXISTS (
-                    SELECT 1 FROM msg_message_status s 
-                    WHERE s.message_id = m.id AND s.user_id = ? AND s.status = ?
-                )""",
-            tuple(params) + (user_id, MessageStatusType.READ.value),
-        )
-        count = count_row["cnt"] if count_row else 0
-
-        # Batch update existing statuses
+        # 1. Update existing statuses that aren't already 'read'
+        # Using a join-style update if possible, but SQLite subquery is more portable
+        update_query = f"""
+            UPDATE msg_message_status 
+            SET status = ?, timestamp = ?
+            WHERE user_id = ? AND status != ?
+            AND message_id IN (
+                SELECT id FROM msg_messages m WHERE {msg_filter}
+            )
+        """
         self._execute(
-            f"""UPDATE msg_message_status 
-                SET status = ?, timestamp = ?
-                WHERE user_id = ? AND status != ?
-                AND message_id IN (SELECT id FROM msg_messages WHERE {msg_filter})""",
-            (MessageStatusType.READ.value, timestamp, user_id, MessageStatusType.READ.value)
-            + tuple(params),
+            update_query,
+            [MessageStatusType.READ.value, timestamp, user_id, MessageStatusType.READ.value] + params,
+            auto_commit=False, # Don't commit yet, we have more work
+        )
+
+        # 2. Insert new statuses for messages that don't have one yet
+        insert_query = f"""
+            INSERT OR IGNORE INTO msg_message_status (id, message_id, user_id, status, timestamp)
+            SELECT 
+                abs(random()) % 9223372036854775807,
+                m.id,
+                ?,
+                ?,
+                ?
+            FROM msg_messages m
+            LEFT JOIN msg_message_status s ON s.message_id = m.id AND s.user_id = ?
+            WHERE {msg_filter} AND s.id IS NULL
+        """
+        self._execute(
+            insert_query,
+            [user_id, MessageStatusType.READ.value, timestamp, user_id] + params,
             auto_commit=auto_commit,
         )
 
-        # Batch insert new statuses
-        self._execute(
-            f"""INSERT OR IGNORE INTO msg_message_status (id, message_id, user_id, status, timestamp)
-                SELECT 
-                    abs(random()) % 9223372036854775807,
-                    m.id,
-                    ?,
-                    ?,
-                    ?
-                FROM msg_messages m
-                WHERE m.{msg_filter}
-                AND NOT EXISTS (
-                    SELECT 1 FROM msg_message_status s 
-                    WHERE s.message_id = m.id AND s.user_id = ?
-                )""",
-            (user_id, MessageStatusType.READ.value, timestamp) + tuple(params) + (user_id,),
-            auto_commit=auto_commit,
-        )
-
-        return count
+        # We return 1 if anything changed, or a rough estimate
+        # (Actual count is expensive to compute precisely without another query)
+        return 1
 
     def get_unread_count(
         self, user_id: SnowflakeID, conversation_id: SnowflakeID

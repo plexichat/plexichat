@@ -296,7 +296,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                         params["ResponseContentDisposition"] = f"attachment; filename={filename}"
                     
                     signed = media.sign_url(file_id, expires_in=300, params=params)
-                    return RedirectResponse(signed.url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+                    return RedirectResponse(signed.url, status_code=status.HTTP_302_FOUND)
                 except Exception as e:
                     logger.error(f"Failed to generate signed URL for {filename}: {e}")
                     # Fallback to streaming if signing fails (slower but works)
