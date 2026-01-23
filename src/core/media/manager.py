@@ -736,9 +736,9 @@ class MediaManager(BaseManager):
         )
 
         # Register file hash for deduplication tracking
-        if dedup_result and dedup_manager is not None:
+        if dedup_result and self._dedup_manager is not None:
             try:
-                dedup_manager.register_file(
+                self._dedup_manager.register_file(
                     hash_value=checksum,
                     file_size=final_size,
                     content_type=content_type,
