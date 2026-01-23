@@ -222,54 +222,67 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         import src.api as api_module
 
         try:
-            # --- Authentication ---
-            # Try Authorization header first (preferred for API calls)
-            auth_header: Optional[str] = request.headers.get("Authorization")
-            token: Optional[str] = None
+            # --- Signature Verification (Bypass Auth) ---
+            media = api_module.get_media()
+            if not media:
+                 raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Media module unavailable"}})
 
-            if auth_header and auth_header.startswith("Bearer "):
-                token = auth_header[7:]
-
-            # Fallback to cookie-based auth for <img> tags and direct browser access
-            if not token:
-                token = request.cookies.get("plexichat_token")
-
-            if not token:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail={"error": {"code": 401, "message": "Authentication required"}}
-                )
-
-            # Verify token
-            # Verify token
-            auth = api_module.get_auth()
-            if not auth:
-                raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module unavailable"}})
-            
+            is_signed = False
             try:
-                # Try validating as standard user token first
-                token_info: TokenInfo = auth.verify_token(token)
-                if not token_info:
-                    raise ValueError("Invalid user token")
+                # Check if URL has valid signature
+                sig_valid, _ = media.verify_signed_url(str(request.url))
+                if sig_valid:
+                    is_signed = True
+                    logger.debug(f"Access granted via signed URL: {filename}")
             except Exception:
-                # Fallback: Check if it's a valid ADMIN token
-                # This allows the Admin Dashboard to load user attachments without 401 errors
+                pass
+
+            # --- Authentication (Required if no valid signature) ---
+            if not is_signed:
+                # Try Authorization header first (preferred for API calls)
+                auth_header: Optional[str] = request.headers.get("Authorization")
+                token: Optional[str] = None
+
+                if auth_header and auth_header.startswith("Bearer "):
+                    token = auth_header[7:]
+
+                # Fallback to cookie-based auth for <img> tags and direct browser access
+                if not token:
+                    token = request.cookies.get("plexichat_token")
+
+                if not token:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail={"error": {"code": 401, "message": "Authentication required"}}
+                    )
+
+                # Verify token
+                auth = api_module.get_auth()
+                if not auth:
+                    raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module unavailable"}})
+                
                 try:
-                    import src.api as api_module
-                    admin = api_module.get_admin()
-                    if admin and admin.validate_session(token):
-                        # Valid admin session - allow access
-                        pass 
-                    else:
-                         raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Invalid token"}})
+                    # Try validating as standard user token first
+                    token_info: TokenInfo = auth.verify_token(token)
+                    if not token_info:
+                        raise ValueError("Invalid user token")
                 except Exception:
-                    raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Invalid token"}})
+                    # Fallback: Check if it's a valid ADMIN token
+                    # This allows the Admin Dashboard to load user attachments without 401 errors
+                    try:
+                        admin = api_module.get_admin()
+                        if admin and admin.validate_session(token):
+                            # Valid admin session - allow access
+                            pass 
+                        else:
+                             raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Invalid token"}})
+                    except Exception:
+                        raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Invalid token"}})
 
             # --- File Lookup ---
             db = api_module.get_db()
-            media = api_module.get_media()
-            if not db or not media:
-                raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Core modules unavailable"}})
+            if not db:
+                raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Database module unavailable"}})
 
             # Find file in database
             row = db.fetch_one(
