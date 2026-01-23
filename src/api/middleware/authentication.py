@@ -29,12 +29,15 @@ class AuthenticationMiddleware:
 
         request = Request(scope, receive)
 
-        # 1. Check for Internal Service Authentication (No magic bypasses)
+        # 1. Check for Internal Service Authentication
         internal_secret = api.get_internal_secret()
         provided_secret = request.headers.get("X-Plexichat-Internal-Secret")
-        is_internal = internal_secret and provided_secret == internal_secret
+        is_internal = bool(internal_secret and provided_secret == internal_secret)
 
         scope["state"]["is_internal"] = is_internal
+        if is_internal:
+            import utils.logger as logger
+            logger.debug(f"Auth: Internal service authenticated for path {path}")
 
         # 2. Extract and Verify Bearer Token
         # Skip for admin routes which manage their own sessions

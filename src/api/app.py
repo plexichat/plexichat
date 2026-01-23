@@ -237,8 +237,10 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             except Exception:
                 pass
 
-            # --- Authentication (Required if no valid signature) ---
-            if not is_signed:
+            # --- Authentication (Required if no valid signature or internal) ---
+            is_internal = request.scope.get("state", {}).get("is_internal", False)
+            
+            if not is_signed and not is_internal:
                 # Try Authorization header first (preferred for API calls)
                 auth_header: Optional[str] = request.headers.get("Authorization")
                 token: Optional[str] = None
@@ -316,12 +318,12 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     signed = media.sign_url(file_id, expires_in=300, params=params)
                     
                     # ONLY redirect if it's an external URL (Native S3)
-                    if signed.url.startswith("http"):
-                        logger.info(f"Redirecting to S3 native URL: {filename}")
+                    if signed.url.startswith("http") and not signed.url.startswith(str(request.base_url)):
+                        logger.debug(f"Redirecting to S3 native URL: {filename}")
                         return RedirectResponse(signed.url, status_code=status.HTTP_303_SEE_OTHER)
                     
                     # If it's a local URL, it means it's encrypted and needs proxying/streaming
-                    logger.info(f"Serving encrypted S3 attachment via proxy: {filename}")
+                    logger.debug(f"Serving encrypted S3 attachment via proxy: {filename}")
                 except Exception as e:
                     logger.error(f"Failed to generate signed URL for {filename}: {e}")
                     # Fallback to streaming if signing fails (slower but works)
