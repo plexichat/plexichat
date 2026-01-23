@@ -934,4 +934,4 @@ def get_client() -> Optional[RedisClient]:
 
 def is_available() -> bool:
     """Check if Redis is available and connected."""
-    return _default_client is not None and _default_client.ping()
+    return _default_client is not None and _default_client._connected

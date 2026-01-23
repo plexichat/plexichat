@@ -5,6 +5,7 @@ FastAPI application factory - Creates and configures the API application.
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import sys
+import time
 from pathlib import Path
 
 import utils.config as global_config

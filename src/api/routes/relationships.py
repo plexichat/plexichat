@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Depends
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.core.auth.models import User
 from src.api.schemas.relationships import (
     FriendRequestCreate,
     BlockCreate,
@@ -392,6 +393,14 @@ async def create_relationship(
             },
         )
 
+        # Invalidate cache for both users
+        try:
+            get_relationships.invalidate(current_user=current_user)
+            other_user = User(id=target_id, username="", account_type=None, permissions={}, created_at=0, updated_at=0)
+            get_relationships.invalidate(current_user=other_user)
+        except Exception as e:
+            logger.debug(f"Failed to invalidate relationship cache in create: {e}")
+
         return RelationshipResponse(
             user_id=SnowflakeID(target_id),
             status="pending_outgoing",
@@ -569,6 +578,15 @@ async def accept_friend_request(
                 "created_at": created_at,
             },
         )
+
+        # Invalidate cache for both users
+        try:
+            get_relationships.invalidate(current_user=current_user)
+            # Create a dummy user object for cache key generation
+            other_user = User(id=sender_id, username="", account_type=None, permissions={}, created_at=0, updated_at=0)
+            get_relationships.invalidate(current_user=other_user)
+        except Exception as e:
+            logger.debug(f"Failed to invalidate relationship cache: {e}")
 
         return SuccessResponse(success=True)
     except HTTPException:
@@ -749,6 +767,16 @@ async def delete_relationship(
                         "error": {"code": 404, "message": "Relationship not found"}
                     },
                 )
+
+            # Invalidate cache for both users
+            try:
+                get_relationships.invalidate(current_user=current_user)
+                # Create a dummy user object for cache key generation
+                other_user = User(id=target_id, username="", account_type=None, permissions={}, created_at=0, updated_at=0)
+                get_relationships.invalidate(current_user=other_user)
+            except Exception as e:
+                logger.debug(f"Failed to invalidate relationship cache during delete: {e}")
+
         except HTTPException:
             raise
         except Exception as e:
