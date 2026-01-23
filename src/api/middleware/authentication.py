@@ -64,8 +64,8 @@ class AuthenticationMiddleware:
                         else:
                             logger.warning(f"Auth: verify_token returned None for path {path}")
                     except Exception as e:
-                        # Only log legitimate auth errors, not format mismatches
-                        logger.error(f"Authentication failed for path {path}: {e}")
+                        # Log the error but don't block yet - get_current_user dependency handles the 401
+                        logger.debug(f"Authentication failed for path {path}: {e}")
                         scope["state"]["auth_error"] = str(e)
                 elif not is_plexichat_token:
                     logger.debug(f"Auth: Identified potential admin token for path {path}")
