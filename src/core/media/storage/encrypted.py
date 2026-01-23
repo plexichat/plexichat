@@ -168,10 +168,43 @@ class EncryptedStorage(StorageBackendBase):
 
     def retrieve_stream(self, path: str) -> Tuple[BinaryIO, int]:
         """Retrieve file as decrypted stream."""
-        # For simplicity, decrypt to memory and return as BytesIO
-        # A more sophisticated implementation could stream decrypt
-        data = self.retrieve(path)
-        return io.BytesIO(data), len(data)
+        # Try encrypted path first
+        enc_path = path + ".enc"
+
+        if self._backend.exists(enc_path):
+            if not self._enabled or not self._encryptor:
+                raise StorageReadError(
+                    "File is encrypted but encryption is disabled", "encrypted"
+                )
+
+            # Get size of original file (from header)
+            original_size = self.get_size(path)
+
+            # For small files, use regular retrieve
+            if original_size <= self._streaming_threshold:
+                data = self.retrieve(path)
+                return io.BytesIO(data), len(data)
+
+            # For large files, use streaming decryption
+            if self._streaming_encryptor:
+                try:
+                    enc_stream, _ = self._backend.retrieve_stream(enc_path)
+                    output = io.BytesIO()
+                    aad = self._get_aad(path)
+                    
+                    self._streaming_encryptor.decrypt_stream(enc_stream, output, aad)
+                    
+                    output.seek(0)
+                    return output, original_size
+                except Exception as e:
+                    logger.error(f"Stream decryption failed for {path}: {e}")
+                    # Fallback to retrieve if streaming fails
+            
+            data = self.retrieve(path)
+            return io.BytesIO(data), len(data)
+
+        # Fall back to unencrypted path
+        return self._backend.retrieve_stream(path)
 
     def delete(self, path: str) -> bool:
         """Delete file (tries both encrypted and unencrypted paths)."""

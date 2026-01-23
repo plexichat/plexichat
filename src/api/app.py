@@ -338,18 +338,21 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     return FileResponse(file_path, filename=filename, media_type="application/octet-stream")
                 return FileResponse(file_path, media_type=content_type)
 
-            # --- Generic Fallback: Retrieve data via media module (slowest) ---
+            # --- Generic Fallback: Retrieve data via media module (using streaming) ---
             try:
-                data, ct = media.get_file_data(file_id)
-                from fastapi import Response
-                response = Response(
-                    content=data,
+                from fastapi.responses import StreamingResponse
+                stream, size, ct = media.get_file_stream(file_id)
+                
+                headers = {
+                    "Content-Length": str(size),
+                    "Content-Disposition": f"attachment; filename={filename}" if download else "inline"
+                }
+                
+                return StreamingResponse(
+                    stream,
                     media_type=ct,
-                    headers={
-                        "Content-Disposition": f"attachment; filename={filename}" if download else "inline"
-                    }
+                    headers=headers
                 )
-                return response
             except Exception as e:
                 logger.error(f"Generic retrieval failed for {filename}: {e}")
                 raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Retrieval failed"}})

@@ -211,18 +211,26 @@ class MediaManager(BaseManager):
 
         return storage
 
-    def _init_db_storage(self) -> Optional[DatabaseStorage]:
+    def _init_db_storage(self) -> Optional[StorageBackendBase]:
         """Initialize database storage for auto-routing (if enabled and not primary)."""
         auto_route = self._config.get("auto_route_to_database", {})
         primary_backend = self._config.get("storage_backend", "local")
+        encrypt_at_rest = self._config.get("encrypt_at_rest", True)
 
         # Only create separate DB storage if auto-routing is enabled and DB isn't primary
         if auto_route.get("enabled", False) and primary_backend != "database":
-            return DatabaseStorage(
+            storage = DatabaseStorage(
                 db=self._db,
                 base_url=self._config.get("database_url", "/api/v1/media/blob"),
                 max_size=auto_route.get("max_size", 512 * 1024),
             )
+            
+            # Wrap with encryption if enabled (Fix: ensure auto-routed DB storage is also encrypted)
+            if encrypt_at_rest:
+                storage = wrap_storage_with_encryption(storage, enabled=True)
+                logger.debug("Encrypted database storage initialized for auto-routing")
+            
+            return storage
         return None
 
     def _check_rate_limit(self, user_id: int, file_size: int) -> None:
@@ -928,6 +936,25 @@ class MediaManager(BaseManager):
         storage = self._get_storage_by_backend(file.storage_backend.value)
         data = storage.retrieve(file.storage_path)
         return data, file.content_type
+
+    def get_file_stream(self, file_id: int) -> Tuple[BinaryIO, int, str]:
+        """
+        Get file data as a stream.
+
+        Args:
+            file_id: File ID
+
+        Returns:
+            Tuple of (file stream, size, content_type)
+        """
+        file = self.get_file(file_id)
+        if not file:
+            raise MediaError("File not found")
+
+        # Use the correct storage backend for this file
+        storage = self._get_storage_by_backend(file.storage_backend.value)
+        stream, size = storage.retrieve_stream(file.storage_path)
+        return stream, size, file.content_type
 
     def delete_file(self, user_id: int, file_id: int) -> bool:
         """
