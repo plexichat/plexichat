@@ -262,11 +262,15 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module unavailable"}})
                 
                 try:
+                    # Explicitly check IP and UA for cookie tokens if possible
+                    ip = request.client.host if request.client else None
+                    ua = request.headers.get("User-Agent")
+                    
                     # Try validating as standard user token first
-                    token_info: TokenInfo = auth.verify_token(token)
+                    token_info = auth.verify_token(token, ip, ua)
                     if not token_info:
                         raise ValueError("Invalid user token")
-                except Exception:
+                except Exception as e:
                     # Fallback: Check if it's a valid ADMIN token
                     # This allows the Admin Dashboard to load user attachments without 401 errors
                     try:
@@ -275,6 +279,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                             # Valid admin session - allow access
                             pass 
                         else:
+                             logger.warning(f"Attachment auth failed for {filename}: {e}")
                              raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Invalid token"}})
                     except Exception:
                         raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Invalid token"}})

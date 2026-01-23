@@ -788,13 +788,13 @@ def delete_server_icon(server_id: int) -> bool:
     return deleted > 0
 
 
-def generate_default_svg(user_id: int, initials: str) -> str:
-    """Generate a colorful SVG placeholder avatar based on user ID."""
+def generate_default_svg(seed_id: int, initials: str) -> str:
+    """Generate a colorful SVG placeholder avatar based on a seed ID (user or server)."""
     # Match frontend colors in ui.js:getAvatarColor
     colors = ["#e94560", "#4ade80", "#fbbf24", "#60a5fa", "#a78bfa", "#f472b6"]
 
     # Match frontend logic: index = parseInt(String(id).slice(-2), 16) % colors.length
-    id_str = str(user_id)
+    id_str = str(seed_id)
     try:
         # Frontend does String(id).slice(-2) which is the last 2 characters
         # then parseInt(..., 16) which is hex.
@@ -806,7 +806,7 @@ def generate_default_svg(user_id: int, initials: str) -> str:
         index = hex_val % len(colors)
     except (ValueError, IndexError):
         # Fallback to simple modulo if hex parsing fails
-        index = user_id % len(colors)
+        index = seed_id % len(colors)
         
     color = colors[index]
 

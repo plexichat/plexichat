@@ -380,9 +380,41 @@ async def get_server_icon(server_id: str, request: Request):
         try:
             result = avatars.get_server_icon_data(sid)
             if not result:
-                raise HTTPException(
-                    status_code=404,
-                    detail={"error": {"code": 404, "message": "Icon not found"}},
+                # Generate a default SVG icon if none exists
+                from src.core.avatars import generate_default_svg
+                
+                # Try to get server name for initials
+                initials = "S"
+                try:
+                    server_mod = api.get_servers()
+                    if server_mod:
+                        # Need a user_id for get_server but we don't have one here
+                        # Use a fallback approach or get raw server data from DB
+                        db = api.get_db()
+                        row = db.fetch_one("SELECT name FROM srv_servers WHERE id = ?", (sid,))
+                        if row:
+                            name = row["name"].strip()
+                            if name:
+                                initials = name[:min(2, len(name))].upper()
+                except Exception:
+                    pass
+
+                svg_content = generate_default_svg(sid, initials)
+                svg_bytes = svg_content.encode() if isinstance(svg_content, str) else svg_content
+                svg_etag = hashlib.sha256(svg_bytes).hexdigest()
+                
+                if etag_client == f'"{svg_etag}"':
+                    return Response(status_code=304)
+
+                return Response(
+                    content=svg_content,
+                    media_type="image/svg+xml",
+                    headers={
+                        "Cache-Control": "public, max-age=3600",
+                        "ETag": f'"{svg_etag}"',
+                        "Access-Control-Allow-Origin": "*",
+                        "Cross-Origin-Resource-Policy": "cross-origin",
+                    },
                 )
         except HTTPException:
             raise

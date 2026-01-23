@@ -32,17 +32,23 @@ _estimated_downtime: Optional[int] = None
 _restart_at: Optional[str] = None
 _update_url: Optional[str] = None
 
+# Cached version info for fast status responses
+_cached_version_info: Optional[VersionInfo] = None
+
 
 def _version_to_info(ver) -> VersionInfo:
     """Convert Version object to VersionInfo schema."""
+    global _cached_version_info
     try:
-        return VersionInfo(
+        info = VersionInfo(
             stage=ver.stage.value,
             major=ver.major,
             minor=ver.minor,
             build=ver.build,
             string=version_util.format_version(ver),
         )
+        _cached_version_info = info
+        return info
     except Exception as e:
         logger.error(f"Error converting version object: {e}")
         return VersionInfo(
@@ -69,7 +75,7 @@ async def get_server_version() -> ServerVersionResponse:
         min_supported = version_util.min_supported()
 
         return ServerVersionResponse(
-            version=_version_to_info(current),
+            version=_cached_version_info or _version_to_info(current),
             min_supported_version=_version_to_info(min_supported)
             if min_supported
             else None,
@@ -149,7 +155,7 @@ async def negotiate_version(
 
             response = VersionNegotiateResponse(
                 compatible=is_compatible,
-                server_version=_version_to_info(server_ver),
+                server_version=_cached_version_info or _version_to_info(server_ver),
                 client_version=_version_to_info(client_ver),
                 min_supported_version=_version_to_info(min_supported)
                 if min_supported
@@ -226,12 +232,18 @@ async def get_server_status() -> ServerStatusResponse:
     5 seconds when state is not 'running'.
     """
     try:
-        current = version_util.current()
+        # Use cached version info if available
+        if _cached_version_info:
+            ver_info = _cached_version_info
+        else:
+            current = version_util.current()
+            ver_info = _version_to_info(current)
+            
         uptime = int(time.time() - _server_start_time)
 
         return ServerStatusResponse(
             state=_server_state,
-            version=_version_to_info(current),
+            version=ver_info,
             uptime_seconds=uptime,
             maintenance_message=_maintenance_message,
             estimated_downtime_seconds=_estimated_downtime,

@@ -765,7 +765,7 @@ class ServerManager(BaseManager):
                 (channel_id,),
             )
             if not row:
-                logger.warning(
+                logger.debug(
                     f"get_channel: channel {channel_id} NOT FOUND in database (or deleted)"
                 )
                 return None
