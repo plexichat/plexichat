@@ -306,46 +306,11 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             content_type = row["content_type"]
             download = request.query_params.get("download", "0") == "1"
 
-            # --- S3 Storage Optimization: Redirect to signed URL ---
-            if backend == "s3":
-                try:
-                    # Generate a short-lived signed URL (5 minutes)
-                    # For S3, we MUST include the content-disposition in the signature
-                    params = {}
-                    if download:
-                        params["ResponseContentDisposition"] = f"attachment; filename={filename}"
-                    
-                    signed = media.sign_url(file_id, expires_in=300, params=params)
-                    
-                    # ONLY redirect if it's an external URL (Native S3)
-                    # If it's a local proxy URL, it means it's encrypted and needs proxying/streaming
-                    if signed.url.startswith("http") and not signed.url.startswith(str(request.base_url)):
-                        logger.debug(f"Redirecting to S3 native URL: {filename}")
-                        return RedirectResponse(signed.url, status_code=status.HTTP_303_SEE_OTHER)
-                    
-                    logger.debug(f"S3 attachment needs proxying (encrypted or local): {filename}")
-                except Exception as e:
-                    logger.error(f"Failed to generate signed URL for {filename}: {e}")
-                    # Fallback to streaming if signing fails (slower but works)
-                    pass
-
-            # --- Local/Fallback Storage: Stream via FileResponse ---
-            # Get actual file path for local storage
-            if backend == "local":
-                # Use base path from config
-                media_config = global_config.get("media", {})
-                base_path = Path(media_config.get("local_path", "uploads"))
-                file_path = base_path / storage_path
-                
-                if not file_path.exists():
-                    logger.error(f"Local file missing for database record: {storage_path}")
-                    raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "File not found"}})
-                
-                if download:
-                    return FileResponse(file_path, filename=filename, media_type="application/octet-stream")
-                return FileResponse(file_path, media_type=content_type)
-
-            # --- Generic Fallback: Retrieve data via media module (using streaming) ---
+            # --- File Retrieval: Stream via media module ---
+            # We always stream through the server now to ensure:
+            # 1. Decryption works correctly (EncryptedStorage handles this)
+            # 2. Authentication works (we use our own session/cookie)
+            # 3. CORS/AccessDenied issues with direct S3 redirects are avoided
             try:
                 from fastapi.responses import StreamingResponse
                 start_time = time.perf_counter()
@@ -353,10 +318,11 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 
                 headers = {
                     "Content-Length": str(size),
-                    "Content-Disposition": f"attachment; filename={filename}" if download else "inline"
+                    "Content-Disposition": f"attachment; filename={filename}" if download else "inline",
+                    "Cache-Control": "private, max-age=3600"
                 }
                 
-                # Log duration after the stream is acquired (actual transfer is async)
+                # Log duration after the stream is acquired
                 duration = (time.perf_counter() - start_time) * 1000
                 if duration > 100:
                     logger.warning(f"Slow file retrieval for {filename}: {duration:.1f}ms (backend: {backend})")
