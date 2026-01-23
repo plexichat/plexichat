@@ -471,7 +471,7 @@ class PlexiChatServer:
                 "database_max_size": 524288,  # 512KB max for DB storage
                 # Auto-routing: route small files to database regardless of primary backend
                 "auto_route_to_database": {
-                    "enabled": False,
+                    "enabled": True,
                     "max_size": 524288,  # Files under 512KB
                     "content_types": [  # Only these types get routed to DB
                         "text/plain",
