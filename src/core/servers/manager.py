@@ -416,12 +416,11 @@ class ServerManager(BaseManager):
             (server_id,),
         )
 
-        if not row:
-            logger.warning(
-                f"get_server: server {server_id} NOT FOUND in database (or deleted)"
-            )
-            return None
-
+                    if not row:
+                        logger.debug(
+                            f"get_server: server {server_id} NOT FOUND in database (or deleted)"
+                        )
+                        return None
         server = self._row_to_server(row)
 
         # Cache the server data (5 minute TTL)
