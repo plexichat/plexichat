@@ -99,6 +99,7 @@ __all__ = [
     "upload_attachment",
     "get_file",
     "get_file_data",
+    "get_file_stream",
     "delete_file",
     # URL signing
     "sign_url",
@@ -255,6 +256,19 @@ def get_file_data(file_id: int) -> Tuple[bytes, str]:
         Tuple of (file bytes, content_type)
     """
     return _get_manager().get_file_data(file_id)
+
+
+def get_file_stream(file_id: int) -> Tuple[BinaryIO, int, str]:
+    """
+    Get file data as a stream.
+
+    Args:
+        file_id: File ID
+
+    Returns:
+        Tuple of (file stream, size, content_type)
+    """
+    return _get_manager().get_file_stream(file_id)
 
 
 def delete_file(user_id: int, file_id: int) -> bool:
