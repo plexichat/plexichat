@@ -35,11 +35,17 @@ def _channel_to_response(channel) -> ChannelResponse:
         channel_type = getattr(channel, "channel_type", None)
         if channel_type is not None and hasattr(channel_type, "value"):
             channel_type = channel_type.value
+        
+        # Handle different model types (Channel vs Conversation)
+        server_id = getattr(channel, "server_id", 0)
+        
+        # If it's a Conversation model but lacks name (e.g. DM), use a placeholder
+        name = getattr(channel, "name", None) or f"Conversation {channel.id}"
 
         return ChannelResponse(
             id=SnowflakeID(channel.id),
-            server_id=SnowflakeID(channel.server_id),
-            name=channel.name,
+            server_id=SnowflakeID(server_id),
+            name=name,
             channel_type=channel_type or "text",
             topic=getattr(channel, "topic", None),
             position=getattr(channel, "position", 0),
@@ -96,6 +102,12 @@ async def get_channel(
 
         try:
             channel = servers_mod.get_channel(cid, current_user.user_id)
+            if not channel:
+                # Fallback to messaging module for DMs
+                messaging_mod = api.get_messaging()
+                if messaging_mod:
+                    channel = messaging_mod.get_conversation(cid, current_user.user_id)
+            
             if not channel:
                 raise HTTPException(
                     status_code=404,
