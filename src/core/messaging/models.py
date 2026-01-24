@@ -172,6 +172,7 @@ class UserMessageSettings:
     max_attachments_per_message: Optional[int] = None  # None = use global default
     read_receipts_enabled: bool = True
     typing_indicators_enabled: bool = True
+    compact_messages_enabled: bool = True
 
 
 @dataclass

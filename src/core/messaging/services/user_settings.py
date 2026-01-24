@@ -45,6 +45,7 @@ class UserSettingsService(BaseService):
         max_attachments_per_message: Optional[int] = None,
         read_receipts_enabled: Optional[bool] = None,
         typing_indicators_enabled: Optional[bool] = None,
+        compact_messages_enabled: Optional[bool] = None,
     ) -> UserMessageSettings:
         """Update user's message settings."""
         current = self.get_message_settings(user_id)
@@ -56,6 +57,7 @@ class UserSettingsService(BaseService):
         new_att_count = max_attachments_per_message if max_attachments_per_message is not None else current.max_attachments_per_message
         new_read_receipts = read_receipts_enabled if read_receipts_enabled is not None else current.read_receipts_enabled
         new_typing = typing_indicators_enabled if typing_indicators_enabled is not None else current.typing_indicators_enabled
+        new_compact = compact_messages_enabled if compact_messages_enabled is not None else current.compact_messages_enabled
 
         if self._repo.message_settings_exists(user_id):
             self._repo.update_message_settings(
@@ -67,6 +69,7 @@ class UserSettingsService(BaseService):
                 new_att_count,
                 new_read_receipts,
                 new_typing,
+                new_compact,
             )
         else:
             self._repo.create_message_settings(
@@ -78,6 +81,7 @@ class UserSettingsService(BaseService):
                 new_att_count,
                 new_read_receipts,
                 new_typing,
+                new_compact,
             )
 
         # Invalidate cache
