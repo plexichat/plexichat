@@ -66,7 +66,7 @@ class S3Storage(StorageBackendBase):
             region_name=region,
             signature_version="s3v4",
             retries={"max_attempts": 3, "mode": "standard"},
-            s3={"addressing_style": "virtual"},
+            s3={"addressing_style": "path"},
         )
 
         client_kwargs = {
