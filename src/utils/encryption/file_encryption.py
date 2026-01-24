@@ -23,7 +23,7 @@ from .core import Keyring
 # File format constants
 FILE_MAGIC = b"PXENC"  # PlexiChat Encrypted
 FILE_VERSION = 1
-CHUNK_SIZE = 64 * 1024  # 64KB chunks for streaming
+CHUNK_SIZE = 256 * 1024  # 256KB chunks for streaming
 NONCE_SIZE = 12
 TAG_SIZE = 16
 KEY_SIZE = 32

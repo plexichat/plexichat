@@ -10,7 +10,8 @@ import hashlib
 import mimetypes
 import uuid
 import threading
-from typing import Optional, Dict, Any, BinaryIO, Tuple
+from concurrent.futures import ThreadPoolExecutor
+from typing import Optional, Dict, Any, BinaryIO, Tuple, List
 
 import utils.config as config
 import utils.logger as logger
@@ -124,6 +125,7 @@ class MediaManager(BaseManager):
         self._url_signer = self._init_url_signer()
         self._scanner = self._init_scanner()
         self._proxy = self._init_proxy()
+        self._executor = ThreadPoolExecutor(max_workers=10)
 
         # Initialize deduplication once
         from .deduplication import setup as dedup_setup, DeduplicationManager
@@ -875,8 +877,6 @@ class MediaManager(BaseManager):
         try:
             results = self._image_processor.create_thumbnails(image_data, sizes)
             
-            from concurrent.futures import ThreadPoolExecutor
-            
             def store_thumb(size, data_tuple):
                 thumb_data, width, height = data_tuple
                 thumb_path = f"thumbnails/{file_id}/{size}.jpg"
@@ -893,14 +893,14 @@ class MediaManager(BaseManager):
                 )
                 return size, self._storage.get_url(thumb_path)
 
-            with ThreadPoolExecutor(max_workers=len(results)) as executor:
-                futures = [executor.submit(store_thumb, size, data) for size, data in results.items()]
-                for future in futures:
-                    try:
-                        size, url = future.result()
-                        thumbnails[size] = url
-                    except Exception as fe:
-                        logger.warning(f"Failed to store thumbnail size: {fe}")
+            # Use the shared class executor for thumbnail storage
+            futures = [self._executor.submit(store_thumb, size, data) for size, data in results.items()]
+            for future in futures:
+                try:
+                    size, url = future.result()
+                    thumbnails[size] = url
+                except Exception as fe:
+                    logger.warning(f"Failed to store thumbnail size: {fe}")
 
         except Exception as e:
             logger.warning(f"Failed to generate thumbnails: {e}")
