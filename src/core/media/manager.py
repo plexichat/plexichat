@@ -850,7 +850,9 @@ class MediaManager(BaseManager):
                 ),
             )
 
-        url = self._storage.get_url(storage_path)
+        # Use our API proxy URL instead of direct storage URL
+        stored_filename = os.path.basename(storage_path)
+        url = f"/api/v1/media/attachments/{stored_filename}"
 
         logger.debug(
             f"File {file_id} uploaded via stream by user {user_id}: {filename}"
