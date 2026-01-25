@@ -16,24 +16,22 @@ Usage:
     python -m src.core.migrations.cli validate_migrations
 """
 
-import argparse
-import logging
-import os
 import sys
-from datetime import datetime
 from pathlib import Path
 
 # Add project root to path for imports
 project_root = Path(__file__).parent.parent.parent.parent.parent
-sys.path.insert(0, str(project_root))
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
-from src.core.database import Database
-from . import run_migrations, rollback, get_status
-from .manager import MigrationManager
-
-
-import utils.config as config
-import utils.logger as logger
+import argparse  # noqa: E402
+import logging  # noqa: E402
+import os  # noqa: E402
+import utils.config as config  # noqa: E402
+import utils.logger as logger  # noqa: E402
+from src.core.database import Database  # noqa: E402
+from . import run_migrations, rollback, get_status  # noqa: E402
+from .manager import MigrationManager  # noqa: E402
 
 
 logging.basicConfig(
@@ -167,14 +165,14 @@ def down(db):
     pass
 '''.format(
         name=name,
-        description=f"Add description of what this migration does"
+        description="Add description of what this migration does"
     )
     
     with open(file_path, 'w', encoding='utf-8') as f:
         f.write(template)
     
     print(f"Created migration: {file_path}")
-    print(f"Edit the file to implement the migration logic")
+    print("Edit the file to implement the migration logic")
 
 
 def list_migrations(db) -> None:
@@ -233,7 +231,7 @@ def apply_migrations(db, dry_run: bool = False) -> None:
     
     result = run_migrations(db, dry_run=dry_run)
     
-    print(f"\nResults:")
+    print("\nResults:")
     print(f"  Applied: {result['applied_count']}")
     print(f"  Failed:  {result['failed_count']}")
     

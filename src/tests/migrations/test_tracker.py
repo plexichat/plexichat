@@ -2,8 +2,6 @@
 Tests for the migration tracker.
 """
 
-import pytest
-from datetime import datetime
 
 from src.core.migrations.tracker import MigrationTracker
 

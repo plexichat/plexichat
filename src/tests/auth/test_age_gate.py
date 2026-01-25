@@ -3,7 +3,6 @@ import pytest
 import uuid
 import utils.config as config
 from src.core.auth.exceptions import AuthError
-from src.utils.encryption import encrypt_data, decrypt_data
 
 @pytest.mark.auth
 class TestAgeGate:

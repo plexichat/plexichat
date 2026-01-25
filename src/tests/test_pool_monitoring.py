@@ -14,7 +14,7 @@ import pytest
 import time
 import threading
 from datetime import datetime
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch
 
 import utils.config as config
 import utils.logger as logger
@@ -111,7 +111,7 @@ class TestConnectionAgeTracking:
     def test_connection_metadata_tracked(self, test_db):
         """Test that connection metadata is tracked."""
         # Get a connection
-        conn = test_db._get_conn()
+        test_db._get_conn()
         
         # Verify metadata is created
         assert len(test_db._connection_metadata) > 0
@@ -261,7 +261,7 @@ class TestPeriodicLogging:
             
             # Should have logged pool stats
             info_calls = [call[0][0].lower() for call in mock_info.call_args_list]
-            stats_logged = any('pool stats' in call or 'active' in call for call in info_calls)
+            any('pool stats' in call or 'active' in call for call in info_calls)
             # Note: May not be logged if no activity, so we just check thread is running
             assert test_db._periodic_logging_thread.is_alive()
 
@@ -290,7 +290,7 @@ class TestAcquisitionTimeTracking:
     def test_acquisition_time_recorded_on_connect(self, test_db):
         """Test that acquisition time is recorded when connection is acquired."""
         # Get connection
-        conn = test_db._get_conn()
+        test_db._get_conn()
         
         # For SQLite, acquisitions aren't tracked (only for PostgreSQL pool)
         # But metadata should be created

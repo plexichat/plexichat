@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 
 import src.api as api
 import utils.logger as logger
+from src.core.database import cached
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.messages import (
     MessageCreateRequest,
@@ -86,11 +87,6 @@ def _message_to_response(
         author_avatar_url=author_avatar_url or getattr(msg, "author_avatar_url", None),
         reactions=reactions_data or [],
     )
-
-
-from src.core.database import cached
-
-router = APIRouter(tags=["Messages"])
 
 
 @router.get(

@@ -20,7 +20,6 @@ Environment Configuration:
 import pytest
 import os
 import sys
-import time
 import threading
 
 # Setup paths
@@ -30,18 +29,9 @@ for path in [project_root, src_path]:
     if path not in sys.path:
         sys.path.insert(0, path)
 
-import utils.config as config
-import utils.logger as logger
-from src.core.database.core import Database
-from src.tests.fixtures.postgres_docker import (
-    postgres_manager,
-    postgres_config,
-    postgres_db,
-    postgres_db_with_table,
-    postgres_db_with_constraints,
-    clean_postgres_db,
-    postgres_connection_pool_tester,
-)
+import utils.config as config  # noqa: E402
+import utils.logger as logger  # noqa: E402
+from src.core.database.core import Database  # noqa: E402
 
 
 # Fixture for setup/teardown
@@ -262,7 +252,7 @@ class TestPostgresDockerConnectionPool:
         # First connection
         db1 = Database()
         db1.connect()
-        conn1_id = id(db1._local.connection)
+        id(db1._local.connection)
         
         # Execute query
         result1 = db1.fetch_one("SELECT 1 as val")
@@ -273,7 +263,7 @@ class TestPostgresDockerConnectionPool:
         # Second connection
         db2 = Database()
         db2.connect()
-        conn2_id = id(db2._local.connection)
+        id(db2._local.connection)
         
         # Due to pool reuse, might get same or different connection
         # Just verify it works
@@ -286,7 +276,6 @@ class TestPostgresDockerConnectionPool:
         """Test pool with multiple concurrent connections."""
         config.set("database", postgres_config)
         
-        connections = []
         results = []
         
         def create_connection(idx: int):

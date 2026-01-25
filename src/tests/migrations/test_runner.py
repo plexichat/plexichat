@@ -3,7 +3,6 @@ Tests for the migration runner.
 """
 
 import pytest
-from pathlib import Path
 
 from src.core.migrations.runner import MigrationRunner
 from src.core.migrations.tracker import MigrationTracker

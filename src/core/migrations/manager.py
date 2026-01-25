@@ -6,11 +6,10 @@ entire migration process including discovery, validation, execution, and trackin
 """
 
 import logging
-import os
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
-from . import schema, validator
+from . import validator
 from .tracker import MigrationTracker
 from .runner import MigrationRunner
 
@@ -217,7 +216,7 @@ class MigrationManager:
                     migration_file = f
                     break
         except NotADirectoryError:
-            raise ValueError(f"Migrations directory not found")
+            raise ValueError("Migrations directory not found")
         
         if migration_file is None:
             raise ValueError(f"Migration file for version {version} not found")
@@ -226,11 +225,11 @@ class MigrationManager:
             runner = MigrationRunner(self.db, self.tracker)
             runner.validate_migration_file(migration_file)
             module = runner.load_migration_module(migration_file)
-            result = runner.execute_migration_down(module, version)
-            
+            runner.execute_migration_down(module, version)
+
             # Mark as rolled back in tracker
             self.tracker.record_rollback(version)
-            
+
             return {
                 'success': True,
                 'version': version,

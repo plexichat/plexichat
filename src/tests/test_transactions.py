@@ -13,7 +13,6 @@ import pytest
 import os
 import sys
 import shutil
-import sqlite3
 
 # Setup paths before any imports
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
@@ -1640,7 +1639,6 @@ class TestPostgresConnectionPoolFailureRecovery:
         except ImportError:
             pytest.skip("psycopg2-binary not installed")
         
-        from unittest.mock import MagicMock, patch
         
         pg_config = {
             "type": "postgres",

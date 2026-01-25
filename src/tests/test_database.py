@@ -1065,7 +1065,7 @@ def test_connection_replacement_in_connect(db_config):
     
     # Verify thread-local state is properly initialized
     assert db._local.transaction_depth == 0
-    assert db._local.in_transaction == False
+    assert not db._local.in_transaction
     
     db.close()
 
@@ -1078,7 +1078,7 @@ def test_thread_local_state_clearing(db_config):
     # Set transaction state
     db.begin_transaction()
     assert db._local.transaction_depth == 1
-    assert db._local.in_transaction == True
+    assert db._local.in_transaction
     
     # Call close()
     db.close()
@@ -1086,7 +1086,7 @@ def test_thread_local_state_clearing(db_config):
     # Verify thread-local state is cleared
     assert db._local.connection is None
     assert db._local.transaction_depth == 0
-    assert db._local.in_transaction == False
+    assert not db._local.in_transaction
 
 
 def test_connection_lifecycle_logging(db_config, caplog):
@@ -1161,7 +1161,7 @@ def test_connection_acquire_release_cycle(db_config):
     db.close()
     assert db._local.connection is None
     assert db._local.transaction_depth == 0
-    assert db._local.in_transaction == False
+    assert not db._local.in_transaction
 
 
 def test_multiple_connection_cycles(db_config):
@@ -1238,7 +1238,7 @@ def test_connection_pool_state_consistency(db_config):
         db.connect()
         assert db._local.connection is not None
         assert db._local.transaction_depth == 0
-        assert db._local.in_transaction == False
+        assert not db._local.in_transaction
         
         # Do something with connection
         cursor = db.execute("SELECT ?", (i,))
@@ -1247,7 +1247,7 @@ def test_connection_pool_state_consistency(db_config):
         db.close()
         assert db._local.connection is None
         assert db._local.transaction_depth == 0
-        assert db._local.in_transaction == False
+        assert not db._local.in_transaction
 
 
 # PostgreSQL-specific error handling tests
@@ -1269,7 +1269,7 @@ def test_pool_exhaustion_handling(db_config, caplog):
         pytest.skip("psycopg2 not installed")
 
     import logging
-    from unittest.mock import Mock, MagicMock, patch
+    from unittest.mock import MagicMock, patch
     
     # Set logger to capture DEBUG level
     caplog.set_level(logging.DEBUG)
@@ -1376,7 +1376,7 @@ def test_connect_timeout_handling(db_config, caplog):
         pytest.skip("psycopg2 not installed")
 
     import logging
-    from unittest.mock import Mock, MagicMock, patch
+    from unittest.mock import MagicMock, patch
     
     # Set logger to capture DEBUG level
     caplog.set_level(logging.DEBUG)
@@ -1490,8 +1490,7 @@ class TestPostgresConnectionPoolAcquisition:
         """Test that pool is reused across multiple threads."""
         import threading
         
-        db = Database()
-        pools_seen = []
+        Database()
         
         def get_pool():
             """Get pool reference from database instance."""
@@ -1527,7 +1526,7 @@ class TestPostgresPlaceholderConversionComplex:
     
     def test_nested_single_quotes_with_placeholders(self):
         """Test placeholder conversion with nested single quotes."""
-        db = Database()
+        Database()
         from src.core.database.core import _PLACEHOLDER_PATTERN
         
         # Query with nested quotes and placeholders
@@ -1537,7 +1536,7 @@ class TestPostgresPlaceholderConversionComplex:
     
     def test_multiple_nested_quotes(self):
         """Test multiple levels of quote nesting."""
-        db = Database()
+        Database()
         from src.core.database.core import _PLACEHOLDER_PATTERN
         
         # Multiple parameters with quoted strings
@@ -1547,7 +1546,7 @@ class TestPostgresPlaceholderConversionComplex:
     
     def test_mixed_quote_styles(self):
         """Test queries with both single and double quotes."""
-        db = Database()
+        Database()
         from src.core.database.core import _PLACEHOLDER_PATTERN
         
         # Single quoted string containing double quotes
@@ -1557,7 +1556,7 @@ class TestPostgresPlaceholderConversionComplex:
     
     def test_consecutive_placeholders(self):
         """Test query with consecutive placeholders."""
-        db = Database()
+        Database()
         from src.core.database.core import _PLACEHOLDER_PATTERN
         
         # Consecutive parameters
@@ -1567,7 +1566,7 @@ class TestPostgresPlaceholderConversionComplex:
     
     def test_placeholder_in_case_statement(self):
         """Test placeholder conversion in CASE statements."""
-        db = Database()
+        Database()
         from src.core.database.core import _PLACEHOLDER_PATTERN
         
         query = """
@@ -1584,7 +1583,7 @@ class TestPostgresPlaceholderConversionComplex:
     
     def test_placeholder_in_json_extraction(self):
         """Test placeholder in JSON path expressions."""
-        db = Database()
+        Database()
         from src.core.database.core import _PLACEHOLDER_PATTERN
         
         # PostgreSQL JSON query
@@ -1594,7 +1593,7 @@ class TestPostgresPlaceholderConversionComplex:
     
     def test_placeholder_in_like_clause(self):
         """Test placeholder in LIKE clause with wildcard strings."""
-        db = Database()
+        Database()
         from src.core.database.core import _PLACEHOLDER_PATTERN
         
         query = "SELECT * FROM users WHERE username LIKE ? AND email LIKE ?"
@@ -1603,7 +1602,7 @@ class TestPostgresPlaceholderConversionComplex:
     
     def test_placeholder_in_between_clause(self):
         """Test placeholder in BETWEEN clause."""
-        db = Database()
+        Database()
         from src.core.database.core import _PLACEHOLDER_PATTERN
         
         query = "SELECT * FROM users WHERE age BETWEEN ? AND ?"
@@ -1612,7 +1611,7 @@ class TestPostgresPlaceholderConversionComplex:
     
     def test_placeholder_in_in_clause(self):
         """Test placeholder in IN clause."""
-        db = Database()
+        Database()
         from src.core.database.core import _PLACEHOLDER_PATTERN
         
         # Note: IN clauses with placeholders are complex;
@@ -1623,7 +1622,7 @@ class TestPostgresPlaceholderConversionComplex:
     
     def test_no_false_positives_in_string_literals(self):
         """Test that question marks in string literals aren't converted."""
-        db = Database()
+        Database()
         from src.core.database.core import _PLACEHOLDER_PATTERN
         
         query = "SELECT 'Is this correct?' AS question, 'Why not?' AS another, id FROM users WHERE id = ?"
@@ -1637,7 +1636,7 @@ class TestPostgresPlaceholderConversionComplex:
     
     def test_escaped_single_quote_with_placeholder(self):
         """Test escaped single quotes followed by placeholders."""
-        db = Database()
+        Database()
         from src.core.database.core import _PLACEHOLDER_PATTERN
         
         # Escaped quote at end of string followed by placeholder
@@ -1647,7 +1646,7 @@ class TestPostgresPlaceholderConversionComplex:
     
     def test_complex_query_with_subquery(self):
         """Test placeholder conversion in subqueries."""
-        db = Database()
+        Database()
         from src.core.database.core import _PLACEHOLDER_PATTERN
         
         query = """

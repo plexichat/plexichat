@@ -2,9 +2,7 @@
 Tests for migration validators.
 """
 
-import hashlib
 import pytest
-from pathlib import Path
 
 from src.core.migrations.validator import (
     calculate_checksum,

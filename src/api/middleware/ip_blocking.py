@@ -2,7 +2,7 @@
 IP Blocking Middleware - Intercepts requests from blacklisted IPs.
 """
 
-from fastapi import Request, HTTPException, status
+from fastapi import Request
 from starlette.types import ASGIApp, Receive, Send, Scope
 
 import src.api as api

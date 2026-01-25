@@ -30,13 +30,10 @@ Environment Variables:
 """
 
 import os
-import sys
 import time
 import logging
 import pytest
 from typing import Dict, Optional, Generator, TYPE_CHECKING
-import subprocess
-import json
 
 if TYPE_CHECKING:
     from src.core.database.core import Database

@@ -1684,7 +1684,7 @@ async def get_audit_log(
                     try:
                         role = servers_mod.get_role(rid, current_user.user_id)
                         role_map[rid] = role.name if role else None
-                    except:
+                    except Exception:
                         role_map[rid] = None
                 target_name = role_map[rid]
             elif e.target_type == "channel" and e.target_id:
@@ -1693,7 +1693,7 @@ async def get_audit_log(
                     try:
                         channel = servers_mod.get_channel(cid, current_user.user_id)
                         channel_map[cid] = channel.name if channel else None
-                    except:
+                    except Exception:
                         channel_map[cid] = None
                 target_name = channel_map[cid]
 

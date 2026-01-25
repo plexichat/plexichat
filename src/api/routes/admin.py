@@ -14,7 +14,6 @@ from fastapi import APIRouter, HTTPException, status, Request, Response
 from fastapi.responses import HTMLResponse
 from typing import Dict, List, Optional, Union, Any
 import time
-import os
 from pathlib import Path
 
 import src.api as api

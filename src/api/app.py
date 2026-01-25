@@ -6,7 +6,6 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import sys
 import time
-from pathlib import Path
 
 import utils.config as global_config
 from .config import get_api_config
@@ -19,7 +18,7 @@ from .middleware import (
     create_rate_limit_middleware,
     IPBlockingMiddleware,
 )
-from .routes import create_api_router, create_docs_router, is_docs_enabled, admin_router
+from .routes import create_api_router, create_docs_router, is_docs_enabled
 from .routes.docs import get_docs_config
 
 import utils.logger as logger
@@ -194,11 +193,8 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             )
 
     # Serve uploaded media files (requires authentication)
-    from fastapi.responses import FileResponse
     from fastapi import status
-    from pathlib import Path
     from typing import Optional
-    from src.core.auth.models import TokenInfo
 
     @app.get(
         "/api/v1/media/attachments/{filename}",
@@ -218,8 +214,6 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     )
     async def serve_attachment(filename: str, request: Request):
         """Serve uploaded attachment files. Handles local and S3 storage with redirect optimization."""
-        from fastapi.responses import FileResponse, RedirectResponse
-        from fastapi import status
         import src.api as api_module
 
         try:
@@ -303,8 +297,6 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
             file_id = row["id"]
             backend = row["storage_backend"]
-            storage_path = row["storage_path"]
-            content_type = row["content_type"]
             download = request.query_params.get("download", "0") == "1"
 
             # --- File Retrieval: Stream via media module ---

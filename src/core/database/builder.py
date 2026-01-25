@@ -26,7 +26,7 @@ Example Usage:
 
 import re
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Union, Type, TypeVar
+from typing import Any, Dict, List, Optional, Type, TypeVar
 from dataclasses import dataclass
 
 from pydantic import BaseModel, ValidationError

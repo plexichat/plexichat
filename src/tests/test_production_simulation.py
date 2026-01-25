@@ -26,21 +26,16 @@ Usage:
 import asyncio
 import json
 import logging
-import multiprocessing as mp
-import signal
 import time
-import threading
 from dataclasses import dataclass, asdict
 from multiprocessing import Process, Queue
-from typing import List, Dict, Any, Optional, Tuple
-from unittest.mock import patch, MagicMock
+from typing import List, Dict, Any, Optional
 
 import fakeredis
 import pytest
 from sqlalchemy import text
 
 from src.core.database.core import Database
-from src.core.database.redis_client import RedisClient
 
 logger = logging.getLogger(__name__)
 
@@ -215,7 +210,7 @@ class ProductionSimulator:
             try:
                 result = result_queue.get(timeout=5.0)
                 results.append(result)
-            except:
+            except Exception:
                 # Check if any workers are still alive
                 alive_workers = sum(1 for w in self.workers if w.is_alive())
                 if alive_workers == 0:
@@ -489,15 +484,14 @@ class TestMultiWorkerPostgresPool:
         )
         
         # Collect pool stats during execution
-        aggregator = MetricsAggregator()
+        MetricsAggregator()
         
         # Start metrics collection in background
-        metrics_task = None
         try:
-            metrics_task = asyncio.create_task(
+            asyncio.create_task(
                 collect_pool_metrics_async(db, interval_ms=50, duration_seconds=30)
             )
-        except:
+        except Exception:
             # If asyncio not available in test context, skip metrics collection
             pass
         
@@ -811,7 +805,7 @@ class TestWorkerRestartScenarios:
             queries_per_worker=50
         )
         
-        result_queue = simulator.spawn_workers(simulate_production_load)
+        simulator.spawn_workers(simulate_production_load)
         
         time.sleep(1)
         
@@ -1090,7 +1084,7 @@ class TestPoolUtilizationMonitoring:
             metrics.append(metric)
             time.sleep(0.1)
         
-        results = simulator.collect_results(result_queue, timeout=120)
+        simulator.collect_results(result_queue, timeout=120)
         simulator.join_all_workers(timeout=30)
         
         # Verify metrics collected

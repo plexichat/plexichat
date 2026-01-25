@@ -136,8 +136,7 @@ class SettingsManager(BaseManager):
 
         # Insert new
         setting_id = self._generate_id()
-        db_type = getattr(self._db, "type", "sqlite")
-        
+
         self._db.execute(
             """INSERT INTO user_settings (id, user_id, key, value, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?)""",

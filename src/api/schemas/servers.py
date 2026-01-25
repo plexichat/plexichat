@@ -6,6 +6,7 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, ConfigDict
 
 from .common import SnowflakeID
+from .users import UserPublicResponse
 
 
 class ServerCreateRequest(BaseModel):
@@ -195,9 +196,6 @@ class BanCreateRequest(BaseModel):
     delete_message_days: int = Field(
         0, ge=0, le=7, description="Number of days of messages to delete"
     )
-
-
-from .users import UserPublicResponse
 
 
 class AuditLogEntryResponse(BaseModel):

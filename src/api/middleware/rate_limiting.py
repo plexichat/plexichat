@@ -3,7 +3,6 @@ Rate limiting middleware integration for the API.
 """
 
 from typing import Optional, Dict, Any, Callable, Type
-import sys
 
 from fastapi import Request
 

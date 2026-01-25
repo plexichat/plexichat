@@ -11,7 +11,7 @@ import mimetypes
 import uuid
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional, Dict, Any, BinaryIO, Tuple, List
+from typing import Optional, Dict, Any, BinaryIO, Tuple
 
 import utils.config as config
 import utils.logger as logger

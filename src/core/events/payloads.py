@@ -586,7 +586,7 @@ def create_guild_members_chunk(
             "members": members,
             "chunk_index": chunk_index,
             "chunk_count": chunk_count,
-            "not_found": [_str_id(uid) for r in (not_found or [])],
+            "not_found": [_str_id(r) for r in (not_found or [])],
         },
         server_id=server_id,
     )

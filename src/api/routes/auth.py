@@ -251,7 +251,7 @@ async def login(request: Request, body: LoginRequest) -> LoginResponse:
             status_code=401,
             detail={"error": {"code": 401, "message": "Invalid credentials"}},
         )
-    except AccountLockedError as e:
+    except AccountLockedError:
         masked_username = mask_string(body.username)
         logger.warning(f"Login failed for '{masked_username}': Account locked")
         raise HTTPException(

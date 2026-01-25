@@ -2,7 +2,6 @@
 Test fixtures for migration system tests.
 """
 
-import os
 import tempfile
 from pathlib import Path
 

@@ -15,11 +15,9 @@ For PostgreSQL load testing, swap config to use 'postgres' type.
 import pytest
 import time
 import threading
-import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any
 from dataclasses import dataclass, field
-from datetime import datetime
 import statistics
 
 import utils.config as config
@@ -525,7 +523,7 @@ class TestConcurrentQueries:
             ]
             results = [f.result() for f in as_completed(futures)]
         
-        duration = time.time() - start_time
+        time.time() - start_time
         pool_monitor.stop()
         
         total_successful = sum(results)
@@ -572,7 +570,7 @@ class TestSustainedLoad:
         pool_monitor.stop()
         
         total_queries = num_threads * queries_per_thread
-        total_successful = sum(results)
+        sum(results)
         
         # Compile and verify results
         test_results = LoadTestResults(
@@ -619,7 +617,7 @@ class TestSustainedLoad:
             ]
             results = [f.result() for f in as_completed(futures)]
         
-        duration = time.time() - start_time
+        time.time() - start_time
         pool_monitor.stop()
         
         total_queries = num_threads * queries_per_thread
@@ -690,7 +688,7 @@ class TestThreadReuse:
         
         # Get baseline pool stats
         baseline_stats = load_test_db.get_pool_stats()
-        baseline_idle = baseline_stats.get("idle_connections", 0)
+        baseline_stats.get("idle_connections", 0)
         baseline_active = baseline_stats.get("active_connections", 0)
         
         # Track connection object ID for same thread

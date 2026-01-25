@@ -15,17 +15,9 @@ import pytest
 import sqlite3
 import tempfile
 import os
-from datetime import datetime
-from typing import Any
 
 from src.core.database.builder import (
     QueryBuilder,
-    InsertQuery,
-    SelectQuery,
-    UpdateQuery,
-    DeleteQuery,
-    SchemaRegistry,
-    QueryBuilderException,
     SQLInjectionError,
     SchemaValidationError,
     ValidationModelError,
@@ -33,8 +25,6 @@ from src.core.database.builder import (
 from src.core.database.models import (
     UserInsert,
     UserUpdate,
-    ServerInsert,
-    MessageInsert,
 )
 
 

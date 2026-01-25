@@ -2,9 +2,8 @@
 Help routes - Serve user-facing help documentation.
 """
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
-import utils.config as config
 
 router = APIRouter(tags=["Help"])
 

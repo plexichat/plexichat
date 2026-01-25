@@ -16,17 +16,13 @@ Results are logged with comparison to baselines for automated regression detecti
 
 import pytest
 import time
-import threading
-import sqlite3
 import statistics
 import json
 import os
 from dataclasses import dataclass, field, asdict
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Optional
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import tempfile
-import shutil
 
 import utils.config as config
 import utils.logger as logger
@@ -88,7 +84,7 @@ class BenchmarkResult:
         result_str += f"\nDatabase Type: {self.database_type}"
         result_str += f"\nOperation: {self.operation}"
         result_str += f"\nIterations: {self.num_iterations}"
-        result_str += f"\n\nTiming Statistics (milliseconds):"
+        result_str += "\n\nTiming Statistics (milliseconds):"
         result_str += f"\n  Min:    {self.min_ms:.3f}"
         result_str += f"\n  Max:    {self.max_ms:.3f}"
         result_str += f"\n  Mean:   {self.mean_ms:.3f}"
@@ -400,7 +396,7 @@ def test_concurrent_connection_acquisition(benchmark_db_sqlite):
     def acquire_connection():
         start = time.time()
         # Each thread gets its own connection via thread-local storage
-        conn = benchmark_db_sqlite._get_conn()
+        benchmark_db_sqlite._get_conn()
         elapsed_ms = (time.time() - start) * 1000
         execution_times.append(elapsed_ms)
     
@@ -501,7 +497,7 @@ def test_placeholder_conversion_performance(benchmark_db_sqlite):
         for _ in range(iterations):
             with BenchmarkTimer() as timer:
                 # Test conversion (SQLite returns unchanged)
-                converted = db._convert_placeholders(query)
+                db._convert_placeholders(query)
             execution_times.append(timer.elapsed_ms)
         
         result = calculate_benchmark_stats(execution_times, target_ms=0.1)
