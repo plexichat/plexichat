@@ -28,35 +28,62 @@ class AuthenticationMiddleware:
             scope["state"] = {}
 
         request = Request(scope, receive)
+        path = scope.get("path", "")
 
-        # 1. Check for Internal Service Authentication (No magic bypasses)
+        # 1. Check for Internal Service Authentication
         internal_secret = api.get_internal_secret()
         provided_secret = request.headers.get("X-Plexichat-Internal-Secret")
-        is_internal = internal_secret and provided_secret == internal_secret
+        is_internal = bool(internal_secret and provided_secret == internal_secret)
 
         scope["state"]["is_internal"] = is_internal
+        if is_internal:
+            import utils.logger as logger
+            logger.debug(f"Auth: Internal service authenticated for path {path}")
 
         # 2. Extract and Verify Bearer Token
+        # Skip for admin routes which manage their own sessions
+        is_admin_path = path.startswith("/admin/") or path.startswith("/api/v1/admin/")
+        
         auth_header = request.headers.get("Authorization")
-        if auth_header:
+        if auth_header and not is_admin_path:
             token = self._extract_token(auth_header)
             if token:
+                import utils.logger as logger
+                token_parts = token.split(".")
+                is_plexichat_token = len(token_parts) >= 2
+                
                 auth = api.get_auth()
-                if auth:
+                if auth and is_plexichat_token:
                     try:
                         ip = request.client.host if request.client else None
                         ua = request.headers.get("User-Agent")
                         token_info = auth.verify_token(token, ip, ua)
-
-                        scope["state"]["user"] = token_info
+                        if token_info:
+                            scope["state"]["user"] = token_info
+                            logger.debug(f"Auth: Successfully authenticated user {token_info.user_id} for path {path}")
+                        else:
+                            logger.warning(f"Auth: verify_token returned None for path {path}")
                     except Exception as e:
+                        # Log the error but don't block yet - get_current_user dependency handles the 401
+                        logger.debug(f"Authentication failed for path {path}: {e}")
                         scope["state"]["auth_error"] = str(e)
+                elif not is_plexichat_token:
+                    logger.debug(f"Auth: Identified potential admin token for path {path}")
+                    scope["state"]["potential_admin_token"] = token
+                elif not auth:
+                    logger.error(f"Auth: Auth module NOT AVAILABLE for path {path}")
+            else:
+                import utils.logger as logger
+                from utils.logger import mask_string
+                masked_header = mask_string(auth_header)
+                logger.debug(f"Auth: Failed to extract token from header '{masked_header}' for path {path}")
 
         await self.app(scope, receive, send)
 
     def _extract_token(self, auth_header: str) -> Optional[str]:
-        parts = auth_header.split(" ")
-        if len(parts) == 2 and parts[0] in ("Bearer", "Bot"):
+        # Split by any whitespace and handle case-insensitivity
+        parts = auth_header.split()
+        if len(parts) == 2 and parts[0].title() in ("Bearer", "Bot"):
             return parts[1]
         return None
 
@@ -70,6 +97,9 @@ async def get_current_user(request: Request) -> TokenInfo:
         error = request.scope.get("state", {}).get(
             "auth_error", "Authentication required"
         )
+        
+        import utils.logger as logger
+        logger.debug(f"get_current_user: No user in state for path {request.url.path}. Error: {error}")
 
         raise HTTPException(status_code=401, detail={"error": {"message": error}})
 

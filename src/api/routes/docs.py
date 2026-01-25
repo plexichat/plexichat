@@ -25,7 +25,6 @@ router = APIRouter(tags=["Documentation"])
 # Module state
 _docs_cache: Dict[str, tuple] = {}  # path -> (content, timestamp)
 _html_cache: Dict[str, tuple] = {}  # path -> (html, timestamp)
-_request_counts: Dict[str, List[float]] = {}  # ip -> [timestamps]
 
 
 @dataclass
@@ -357,6 +356,9 @@ def _build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
             NavItem("Events", "/websocket/events"),
             NavItem("Opcodes", "/websocket/opcodes"),
         ],
+        "Help": [
+            NavItem("Security Logout", "/security-logout"),
+        ],
     }
 
     html = ['<aside class="sidebar">']
@@ -629,8 +631,6 @@ async def docs_websocket_page(request: Request, page: str):
 
 @router.get("/rate-limits")
 async def docs_rate_limits(request: Request):
-    from src.api.routes.docs import _generate_dynamic_rate_limits_content
-
     content = _generate_dynamic_rate_limits_content()
     return HTMLResponse(
         _markdown_to_html(content, "Rate Limits", get_docs_config(), "/rate-limits")
@@ -640,6 +640,13 @@ async def docs_rate_limits(request: Request):
 @router.get("/errors")
 async def docs_errors(request: Request):
     return await _serve_page(request, Path("docs/errors.md"), "Errors", "/errors")
+
+
+@router.get("/security-logout")
+async def docs_security_logout(request: Request):
+    return await _serve_page(
+        request, Path("docs/security-logout.md"), "Security Logout", "/security-logout"
+    )
 
 
 @router.get("/data-types")

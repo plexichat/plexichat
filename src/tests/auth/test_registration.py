@@ -4,6 +4,12 @@ Registration tests for auth module.
 
 import pytest
 import uuid
+from src.core.auth.exceptions import (
+    UserExistsError,
+    WeakPasswordError,
+    InvalidEmailError,
+    InvalidUsernameError
+)
 
 
 class TestRegistration:
@@ -34,7 +40,7 @@ class TestRegistration:
 
         auth.register(username, f"{username}1@example.com", "SecurePass123!")
 
-        with pytest.raises(auth.UserExistsError):
+        with pytest.raises(UserExistsError):
             auth.register(username, f"{username}2@example.com", "SecurePass123!")
 
     def test_register_duplicate_email(self, db_and_auth):
@@ -45,14 +51,14 @@ class TestRegistration:
 
         auth.register(f"user1_{unique_id}", email, "SecurePass123!")
 
-        with pytest.raises(auth.UserExistsError):
+        with pytest.raises(UserExistsError):
             auth.register(f"user2_{unique_id}", email, "SecurePass123!")
 
     def test_register_weak_password_too_short(self, db_and_auth):
         """Test that short password fails."""
         db, auth = db_and_auth
 
-        with pytest.raises(auth.WeakPasswordError) as exc:
+        with pytest.raises(WeakPasswordError) as exc:
             auth.register("dave", "dave@example.com", "Short1!")
 
         assert "at least" in str(exc.value)
@@ -61,7 +67,7 @@ class TestRegistration:
         """Test that password without uppercase fails."""
         db, auth = db_and_auth
 
-        with pytest.raises(auth.WeakPasswordError) as exc:
+        with pytest.raises(WeakPasswordError) as exc:
             auth.register("eve", "eve@example.com", "lowercase123!")
 
         assert "uppercase" in str(exc.value).lower()
@@ -70,7 +76,7 @@ class TestRegistration:
         """Test that password without lowercase fails."""
         db, auth = db_and_auth
 
-        with pytest.raises(auth.WeakPasswordError) as exc:
+        with pytest.raises(WeakPasswordError) as exc:
             auth.register("frank", "frank@example.com", "UPPERCASE123!")
 
         assert "lowercase" in str(exc.value).lower()
@@ -79,7 +85,7 @@ class TestRegistration:
         """Test that password without digit fails."""
         db, auth = db_and_auth
 
-        with pytest.raises(auth.WeakPasswordError) as exc:
+        with pytest.raises(WeakPasswordError) as exc:
             auth.register("grace", "grace@example.com", "NoDigitsHere!")
 
         assert "digit" in str(exc.value).lower()
@@ -88,7 +94,7 @@ class TestRegistration:
         """Test that password without special char fails."""
         db, auth = db_and_auth
 
-        with pytest.raises(auth.WeakPasswordError) as exc:
+        with pytest.raises(WeakPasswordError) as exc:
             auth.register("henry", "henry@example.com", "NoSpecial123")
 
         assert "special" in str(exc.value).lower()
@@ -97,21 +103,21 @@ class TestRegistration:
         """Test that invalid email fails."""
         db, auth = db_and_auth
 
-        with pytest.raises(auth.InvalidEmailError):
+        with pytest.raises(InvalidEmailError):
             auth.register("ivan", "not-an-email", "SecurePass123!")
 
     def test_register_invalid_username_too_short(self, db_and_auth):
         """Test that short username fails."""
         db, auth = db_and_auth
 
-        with pytest.raises(auth.InvalidUsernameError):
+        with pytest.raises(InvalidUsernameError):
             auth.register("ab", "ab@example.com", "SecurePass123!")
 
     def test_register_invalid_username_special_chars(self, db_and_auth):
         """Test that username with special chars fails."""
         db, auth = db_and_auth
 
-        with pytest.raises(auth.InvalidUsernameError):
+        with pytest.raises(InvalidUsernameError):
             auth.register("user@name", "user@example.com", "SecurePass123!")
 
     def test_register_reserved_username(self, db_and_auth):
@@ -119,7 +125,7 @@ class TestRegistration:
         db, auth = db_and_auth
         unique_id = uuid.uuid4().hex[:16]
 
-        with pytest.raises(auth.InvalidUsernameError):
+        with pytest.raises(InvalidUsernameError):
             auth.register("admin", f"admin_{unique_id}@example.com", "SecurePass123!")
 
     def test_register_creates_default_permissions(self, db_and_auth):

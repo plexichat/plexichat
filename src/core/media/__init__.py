@@ -99,6 +99,7 @@ __all__ = [
     "upload_attachment",
     "get_file",
     "get_file_data",
+    "get_file_stream",
     "delete_file",
     # URL signing
     "sign_url",
@@ -257,6 +258,19 @@ def get_file_data(file_id: int) -> Tuple[bytes, str]:
     return _get_manager().get_file_data(file_id)
 
 
+def get_file_stream(file_id: int) -> Tuple[BinaryIO, int, str]:
+    """
+    Get file data as a stream.
+
+    Args:
+        file_id: File ID
+
+    Returns:
+        Tuple of (file stream, size, content_type)
+    """
+    return _get_manager().get_file_stream(file_id)
+
+
 def delete_file(user_id: int, file_id: int) -> bool:
     """
     Delete a file (soft delete).
@@ -274,18 +288,21 @@ def delete_file(user_id: int, file_id: int) -> bool:
 # === URL Signing ===
 
 
-def sign_url(file_id: int, expires_in: Optional[int] = None) -> SignedUrl:
+def sign_url(
+    file_id: int, expires_in: Optional[int] = None, params: Optional[dict] = None
+) -> SignedUrl:
     """
     Generate signed URL for file.
 
     Args:
         file_id: File ID
         expires_in: Expiration time in seconds
+        params: Optional storage-specific parameters
 
     Returns:
         SignedUrl object
     """
-    return _get_manager().sign_url(file_id, expires_in)
+    return _get_manager().sign_url(file_id, expires_in, params)
 
 
 def verify_signed_url(url: str) -> Tuple[bool, int]:

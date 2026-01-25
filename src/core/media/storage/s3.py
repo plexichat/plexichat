@@ -66,6 +66,7 @@ class S3Storage(StorageBackendBase):
             region_name=region,
             signature_version="s3v4",
             retries={"max_attempts": 3, "mode": "standard"},
+            s3={"addressing_style": "path"},
         )
 
         client_kwargs = {
@@ -81,11 +82,16 @@ class S3Storage(StorageBackendBase):
 
         try:
             self._client = boto3.client(**client_kwargs)
-            self._client.head_bucket(Bucket=bucket)
+            # Try to validate bucket existence, but don't fail if HeadBucket is unsupported
+            try:
+                self._client.head_bucket(Bucket=bucket)
+            except Exception as head_err:
+                logger.warning(f"S3 HeadBucket failed (might be unsupported by provider): {head_err}")
+            
             endpoint_info = f" (endpoint: {endpoint_url})" if endpoint_url else ""
             logger.info(f"Connected to S3 storage: bucket={bucket}{endpoint_info}")
         except Exception as e:
-            logger.error(f"Failed to connect to S3: {e}")
+            logger.error(f"Failed to initialize S3 client: {e}")
             raise StorageConnectionError(f"Failed to connect to S3: {e}", "s3")
 
     def _full_path(self, path: str) -> str:
@@ -210,6 +216,10 @@ class S3Storage(StorageBackendBase):
         except self._ClientError:
             return 0
 
+    def is_encrypted(self, path: str) -> bool:
+        """Check if file is encrypted."""
+        return False
+
     def get_metadata(self, path: str) -> dict:
         """Get file metadata."""
         key = self._full_path(path)
@@ -234,23 +244,29 @@ class S3Storage(StorageBackendBase):
                 "exists": False,
             }
 
-    def generate_presigned_url(self, path: str, expires_in: int = 3600) -> str:
+    def generate_presigned_url(
+        self, path: str, expires_in: int = 3600, params: Optional[dict] = None
+    ) -> str:
         """
         Generate a presigned URL for temporary access.
 
         Args:
             path: Storage path
             expires_in: URL expiration time in seconds
+            params: Optional extra parameters for the GET request (e.g. ResponseContentDisposition)
 
         Returns:
             Presigned URL
         """
         key = self._full_path(path)
+        get_params = {"Bucket": self._bucket, "Key": key}
+        if params:
+            get_params.update(params)
 
         try:
             url = self._client.generate_presigned_url(
                 "get_object",
-                Params={"Bucket": self._bucket, "Key": key},
+                Params=get_params,
                 ExpiresIn=expires_in,
             )
             return url

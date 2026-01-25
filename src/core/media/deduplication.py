@@ -146,6 +146,25 @@ CREATE INDEX IF NOT EXISTS idx_media_blocked_hashes_type ON media_blocked_hashes
 """
 
 
+def setup(db):
+    """Initialize the deduplication module."""
+    _create_tables(db)
+
+def _create_tables(db):
+    """Create deduplication tables."""
+    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    for statement in statements:
+        if statement:
+            try:
+                converted = (
+                    db.convert_schema(statement)
+                    if hasattr(db, "convert_schema")
+                    else statement
+                )
+                db.execute(converted)
+            except Exception as e:
+                logger.error(f"Failed to create deduplication table: {e}")
+
 class DeduplicationManager:
     """Manages file deduplication and content reporting."""
 
@@ -153,7 +172,6 @@ class DeduplicationManager:
         """Initialize deduplication manager."""
         self._db = db
         self._config = self._load_config()
-        self._create_tables()
 
     def _load_config(self) -> dict:
         """Load deduplication configuration."""
@@ -173,21 +191,6 @@ class DeduplicationManager:
             "phash_threshold": phash_config.get("similarity_threshold", 10),
             "phash_algorithm": phash_config.get("algorithm", "phash"),
         }
-
-    def _create_tables(self):
-        """Create deduplication tables."""
-        statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
-        for statement in statements:
-            if statement:
-                try:
-                    converted = (
-                        self._db.convert_schema(statement)
-                        if hasattr(self._db, "convert_schema")
-                        else statement
-                    )
-                    self._db.execute(converted)
-                except Exception as e:
-                    logger.error(f"Failed to create deduplication table: {e}")
 
     def compute_hash(self, file_data: bytes) -> str:
         """Compute hash of file data."""
@@ -576,10 +579,9 @@ class DeduplicationManager:
         now = int(time.time() * 1000)
 
         try:
-            self._db.execute(
-                """INSERT OR REPLACE INTO media_blocked_hashes 
-                   (hash_value, hash_type, phash_threshold, reason, blocked_at, blocked_by, auto_blocked)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            self._db.upsert(
+                "media_blocked_hashes",
+                ["hash_value", "hash_type", "phash_threshold", "reason", "blocked_at", "blocked_by", "auto_blocked"],
                 (
                     hash_value,
                     hash_type,
@@ -589,6 +591,7 @@ class DeduplicationManager:
                     blocked_by,
                     1 if auto else 0,
                 ),
+                conflict_columns=["hash_value"]
             )
 
             # Update all pending reports for this hash
@@ -635,11 +638,11 @@ class DeduplicationManager:
             expires_at = now + (duration_hours * 3600 * 1000)
 
         try:
-            self._db.execute(
-                """INSERT OR REPLACE INTO media_blocked_users 
-                   (user_id, reason, blocked_at, blocked_by, expires_at)
-                   VALUES (?, ?, ?, ?, ?)""",
+            self._db.upsert(
+                "media_blocked_users",
+                ["user_id", "reason", "blocked_at", "blocked_by", "expires_at"],
                 (user_id, reason, now, blocked_by, expires_at),
+                conflict_columns=["user_id"]
             )
             logger.info(f"User {user_id} blocked from uploads: {reason}")
             return True

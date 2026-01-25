@@ -27,7 +27,7 @@ Usage:
     token_info = auth.verify_token(result.token)
 """
 
-from typing import Optional, List, Dict, Protocol
+from typing import Optional, List, Dict, Protocol, Any
 
 from .exceptions import (
     AuthError,
@@ -130,6 +130,8 @@ def register(
     password: str,
     device_info: Optional[Dict[str, str]] = None,
     ip_address: Optional[str] = None,
+    age: Optional[int] = None,
+    dob: Optional[str] = None,
 ) -> User:
     """
     Register a new user account.
@@ -140,6 +142,8 @@ def register(
         password: Password (will be validated for strength)
         device_info: Optional device information
         ip_address: Optional IP address
+        age: Optional user age
+        dob: Optional date of birth
 
     Returns:
         Created User object
@@ -150,7 +154,9 @@ def register(
         InvalidUsernameError: Username format invalid
         InvalidEmailError: Email format invalid
     """
-    return _get_manager().register(username, email, password, device_info, ip_address)
+    return _get_manager().register(
+        username, email, password, device_info, ip_address, age, dob
+    )
 
 
 def verify_email(token: str) -> bool:
@@ -241,6 +247,11 @@ def logout(token: str) -> bool:
 def logout_all(user_id: int, except_token: Optional[str] = None) -> int:
     """Logout all sessions for a user. Returns count of sessions revoked."""
     return _get_manager().logout_all(user_id, except_token)
+
+
+def logout_all_users() -> int:
+    """Logout all sessions for all users."""
+    return _get_manager().logout_all_users()
 
 
 def get_sessions(user_id: int) -> List[Session]:
@@ -410,6 +421,34 @@ def revoke_device(user_id: int, device_id: int) -> bool:
     return _get_manager().revoke_device(user_id, device_id)
 
 
+# === IP Blacklisting ===
+
+
+def block_ip(
+    ip_address: str,
+    reason: Optional[str] = None,
+    blocked_by: Optional[int] = None,
+    duration_hours: Optional[int] = None,
+) -> bool:
+    """Block an IP address."""
+    return _get_manager().block_ip(ip_address, reason, blocked_by, duration_hours)
+
+
+def unblock_ip(ip_address: str) -> bool:
+    """Unblock an IP address."""
+    return _get_manager().unblock_ip(ip_address)
+
+
+def is_ip_blocked(ip_address: str) -> bool:
+    """Check if an IP address is blocked."""
+    return _get_manager().is_ip_blocked(ip_address)
+
+
+def get_blocked_ips() -> List[Dict[str, Any]]:
+    """Get all blocked IPs."""
+    return _get_manager().get_blocked_ips()
+
+
 # === Audit ===
 
 
@@ -467,6 +506,8 @@ def oauth_login(
     username_hint: Optional[str] = None,
     ip_address: Optional[str] = None,
     user_agent: Optional[str] = None,
+    age: Optional[int] = None,
+    dob: Optional[str] = None,
 ) -> AuthResult:
     """
     Login or register via OAuth provider.
@@ -482,6 +523,8 @@ def oauth_login(
         username_hint=username_hint,
         ip_address=ip_address,
         user_agent=user_agent,
+        age=age,
+        dob=dob,
     )
 
 

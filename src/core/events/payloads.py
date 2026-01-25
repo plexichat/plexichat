@@ -569,3 +569,24 @@ def create_reaction_remove(
         message_id=message_id,
         emoji=emoji,
     )
+
+
+def create_guild_members_chunk(
+    server_id: int,
+    members: List[Dict[str, Any]],
+    chunk_index: int = 0,
+    chunk_count: int = 1,
+    not_found: Optional[List[int]] = None,
+) -> GuildMemberEvent:
+    """Create a GUILD_MEMBERS_CHUNK event."""
+    return GuildMemberEvent(
+        event_type=EventType.GUILD_MEMBERS_CHUNK,
+        data={
+            "guild_id": _str_id(server_id),
+            "members": members,
+            "chunk_index": chunk_index,
+            "chunk_count": chunk_count,
+            "not_found": [_str_id(r) for r in (not_found or [])],
+        },
+        server_id=server_id,
+    )

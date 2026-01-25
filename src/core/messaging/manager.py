@@ -436,7 +436,7 @@ class MessagingManager(BaseManager):
         webhook_id: Optional[SnowflakeID] = None,
     ) -> Message:
         """Send a message to a conversation."""
-        msg = self._message_svc.send_message(
+        return self._message_svc.send_message(
             user_id,
             conversation_id,
             content,
@@ -446,16 +446,6 @@ class MessagingManager(BaseManager):
             embeds,
             webhook_id,
         )
-
-        # Update conversation's last message
-        self._conversation_svc.update_last_message(
-            conversation_id, msg.id, msg.created_at
-        )
-
-        # Create initial status
-        self._message_status_svc.create_initial_status(msg.id, user_id)
-
-        return msg
 
     def edit_message(
         self, user_id: SnowflakeID, message_id: SnowflakeID, content: str
@@ -579,8 +569,16 @@ class MessagingManager(BaseManager):
     def get_message_status(
         self, user_id: SnowflakeID, message_id: SnowflakeID
     ) -> List[MessageStatus]:
-        """Get delivery/read status for a message."""
+        """Get delivery/read status for a message (sender only)."""
         return self._message_status_svc.get_message_status(user_id, message_id)
+
+    def get_reader_ids(self, user_id: SnowflakeID, message_id: SnowflakeID) -> List[SnowflakeID]:
+        """Get IDs of users who have read a message (sender only)."""
+        return self._message_status_svc.get_reader_ids(user_id, message_id)
+
+    def get_batch_reader_ids(self, user_id: SnowflakeID, message_ids: List[SnowflakeID]) -> Dict[SnowflakeID, List[SnowflakeID]]:
+        """Get IDs of users who have read messages (batch, sender only)."""
+        return self._message_status_svc.get_batch_reader_ids(user_id, message_ids)
 
     # === Pins ===
 

@@ -89,8 +89,11 @@ class ParticipantService(BaseService):
         if cached is not None:
             return cached
 
+        import utils.logger as logger
+        
         # Check direct participation
         if self._repo.exists(conversation_id, user_id):
+            logger.debug(f"User {user_id} is a direct participant in conversation {conversation_id}")
             self._cache_set(cache_key, True)
             return True
 
@@ -100,12 +103,21 @@ class ParticipantService(BaseService):
             server_id = metadata.get("server_id")
             if server_id:
                 try:
-                    if self._repo.check_server_membership(int(server_id), user_id):
+                    is_member = self._repo.check_server_membership(int(server_id), user_id)
+                    if is_member:
+                        logger.debug(f"User {user_id} is a participant in conversation {conversation_id} via membership in server {server_id}")
                         self._cache_set(cache_key, True)
                         return True
-                except (TypeError, ValueError):
-                    pass
+                    else:
+                        logger.warning(f"User {user_id} is NOT a member of server {server_id} associated with conversation {conversation_id}")
+                except (TypeError, ValueError) as e:
+                    logger.error(f"Error checking server membership for conversation {conversation_id}: {e}")
+            else:
+                logger.debug(f"Conversation {conversation_id} has metadata but no server_id")
+        else:
+            logger.debug(f"Conversation {conversation_id} has no metadata")
 
+        logger.warning(f"User {user_id} is NOT a participant in conversation {conversation_id} (direct or server-wide)")
         self._cache_set(cache_key, False)
         return False
 

@@ -487,21 +487,13 @@ def verify_otp_setup(admin_id: int, code: str) -> AdminLoginResult:
     """Verify OTP code during setup and enable OTP."""
     db = _get_db()
 
-    logger.debug(f"verify_otp_setup called with admin_id={admin_id}, code={code}")
-
     row = db.fetch_one("SELECT totp_secret FROM admin_users WHERE id = ?", (admin_id,))
-
-    logger.debug(f"DB row result: {row}")
 
     if not row:
         logger.warning(f"Admin user {admin_id} not found")
         return AdminLoginResult(success=False, error="Admin user not found")
 
     secret = row["totp_secret"] if isinstance(row, dict) else row[0]
-
-    logger.debug(
-        f"Secret found: {bool(secret)}, length: {len(secret) if secret else 0}"
-    )
 
     if not secret:
         return AdminLoginResult(success=False, error="OTP not configured")
@@ -510,8 +502,6 @@ def verify_otp_setup(admin_id: int, code: str) -> AdminLoginResult:
     import pyotp
 
     totp = pyotp.TOTP(secret)
-    expected = totp.now()
-    logger.debug(f"Expected OTP: {expected}, Provided: {code}")
 
     if not totp.verify(code, valid_window=1):
         logger.warning(f"OTP verification failed for admin {admin_id}")
@@ -1004,7 +994,7 @@ def get_hash_report_counts() -> Dict[str, int]:
     """Get counts of hash reports by status."""
     db = _get_db()
 
-    counts = {"pending": 0, "reviewed": 0, "blocked": 0, "cleared": 0, "total": 0}
+    counts = {"pending": 0, "blocked": 0, "cleared": 0, "total": 0}
 
     try:
         rows = db.fetch_all(
@@ -1106,11 +1096,11 @@ def review_hash_report(
     if action == "block":
         # Block the hash
         try:
-            db.execute(
-                """INSERT OR REPLACE INTO media_blocked_hashes 
-                   (hash_value, reason, blocked_at, blocked_by, auto_blocked)
-                   VALUES (?, ?, ?, ?, 0)""",
-                (hash_value, notes or "Blocked by admin", now, admin_id),
+            db.upsert(
+                "media_blocked_hashes",
+                ["hash_value", "reason", "blocked_at", "blocked_by", "auto_blocked"],
+                (hash_value, notes or "Blocked by admin", now, admin_id, 0),
+                conflict_columns=["hash_value"]
             )
         except Exception as e:
             logger.error(f"Failed to block hash: {e}")
@@ -1156,11 +1146,11 @@ def block_hash(
     now = int(time.time() * 1000)
 
     try:
-        db.execute(
-            """INSERT OR REPLACE INTO media_blocked_hashes 
-               (hash_value, hash_type, phash_threshold, reason, blocked_at, blocked_by, auto_blocked)
-               VALUES (?, ?, ?, ?, ?, ?, 0)""",
-            (hash_value, hash_type, phash_threshold, reason, now, admin_id),
+        db.upsert(
+            "media_blocked_hashes",
+            ["hash_value", "hash_type", "phash_threshold", "reason", "blocked_at", "blocked_by", "auto_blocked"],
+            (hash_value, hash_type, phash_threshold, reason, now, admin_id, 0),
+            conflict_columns=["hash_value"]
         )
         return True
     except Exception as e:
@@ -1225,11 +1215,11 @@ def block_user(
         expires_at = now + (duration_hours * 3600 * 1000)
 
     try:
-        db.execute(
-            """INSERT OR REPLACE INTO media_blocked_users 
-               (user_id, reason, blocked_at, blocked_by, expires_at)
-               VALUES (?, ?, ?, ?, ?)""",
+        db.upsert(
+            "media_blocked_users",
+            ["user_id", "reason", "blocked_at", "blocked_by", "expires_at"],
             (user_id, reason, now, admin_id, expires_at),
+            conflict_columns=["user_id"]
         )
         logger.info(f"Admin {admin_id} blocked user {user_id} from uploads: {reason}")
         return True
@@ -1253,6 +1243,7 @@ def unblock_user(user_id: int) -> bool:
 
 
 @dataclass
+@dataclass
 class AdminUserDetail:
     """Detailed user information for admin view."""
 
@@ -1263,6 +1254,8 @@ class AdminUserDetail:
     badges: List[str]
     created_at: int
     last_login: Optional[int]
+    account_locked: bool = False
+    locked_until: Optional[int] = None
 
 
 def search_users(q: str, limit: int = 20, offset: int = 0) -> List[AdminUserDetail]:
@@ -1273,20 +1266,20 @@ def search_users(q: str, limit: int = 20, offset: int = 0) -> List[AdminUserDeta
         # Try to parse as ID first
         user_id = int(q)
         rows = db.fetch_all(
-            """SELECT u.id, u.username, u.email, f.rate_limit_tier as tier, f.badges, u.created_at 
+            """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at, u.account_locked, u.locked_until
                FROM auth_users u
                LEFT JOIN user_features f ON u.id = f.user_id
                WHERE u.id = ? LIMIT ? OFFSET ?""",
             (user_id, limit, offset),
         )
     except ValueError:
-        # Search by username
+        # Search by username or email index
         rows = db.fetch_all(
-            """SELECT u.id, u.username, u.email, f.rate_limit_tier as tier, f.badges, u.created_at 
+            """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at, u.account_locked, u.locked_until
                FROM auth_users u
                LEFT JOIN user_features f ON u.id = f.user_id
-               WHERE u.username LIKE ? LIMIT ? OFFSET ?""",
-            (f"%{q}%", limit, offset),
+               WHERE u.username LIKE ? OR u.email_index LIKE ? LIMIT ? OFFSET ?""",
+            (f"%{q}%", f"%{q}%", limit, offset),
         )
 
     users = []
@@ -1302,15 +1295,20 @@ def search_users(q: str, limit: int = 20, offset: int = 0) -> List[AdminUserDeta
             except Exception:
                 badges = []
 
+            # Return a placeholder for email since it is encrypted
+            email_display = "[Encrypted]" if row.get("email_index") else None
+
             users.append(
                 AdminUserDetail(
                     id=row["id"],
                     username=row["username"],
-                    email=row.get("email"),
+                    email=email_display,
                     tier=row.get("tier", "standard"),
                     badges=badges,
                     created_at=row["created_at"],
                     last_login=None,  # Not in search results for performance
+                    account_locked=bool(row.get("account_locked", 0)),
+                    locked_until=row.get("locked_until"),
                 )
             )
         else:
@@ -1324,15 +1322,19 @@ def search_users(q: str, limit: int = 20, offset: int = 0) -> List[AdminUserDeta
             except Exception:
                 badges = []
 
+            email_display = "[Encrypted]" if row[2] else None
+
             users.append(
                 AdminUserDetail(
                     id=row[0],
                     username=row[1],
-                    email=row[2],
+                    email=email_display,
                     tier=row[3] or "standard",
                     badges=badges,
                     created_at=row[5],
                     last_login=None,
+                    account_locked=bool(row[6]),
+                    locked_until=row[7],
                 )
             )
     return users
@@ -1343,7 +1345,7 @@ def get_user_details(user_id: int) -> Optional[AdminUserDetail]:
     db = _get_db()
 
     row = db.fetch_one(
-        """SELECT u.id, u.username, u.email, f.rate_limit_tier as tier, f.badges, u.created_at, u.last_login
+        """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at, u.last_login_at, u.account_locked, u.locked_until
            FROM auth_users u
            LEFT JOIN user_features f ON u.id = f.user_id
            WHERE u.id = ?""",
@@ -1364,14 +1366,18 @@ def get_user_details(user_id: int) -> Optional[AdminUserDetail]:
         except Exception:
             badges = []
 
+        email_display = "[Encrypted]" if row.get("email_index") else None
+
         return AdminUserDetail(
             id=row["id"],
             username=row["username"],
-            email=row.get("email"),
+            email=email_display,
             tier=row.get("tier", "standard"),
             badges=badges,
             created_at=row["created_at"],
-            last_login=row.get("last_login"),
+            last_login=row.get("last_login_at"),
+            account_locked=bool(row.get("account_locked", 0)),
+            locked_until=row.get("locked_until"),
         )
     else:
         badges_json = row[4] or "[]"
@@ -1384,14 +1390,18 @@ def get_user_details(user_id: int) -> Optional[AdminUserDetail]:
         except Exception:
             badges = []
 
+        email_display = "[Encrypted]" if row[2] else None
+
         return AdminUserDetail(
             id=row[0],
             username=row[1],
-            email=row[2],
+            email=email_display,
             tier=row[3] or "standard",
             badges=badges,
             created_at=row[5],
             last_login=row[6],
+            account_locked=bool(row[7]),
+            locked_until=row[8],
         )
 
 
@@ -1463,12 +1473,14 @@ def update_user_badges(user_id: int, badges: List[str], admin_id: int = 0) -> bo
     return True
 
 
-def add_user_badge(user_id: int, badge: str, admin_id: int = 0) -> bool:
+def add_user_badge(user_id: int, badge: str, admin_id: int = 0) -> Optional[List[str]]:
     """Add a badge to a user if they don't have it."""
     if _features:
         try:
             _features.add_badge(user_id, admin_id, badge)
-            return True
+            # Fetch updated badges to return
+            features = _features.get_user_features(user_id)
+            return features.badges if features else []
         except Exception as e:
             logger.warning(f"Failed to add badge via features module: {e}")
 
@@ -1478,7 +1490,7 @@ def add_user_badge(user_id: int, badge: str, admin_id: int = 0) -> bool:
     if not row:
         # Create entry
         update_user_badges(user_id, [badge], admin_id)
-        return True
+        return [badge]
 
     current_badges_json = (row["badges"] if isinstance(row, dict) else row[0]) or "[]"
     try:
@@ -1490,15 +1502,16 @@ def add_user_badge(user_id: int, badge: str, admin_id: int = 0) -> bool:
         badges_list.append(badge)
         update_user_badges(user_id, badges_list, admin_id)
 
-    return True
+    return badges_list
 
 
-def remove_user_badge(user_id: int, badge: str, admin_id: int = 0) -> bool:
+def remove_user_badge(user_id: int, badge: str, admin_id: int = 0) -> Optional[List[str]]:
     """Remove a badge from a user."""
     if _features:
         try:
             _features.remove_badge(user_id, admin_id, badge)
-            return True
+            features = _features.get_user_features(user_id)
+            return features.badges if features else []
         except Exception as e:
             logger.warning(f"Failed to remove badge via features module: {e}")
 
@@ -1506,7 +1519,7 @@ def remove_user_badge(user_id: int, badge: str, admin_id: int = 0) -> bool:
 
     row = db.fetch_one("SELECT badges FROM user_features WHERE user_id = ?", (user_id,))
     if not row:
-        return False
+        return None
 
     current_badges_json = (row["badges"] if isinstance(row, dict) else row[0]) or "[]"
     try:
@@ -1518,7 +1531,7 @@ def remove_user_badge(user_id: int, badge: str, admin_id: int = 0) -> bool:
         badges_list.remove(badge)
         update_user_badges(user_id, badges_list, admin_id)
 
-    return True
+    return badges_list
 
 
 def is_admin(user_id: int) -> bool:
@@ -1568,6 +1581,37 @@ def set_admin(user_id: int, admin_status: bool) -> bool:
     except Exception as e:
         logger.error(f"Failed to set admin status: {e}")
         return False
+
+
+def lock_user(user_id: int, duration_seconds: Optional[int] = None) -> bool:
+    """Lock/suspend a user account."""
+    db = _get_db()
+    locked_until = (
+        int(time.time() + duration_seconds) if duration_seconds is not None else None
+    )
+
+    db.execute(
+        "UPDATE auth_users SET account_locked = 1, locked_until = ? WHERE id = ?",
+        (locked_until, user_id),
+    )
+
+    # Force logout everywhere
+    from src.core import auth
+
+    if auth:
+        auth.logout_all(user_id)
+
+    return True
+
+
+def unlock_user(user_id: int) -> bool:
+    """Unlock/unsuspend a user account."""
+    db = _get_db()
+    db.execute(
+        "UPDATE auth_users SET account_locked = 0, locked_until = NULL WHERE id = ?",
+        (user_id,),
+    )
+    return True
 
 
 __all__ = [

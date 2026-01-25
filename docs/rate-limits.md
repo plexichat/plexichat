@@ -120,11 +120,19 @@ Bots receive a 1.2x multiplier on high-traffic routes:
 
 ### Internal Requests
 
-Internal services can bypass rate limits:
+Internal services can bypass rate limits by providing a secure internal secret:
 
 ```
-X-Internal-Request: true
+X-Plexichat-Internal-Secret: <your_configured_secret>
 ```
+
+Or using the configured rate limit bypass secret:
+
+```
+X-RateLimit-Bypass: <your_bypass_secret>
+```
+
+Requests without a valid secret will be rate limited even if `X-Internal-Request: true` is present.
 
 ### Admin Users
 

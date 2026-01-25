@@ -124,6 +124,7 @@ CREATE TABLE IF NOT EXISTS msg_user_settings (
     max_attachments_per_message INTEGER,
     read_receipts_enabled INTEGER DEFAULT 1,
     typing_indicators_enabled INTEGER DEFAULT 1,
+    compact_messages_enabled INTEGER DEFAULT 1,
     FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE
 );
 
@@ -225,6 +226,29 @@ def _run_migrations(db) -> None:
         import utils.logger as logger
 
         logger.debug(f"Migration webhook_id: {e}")
+
+    # Migration: Add compact_messages_enabled column to msg_user_settings
+    try:
+        db_type = getattr(db, "db_type", getattr(db, "type", "sqlite"))
+        column_exists = False
+
+        if db_type == "postgres":
+            result = db.fetch_one(
+                """SELECT column_name FROM information_schema.columns 
+                   WHERE table_name = 'msg_user_settings' AND column_name = 'compact_messages_enabled'"""
+            )
+            column_exists = result is not None
+        else:
+            # SQLite
+            rows = db.fetch_all("PRAGMA table_info(msg_user_settings)")
+            column_exists = any(row["name"] == "compact_messages_enabled" for row in rows)
+
+        if not column_exists:
+            db.execute("ALTER TABLE msg_user_settings ADD COLUMN compact_messages_enabled INTEGER DEFAULT 1")
+            logger.info("Migrated msg_user_settings: added compact_messages_enabled column")
+    except Exception as e:
+        import utils.logger as logger
+        logger.debug(f"Migration compact_messages_enabled: {e}")
 
 
 def drop_tables(db) -> None:

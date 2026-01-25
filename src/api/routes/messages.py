@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 
 import src.api as api
 import utils.logger as logger
+from src.core.database import cached
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.messages import (
     MessageCreateRequest,
@@ -28,6 +29,7 @@ def _message_to_response(
     author_avatar_url: Optional[str] = None,
     channel_id: Optional[int] = None,
     reactions_data=None,
+    read_by_usernames: Optional[List[str]] = None,
 ) -> MessageResponse:
     """Convert message object to response model."""
     attachments = []
@@ -58,6 +60,10 @@ def _message_to_response(
         or getattr(msg, "conversation_id", 0)
     )
 
+    # Use provided reader usernames (must be bulk-fetched by caller for performance)
+    read_by = read_by_usernames or []
+    read_count = len(read_by) if read_by_usernames is not None else getattr(msg, "read_count", 0)
+
     return MessageResponse(
         id=SnowflakeID(msg.id),
         channel_id=SnowflakeID(effective_channel_id),
@@ -73,7 +79,8 @@ def _message_to_response(
         pinned=getattr(msg, "pinned", False),
         status=getattr(getattr(msg, "status", None), "value", None),
         delivery_count=getattr(msg, "delivery_count", 0),
-        read_count=getattr(msg, "read_count", 0),
+        read_count=read_count,
+        read_by=read_by,
         author_username=author_username
         or getattr(msg, "author_username", None)
         or f"User {msg.author_id}",
@@ -93,6 +100,7 @@ def _message_to_response(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@cached(ttl=30, prefix="messages_api")
 async def get_channel_messages(
     channel_id: str,
     limit: int = Query(default=50, ge=1, le=100),
@@ -109,10 +117,6 @@ async def get_channel_messages(
     servers_mod = api.get_servers()
     messaging = api.get_messaging()
     auth = api.get_auth()
-    try:
-        db = api.get_db()
-    except Exception:
-        db = None
 
     try:
         try:
@@ -128,35 +132,22 @@ async def get_channel_messages(
 
         messages = None
 
-        is_server_channel = False
-        is_dm_conversation = False
-        if db:
+        # Try server channel first (more common)
+        if servers_mod:
             try:
-                is_server_channel = (
-                    db.fetch_one("SELECT 1 FROM srv_channels WHERE id = ?", (cid,))
-                    is not None
+                messages = servers_mod.get_channel_messages(
+                    user_id=current_user.user_id,
+                    channel_id=cid,
+                    limit=limit,
+                    before_id=before_id,
+                    after_id=after_id,
                 )
-                if not is_server_channel:
-                    is_dm_conversation = (
-                        db.fetch_one(
-                            "SELECT 1 FROM msg_conversations WHERE id = ?", (cid,)
-                        )
-                        is not None
-                    )
             except Exception:
-                # If the cheap existence check fails, fall back to previous behavior
-                is_server_channel = False
-                is_dm_conversation = False
+                # If not a server channel or no access, fall back to messaging
+                messages = None
 
-        if is_server_channel and servers_mod:
-            messages = servers_mod.get_channel_messages(
-                user_id=current_user.user_id,
-                channel_id=cid,
-                limit=limit,
-                before_id=before_id,
-                after_id=after_id,
-            )
-        elif (is_dm_conversation or not db) and messaging:
+        # Fallback to DM/Conversation
+        if messages is None and messaging:
             try:
                 messages = messaging.get_messages(
                     user_id=current_user.user_id,
@@ -209,15 +200,46 @@ async def get_channel_messages(
                 # Fallback to empty reactions if batch fails
                 reactions_cache = {m.id: [] for m in messages}
 
+        # Bulk fetch reader information for messages authored by current user (sender only)
+        # This eliminates the N+1 problem in _message_to_response
+        readers_cache = {} # {message_id: [username, ...]}
+        if messaging and auth and messages:
+            try:
+                # Only check messages authored by current user
+                own_message_ids = [m.id for m in messages if m.author_id == current_user.user_id]
+                if own_message_ids:
+                    reader_ids_map = messaging.get_batch_reader_ids(current_user.user_id, own_message_ids)
+                    
+                    # Collect all unique reader IDs to fetch usernames in bulk
+                    all_reader_ids = set()
+                    for r_ids in reader_ids_map.values():
+                        all_reader_ids.update(r_ids)
+                    
+                    if all_reader_ids:
+                        reader_users = auth.get_users_bulk(list(all_reader_ids))
+                        
+                        # Build the readers cache with usernames
+                        for mid, r_ids in reader_ids_map.items():
+                            readers_cache[mid] = [
+                                reader_users[rid].username 
+                                for rid in r_ids if rid in reader_users
+                            ]
+            except Exception as e:
+                logger.warning(f"Failed to bulk fetch reader info: {e}")
+
         result = []
         for m in messages:
-            author_info = author_cache.get(m.author_id, {})
+            # Robust lookup: check both string and int keys
+            author_id = m.author_id
+            author_info = author_cache.get(author_id) or author_cache.get(str(author_id)) or {}
+            
             result.append(
                 _message_to_response(
                     m,
                     author_username=author_info.get("username"),
                     author_avatar_url=author_info.get("avatar_url"),
                     reactions_data=reactions_cache.get(m.id, []),
+                    read_by_usernames=readers_cache.get(m.id),
                 )
             )
 
@@ -244,6 +266,7 @@ async def get_channel_messages(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@cached(ttl=60, prefix="search_messages_api")
 async def search_messages(
     channel_id: str,
     content: str = Query(..., description="Search query"),
@@ -300,26 +323,32 @@ async def search_messages(
             except Exception:
                 pass
 
-        author_cache = {}  # {user_id: {"username": str, "avatar_url": str}}
+        # Bulk fetch all author info
+        author_ids = list(set(m.author_id for m in messages))
+        author_cache = {}
+        if auth and author_ids:
+            try:
+                users = auth.get_users_bulk(author_ids)
+                author_cache = {
+                    uid: {
+                        "username": u.username,
+                        "avatar_url": getattr(u, "avatar_url", None),
+                    }
+                    for uid, u in users.items()
+                }
+            except Exception:
+                pass
+
         result = []
         for m in messages:
             author_id = m.author_id
-            if author_id not in author_cache:
-                author_info = {"username": None, "avatar_url": None}
-                if auth:
-                    try:
-                        user = auth.get_user(author_id)
-                        if user:
-                            author_info["username"] = user.username
-                            author_info["avatar_url"] = getattr(
-                                user, "avatar_url", None
-                            )
-                    except Exception:
-                        pass
-                author_cache[author_id] = author_info
-            info = author_cache.get(author_id, {})
+            author_info = author_cache.get(author_id) or author_cache.get(str(author_id)) or {}
             result.append(
-                _message_to_response(m, info.get("username"), info.get("avatar_url"))
+                _message_to_response(
+                    m, 
+                    author_username=author_info.get("username"), 
+                    author_avatar_url=author_info.get("avatar_url")
+                )
             )
 
         return result
@@ -674,10 +703,18 @@ async def acknowledge_messages(
             )
 
         # Check if this is a voice channel - voice channels don't have messages to ack
+        conv_id = cid # Default to channel ID (for DMs)
+        is_server_channel = False
         if servers_mod:
             try:
+                # Use a fast check first
                 channel = servers_mod.get_channel(cid, current_user.user_id)
                 if channel:
+                    is_server_channel = True
+                    # For server channels, use the linked conversation_id
+                    if hasattr(channel, "conversation_id") and channel.conversation_id:
+                        conv_id = channel.conversation_id
+                    
                     channel_type = getattr(channel, "channel_type", None)
                     # Handle both enum and string types
                     channel_type_str = (
@@ -693,10 +730,22 @@ async def acknowledge_messages(
 
         up_to_id = int(message_id) if message_id else None
 
-        count = messaging.mark_read(current_user.user_id, cid, up_to_id)
-        logger.debug(
-            f"User {current_user.user_id} marked {count} messages as read in channel {cid}"
-        )
+        try:
+            from starlette.concurrency import run_in_threadpool
+            count = await run_in_threadpool(messaging.mark_read, current_user.user_id, conv_id, up_to_id)
+        except Exception as e:
+            from src.core.messaging.exceptions import ConversationNotFoundError, ConversationAccessDeniedError
+            if isinstance(e, ConversationNotFoundError):
+                raise HTTPException(
+                    status_code=404,
+                    detail={"error": {"code": 404, "message": "Channel not found"}},
+                )
+            if isinstance(e, ConversationAccessDeniedError):
+                raise HTTPException(
+                    status_code=403,
+                    detail={"error": {"code": 403, "message": "Access denied"}},
+                )
+            raise
 
         # Broadcast read receipt event via WebSocket (fire and forget)
         import asyncio
@@ -709,22 +758,12 @@ async def acknowledge_messages(
 
                 if ws_is_setup():
                     dispatcher = get_dispatcher()
-                    servers_mod = api.get_servers()
-
                     user_ids = []
-                    if servers_mod:
-                        try:
-                            channel = servers_mod.get_channel(cid, current_user.user_id)
-                            if channel:
-                                server_id = getattr(channel, "server_id", None)
-                                if server_id:
-                                    user_ids = servers_mod.get_member_user_ids(
-                                        server_id
-                                    )
-                        except Exception:
-                            pass
-
-                    if not user_ids and messaging:
+                    
+                    # For DMs/Groups, notify all participants
+                    # For server channels, we only notify if it's a small set of people (optional)
+                    # or skip to save resources as server channels don't usually show read receipts
+                    if not is_server_channel:
                         try:
                             participants = messaging.get_participants(
                                 current_user.user_id, cid
@@ -732,7 +771,7 @@ async def acknowledge_messages(
                             user_ids = [p.user_id for p in (participants or [])]
                         except Exception:
                             pass
-
+                    
                     if user_ids:
                         event = Event(
                             event_type=EventType.MESSAGE_ACK,
@@ -746,7 +785,8 @@ async def acknowledge_messages(
             except Exception as e:
                 logger.debug(f"Failed to broadcast MESSAGE_ACK: {e}")
 
-        asyncio.create_task(dispatch_ack())
+        if count > 0 or up_to_id:
+            asyncio.create_task(dispatch_ack())
 
         return AckResponse(success=True, messages_marked=count)
     except HTTPException:

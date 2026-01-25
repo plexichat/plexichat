@@ -10,8 +10,10 @@ Only the hash of the secret is stored in the database.
 
 import os
 import base64
-import hashlib
 from typing import Optional, Tuple, Dict, Any
+
+# Import Argon2id from our encryption module
+from src.utils.encryption import hash_password as _hash, verify_password as _verify
 
 
 def generate_token_secret(length: int = 32) -> str:
@@ -32,16 +34,15 @@ def hash_token(token_secret: str) -> str:
     """
     Hash a token secret for storage.
 
-    Uses SHA-256 for fast verification while maintaining security
-    (the secret itself is high-entropy random data).
+    Uses Argon2id for secure hashing to protect against brute-force attacks.
 
     Args:
         token_secret: The secret portion of the token
 
     Returns:
-        Hex-encoded SHA-256 hash
+        Argon2id hash string
     """
-    return hashlib.sha256(token_secret.encode("utf-8")).hexdigest()
+    return _hash(token_secret)
 
 
 def create_session_token(session_id: int, secret_length: int = 32) -> Tuple[str, str]:
@@ -177,9 +178,7 @@ def verify_token_hash(token_secret: str, stored_hash: str) -> bool:
     Returns:
         True if the secret matches the hash
     """
-    computed_hash = hash_token(token_secret)
-    # Use constant-time comparison to prevent timing attacks
-    return _constant_time_compare(computed_hash, stored_hash)
+    return _verify(token_secret, stored_hash)
 
 
 def _constant_time_compare(a: str, b: str) -> bool:
@@ -201,3 +200,7 @@ def _constant_time_compare(a: str, b: str) -> bool:
         result |= x ^ y
 
     return result == 0
+
+
+
+

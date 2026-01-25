@@ -4,10 +4,12 @@ Message service - Business logic for messages.
 
 from typing import Any, Dict, List, Optional
 
-from ..models import Message, MessageType, Attachment
+from ..models import Message, MessageType, Attachment, MessageStatusType
 from ..repositories.message import MessageRepository
 from ..repositories.attachment import AttachmentRepository
 from ..repositories.pin import PinRepository
+from ..repositories.conversation import ConversationRepository
+from ..repositories.message_status import MessageStatusRepository
 from ..exceptions import (
     ConversationAccessDeniedError,
     MessageNotFoundError,
@@ -39,6 +41,8 @@ class MessageService(BaseService):
         self._repo = MessageRepository(db)
         self._attachment_repo = AttachmentRepository(db)
         self._pin_repo = PinRepository(db)
+        self._conversation_repo = ConversationRepository(db)
+        self._status_repo = MessageStatusRepository(db)
         self._participant_svc = participant_service
         self._user_settings_svc = user_settings_service
         self._content_filter_svc = content_filter_service
@@ -128,6 +132,21 @@ class MessageService(BaseService):
                 metadata=metadata if metadata else None,
                 webhook_id=webhook_id,
                 auto_commit=False,
+            )
+
+            # Update conversation's last message (part of transaction)
+            self._conversation_repo.update(
+                conversation_id, 
+                now, 
+                last_message_id=msg_id, 
+                last_message_at=now, 
+                auto_commit=False
+            )
+
+            # Create initial status (part of transaction)
+            status_id = self._generate_id()
+            self._status_repo.create(
+                status_id, msg_id, user_id, MessageStatusType.SENT, now, auto_commit=False
             )
 
             # Add attachments

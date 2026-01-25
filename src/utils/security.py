@@ -9,9 +9,43 @@ Provides:
 
 import socket
 import ipaddress
+import secrets
+import base64
 import utils.logger as logger
 from typing import Tuple, Optional, Set
 from urllib.parse import urlparse, urlunparse
+
+
+def generate_csp_nonce() -> str:
+    """
+    Generate a cryptographically secure nonce for CSP.
+
+    Returns:
+        Base64-encoded 16-byte random nonce
+    """
+    return base64.b64encode(secrets.token_bytes(16)).decode("utf-8")
+
+
+def build_admin_csp_header(nonce: str) -> str:
+    """
+    Build Content-Security-Policy header for the Admin UI.
+    
+    Args:
+        nonce: CSP nonce for inline scripts
+        
+    Returns:
+        CSP header value string
+    """
+    return (
+        f"default-src 'self'; "
+        f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
+        f"style-src 'self' 'unsafe-inline'; "
+        f"img-src 'self' data:; "
+        f"connect-src 'self'; "
+        f"frame-ancestors 'none'; "
+        f"base-uri 'self'; "
+        f"form-action 'self';"
+    )
 
 
 class URLValidator:

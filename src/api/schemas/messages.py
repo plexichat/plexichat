@@ -84,6 +84,9 @@ class MessageResponse(BaseModel):
         0, description="Number of users who received the message"
     )
     read_count: int = Field(0, description="Number of users who read the message")
+    read_by: List[str] = Field(
+        default_factory=list, description="List of usernames who have read the message"
+    )
     author_username: Optional[str] = Field(None, description="Author's username")
     author_avatar_url: Optional[str] = Field(None, description="Author's avatar URL")
     reactions: List[ReactionResponse] = Field(
@@ -102,6 +105,9 @@ class MessagingSettingsResponse(BaseModel):
     )
     typing_indicators_enabled: bool = Field(
         True, description="Whether to show typing indicators"
+    )
+    compact_messages_enabled: bool = Field(
+        True, description="Whether to group consecutive messages from the same person"
     )
     allow_dms_from: str = Field(
         "everyone", description="Who can send DMs (everyone, friends, none)"
@@ -130,6 +136,9 @@ class MessagingSettingsUpdateRequest(BaseModel):
     )
     typing_indicators_enabled: Optional[bool] = Field(
         None, description="Whether to show typing indicators"
+    )
+    compact_messages_enabled: Optional[bool] = Field(
+        None, description="Whether to group consecutive messages from the same person"
     )
     allow_dms_from: Optional[str] = Field(
         None, description="Who can send DMs (everyone, friends, none)"

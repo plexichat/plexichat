@@ -208,6 +208,10 @@ class DatabaseStorage(StorageBackendBase):
         row = self._db.fetch_one("SELECT size FROM media_blobs WHERE path = ?", (path,))
         return row["size"] if row else 0
 
+    def is_encrypted(self, path: str) -> bool:
+        """Check if file is encrypted."""
+        return False
+
     def get_metadata(self, path: str) -> dict:
         """Get file metadata."""
         row = self._db.fetch_one(

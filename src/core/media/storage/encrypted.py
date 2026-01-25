@@ -6,7 +6,7 @@ Files are encrypted before upload and decrypted after download.
 """
 
 import io
-from typing import BinaryIO, Tuple
+from typing import BinaryIO, Tuple, Optional
 
 import utils.logger as logger
 
@@ -168,10 +168,42 @@ class EncryptedStorage(StorageBackendBase):
 
     def retrieve_stream(self, path: str) -> Tuple[BinaryIO, int]:
         """Retrieve file as decrypted stream."""
-        # For simplicity, decrypt to memory and return as BytesIO
-        # A more sophisticated implementation could stream decrypt
-        data = self.retrieve(path)
-        return io.BytesIO(data), len(data)
+        # Try encrypted path first
+        enc_path = path + ".enc"
+
+        if self._backend.exists(enc_path):
+            if not self._enabled or not self._encryptor:
+                raise StorageReadError(
+                    "File is encrypted but encryption is disabled", "encrypted"
+                )
+
+            # Get size of original file (from header)
+            original_size = self.get_size(path)
+
+            # For small files, use regular retrieve
+            if original_size <= self._streaming_threshold:
+                data = self.retrieve(path)
+                return io.BytesIO(data), len(data)
+
+            # For large files, use streaming decryption
+            if self._streaming_encryptor:
+                try:
+                    enc_stream, _ = self._backend.retrieve_stream(enc_path)
+                    aad = self._get_aad(path)
+                    
+                    # Return the generator directly. FastAPI StreamingResponse handles iterables.
+                    # Note: We return it as the 'stream' part of the tuple.
+                    generator = self._streaming_encryptor.decrypt_stream_generator(enc_stream, aad)
+                    return generator, original_size
+                except Exception as e:
+                    logger.error(f"Stream decryption failed for {path}: {e}")
+                    # Fallback to retrieve if streaming fails
+            
+            data = self.retrieve(path)
+            return io.BytesIO(data), len(data)
+
+        # Fall back to unencrypted path
+        return self._backend.retrieve_stream(path)
 
     def delete(self, path: str) -> bool:
         """Delete file (tries both encrypted and unencrypted paths)."""
@@ -235,6 +267,21 @@ class EncryptedStorage(StorageBackendBase):
         """Check if a file is stored encrypted."""
         enc_path = path + ".enc"
         return self._backend.exists(enc_path)
+
+    def generate_presigned_url(
+        self, path: str, expires_in: int = 3600, params: Optional[dict] = None
+    ) -> str:
+        """
+        Generate a presigned URL.
+        Only works if the file is NOT encrypted.
+        """
+        if self.is_encrypted(path):
+            raise RuntimeError("Cannot generate presigned URL for encrypted file")
+
+        if hasattr(self._backend, "generate_presigned_url"):
+            return self._backend.generate_presigned_url(path, expires_in, params)
+
+        raise RuntimeError("Underlying backend does not support presigned URLs")
 
     def get_metadata(self, path: str) -> dict:
         """Get file metadata including encryption status."""

@@ -10,6 +10,7 @@ import hashlib
 import mimetypes
 import uuid
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Dict, Any, BinaryIO, Tuple
 
 import utils.config as config
@@ -124,6 +125,19 @@ class MediaManager(BaseManager):
         self._url_signer = self._init_url_signer()
         self._scanner = self._init_scanner()
         self._proxy = self._init_proxy()
+        self._executor = ThreadPoolExecutor(max_workers=10)
+
+        # Initialize deduplication once
+        from .deduplication import setup as dedup_setup, DeduplicationManager
+        dedup_setup(db)
+        self._dedup_manager = DeduplicationManager(db)
+
+        # Initialize compression once
+        try:
+            from .compression import CompressionManager
+            self._compression_manager = CompressionManager()
+        except ImportError:
+            self._compression_manager = None
 
         create_tables(db)
 
@@ -131,7 +145,11 @@ class MediaManager(BaseManager):
 
     def _load_config(self) -> Dict[str, Any]:
         """Load media configuration from global config."""
-        cfg = config.get("media", {})
+        # Try 'media' first, then 'storage' as fallback
+        cfg = config.get("media")
+        if cfg is None:
+            cfg = config.get("storage", {})
+            
         if not isinstance(cfg, dict):
             cfg = {}
 
@@ -180,23 +198,41 @@ class MediaManager(BaseManager):
 
         # Wrap with encryption if enabled
         if encrypt_at_rest:
+            # Task #6: Ensure media encryption uses app's signing keys if no env var set
+            signing_key = self._config.get("signing_key")
+            if signing_key and signing_key not in ["", "CHANGE_THIS_SIGNING_KEY", "change-me", "changeme"]:
+                if "PLEXICHAT_MEDIA_KEY" not in os.environ:
+                    # Derive a 32-byte key from the signing key for initial keyring setup
+                    derived_key = hashlib.sha256(signing_key.encode()).digest()
+                    import base64
+                    os.environ["PLEXICHAT_MEDIA_KEY"] = base64.b64encode(derived_key).decode()
+                    logger.debug("Derived PLEXICHAT_MEDIA_KEY from signing_key")
+            
             storage = wrap_storage_with_encryption(storage, enabled=True)
             logger.info(f"File encryption at rest enabled for {backend} storage")
 
         return storage
 
-    def _init_db_storage(self) -> Optional[DatabaseStorage]:
+    def _init_db_storage(self) -> Optional[StorageBackendBase]:
         """Initialize database storage for auto-routing (if enabled and not primary)."""
         auto_route = self._config.get("auto_route_to_database", {})
         primary_backend = self._config.get("storage_backend", "local")
+        encrypt_at_rest = self._config.get("encrypt_at_rest", True)
 
         # Only create separate DB storage if auto-routing is enabled and DB isn't primary
         if auto_route.get("enabled", False) and primary_backend != "database":
-            return DatabaseStorage(
+            storage = DatabaseStorage(
                 db=self._db,
                 base_url=self._config.get("database_url", "/api/v1/media/blob"),
                 max_size=auto_route.get("max_size", 512 * 1024),
             )
+            
+            # Wrap with encryption if enabled (Fix: ensure auto-routed DB storage is also encrypted)
+            if encrypt_at_rest:
+                storage = wrap_storage_with_encryption(storage, enabled=True)
+                logger.debug("Encrypted database storage initialized for auto-routing")
+            
+            return storage
         return None
 
     def _check_rate_limit(self, user_id: int, file_size: int) -> None:
@@ -503,22 +539,21 @@ class MediaManager(BaseManager):
         media_type = self._detect_media_type(content_type)
         file_size = len(file_data)
 
-        # Pre-validation (not needing lock)
+        # Pre-validation
         self._validate_content_type(content_type, media_type)
         self._validate_file_size(file_size, media_type)
 
-        with self._lock:
-            # Check rate limits under lock
-            self._check_rate_limit(user_id, file_size)
+        # Check rate limits
+        self._check_rate_limit(user_id, file_size)
 
-            # Delegate to internal logic
-            return self._do_upload(
-                user_id=user_id,
-                file_data=file_data,
-                filename=filename,
-                content_type=content_type,
-                media_type=media_type,
-            )
+        # Delegate to internal logic
+        return self._do_upload(
+            user_id=user_id,
+            file_data=file_data,
+            filename=filename,
+            content_type=content_type,
+            media_type=media_type,
+        )
 
     def _do_upload(
         self,
@@ -582,26 +617,22 @@ class MediaManager(BaseManager):
             )
 
         # SECURITY: Check for blocked/duplicate content using deduplication module
-        dedup_manager = None
-        try:
-            from .deduplication import DeduplicationManager
+        dedup_result = None
+        if self._dedup_manager:
+            try:
+                dedup_result = self._dedup_manager.check_duplicate(file_data, content_type)
 
-            dedup_manager = DeduplicationManager(self._db)
-            dedup_result = dedup_manager.check_duplicate(file_data, content_type)
-
-            if dedup_result.is_blocked:
-                logger.warning(
-                    f"Blocked content upload attempt by user {user_id}: {dedup_result.block_reason}"
-                )
-                raise FileUploadError(
-                    f"This content has been blocked: {dedup_result.block_reason}",
-                    filename,
-                )
-        except ImportError:
-            dedup_result = None
-        except Exception as e:
-            logger.warning(f"Deduplication check failed: {e}")
-            dedup_result = None
+                if dedup_result.is_blocked:
+                    logger.warning(
+                        f"Blocked content upload attempt by user {user_id}: {dedup_result.block_reason}"
+                    )
+                    raise FileUploadError(
+                        f"This content has been blocked: {dedup_result.block_reason}",
+                        filename,
+                    )
+            except Exception as e:
+                logger.warning(f"Deduplication check failed: {e}")
+                dedup_result = None
 
         scan_status = ScanStatus.SKIPPED
         scan_result = None
@@ -619,12 +650,9 @@ class MediaManager(BaseManager):
         # OPTIMIZATION: Apply compression if enabled
         compressed_data = file_data
         compression_applied = False
-        try:
-            from .compression import CompressionManager
-
-            compression_manager = CompressionManager()
-            if compression_manager.is_enabled():
-                compression_result = compression_manager.compress(
+        if self._compression_manager and self._compression_manager.is_enabled():
+            try:
+                compression_result = self._compression_manager.compress(
                     file_data, content_type
                 )
                 if compression_result.success and compression_result.data:
@@ -638,10 +666,8 @@ class MediaManager(BaseManager):
                         # Update content type if format changed
                         if compression_result.format:
                             content_type = compression_result.format
-        except ImportError:
-            pass
-        except Exception as e:
-            logger.warning(f"Compression failed, using original: {e}")
+            except Exception as e:
+                logger.warning(f"Compression failed, using original: {e}")
 
         # Use compressed data for storage
         final_data = compressed_data
@@ -720,9 +746,9 @@ class MediaManager(BaseManager):
         )
 
         # Register file hash for deduplication tracking
-        if dedup_result and dedup_manager is not None:
+        if dedup_result and self._dedup_manager is not None:
             try:
-                dedup_manager.register_file(
+                self._dedup_manager.register_file(
                     hash_value=checksum,
                     file_size=final_size,
                     content_type=content_type,
@@ -737,7 +763,11 @@ class MediaManager(BaseManager):
         if media_type == MediaType.IMAGE and self._image_processor:
             thumbnails = self._generate_thumbnails(file_id, final_data)
 
-        url = storage.get_url(storage_path)
+        # Use our API proxy URL instead of direct storage URL
+        # This ensures auth checks and signed URL redirection for S3
+        # Use filename as stored in DB (os.path.basename(storage_path))
+        stored_filename = os.path.basename(storage_path)
+        url = f"/api/v1/media/attachments/{stored_filename}"
 
         compression_info = (
             f", compressed from {file_size}" if compression_applied else ""
@@ -820,7 +850,9 @@ class MediaManager(BaseManager):
                 ),
             )
 
-        url = self._storage.get_url(storage_path)
+        # Use our API proxy URL instead of direct storage URL
+        stored_filename = os.path.basename(storage_path)
+        url = f"/api/v1/media/attachments/{stored_filename}"
 
         logger.debug(
             f"File {file_id} uploaded via stream by user {user_id}: {filename}"
@@ -846,11 +878,12 @@ class MediaManager(BaseManager):
 
         try:
             results = self._image_processor.create_thumbnails(image_data, sizes)
-
-            for size, (thumb_data, width, height) in results.items():
+            
+            def store_thumb(size, data_tuple):
+                thumb_data, width, height = data_tuple
                 thumb_path = f"thumbnails/{file_id}/{size}.jpg"
                 self._storage.store(thumb_data, thumb_path, "image/jpeg")
-
+                
                 thumb_id = self._generate_id()
                 now = self._get_timestamp()
 
@@ -860,8 +893,17 @@ class MediaManager(BaseManager):
                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
                     (thumb_id, file_id, size, width, height, thumb_path, now),
                 )
+                return size, self._storage.get_url(thumb_path)
 
-                thumbnails[size] = self._storage.get_url(thumb_path)
+            # Use the shared class executor for thumbnail storage
+            futures = [self._executor.submit(store_thumb, size, data) for size, data in results.items()]
+            for future in futures:
+                try:
+                    size, url = future.result()
+                    thumbnails[size] = url
+                except Exception as fe:
+                    logger.warning(f"Failed to store thumbnail size: {fe}")
+
         except Exception as e:
             logger.warning(f"Failed to generate thumbnails: {e}")
 
@@ -896,6 +938,25 @@ class MediaManager(BaseManager):
         storage = self._get_storage_by_backend(file.storage_backend.value)
         data = storage.retrieve(file.storage_path)
         return data, file.content_type
+
+    def get_file_stream(self, file_id: int) -> Tuple[BinaryIO, int, str]:
+        """
+        Get file data as a stream.
+
+        Args:
+            file_id: File ID
+
+        Returns:
+            Tuple of (file stream, size, content_type)
+        """
+        file = self.get_file(file_id)
+        if not file:
+            raise MediaError("File not found")
+
+        # Use the correct storage backend for this file
+        storage = self._get_storage_by_backend(file.storage_backend.value)
+        stream, size = storage.retrieve_stream(file.storage_path)
+        return stream, size, file.content_type
 
     def delete_file(self, user_id: int, file_id: int) -> bool:
         """
@@ -1017,6 +1078,7 @@ class MediaManager(BaseManager):
         self,
         file_id: int,
         expires_in: Optional[int] = None,
+        params: Optional[dict] = None,
     ) -> SignedUrl:
         """
         Generate signed URL for file.
@@ -1024,6 +1086,7 @@ class MediaManager(BaseManager):
         Args:
             file_id: File ID
             expires_in: Expiration time in seconds
+            params: Optional storage-specific parameters
 
         Returns:
             SignedUrl object
@@ -1032,7 +1095,42 @@ class MediaManager(BaseManager):
         if not file:
             raise MediaError("File not found")
 
-        url = self._storage.get_url(file.storage_path)
+        # Get correct storage for this file
+        storage = self._get_storage_by_backend(file.storage_backend.value)
+        
+        # Check if file is encrypted (requires server-side decryption)
+        is_encrypted = storage.is_encrypted(file.storage_path)
+
+        # If encrypted, we MUST serve it through our API proxy for decryption
+        if is_encrypted:
+            # Sign our proxy URL
+            proxy_url = f"/api/v1/media/attachments/{file.filename}"
+            return self._url_signer.sign_url(proxy_url, file_id, expires_in)
+
+        # If using S3 and not encrypted, prefer native S3 presigning
+        if file.storage_backend == StorageBackend.S3:
+            # Look for native signing capability (including through wrappers)
+            if hasattr(storage, "generate_presigned_url"):
+                url = storage.generate_presigned_url(
+                    file.storage_path, 
+                    expires_in or 3600,
+                    params=params
+                )
+                return SignedUrl(
+                    url=url,
+                    expires_at=int(time.time() * 1000) + ((expires_in or 3600) * 1000),
+                    signature="native",
+                    file_id=file_id,
+                )
+            
+            # If S3 but no native signing available (unlikely), we MUST proxy it
+            # because direct S3 URLs will fail without a native signature
+            logger.warning(f"S3 native signing unavailable for {file.filename}, falling back to proxy")
+            proxy_url = f"/api/v1/media/attachments/{file.filename}"
+            return self._url_signer.sign_url(proxy_url, file_id, expires_in)
+
+        # Fallback to signing the default URL (Local/Database storage)
+        url = storage.get_url(file.storage_path)
         return self._url_signer.sign_url(url, file_id, expires_in)
 
     def verify_signed_url(self, url: str) -> Tuple[bool, int]:

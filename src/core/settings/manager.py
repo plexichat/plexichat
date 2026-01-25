@@ -134,25 +134,14 @@ class SettingsManager(BaseManager):
                 f"User has reached maximum of {self.config.max_settings_per_user} settings"
             )
 
-        # Insert new - use RETURNING for PostgreSQL to get the ID
-        db_type = getattr(self._db, "type", "sqlite")
-        if db_type == "postgres":
-            # For PostgreSQL, use RETURNING and fetch the result properly
-            result = self._db.fetch_one(
-                """INSERT INTO user_settings (user_id, key, value, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?) RETURNING id""",
-                (user_id, key, value, now, now),
-            )
-            # Result is a dict
-            setting_id = result.get("id", 0) if result else 0
-        else:
-            cursor = self._db.execute(
-                """INSERT INTO user_settings (user_id, key, value, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (user_id, key, value, now, now),
-            )
-            setting_id = cursor.lastrowid
-            cursor.close()
+        # Insert new
+        setting_id = self._generate_id()
+
+        self._db.execute(
+            """INSERT INTO user_settings (id, user_id, key, value, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (setting_id, user_id, key, value, now, now),
+        )
 
         logger.info(f"Created setting '{key}' for user {user_id}")
         return UserSetting(

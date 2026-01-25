@@ -105,7 +105,7 @@ def validate_password(password: str) -> PasswordValidation:
             score += 1
 
     if pwd_config.get("require_special", True):
-        if not re.search(r"[!@#$%^&*(),.?\":{}|<>_\-+=\[\]\\;'/`~]", password):
+        if not re.search(r"[^\w\s]", password):
             issues.append("Password must contain at least one special character")
         else:
             score += 1
@@ -177,20 +177,44 @@ def validate_email(email: str) -> bool:
     Returns:
         True if email format is valid with a recognized TLD
     """
-    import utils.logger as logger
+    import utils.config as config
 
-    # Basic email regex - not exhaustive but catches most issues
-    pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.([a-zA-Z]{2,})$"
-    match = re.match(pattern, email)
-    if not match:
-        logger.debug(f"Email validation failed (regex): {email}")
+    auth_config = config.get("authentication", {})
+    
+    # Get email validation config (default to strict validation)
+    email_config = auth_config.get("email_validation", {})
+    strict_validation = email_config.get("strict", True)
+    allow_custom_tlds = email_config.get("allow_custom_tlds", False)
+    valid_tlds = set(email_config.get("valid_tlds", []))
+    
+    # Basic format check
+    if not email or "@" not in email:
+        return False
+        
+    try:
+        parts = email.split("@")
+        if len(parts) != 2:
+            return False
+            
+        domain = parts[1]
+        if "." not in domain:
+            return False
+            
+        tld = domain.split(".")[-1].lower()
+    except Exception:
         return False
 
-    # Extract and validate TLD
-    tld = match.group(1).lower()
-
-    # Comprehensive list of valid TLDs (common gTLDs, ccTLDs, and new gTLDs)
-    valid_tlds = {
+    # If not strict validation, only check basic format
+    if not strict_validation:
+        return True
+        
+    # If custom TLDs are allowed and not in our list, it's still valid if it's not empty
+    if allow_custom_tlds and tld:
+        return True
+    
+    # If no custom TLDs configured, use default list
+    if not valid_tlds:
+        valid_tlds = {
         # Generic TLDs
         "com",
         "org",

@@ -11,6 +11,7 @@ from fastapi import APIRouter, Request, HTTPException, Depends, Query
 
 import src.api as api
 import utils.logger as logger
+from utils.logger import mask_email, mask_string
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.auth import (
     RegisterRequest,
@@ -84,6 +85,7 @@ def _user_to_response(user) -> UserResponse:
             created_at=user.created_at,
             email_verified=getattr(user, "email_verified", False),
             totp_enabled=getattr(user, "totp_enabled", False),
+            age_verified=getattr(user, "age_verified", False),
         )
     except Exception as e:
         logger.error(f"Error converting user object to response: {e}")
@@ -121,16 +123,29 @@ async def register(request: Request, body: RegisterRequest) -> LoginResponse:
 
     ip_address = request.client.host if request.client else None
 
+    # Handle age_verified boolean as an alternative to explicit age
+    age = body.age
+    if age is None and body.age_verified is True:
+        # Get minimum age from config or default to 13
+        min_age = 13
+        if config_util:
+            min_age = config_util.get("authentication.accounts.minimum_age", 13)
+        age = min_age
+
     try:
         user = auth.register(
             username=body.username,
             email=body.email,
             password=body.password,
             ip_address=ip_address,
+            age=age,
+            dob=body.dob,
         )
     except UserExistsError:
+        masked_username = mask_string(body.username)
+        masked_email_addr = mask_email(body.email)
         logger.warning(
-            f"Registration failed: User '{body.username}' or email '{body.email}' already exists"
+            f"Registration failed: User '{masked_username}' or email '{masked_email_addr}' already exists"
         )
         raise HTTPException(
             status_code=409,
@@ -141,17 +156,20 @@ async def register(request: Request, body: RegisterRequest) -> LoginResponse:
                 }
             },
         )
-    except (InvalidUsernameError, InvalidEmailError, WeakPasswordError) as e:
-        logger.warning(f"Registration failed for '{body.username}': {e}")
+    except (InvalidUsernameError, InvalidEmailError, WeakPasswordError, AuthError) as e:
+        # AuthError could be age-related
+        masked_username = mask_string(body.username)
+        logger.warning(f"Registration failed for '{masked_username}': {e}")
         raise HTTPException(
             status_code=400, detail={"error": {"code": 400, "message": str(e)}}
         )
     except Exception as e:
+        masked_username = mask_string(body.username)
         logger.error(
-            f"Unexpected error in register for '{body.username}': {e}", exc_info=True
+            f"Unexpected error in register for '{masked_username}': {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": "Internal server error during registration"}}
         )
 
     # Apply alpha tester features if enabled
@@ -225,35 +243,40 @@ async def login(request: Request, body: LoginRequest) -> LoginResponse:
             user_agent=user_agent,
         )
     except InvalidCredentialsError:
+        masked_username = mask_string(body.username)
         logger.warning(
-            f"Login failed for '{body.username}': Invalid credentials"
+            f"Login failed for '{masked_username}': Invalid credentials"
         )
         raise HTTPException(
             status_code=401,
             detail={"error": {"code": 401, "message": "Invalid credentials"}},
         )
-    except AccountLockedError as e:
-        logger.warning(f"Login failed for '{body.username}': Account locked")
+    except AccountLockedError:
+        masked_username = mask_string(body.username)
+        logger.warning(f"Login failed for '{masked_username}': Account locked")
         raise HTTPException(
-            status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+            status_code=403, detail={"error": {"code": 403, "message": "Account locked"}}
         )
     except (EmailNotVerifiedError, AccountDisabledError) as e:
+        masked_username = mask_string(body.username)
         logger.warning(
-            f"Login failed for '{body.username}': {type(e).__name__}"
+            f"Login failed for '{masked_username}': {type(e).__name__}"
         )
         raise HTTPException(
             status_code=403, detail={"error": {"code": 403, "message": str(e)}}
         )
     except Exception as e:
+        masked_username = mask_string(body.username)
         logger.error(
-            f"Unexpected error in login for '{body.username}': {e}", exc_info=True
+            f"Unexpected error in login for '{masked_username}': {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": "Internal server error during login"}}
         )
 
     if result.status.value == "two_factor_required":
-        logger.info(f"2FA challenge issued for user '{body.username}'")
+        masked_username = mask_string(body.username)
+        logger.info(f"2FA challenge issued for user '{masked_username}'")
         return LoginResponse(
             status="two_factor_required",
             token=None,
@@ -263,8 +286,9 @@ async def login(request: Request, body: LoginRequest) -> LoginResponse:
             expires_in=result.expires_in,
         )
 
+    masked_username = mask_string(body.username)
     logger.info(
-        f"User '{body.username}' logged in successfully (ID: {getattr(result.user, 'id', 'unknown')})"
+        f"User '{masked_username}' logged in successfully (ID: {getattr(result.user, 'id', 'unknown')})"
     )
     return LoginResponse(
         status="success",
@@ -681,6 +705,14 @@ async def oauth_callback(
                 status_code=401, detail={"error": {"code": 401, "message": str(e)}}
             )
 
+        if result.status.value == "failed":
+            # Handle specific failure cases like age verification
+            error_code = 400 if "Age" in str(result.message) else 401
+            raise HTTPException(
+                status_code=error_code,
+                detail={"error": {"code": error_code, "message": result.message}},
+            )
+
         if result.status.value == "two_factor_required":
             return LoginResponse(
                 status="two_factor_required",
@@ -795,6 +827,68 @@ async def logout(
             )
 
     return SuccessResponse(success=True)
+
+
+@router.post(
+    "/refresh",
+    response_model=LoginResponse,
+    summary="Refresh session token",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired session"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def refresh_session(request: Request) -> LoginResponse:
+    """
+    Refresh the current session.
+
+    Validates the current session token and returns a potentially updated token.
+    If the session is near expiration, it will be extended.
+    """
+    auth = api.get_auth()
+    if not auth:
+        logger.error("Auth module not available")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Auth module not available"}},
+        )
+
+    # Get token from Authorization header
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Missing authentication token"}},
+        )
+
+    token = auth_header[7:]
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("User-Agent")
+
+    try:
+        # verify_token will handle extension if enabled
+        token_info = auth.verify_token(token, ip_address, user_agent)
+
+        # Get user object for response
+        user = auth.get_user(token_info.user_id)
+        if not user:
+            raise UserNotFoundError("User not found")
+
+        return LoginResponse(
+            status="success",
+            token=token,  # For now, we return the same token as it's just been extended in DB
+            user=_user_to_response(user),
+        )
+    except (TokenInvalidError, TokenExpiredError) as e:
+        logger.warning(f"Session refresh failed: {e}")
+        raise HTTPException(
+            status_code=401, detail={"error": {"code": 401, "message": str(e)}}
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error in refresh_session: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
 
 
 @router.get(
@@ -1286,50 +1380,36 @@ async def get_password_requirements() -> PasswordRequirementsResponse:
     passwords before submission and display requirements to users.
     """
     try:
-        # Default requirements (should match main.py defaults)
-        defaults = {
-            "min_length": 12,
-            "max_length": 128,
-            "require_uppercase": True,
-            "require_lowercase": True,
-            "require_digit": True,
-            "require_special": True,
-        }
-
+        # Get authentication config directly from config utility to avoid duplication
+        auth_config = {}
         if config_util:
-            try:
-                # Try to get the nested authentication.password config
-                auth_config = config_util.get("authentication", {})
-                password_config = (
-                    auth_config.get("password", {})
-                    if isinstance(auth_config, dict)
-                    else {}
-                )
+            auth_config = config_util.get("authentication", {})
+            if not isinstance(auth_config, dict):
+                auth_config = {}
+        
+        password_config = auth_config.get("password", {})
+        if not isinstance(password_config, dict):
+            password_config = {}
+            
+        accounts_config = auth_config.get("accounts", {})
+        if not isinstance(accounts_config, dict):
+            accounts_config = {}
 
-                return PasswordRequirementsResponse(
-                    min_length=password_config.get(
-                        "min_length", defaults["min_length"]
-                    ),
-                    max_length=password_config.get(
-                        "max_length", defaults["max_length"]
-                    ),
-                    require_uppercase=password_config.get(
-                        "require_uppercase", defaults["require_uppercase"]
-                    ),
-                    require_lowercase=password_config.get(
-                        "require_lowercase", defaults["require_lowercase"]
-                    ),
-                    require_digit=password_config.get(
-                        "require_digit", defaults["require_digit"]
-                    ),
-                    require_special=password_config.get(
-                        "require_special", defaults["require_special"]
-                    ),
-                )
-            except Exception as ce:
-                logger.debug(f"Failed to load password requirements from config: {ce}")
+        from src.api.routes.docs import is_docs_enabled
 
-        return PasswordRequirementsResponse(**defaults)
+        # Default values matching main.py
+        return PasswordRequirementsResponse(
+            min_length=password_config.get("min_length", 12),
+            max_length=password_config.get("max_length", 128),
+            require_uppercase=password_config.get("require_uppercase", True),
+            require_lowercase=password_config.get("require_lowercase", True),
+            require_digit=password_config.get("require_digit", True),
+            require_special=password_config.get("require_special", True),
+            age_gate_enabled=accounts_config.get("age_gate_enabled", False),
+            age_verification_type=accounts_config.get("age_verification_type", "boolean"),
+            minimum_age=accounts_config.get("minimum_age", 13),
+            docs_enabled=is_docs_enabled(),
+        )
     except Exception as e:
         logger.error(f"Failed to get password requirements: {e}", exc_info=True)
         raise HTTPException(

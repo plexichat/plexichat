@@ -34,6 +34,7 @@ from .avatars import router as avatars_router
 from .media import router as media_router
 from .reports import router as reports_router
 from .qr import router as qr_router
+from .help import router as help_router
 
 import utils.config as config
 import utils.logger as logger
@@ -82,8 +83,8 @@ def create_api_router() -> APIRouter:
     api_router.include_router(users_router, prefix="/users", tags=["Users"])
     api_router.include_router(servers_router, prefix="/servers", tags=["Servers"])
     api_router.include_router(emojis_router, prefix="/servers", tags=["Emojis"])
-    api_router.include_router(channels_router, prefix="/channels", tags=["Channels"])
     api_router.include_router(messages_router, tags=["Messages"])
+    api_router.include_router(channels_router, prefix="/channels", tags=["Channels"])
     api_router.include_router(
         relationships_router, prefix="/relationships", tags=["Relationships"]
     )
@@ -101,9 +102,9 @@ def create_api_router() -> APIRouter:
     # Include admin router with configurable path
     admin_config = config.get("admin_ui", {})
     if admin_config.get("enabled", False):
-        admin_config.get("path", "/admin")
+        admin_path = admin_config.get("path", "/admin")
         # Remove /api/v1 prefix since admin is mounted at root
-        api_router.include_router(admin_router, prefix="/admin", tags=["Admin"])
+        api_router.include_router(admin_router, prefix=admin_path, tags=["Admin"])
 
     # Include features router (admin endpoints + user features)
     api_router.include_router(features_router, tags=["Features"])
@@ -119,6 +120,9 @@ def create_api_router() -> APIRouter:
 
     # Include QR router
     api_router.include_router(qr_router, tags=["Utilities"])
+
+    # Include help router
+    api_router.include_router(help_router, prefix="/help", tags=["Help"])
 
     return api_router
 

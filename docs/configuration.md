@@ -89,6 +89,10 @@ authentication:
     allow_registration: true
     require_email_verification: false
     max_bots_per_user: 5
+    age_gate_enabled: false      # Enable age verification on registration
+    minimum_age: 13             # Minimum required age
+    # Verification type: "boolean" (simple check) or "dob" (store date of birth)
+    age_verification_type: "boolean"
   
   sessions:
     token_bytes: 32
@@ -102,6 +106,85 @@ authentication:
     token_cache_ttl: 30
     token_verify_rate_limit: 100
     token_binding: false
+```
+
+### Applications
+
+```yaml
+applications:
+  max_applications_per_user: 25
+  max_commands_per_app: 100
+  interaction_timeout: 900
+  webhook_signature_secret: null  # Auto-generated on startup if not set
+  oauth:
+    code_expiry_seconds: 600
+    token_expiry_seconds: 604800
+    refresh_enabled: true
+  rate_limits:
+    requests_per_minute: 60
+```
+
+### Polls
+
+```yaml
+polls:
+  max_options: 10
+  min_options: 2
+  max_question_length: 300
+  max_option_length: 100
+  min_duration_hours: 1
+  max_duration_hours: 168
+```
+
+### Emojis
+
+```yaml
+emojis:
+  max_emojis_per_server: 50
+  max_animated_emojis_per_server: 50
+  max_emoji_size: 262144
+  emoji_min_name_length: 2
+  emoji_max_name_length: 32
+  allowed_formats: ["image/png", "image/jpeg", "image/gif", "image/webp"]
+```
+
+### Search
+
+```yaml
+search:
+  enabled: true
+  backend: sqlite_fts5           # sqlite_fts5 or elasticsearch
+  result_limit: 100
+  batch_size: 100
+  write_time_indexing: true
+  discovery:
+    enabled: true
+    min_members_for_listing: 10
+    max_tags: 10
+    bump_cooldown_hours: 4
+```
+
+### Servers
+
+```yaml
+servers:
+  server_name_min_length: 2
+  server_name_max_length: 100
+  channel_name_max_length: 100
+  role_name_max_length: 100
+  invite_code_length: 8
+  events:
+    max_event_duration_hours: 168
+    max_recurring_instances: 50
+  onboarding:
+    max_onboarding_steps: 10
+    max_welcome_channels: 5
+    max_step_options: 25
+  templates:
+    template_code_length: 8
+    max_channels_in_template: 100
+    max_roles_in_template: 50
+    max_templates_per_user: 25
 ```
 
 ### OAuth
@@ -216,7 +299,7 @@ encryption:
 api:
   title: PlexiChat API
   description: REST API for PlexiChat messaging platform
-  version: a.1.0-1
+  version: a.1.0-32
   api_prefix: /api/v1
   debug: false           # Enable debug mode
   cors_origins:
@@ -226,6 +309,10 @@ api:
     - "*"
   cors_allow_headers:
     - "*"
+  # Trusted proxies for IP extraction (e.g., ["10.0.0.1", "172.16.0.0/12"])
+  trusted_proxies: []
+  # Whether to trust X-Forwarded-For (requires trusted_proxies for security)
+  trust_x_forwarded_for: false
   docs_url: /docs        # Swagger UI path (null to disable)
   redoc_url: /redoc      # ReDoc path (null to disable)
   openapi_url: /openapi.json  # OpenAPI schema path
@@ -257,7 +344,7 @@ storage:
 ```yaml
 application:
   name: PlexiChat
-  version: a.1.0-1
+  version: a.1.0-32
   environment: development  # development, staging, production
 ```
 
@@ -265,7 +352,7 @@ application:
 
 ```yaml
 versioning:
-  min_supported_version: a.1.0-1  # Minimum client version
+  min_supported_version: a.1.0-32  # Minimum client version
   update_url: null                 # URL for client updates
 ```
 
@@ -300,6 +387,15 @@ docs:
   # Security
   security:
     require_auth: false  # Public docs by default
+```
+
+### Rate Limiting
+
+```yaml
+rate_limiting:
+  # Secret for bypassing rate limits (e.g., for internal services)
+  # Auto-generated on startup if not set.
+  bypass_secret: null
 ```
 
 ### Messaging

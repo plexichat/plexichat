@@ -6,6 +6,7 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, ConfigDict
 
 from .common import SnowflakeID
+from .users import UserPublicResponse
 
 
 class ServerCreateRequest(BaseModel):
@@ -51,6 +52,8 @@ class ServerResponse(BaseModel):
     default_channel_id: Optional[SnowflakeID] = Field(
         None, description="Default channel ID"
     )
+    verification_level: int = Field(0, description="Verification level required to join")
+    default_message_notifications: int = Field(0, description="Default notification level")
     created_at: int = Field(..., description="Creation timestamp")
 
 
@@ -60,7 +63,7 @@ class ChannelCreateRequest(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     name: str = Field(..., min_length=1, max_length=100, description="Channel name")
-    type: Optional[str] = Field(
+    channel_type: Optional[str] = Field(
         "text", description="Channel type: text, voice, category"
     )
     topic: Optional[str] = Field(None, max_length=1024, description="Channel topic")
@@ -202,13 +205,15 @@ class AuditLogEntryResponse(BaseModel):
     id: SnowflakeID = Field(..., description="Entry ID")
     server_id: SnowflakeID = Field(..., description="Server ID")
     user_id: SnowflakeID = Field(..., description="User who performed action")
+    user: Optional[UserPublicResponse] = Field(default=None, description="User information")
     action: str = Field(..., description="Action type")
     target_type: Optional[str] = Field(default=None, description="Target object type")
     target_id: Optional[SnowflakeID] = Field(
         default=None, description="Target object ID"
     )
-    changes: Optional[List[Dict[str, Any]]] = Field(
-        default=None, description="List of changes"
+    target_name: Optional[str] = Field(default=None, description="Target object name")
+    changes: Optional[Dict[str, Any]] = Field(
+        default=None, description="Dictionary of changes"
     )
     reason: Optional[str] = Field(default=None, description="Reason for action")
     created_at: Optional[int] = Field(default=None, description="Creation timestamp")

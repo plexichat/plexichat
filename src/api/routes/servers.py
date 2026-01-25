@@ -2,7 +2,7 @@
 Server routes - Server/guild management endpoints.
 """
 
-from typing import List, Optional
+from typing import List, Optional, Dict
 from fastapi import APIRouter, HTTPException, Depends, File, UploadFile
 
 import src.api as api
@@ -30,6 +30,7 @@ from src.core.database import (
     invalidate_user_servers,
     invalidate_server_channels,
     invalidate_server,
+    cached,
 )
 
 import utils.config as config
@@ -41,16 +42,20 @@ router = APIRouter(tags=["Servers"])
 def _server_to_response(server) -> ServerResponse:
     """Convert server object to response model."""
     default_channel_id = getattr(server, "default_channel_id", None)
+    # Use getattr to correctly pick up the icon_url property from the Server model
+    icon_url = getattr(server, "icon_url", None)
     return ServerResponse(
         id=SnowflakeID(server.id),
         name=server.name,
         description=getattr(server, "description", None),
-        icon_url=getattr(server, "icon_url", None),
+        icon_url=icon_url,
         owner_id=SnowflakeID(server.owner_id),
         member_count=getattr(server, "member_count", 0),
         default_channel_id=SnowflakeID(default_channel_id)
         if default_channel_id
         else None,
+        verification_level=getattr(server, "verification_level", 0),
+        default_message_notifications=getattr(server, "default_message_notifications", 0),
         created_at=server.created_at,
     )
 
@@ -405,6 +410,7 @@ async def delete_server(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@cached(ttl=30, prefix="server_channels_api")
 async def get_server_channels(
     server_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> List[ChannelResponse]:
@@ -471,13 +477,14 @@ async def get_server_channels(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@cached(ttl=30, prefix="server_members_api")
 async def get_server_members(
     server_id: str,
     limit: int = 100,
     after: Optional[str] = None,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> List[MemberResponse]:
-    """Get server members."""
+    """Get server members (cached for 30s)."""
     servers_mod = api.get_servers()
     auth = api.get_auth()
     presence = api.get_presence()
@@ -497,48 +504,70 @@ async def get_server_members(
                 detail={"error": {"code": 400, "message": "Invalid server ID"}},
             )
 
-        members = servers_mod.get_members(current_user.user_id, sid)
+        # Reconstruct TokenInfo if it's a dict from cache
+        curr_user_id = current_user.user_id if hasattr(current_user, "user_id") else current_user.get("user_id")
+
+        members = servers_mod.get_members(curr_user_id, sid)
+        if not members:
+            return []
+
+        # Get all user IDs for bulk fetching, handling both objects and dicts
+        user_ids = []
+        for m in members:
+            uid = getattr(m, "user_id", None) or m.get("user_id")
+            if uid:
+                user_ids.append(uid)
+
+        # Bulk fetch user data
+        users_map = {}
+        if auth and user_ids:
+            users_map = auth.get_users_bulk(user_ids)
+
+        # Bulk fetch presence data
+        presence_map = {}
+        if presence and user_ids:
+            try:
+                presence_map = presence.get_visible_presences_bulk(curr_user_id, user_ids)
+            except Exception as e:
+                logger.warning(f"Failed to get bulk presence for server {sid}: {e}")
+
         result = []
-        for m in members or []:
-            user_id = getattr(m, "user_id", 0)
-
-            # Get user info
-            username = None
-            avatar_url = None
-            if auth:
-                try:
-                    user = auth.get_user(user_id)
-                    if user:
-                        username = user.username
-                        avatar_url = getattr(user, "avatar_url", None)
-                except Exception:
-                    pass
-
-            # Get presence info - default to offline if not found
+        for m in members:
+            # Handle both objects and dicts (from cache)
+            if isinstance(m, dict):
+                raw_user_id = m.get("user_id", 0)
+                nickname = m.get("nickname")
+                joined_at = m.get("joined_at")
+                roles = m.get("roles", [])
+            else:
+                raw_user_id = getattr(m, "user_id", 0)
+                nickname = getattr(m, "nickname", None)
+                joined_at = getattr(m, "joined_at", None)
+                roles = getattr(m, "roles", [])
+            
+            # Robust lookup: check both string and int keys
+            user_id = int(raw_user_id)
+            user = users_map.get(user_id) or users_map.get(str(user_id))
+            
+            # Presence info
+            pres = presence_map.get(user_id) or presence_map.get(str(user_id))
             presence_data = PresenceResponse(status="offline")
-            if presence:
-                try:
-                    pres = presence.get_visible_presence(current_user.user_id, user_id)
-                    if pres:
-                        status = getattr(pres, "status", None)
-                        if status and hasattr(status, "value"):
-                            status = status.value
-                        presence_data = PresenceResponse(
-                            status=str(status) if status else "offline"
-                        )
-                except Exception as e:
-                    logger.warning(f"Failed to get presence for user {user_id}: {e}")
+            if pres:
+                status = getattr(pres, "status", None)
+                if status and hasattr(status, "value"):
+                    status = status.value
+                presence_data = PresenceResponse(
+                    status=str(status) if status else "offline"
+                )
 
             result.append(
                 MemberResponse(
                     user_id=SnowflakeID(user_id),
-                    username=username or f"User {user_id}",
-                    nickname=getattr(m, "nickname", None),
-                    avatar_url=avatar_url,
-                    joined_at=getattr(m, "joined_at", None),
-                    roles=[SnowflakeID(r) for r in getattr(m, "roles", [])]
-                    if hasattr(m, "roles")
-                    else [],
+                    username=str(user.username) if user else f"User {user_id}",
+                    nickname=nickname,
+                    avatar_url=getattr(user, "avatar_url", None),
+                    joined_at=joined_at,
+                    roles=[SnowflakeID(r) for r in (roles or [])],
                     presence=presence_data,
                 )
             )
@@ -1532,6 +1561,54 @@ async def leave_server(
         )
 
 
+@router.get(
+    "/{server_id}/permissions",
+    response_model=Dict[str, bool],
+    summary="Get my permissions",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid server ID"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        404: {"model": ErrorResponse, "description": "Server not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_my_permissions(
+    server_id: str, current_user: TokenInfo = Depends(get_current_user)
+) -> Dict[str, bool]:
+    """
+    Get current user's permissions in a server.
+    """
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
+        )
+
+    try:
+        try:
+            sid = int(server_id)
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid server ID"}},
+            )
+
+        return servers_mod.get_permissions(current_user.user_id, sid)
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "Server not found"}},
+            )
+        
+        logger.error(f"Failed to get permissions for server {server_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+
 # ==================== Audit Log ====================
 
 
@@ -1556,6 +1633,8 @@ async def get_audit_log(
     Returns a list of administrative actions taken in the server. Requires view audit log permission.
     """
     servers_mod = api.get_servers()
+    auth_mod = api.get_auth()
+    
     if not servers_mod:
         raise HTTPException(
             status_code=500,
@@ -1572,24 +1651,72 @@ async def get_audit_log(
             )
 
         entries = servers_mod.get_audit_log(current_user.user_id, sid, limit=limit)
-        return [
-            AuditLogEntryResponse(
-                id=SnowflakeID(e.id),
-                server_id=SnowflakeID(e.server_id),
-                user_id=SnowflakeID(e.user_id),
-                action=e.action_type.value
-                if hasattr(e.action_type, "value")
-                else str(e.action_type),
-                target_type=getattr(e, "target_type", None),
-                target_id=SnowflakeID(e.target_id)
-                if getattr(e, "target_id", None)
-                else None,
-                changes=getattr(e, "changes", None),
-                reason=getattr(e, "reason", None),
-                created_at=getattr(e, "created_at", None),
+        if not entries:
+            return []
+
+        # Batch fetch user info
+        user_ids = set()
+        for e in entries:
+            user_ids.add(e.user_id)
+            if e.target_type == "member" and e.target_id:
+                user_ids.add(int(e.target_id))
+        
+        users_map = {}
+        if auth_mod:
+            users = auth_mod.get_users(list(user_ids))
+            for u in users:
+                from .users import _user_to_public_response
+                users_map[int(u.id)] = _user_to_public_response(u)
+
+        # Cache for roles and channels to avoid repeated lookups
+        role_map = {}
+        channel_map = {}
+
+        result = []
+        for e in entries:
+            target_name = None
+            if e.target_type == "member" and e.target_id:
+                target_user = users_map.get(int(e.target_id))
+                target_name = target_user.username if target_user else f"User {e.target_id}"
+            elif e.target_type == "role" and e.target_id:
+                rid = int(e.target_id)
+                if rid not in role_map:
+                    try:
+                        role = servers_mod.get_role(rid, current_user.user_id)
+                        role_map[rid] = role.name if role else None
+                    except Exception:
+                        role_map[rid] = None
+                target_name = role_map[rid]
+            elif e.target_type == "channel" and e.target_id:
+                cid = int(e.target_id)
+                if cid not in channel_map:
+                    try:
+                        channel = servers_mod.get_channel(cid, current_user.user_id)
+                        channel_map[cid] = channel.name if channel else None
+                    except Exception:
+                        channel_map[cid] = None
+                target_name = channel_map[cid]
+
+            result.append(
+                AuditLogEntryResponse(
+                    id=SnowflakeID(e.id),
+                    server_id=SnowflakeID(e.server_id),
+                    user_id=SnowflakeID(e.user_id),
+                    user=users_map.get(int(e.user_id)),
+                    action=e.action_type.value
+                    if hasattr(e.action_type, "value")
+                    else str(e.action_type),
+                    target_type=getattr(e, "target_type", None),
+                    target_id=SnowflakeID(e.target_id)
+                    if getattr(e, "target_id", None)
+                    else None,
+                    target_name=target_name,
+                    changes=getattr(e, "changes", None),
+                    reason=getattr(e, "reason", None),
+                    created_at=getattr(e, "created_at", None),
+                )
             )
-            for e in (entries or [])
-        ]
+        return result
     except HTTPException:
         raise
     except Exception as e:
@@ -1759,18 +1886,24 @@ async def upload_server_icon(
 
         servers_mod.require_permission(current_user.user_id, sid, "server.manage")
 
-        # Use media module for upload (handles validation and security)
+        # Use avatars module for upload (handles resizing and database storage)
+        avatars = api.get_avatars()
+        if not avatars:
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Avatars module not available"}}
+            )
+
         content = await file.read()
-        result = media.upload_file(
-            user_id=current_user.user_id,
-            file_data=content,
-            filename=file.filename or f"server_icon_{sid}",
+        result = avatars.upload_server_icon(
+            server_id=sid,
+            image_data=content,
             content_type=file.content_type,
         )
 
-        # Update server with new icon URL
+        # Update server with new icon URL from avatars module
         server = servers_mod.update_server(
-            current_user.user_id, sid, icon_url=result.url
+            current_user.user_id, sid, icon_url=result["url"]
         )
         return _server_to_response(server)
     except HTTPException:

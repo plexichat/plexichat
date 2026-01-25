@@ -4,6 +4,7 @@ Hardened AuthManager - Secure authentication logic.
 
 import time
 import json
+import secrets
 from typing import Optional, List, Dict, Any
 
 import utils.config as config
@@ -12,6 +13,7 @@ import utils.logger as logger
 from src.core.base import BaseManager, SnowflakeID
 from src.utils.encryption import EncryptionManager
 
+from src.core.database import cached, invalidate_pattern
 from .models import (
     User,
     Session,
@@ -89,6 +91,7 @@ class AuthManager(BaseManager):
                 "updated_at",
                 "email_verified",
                 "account_locked",
+                "age_verified",
             ],
             (
                 0,
@@ -99,6 +102,7 @@ class AuthManager(BaseManager):
                 permissions_to_json({}),
                 now,
                 now,
+                1,
                 1,
                 1,
             ),
@@ -158,7 +162,47 @@ class AuthManager(BaseManager):
         password: str,
         device_info: Optional[Dict[str, str]] = None,
         ip_address: Optional[str] = None,
+        age: Optional[int] = None,
+        dob: Optional[str] = None,
     ) -> User:
+        # Generate ID first to use as encryption context
+        user_id = self._generate_id()
+
+        # Configuration check for age gate
+        accounts_config = self._config.get("accounts", {})
+        age_gate_enabled = accounts_config.get("age_gate_enabled", False)
+        min_age = accounts_config.get("minimum_age", 13)
+        verification_type = accounts_config.get("age_verification_type", "boolean")
+        
+        age_verified = 0
+        stored_dob = None
+
+        if age_gate_enabled:
+            if verification_type == "dob":
+                if not dob:
+                    raise AuthError("Date of birth is required", "dob")
+                try:
+                    from datetime import datetime
+                    birth_date = datetime.strptime(dob, "%Y-%m-%d")
+                    today = datetime.today()
+                    calc_age = today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
+                    if calc_age < min_age:
+                        raise AuthError(f"Minimum age requirement not met ({min_age})", "age")
+                    age_verified = 1
+                    # Encrypt DOB for storage using user_id as context
+                    stored_dob = self.crypto.encrypt_data(dob, context=str(user_id))
+                except ValueError:
+                    raise AuthError("Invalid date format. Use YYYY-MM-DD", "dob")
+            else:
+                # Boolean/Age mode
+                if age is not None:
+                    if age < min_age:
+                        raise AuthError(f"Minimum age requirement not met ({min_age})", "age")
+                    age_verified = 1
+                else:
+                    # If neither age nor dob is provided but gate is enabled
+                    raise AuthError("Age verification required", "age")
+        
         valid, issues = validate_username(username)
         if not valid:
             raise InvalidUsernameError(f"Invalid: {issues}", issues)
@@ -180,14 +224,13 @@ class AuthManager(BaseManager):
         ):
             raise UserExistsError("Email registered", "email")
 
-        user_id = self._generate_id()
         now = self._get_timestamp()
         email_encrypted = self.crypto.encrypt_data(email, context=str(user_id))
         password_hash = self.crypto.hash_password(password)
-        require_ver = self._get_config("accounts.require_email_verification", False)
+        require_ver = accounts_config.get("require_email_verification", False)
 
         self._db.execute(
-            "INSERT INTO auth_users (id, account_type, username, email_index, email_encrypted, password_hash, permissions, created_at, updated_at, email_verified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO auth_users (id, account_type, username, email_index, email_encrypted, password_hash, permissions, created_at, updated_at, email_verified, age_verified, date_of_birth) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 user_id,
                 AccountType.USER.value,
@@ -198,7 +241,9 @@ class AuthManager(BaseManager):
                 permissions_to_json(DEFAULT_USER_PERMISSIONS),
                 now,
                 now,
-                0 if require_ver else 1,
+                1 if not require_ver else 0,
+                age_verified,
+                stored_dob,
             ),
         )
 
@@ -220,6 +265,8 @@ class AuthManager(BaseManager):
             created_at=now,
             updated_at=now,
             email_verified=not require_ver,
+            age_verified=bool(age_verified),
+            date_of_birth=dob if (age_gate_enabled and verification_type == "dob") else None,
         )
 
     def verify_email(self, token: str) -> bool:
@@ -294,8 +341,11 @@ class AuthManager(BaseManager):
 
         user_id = row["id"]
         if row["account_locked"]:
-            if row["locked_until"] and row["locked_until"] > self._get_timestamp():
+            # Check if lock is permanent (no expiry) or active (expiry in future)
+            if not row["locked_until"] or row["locked_until"] > self._get_timestamp():
                 raise AccountLockedError("Account locked", row["locked_until"])
+            
+            # Auto-unlock only if lock has expired
             self._db.execute(
                 "UPDATE auth_users SET account_locked = 0, failed_login_attempts = 0 WHERE id = ?",
                 (user_id,),
@@ -392,6 +442,7 @@ class AuthManager(BaseManager):
             token=token,
         )
 
+    @cached(ttl=30, prefix="token_verify")
     def verify_token(
         self,
         token: str,
@@ -502,6 +553,8 @@ class AuthManager(BaseManager):
     def logout(self, token: str) -> bool:
         parsed = parse_token(token)
         if parsed and parsed["token_type"] == "session":
+            # Clear token verification cache for immediate effect
+            invalidate_pattern("token_verify:*")
             self._db.execute(
                 "UPDATE auth_sessions SET revoked = 1 WHERE id = ?", (parsed["id"],)
             )
@@ -509,6 +562,9 @@ class AuthManager(BaseManager):
         return False
 
     def logout_all(self, user_id: int, except_token: Optional[str] = None) -> int:
+        # Clear token verification cache for immediate effect
+        invalidate_pattern("token_verify:*")
+        
         if except_token:
             parsed = parse_token(except_token)
             if parsed and parsed["token_type"] == "session":
@@ -520,6 +576,13 @@ class AuthManager(BaseManager):
         self._db.execute(
             "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ?", (user_id,)
         )
+        return 1
+
+    def logout_all_users(self) -> int:
+        """Invalidate ALL active sessions for ALL users."""
+        invalidate_pattern("token_verify:*")
+        self._db.execute("UPDATE auth_sessions SET revoked = 1 WHERE revoked = 0")
+        logger.info("Site-wide session purge: all users logged out")
         return 1
 
     def get_sessions(self, user_id: int) -> List[Session]:
@@ -542,6 +605,7 @@ class AuthManager(BaseManager):
         ]
 
     def revoke_session(self, user_id: int, session_id: int) -> bool:
+        invalidate_pattern("token_verify:*")
         self._db.execute(
             "UPDATE auth_sessions SET revoked = 1 WHERE id = ? AND user_id = ?",
             (session_id, user_id),
@@ -1020,6 +1084,46 @@ class AuthManager(BaseManager):
             ),
         )
 
+    # === IP Blacklisting ===
+
+    def block_ip(self, ip_address: str, reason: Optional[str] = None, blocked_by: Optional[int] = None, duration_hours: Optional[int] = None) -> bool:
+        """Block an IP address."""
+        now = self._get_timestamp()
+        expires_at = now + (duration_hours * 3600 * 1000) if duration_hours else None
+        
+        self._db.upsert(
+            "auth_ip_blacklist",
+            ["ip_address", "reason", "blocked_at", "blocked_by", "expires_at"],
+            (ip_address, reason, now, blocked_by, expires_at),
+            conflict_columns=["ip_address"]
+        )
+        logger.info(f"IP {ip_address} blocked by {blocked_by}: {reason}")
+        return True
+
+    def unblock_ip(self, ip_address: str) -> bool:
+        """Unblock an IP address."""
+        self._db.execute("DELETE FROM auth_ip_blacklist WHERE ip_address = ?", (ip_address,))
+        logger.info(f"IP {ip_address} unblocked")
+        return True
+
+    def is_ip_blocked(self, ip_address: str) -> bool:
+        """Check if an IP address is blocked."""
+        row = self._db.fetch_one("SELECT expires_at FROM auth_ip_blacklist WHERE ip_address = ?", (ip_address,))
+        if not row:
+            return False
+        
+        expires_at = row["expires_at"]
+        if expires_at and expires_at < self._get_timestamp():
+            # Block expired, cleanup
+            self.unblock_ip(ip_address)
+            return False
+            
+        return True
+
+    def get_blocked_ips(self) -> List[Dict[str, Any]]:
+        """Get all blocked IPs."""
+        return self._db.fetch_all("SELECT * FROM auth_ip_blacklist ORDER BY blocked_at DESC")
+
     # === Audit & History ===
 
     def get_login_history(self, user_id: int, limit: int = 50) -> List[AuditEntry]:
@@ -1068,30 +1172,50 @@ class AuthManager(BaseManager):
     # === Utility ===
 
     def get_user(self, user_id: int) -> Optional[User]:
+        """Get a user by ID (cached)."""
+        data = self._get_user_data_cached(user_id)
+        if not data:
+            return None
+        return self._dict_to_user(data)
+
+    @cached(ttl=60, prefix="user_data")
+    def _get_user_data_cached(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """Internal helper to fetch raw user data from DB for caching."""
         row = self._db.fetch_one("SELECT * FROM auth_users WHERE id = ?", (user_id,))
         if not row:
             return None
             
-        email = None
-        if row.get("email_encrypted"):
+        user_dict = dict(row)
+        # Decrypt sensitive fields for the cached dictionary
+        if user_dict.get("email_encrypted"):
             try:
-                email = self.crypto.decrypt_data(row["email_encrypted"], context=str(user_id))
-            except Exception as e:
-                logger.error(f"Decryption failed for user {user_id}: {e}")
-                # Don't return a magic string that could be treated as a valid email
-                email = None
+                user_dict["email"] = self.crypto.decrypt_data(user_dict["email_encrypted"], context=str(user_id))
+            except Exception:
+                user_dict["email"] = None
+        
+        if user_dict.get("date_of_birth"):
+            try:
+                user_dict["dob_decrypted"] = self.crypto.decrypt_data(user_dict["date_of_birth"], context=str(user_id))
+            except Exception:
+                user_dict["dob_decrypted"] = None
+                
+        return user_dict
 
+    def _dict_to_user(self, row: Dict[str, Any]) -> User:
+        """Convert a raw data dictionary to a User object."""
         return User(
             id=row["id"],
             account_type=AccountType(row["account_type"]),
             username=row["username"],
-            email=email,
+            email=row.get("email"),
             permissions=permissions_from_json(row["permissions"]),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             email_verified=bool(row["email_verified"]),
             account_locked=bool(row["account_locked"]),
             totp_enabled=bool(row["totp_enabled"]),
+            age_verified=bool(row["age_verified"]),
+            date_of_birth=row.get("dob_decrypted") or row.get("date_of_birth"),
         )
 
     def get_user_by_username(self, username: str) -> Optional[User]:
@@ -1102,10 +1226,12 @@ class AuthManager(BaseManager):
             return None
         return self.get_user(row["id"])
 
-    def get_users_bulk(self, user_ids: List[int]) -> Dict[int, User]:
+    @cached(ttl=60, prefix="users_bulk")
+    def get_users_bulk(self, user_ids: List[int]) -> Dict[str, User]:
+        """Get multiple users by ID (bulk-cached)."""
         if not user_ids:
             return {}
-        
+            
         placeholders = ",".join("?" for _ in user_ids)
         rows = self._db.fetch_all(
             f"SELECT * FROM auth_users WHERE id IN ({placeholders})", tuple(user_ids)
@@ -1114,25 +1240,23 @@ class AuthManager(BaseManager):
         result = {}
         for row in rows:
             user_id = row["id"]
-            email = None
-            if row.get("email_encrypted"):
-                try:
-                    email = self.crypto.decrypt_data(row["email_encrypted"], context=str(user_id))
-                except Exception as e:
-                    logger.error(f"Decryption failed for user {user_id} in bulk fetch: {e}")
+            user_dict = dict(row)
             
-            result[user_id] = User(
-                id=user_id,
-                account_type=AccountType(row["account_type"]),
-                username=row["username"],
-                email=email,
-                permissions=permissions_from_json(row["permissions"]),
-                created_at=row["created_at"],
-                updated_at=row["updated_at"],
-                email_verified=bool(row["email_verified"]),
-                account_locked=bool(row["account_locked"]),
-                totp_enabled=bool(row["totp_enabled"]),
-            )
+            # Decrypt sensitive fields for individual users
+            if user_dict.get("email_encrypted"):
+                try:
+                    user_dict["email"] = self.crypto.decrypt_data(user_dict["email_encrypted"], context=str(user_id))
+                except Exception:
+                    user_dict["email"] = None
+            
+            if user_dict.get("date_of_birth"):
+                try:
+                    user_dict["dob_decrypted"] = self.crypto.decrypt_data(user_dict["date_of_birth"], context=str(user_id))
+                except Exception:
+                    user_dict["dob_decrypted"] = None
+            
+            result[str(user_id)] = self._dict_to_user(user_dict)
+                
         return result
 
     def grant_permission(self, user_id: int, permission: str) -> bool:
@@ -1154,6 +1278,106 @@ class AuthManager(BaseManager):
         username_hint: Optional[str] = None,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
+        age: Optional[int] = None,
+        dob: Optional[str] = None,
     ) -> AuthResult:
-        # Simplified OAuth login stub
-        return AuthResult(status=AuthStatus.FAILED, message="Not fully implemented")
+        """Handle OAuth login flow: verify external ID, link or create user, and start session."""
+        # 1. Check if we already have this external account linked
+        row = self._db.fetch_one(
+            "SELECT user_id FROM auth_external_accounts WHERE provider = ? AND external_id = ?",
+            (provider, external_id),
+        )
+
+        user_id = None
+        if row:
+            user_id = row["user_id"]
+        else:
+            # 2. Not linked. Check if a user with this email already exists to auto-link
+            if email:
+                email_index = self.crypto.blind_index(email, "user_email")
+                user_row = self._db.fetch_one(
+                    "SELECT id FROM auth_users WHERE email_index = ?", (email_index,)
+                )
+                if user_row:
+                    user_id = user_row["id"]
+                    # Link existing user to this provider
+                    self._db.insert_or_ignore(
+                        "auth_external_accounts",
+                        ["id", "user_id", "provider", "external_id", "email_index", "created_at"],
+                        (self._generate_id(), user_id, provider, external_id, email_index, self._get_timestamp())
+                    )
+
+        # 3. If still no user, create a new one
+        if not user_id:
+            # Check age gate before attempting registration
+            accounts_config = self._config.get("accounts", {})
+            if accounts_config.get("age_gate_enabled", False):
+                if age is None and dob is None:
+                    # Signal to client that age/DOB is needed for new registration
+                    return AuthResult(status=AuthStatus.FAILED, message="Age verification required")
+
+            # Use username_hint or derive from email/external_id
+            base_username = username_hint or (email.split("@")[0] if email else f"{provider}_{external_id[:8]}")
+            
+            # Ensure username uniqueness
+            username = base_username
+            attempts = 0
+            while attempts < 10 and self._db.fetch_one("SELECT id FROM auth_users WHERE username = ?", (username,)):
+                username = f"{base_username}{secrets.token_hex(2)}"
+                attempts += 1
+            
+            # Use a random strong password for OAuth-only accounts
+            random_password = secrets.token_urlsafe(32)
+            
+            try:
+                user = self.register(
+                    username=username,
+                    email=email or f"{external_id}@{provider}.internal",
+                    password=random_password,
+                    ip_address=ip_address,
+                    age=age,
+                    dob=dob
+                )
+                user_id = user.id
+                
+                # Link the new user
+                email_index = self.crypto.blind_index(email or f"{external_id}@{provider}.internal", "user_email")
+                self._db.insert_or_ignore(
+                    "auth_external_accounts",
+                    ["id", "user_id", "provider", "external_id", "email_index", "created_at"],
+                    (self._generate_id(), user_id, provider, external_id, email_index, self._get_timestamp())
+                )
+            except AuthError as e:
+                # If registration fails (e.g. age gate), we pass that up
+                self._log_audit(AuditEventType.LOGIN_FAILED, None, False, ip_address, details={"error": str(e), "provider": provider})
+                return AuthResult(status=AuthStatus.FAILED, message=str(e))
+
+        # 4. Success - load user and start session
+        user_obj = self.get_user(user_id)
+        if not user_obj:
+            return AuthResult(status=AuthStatus.FAILED, message="User creation failed")
+            
+        if user_obj.account_locked:
+            return AuthResult(status=AuthStatus.FAILED, message="Account locked")
+
+        session = self._create_session(user_id, None, ip_address, user_agent)
+        
+        # Update last login
+        now = self._get_timestamp()
+        self._db.execute(
+            "UPDATE auth_users SET last_login_at = ?, failed_login_attempts = 0 WHERE id = ?",
+            (now, user_id)
+        )
+        self._db.execute(
+            "UPDATE auth_external_accounts SET last_login_at = ? WHERE user_id = ? AND provider = ?",
+            (now, user_id, provider)
+        )
+
+        self._log_audit(AuditEventType.LOGIN_SUCCESS, user_id, True, ip_address, details={"provider": provider})
+        
+        return AuthResult(
+            status=AuthStatus.SUCCESS,
+            token=session.token,
+            user=user_obj,
+            session=session
+        )

@@ -120,6 +120,19 @@ class StorageBackendBase(ABC):
         """
         pass
 
+    @abstractmethod
+    def is_encrypted(self, path: str) -> bool:
+        """
+        Check if a file is stored encrypted.
+
+        Args:
+            path: Storage path
+
+        Returns:
+            True if encrypted
+        """
+        pass
+
     def get_metadata(self, path: str) -> dict:
         """
         Get file metadata.

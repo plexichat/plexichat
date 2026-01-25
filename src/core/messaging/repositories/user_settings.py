@@ -33,6 +33,7 @@ class UserSettingsRepository(BaseRepository[UserMessageSettings]):
         max_attachments_per_message: Optional[int] = None,
         read_receipts_enabled: bool = True,
         typing_indicators_enabled: bool = True,
+        compact_messages_enabled: bool = True,
         auto_commit: bool = True,
     ) -> None:
         """Create user message settings."""
@@ -40,8 +41,8 @@ class UserSettingsRepository(BaseRepository[UserMessageSettings]):
             """INSERT INTO msg_user_settings 
                (user_id, allow_dms_from, auto_create_dms, max_message_length, 
                 max_attachment_size, max_attachments_per_message, 
-                read_receipts_enabled, typing_indicators_enabled)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                read_receipts_enabled, typing_indicators_enabled, compact_messages_enabled)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 user_id,
                 allow_dms_from,
@@ -51,6 +52,7 @@ class UserSettingsRepository(BaseRepository[UserMessageSettings]):
                 max_attachments_per_message,
                 1 if read_receipts_enabled else 0,
                 1 if typing_indicators_enabled else 0,
+                1 if compact_messages_enabled else 0,
             ),
             auto_commit=auto_commit,
         )
@@ -65,6 +67,7 @@ class UserSettingsRepository(BaseRepository[UserMessageSettings]):
         max_attachments_per_message: Optional[int],
         read_receipts_enabled: bool,
         typing_indicators_enabled: bool,
+        compact_messages_enabled: bool,
         auto_commit: bool = True,
     ) -> None:
         """Update user message settings."""
@@ -72,7 +75,8 @@ class UserSettingsRepository(BaseRepository[UserMessageSettings]):
             """UPDATE msg_user_settings 
                SET allow_dms_from = ?, auto_create_dms = ?, max_message_length = ?,
                    max_attachment_size = ?, max_attachments_per_message = ?,
-                   read_receipts_enabled = ?, typing_indicators_enabled = ?
+                   read_receipts_enabled = ?, typing_indicators_enabled = ?,
+                   compact_messages_enabled = ?
                WHERE user_id = ?""",
             (
                 allow_dms_from,
@@ -82,6 +86,7 @@ class UserSettingsRepository(BaseRepository[UserMessageSettings]):
                 max_attachments_per_message,
                 1 if read_receipts_enabled else 0,
                 1 if typing_indicators_enabled else 0,
+                1 if compact_messages_enabled else 0,
                 user_id,
             ),
             auto_commit=auto_commit,
@@ -106,6 +111,7 @@ class UserSettingsRepository(BaseRepository[UserMessageSettings]):
             max_attachments_per_message=row["max_attachments_per_message"],
             read_receipts_enabled=bool(row["read_receipts_enabled"]),
             typing_indicators_enabled=bool(row["typing_indicators_enabled"]),
+            compact_messages_enabled=bool(row.get("compact_messages_enabled", True)),
         )
 
     # === Content Filter Settings ===

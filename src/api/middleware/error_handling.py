@@ -12,6 +12,12 @@ from starlette.types import ASGIApp, Receive, Send, Scope
 import traceback
 import src.api as api
 import utils.config as config
+try:
+    from utils.logger import sanitize_log_message
+except ImportError:
+    # Fallback if common-utils is not synced
+    def sanitize_log_message(message: str) -> str:
+        return message
 
 
 ERROR_MAPPINGS = {
@@ -49,7 +55,9 @@ def get_status_code_for_exception(exc: Exception) -> int:
 
 def format_error_response(code: int, message: str) -> dict:
     """Format error response in standard format."""
-    return {"error": {"code": code, "message": message}}
+    # Sanitize message to prevent PII leakage
+    safe_message = sanitize_log_message(message)
+    return {"error": {"code": code, "message": safe_message}}
 
 
 def _get_cors_headers(request: Request) -> dict:
@@ -162,8 +170,24 @@ def setup_exception_handlers(app: FastAPI):
         """Handle HTTP exceptions."""
         detail = exc.detail
         headers = _get_cors_headers(request)
+        
+        # Don't leak details for 500 errors in production
+        debug = False
+        try:
+            debug = config.get("api", {}).get("debug", False)
+        except Exception:
+            pass
 
         if isinstance(detail, dict) and "error" in detail:
+            # Mask internal server error messages
+            if exc.status_code == 500 and not debug:
+                detail["error"]["message"] = "Internal server error"
+            else:
+                # Sanitize whatever message is there
+                msg = detail["error"].get("message")
+                if msg and isinstance(msg, str):
+                    detail["error"]["message"] = sanitize_log_message(msg)
+            
             return JSONResponse(
                 status_code=exc.status_code, content=detail, headers=headers
             )

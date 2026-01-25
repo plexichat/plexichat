@@ -103,8 +103,8 @@ class Server:
     created_at: int
     updated_at: int
     description: Optional[str] = None
-    icon_url: Optional[str] = None
-    banner_url: Optional[str] = None
+    icon_path: Optional[str] = None
+    banner_path: Optional[str] = None
     verification_level: int = 0
     default_message_notifications: int = 0
     explicit_content_filter: int = 0
@@ -126,6 +126,34 @@ class Server:
     deleted: bool = False
     deleted_at: Optional[int] = None
     metadata: Optional[Dict[str, Any]] = None
+
+    @property
+    def icon_url(self) -> Optional[str]:
+        """Get the icon URL for this server."""
+        return f"/api/v1/avatars/servers/{self.id}" if self.icon_path else None
+
+    @property
+    def banner_url(self) -> Optional[str]:
+        """Get the banner URL for this server."""
+        return f"/api/v1/avatars/banners/{self.id}" if self.banner_path else None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert server to dictionary including properties."""
+        return {
+            "id": str(self.id),
+            "name": self.name,
+            "owner_id": str(self.owner_id),
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "description": self.description,
+            "icon_url": self.icon_url,
+            "banner_url": self.banner_url,
+            "verification_level": self.verification_level,
+            "member_count": self.member_count,
+            "features": self.features,
+            "premium_tier": self.premium_tier,
+            "default_channel_id": str(self.default_channel_id) if self.default_channel_id else None,
+        }
 
 
 @dataclass
@@ -197,6 +225,8 @@ class Member:
     joined_at: int
     updated_at: int
     nickname: Optional[str] = None
+    username: Optional[str] = None  # Populated via enrichment
+    avatar_url: Optional[str] = None  # Populated via enrichment
     roles: List[SnowflakeID] = field(default_factory=list)
     deaf: bool = False
     mute: bool = False
@@ -206,6 +236,23 @@ class Member:
     muted: bool = False
     deafened: bool = False
     inviter_id: Optional[SnowflakeID] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert member to dictionary including properties."""
+        return {
+            "id": str(self.id),
+            "server_id": str(self.server_id),
+            "user_id": str(self.user_id),
+            "joined_at": self.joined_at,
+            "updated_at": self.updated_at,
+            "nickname": self.nickname,
+            "roles": [str(r) for r in self.roles],
+            "deaf": self.deaf,
+            "mute": self.mute,
+            "muted": self.muted,
+            "deafened": self.deafened,
+            "avatar_url": self.avatar_url,
+        }
 
 
 @dataclass
@@ -392,6 +439,8 @@ SERVER_PERMISSIONS = {
     # Invite management
     "invites.create": "Create invites",
     "invites.manage": "Manage and delete invites",
+    # Emoji management
+    "emojis.manage": "Create, edit, delete custom emojis",
     # Message permissions (per channel)
     "messages.send": "Send messages",
     "messages.read": "Read messages",
@@ -401,6 +450,7 @@ SERVER_PERMISSIONS = {
     "messages.mention_everyone": "Use @everyone and @here",
     "messages.add_reactions": "Add reactions",
     "messages.use_external_emojis": "Use external emojis",
+    "messages.bypass_slowmode": "Bypass channel slowmode",
     # Voice permissions
     "voice.connect": "Connect to voice channels",
     "voice.speak": "Speak in voice channels",

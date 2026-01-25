@@ -13,6 +13,11 @@ A database connectivity module supporting SQLite and PostgreSQL with a clean, co
 - Automatic directory creation for SQLite
 - Dict-like row access for both SQLite and PostgreSQL
 - Integrated logging
+- **Connection pool monitoring** - Track pool health, acquisition times, and connection age
+
+## Documentation
+
+- [POOL_MONITORING.md](./POOL_MONITORING.md) - Comprehensive connection pool monitoring guide
 
 ## Requirements
 
@@ -37,6 +42,17 @@ database:
     user: postgres
     password: ""
     dbname: plexichat
+  
+  # Connection pool monitoring (PostgreSQL)
+  connection_pool:
+    min_connections: 2
+    max_connections: 20
+    connect_timeout: 10
+    max_connection_age_hours: 0.5  # 30 minutes
+  
+  # Monitoring settings
+  monitoring:
+    log_interval_seconds: 60  # Log stats every 60 seconds
 ```
 
 ### Switching to PostgreSQL
@@ -97,6 +113,30 @@ The module automatically converts `?` placeholders to `%s` for PostgreSQL, so yo
 db.execute("INSERT INTO users (name) VALUES (?)", ("Bob",))
 db.fetch_one("SELECT * FROM users WHERE name = ?", ("Bob",))
 ```
+
+### Connection Pool Monitoring
+
+Monitor and track database connection pool health:
+
+```python
+from core.database import Database
+
+db = Database()
+
+# Start automatic periodic logging of pool stats
+db.start_pool_monitoring()
+
+# Get current pool statistics
+stats = db.get_pool_stats()
+print(f"Active connections: {stats['active_connections']}")
+print(f"Pool utilization: {(stats['active_connections'] / stats['max_connections'] * 100):.1f}%")
+print(f"Avg acquisition time: {stats['avg_acquisition_time']:.3f}s")
+
+# Stop monitoring when done
+db.stop_pool_monitoring()
+```
+
+For comprehensive monitoring guide, see [POOL_MONITORING.md](./POOL_MONITORING.md)
 
 ### Context Manager
 

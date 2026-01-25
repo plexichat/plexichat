@@ -33,7 +33,7 @@ import utils.validator as validator  # noqa: E402
 import utils.version as version  # noqa: E402
 
 # Global Version Definition
-VERSION = "a.1.0-31"
+VERSION = "a.1.0-34"
 
 
 class PlexiChatServer:
@@ -85,7 +85,15 @@ class PlexiChatServer:
                     "dbname": "plexichat",
                     "sslmode": "prefer",
                 },
-                "connection_pool": {"min_connections": 1, "max_connections": 10},
+                "connection_pool": {
+                    "min_connections": 1,
+                    "max_connections": 10,
+                    "connect_timeout": 10,
+                    "max_idle_time": 300,
+                    "validation_interval": 60,
+                    "enable_validation": True,
+                    "validation_query": "SELECT 1",
+                },
             },
             "authentication": {
                 "accounts": {
@@ -94,6 +102,15 @@ class PlexiChatServer:
                     "max_bots_per_user": 5,
                     "username_min_length": 3,
                     "username_max_length": 32,
+                    "age_gate_enabled": False,
+                    "minimum_age": 13,
+                    # "boolean" (store only verified bit) or "dob" (store date of birth)
+                    "age_verification_type": "boolean",
+                },
+                "email_validation": {
+                    "strict": True,
+                    "allow_custom_tlds": False,
+                    "valid_tlds": [],
                 },
                 "sessions": {
                     "token_bytes": 32,
@@ -124,6 +141,49 @@ class PlexiChatServer:
                     "require_special": True,
                 },
                 "bots": {"token_bytes": 48, "require_owner_2fa": False},
+            },
+            "applications": {
+                "max_applications_per_user": 25,
+                "max_commands_per_app": 100,
+                "interaction_timeout": 900,
+                "webhook_signature_secret": secrets.token_hex(32),
+                "oauth": {
+                    "code_expiry_seconds": 600,
+                    "token_expiry_seconds": 604800,
+                    "refresh_enabled": True,
+                },
+                "rate_limits": {
+                    "requests_per_minute": 60,
+                }
+            },
+            "polls": {
+                "max_options": 10,
+                "min_options": 2,
+                "max_question_length": 300,
+                "max_option_length": 100,
+                "min_duration_hours": 1,
+                "max_duration_hours": 168,
+            },
+            "emojis": {
+                "max_emojis_per_server": 50,
+                "max_animated_emojis_per_server": 50,
+                "max_emoji_size": 262144,
+                "emoji_min_name_length": 2,
+                "emoji_max_name_length": 32,
+                "allowed_formats": ["image/png", "image/jpeg", "image/gif", "image/webp"],
+            },
+            "search": {
+                "enabled": True,
+                "backend": "sqlite_fts5",
+                "result_limit": 100,
+                "batch_size": 100,
+                "write_time_indexing": True,
+                "discovery": {
+                    "enabled": True,
+                    "min_members_for_listing": 10,
+                    "max_tags": 10,
+                    "bump_cooldown_hours": 4,
+                }
             },
             # OAuth configuration for external identity providers
             # SECURITY: Store client_secret values in environment variables for production:
@@ -253,8 +313,8 @@ class PlexiChatServer:
                 "cache_max_items": 1000,
             },
             "api": {
-                "title": "PlexiChat API",
-                "description": "REST API for PlexiChat messaging platform",
+                "title": "Plexichat API",
+                "description": "REST API for Plexichat messaging platform",
                 "version": VERSION,
                 "api_prefix": "/api/v1",
                 "debug": True,
@@ -265,6 +325,11 @@ class PlexiChatServer:
                     "http://127.0.0.1:5000",
                     "http://localhost:8000",
                     "http://127.0.0.1:8000",
+                    "https://plexichat-app.tail79f345.ts.net:8443",
+                    "https://plexichat-app.tail79f345.ts.net",
+                    "http://localhost:8443",
+                    "https://linuxofuser.pythonanywhere.com",
+                    "http://linuxofuser.pythonanywhere.com",
                 ],
                 "cors_allow_credentials": True,
                 "cors_allow_methods": [
@@ -282,11 +347,37 @@ class PlexiChatServer:
                     "Accept",
                     "Origin",
                 ],
+                # Trusted proxies for IP extraction (empty = none)
+                "trusted_proxies": [],
+                # Whether to trust X-Forwarded-For (requires trusted_proxies to be set for security)
+                "trust_x_forwarded_for": False,
                 "docs_url": "/docs",
                 "redoc_url": "/redoc",
                 "openapi_url": "/openapi.json",
             },
             "server": {"host": "0.0.0.0", "port": 8000, "workers": 1, "reload": False},
+            "servers": {
+                "server_name_min_length": 2,
+                "server_name_max_length": 100,
+                "channel_name_max_length": 100,
+                "role_name_max_length": 100,
+                "invite_code_length": 12,
+                "events": {
+                    "max_event_duration_hours": 168,
+                    "max_recurring_instances": 50,
+                },
+                "onboarding": {
+                    "max_onboarding_steps": 10,
+                    "max_welcome_channels": 5,
+                    "max_step_options": 25,
+                },
+                "templates": {
+                    "template_code_length": 8,
+                    "max_channels_in_template": 100,
+                    "max_roles_in_template": 50,
+                    "max_templates_per_user": 25,
+                }
+            },
             "websocket": {
                 "heartbeat_interval_ms": 45000,
                 "session_timeout_ms": 60000,
@@ -300,17 +391,11 @@ class PlexiChatServer:
                 "allowed_origins": [],
             },
             "application": {
-                "name": "PlexiChat",
+                "name": "Plexichat",
                 "version": VERSION,
                 "environment": "development",
             },
             "versioning": {"min_supported_version": VERSION, "update_url": None},
-            "storage": {
-                "data_dir": str(home_dir / "data"),
-                "logs_dir": str(home_dir / "logs"),
-                "media_dir": str(home_dir / "media"),
-                "temp_dir": str(home_dir / "temp"),
-            },
             "rate_limiting": {
                 "enabled": True,
                 # Global rate limit (per user, across all requests)
@@ -364,6 +449,11 @@ class PlexiChatServer:
                 "rate_limit": {"max_per_hour": 5, "max_per_day": 20},
             },
             "media": {
+                # Directories
+                "data_dir": str(home_dir / "data"),
+                "logs_dir": str(home_dir / "logs"),
+                "media_dir": str(home_dir / "media"),
+                "temp_dir": str(home_dir / "temp"),
                 # Primary storage backend: "local", "s3", or "database"
                 "storage_backend": "local",
                 # Client-side encryption at rest
@@ -386,7 +476,7 @@ class PlexiChatServer:
                 "database_max_size": 524288,  # 512KB max for DB storage
                 # Auto-routing: route small files to database regardless of primary backend
                 "auto_route_to_database": {
-                    "enabled": False,
+                    "enabled": True,
                     "max_size": 524288,  # Files under 512KB
                     "content_types": [  # Only these types get routed to DB
                         "text/plain",
@@ -555,6 +645,8 @@ class PlexiChatServer:
                     "enabled": True,
                     "allowed_hosts": ["127.0.0.1", "localhost", "::1"],
                 },
+                # List of IP addresses or prefixes to explicitly block
+                "blocked_ips": [],
                 # Allowed origins for admin panel CORS (empty = use main api.cors_origins)
                 "allowed_origins": [],
                 # Rate limiting for admin login attempts
@@ -605,7 +697,7 @@ class PlexiChatServer:
                         "max_voice_minutes_per_day": 120,
                         "max_video_minutes_per_day": 60,
                         "max_file_uploads_per_day": 50,
-                        "max_file_size_mb": 10,
+                        "max_file_size_mb": 50,
                         "max_servers": 100,
                         "max_message_length": 2000,
                         "max_reactions_per_message": 20,
@@ -652,6 +744,21 @@ class PlexiChatServer:
                 # Rate limits for feature management endpoints (admin only)
                 "admin_rate_limit": {"max_per_minute": 30, "max_per_hour": 200},
             },
+            "monitoring": {
+                "enabled": True,
+                "log_interval": 300,
+                "metrics_enabled": True,
+                "alert_thresholds": {
+                    "cpu_percent": 80,
+                    "memory_percent": 85,
+                    "db_pool_saturation_percent": 75,
+                    "query_time_ms": 5000,
+                    "db_errors_per_minute": 10,
+                    "api_response_time_ms": 2000,
+                    "error_rate_percent": 5,
+                    "active_connections": 1000,
+                },
+            },
         }
 
     def setup_directories(self) -> None:
@@ -696,17 +803,55 @@ class PlexiChatServer:
         return config_path
 
     def _apply_env_overrides(self) -> None:
-        """Apply environment variable overrides to configuration."""
-        # DATABASE_URL override (format: postgres://user:pass@host:port/dbname or sqlite:///path)
+        """Apply environment variable overrides to configuration.
+        
+        Supports the following environment variables:
+        
+        DATABASE CONFIGURATION:
+        - DATABASE_URL: Full PostgreSQL or SQLite connection string
+        - POSTGRES_HOST: PostgreSQL host (default: localhost)
+        - POSTGRES_PORT: PostgreSQL port (default: 5432)
+        - POSTGRES_USER: PostgreSQL username (default: postgres)
+        - POSTGRES_PASSWORD: PostgreSQL password (required for production)
+        - POSTGRES_DBNAME: PostgreSQL database name (default: plexichat)
+        - POSTGRES_SSLMODE: PostgreSQL SSL mode (default: prefer)
+        
+        DATABASE CONNECTION POOL:
+        - DB_POOL_MIN_CONNECTIONS: Minimum connections (default: 1)
+        - DB_POOL_MAX_CONNECTIONS: Maximum connections (default: 10)
+        - DB_POOL_CONNECT_TIMEOUT: Connection timeout in seconds (default: 10)
+        - DB_POOL_MAX_IDLE_TIME: Idle timeout in seconds (default: 300)
+        - DB_POOL_VALIDATION_INTERVAL: Validation check interval in seconds (default: 60)
+        - DB_POOL_ENABLE_VALIDATION: Enable connection validation (default: true)
+        - DB_POOL_VALIDATION_QUERY: Query for validation (default: SELECT 1)
+        
+        MONITORING:
+        - MONITORING_ENABLED: Enable monitoring (default: true)
+        - MONITORING_LOG_INTERVAL: Metrics log interval in seconds (default: 300)
+        - MONITORING_METRICS_ENABLED: Enable metrics collection (default: true)
+        - MONITORING_ALERT_CPU_THRESHOLD: CPU alert threshold % (default: 80)
+        - MONITORING_ALERT_MEMORY_THRESHOLD: Memory alert threshold % (default: 85)
+        - MONITORING_ALERT_DB_POOL_THRESHOLD: DB pool saturation % (default: 75)
+        - MONITORING_ALERT_QUERY_TIME_MS: Query timeout alert in ms (default: 5000)
+        - MONITORING_ALERT_DB_ERRORS_PER_MINUTE: DB error rate alert (default: 10)
+        - MONITORING_ALERT_API_RESPONSE_TIME_MS: API response time alert (default: 2000)
+        - MONITORING_ALERT_ERROR_RATE_PERCENT: Error rate alert % (default: 5)
+        - MONITORING_ALERT_ACTIVE_CONNECTIONS: Connection count alert (default: 1000)
+        
+        LOGGING:
+        - LOG_LEVEL: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        """
+        import urllib.parse
+        
+        db_config = config.get("database", {})
+        
+        # Handle DATABASE_URL (takes precedence over individual env vars)
         database_url = os.getenv("DATABASE_URL")
         if database_url:
-            db_config = config.get("database", {})
             if database_url.startswith("postgres://") or database_url.startswith(
                 "postgresql://"
             ):
                 # Parse PostgreSQL URL
-                import urllib.parse
-
                 parsed = urllib.parse.urlparse(database_url)
                 db_config["type"] = "postgres"
                 db_config["postgres"] = {
@@ -725,8 +870,176 @@ class PlexiChatServer:
             elif database_url.startswith("sqlite:///"):
                 db_config["type"] = "sqlite"
                 db_config["path"] = database_url[10:]  # Remove sqlite:///
-            config.set("database", db_config)
-
+        else:
+            # Handle individual PostgreSQL environment variables
+            if not db_config.get("postgres"):
+                db_config["postgres"] = {}
+            
+            postgres_config = db_config["postgres"]
+            
+            # PostgreSQL connection credentials
+            postgres_host = os.getenv("POSTGRES_HOST")
+            if postgres_host:
+                postgres_config["host"] = postgres_host
+            
+            postgres_port = os.getenv("POSTGRES_PORT")
+            if postgres_port:
+                try:
+                    postgres_config["port"] = int(postgres_port)
+                except ValueError:
+                    logger.warning(f"Invalid POSTGRES_PORT value: {postgres_port}, using default")
+            
+            postgres_user = os.getenv("POSTGRES_USER")
+            if postgres_user:
+                postgres_config["user"] = postgres_user
+            
+            postgres_password = os.getenv("POSTGRES_PASSWORD")
+            if postgres_password:
+                postgres_config["password"] = postgres_password
+            
+            postgres_dbname = os.getenv("POSTGRES_DBNAME")
+            if postgres_dbname:
+                postgres_config["dbname"] = postgres_dbname
+            
+            postgres_sslmode = os.getenv("POSTGRES_SSLMODE")
+            if postgres_sslmode:
+                postgres_config["sslmode"] = postgres_sslmode
+        
+        # Initialize connection pool config if not present
+        if "connection_pool" not in db_config:
+            db_config["connection_pool"] = {}
+        
+        pool_config = db_config["connection_pool"]
+        
+        # Connection pool environment variables
+        db_pool_min = os.getenv("DB_POOL_MIN_CONNECTIONS")
+        if db_pool_min:
+            try:
+                pool_config["min_connections"] = int(db_pool_min)
+            except ValueError:
+                logger.warning(f"Invalid DB_POOL_MIN_CONNECTIONS value: {db_pool_min}")
+        
+        db_pool_max = os.getenv("DB_POOL_MAX_CONNECTIONS")
+        if db_pool_max:
+            try:
+                pool_config["max_connections"] = int(db_pool_max)
+            except ValueError:
+                logger.warning(f"Invalid DB_POOL_MAX_CONNECTIONS value: {db_pool_max}")
+        
+        db_pool_timeout = os.getenv("DB_POOL_CONNECT_TIMEOUT")
+        if db_pool_timeout:
+            try:
+                pool_config["connect_timeout"] = int(db_pool_timeout)
+            except ValueError:
+                logger.warning(f"Invalid DB_POOL_CONNECT_TIMEOUT value: {db_pool_timeout}")
+        
+        db_pool_idle = os.getenv("DB_POOL_MAX_IDLE_TIME")
+        if db_pool_idle:
+            try:
+                pool_config["max_idle_time"] = int(db_pool_idle)
+            except ValueError:
+                logger.warning(f"Invalid DB_POOL_MAX_IDLE_TIME value: {db_pool_idle}")
+        
+        db_pool_validation_interval = os.getenv("DB_POOL_VALIDATION_INTERVAL")
+        if db_pool_validation_interval:
+            try:
+                pool_config["validation_interval"] = int(db_pool_validation_interval)
+            except ValueError:
+                logger.warning(f"Invalid DB_POOL_VALIDATION_INTERVAL value: {db_pool_validation_interval}")
+        
+        db_pool_enable_validation = os.getenv("DB_POOL_ENABLE_VALIDATION")
+        if db_pool_enable_validation:
+            pool_config["enable_validation"] = db_pool_enable_validation.lower() in ("true", "1", "yes")
+        
+        db_pool_validation_query = os.getenv("DB_POOL_VALIDATION_QUERY")
+        if db_pool_validation_query:
+            pool_config["validation_query"] = db_pool_validation_query
+        
+        config.set("database", db_config)
+        
+        # Monitoring configuration environment variables
+        monitoring_config = config.get("monitoring", {})
+        
+        monitoring_enabled = os.getenv("MONITORING_ENABLED")
+        if monitoring_enabled:
+            monitoring_config["enabled"] = monitoring_enabled.lower() in ("true", "1", "yes")
+        
+        monitoring_log_interval = os.getenv("MONITORING_LOG_INTERVAL")
+        if monitoring_log_interval:
+            try:
+                monitoring_config["log_interval"] = int(monitoring_log_interval)
+            except ValueError:
+                logger.warning(f"Invalid MONITORING_LOG_INTERVAL value: {monitoring_log_interval}")
+        
+        monitoring_metrics = os.getenv("MONITORING_METRICS_ENABLED")
+        if monitoring_metrics:
+            monitoring_config["metrics_enabled"] = monitoring_metrics.lower() in ("true", "1", "yes")
+        
+        # Initialize alert thresholds if not present
+        if "alert_thresholds" not in monitoring_config:
+            monitoring_config["alert_thresholds"] = {}
+        
+        alert_thresholds = monitoring_config["alert_thresholds"]
+        
+        # Individual alert threshold environment variables
+        cpu_threshold = os.getenv("MONITORING_ALERT_CPU_THRESHOLD")
+        if cpu_threshold:
+            try:
+                alert_thresholds["cpu_percent"] = float(cpu_threshold)
+            except ValueError:
+                logger.warning(f"Invalid MONITORING_ALERT_CPU_THRESHOLD value: {cpu_threshold}")
+        
+        memory_threshold = os.getenv("MONITORING_ALERT_MEMORY_THRESHOLD")
+        if memory_threshold:
+            try:
+                alert_thresholds["memory_percent"] = float(memory_threshold)
+            except ValueError:
+                logger.warning(f"Invalid MONITORING_ALERT_MEMORY_THRESHOLD value: {memory_threshold}")
+        
+        db_pool_threshold = os.getenv("MONITORING_ALERT_DB_POOL_THRESHOLD")
+        if db_pool_threshold:
+            try:
+                alert_thresholds["db_pool_saturation_percent"] = float(db_pool_threshold)
+            except ValueError:
+                logger.warning(f"Invalid MONITORING_ALERT_DB_POOL_THRESHOLD value: {db_pool_threshold}")
+        
+        query_time = os.getenv("MONITORING_ALERT_QUERY_TIME_MS")
+        if query_time:
+            try:
+                alert_thresholds["query_time_ms"] = int(query_time)
+            except ValueError:
+                logger.warning(f"Invalid MONITORING_ALERT_QUERY_TIME_MS value: {query_time}")
+        
+        db_errors = os.getenv("MONITORING_ALERT_DB_ERRORS_PER_MINUTE")
+        if db_errors:
+            try:
+                alert_thresholds["db_errors_per_minute"] = int(db_errors)
+            except ValueError:
+                logger.warning(f"Invalid MONITORING_ALERT_DB_ERRORS_PER_MINUTE value: {db_errors}")
+        
+        api_response_time = os.getenv("MONITORING_ALERT_API_RESPONSE_TIME_MS")
+        if api_response_time:
+            try:
+                alert_thresholds["api_response_time_ms"] = int(api_response_time)
+            except ValueError:
+                logger.warning(f"Invalid MONITORING_ALERT_API_RESPONSE_TIME_MS value: {api_response_time}")
+        
+        error_rate = os.getenv("MONITORING_ALERT_ERROR_RATE_PERCENT")
+        if error_rate:
+            try:
+                alert_thresholds["error_rate_percent"] = float(error_rate)
+            except ValueError:
+                logger.warning(f"Invalid MONITORING_ALERT_ERROR_RATE_PERCENT value: {error_rate}")
+        
+        active_connections = os.getenv("MONITORING_ALERT_ACTIVE_CONNECTIONS")
+        if active_connections:
+            try:
+                alert_thresholds["active_connections"] = int(active_connections)
+            except ValueError:
+                logger.warning(f"Invalid MONITORING_ALERT_ACTIVE_CONNECTIONS value: {active_connections}")
+        
+        config.set("monitoring", monitoring_config)
+        
         # LOG_LEVEL override
         log_level = os.getenv("LOG_LEVEL")
         if log_level:
@@ -734,13 +1047,48 @@ class PlexiChatServer:
             log_config["level"] = log_level.upper()
             config.set("logging", log_config)
 
+    def validate_config(self) -> None:
+        """Validate current configuration against required keys and types."""
+        defaults = self.get_default_config()
+        current = config.get_all()
+        
+        missing = []
+        type_mismatches = []
+        
+        def check_recursive(d_dict, c_dict, path=""):
+            for k, v in d_dict.items():
+                current_path = f"{path}.{k}" if path else k
+                if k not in c_dict:
+                    missing.append(current_path)
+                    continue
+                
+                if isinstance(v, dict) and isinstance(c_dict[k], dict):
+                    check_recursive(v, c_dict[k], current_path)
+                elif v is not None and c_dict[k] is not None:
+                    if not isinstance(c_dict[k], type(v)):
+                        type_mismatches.append(
+                            f"{current_path}: expected {type(v).__name__}, got {type(c_dict[k]).__name__}"
+                        )
+        
+        check_recursive(defaults, current)
+        
+        if missing:
+            logger.warning(f"Missing configuration keys: {', '.join(missing)}")
+            # For some critical keys we might want to raise an error, 
+            # but for now we'll just log warnings as defaults are applied by the config util.
+            
+        if type_mismatches:
+            error_msg = f"Configuration type mismatches: {', '.join(type_mismatches)}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
     def setup_logging(self) -> None:
         """Setup logging with configured settings."""
         log_config = config.get("logging", {})
-        storage_config = config.get("storage", {})
+        media_config = config.get("media", {})
 
         # Use home folder logs dir or fallback to project logs
-        log_dir = storage_config.get("logs_dir", os.path.join(project_root, "logs"))
+        log_dir = media_config.get("logs_dir", os.path.join(project_root, "logs"))
         
         # Expand ~ to home directory
         log_dir = os.path.expanduser(log_dir)
@@ -755,7 +1103,7 @@ class PlexiChatServer:
         )
 
     def setup_utilities(self) -> None:
-        """Setup validator and version utilities."""
+        """Setup validator, version and encryption utilities."""
         validator.setup()
 
         versioning_config = config.get("versioning", {})
@@ -764,6 +1112,17 @@ class PlexiChatServer:
             min_supported_version=versioning_config.get(
                 "min_supported_version", VERSION
             ),
+        )
+
+        # Initialize encryption with config values
+        from src.utils import encryption
+        encryption_config = config.get("encryption", {})
+        encryption.setup(
+            worker_id=encryption_config.get("snowflake", {}).get("worker_id", 1) or 1,
+            datacenter_id=encryption_config.get("snowflake", {}).get("datacenter_id", 1) or 1,
+            argon2_time_cost=encryption_config.get("argon2", {}).get("time_cost", 2),
+            argon2_memory_cost=encryption_config.get("argon2", {}).get("memory_cost", 65536),
+            argon2_parallelism=encryption_config.get("argon2", {}).get("parallelism", 2),
         )
 
     def initialize_modules(
@@ -793,6 +1152,19 @@ class PlexiChatServer:
         api.set_internal_secret(internal_secret)
         logger.info("Internal security secret generated for self-test")
 
+        # Persist long-lived secrets if they don't exist
+        app_config = config.get("applications", {})
+        if not app_config.get("webhook_signature_secret"):
+            app_config["webhook_signature_secret"] = secrets.token_hex(32)
+            config.set("applications", app_config)
+            logger.info("Generated and persisted webhook_signature_secret")
+
+        rl_config = config.get("rate_limiting", {})
+        if not rl_config.get("bypass_secret"):
+            rl_config["bypass_secret"] = secrets.token_hex(32)
+            config.set("rate_limiting", rl_config)
+            logger.info("Generated and persisted rate-limit bypass_secret")
+
         failed_modules = []
 
         # Initialize database
@@ -800,9 +1172,26 @@ class PlexiChatServer:
         self.db = Database()
 
         # Run migrations
-        from src.core.database.migrations import run_all_migrations
+        from src.core.migrations import run_migrations
 
-        run_all_migrations(self.db)
+        try:
+            migration_result = run_migrations(self.db)
+            if migration_result['success']:
+                logger.info(
+                    f"Migrations applied successfully: "
+                    f"{migration_result['applied_count']} applied, "
+                    f"{migration_result['failed_count']} failed"
+                )
+            else:
+                logger.error(
+                    f"Migration process had failures: "
+                    f"{migration_result['applied_count']} applied, "
+                    f"{migration_result['failed_count']} failed"
+                )
+        except Exception as e:
+            logger.error(f"Critical error during migrations: {e}")
+            raise
+        
         self.db.connect()
 
         # Initialize Redis if enabled
@@ -993,7 +1382,7 @@ class PlexiChatServer:
                 from src.core.ratelimit.storage import (
                     RedisStorage,
                     MemoryStorage,
-                    SQLiteStorage,
+                    DatabaseStorage,
                 )
                 from src.core.database.redis_client import (
                     is_available as redis_is_available,
@@ -1005,9 +1394,10 @@ class PlexiChatServer:
                         storage = RedisStorage()
                         logger.info("Using Redis storage for rate limiting")
                     elif self.db:
-                        storage = SQLiteStorage(self.db)
+                        storage = DatabaseStorage(self.db)
+                        db_type = self.db.type.capitalize()
                         logger.info(
-                            "Using SQLite storage for rate limiting (shared across workers)"
+                            f"Using {db_type} storage for rate limiting (shared across workers)"
                         )
                     else:
                         storage = MemoryStorage()
@@ -1143,6 +1533,7 @@ class PlexiChatServer:
             events_module=self._modules.get("events"),
             notifications_module=self._modules.get("notifications"),
             threads_module=self._modules.get("threads"),
+            telemetry_module=self._modules.get("telemetry"),
         )
 
         # Get rate limiting and docs settings from config
@@ -1432,11 +1823,11 @@ Examples:
 
     # Setup logging - NOW we can use logger
     log_config = config.get("logging", {})
-    storage_config = config.get("storage", {})
-    log_dir = storage_config.get("logs_dir", os.path.join(project_root, "logs"))
+    media_config = config.get("media", {})
+    log_dir = media_config.get("logs_dir", os.path.join(project_root, "logs"))
     log_dir = os.path.expanduser(log_dir)  # Expand ~ to home directory
     
-    early_logs.append(("info", f"Initializing logger..."))
+    early_logs.append(("info", "Initializing logger..."))
     early_logs.append(("info", f"  Log directory: {log_dir}"))
     early_logs.append(("info", f"  Log level: {log_config.get('level', 'INFO')}"))
     
@@ -1460,6 +1851,16 @@ Examples:
 
     # Security warnings for default/placeholder keys
     _check_security_keys()
+
+    # Validate configuration
+    try:
+        server.validate_config()
+        logger.info("Configuration validated successfully")
+    except Exception as e:
+        logger.error(f"Configuration validation failed: {e}")
+        # Default to strict config unless explicitly disabled
+        if os.getenv("NO_STRICT_CONFIG") != "true":
+            sys.exit(1)
 
     # Setup utilities
     server.setup_utilities()
@@ -1491,6 +1892,10 @@ Examples:
 
         # Start server in background thread
         import uvicorn
+
+        if server.app is None:
+            logger.error("Failed to create FastAPI application for self-test")
+            sys.exit(1)
 
         uvi_config = uvicorn.Config(server.app, host=host, port=port, log_level="error")
         uvi_server = uvicorn.Server(uvi_config)
@@ -1570,11 +1975,11 @@ def _check_security_keys() -> None:
             if is_message_key_auto_generated():
                 warnings.append(
                     "MESSAGE ENCRYPTION: Using auto-generated key. "
-                    "BACK UP ~/.plexichat/data/.message_encryption_key - without it, encrypted messages cannot be recovered!"
+                    "Set PLEXICHAT_MESSAGE_KEY env var or back up ~/.plexichat/data/message_keyring.json"
                 )
         except Exception:
             warnings.append(
-                "messaging.encrypt_messages is enabled (back up ~/.plexichat/data/.message_encryption_key)"
+                "messaging.encrypt_messages is enabled (ensure PLEXICHAT_MESSAGE_KEY is set or back up message_keyring.json)"
             )
 
     # Log warnings
@@ -1592,3 +1997,8 @@ def _check_security_keys() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+if __name__ == "__main__":
+    main()
+

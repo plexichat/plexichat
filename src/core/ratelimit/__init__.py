@@ -37,7 +37,10 @@ from .config import (
 )
 from .manager import RateLimitManager
 from .decorators import rate_limit, custom_rate_limit
-from .middleware import RateLimitMiddleware, RateLimitMiddlewareASGI
+from .middleware import RateLimitMiddlewareASGI
+
+# Alias for backward compatibility with tests
+RateLimitMiddleware = RateLimitMiddlewareASGI
 
 __all__ = [
     "setup",
@@ -56,8 +59,8 @@ __all__ = [
     "RateLimitHeaders",
     "BucketType",
     "RateLimitAlgorithm",
-    "RateLimitMiddleware",
     "RateLimitMiddlewareASGI",
+    "RateLimitMiddleware",  # Alias
     "rate_limit",
     "custom_rate_limit",
     "DEFAULT_ROUTE_LIMITS",

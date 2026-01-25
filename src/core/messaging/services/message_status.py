@@ -4,6 +4,7 @@ Message status service - Business logic for delivery/read status.
 
 from typing import Any, Dict, List, Optional
 
+from src.core.database import cached
 from ..models import MessageStatus, MessageStatusType
 from ..repositories.message_status import MessageStatusRepository
 from ..repositories.message import MessageRepository
@@ -120,6 +121,42 @@ class MessageStatusService(BaseService):
         rows = self._repo.get_all_by_message(message_id)
         return [self._repo.row_to_model(row) for row in rows]
 
+    def get_reader_ids(self, user_id: SnowflakeID, message_id: SnowflakeID) -> List[SnowflakeID]:
+        """Get IDs of users who have read a message (sender only)."""
+        msg_row = self._message_repo.get_by_id(message_id)
+        if not msg_row:
+            return []
+            
+        # Security: only the author can see who read their message
+        if msg_row["author_id"] != user_id:
+            return []
+            
+        return self._repo.get_reader_ids(message_id)
+
+    def get_batch_reader_ids(self, user_id: SnowflakeID, message_ids: List[SnowflakeID]) -> Dict[SnowflakeID, List[SnowflakeID]]:
+        """Get IDs of users who have read messages (batch, sender only)."""
+        if not message_ids:
+            return {}
+            
+        # Get message rows to verify ownership
+        msg_rows = self._message_repo.get_batch_by_ids(message_ids)
+        
+        # Filter for messages where user is the author
+        owned_message_ids = [
+            row["id"] for row in msg_rows if row["author_id"] == user_id
+        ]
+        
+        if not owned_message_ids:
+            return {mid: [] for mid in message_ids}
+            
+        reader_map = self._repo.get_batch_reader_ids(owned_message_ids)
+        
+        # Ensure all requested IDs are in the result
+        result: Dict[SnowflakeID, List[SnowflakeID]] = {mid: [] for mid in message_ids}
+        result.update(reader_map)
+        return result
+
+    @cached(ttl=30, prefix="msg_status_batch")
     def get_batch_status_info(
         self, user_id: SnowflakeID, message_ids: List[SnowflakeID]
     ) -> Dict[SnowflakeID, Dict[str, Any]]:

@@ -83,8 +83,8 @@ class TicketResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: int = Field(..., description="Ticket ID")
-    user_id: int = Field(..., description="User ID who submitted feedback")
+    id: str = Field(..., description="Ticket ID")
+    user_id: str = Field(..., description="User ID who submitted feedback")
     username: str = Field(..., description="Username who submitted feedback")
     content: str = Field(..., description="Feedback content")
     category: Optional[str] = Field(None, description="Feedback category")
@@ -92,7 +92,7 @@ class TicketResponse(BaseModel):
     status: str = Field(..., description="Ticket status")
     created_at: int = Field(..., description="Creation timestamp")
     resolved_at: Optional[int] = Field(None, description="Resolution timestamp")
-    resolved_by: Optional[int] = Field(None, description="Admin ID who resolved it")
+    resolved_by: Optional[str] = Field(None, description="Admin ID who resolved it")
 
 
 class NoteResponse(BaseModel):
@@ -100,9 +100,9 @@ class NoteResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: int = Field(..., description="Note ID")
-    ticket_id: int = Field(..., description="Ticket ID")
-    admin_id: int = Field(..., description="Admin ID who created the note")
+    id: str = Field(..., description="Note ID")
+    ticket_id: str = Field(..., description="Ticket ID")
+    admin_id: str = Field(..., description="Admin ID who created the note")
     admin_username: str = Field(..., description="Admin username")
     content: str = Field(..., description="Note content")
     created_at: int = Field(..., description="Creation timestamp")
@@ -184,10 +184,10 @@ class HashReportResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: int = Field(..., description="Report ID")
+    id: str = Field(..., description="Report ID")
     hash_value: str = Field(..., description="SHA-256 hash")
     phash_value: Optional[str] = Field(default=None, description="Perceptual hash")
-    reporter_id: int = Field(..., description="User ID who reported")
+    reporter_id: str = Field(..., description="User ID who reported")
     reporter_username: Optional[str] = Field(
         default=None, description="Username who reported"
     )
@@ -196,12 +196,12 @@ class HashReportResponse(BaseModel):
     status: str = Field(..., description="Report status")
     reported_at: int = Field(..., description="Report timestamp")
     reviewed_at: Optional[int] = Field(default=None, description="Review timestamp")
-    reviewed_by: Optional[int] = Field(
+    reviewed_by: Optional[str] = Field(
         default=None, description="Admin ID who reviewed"
     )
     admin_notes: Optional[str] = Field(default=None, description="Admin notes")
-    uploader_id: Optional[int] = Field(default=None, description="Uploader user ID")
-    message_id: Optional[int] = Field(default=None, description="Message ID")
+    uploader_id: Optional[str] = Field(default=None, description="Uploader user ID")
+    message_id: Optional[str] = Field(default=None, description="Message ID")
     attachment_url: Optional[str] = Field(default=None, description="Attachment URL")
     block_uploader: bool = Field(False, description="Whether to block uploader")
 
@@ -211,8 +211,9 @@ class HashReportCountsResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    open: int = Field(0, description="Open reports")
-    reviewed: int = Field(0, description="Reviewed reports")
+    pending: int = Field(0, description="Pending reports")
+    blocked: int = Field(0, description="Blocked reports")
+    cleared: int = Field(0, description="Cleared reports")
     total: int = Field(0, description="Total reports")
 
 
@@ -298,6 +299,8 @@ class UserDetailsResponse(BaseModel):
     badges: List[str] = Field(..., description="User badges")
     created_at: int = Field(..., description="Creation timestamp")
     last_login: Optional[int] = Field(None, description="Last login timestamp")
+    account_locked: bool = Field(False, description="Whether account is locked")
+    locked_until: Optional[int] = Field(None, description="Lock expiration timestamp")
 
 
 class UserTierUpdateResponse(BaseModel):
@@ -345,6 +348,33 @@ class BlockUserResponse(BaseModel):
 
     success: bool = Field(..., description="Whether block was successful")
     user_id: int = Field(..., description="User ID")
+
+
+class IPBlockRequest(BaseModel):
+    """Request to block an IP address."""
+    ip_address: str = Field(..., description="IP address to block")
+    reason: Optional[str] = Field(None, max_length=500, description="Reason for blocking")
+    duration_hours: Optional[int] = Field(None, description="Duration in hours")
+
+
+class BlockedIPResponse(BaseModel):
+    """Blocked IP information."""
+    ip_address: str
+    reason: Optional[str]
+    blocked_at: int
+    blocked_by: Optional[int]
+    expires_at: Optional[int]
+
+
+class ForceLogoutRequest(BaseModel):
+    """Request to force logout a user."""
+    user_id: str = Field(..., description="User ID to logout")
+
+
+class UserLockRequest(BaseModel):
+    """Request to lock/suspend a user account."""
+    user_id: str = Field(..., description="User ID to lock")
+    duration_seconds: Optional[int] = Field(None, description="Lock duration in seconds (null for permanent)")
 
 
 class TelemetryExportResponse(BaseModel):

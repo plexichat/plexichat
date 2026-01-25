@@ -24,10 +24,36 @@ from src.api.schemas.features import (
     TiersResponse,
     BadgesResponse,
     TierLimitsResponse,
+    ServerFeaturesResponse,
 )
 from src.api.schemas.common import ErrorResponse
 
 router = APIRouter(tags=["User Features"])
+
+
+# === Public Endpoints ===
+
+
+@router.get(
+    "/features",
+    response_model=ServerFeaturesResponse,
+    summary="Get server features",
+)
+async def get_server_features() -> ServerFeaturesResponse:
+    """Get global server features and discovery information."""
+    import utils.config as config
+    from src.api.routes.docs import is_docs_enabled
+    
+    auth_config = config.get("authentication", {})
+    accounts_config = auth_config.get("accounts", {})
+    
+    return ServerFeaturesResponse(
+        docs_enabled=is_docs_enabled(),
+        age_restriction_enabled=accounts_config.get("age_gate_enabled", False),
+        minimum_age=accounts_config.get("minimum_age", 13),
+        registration_enabled=accounts_config.get("allow_registration", True),
+        version=config.get("api.version", "unknown")
+    )
 
 
 # === Helper Functions ===

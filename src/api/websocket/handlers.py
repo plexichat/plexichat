@@ -5,6 +5,7 @@ Opcode handlers - Handle incoming gateway messages.
 from typing import Optional, Dict, Any, Tuple, List, TYPE_CHECKING
 
 import utils.logger as logger
+import src.core.events as events_mod
 
 from .opcodes import GatewayOpcode, GatewayCloseCode
 from .connection import Connection, ConnectionState
@@ -474,6 +475,83 @@ class OpcodeHandler:
         """Handle request guild members opcode."""
         if not connection.is_authenticated:
             return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+
+        if not data or "guild_id" not in data:
+            return None, None, None
+
+        try:
+            guild_id = int(data["guild_id"])
+        except (ValueError, TypeError):
+            return None, None, None
+
+        if not self._servers or not self._auth or not self._presence:
+            return None, None, None
+
+        user_id = connection.user_id
+        assert user_id is not None
+
+        # 1. Verify user is a member of the guild
+        try:
+            member = self._servers.get_member(guild_id, user_id)
+            if not member:
+                return None, None, None
+        except Exception:
+            return None, None, None
+
+        # 2. Get members (for now, just get first 1000)
+        try:
+            members = self._servers.get_members(user_id, guild_id, limit=1000)
+            if not members:
+                return None, None, None
+
+            user_ids = [m.user_id for m in members]
+            
+            # Bulk fetch user data
+            users_map = self._auth.get_users_bulk(user_ids)
+            
+            # Bulk fetch presence data
+            presence_map = {}
+            try:
+                presence_map = self._presence.get_visible_presences_bulk(user_id, user_ids)
+            except Exception as e:
+                logger.warning(f"WS: Failed to get bulk presence for server {guild_id}: {e}")
+
+            member_list = []
+            for m in members:
+                u_id = m.user_id
+                user = users_map.get(u_id)
+                
+                pres = presence_map.get(u_id)
+                status = "offline"
+                if pres:
+                    status_obj = getattr(pres, "status", None)
+                    status = str(status_obj.value if hasattr(status_obj, "value") else status_obj) if status_obj else "offline"
+
+                member_list.append({
+                    "user_id": str(u_id),
+                    "username": user.username if user else f"User {u_id}",
+                    "nickname": m.nickname,
+                    "avatar_url": getattr(user, "avatar_url", None) or getattr(m, "avatar_url", None),
+                    "joined_at": m.joined_at,
+                    "roles": [str(r) for r in (m.roles or [])],
+                    "presence": {"status": status}
+                })
+
+            # 3. Dispatch chunk
+            from src.api.websocket import get_dispatcher
+            dispatcher = get_dispatcher()
+            
+            event = events_mod.create_guild_members_chunk(
+                server_id=guild_id,
+                members=member_list,
+                chunk_index=0,
+                chunk_count=1
+            )
+            
+            await dispatcher.dispatch_to_connection(connection, event)
+            
+        except Exception as e:
+            logger.error(f"WS: Failed to process guild members request for {guild_id}: {e}", exc_info=True)
 
         return None, None, None
 

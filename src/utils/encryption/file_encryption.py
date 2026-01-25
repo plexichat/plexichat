@@ -23,7 +23,7 @@ from .core import Keyring
 # File format constants
 FILE_MAGIC = b"PXENC"  # PlexiChat Encrypted
 FILE_VERSION = 1
-CHUNK_SIZE = 64 * 1024  # 64KB chunks for streaming
+CHUNK_SIZE = 256 * 1024  # 256KB chunks for streaming
 NONCE_SIZE = 12
 TAG_SIZE = 16
 KEY_SIZE = 32
@@ -78,7 +78,8 @@ class FileEncryptor:
         from pathlib import Path
 
         self.keyring = keyring or Keyring(
-            Path.home() / ".plexichat" / "data" / "file_keyring.json"
+            Path.home() / ".plexichat" / "data" / "file_keyring.json",
+            env_var="PLEXICHAT_MEDIA_KEY"
         )
         self._ensure_key()
 
@@ -345,7 +346,8 @@ class StreamingFileEncryptor:
         from pathlib import Path
 
         self.keyring = keyring or Keyring(
-            Path.home() / ".plexichat" / "data" / "file_keyring.json"
+            Path.home() / ".plexichat" / "data" / "file_keyring.json",
+            env_var="PLEXICHAT_MEDIA_KEY"
         )
         self.chunk_size = chunk_size
         self._ensure_key()
@@ -527,6 +529,91 @@ class StreamingFileEncryptor:
             "original_size": original_size,
             "verified": verified,
         }
+
+    def decrypt_stream_generator(
+        self,
+        input_stream: BinaryIO,
+        aad: Optional[bytes] = None,
+        verify_checksum: bool = True,
+    ):
+        """
+        Decrypt a stream in chunks and yield them (generator).
+
+        Args:
+            input_stream: Input file-like object (encrypted)
+            aad: Additional Authenticated Data
+            verify_checksum: Whether to verify final checksum
+
+        Yields:
+            Decrypted chunks of data
+        """
+        # Read header
+        magic = input_stream.read(5)
+        if magic != FILE_MAGIC:
+            raise ValueError("Invalid encrypted file")
+
+        version = struct.unpack(">B", input_stream.read(1))[0]
+        if version != FILE_VERSION:
+            raise ValueError(f"Unsupported version: {version}")
+
+        key_version = struct.unpack(">I", input_stream.read(4))[0]
+        wrapped_key_len = struct.unpack(">H", input_stream.read(2))[0]
+        wrapped_key = input_stream.read(wrapped_key_len)
+        original_size = struct.unpack(">Q", input_stream.read(8))[0]
+        # Skip chunk_size field from header
+        input_stream.read(4)
+
+        # Unwrap DEK
+        _, kek = self.keyring.get_key(key_version)
+        kek_cipher = AESGCM(kek)
+        wrap_nonce = wrapped_key[:NONCE_SIZE]
+        dek = kek_cipher.decrypt(wrap_nonce, wrapped_key[NONCE_SIZE:], None)
+        cipher = AESGCM(dek)
+
+        # Decrypt chunks
+        hasher = hashlib.sha256()
+        chunk_index = 0
+        total_decrypted = 0
+
+        while total_decrypted < original_size:
+            # Read chunk nonce
+            chunk_nonce = input_stream.read(NONCE_SIZE)
+            if len(chunk_nonce) < NONCE_SIZE:
+                break
+
+            # Read encrypted chunk length
+            len_bytes = input_stream.read(4)
+            if len(len_bytes) < 4:
+                break
+            encrypted_len = struct.unpack(">I", len_bytes)[0]
+
+            # Read encrypted chunk
+            encrypted_chunk = input_stream.read(encrypted_len)
+            if len(encrypted_chunk) < encrypted_len:
+                raise ValueError("Truncated encrypted data")
+
+            # Reconstruct AAD
+            chunk_aad = struct.pack(">Q", chunk_index)
+            if aad:
+                chunk_aad = aad + chunk_aad
+
+            # Decrypt and yield
+            chunk = cipher.decrypt(chunk_nonce, encrypted_chunk, chunk_aad)
+            hasher.update(chunk)
+            yield chunk
+
+            chunk_index += 1
+            total_decrypted += len(chunk)
+
+        # Verify checksum
+        if verify_checksum:
+            try:
+                stored_checksum = input_stream.read(64).decode("ascii")
+                computed_checksum = hasher.hexdigest()
+                if stored_checksum != computed_checksum:
+                    logger.warning("Stream checksum mismatch")
+            except Exception as e:
+                logger.warning(f"Failed to verify stream checksum: {e}")
 
 
 # Module-level convenience functions

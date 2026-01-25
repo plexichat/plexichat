@@ -15,6 +15,8 @@ Features:
 
 import json
 import time
+import dataclasses
+from enum import Enum
 from typing import Any, Dict, List, Optional, Union, Set, cast
 
 import utils.config as config
@@ -22,7 +24,21 @@ import utils.logger as logger
 
 # Type aliases
 RedisValue = Union[str, bytes, int, float]
-JsonSerializable = Union[dict, list, str, int, float, bool, None]
+JsonSerializable = Union[dict, list, str, int, float, bool, None, object]
+
+
+class EnhancedJSONEncoder(json.JSONEncoder):
+    """JSON encoder that handles dataclasses, enums, and sets."""
+    def default(self, o):
+        if dataclasses.is_dataclass(o):
+            return dataclasses.asdict(o)
+        if isinstance(o, Enum):
+            return o.value
+        if isinstance(o, set):
+            return list(o)
+        if hasattr(o, "to_dict"):
+            return o.to_dict()
+        return super().default(o)
 
 
 class RedisError(Exception):
@@ -71,7 +87,9 @@ class RedisClient:
         self.config = config.get("redis") or {}
         self.enabled = self.config.get("enabled", False)
         self._client: Any = None
+        self._bin_client: Any = None
         self._pool: Any = None
+        self._bin_pool: Any = None
         self._pubsub: Any = None
         self._connected = False
 
@@ -157,6 +175,12 @@ class RedisClient:
             self._pool = redis.ConnectionPool(**pool_kwargs)
             self._client = redis.Redis(connection_pool=self._pool)
 
+            # Build binary connection pool (no decoding)
+            bin_pool_kwargs = pool_kwargs.copy()
+            bin_pool_kwargs["decode_responses"] = False
+            self._bin_pool = redis.ConnectionPool(**bin_pool_kwargs)
+            self._bin_client = redis.Redis(connection_pool=self._bin_pool)
+
             # Test connection
             self._client.ping()
             self._connected = True
@@ -221,6 +245,32 @@ class RedisClient:
             logger.error(f"Redis SET failed for {key}: {e}")
             raise RedisOperationError(f"SET failed: {e}")
 
+    def set_bin(self, key: str, value: bytes, ttl: Optional[int] = None) -> bool:
+        """
+        Set a binary key-value pair.
+
+        Args:
+            key: The key name.
+            value: The binary value to store.
+            ttl: Time-to-live in seconds (optional).
+
+        Returns:
+            True if successful.
+        """
+        self._ensure_connected()
+        full_key = self._prefixed_key(self._sanitize_key(key))
+
+        try:
+            if ttl:
+                self._bin_client.setex(full_key, ttl, value)
+            else:
+                self._bin_client.set(full_key, value)
+            logger.debug(f"Redis SET (binary): {key}")
+            return True
+        except Exception as e:
+            logger.error(f"Redis SET (binary) failed for {key}: {e}")
+            raise RedisOperationError(f"SET failed: {e}")
+
     def get(self, key: str) -> Optional[str]:
         """
         Get a value by key.
@@ -240,6 +290,27 @@ class RedisClient:
             return value
         except Exception as e:
             logger.error(f"Redis GET failed for {key}: {e}")
+            raise RedisOperationError(f"GET failed: {e}")
+
+    def get_bin(self, key: str) -> Optional[bytes]:
+        """
+        Get a binary value by key.
+
+        Args:
+            key: The key name.
+
+        Returns:
+            The binary value or None if not found.
+        """
+        self._ensure_connected()
+        full_key = self._prefixed_key(self._sanitize_key(key))
+
+        try:
+            value = self._bin_client.get(full_key)
+            logger.debug(f"Redis GET (binary): {key} -> {'found' if value else 'miss'}")
+            return value
+        except Exception as e:
+            logger.error(f"Redis GET (binary) failed for {key}: {e}")
             raise RedisOperationError(f"GET failed: {e}")
 
     def delete(self, *keys: str) -> int:
@@ -310,7 +381,7 @@ class RedisClient:
             ttl: Time-to-live in seconds (optional).
         """
         try:
-            json_str = json.dumps(value, separators=(",", ":"))
+            json_str = json.dumps(value, separators=(",", ":"), cls=EnhancedJSONEncoder)
             return self.set(key, json_str, ttl)
         except (TypeError, ValueError) as e:
             logger.error(f"JSON serialization failed for {key}: {e}")
@@ -863,4 +934,4 @@ def get_client() -> Optional[RedisClient]:
 
 def is_available() -> bool:
     """Check if Redis is available and connected."""
-    return _default_client is not None and _default_client.ping()
+    return _default_client is not None and _default_client._connected

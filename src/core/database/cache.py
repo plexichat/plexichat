@@ -16,6 +16,9 @@ Features:
 import json
 import hashlib
 import time
+import inspect
+import dataclasses
+from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, cast
 from functools import wraps
 
@@ -38,6 +41,25 @@ _cache_stats = {
     "errors": 0,
 }
 
+# Simple in-memory fallback cache
+_mem_cache: Dict[str, Tuple[float, Any]] = {}
+_MEM_CACHE_MAX_SIZE = 1000
+
+def _mem_cache_get(key: str) -> Optional[Any]:
+    if key in _mem_cache:
+        expiry, value = _mem_cache[key]
+        if expiry > time.time():
+            return value
+        del _mem_cache[key]
+    return None
+
+def _mem_cache_set(key: str, value: Any, ttl: int):
+    if len(_mem_cache) >= _MEM_CACHE_MAX_SIZE:
+        # Very simple eviction: clear half the cache if it gets too big
+        keys = list(_mem_cache.keys())
+        for k in keys[:_MEM_CACHE_MAX_SIZE // 2]:
+            del _mem_cache[k]
+    _mem_cache[key] = (time.time() + ttl, value)
 
 class CacheError(Exception):
     """Base exception for cache operations."""
@@ -60,24 +82,116 @@ def _generate_cache_key(prefix: str, *args, **kwargs) -> str:
     # Build a string representation of arguments
     key_parts = [prefix]
 
+    def process_val(val):
+        if hasattr(val, "__class__"):
+            class_name = val.__class__.__name__
+            if class_name in ("TokenInfo", "User"):
+                # Only use user_id to avoid cache fragmentation by session/expiry
+                uid = getattr(val, "user_id", None) or getattr(val, "id", "unknown")
+                return f"{class_name}:{uid}"
+            
+            # Check for core managers by looking at the module or base classes
+            from src.core.base import BaseManager
+            if isinstance(val, BaseManager):
+                return f"Manager:{class_name}"
+                
+        if isinstance(val, (dict, list)):
+            return f"{type(val).__name__}:{hashlib.md5(json.dumps(val, sort_keys=True).encode()).hexdigest()[:8]}"
+        return f"{type(val).__name__}:{val}"
+
     for arg in args:
-        if isinstance(arg, (dict, list)):
-            key_parts.append(
-                f"{type(arg).__name__}:{hashlib.md5(json.dumps(arg, sort_keys=True).encode()).hexdigest()[:8]}"
-            )
-        else:
-            key_parts.append(f"{type(arg).__name__}:{arg}")
+        key_parts.append(process_val(arg))
 
     for k, v in sorted(kwargs.items()):
-        if isinstance(v, (dict, list)):
-            key_parts.append(
-                f"{k}:{type(v).__name__}:{hashlib.md5(json.dumps(v, sort_keys=True).encode()).hexdigest()[:8]}"
-            )
-        else:
-            key_parts.append(f"{k}:{type(v).__name__}:{v}")
+        key_parts.append(f"{k}:{process_val(v)}")
 
     return ":".join(key_parts)
 
+
+def _ensure_serializable(obj: Any) -> Any:
+    """Ensure an object is JSON serializable, recursively converting complex types."""
+    if obj is None or isinstance(obj, (bool, int, float, str)):
+        return obj
+    
+    if isinstance(obj, Enum):
+        return obj.value
+        
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        data = _ensure_serializable(dataclasses.asdict(obj))
+        if isinstance(data, dict):
+            data["__type__"] = f"{obj.__class__.__module__}.{obj.__class__.__name__}"
+        return data
+        
+    if isinstance(obj, (list, tuple, set)):
+        return [_ensure_serializable(item) for item in obj]
+        
+    if isinstance(obj, dict):
+        return {str(k): _ensure_serializable(v) for k, v in obj.items()}
+    
+    # Handle Pydantic models (common in API responses)
+    if hasattr(obj, "model_dump") and callable(obj.model_dump):
+        data = _ensure_serializable(obj.model_dump())
+        if isinstance(data, dict):
+            data["__type__"] = f"{obj.__class__.__module__}.{obj.__class__.__name__}"
+        return data
+    if hasattr(obj, "dict") and callable(obj.dict):
+        data = _ensure_serializable(obj.dict())
+        if isinstance(data, dict):
+            data["__type__"] = f"{obj.__class__.__module__}.{obj.__class__.__name__}"
+        return data
+        
+    # Last resort fallback for custom types that might behave like strings (e.g. SnowflakeID)
+    if hasattr(obj, "__str__") and not isinstance(obj, (dict, list, tuple)):
+        return str(obj)
+        
+    return obj
+
+# Type registry for reconstruction
+_TYPE_REGISTRY = {}
+
+def _get_type_from_name(type_name: str) -> Optional[type]:
+    """Dynamically load and cache types for reconstruction."""
+    if type_name in _TYPE_REGISTRY:
+        return _TYPE_REGISTRY[type_name]
+    
+    try:
+        module_path, class_name = type_name.rsplit(".", 1)
+        import importlib
+        module = importlib.import_module(module_path)
+        cls = getattr(module, class_name)
+        _TYPE_REGISTRY[type_name] = cls
+        return cls
+    except Exception:
+        return None
+
+def _reconstruct_object(data: Any) -> Any:
+    """Recursively reconstruct objects from dictionaries using __type__ hints."""
+    if isinstance(data, list):
+        return [_reconstruct_object(item) for item in data]
+    
+    if isinstance(data, dict):
+        if "__type__" in data:
+            type_name = data.pop("__type__")
+            cls = _get_type_from_name(type_name)
+            
+            if not cls:
+                return data
+                
+            # Reconstruct children of this object
+            reconstructed_params = {k: _reconstruct_object(v) for k, v in data.items()}
+            
+            try:
+                if issubclass(cls, Enum):
+                    return cls(reconstructed_params)
+                return cls(**reconstructed_params)
+            except Exception as e:
+                logger.debug(f"Failed to reconstruct {type_name}: {e}")
+                return reconstructed_params
+        else:
+            # Plain dict, but recurse into values
+            return {k: _reconstruct_object(v) for k, v in data.items()}
+            
+    return data
 
 def cached(
     ttl: Optional[int] = None,
@@ -93,22 +207,77 @@ def cached(
         prefix: Custom key prefix. Defaults to function name.
         key_builder: Custom function to build cache key from arguments.
         skip_cache_if: Function that returns True to skip caching for this call.
-
-    Usage:
-        @cached(ttl=300)
-        def get_user(user_id: int) -> dict:
-            return db.fetch_one("SELECT * FROM users WHERE id = ?", (user_id,))
-
-        @cached(ttl=60, prefix="server")
-        def get_server_info(server_id: int) -> dict:
-            return expensive_operation(server_id)
-
-        @cached(key_builder=lambda user_id, **kw: f"user:{user_id}")
-        def get_user_profile(user_id: int, include_stats: bool = False) -> dict:
-            ...
     """
 
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
+        is_async = inspect.iscoroutinefunction(func)
+
+        @wraps(func)
+        async def async_wrapper(*args, **kwargs) -> T:
+            global _cache_stats
+
+            # Check if we should skip caching
+            if skip_cache_if and skip_cache_if(*args, **kwargs):
+                return await func(*args, **kwargs)
+
+            # Check if Redis is available
+            client = get_client()
+            redis_ready = client and is_available()
+
+            # Generate cache key
+            key_prefix = prefix or f"cache:{func.__module__}.{func.__name__}"
+            if key_builder:
+                cache_key = key_builder(*args, **kwargs)
+            else:
+                cache_key = _generate_cache_key(key_prefix, *args, **kwargs)
+
+            # Try to get from cache (Redis then Memory)
+            if redis_ready:
+                try:
+                    cached_value = client.get_json(cache_key)
+                    if cached_value is not None:
+                        _cache_stats["hits"] += 1
+                        logger.debug(
+                            f"CACHE HIT (Redis): {cache_key} (total hits: {_cache_stats['hits']})"
+                        )
+                        return cast(T, _reconstruct_object(cached_value))
+                except RedisOperationError:
+                    _cache_stats["errors"] += 1
+            else:
+                cached_value = _mem_cache_get(cache_key)
+                if cached_value is not None:
+                    _cache_stats["hits"] += 1
+                    logger.debug(
+                        f"CACHE HIT (Memory): {cache_key} (total hits: {_cache_stats['hits']})"
+                    )
+                    return cast(T, _reconstruct_object(cached_value))
+
+            # Cache miss - execute function
+            _cache_stats["misses"] += 1
+            logger.debug(
+                f"CACHE MISS: {cache_key} (total misses: {_cache_stats['misses']})"
+            )
+
+            result = await func(*args, **kwargs)
+            serializable_result = _ensure_serializable(result)
+
+            # Store in cache (Redis and/or Memory)
+            cache_ttl = ttl if ttl is not None else (client.ttl_cache if redis_ready else 300)
+            
+            if redis_ready:
+                try:
+                    client.set_json(
+                        cache_key, cast(JsonSerializable, serializable_result), ttl=cache_ttl
+                    )
+                except RedisOperationError as e:
+                    _cache_stats["errors"] += 1
+                    logger.warning(f"Failed to cache result for {cache_key}: {e}")
+            
+            # Always store in memory as well for fastest possible second-hit or as fallback
+            _mem_cache_set(cache_key, serializable_result, cache_ttl)
+
+            return result
+
         @wraps(func)
         def wrapper(*args, **kwargs) -> T:
             global _cache_stats
@@ -119,8 +288,7 @@ def cached(
 
             # Check if Redis is available
             client = get_client()
-            if not client or not is_available():
-                return func(*args, **kwargs)
+            redis_ready = client and is_available()
 
             # Generate cache key
             key_prefix = prefix or f"cache:{func.__module__}.{func.__name__}"
@@ -129,41 +297,57 @@ def cached(
             else:
                 cache_key = _generate_cache_key(key_prefix, *args, **kwargs)
 
-            # Try to get from cache
-            try:
-                cached_value = client.get_json(cache_key)
+            # Try to get from cache (Redis then Memory)
+            if redis_ready:
+                try:
+                    cached_value = client.get_json(cache_key)
+                    if cached_value is not None:
+                        _cache_stats["hits"] += 1
+                        logger.debug(
+                            f"CACHE HIT (Redis): {cache_key} (total hits: {_cache_stats['hits']})"
+                        )
+                        return cast(T, _reconstruct_object(cached_value))
+                except RedisOperationError:
+                    _cache_stats["errors"] += 1
+            else:
+                cached_value = _mem_cache_get(cache_key)
                 if cached_value is not None:
                     _cache_stats["hits"] += 1
-                    logger.info(
-                        f"CACHE HIT: {cache_key} (total hits: {_cache_stats['hits']})"
+                    logger.debug(
+                        f"CACHE HIT (Memory): {cache_key} (total hits: {_cache_stats['hits']})"
                     )
-                    return cast(T, cached_value)
-            except RedisOperationError:
-                _cache_stats["errors"] += 1
-                # Fall through to execute function
+                    return cast(T, _reconstruct_object(cached_value))
 
             # Cache miss - execute function
             _cache_stats["misses"] += 1
-            logger.info(
+            logger.debug(
                 f"CACHE MISS: {cache_key} (total misses: {_cache_stats['misses']})"
             )
 
             result = func(*args, **kwargs)
+            serializable_result = _ensure_serializable(result)
 
-            # Store in cache
-            try:
-                cache_ttl = ttl if ttl is not None else client.ttl_cache
-                client.set_json(
-                    cache_key, cast(JsonSerializable, result), ttl=cache_ttl
-                )
-            except RedisOperationError as e:
-                _cache_stats["errors"] += 1
-                logger.warning(f"Failed to cache result for {cache_key}: {e}")
+            # Store in cache (Redis and/or Memory)
+            cache_ttl = ttl if ttl is not None else (client.ttl_cache if redis_ready else 300)
+            
+            if redis_ready:
+                try:
+                    client.set_json(
+                        cache_key, cast(JsonSerializable, serializable_result), ttl=cache_ttl
+                    )
+                except RedisOperationError as e:
+                    _cache_stats["errors"] += 1
+                    logger.warning(f"Failed to cache result for {cache_key}: {e}")
+            
+            # Always store in memory as well for fastest possible second-hit or as fallback
+            _mem_cache_set(cache_key, serializable_result, cache_ttl)
 
             return result
 
+        final_wrapper = async_wrapper if is_async else wrapper
+
         # Add cache control methods to the wrapper
-        wrapper_any = cast(Any, wrapper)
+        wrapper_any = cast(Any, final_wrapper)
         wrapper_any.cache_key_prefix = (
             prefix or f"cache:{func.__module__}.{func.__name__}"
         )
@@ -173,7 +357,7 @@ def cached(
             else _generate_cache_key(wrapper_any.cache_key_prefix, *args, **kwargs)
         )
 
-        return wrapper
+        return final_wrapper
 
     return decorator
 

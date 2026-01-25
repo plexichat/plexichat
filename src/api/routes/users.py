@@ -61,11 +61,23 @@ def _user_to_response(user, include_private: bool = False) -> UserResponse:
 def _user_to_public_response(user) -> UserPublicResponse:
     """Convert user object or dict to public response model."""
     try:
+        user_id = _get_attr(user, "id")
+        
+        # Fetch badges from features module
+        badges = []
+        try:
+            from src.core import features
+            if features._setup_complete:
+                badges = features.get_user_badges(user_id)
+        except Exception as e:
+            logger.debug(f"Failed to fetch badges for user {user_id}: {e}")
+
         return UserPublicResponse(
-            id=SnowflakeID(_get_attr(user, "id")),
+            id=SnowflakeID(user_id),
             username=str(_get_attr(user, "username") or ""),
             avatar_url=_get_attr(user, "avatar_url"),
             created_at=int(_get_attr(user, "created_at") or 0),
+            badges=badges,
         )
     except Exception as e:
         logger.error(f"Error converting user object to public response: {e}")
@@ -109,7 +121,7 @@ def _get_user_cached(user_id: int):
 
 
 # Apply caching to the internal function (60s TTL for user data)
-_get_user_cached = cached(ttl=60, prefix="user")(_get_user_cached)
+_get_user_cached = cached(ttl=60, prefix="user_api")(_get_user_cached)
 
 
 @router.get(

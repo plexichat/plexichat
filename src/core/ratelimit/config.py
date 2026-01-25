@@ -25,7 +25,7 @@ def _build_global_limit() -> RateLimitConfig:
 def _build_user_limit() -> RateLimitConfig:
     """Build user rate limit from config."""
     return RateLimitConfig(
-        requests=app_config.get("rate_limiting.user.requests", 120),
+        requests=app_config.get("rate_limiting.user.requests", 70),
         window_seconds=app_config.get("rate_limiting.user.window_seconds", 60.0),
         burst=app_config.get("rate_limiting.user.burst", 20),
         algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
@@ -38,7 +38,7 @@ def _build_user_limit() -> RateLimitConfig:
 def _build_ip_limit() -> RateLimitConfig:
     """Build IP rate limit from config."""
     return RateLimitConfig(
-        requests=app_config.get("rate_limiting.ip.requests", 60),
+        requests=app_config.get("rate_limiting.ip.requests", 70),
         window_seconds=app_config.get("rate_limiting.ip.window_seconds", 60.0),
         burst=app_config.get("rate_limiting.ip.burst", 10),
         algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
@@ -193,8 +193,8 @@ DEFAULT_ROUTE_LIMITS: Dict[str, RateLimitConfig] = {
         scope=BucketType.ROUTE,
     ),
     "POST /channels/{id}/messages": RateLimitConfig(
-        requests=5,
-        window_seconds=5.0,
+        requests=app_config.get("rate_limiting.routes.send_message.requests", 5),
+        window_seconds=app_config.get("rate_limiting.routes.send_message.window", 5.0),
         burst=3,
         algorithm=RateLimitAlgorithm.TOKEN_BUCKET,
         scope=BucketType.RESOURCE,

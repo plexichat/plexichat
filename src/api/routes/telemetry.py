@@ -72,16 +72,22 @@ async def submit_response_times(
 
         accepted_count = 0
         try:
-            for entry in submission.entries:
-                telemetry.record_response_time(
-                    endpoint=entry.endpoint,
-                    method=entry.method,
-                    response_time_ms=entry.response_time_ms,
-                    status_code=entry.status_code,
-                    user_id=user_id,
-                    timestamp=entry.timestamp,
-                )
-                accepted_count += 1
+            # Map API schema to core module expected format
+            core_entries = [
+                {
+                    "endpoint": entry.endpoint,
+                    "method": entry.method,
+                    "response_time_ms": entry.response_time_ms,
+                    "status_code": entry.status_code,
+                    "timestamp": entry.timestamp,
+                }
+                for entry in submission.entries
+            ]
+            
+            accepted_count = telemetry.submit_response_times(
+                entries=core_entries,
+                client_id=str(user_id) if user_id else None
+            )
         except Exception as te:
             logger.error(
                 f"Error recording telemetry entries from {client_ip} (user: {user_id}): {te}",

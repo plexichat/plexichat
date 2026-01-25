@@ -6,6 +6,7 @@ and database interactions.
 """
 
 import json
+import re
 import secrets
 import string
 from typing import Optional, List, Dict, Any, Union
@@ -61,7 +62,13 @@ from .permissions import (
     can_manage_role,
     can_manage_member,
 )
-from src.core.database import cache_get, cache_set, cache_delete, redis_available
+from src.core.database import (
+    cache_get,
+    cache_set,
+    cache_delete,
+    redis_available,
+    cached,
+)
 from src.core.database.collections import CappedDict
 
 
@@ -172,12 +179,36 @@ class ServerManager(BaseManager):
 
         return name
 
-    def _validate_channel_name(self, name: str) -> str:
-        """Validate and sanitize channel name."""
+    def _validate_channel_name(
+        self, name: str, channel_type: ChannelType = ChannelType.TEXT
+    ) -> str:
+        """Validate and sanitize channel name.
+        
+        Text and announcement channels are strictly lowercase, alphanumeric, and hyphenated (no unicode).
+        Voice and stage channels allow spaces and mixed case but are also sanitized for security.
+        """
         if not name or not name.strip():
             raise InvalidChannelNameError("Channel name cannot be empty")
 
-        name = name.strip().lower().replace(" ", "-")
+        name = name.strip()
+        
+        # Strict ASCII-only hyphenated naming for text-based channels
+        if channel_type in (ChannelType.TEXT, ChannelType.ANNOUNCEMENT):
+            # Convert to lowercase, replace multiple spaces/non-alphanumeric with single hyphen
+            name = name.lower()
+            name = re.sub(r"[^a-z0-9]+", "-", name)
+            # Remove leading/trailing hyphens
+            name = name.strip("-")
+            
+            if not name:
+                raise InvalidChannelNameError("Channel name must contain alphanumeric characters")
+        else:
+            # Voice/Stage: Allow more characters but collapse multiple spaces and remove dangerous ones
+            name = re.sub(r"\s+", " ", name)
+            # Remove non-printable and potentially dangerous characters (keep ASCII mostly)
+            name = re.sub(r"[^\x20-\x7E]", "", name)
+            name = name.strip()
+
         max_len = self._config.get("channel_name_max_length", 100)
 
         if len(name) > max_len:
@@ -372,7 +403,7 @@ class ServerManager(BaseManager):
         if redis_available():
             cached = cache_get(cache_key)
             if cached:
-                logger.info(f"get_server: cache hit for {server_id}")
+                logger.debug(f"get_server: cache hit for {server_id}")
                 return self._dict_to_server(cached)
 
         row = self._db.fetch_one(
@@ -386,11 +417,10 @@ class ServerManager(BaseManager):
         )
 
         if not row:
-            logger.warning(
+            logger.debug(
                 f"get_server: server {server_id} NOT FOUND in database (or deleted)"
             )
             return None
-
         server = self._row_to_server(row)
 
         # Cache the server data (5 minute TTL)
@@ -583,7 +613,7 @@ class ServerManager(BaseManager):
 
         self.require_permission(user_id, server_id, "channels.manage")
 
-        name = self._validate_channel_name(name)
+        name = self._validate_channel_name(name, channel_type)
 
         if category_id:
             cat = self._db.fetch_one(
@@ -734,7 +764,7 @@ class ServerManager(BaseManager):
                 (channel_id,),
             )
             if not row:
-                logger.warning(
+                logger.debug(
                     f"get_channel: channel {channel_id} NOT FOUND in database (or deleted)"
                 )
                 return None
@@ -816,7 +846,7 @@ class ServerManager(BaseManager):
         changes = {}
 
         if name is not None:
-            name = self._validate_channel_name(name)
+            name = self._validate_channel_name(name, channel.channel_type)
             updates.append("name = ?")
             params.append(name)
             changes["name"] = {"old": channel.name, "new": name}
@@ -1235,6 +1265,32 @@ class ServerManager(BaseManager):
             server_id, user_id, AuditLogAction.MEMBER_JOIN, "member", user_id
         )
 
+        # Add user to all existing channel conversations in this server
+        if self._messaging:
+            try:
+                # Fetch all text channels for this server
+                channels = self._db.fetch_all(
+                    "SELECT conversation_id FROM srv_channels WHERE server_id = ? AND channel_type = ? AND deleted = 0",
+                    (server_id, ChannelType.TEXT.value)
+                )
+                for ch in channels:
+                    if ch["conversation_id"]:
+                        try:
+                            # Use default role for participant
+                            from src.core.messaging.models import ParticipantRole
+                            self._messaging.add_participant(
+                                conversation_id=ch["conversation_id"],
+                                user_id=user_id,
+                                role=ParticipantRole.USER
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to add new member {user_id} to conversation {ch['conversation_id']}: {e}")
+            except Exception as e:
+                logger.error(f"Error adding member {user_id} to server conversations: {e}")
+
+        # Invalidate member cache for the joining user
+        self._cache_invalidate(self._member_cache, (server_id, user_id))
+
         logger.debug(f"Added member {user_id} to server {server_id}")
 
         result = self.get_member(server_id, user_id)
@@ -1255,6 +1311,7 @@ class ServerManager(BaseManager):
 
         return self._row_to_member(row)
 
+    @cached(ttl=30, prefix="server_members")
     def get_members(
         self,
         user_id: SnowflakeID,
@@ -1279,8 +1336,26 @@ class ServerManager(BaseManager):
         params.append(limit)
 
         rows = self._db.fetch_all(query, tuple(params))
+        if not rows:
+            return []
 
-        return [self._row_to_member(row) for row in rows]
+        # Bulk fetch roles for all members to avoid N+1
+        member_ids = [row["id"] for row in rows]
+        placeholders = ",".join("?" for _ in member_ids)
+        role_rows = self._db.fetch_all(
+            f"SELECT member_id, role_id FROM srv_member_roles WHERE member_id IN ({placeholders})",
+            tuple(member_ids)
+        )
+        
+        # Map roles to members
+        roles_map = {}
+        for rr in role_rows:
+            mid = rr["member_id"]
+            if mid not in roles_map:
+                roles_map[mid] = []
+            roles_map[mid].append(rr["role_id"])
+
+        return [self._row_to_member(row, roles=roles_map.get(row["id"], [])) for row in rows]
 
     def get_member_user_ids(
         self,
@@ -1412,6 +1487,16 @@ class ServerManager(BaseManager):
             "DELETE FROM srv_members WHERE server_id = ? AND user_id = ?",
             (server_id, user_id),
         )
+
+        # Invalidate caches for the user leaving
+        self._cache_invalidate(self._member_cache, (server_id, user_id))
+        self._cache_invalidate(self._member_roles_cache, (server_id, user_id))
+        self._cache_invalidate(self._permission_cache, (user_id, server_id, None))
+
+        # Also invalidate any channel-specific permission caches
+        for key in list(self._permission_cache.keys()):
+            if key[0] == user_id and key[1] == server_id:
+                self._cache_invalidate(self._permission_cache, key)
 
         self._log_audit(
             server_id, user_id, AuditLogAction.MEMBER_LEAVE, "member", user_id
@@ -2140,7 +2225,24 @@ class ServerManager(BaseManager):
         if channel.channel_type != ChannelType.TEXT:
             raise ChannelTypeError("Can only send messages to text channels")
 
-        self.require_permission(user_id, channel.server_id, "messages.send", channel_id)
+        # Check permissions
+        permissions = self.get_permissions(user_id, channel.server_id, channel_id)
+        if not check_permission(permissions, "messages.send"):
+            raise PermissionDeniedError("Missing messages.send permission", "messages.send")
+
+        # Enforce slowmode
+        if channel.slowmode_seconds > 0:
+            # Bypass slowmode if user has bypass permission or management perms
+            can_bypass = check_permission(permissions, "messages.bypass_slowmode") or \
+                         check_permission(permissions, "messages.manage") or \
+                         check_permission(permissions, "channels.manage") or \
+                         check_permission(permissions, "administrator")
+            
+            if not can_bypass:
+                retry_after = self._check_slowmode(user_id, channel_id, channel.slowmode_seconds)
+                if retry_after:
+                    from src.core.ratelimit.exceptions import RateLimitError
+                    raise RateLimitError(f"Slowmode is enabled. Try again in {retry_after:.1f}s", retry_after)
 
         if not self._messaging:
             raise ServerError("Messaging module not available")
@@ -2156,6 +2258,30 @@ class ServerManager(BaseManager):
             reply_to_id=reply_to_id,
             attachments=attachments,
         )
+
+    def _check_slowmode(self, user_id: SnowflakeID, channel_id: SnowflakeID, slowmode_seconds: int) -> Optional[float]:
+        """Check if user is slowmoded in channel. Returns retry_after if limited."""
+        if slowmode_seconds <= 0:
+            return None
+            
+        key = f"slowmode:{channel_id}:{user_id}"
+        # Use Redis if available
+        if redis_available():
+            try:
+                from src.core.database import cache_get, cache_set
+                last_msg_time = cache_get(key)
+                now = self._get_timestamp() / 1000.0
+                if last_msg_time:
+                    try:
+                        elapsed = now - float(last_msg_time)
+                        if elapsed < slowmode_seconds:
+                            return slowmode_seconds - elapsed
+                    except (ValueError, TypeError):
+                        pass
+                cache_set(key, str(now), ttl=slowmode_seconds)
+            except Exception as e:
+                logger.debug(f"Slowmode check failed (Redis error): {e}")
+        return None
 
     def get_channel_messages(
         self,
@@ -2245,7 +2371,7 @@ class ServerManager(BaseManager):
 
         # If cached as member, return True immediately
         if cached is True:
-            logger.info(
+            logger.debug(
                 f"[Instance:{self.instance_id}] _is_member: user {uid} is cached as member of server {sid}"
             )
             return True
@@ -2261,7 +2387,7 @@ class ServerManager(BaseManager):
             if row:
                 owner_id = int(row["owner_id"])
                 self._cache_set(self._server_owner_cache, sid, owner_id)
-                logger.info(
+                logger.debug(
                     f"[Instance:{self.instance_id}] _is_member: fetched owner_id {owner_id} for server {sid}"
                 )
             else:
@@ -2270,7 +2396,7 @@ class ServerManager(BaseManager):
                 )
 
         if owner_id == uid:
-            logger.info(
+            logger.debug(
                 f"[Instance:{self.instance_id}] _is_member: user {uid} is recognized as owner of server {sid} (owner_id={owner_id})"
             )
             self._cache_set(self._member_cache, cache_key, True)
@@ -2278,12 +2404,12 @@ class ServerManager(BaseManager):
 
         # If it was cached as False and we verified they aren't the owner, respect cache
         if cached is False:
-            logger.info(
+            logger.debug(
                 f"[Instance:{self.instance_id}] _is_member: user {uid} is cached as NOT a member of server {sid}"
             )
             return False
 
-        logger.info(
+        logger.debug(
             f"[Instance:{self.instance_id}] _is_member: checking DB for membership: sid={sid}, uid={uid}"
         )
         row = self._db.fetch_one(
@@ -2293,11 +2419,11 @@ class ServerManager(BaseManager):
 
         is_member = row is not None
         if not is_member:
-            logger.info(
+            logger.debug(
                 f"[Instance:{self.instance_id}] _is_member: user {uid} is NOT a member of server {sid} (owner is {owner_id})"
             )
         else:
-            logger.info(
+            logger.debug(
                 f"[Instance:{self.instance_id}] _is_member: user {uid} found in srv_members for server {sid}"
             )
 
@@ -2366,7 +2492,7 @@ class ServerManager(BaseManager):
             name=row["name"],
             owner_id=row["owner_id"],
             description=row["description"],
-            icon_url=row["icon_url"],
+            icon_path=row["icon_url"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             member_count=member_count,
@@ -2410,7 +2536,8 @@ class ServerManager(BaseManager):
             name=data["name"],
             owner_id=data["owner_id"],
             description=data.get("description"),
-            icon_url=data.get("icon_url"),
+            icon_path=data.get("icon_url"),
+            banner_path=data.get("banner_url"),
             created_at=data["created_at"],
             updated_at=data["updated_at"],
             member_count=data.get("member_count", 0),
@@ -2477,20 +2604,30 @@ class ServerManager(BaseManager):
             deleted=bool(row.get("deleted", False)),
         )
 
-    def _row_to_member(self, row: Dict[str, Any]) -> Member:
+    def _row_to_member(
+        self,
+        row: Dict[str, Any],
+        roles: Optional[List[SnowflakeID]] = None,
+        username: Optional[str] = None,
+        avatar_url: Optional[str] = None,
+    ) -> Member:
         """Convert database row to Member model."""
         # Get role IDs
-        role_rows = self._db.fetch_all(
-            "SELECT role_id FROM srv_member_roles WHERE member_id = ?",
-            (row["id"],),
-        )
-        role_ids = [r["role_id"] for r in role_rows]
+        role_ids = roles
+        if role_ids is None:
+            role_rows = self._db.fetch_all(
+                "SELECT role_id FROM srv_member_roles WHERE member_id = ?",
+                (row["id"],),
+            )
+            role_ids = [r["role_id"] for r in role_rows]
 
         return Member(
             id=row["id"],
             server_id=row["server_id"],
             user_id=row["user_id"],
             nickname=row.get("nickname"),
+            username=username,
+            avatar_url=avatar_url,
             joined_at=row["joined_at"],
             updated_at=row.get("updated_at", row["joined_at"]),
             muted=bool(row.get("muted", False)),
@@ -2558,11 +2695,19 @@ class ServerManager(BaseManager):
                 changes = None
 
         action_val = row.get("action_type") or row.get("action")
-        try:
-            action_type = AuditLogAction(action_val)
-        except (ValueError, KeyError):
-            # Fallback to SERVER_UPDATE if unknown
-            action_type = AuditLogAction.SERVER_UPDATE
+        action_type = AuditLogAction.SERVER_UPDATE
+        if action_val:
+            if isinstance(action_val, str):
+                action_val = action_val.lower().replace("-", "_")
+            
+            try:
+                action_type = AuditLogAction(action_val)
+            except (ValueError, KeyError):
+                # Try to find by name if value doesn't match
+                try:
+                    action_type = AuditLogAction[action_val.upper()]
+                except (ValueError, KeyError):
+                    action_type = AuditLogAction.SERVER_UPDATE
 
         return AuditLogEntry(
             id=row["id"],

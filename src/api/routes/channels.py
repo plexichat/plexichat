@@ -2,10 +2,12 @@
 Channel routes - Channel management endpoints.
 """
 
+import asyncio
 from typing import Optional, Dict, List
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Body
 
 import src.api as api
+import src.core.events as events_mod
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.servers import (
     ChannelResponse,
@@ -33,11 +35,17 @@ def _channel_to_response(channel) -> ChannelResponse:
         channel_type = getattr(channel, "channel_type", None)
         if channel_type is not None and hasattr(channel_type, "value"):
             channel_type = channel_type.value
+        
+        # Handle different model types (Channel vs Conversation)
+        server_id = getattr(channel, "server_id", 0)
+        
+        # If it's a Conversation model but lacks name (e.g. DM), use a placeholder
+        name = getattr(channel, "name", None) or f"Conversation {channel.id}"
 
         return ChannelResponse(
             id=SnowflakeID(channel.id),
-            server_id=SnowflakeID(channel.server_id),
-            name=channel.name,
+            server_id=SnowflakeID(server_id),
+            name=name,
             channel_type=channel_type or "text",
             topic=getattr(channel, "topic", None),
             position=getattr(channel, "position", 0),
@@ -94,6 +102,12 @@ async def get_channel(
 
         try:
             channel = servers_mod.get_channel(cid, current_user.user_id)
+            if not channel:
+                # Fallback to messaging module for DMs
+                messaging_mod = api.get_messaging()
+                if messaging_mod:
+                    channel = messaging_mod.get_conversation(cid, current_user.user_id)
+            
             if not channel:
                 raise HTTPException(
                     status_code=404,
@@ -660,6 +674,70 @@ async def join_server_via_invite(
             sid = getattr(result, "server_id", None) or (
                 result if isinstance(result, (int, str)) else None
             )
+            
+            # Dispatch WebSocket events
+            async def dispatch_join_events():
+                try:
+                    from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+                    if not ws_is_setup():
+                        return
+                        
+                    dispatcher = get_dispatcher()
+                    auth = api.get_auth()
+                    
+                    # 1. Dispatch GUILD_CREATE to the joining user
+                    server = servers_mod.get_server(current_user.user_id, sid)
+                    if server:
+                        channels = servers_mod.get_channels(current_user.user_id, sid)
+                        roles = servers_mod.get_roles(sid)
+                        
+                        event = events_mod.create_guild_create(
+                            server_id=sid,
+                            name=server.name,
+                            owner_id=server.owner_id,
+                            member_count=getattr(server, "member_count", 0),
+                            channels=[{
+                                "id": str(c.id),
+                                "name": c.name,
+                                "type": getattr(c.channel_type, "value", c.channel_type) if hasattr(c.channel_type, "value") else c.channel_type,
+                                "position": getattr(c, "position", 0)
+                            } for c in channels],
+                            roles=[{
+                                "id": str(r.id),
+                                "name": r.name,
+                                "color": r.color,
+                                "hoist": r.hoist,
+                                "position": r.position
+                            } for r in roles]
+                        )
+                        await dispatcher.dispatch_event(event, [current_user.user_id])
+                    
+                    # 2. Dispatch GUILD_MEMBER_ADD to other members
+                    user_data = None
+                    if auth:
+                        user = auth.get_user(current_user.user_id)
+                        if user:
+                            user_data = {
+                                "id": str(user.id),
+                                "username": user.username,
+                                "avatar_url": user.avatar_url
+                            }
+                    
+                    member_event = events_mod.create_guild_member_add(
+                        server_id=sid,
+                        user_id=current_user.user_id,
+                        user=user_data
+                    )
+                    
+                    # Get member IDs to notify
+                    member_ids = servers_mod.get_member_user_ids(sid, exclude_user_id=current_user.user_id)
+                    if member_ids:
+                        await dispatcher.dispatch_event(member_event, member_ids)
+                        
+                except Exception as de:
+                    logger.warning(f"Failed to dispatch join events for server {sid}: {de}")
+
+            asyncio.create_task(dispatch_join_events())
 
             return InviteJoinResponse(
                 success=True,
@@ -882,21 +960,29 @@ async def upload_attachment(
 
         # Use the media module for upload (handles size limits, security, and storage)
         try:
+            from starlette.concurrency import run_in_threadpool
             content = await file.read()
-            result = media.upload_file(
+            result = await run_in_threadpool(
+                media.upload_file,
                 user_id=current_user.user_id,
                 file_data=content,
                 filename=file.filename or "attachment",
                 content_type=file.content_type,
             )
 
+            # Convert thumbnail keys from int to str for Pydantic schema
+            thumbnails_str = (
+                {str(k): v for k, v in result.thumbnails.items()}
+                if result.thumbnails
+                else None
+            )
             return AttachmentUploadResponse(
                 id=str(result.file_id),
                 filename=result.filename,
                 size=result.size,
                 content_type=result.content_type,
                 url=result.url,
-                thumbnails=result.thumbnails,
+                thumbnails=thumbnails_str,
             )
         except Exception as e:
             exc_name = type(e).__name__

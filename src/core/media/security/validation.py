@@ -26,7 +26,7 @@ MAGIC_SIGNATURES = {
     "image/bmp": [(0, b"BM")],
     "image/tiff": [(0, b"II*\x00"), (0, b"MM\x00*")],
     "image/x-icon": [(0, b"\x00\x00\x01\x00"), (0, b"\x00\x00\x02\x00")],
-    "image/svg+xml": [],  # Text-based, no magic bytes
+    "image/svg+xml": [(0, b"<svg"), (0, b"<?xml")],  # SVG/XML magic bytes
     # Videos
     "video/mp4": [(4, b"ftyp")],  # ftyp at offset 4
     "video/webm": [(0, b"\x1a\x45\xdf\xa3")],
@@ -62,13 +62,14 @@ MAGIC_SIGNATURES = {
     "application/vnd.openxmlformats-officedocument.presentationml.presentation": [
         (0, b"PK\x03\x04")
     ],
+    # Web formats
+    "text/html": [(0, b"<html"), (0, b"<!DOCTYPE html")],
+    "application/xml": [(0, b"<?xml")],
     # Text types - no magic bytes
     "text/plain": [],
     "text/markdown": [],
     "text/csv": [],
-    "text/html": [],
     "application/json": [],
-    "application/xml": [],
 }
 
 # Dangerous executable extensions
@@ -201,10 +202,11 @@ class FileValidator:
         if not signatures:
             return True, None
 
-        # Check if file matches any valid signature
+        # Check if file matches any valid signature (case-insensitive for text-based formats)
+        file_data_lower = file_data.lower()
         for offset, sig in signatures:
             if len(file_data) >= offset + len(sig):
-                if file_data[offset : offset + len(sig)] == sig:
+                if file_data_lower[offset : offset + len(sig)] == sig.lower():
                     return True, None
 
         # Special handling for container formats
@@ -260,19 +262,20 @@ class FileValidator:
         Returns:
             Sanitized filename
         """
+        import posixpath
+
         # Normalize path separators first (handle both Unix and Windows paths)
         filename = filename.replace("\\", "/")
 
-        # Remove path components
-        filename = os.path.basename(filename)
+        # Extract just the filename part (remove all path components)
+        filename = posixpath.basename(filename)
 
         # Remove null bytes
         filename = filename.replace("\x00", "")
 
-        # Remove path traversal attempts
-        filename = filename.replace("..", "")
-        filename = filename.replace("/", "_")
-        filename = filename.replace("\\", "_")
+        # Remove path traversal attempts - repeatedly replace until no more
+        while ".." in filename:
+            filename = filename.replace("..", "")
 
         # Remove control characters
         filename = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", filename)
@@ -344,3 +347,7 @@ def validate_file(
 def sanitize_filename(filename: str) -> str:
     """Convenience function to sanitize a filename."""
     return get_validator().sanitize_filename(filename)
+
+
+
+

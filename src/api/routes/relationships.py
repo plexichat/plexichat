@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Depends
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.core.auth.models import User
 from src.api.schemas.relationships import (
     FriendRequestCreate,
     BlockCreate,
@@ -16,6 +17,7 @@ from src.api.schemas.relationships import (
 )
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 import utils.logger as logger
+from src.core.database import cached
 
 router = APIRouter(tags=["Relationships"])
 
@@ -38,15 +40,16 @@ def _relationship_to_response(rel) -> RelationshipResponse:
     response_model=List[DetailedRelationshipInfo],
     summary="Get my relationships",
     responses={
-        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@cached(ttl=30, prefix="relationships_api")
 async def get_relationships(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> List[DetailedRelationshipInfo]:
     """
-    Get all relationships for current user.
+    Get all relationships for current user (cached for 30s).
 
     Returns friends, pending requests, and blocked users with user info.
     """
@@ -63,37 +66,8 @@ async def get_relationships(
             },
         )
 
-    def get_user_info(user_id):
-        """Get username and presence for a user."""
-        username = None
-        avatar_url = None
-        presence_data = None
-
-        if auth:
-            try:
-                user = auth.get_user(user_id)
-                if user:
-                    username = user.username
-                    avatar_url = getattr(user, "avatar_url", None)
-            except Exception as e:
-                logger.debug(f"Failed to get user info for {user_id}: {e}")
-
-        # Default to offline if presence not found
-        presence_data = PresenceInfo(status="offline")
-        if presence:
-            try:
-                pres = presence.get_visible_presence(current_user.user_id, user_id)
-                if pres:
-                    status = getattr(pres, "status", None)
-                    if status and hasattr(status, "value"):
-                        status = status.value
-                    presence_data = PresenceInfo(status=status or "offline")
-            except Exception as e:
-                logger.debug(f"Failed to get presence for {user_id}: {e}")
-
-        return username, avatar_url, presence_data
-
     try:
+        # 1. Fetch raw relationship rows
         try:
             friends = relationships.get_friends(current_user.user_id)
             pending_in = relationships.get_pending_requests_incoming(
@@ -115,67 +89,141 @@ async def get_relationships(
                 },
             )
 
+        # 2. Collect all involved user IDs for bulk fetching
+        all_user_ids = set()
+        my_id = current_user.user_id
+        
+        friends_ids = []
+        for f in friends:
+            # In a friendship row, we are either user_id or friend_id. The friend is the other one.
+            f_uid = getattr(f, "user_id", 0)
+            f_fid = getattr(f, "friend_id", 0)
+            target_id = f_fid if f_uid == my_id else f_uid
+            
+            friends_ids.append(target_id)
+            all_user_ids.add(target_id)
+            
+        pending_in_ids = []
+        for r in pending_in:
+            # Incoming: sender is the other person
+            uid = getattr(r, "sender_id", 0)
+            pending_in_ids.append(uid)
+            all_user_ids.add(uid)
+            
+        pending_out_ids = []
+        for r in pending_out:
+            # Outgoing: recipient is the other person
+            uid = getattr(r, "recipient_id", 0)
+            pending_out_ids.append(uid)
+            all_user_ids.add(uid)
+            
+        blocked_ids = []
+        for b in blocked:
+            # Blocked: blocked_id is the other person (unless we are blocked_id, but usually we list who WE blocked)
+            uid = getattr(b, "blocked_id", 0)
+            blocked_ids.append(uid)
+            all_user_ids.add(uid)
+
+        # 3. Bulk fetch user info and presence
+        user_info_map = {}
+        presence_map = {}
+        
+        if all_user_ids:
+            if auth:
+                try:
+                    users = auth.get_users_bulk(list(all_user_ids))
+                    for uid_str, u in users.items():
+                        user_info_map[uid_str] = {
+                            "username": u.username,
+                            "avatar_url": getattr(u, "avatar_url", None)
+                        }
+                except Exception as e:
+                    logger.debug(f"Failed bulk user fetch: {e}")
+            
+            if presence:
+                try:
+                    # Use bulk presence fetch (internal to presence module)
+                    presences = presence.get_visible_presences_bulk(my_id, list(all_user_ids))
+                    for p_uid, p in presences.items():
+                        p_status = getattr(p, "status", None)
+                        if p_status and hasattr(p_status, "value"):
+                            p_status = p_status.value
+                        presence_map[p_uid] = PresenceInfo(status=p_status or "offline")
+                except Exception as e:
+                    logger.debug(f"Failed bulk presence fetch: {e}")
+
+        # 4. Map back to result objects
         result = []
 
-        for f in friends:
-            # friend_id is the OTHER user in the friendship, user_id is the current user
-            friend_user_id = getattr(f, "friend_id", 0) or getattr(f, "user_id", 0)
-            username, avatar_url, presence_data = get_user_info(friend_user_id)
+        for idx, f in enumerate(friends):
+            uid = friends_ids[idx]
+            # Robust lookup: check both string and int keys
+            info = user_info_map.get(uid) or user_info_map.get(str(uid)) or {}
             result.append(
                 DetailedRelationshipInfo(
-                    user_id=str(friend_user_id),
-                    username=username or f"User {friend_user_id}",
-                    avatar_url=avatar_url,
+                    user_id=str(uid),
+                    username=info.get("username") or f"User {uid}",
+                    avatar_url=info.get("avatar_url"),
                     status="friend",
-                    presence=presence_data,
+                    presence=presence_map.get(uid) or presence_map.get(str(uid)) or PresenceInfo(status="offline"),
                     created_at=getattr(f, "created_at", None),
                 )
             )
 
-        for r in pending_in:
-            user_id = getattr(r, "sender_id", 0)
-            username, avatar_url, presence_data = get_user_info(user_id)
+        for idx, r in enumerate(pending_in):
+            uid = pending_in_ids[idx]
+            info = user_info_map.get(uid) or user_info_map.get(str(uid)) or {}
             result.append(
                 DetailedRelationshipInfo(
-                    user_id=str(user_id),
-                    username=username or f"User {user_id}",
-                    avatar_url=avatar_url,
+                    user_id=str(uid),
+                    username=info.get("username") or f"User {uid}",
+                    avatar_url=info.get("avatar_url"),
                     status="pending_incoming",
-                    presence=presence_data,
+                    presence=presence_map.get(uid) or presence_map.get(str(uid)) or PresenceInfo(status="offline"),
                     message=getattr(r, "message", None),
                     created_at=getattr(r, "created_at", None),
                 )
             )
 
-        for r in pending_out:
-            user_id = getattr(r, "recipient_id", 0)
-            username, avatar_url, presence_data = get_user_info(user_id)
+        for idx, r in enumerate(pending_out):
+            uid = pending_out_ids[idx]
+            info = user_info_map.get(uid) or user_info_map.get(str(uid)) or {}
             result.append(
                 DetailedRelationshipInfo(
-                    user_id=str(user_id),
-                    username=username or f"User {user_id}",
-                    avatar_url=avatar_url,
+                    user_id=str(uid),
+                    username=info.get("username") or f"User {uid}",
+                    avatar_url=info.get("avatar_url"),
                     status="pending_outgoing",
-                    presence=presence_data,
+                    presence=presence_map.get(uid) or presence_map.get(str(uid)) or PresenceInfo(status="offline"),
                     created_at=getattr(r, "created_at", None),
                 )
             )
 
-        for b in blocked:
-            user_id = getattr(b, "blocked_id", 0)
-            username, avatar_url, _ = get_user_info(user_id)
+        for idx, b in enumerate(blocked):
+            uid = blocked_ids[idx]
+            info = user_info_map.get(uid) or user_info_map.get(str(uid)) or {}
             result.append(
                 DetailedRelationshipInfo(
-                    user_id=str(user_id),
-                    username=username or f"User {user_id}",
-                    avatar_url=avatar_url,
+                    user_id=str(uid),
+                    username=info.get("username") or f"User {uid}",
+                    avatar_url=info.get("avatar_url"),
                     status="blocked",
-                    presence=None,
+                    presence=PresenceInfo(status="offline"),
                     created_at=getattr(b, "created_at", None),
                 )
             )
 
         return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Unexpected error processing relationships for user {current_user.user_id}: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -205,8 +253,8 @@ async def _dispatch_relationship_event(
                 else EventType.RELATIONSHIP_REMOVE,
                 data=data,
             )
-            # Send to both users involved
-            await dispatcher.dispatch_event(event, [user_id, target_id])
+            # Send ONLY to the specified user. Callers call this twice if needed for both users.
+            await dispatcher.dispatch_event(event, [user_id])
     except Exception as e:
         import utils.logger as logger
 
@@ -344,6 +392,14 @@ async def create_relationship(
             },
         )
 
+        # Invalidate cache for both users
+        try:
+            get_relationships.invalidate(current_user=current_user)
+            other_user = User(id=target_id, username="", account_type=None, permissions={}, created_at=0, updated_at=0)
+            get_relationships.invalidate(current_user=other_user)
+        except Exception as e:
+            logger.debug(f"Failed to invalidate relationship cache in create: {e}")
+
         return RelationshipResponse(
             user_id=SnowflakeID(target_id),
             status="pending_outgoing",
@@ -407,12 +463,20 @@ async def accept_friend_request(
         try:
             pending = relationships.get_pending_requests_incoming(current_user.user_id)
             request_id = None
+            
+            # Try to match by user_id provided (which could be the sender's user ID or the request ID itself)
+            try:
+                provided_id = int(user_id)
+            except (ValueError, TypeError):
+                provided_id = 0
+
             for r in pending:
-                if getattr(r, "sender_id", 0) == sender_id:
+                if r.id == provided_id or r.sender_id == provided_id:
                     request_id = r.id
                     break
 
             if not request_id:
+                logger.warning(f"Friend request from/with ID {user_id} not found for user {current_user.user_id}. Pending IDs: {[r.id for r in pending]}, Senders: {[r.sender_id for r in pending]}")
                 raise HTTPException(
                     status_code=404,
                     detail={
@@ -513,6 +577,15 @@ async def accept_friend_request(
                 "created_at": created_at,
             },
         )
+
+        # Invalidate cache for both users
+        try:
+            get_relationships.invalidate(current_user=current_user)
+            # Create a dummy user object for cache key generation
+            other_user = User(id=sender_id, username="", account_type=None, permissions={}, created_at=0, updated_at=0)
+            get_relationships.invalidate(current_user=other_user)
+        except Exception as e:
+            logger.debug(f"Failed to invalidate relationship cache: {e}")
 
         return SuccessResponse(success=True)
     except HTTPException:
@@ -693,6 +766,16 @@ async def delete_relationship(
                         "error": {"code": 404, "message": "Relationship not found"}
                     },
                 )
+
+            # Invalidate cache for both users
+            try:
+                get_relationships.invalidate(current_user=current_user)
+                # Create a dummy user object for cache key generation
+                other_user = User(id=target_id, username="", account_type=None, permissions={}, created_at=0, updated_at=0)
+                get_relationships.invalidate(current_user=other_user)
+            except Exception as e:
+                logger.debug(f"Failed to invalidate relationship cache during delete: {e}")
+
         except HTTPException:
             raise
         except Exception as e:

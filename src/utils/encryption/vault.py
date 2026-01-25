@@ -22,7 +22,10 @@ class HardwareVault:
         
         # Prioritize environment key over hardware even during initialization
         if "PLEXICHAT_SYSTEM_KEY" in os.environ:
-            logger.info("PLEXICHAT_SYSTEM_KEY found, skipping TPM detection")
+            try:
+                logger.info("PLEXICHAT_SYSTEM_KEY found, skipping TPM detection")
+            except Exception:
+                pass
         else:
             self._init_tpm()
 
@@ -37,9 +40,15 @@ class HardwareVault:
                 cap = ctx.get_capability(0, 0x00000001, 1)  # TPM_CAP_PROPERTIES
                 if cap:
                     self._tpm_available = True
-                    logger.info("TPM 2.0 hardware detected and available")
+                    try:
+                        logger.info("TPM 2.0 hardware detected and available")
+                    except Exception:
+                        pass
         except (ImportError, Exception):
-            logger.debug("TPM 2.0 not available or tpm2-pytss not installed")
+            try:
+                logger.debug("TPM 2.0 not available or tpm2-pytss not installed")
+            except Exception:
+                pass
 
     def get_kek(self) -> bytes:
         """

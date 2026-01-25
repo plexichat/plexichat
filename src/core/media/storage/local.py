@@ -146,6 +146,10 @@ class LocalStorage(StorageBackendBase):
         except OSError:
             return 0
 
+    def is_encrypted(self, path: str) -> bool:
+        """Check if file is encrypted."""
+        return False
+
     def get_metadata(self, path: str) -> dict:
         """Get file metadata."""
         full_path = self._full_path(path)

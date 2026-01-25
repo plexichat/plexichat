@@ -22,10 +22,12 @@ CREATE TABLE IF NOT EXISTS auth_users (
     locked_until INTEGER,
     failed_login_attempts INTEGER DEFAULT 0,
     last_login_at INTEGER,
-    totp_secret_encrypted TEXT,
     totp_enabled INTEGER DEFAULT 0,
+    totp_secret_encrypted TEXT,
     backup_codes_hash TEXT,
-    avatar_url TEXT
+    avatar_url TEXT,
+    age_verified INTEGER DEFAULT 0,
+    date_of_birth TEXT
 );
 
 -- Sessions table with Token Binding
@@ -78,6 +80,15 @@ CREATE TABLE IF NOT EXISTS auth_known_ips (
     last_seen_at INTEGER NOT NULL,
     FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
     UNIQUE(user_id, ip_address)
+);
+
+-- IP Blacklist table
+CREATE TABLE IF NOT EXISTS auth_ip_blacklist (
+    ip_address TEXT PRIMARY KEY,
+    reason TEXT,
+    blocked_at INTEGER NOT NULL,
+    blocked_by INTEGER,
+    expires_at INTEGER
 );
 
 -- Email verification tokens (Restored)
