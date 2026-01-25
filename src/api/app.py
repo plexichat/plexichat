@@ -323,6 +323,15 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     "Cache-Control": "private, max-age=3600"
                 }
                 
+                # Add CORS headers specifically for media to avoid policy blocks
+                origin = request.headers.get("Origin")
+                if origin in config.cors_origins:
+                    headers["Access-Control-Allow-Origin"] = origin
+                    headers["Access-Control-Allow-Credentials"] = "true"
+                elif config.cors_origins:
+                    headers["Access-Control-Allow-Origin"] = config.cors_origins[0]
+                    headers["Access-Control-Allow-Credentials"] = "true"
+                
                 # Log duration after the stream is acquired
                 duration = (time.perf_counter() - start_time) * 1000
                 if duration > 100:
