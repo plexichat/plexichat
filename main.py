@@ -107,6 +107,11 @@ class PlexiChatServer:
                     # "boolean" (store only verified bit) or "dob" (store date of birth)
                     "age_verification_type": "boolean",
                 },
+                "email_validation": {
+                    "strict": True,
+                    "allow_custom_tlds": False,
+                    "valid_tlds": [],
+                },
                 "sessions": {
                     "token_bytes": 32,
                     "expire_hours": 168,
@@ -1822,7 +1827,7 @@ Examples:
     log_dir = media_config.get("logs_dir", os.path.join(project_root, "logs"))
     log_dir = os.path.expanduser(log_dir)  # Expand ~ to home directory
     
-    early_logs.append(("info", f"Initializing logger..."))
+    early_logs.append(("info", "Initializing logger..."))
     early_logs.append(("info", f"  Log directory: {log_dir}"))
     early_logs.append(("info", f"  Log level: {log_config.get('level', 'INFO')}"))
     
@@ -1887,6 +1892,10 @@ Examples:
 
         # Start server in background thread
         import uvicorn
+
+        if server.app is None:
+            logger.error("Failed to create FastAPI application for self-test")
+            sys.exit(1)
 
         uvi_config = uvicorn.Config(server.app, host=host, port=port, log_level="error")
         uvi_server = uvicorn.Server(uvi_config)
@@ -1988,3 +1997,8 @@ def _check_security_keys() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+if __name__ == "__main__":
+    main()
+

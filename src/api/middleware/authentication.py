@@ -8,7 +8,7 @@ from fastapi.security import HTTPBearer
 from starlette.types import ASGIApp, Receive, Send, Scope
 
 import src.api as api
-from src.core.auth.models import TokenInfo, AccountType
+from src.core.auth.models import TokenInfo
 
 security = HTTPBearer(auto_error=False)
 
@@ -28,6 +28,7 @@ class AuthenticationMiddleware:
             scope["state"] = {}
 
         request = Request(scope, receive)
+        path = scope.get("path", "")
 
         # 1. Check for Internal Service Authentication
         internal_secret = api.get_internal_secret()
@@ -41,7 +42,6 @@ class AuthenticationMiddleware:
 
         # 2. Extract and Verify Bearer Token
         # Skip for admin routes which manage their own sessions
-        path = scope.get("path", "")
         is_admin_path = path.startswith("/admin/") or path.startswith("/api/v1/admin/")
         
         auth_header = request.headers.get("Authorization")

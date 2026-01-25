@@ -1,4 +1,4 @@
-"""
+﻿"""
 Database module - Provides database connectivity for SQLite and PostgreSQL.
 
 This module follows the zero-friction pattern established by common-utils.
@@ -168,6 +168,19 @@ class Database:
                         stats["utilization_percent"] = (stats["active_connections"] / stats["max_connections"]) * 100
                     else:
                         stats["utilization_percent"] = 0
+                        
+                    # Determine pool status and check for critical conditions
+                    stats["status"] = "healthy"
+                    if stats["utilization_percent"] >= 90:
+                        stats["status"] = "critical"
+                        logger.warning(f"Database connection pool utilization is {stats['utilization_percent']:.1f}% - near capacity")
+                    elif stats["utilization_percent"] >= 75:
+                        stats["status"] = "warning"
+                        logger.warning(f"Database connection pool utilization is {stats['utilization_percent']:.1f}% - high utilization")
+                        
+                    # Check for connection pool exhaustion
+                    if stats["active_connections"] >= stats["max_connections"]:
+                        logger.error("Database connection pool exhausted - all connections in use")
                 except Exception as e:
                     logger.warning(f"Could not retrieve detailed pool stats: {e}")
                     stats["idle_connections"] = "unavailable"
@@ -801,7 +814,8 @@ class Database:
                 is_failed_transaction = True
             
             # Check by pgcode attribute if available (PostgreSQL error code)
-            if hasattr(e, "pgcode") and e.pgcode == "25P02":  # 25P02 is the pgcode for InFailedSqlTransaction
+            pg_code = getattr(e, "pgcode", None)
+            if pg_code == "25P02":  # 25P02 is the pgcode for InFailedSqlTransaction
                 is_failed_transaction = True
             
             # Check for common message fragments
@@ -1349,9 +1363,9 @@ class Database:
         query = self._convert_placeholders(query)
 
         cursor = conn.cursor()
+        exec_start = time.time()
         try:
             # Track query execution time
-            exec_start = time.time()
             cursor.executemany(query, params_list)
             exec_time_ms = (time.time() - exec_start) * 1000
             
@@ -1389,7 +1403,6 @@ class Database:
             with self._pool_stats_lock:
                 self._query_execution_times.append((time.time(), exec_time_ms))
             
-            error_msg = str(e).lower()
             error_type = type(e).__name__
             
             # Record error count
