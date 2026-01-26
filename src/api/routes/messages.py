@@ -976,18 +976,18 @@ async def edit_message(
                 user = auth.get_user(current_user.user_id)
                 if user:
                     author_avatar_url = getattr(user, "avatar_url", None)
-                            except Exception:
-                                pass
-            
-                    response = _message_to_response(
-                        msg, 
-                        author_username, 
-                        author_avatar_url, 
-                        channel_id=cid,
-                        media_mod=api.get_media()
-                    )
-            
-                    # Broadcast MESSAGE_UPDATE event via WebSocket (fire and forget)
+            except Exception:
+                pass
+
+        response = _message_to_response(
+            msg, 
+            author_username, 
+            author_avatar_url, 
+            channel_id=cid,
+            media_mod=api.get_media()
+        )
+
+        # Broadcast MESSAGE_UPDATE event via WebSocket (fire and forget)
             
         import asyncio
 
