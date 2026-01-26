@@ -472,25 +472,48 @@ class Database:
             )
 
         try:
-            acq_start = time.time()
-            try:
-                conn = self._pool.getconn()
-            except Exception:
-                # Record pool wait event
-                wait_duration = time.time() - acq_start
+            # Try to get a valid connection from the pool, discarding bad ones
+            conn = None
+            max_pool_attempts = 5
+            for attempt in range(max_pool_attempts):
+                acq_start = time.time()
+                try:
+                    conn = self._pool.getconn()
+                except Exception:
+                    # Record pool wait event
+                    wait_duration = time.time() - acq_start
+                    with self._pool_stats_lock:
+                        self._connection_pool_waits.append((acq_start, wait_duration))
+                    raise
+                
+                # Record acquisition time
+                acq_duration = time.time() - acq_start
                 with self._pool_stats_lock:
-                    self._connection_pool_waits.append((acq_start, wait_duration))
-                raise
+                    self._connection_acquisitions.append((acq_start, acq_duration))
+                
+                # Validate connection is not closed at protocol level
+                if hasattr(conn, "closed") and conn.closed:
+                    logger.warning(f"Connection from pool is already closed (attempt {attempt+1}/{max_pool_attempts})")
+                    self._pool.putconn(conn, close=True)
+                    conn = None
+                    continue
+                
+                # Perform active validation if connection has been idle
+                # If it's a retry or been idle for a while, it might be dead despite closed=0
+                try:
+                    with conn.cursor() as val_cursor:
+                        val_cursor.execute("SELECT 1")
+                    # If we got here, connection is definitely alive
+                    break
+                except Exception as e:
+                    logger.warning(f"Connection from pool failed active validation (attempt {attempt+1}/{max_pool_attempts}): {e}")
+                    self._pool.putconn(conn, close=True)
+                    conn = None
+                    continue
             
-            # Record acquisition time
-            acq_duration = time.time() - acq_start
-            with self._pool_stats_lock:
-                self._connection_acquisitions.append((acq_start, acq_duration))
-            
-            # Validate connection is not closed
-            if hasattr(conn, "closed") and conn.closed:
-                logger.error("Connection from pool is closed, raising exception")
-                raise psycopg2.OperationalError("Connection is closed")
+            if not conn:
+                logger.error("Failed to acquire a valid connection from the pool after multiple attempts")
+                raise psycopg2.OperationalError("No valid connections in pool")
             
             conn.autocommit = False
             
@@ -515,7 +538,7 @@ class Database:
                 pool_utilization_percent=f"{utilization:.1f}" if isinstance(utilization, (int, float)) else "unavailable"
             )
             logger.debug(f"Thread {threading.current_thread().name} acquired PostgreSQL connection from pool {context}")
-            logger.info("Acquired connection from pool")
+            logger.info("Acquired validated connection from pool")
             return conn
         except psycopg2.pool.PoolError as e:
             logger.error(f"Connection pool exhausted, no available connections: {e}")
@@ -898,7 +921,7 @@ class Database:
 
         # Implementation with automatic retry for connection issues
         retry_count = 0
-        max_retries = 1
+        max_retries = 2
         
         while True:
             cursor = conn.cursor()
@@ -954,11 +977,15 @@ class Database:
                         "connection reset by peer",
                         "broken pipe",
                         "terminating connection due to idle timeout",
+                        "could not connect to server",
+                        "connection refused",
+                        "the database system is starting up",
+                        "the database system is shutting down",
                     ]
                     if any(fragment in error_msg for fragment in conn_fragments):
                         is_connection_error = True
                 
-                # Retry once if it's a connection error and NOT in a transaction
+                # Retry if it's a connection error and NOT in a transaction
                 if is_connection_error and retry_count < max_retries and self.transaction_depth == 0:
                     retry_count += 1
                     logger.warning(
@@ -968,6 +995,7 @@ class Database:
                     # Force discard existing connection
                     if self.type == "postgres" and self._pool:
                         try:
+                            # Discard the bad connection from pool
                             self._pool.putconn(conn, close=True)
                         except Exception:
                             pass
@@ -1004,21 +1032,14 @@ class Database:
                     error_rate_per_minute=f"{error_rate:.2f}",
                     thread_id=threading.current_thread().ident
                 )
-            logger.error(f"Query failed {error_context}")
-            
-            # Log high error rate warning
-            if error_rate > self._error_rate_threshold:
-                rate_context = self._format_log_context(
-                    error_rate_per_minute=f"{error_rate:.2f}",
-                    threshold_per_minute=self._error_rate_threshold
-                )
-                logger.warning(f"High error rate detected {rate_context}")
-            
-            # Handle transaction state corruption
             try:
                 if self.type == "postgres":
                     # PostgreSQL requires rollback on ANY error
-                    if self.transaction_depth > 0:
+                    if hasattr(conn, "closed") and conn.closed > 0:
+                        logger.debug("Skipping transaction cleanup as connection is already closed")
+                        self.transaction_depth = 0
+                        self.in_transaction = False
+                    elif self.transaction_depth > 0:
                         # Attempt to rollback to last savepoint
                         try:
                             cursor.execute(f"ROLLBACK TO SAVEPOINT sp_{self.transaction_depth}")
@@ -1026,16 +1047,19 @@ class Database:
                         except Exception as inner_e:
                             # Savepoint rollback failed, rollback entire transaction
                             logger.warning(f"Savepoint rollback failed: {inner_e}, rolling back transaction")
-                            conn.rollback()
+                            if self.type != "postgres" or (hasattr(conn, "closed") and conn.closed == 0):
+                                conn.rollback()
                             self.transaction_depth = 0
                             self.in_transaction = False
                     else:
                         # Not in nested transaction, simple rollback
-                        conn.rollback()
+                        if self.type != "postgres" or (hasattr(conn, "closed") and conn.closed == 0):
+                            conn.rollback()
                         self.in_transaction = False
                 elif not self.in_transaction:
                     # SQLite: only rollback if not explicitly in transaction
-                    conn.rollback()
+                    if self.type != "postgres" or (hasattr(conn, "closed") and conn.closed == 0):
+                        conn.rollback()
             except Exception as cleanup_e:
                 logger.error(f"Error during transaction cleanup: {cleanup_e}")
                 # Force state reset on cleanup failure
@@ -1439,7 +1463,11 @@ class Database:
             try:
                 if self.type == "postgres":
                     # PostgreSQL requires rollback on ANY error
-                    if self.transaction_depth > 0:
+                    if hasattr(conn, "closed") and conn.closed > 0:
+                        logger.debug("Skipping transaction cleanup as connection is already closed")
+                        self.transaction_depth = 0
+                        self.in_transaction = False
+                    elif self.transaction_depth > 0:
                         # Attempt to rollback to last savepoint
                         try:
                             cursor.execute(f"ROLLBACK TO SAVEPOINT sp_{self.transaction_depth}")
@@ -1447,16 +1475,19 @@ class Database:
                         except Exception as inner_e:
                             # Savepoint rollback failed, rollback entire transaction
                             logger.warning(f"Savepoint rollback failed: {inner_e}, rolling back transaction")
-                            conn.rollback()
+                            if self.type != "postgres" or (hasattr(conn, "closed") and conn.closed == 0):
+                                conn.rollback()
                             self.transaction_depth = 0
                             self.in_transaction = False
                     else:
                         # Not in nested transaction, simple rollback
-                        conn.rollback()
+                        if self.type != "postgres" or (hasattr(conn, "closed") and conn.closed == 0):
+                            conn.rollback()
                         self.in_transaction = False
                 elif not self.in_transaction:
                     # SQLite: only rollback if not explicitly in transaction
-                    conn.rollback()
+                    if self.type != "postgres" or (hasattr(conn, "closed") and conn.closed == 0):
+                        conn.rollback()
             except Exception as cleanup_e:
                 logger.error(f"Error during transaction cleanup: {cleanup_e}")
                 # Force state reset on cleanup failure

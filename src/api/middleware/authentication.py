@@ -9,6 +9,7 @@ from starlette.types import ASGIApp, Receive, Send, Scope
 
 import src.api as api
 from src.core.auth.models import TokenInfo
+from src.core.auth.exceptions import AuthError
 
 security = HTTPBearer(auto_error=False)
 
@@ -64,9 +65,16 @@ class AuthenticationMiddleware:
                         else:
                             logger.warning(f"Auth: verify_token returned None for path {path}")
                     except Exception as e:
-                        # Log the error but don't block yet - get_current_user dependency handles the 401
-                        logger.debug(f"Authentication failed for path {path}: {e}")
-                        scope["state"]["auth_error"] = str(e)
+                        # Distinguish between AuthError (invalid token) and other errors (DB failed)
+                        if isinstance(e, AuthError):
+                            # This is a legitimate authentication failure (invalid/expired token)
+                            logger.debug(f"Authentication failed for path {path}: {e}")
+                            scope["state"]["auth_error"] = str(e)
+                        else:
+                            # This is likely a database or system error
+                            # We should log it as an error and potentially return a 500 instead of 401
+                            logger.error(f"System error during authentication for path {path}: {e}", exc_info=True)
+                            scope["state"]["system_error"] = str(e)
                 elif not is_plexichat_token:
                     logger.debug(f"Auth: Identified potential admin token for path {path}")
                     scope["state"]["potential_admin_token"] = token
@@ -94,6 +102,16 @@ async def get_current_user(request: Request) -> TokenInfo:
     user = request.scope.get("state", {}).get("user")
 
     if not user:
+        # Check if there was a system error (DB failed) vs auth error (invalid token)
+        system_error = request.scope.get("state", {}).get("system_error")
+        if system_error:
+            import utils.logger as logger
+            logger.error(f"get_current_user: System error blocking authentication: {system_error}")
+            raise HTTPException(
+                status_code=500, 
+                detail={"error": {"code": 500, "message": "Internal server error during authentication"}}
+            )
+
         error = request.scope.get("state", {}).get(
             "auth_error", "Authentication required"
         )
