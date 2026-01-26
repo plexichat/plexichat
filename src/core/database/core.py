@@ -455,8 +455,10 @@ class Database:
             # Read timeout configuration (default 10 seconds)
             connect_timeout = pool_config.get("connect_timeout", 10)
 
+            # Performance optimization: Default min_connections to 1 instead of 10
+            # to avoid slow startup with cold-starting databases (like Neon).
             self._pool = psycopg2.pool.ThreadedConnectionPool(
-                minconn=pool_config.get("min_connections", 10),
+                minconn=pool_config.get("min_connections", 1),
                 maxconn=pool_config.get("max_connections", 50),
                 connect_timeout=connect_timeout,
                 host=pg_config.get("host", "localhost"),

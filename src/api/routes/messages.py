@@ -30,11 +30,35 @@ def _message_to_response(
     channel_id: Optional[int] = None,
     reactions_data=None,
     read_by_usernames: Optional[List[str]] = None,
+    media_mod=None,
 ) -> MessageResponse:
     """Convert message object to response model."""
     attachments = []
     if hasattr(msg, "attachments") and msg.attachments:
         for att in msg.attachments:
+            # Handle URL signing for absolute security and cross-origin access
+            url = att.url
+            if media_mod and url and url.startswith("/api/v1/media/attachments/"):
+                try:
+                    # Parse file_id from metadata if available, or try to lookup
+                    file_id = getattr(att, "file_id", None)
+                    if not file_id and hasattr(att, "metadata") and att.metadata:
+                        if isinstance(att.metadata, dict):
+                            file_id = att.metadata.get("file_id")
+                        elif isinstance(att.metadata, str):
+                            import json
+                            try:
+                                meta = json.loads(att.metadata)
+                                file_id = meta.get("file_id")
+                            except Exception:
+                                pass
+                    
+                    if file_id:
+                        signed = media_mod.sign_url(int(file_id))
+                        url = signed.url
+                except Exception as e:
+                    logger.debug(f"Failed to sign attachment URL: {e}")
+
             attachments.append(
                 AttachmentResponse(
                     id=SnowflakeID(att.id),
@@ -43,7 +67,7 @@ def _message_to_response(
                         att, "content_type", "application/octet-stream"
                     ),
                     size=getattr(att, "size", 0),
-                    url=att.url,
+                    url=url,
                     hash=getattr(att, "checksum", None) or getattr(att, "hash", None),
                 )
             )
@@ -187,6 +211,9 @@ async def get_channel_messages(
             except Exception:
                 pass
 
+        # Get media module for URL signing
+        media_mod = api.get_media()
+
         # Fetch reactions for all messages in a single batch query (avoids N+1)
         reactions_module = api.get_reactions()
         reactions_cache = {}
@@ -240,6 +267,7 @@ async def get_channel_messages(
                     author_avatar_url=author_info.get("avatar_url"),
                     reactions_data=reactions_cache.get(m.id, []),
                     read_by_usernames=readers_cache.get(m.id),
+                    media_mod=media_mod,
                 )
             )
 
@@ -339,6 +367,8 @@ async def search_messages(
             except Exception:
                 pass
 
+        media_mod = api.get_media()
+
         result = []
         for m in messages:
             author_id = m.author_id
@@ -347,7 +377,8 @@ async def search_messages(
                 _message_to_response(
                     m, 
                     author_username=author_info.get("username"), 
-                    author_avatar_url=author_info.get("avatar_url")
+                    author_avatar_url=author_info.get("avatar_url"),
+                    media_mod=media_mod
                 )
             )
 
@@ -540,7 +571,11 @@ async def send_channel_message(
                     pass
 
         response = _message_to_response(
-            msg, author_username, author_avatar_url, channel_id=cid
+            msg, 
+            author_username, 
+            author_avatar_url, 
+            channel_id=cid,
+            media_mod=api.get_media()
         )
 
         # Broadcast MESSAGE_CREATE event via WebSocket (fully async - doesn't block response)
@@ -855,7 +890,7 @@ async def get_message(
         # Check permission (simple check for now)
         # TODO: Implement proper channel access check
 
-        return _message_to_response(message, channel_id=cid)
+        return _message_to_response(message, channel_id=cid, media_mod=api.get_media())
     except HTTPException:
         raise
     except Exception as e:
@@ -941,14 +976,19 @@ async def edit_message(
                 user = auth.get_user(current_user.user_id)
                 if user:
                     author_avatar_url = getattr(user, "avatar_url", None)
-            except Exception:
-                pass
-
-        response = _message_to_response(
-            msg, author_username, author_avatar_url, channel_id=cid
-        )
-
-        # Broadcast MESSAGE_UPDATE event via WebSocket (fire and forget)
+                            except Exception:
+                                pass
+            
+                    response = _message_to_response(
+                        msg, 
+                        author_username, 
+                        author_avatar_url, 
+                        channel_id=cid,
+                        media_mod=api.get_media()
+                    )
+            
+                    # Broadcast MESSAGE_UPDATE event via WebSocket (fire and forget)
+            
         import asyncio
 
         async def dispatch_message_update():
@@ -1235,7 +1275,12 @@ async def get_pinned_messages(
                 author_cache[author_id] = author_info
             info = author_cache.get(author_id, {})
             result.append(
-                _message_to_response(m, info.get("username"), info.get("avatar_url"))
+                _message_to_response(
+                    m, 
+                    info.get("username"), 
+                    info.get("avatar_url"),
+                    media_mod=api.get_media()
+                )
             )
 
         return result
