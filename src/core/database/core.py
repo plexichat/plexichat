@@ -503,6 +503,9 @@ class Database:
                 try:
                     with conn.cursor() as val_cursor:
                         val_cursor.execute("SELECT 1")
+                    # Important: End the transaction started by SELECT 1 if not in autocommit mode
+                    if not conn.autocommit:
+                        conn.rollback()
                     # If we got here, connection is definitely alive
                     break
                 except Exception as e:
