@@ -163,6 +163,7 @@ class MessageService(BaseService):
                         att_data.get("url", ""),
                         now,
                         metadata=att_data.get("metadata"),
+                        checksum=att_data.get("hash") or att_data.get("checksum"),
                         auto_commit=False,
                     )
                     attachment_list.append(
@@ -174,6 +175,7 @@ class MessageService(BaseService):
                             size=att_data.get("size", 0),
                             url=att_data.get("url", ""),
                             created_at=now,
+                            checksum=att_data.get("hash") or att_data.get("checksum"),
                         )
                     )
 

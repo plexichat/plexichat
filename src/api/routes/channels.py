@@ -982,6 +982,7 @@ async def upload_attachment(
                 size=result.size,
                 content_type=result.content_type,
                 url=result.url,
+                hash=result.checksum,
                 thumbnails=thumbnails_str,
             )
         except Exception as e:

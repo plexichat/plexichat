@@ -18,6 +18,7 @@ class AttachmentRequest(BaseModel):
     content_type: str = Field(..., description="MIME type")
     size: int = Field(..., ge=0, description="File size in bytes")
     url: str = Field(..., description="File URL")
+    hash: Optional[str] = Field(None, description="SHA-256 hash for content reporting")
 
 
 class MessageCreateRequest(BaseModel):

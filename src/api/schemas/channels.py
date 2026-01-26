@@ -128,6 +128,7 @@ class AttachmentUploadResponse(BaseModel):
     size: int = Field(..., description="File size in bytes")
     content_type: str = Field(..., description="MIME type")
     url: str = Field(..., description="Download URL")
+    hash: Optional[str] = Field(None, description="SHA-256 hash for content reporting")
     thumbnails: Optional[Dict[str, str]] = Field(
         None, description="Generated thumbnails"
     )

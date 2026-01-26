@@ -45,6 +45,7 @@ class AttachmentService(BaseService):
         size: int,
         url: str,
         metadata: Optional[Dict[str, Any]] = None,
+        checksum: Optional[str] = None,
     ) -> Attachment:
         """Add an attachment to a message."""
         msg_row = self._message_repo.get_by_id(message_id)
@@ -98,6 +99,7 @@ class AttachmentService(BaseService):
             now,
             url_encrypted=encrypted_url,
             metadata=metadata,
+            checksum=checksum,
         )
 
         row = self._repo.get_by_id(att_id)

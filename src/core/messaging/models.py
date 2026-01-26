@@ -145,6 +145,7 @@ class Attachment:
     created_at: int
     url_encrypted: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+    checksum: Optional[str] = None
     deleted: bool = False
 
 

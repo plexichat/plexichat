@@ -407,6 +407,7 @@ class DeduplicationManager:
         storage_path: str,
         storage_backend: str,
         timestamp: int,
+        phash_value: Optional[str] = None,
     ) -> int:
         """
         Register a new file hash or increment reference count.
@@ -439,12 +440,13 @@ class DeduplicationManager:
 
         self._db.execute(
             """INSERT INTO media_file_hashes 
-               (id, hash_value, algorithm, file_size, content_type, reference_count, 
+               (id, hash_value, phash_value, algorithm, file_size, content_type, reference_count, 
                 first_seen, storage_path, storage_backend)
-               VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)""",
             (
                 hash_id,
                 hash_value,
+                phash_value,
                 self._config["hash_algorithm"],
                 file_size,
                 content_type,
@@ -520,6 +522,19 @@ class DeduplicationManager:
         """
         from src.utils.encryption import generate_snowflake_id
         import time
+
+        # Resolve actual hash if reporting by URL
+        if hash_value == "URL_REPORT" and attachment_url:
+            filename = os.path.basename(attachment_url.split("?")[0])
+            # Match by storage path suffix (filename)
+            row = self._db.fetch_one(
+                "SELECT hash_value, phash_value FROM media_file_hashes WHERE storage_path LIKE ?",
+                (f"%{filename}",)
+            )
+            if row:
+                hash_value = row["hash_value"] or hash_value
+                if not phash_value:
+                    phash_value = row.get("phash_value")
 
         report_id = generate_snowflake_id()
         now = int(time.time() * 1000)

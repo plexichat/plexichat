@@ -748,6 +748,9 @@ class MediaManager(BaseManager):
         # Register file hash for deduplication tracking
         if dedup_result and self._dedup_manager is not None:
             try:
+                # Compute pHash for images to enable similarity detection
+                phash = self._dedup_manager.compute_phash(final_data, content_type)
+                
                 self._dedup_manager.register_file(
                     hash_value=checksum,
                     file_size=final_size,
@@ -755,6 +758,7 @@ class MediaManager(BaseManager):
                     storage_path=storage_path,
                     storage_backend=storage_backend,
                     timestamp=now,
+                    phash_value=phash,
                 )
             except Exception as e:
                 logger.warning(f"Failed to register file hash: {e}")

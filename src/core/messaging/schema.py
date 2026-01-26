@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS msg_attachments (
     url_encrypted TEXT,
     created_at INTEGER NOT NULL,
     metadata TEXT,
+    checksum TEXT,
     deleted INTEGER DEFAULT 0,
     FOREIGN KEY (message_id) REFERENCES msg_messages(id) ON DELETE CASCADE
 );
@@ -249,6 +250,29 @@ def _run_migrations(db) -> None:
     except Exception as e:
         import utils.logger as logger
         logger.debug(f"Migration compact_messages_enabled: {e}")
+
+    # Migration: Add checksum column to msg_attachments
+    try:
+        db_type = getattr(db, "db_type", getattr(db, "type", "sqlite"))
+        column_exists = False
+
+        if db_type == "postgres":
+            result = db.fetch_one(
+                """SELECT column_name FROM information_schema.columns 
+                   WHERE table_name = 'msg_attachments' AND column_name = 'checksum'"""
+            )
+            column_exists = result is not None
+        else:
+            # SQLite
+            rows = db.fetch_all("PRAGMA table_info(msg_attachments)")
+            column_exists = any(row["name"] == "checksum" for row in rows)
+
+        if not column_exists:
+            db.execute("ALTER TABLE msg_attachments ADD COLUMN checksum TEXT")
+            logger.info("Migrated msg_attachments: added checksum column")
+    except Exception as e:
+        import utils.logger as logger
+        logger.debug(f"Migration msg_attachments checksum: {e}")
 
 
 def drop_tables(db) -> None:

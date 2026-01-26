@@ -454,6 +454,7 @@ async def send_channel_message(
                     "content_type": a.content_type,
                     "size": a.size,
                     "url": a.url,
+                    "hash": a.hash,
                 }
                 for a in body.attachments
             ]

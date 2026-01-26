@@ -24,13 +24,14 @@ class AttachmentRepository(BaseRepository[Attachment]):
         created_at: int,
         url_encrypted: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        checksum: Optional[str] = None,
         auto_commit: bool = True,
     ) -> None:
         """Create a new attachment."""
         self._execute(
             """INSERT INTO msg_attachments 
-               (id, message_id, filename, content_type, size, url, url_encrypted, created_at, metadata)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (id, message_id, filename, content_type, size, url, url_encrypted, created_at, metadata, checksum)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 att_id,
                 message_id,
@@ -41,6 +42,7 @@ class AttachmentRepository(BaseRepository[Attachment]):
                 url_encrypted,
                 created_at,
                 self._json_dumps(metadata),
+                checksum,
             ),
             auto_commit=auto_commit,
         )
@@ -116,5 +118,6 @@ class AttachmentRepository(BaseRepository[Attachment]):
             url_encrypted=row["url_encrypted"],
             created_at=row["created_at"],
             metadata=self._json_loads(row["metadata"]) if row["metadata"] else None,
+            checksum=row.get("checksum"),
             deleted=bool(row["deleted"]),
         )
