@@ -3,7 +3,7 @@ from typing import Any
 
 # Regex pattern to match ? placeholders (not inside single or double quotes)
 # Corrected with escaped double quotes for safe string representation
-_PLACEHOLDER_PATTERN = re.compile(r"('(?:''|[^'])*'|"(?:""|[^\\"])*")|(\?)")
+_PLACEHOLDER_PATTERN = re.compile(r"('(?:''|[^'])*'|"(?:""|[^\"])*")|(\?)")
 
 def convert_placeholders(query: str, db_type: str) -> str:
     """
@@ -48,7 +48,7 @@ def sanitize_identifier(identifier: str, db_type: str) -> str:
         raise ValueError(f"Invalid database identifier: {identifier}")
         
     if db_type == "postgres":
-        return f'"{identifier}"'
+        return f'\"{identifier}\"'  # Corrected escaping for double quotes within f-string
     else:
         # SQLite uses backticks
         return f'`{identifier}`'
