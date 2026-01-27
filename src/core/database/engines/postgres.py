@@ -13,15 +13,13 @@ class PostgresEngine(BaseEngine):
         try:
             import psycopg2
             from psycopg2.extras import RealDictCursor
-            from psycopg2.pool import ThreadedConnectionPool
         except ImportError:
             logger.error("psycopg2 not installed. Please install with: pip install psycopg2-binary")
             raise ImportError("psycopg2 not installed")
 
         pg_config = self.config.get("postgres", {})
-        pool_config = self.config.get("connection_pool", {})
-
-        # Build connection string or params
+        
+        # Build DSN
         dsn = f"host={pg_config.get('host', 'localhost')} " \
               f"port={pg_config.get('port', 5432)} " \
               f"user={pg_config.get('user', 'postgres')} " \
@@ -29,18 +27,6 @@ class PostgresEngine(BaseEngine):
               f"dbname={pg_config.get('dbname', 'plexichat')} " \
               f"sslmode={pg_config.get('sslmode', 'prefer')}"
 
-        # Initialize pool if not already done (this will be handled by Database class actually)
-        # But connect() for a single thread in core.py:394 used self._pool.getconn()
-        # So we need to return the pool or a connection from the pool.
-        # Actually, the Database class manages the pool. Engines should just provide the connection.
-        # However, the Database class currently creates the pool in __init__ or first connect.
-        
-        # Let's see how Database.connect() works in core.py.
-        # It calls self._pool.getconn() if self.type == "postgres".
-        
-        # To maintain the API, the Database class should still hold the pool.
-        # So connect() here should probably just be for when there is NO pool.
-        
         return psycopg2.connect(dsn, cursor_factory=RealDictCursor)
 
     def create_pool(self, min_conn: int, max_conn: int) -> Any:
@@ -51,6 +37,9 @@ class PostgresEngine(BaseEngine):
             raise ImportError("psycopg2 not installed")
 
         pg_config = self.config.get("postgres", {})
+        pool_config = self.config.get("connection_pool", {})
+        connect_timeout = pool_config.get("connect_timeout", 10)
+
         dsn = f"host={pg_config.get('host', 'localhost')} " \
               f"port={pg_config.get('port', 5432)} " \
               f"user={pg_config.get('user', 'postgres')} " \
@@ -59,7 +48,9 @@ class PostgresEngine(BaseEngine):
               f"sslmode={pg_config.get('sslmode', 'prefer')}"
               
         return ThreadedConnectionPool(
-            min_conn, max_conn, dsn, cursor_factory=RealDictCursor
+            min_conn, max_conn, dsn, 
+            cursor_factory=RealDictCursor,
+            connect_timeout=connect_timeout
         )
 
     def get_pool_stats(self, pool: Any) -> Dict[str, Any]:

@@ -99,6 +99,7 @@ class Database:
         self._max_idle_time = pool_config.get("max_idle_time", 300)
         
         logger.info(f"Database initialized with type: {self.type}")
+        self.start_pool_monitoring()
 
     @property
     def transaction_depth(self) -> int:
