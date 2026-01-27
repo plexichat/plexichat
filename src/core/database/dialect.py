@@ -2,7 +2,8 @@ import re
 from typing import Any
 
 # Regex pattern to match ? placeholders (not inside single or double quotes)
-_PLACEHOLDER_PATTERN = re.compile(r"('(?:''|[^'])*'|"(?:""|[^"])*")|(\?)")
+# Corrected with escaped double quotes for safe string representation
+_PLACEHOLDER_PATTERN = re.compile(r"('(?:''|[^'])*'|"(?:""|[^\\"])*")|(\?)")
 
 def convert_placeholders(query: str, db_type: str) -> str:
     """
@@ -14,11 +15,9 @@ def convert_placeholders(query: str, db_type: str) -> str:
 
     # Handle Postgres-specific escaping and syntax
     # 1. Escape literal % for psycopg2 (must be %%)
-    # This matches the original implementation
     query = query.replace("%", "%%")
 
     # 2. Convert INSERT OR IGNORE to INSERT ... ON CONFLICT DO NOTHING
-    # This matches the original implementation
     if "INSERT OR IGNORE" in query.upper():
         query = re.sub(r"INSERT OR IGNORE INTO", "INSERT INTO", query, flags=re.IGNORECASE)
         if "ON CONFLICT DO NOTHING" not in query.upper():
@@ -51,5 +50,5 @@ def sanitize_identifier(identifier: str, db_type: str) -> str:
     if db_type == "postgres":
         return f'"{identifier}"'
     else:
-        # SQLite uses backticks or double quotes
+        # SQLite uses backticks
         return f'`{identifier}`'
