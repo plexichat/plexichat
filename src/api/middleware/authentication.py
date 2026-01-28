@@ -31,10 +31,6 @@ class AuthenticationMiddleware:
         request = Request(scope, receive)
         path = scope.get("path", "")
 
-        if path == "/api/v1/status":
-            await self.app(scope, receive, send)
-            return
-
         # 1. Check for Internal Service Authentication
         internal_secret = api.get_internal_secret()
         provided_secret = request.headers.get("X-Plexichat-Internal-Secret")

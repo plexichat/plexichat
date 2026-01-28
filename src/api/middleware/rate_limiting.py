@@ -82,7 +82,6 @@ def create_rate_limit_middleware(
     default_excludes = [
         "/",
         "/health",
-        "/api/v1/status",
         "/docs",
         "/redoc",
         "/openapi.json",

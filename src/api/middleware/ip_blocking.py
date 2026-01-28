@@ -20,11 +20,6 @@ class IPBlockingMiddleware:
             await self.app(scope, receive, send)
             return
 
-        path = scope.get("path", "")
-        if path == "/api/v1/status":
-            await self.app(scope, receive, send)
-            return
-
         request = Request(scope, receive)
         
         # Get client IP (handle proxies if trust is enabled)
