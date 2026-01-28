@@ -1088,6 +1088,9 @@ class AuthManager(BaseManager):
 
     def block_ip(self, ip_address: str, reason: Optional[str] = None, blocked_by: Optional[int] = None, duration_hours: Optional[int] = None) -> bool:
         """Block an IP address."""
+        # Invalidate cache for this IP
+        invalidate_pattern("ip_blocked:*")
+        
         now = self._get_timestamp()
         expires_at = now + (duration_hours * 3600 * 1000) if duration_hours else None
         
@@ -1102,6 +1105,9 @@ class AuthManager(BaseManager):
 
     def unblock_ip(self, ip_address: str) -> bool:
         """Unblock an IP address."""
+        # Invalidate cache for this IP
+        invalidate_pattern("ip_blocked:*")
+        
         self._db.execute("DELETE FROM auth_ip_blacklist WHERE ip_address = ?", (ip_address,))
         logger.info(f"IP {ip_address} unblocked")
         return True

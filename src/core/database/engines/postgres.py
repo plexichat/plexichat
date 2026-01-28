@@ -18,6 +18,8 @@ class PostgresEngine(BaseEngine):
             raise ImportError("psycopg2 not installed")
 
         pg_config = self.config.get("postgres", {})
+        pool_config = self.config.get("connection_pool", {})
+        connect_timeout = pool_config.get("connect_timeout", 10)
         
         # Build DSN
         dsn = f"host={pg_config.get('host', 'localhost')} " \
@@ -27,7 +29,7 @@ class PostgresEngine(BaseEngine):
               f"dbname={pg_config.get('dbname', 'plexichat')} " \
               f"sslmode={pg_config.get('sslmode', 'prefer')}"
 
-        return psycopg2.connect(dsn, cursor_factory=RealDictCursor)
+        return psycopg2.connect(dsn, cursor_factory=RealDictCursor, connect_timeout=connect_timeout)
 
     def create_pool(self, min_conn: int, max_conn: int) -> Any:
         try:
