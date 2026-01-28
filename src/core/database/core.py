@@ -75,6 +75,11 @@ class Database:
             min_conn = pool_config.get("min_connections", 1)
             max_conn = pool_config.get("max_connections", 50) # Match original max
             try:
+                # Force min_conn to 1 if it's currently higher to avoid startup hangs
+                if min_conn > 1:
+                    logger.info(f"Reducing min_connections from {min_conn} to 1 for startup stability")
+                    min_conn = 1
+                
                 self._pool = self.engine.create_pool(min_conn, max_conn)
                 logger.info(f"PostgreSQL connection pool initialized: {min_conn}-{max_conn} connections")
             except Exception as e:
