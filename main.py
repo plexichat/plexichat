@@ -1227,7 +1227,7 @@ class PlexiChatServer:
             logger.error(f"Failed to check encryption key rotation: {e}")
 
         # Initialize core modules in dependency order
-                startup_times = {}
+        startup_times = {}
         
         def timed_init(name: str, init_func):
             """Initialize a module and track how long it takes."""
