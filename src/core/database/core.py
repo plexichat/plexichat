@@ -70,21 +70,9 @@ class Database:
         # Initialize components
         if self.type == "postgres":
             self.engine = PostgresEngine(self.config)
-            # Pre-initialize pool for Postgres
-            pool_config = self.config.get("connection_pool", {})
-            min_conn = pool_config.get("min_connections", 1)
-            max_conn = pool_config.get("max_connections", 50)
-            
-            try:
-                # Force min_conn to 1 if it's currently higher to avoid startup hangs
-                if min_conn > 1:
-                    logger.info(f"Reducing min_connections from {min_conn} to 1 for startup stability")
-                    min_conn = 1
-                
-                self._pool = self.engine.create_pool(min_conn, max_conn)
-                logger.info(f"PostgreSQL connection pool initialized: {min_conn}-{max_conn} connections")
-            except Exception as e:
-                logger.error(f"Failed to initialize PostgreSQL pool: {e}")
+            # Pool will be initialized on-demand in connect()
+            self._pool = None
+            logger.info("PostgreSQL engine initialized (pool creation deferred)")
         elif self.type == "sqlite":
             self.engine = SqliteEngine(self.config)
         else:
