@@ -1106,6 +1106,7 @@ class AuthManager(BaseManager):
         logger.info(f"IP {ip_address} unblocked")
         return True
 
+    @cached(ttl=300, prefix="ip_blocked")
     def is_ip_blocked(self, ip_address: str) -> bool:
         """Check if an IP address is blocked."""
         row = self._db.fetch_one("SELECT expires_at FROM auth_ip_blacklist WHERE ip_address = ?", (ip_address,))

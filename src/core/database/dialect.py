@@ -12,9 +12,11 @@ def convert_placeholders(query: str, db_type: str) -> str:
     if db_type != "postgres":
         return query
 
-    # Handle Postgres-specific escaping and syntax
-    # 1. Escape literal % for psycopg2 (must be %%)
-    query = query.replace("%", "%%")
+    # Handle Postgres-specific syntax and placeholders
+    
+    # 1. Convert abs(random()) to floor(random() * ...) for PostgreSQL
+    if "abs(random())" in query.lower():
+        query = re.sub(r"abs\(random\(\)\)", "floor(random() * 9223372036854775807)::bigint", query, flags=re.IGNORECASE)
 
     # 2. Convert INSERT OR IGNORE to INSERT ... ON CONFLICT DO NOTHING
     if "INSERT OR IGNORE" in query.upper():
@@ -25,14 +27,15 @@ def convert_placeholders(query: str, db_type: str) -> str:
                 query = query[:-1] + " ON CONFLICT DO NOTHING;"
             else:
                 query = query + " ON CONFLICT DO NOTHING"
-    
-    # 3. Convert abs(random()) to floor(random() * ...) for PostgreSQL
-    if "abs(random())" in query.lower():
-        query = re.sub(r"abs\(random\(\)\)", "floor(random() * 9223372036854775807)::bigint", query, flags=re.IGNORECASE)
 
     def replace(match):
         if match.group(1):  # It's a quoted string
-            return match.group(1)
+            # In a quoted string, we DO NOT want to escape % unless it's for psycopg2
+            # BUT psycopg2 only wants %% for literal % in the query itself, 
+            # NOT for % used as wildcards in LIKE patterns when passed as parameters.
+            # However, if the % is literal in the SQL text, it MUST be %%.
+            content = match.group(1)
+            return content.replace("%", "%%")
         else:  # It's a ? placeholder
             return "%s"
 
