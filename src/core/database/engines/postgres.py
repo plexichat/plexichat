@@ -47,21 +47,11 @@ class PostgresEngine(BaseEngine):
               f"dbname={pg_config.get('dbname', 'plexichat')} " \
               f"sslmode={pg_config.get('sslmode', 'prefer')}"
               
-        logger.info(f"Creating ThreadedConnectionPool ({min_conn}-{max_conn}) with timeout {connect_timeout}s")
-        start_time = time.time()
-        try:
-            pool = ThreadedConnectionPool(
-                min_conn, max_conn, dsn, 
-                cursor_factory=RealDictCursor,
-                connect_timeout=connect_timeout
-            )
-            elapsed = time.time() - start_time
-            logger.info(f"ThreadedConnectionPool created successfully in {elapsed:.2f}s")
-            return pool
-        except Exception as e:
-            elapsed = time.time() - start_time
-            logger.error(f"ThreadedConnectionPool creation FAILED after {elapsed:.2f}s: {e}")
-            raise
+        return ThreadedConnectionPool(
+            min_conn, max_conn, dsn, 
+            cursor_factory=RealDictCursor,
+            connect_timeout=connect_timeout
+        )
 
     def get_pool_stats(self, pool: Any) -> Dict[str, Any]:
         stats = {
