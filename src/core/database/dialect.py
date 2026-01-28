@@ -31,16 +31,13 @@ def convert_placeholders(query: str, db_type: str) -> str:
             # Escape literal % inside the SQL string itself for psycopg2
             content = match.group(1)
             return content.replace("%", "%%")
-        else:  # It's a ? placeholder or a % outside of quotes
-            matched = match.group(0)
-            if matched == "?":
-                return "%s"
-            # If it's a literal % in the SQL (not in a string literal), it MUST be %%
-            return matched.replace("%", "%%")
+        elif match.group(2):  # It's a ? placeholder
+            return "%s"
+        else:  # It's a literal % in the SQL
+            return "%%"
 
-    # Updated pattern to match quoted strings, ? placeholders, OR literal %
-    # This ensures we handle % everywhere correctly for psycopg2
-    pattern = re.compile(r'''('(?:''|[^'])*'|"(?:""|[^"])*")|(\?) | (%)''', re.VERBOSE)
+    # Pattern to match quoted strings, ? placeholders, OR literal %
+    pattern = re.compile(r'''('(?:''|[^'])*'|"(?:""|[^"])*")|(\?) | (%)'''.replace(" ", ""), re.VERBOSE)
     return pattern.sub(replace, query)
 
 def sanitize_identifier(identifier: str, db_type: str) -> str:
