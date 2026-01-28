@@ -237,7 +237,7 @@ class Database:
             
             return conn
 
-    def execute(self, query: str, params: Optional[Tuple] = None) -> DbCursor:
+    def execute(self, query: str, params: Optional[Tuple] = None, auto_commit: bool = True) -> DbCursor:
         """Execute a query and return a cursor."""
         if self.transaction_depth > 0:
             self._validate_transaction_state()
@@ -259,7 +259,7 @@ class Database:
             if duration_ms > self._slow_query_threshold_ms:
                 logger.warning(f"Slow query detected ({duration_ms:.2f}ms): {query[:100]}")
             
-            if not self.in_transaction:
+            if auto_commit and not self.in_transaction:
                 conn.commit()
                 
             return cursor
@@ -268,7 +268,7 @@ class Database:
             self._handle_execution_error(conn, cursor, e, query)
             raise
 
-    def execute_many(self, query: str, params_list: List[Tuple]) -> DbCursor:
+    def execute_many(self, query: str, params_list: List[Tuple], auto_commit: bool = True) -> DbCursor:
         """Execute a batch query."""
         if self.transaction_depth > 0:
             self._validate_transaction_state()
@@ -283,7 +283,7 @@ class Database:
             exec_time = (time.time() - start_time) * 1000
             self.monitor.record_query_execution(exec_time)
             
-            if not self.in_transaction:
+            if auto_commit and not self.in_transaction:
                 conn.commit()
             return cursor
         except Exception as e:
