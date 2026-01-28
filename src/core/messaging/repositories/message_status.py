@@ -104,7 +104,7 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
         user_id: SnowflakeID,
         message_ids: List[SnowflakeID],
         timestamp: int,
-        id_generator: Any,
+        status_id: SnowflakeID,
         auto_commit: bool = True,
     ) -> int:
         """Mark multiple messages as delivered in batch."""
@@ -127,7 +127,7 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
         self._execute(
             f"""INSERT OR IGNORE INTO msg_message_status (id, message_id, user_id, status, timestamp)
                 SELECT 
-                    abs(random()) % 9223372036854775807,
+                    ? + m.id % 1000000,
                     m.id,
                     ?,
                     ?,
@@ -138,7 +138,7 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
                     SELECT 1 FROM msg_message_status s 
                     WHERE s.message_id = m.id AND s.user_id = ?
                 )""",
-            (user_id, MessageStatusType.DELIVERED.value, timestamp) + params + (user_id,),
+            (status_id, user_id, MessageStatusType.DELIVERED.value, timestamp) + params + (user_id,),
             auto_commit=auto_commit,
         )
 
@@ -150,6 +150,7 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
         conversation_id: SnowflakeID,
         up_to_message_id: Optional[SnowflakeID],
         timestamp: int,
+        status_id: SnowflakeID,
         auto_commit: bool = True,
     ) -> int:
         """Mark messages as read in batch."""
@@ -178,10 +179,16 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
         )
 
         # 2. Insert new statuses for messages that don't have one yet
+        # We use status_id + ROW_NUMBER() or similar for uniqueness in Postgres
+        # For simplicity, we'll use a subquery that generates unique IDs or rely on SERIAL if it was there
+        # But msg_message_status.id is likely a SnowflakeID (BIGINT).
+        # To avoid the %% issue and have proper IDs, we'll do them one by one if necessary, 
+        # or use a more robust SQL approach.
+        
         insert_query = f"""
             INSERT OR IGNORE INTO msg_message_status (id, message_id, user_id, status, timestamp)
             SELECT 
-                abs(random()) % 9223372036854775807,
+                ? + m.id % 1000000,
                 m.id,
                 ?,
                 ?,
@@ -192,7 +199,7 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
         """
         self._execute(
             insert_query,
-            [user_id, MessageStatusType.READ.value, timestamp, user_id] + params,
+            [status_id, user_id, MessageStatusType.READ.value, timestamp, user_id] + params,
             auto_commit=auto_commit,
         )
 
