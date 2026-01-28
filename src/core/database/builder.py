@@ -168,8 +168,9 @@ class Query(ABC):
                 cursor = self.connection.cursor()
                 # Convert Parameter objects and ? to %s for PostgreSQL
                 param_values = [p.value if isinstance(p, Parameter) else p for p in params]
-                # Replace ? with %s for PostgreSQL
-                pg_sql = re.sub(r'\?', '%s', sql)
+                # Replace ? with %s for PostgreSQL using the dialect utility
+                from . import dialect
+                pg_sql = dialect.convert_placeholders(sql, self.db_type)
                 cursor.execute(pg_sql, param_values)
                 
                 # Get results based on query type
