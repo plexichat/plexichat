@@ -12,16 +12,11 @@ def convert_placeholders(query: str, db_type: str) -> str:
     if db_type != "postgres":
         return query
 
-    # Handle Postgres-specific escaping and syntax
-    # 1. Escape literal % for psycopg2 (must be %%)
-    # This is critical for psycopg2 to not confuse % with format specifiers
-    query = query.replace("%", "%%")
-
-    # 2. Convert abs(random()) to floor(random() * ...) for PostgreSQL
+    # 1. Convert abs(random()) to floor(random() * ...) for PostgreSQL
     if "abs(random())" in query.lower():
         query = re.sub(r"abs\(random\(\)\)", "floor(random() * 9223372036854775807)::bigint", query, flags=re.IGNORECASE)
 
-    # 3. Convert INSERT OR IGNORE to INSERT ... ON CONFLICT DO NOTHING
+    # 2. Convert INSERT OR IGNORE to INSERT ... ON CONFLICT DO NOTHING
     if "INSERT OR IGNORE" in query.upper():
         query = re.sub(r"INSERT OR IGNORE INTO", "INSERT INTO", query, flags=re.IGNORECASE)
         if "ON CONFLICT DO NOTHING" not in query.upper():
@@ -32,12 +27,21 @@ def convert_placeholders(query: str, db_type: str) -> str:
                 query = query + " ON CONFLICT DO NOTHING"
 
     def replace(match):
-        if match.group(1):  # It's a quoted string
-            return match.group(1)
-        else:  # It's a ? placeholder
-            return "%s"
+        if match.group(1):  # It's a quoted string literal in the SQL
+            # Escape literal % inside the SQL string itself for psycopg2
+            content = match.group(1)
+            return content.replace("%", "%%")
+        else:  # It's a ? placeholder or a % outside of quotes
+            matched = match.group(0)
+            if matched == "?":
+                return "%s"
+            # If it's a literal % in the SQL (not in a string literal), it MUST be %%
+            return matched.replace("%", "%%")
 
-    return _PLACEHOLDER_PATTERN.sub(replace, query)
+    # Updated pattern to match quoted strings, ? placeholders, OR literal %
+    # This ensures we handle % everywhere correctly for psycopg2
+    pattern = re.compile(r'''('(?:''|[^'])*'|"(?:""|[^"])*")|(\?) | (%)''', re.VERBOSE)
+    return pattern.sub(replace, query)
 
 def sanitize_identifier(identifier: str, db_type: str) -> str:
     """
