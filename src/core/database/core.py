@@ -207,8 +207,13 @@ class Database:
             if self.type == "postgres":
                 if not self._pool:
                     pool_config = self.config.get("connection_pool", {})
+                    min_conn = pool_config.get("min_connections", 1)
+                    if min_conn > 1:
+                        logger.info(f"Reducing min_connections from {min_conn} to 1 for startup stability")
+                        min_conn = 1
+                        
                     self._pool = self.engine.create_pool(
-                        pool_config.get("min_connections", 1),
+                        min_conn,
                         pool_config.get("max_connections", 50)
                     )
                 conn = self.engine.connect(self._pool)
