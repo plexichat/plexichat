@@ -448,6 +448,13 @@ class PlexiChatServer:
                 "enabled": True,
                 "rate_limit": {"max_per_hour": 5, "max_per_day": 20},
             },
+            "email": {
+                "smtp_host": "localhost",
+                "smtp_port": 587,
+                "smtp_user": "",
+                "from_email": "noreply@plexichat.internal",
+                "use_tls": True,
+            },
             "media": {
                 # Directories
                 "data_dir": str(home_dir / "data"),
@@ -1220,7 +1227,7 @@ class PlexiChatServer:
             logger.error(f"Failed to check encryption key rotation: {e}")
 
         # Initialize core modules in dependency order
-        startup_times = {}
+                startup_times = {}
         
         def timed_init(name: str, init_func):
             """Initialize a module and track how long it takes."""
@@ -1238,7 +1245,25 @@ class PlexiChatServer:
                 logger.error(f"  -> {name} FAILED after {elapsed:.1f}ms: {e}")
                 raise
         
-        timed_init("auth", lambda: auth.setup(self.db))
+        # Initialize email sender if configured
+        email_config = config.get("email", {})
+        email_sender = None
+        smtp_password = os.getenv("PLEXICHAT_SMTP_PASSWORD")
+        if email_config.get("smtp_host") and smtp_password:
+            from src.utils.email import SMTPEmailSender
+            email_sender = SMTPEmailSender(
+                host=email_config["smtp_host"],
+                port=email_config.get("smtp_port", 587),
+                user=email_config.get("smtp_user", ""),
+                password=smtp_password,
+                from_email=email_config.get("from_email", "noreply@plexichat.internal"),
+                use_tls=email_config.get("use_tls", True)
+            )
+            logger.info(f"Email sender initialized via SMTP ({email_config['smtp_host']})")
+        else:
+            logger.info("Email sender not initialized (SMTP host or PLEXICHAT_SMTP_PASSWORD missing)")
+
+        timed_init("auth", lambda: auth.setup(self.db, email_sender=email_sender))
         self._modules["auth"] = auth
 
         timed_init("messaging", lambda: messaging.setup(self.db, auth))

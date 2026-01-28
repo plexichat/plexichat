@@ -29,6 +29,8 @@ from src.api.schemas.auth import (
     RevokeAllSessionsRequest,
     RevokeAllSessionsResponse,
     PasswordRequirementsResponse,
+    PasswordResetRequest,
+    PasswordResetConfirm,
 )
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 
@@ -1414,4 +1416,82 @@ async def get_password_requirements() -> PasswordRequirementsResponse:
         logger.error(f"Failed to get password requirements: {e}", exc_info=True)
         raise HTTPException(
             status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+
+@router.post(
+    "/password-reset/request",
+    response_model=SuccessResponse,
+    summary="Request password reset",
+    responses={
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def request_password_reset(body: PasswordResetRequest) -> SuccessResponse:
+    """
+    Request a password reset email.
+
+    Always returns success to prevent email enumeration.
+    """
+    auth = api.get_auth()
+    if not auth:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Auth module not available"}},
+        )
+
+    try:
+        # Use run_in_threadpool if auth methods are blocking
+        from fastapi.concurrency import run_in_threadpool
+        await run_in_threadpool(auth.request_password_reset, body.email)
+        return SuccessResponse(success=True)
+    except Exception as e:
+        logger.error(f"Password reset request failed: {e}", exc_info=True)
+        # Still return success to prevent email enumeration
+        return SuccessResponse(success=True)
+
+
+@router.post(
+    "/password-reset/confirm",
+    response_model=SuccessResponse,
+    summary="Confirm password reset",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid token or weak password"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def confirm_password_reset(body: PasswordResetConfirm) -> SuccessResponse:
+    """
+    Confirm password reset with token.
+    """
+    auth = api.get_auth()
+    if not auth:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Auth module not available"}},
+        )
+
+    try:
+        from fastapi.concurrency import run_in_threadpool
+        success = await run_in_threadpool(auth.reset_password, body.token, body.new_password)
+        if success:
+            return SuccessResponse(success=True)
+        else:
+            raise TokenInvalidError("Invalid or expired token")
+    except TokenInvalidError as e:
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": str(e)}},
+        )
+    except WeakPasswordError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": str(e)}},
+        )
+    except Exception as e:
+        logger.error(f"Password reset confirmation failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

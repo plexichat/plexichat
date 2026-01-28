@@ -210,3 +210,20 @@ class OAuthLoginResponse(BaseModel):
         default=None,
         description="PKCE code verifier (client must store and return in callback)",
     )
+
+
+class PasswordResetRequest(BaseModel):
+    """Request to initiate password reset."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    email: EmailStr = Field(..., description="Account email address")
+
+
+class PasswordResetConfirm(BaseModel):
+    """Request to reset password with token."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    token: str = Field(..., description="Reset token from email")
+    new_password: str = Field(..., description="New password")
