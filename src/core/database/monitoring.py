@@ -3,13 +3,14 @@ import time
 import uuid
 from typing import Any, List, Optional, Tuple, Dict, Union
 from datetime import datetime
+import utils.config as config
 import utils.logger as logger
 
 class DatabaseMonitor:
     """Handles database monitoring, metrics collection, and background logging."""
 
-    def __init__(self, config: Dict[str, Any], db_type: str):
-        self.config = config
+    def __init__(self, db_config: Dict[str, Any], db_type: str):
+        self.db_config = db_config
         self.db_type = db_type
         self._lock = threading.RLock()
         
@@ -25,12 +26,12 @@ class DatabaseMonitor:
         self._stop_logging = False
         
         # Configuration
-        monitoring_config = self.config.get("monitoring", {})
+        monitoring_config = config.get("monitoring", {})
         alert_thresholds = monitoring_config.get("alert_thresholds", {})
         
-        max_connection_age_hours = self.config.get("connection_pool", {}).get("max_connection_age_hours", 0.5)
+        max_connection_age_hours = self.db_config.get("connection_pool", {}).get("max_connection_age_hours", 0.5)
         self._max_connection_age_seconds = max_connection_age_hours * 3600
-        self._periodic_log_interval = monitoring_config.get("log_interval_seconds", 60)
+        self._periodic_log_interval = monitoring_config.get("log_interval", monitoring_config.get("log_interval_seconds", 60))
         self._slow_query_threshold_ms = alert_thresholds.get("query_time_ms", 5000)
         self._error_rate_window_seconds = 60
         self._error_rate_threshold = alert_thresholds.get("db_errors_per_minute", 10)

@@ -81,7 +81,7 @@ class Database:
         self.monitor = DatabaseMonitor(self.config, self.type)
         
         # Alert thresholds
-        monitoring_config = self.config.get("monitoring", {})
+        monitoring_config = config.get("monitoring", {})
         alert_thresholds = monitoring_config.get("alert_thresholds", {})
         self._slow_query_threshold_ms = alert_thresholds.get("query_time_ms", 5000)
         
@@ -91,6 +91,10 @@ class Database:
         self._validation_query = pool_config.get("validation_query", "SELECT 1")
         self._validation_interval = pool_config.get("validation_interval", 60)
         self._max_idle_time = pool_config.get("max_idle_time", 300)
+        
+        # Max age threshold (default 30 minutes)
+        max_age_hours = pool_config.get("max_connection_age_hours", 0.5)
+        self._max_connection_age_seconds = max_age_hours * 3600
         
         logger.info(f"Database initialized with type: {self.type}")
         self.start_pool_monitoring()
@@ -160,20 +164,29 @@ class Database:
             if is_valid:
                 metadata = self.monitor.get_connection_metadata(conn_id)
                 if metadata:
+                    now = time.time()
                     # Max idle time check
-                    last_used = metadata.get("last_used", time.time())
-                    if self._max_idle_time > 0 and (time.time() - last_used) > self._max_idle_time:
+                    last_used = metadata.get("last_used", now)
+                    if self._max_idle_time > 0 and (now - last_used) > self._max_idle_time:
                         logger.warning(f"Connection {conn_id} exceeded max idle time, evicting")
                         is_valid = False
                     
+                    # Max age check
+                    elif self._max_connection_age_seconds > 0:
+                        created_at = metadata.get("created_at", 0)
+                        if (now - created_at) > self._max_connection_age_seconds:
+                            logger.warning(f"Connection {conn_id} exceeded max age ({now - created_at:.1f}s), evicting")
+                            is_valid = False
+                    
                     # Periodic validation query
-                    elif self._enable_validation:
+                    if is_valid and self._enable_validation:
                         last_val = metadata.get("last_validation", 0)
-                        if (time.time() - last_val) >= self._validation_interval:
+                        if (now - last_val) >= self._validation_interval:
                             try:
-                                with conn.cursor() as cursor:
-                                    cursor.execute(self._validation_query)
-                                metadata["last_validation"] = time.time()
+                                cursor = conn.cursor()
+                                cursor.execute(self._validation_query)
+                                cursor.close()
+                                metadata["last_validation"] = now
                             except Exception as e:
                                 logger.warning(f"Connection {conn_id} failed validation: {e}")
                                 is_valid = False
@@ -405,8 +418,17 @@ class Database:
         if hasattr(self._local, "connection") and self._local.connection:
             conn = self._local.connection
             conn_id = id(conn)
-            self.monitor.check_connection_age(conn_id)
-            self.engine.close_connection(conn, self._pool)
+            
+            # Check age to decide if we should close or return to pool
+            force_close = False
+            metadata = self.monitor.get_connection_metadata(conn_id)
+            if metadata and self._max_connection_age_seconds > 0:
+                age = time.time() - metadata.get("created_at", 0)
+                if age > self._max_connection_age_seconds:
+                    logger.info(f"Closing connection {conn_id} on thread exit (age: {age:.1f}s > {self._max_connection_age_seconds}s)")
+                    force_close = True
+            
+            self.engine.close_connection(conn, self._pool, {"close": force_close})
             self.monitor.remove_connection_metadata(conn_id)
             self._local.connection = None
         

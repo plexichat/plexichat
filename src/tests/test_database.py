@@ -1321,9 +1321,9 @@ def test_pool_exhaustion_handling(db_config, caplog):
     
     # Patch the ThreadedConnectionPool instantiation
     with patch("psycopg2.pool.ThreadedConnectionPool", return_value=mock_pool):
-        # First call to _connect_postgres() creates pool and gets connection
+        # First call to connect() creates pool and gets connection
         try:
-            db._connect_postgres()
+            db.connect()
             assert len(connections_out) == 1, "First connection should be acquired"
         except Exception as e:
             pytest.fail(f"First connection should succeed: {e}")
@@ -1333,7 +1333,7 @@ def test_pool_exhaustion_handling(db_config, caplog):
             # Need new db instance to avoid thread-local reuse
             db2 = Database()
             db2._pool = mock_pool  # Reuse the mock pool
-            db2._connect_postgres()
+            db2.connect()
             assert len(connections_out) == 2, "Second connection should be acquired"
         except Exception as e:
             pytest.fail(f"Second connection should succeed: {e}")
@@ -1343,7 +1343,7 @@ def test_pool_exhaustion_handling(db_config, caplog):
         db3._pool = mock_pool  # Reuse the mock pool
         
         with pytest.raises(psycopg2.pool.PoolError):
-            db3._connect_postgres()
+            db3.connect()
         
         # Verify pool exhaustion error was logged
         log_messages = [record.message for record in caplog.records]
@@ -1412,9 +1412,9 @@ def test_connect_timeout_handling(db_config, caplog):
     
     # Patch the ThreadedConnectionPool instantiation
     with patch("psycopg2.pool.ThreadedConnectionPool", return_value=mock_pool):
-        # Call _connect_postgres() which should timeout
+        # Call connect() which should timeout
         with pytest.raises(psycopg2.OperationalError):
-            db._connect_postgres()
+            db.connect()
         
         # Verify timeout-specific error was logged
         log_messages = [record.message for record in caplog.records]
@@ -1484,7 +1484,7 @@ class TestPostgresConnectionPoolAcquisition:
         db = Database()
         assert db._pool is None, "Pool should be None before first connection"
         # Note: actual connection would require real PostgreSQL
-        # Pool is created in _connect_postgres() which requires live DB
+        # Pool is created in connect() which requires live DB
     
     def test_pool_reuse_across_threads(self, postgres_pool_config):
         """Test that pool is reused across multiple threads."""
@@ -1719,7 +1719,7 @@ class TestPostgresConnectionTimeout:
         
         with patch("psycopg2.pool.ThreadedConnectionPool", return_value=mock_pool):
             with pytest.raises(psycopg2.OperationalError):
-                db._connect_postgres()
+                db.connect()
     
     def test_timeout_is_distinct_from_connection_refused(self, postgres_timeout_config, caplog):
         """Test distinguishing timeout error from connection refused."""
@@ -1742,7 +1742,7 @@ class TestPostgresConnectionTimeout:
         
         with patch("psycopg2.pool.ThreadedConnectionPool", return_value=mock_pool):
             with pytest.raises(psycopg2.OperationalError) as exc_info:
-                db._connect_postgres()
+                db.connect()
             
             # Verify it's a timeout error, not connection refused
             assert "timeout" in str(exc_info.value).lower()
