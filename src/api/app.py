@@ -335,34 +335,26 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 origin = request.headers.get("Origin")
                 allowed_origins = config.cors_origins
                 
-                # Default to safe values
-                res_origin = None
-                res_credentials = "false"
-                
-                if origin:
+                # If no Origin header (direct browser access), we don't need CORS
+                if not origin:
+                    headers["Access-Control-Allow-Origin"] = "*"
+                else:
+                    # Determine if this specific origin is allowed
                     is_allowed = False
-                    # Check if origin is explicitly allowed
                     if isinstance(allowed_origins, list):
                         if "*" in allowed_origins or origin in allowed_origins:
                             is_allowed = True
                     elif isinstance(allowed_origins, str):
                         if allowed_origins == "*" or allowed_origins == origin:
                             is_allowed = True
-                        
+                    
                     if is_allowed:
-                        res_origin = origin
-                        res_credentials = "true"
-                
-                # If no specific origin was allowed, fallback to a safe default but NOT '*' if credentials might be needed
-                # However, for images we often need specific origin for credentials
-                if res_origin:
-                    headers["Access-Control-Allow-Origin"] = res_origin
-                    headers["Access-Control-Allow-Credentials"] = res_credentials
-                else:
-                    # If we can't determine the origin but need to allow SOMETHING, 
-                    # use the origin from the request if it exists, otherwise '*'
-                    headers["Access-Control-Allow-Origin"] = origin if origin else "*"
-                    # DO NOT set Allow-Credentials to true if Origin is '*'
+                        # CRITICAL: If credentials are true, Origin MUST NOT be '*'
+                        headers["Access-Control-Allow-Origin"] = origin
+                        headers["Access-Control-Allow-Credentials"] = "true"
+                    else:
+                        # Fallback for unauthorized origins
+                        headers["Access-Control-Allow-Origin"] = "null"
                 
                 headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
                 headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, X-Requested-With, Accept, Origin"
