@@ -10,6 +10,7 @@ Provides:
 """
 
 import hashlib
+import os
 from typing import Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass
 from enum import Enum

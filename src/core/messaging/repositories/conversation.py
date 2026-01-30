@@ -63,10 +63,14 @@ class ConversationRepository(BaseRepository[Conversation]):
     ) -> List[Dict[str, Any]]:
         """Get conversations for a user with pagination."""
         query = """
-            SELECT c.*, 
-                   (SELECT COUNT(*) FROM msg_participants WHERE conversation_id = c.id) as participant_count
+            SELECT c.*, counts.participant_count
             FROM msg_conversations c
             INNER JOIN msg_participants p ON c.id = p.conversation_id
+            LEFT JOIN (
+                SELECT conversation_id, COUNT(*) as participant_count 
+                FROM msg_participants 
+                GROUP BY conversation_id
+            ) counts ON c.id = counts.conversation_id
             WHERE p.user_id = ? AND c.deleted = 0
         """
         params: List[Any] = [user_id]

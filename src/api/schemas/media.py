@@ -38,7 +38,7 @@ class HashReportResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     success: bool = Field(..., description="Whether report was successfully submitted")
-    report_id: int = Field(..., description="Generated report ID")
+    report_id: str = Field(..., description="Generated report ID")
     message: str = Field(..., description="Success or info message")
 
 

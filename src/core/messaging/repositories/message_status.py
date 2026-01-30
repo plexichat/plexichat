@@ -154,75 +154,69 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
         auto_commit: bool = True,
     ) -> int:
         """Mark messages as read in batch."""
-        # Build base filter for messages to mark read
-        msg_filter = "m.conversation_id = ? AND m.author_id != ? AND m.deleted = 0"
+        # 1. Find all messages in the conversation that need marking (not by user, not deleted)
+        query = "SELECT id FROM msg_messages WHERE conversation_id = ? AND author_id != ? AND deleted = 0"
         params: List[Any] = [conversation_id, user_id]
-
-        if up_to_message_id:
-            msg_filter += " AND m.id <= ?"
-            params.append(up_to_message_id)
-
-        # 1. Update existing statuses that aren't already 'read'
-        # Using a join-style update if possible, but SQLite subquery is more portable
-        update_query = f"""
-            UPDATE msg_message_status 
-            SET status = ?, timestamp = ?
-            WHERE user_id = ? AND status != ?
-            AND message_id IN (
-                SELECT id FROM msg_messages m WHERE {msg_filter}
-            )
-        """
-        self._execute(
-            update_query,
-            [MessageStatusType.READ.value, timestamp, user_id, MessageStatusType.READ.value] + params,
-            auto_commit=False, # Don't commit yet, we have more work
-        )
-
-        # 2. Insert new statuses for messages that don't have one yet
-        # We use status_id + ROW_NUMBER() or similar for uniqueness in Postgres
-        # For simplicity, we'll use a subquery that generates unique IDs or rely on SERIAL if it was there
-        # But msg_message_status.id is likely a SnowflakeID (BIGINT).
-        # To avoid the %% issue and have proper IDs, we'll do them one by one if necessary, 
-        # or use a more robust SQL approach.
         
-        insert_query = f"""
-            INSERT OR IGNORE INTO msg_message_status (id, message_id, user_id, status, timestamp)
-            SELECT 
-                ? + m.id % 1000000,
-                m.id,
-                ?,
-                ?,
-                ?
-            FROM msg_messages m
-            LEFT JOIN msg_message_status s ON s.message_id = m.id AND s.user_id = ?
-            WHERE {msg_filter} AND s.id IS NULL
-        """
+        if up_to_message_id:
+            query += " AND id <= ?"
+            params.append(up_to_message_id)
+            
+        msg_rows = self._fetch_all(query, tuple(params))
+        if not msg_rows:
+            return 0
+            
+        message_ids = [row["id"] for row in msg_rows]
+        in_clause, in_params = self._build_in_clause(message_ids)
+        
+        # 2. Update existing statuses to 'read'
         self._execute(
-            insert_query,
-            [status_id, user_id, MessageStatusType.READ.value, timestamp, user_id] + params,
-            auto_commit=auto_commit,
+            f"""UPDATE msg_message_status 
+                SET status = ?, timestamp = ?
+                WHERE user_id = ? AND status != ?
+                AND message_id IN {in_clause}""",
+            (MessageStatusType.READ.value, timestamp, user_id, MessageStatusType.READ.value) + in_params,
+            auto_commit=False
         )
-
-        # We return 1 if anything changed, or a rough estimate
-        # (Actual count is expensive to compute precisely without another query)
-        return 1
+        
+        # 3. Insert new 'read' statuses for messages that don't have ANY status yet
+        # We find which IDs already have a status for this user
+        existing_rows = self._fetch_all(
+            f"SELECT message_id FROM msg_message_status WHERE user_id = ? AND message_id IN {in_clause}",
+            (user_id,) + in_params
+        )
+        existing_ids = {row["message_id"] for row in existing_rows}
+        missing_ids = [mid for mid in message_ids if mid not in existing_ids]
+        
+        if missing_ids:
+            # We insert missing ones individually or in a small batch if possible
+            # msg_message_status.id is likely a primary key, we need unique values
+            for i, mid in enumerate(missing_ids):
+                # Use i to ensure unique status IDs if multiple inserts happen in same millisecond
+                new_status_id = status_id + (i % 1000000)
+                self._execute(
+                    """INSERT INTO msg_message_status (id, message_id, user_id, status, timestamp)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (new_status_id, mid, user_id, MessageStatusType.READ.value, timestamp),
+                    auto_commit=False
+                )
+        
+        if auto_commit:
+            self.commit()
+            
+        return len(message_ids)
 
     def get_unread_count(
         self, user_id: SnowflakeID, conversation_id: SnowflakeID
     ) -> int:
         """Get unread count for a single conversation."""
         row = self._fetch_one(
-            """SELECT 
-                COALESCE(
-                    (SELECT COUNT(*) FROM msg_messages m 
-                     WHERE m.conversation_id = p.conversation_id 
-                     AND m.author_id != ? 
-                     AND m.deleted = 0
-                     AND (p.last_read_message_id IS NULL OR m.id > p.last_read_message_id)
-                    ), 0
-                ) as unread_count
-            FROM msg_participants p
-            WHERE p.conversation_id = ? AND p.user_id = ?""",
+            """SELECT COUNT(m.id) as unread_count
+               FROM msg_participants p
+               LEFT JOIN msg_messages m ON m.conversation_id = p.conversation_id
+               WHERE p.user_id = ? AND p.conversation_id = ?
+               AND m.author_id != ? AND m.deleted = 0
+               AND (p.last_read_message_id IS NULL OR m.id > p.last_read_message_id)""",
             (user_id, conversation_id, user_id),
         )
         return row["unread_count"] if row else 0
@@ -232,18 +226,13 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
     ) -> Dict[SnowflakeID, int]:
         """Get unread counts for all user's conversations."""
         rows = self._fetch_all(
-            """SELECT 
-                p.conversation_id,
-                COALESCE(
-                    (SELECT COUNT(*) FROM msg_messages m 
-                     WHERE m.conversation_id = p.conversation_id 
-                     AND m.author_id != ? 
-                     AND m.deleted = 0
-                     AND (p.last_read_message_id IS NULL OR m.id > p.last_read_message_id)
-                    ), 0
-                ) as unread_count
-            FROM msg_participants p
-            WHERE p.user_id = ?""",
+            """SELECT p.conversation_id, COUNT(m.id) as unread_count
+               FROM msg_participants p
+               LEFT JOIN msg_messages m ON m.conversation_id = p.conversation_id
+               WHERE p.user_id = ? 
+               AND m.author_id != ? AND m.deleted = 0
+               AND (p.last_read_message_id IS NULL OR m.id > p.last_read_message_id)
+               GROUP BY p.conversation_id""",
             (user_id, user_id),
         )
         return {row["conversation_id"]: row["unread_count"] for row in rows}
