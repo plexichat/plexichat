@@ -335,23 +335,37 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 origin = request.headers.get("Origin")
                 allowed_origins = config.cors_origins
                 
+                # Default to safe values
+                res_origin = None
+                res_credentials = "false"
+                
                 if origin:
                     is_allowed = False
-                    if allowed_origins == "*" or (isinstance(allowed_origins, list) and "*" in allowed_origins):
-                        is_allowed = True
-                    elif isinstance(allowed_origins, list) and origin in allowed_origins:
-                        is_allowed = True
-                    elif isinstance(allowed_origins, str) and origin == allowed_origins:
-                        is_allowed = True
+                    # Check if origin is explicitly allowed
+                    if isinstance(allowed_origins, list):
+                        if "*" in allowed_origins or origin in allowed_origins:
+                            is_allowed = True
+                    elif isinstance(allowed_origins, str):
+                        if allowed_origins == "*" or allowed_origins == origin:
+                            is_allowed = True
                         
                     if is_allowed:
-                        headers["Access-Control-Allow-Origin"] = origin
-                        headers["Access-Control-Allow-Credentials"] = "true"
+                        res_origin = origin
+                        res_credentials = "true"
+                
+                # If no specific origin was allowed, fallback to a safe default but NOT '*' if credentials might be needed
+                # However, for images we often need specific origin for credentials
+                if res_origin:
+                    headers["Access-Control-Allow-Origin"] = res_origin
+                    headers["Access-Control-Allow-Credentials"] = res_credentials
                 else:
-                    headers["Access-Control-Allow-Origin"] = "*"
+                    # If we can't determine the origin but need to allow SOMETHING, 
+                    # use the origin from the request if it exists, otherwise '*'
+                    headers["Access-Control-Allow-Origin"] = origin if origin else "*"
+                    # DO NOT set Allow-Credentials to true if Origin is '*'
                 
                 headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
-                headers["Access-Control-Allow-Headers"] = "*"
+                headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, X-Requested-With, Accept, Origin"
                 
                 # Log duration after the stream is acquired
                 duration = (time.perf_counter() - start_time) * 1000
