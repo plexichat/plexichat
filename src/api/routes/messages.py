@@ -797,15 +797,13 @@ async def acknowledge_messages(
                     dispatcher = get_dispatcher()
                     user_ids = []
                     
-                    # For DMs/Groups, notify the other participant(s)
-                    # We can get participants from the channel if it's a DM
+                    # For DMs/Groups, notify only if it's NOT a server channel to save resources
                     if not is_server_channel:
-                        # Fetch participants ONLY if it's a small group to avoid blocking
-                        # This lookup should be fast
+                        # Fetch IDs of other participants only
                         try:
-                            # Use current_user.user_id to satisfy participant check
-                            participants = messaging.get_participants(current_user.user_id, conv_id)
-                            user_ids = [p.user_id for p in participants if p.user_id != current_user.user_id]
+                            user_ids = messaging.get_participant_ids(conv_id)
+                            # Remove current user
+                            user_ids = [uid for uid in user_ids if uid != current_user.user_id]
                         except Exception:
                             pass
                     
