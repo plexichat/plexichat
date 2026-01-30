@@ -288,7 +288,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
             # Find file in database
             row = db.fetch_one(
-                "SELECT id, storage_backend, storage_path, content_type FROM media_files WHERE filename = ? AND deleted = 0",
+                "SELECT id, storage_backend, storage_path, content_type, original_filename FROM media_files WHERE filename = ? AND deleted = 0",
                 (filename,)
             )
             
@@ -297,6 +297,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
             file_id = row["id"]
             backend = row["storage_backend"]
+            original_filename = row["original_filename"]
             download = request.query_params.get("download", "0") == "1"
 
             # --- File Retrieval: Stream via media module ---
@@ -306,22 +307,47 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             # 3. CORS/AccessDenied issues with direct S3 redirects are avoided
             try:
                 from fastapi.responses import StreamingResponse
+                import re
+                import unicodedata
+                
                 start_time = time.perf_counter()
                 stream, size, ct = media.get_file_stream(file_id)
                 
+                # Sanitize original filename for Content-Disposition
+                # This ensures downloads retain their initial names while being safe for headers
+                def sanitize_header_filename(name):
+                    # Normalize and remove non-ascii
+                    name = unicodedata.normalize('NFKD', name).encode('ascii', 'ignore').decode('ascii')
+                    # Replace potentially problematic characters
+                    name = re.sub(r'[^\w\.\-]', '_', name)
+                    return name or "attachment"
+
+                safe_name = sanitize_header_filename(original_filename)
+                
                 headers = {
                     "Content-Length": str(size),
-                    "Content-Disposition": f"attachment; filename={filename}" if download else "inline",
+                    "Content-Disposition": f'attachment; filename="{safe_name}"' if download else "inline",
                     "Cache-Control": "private, max-age=3600"
                 }
                 
                 # Add CORS headers specifically for media to avoid policy blocks
+                # We must use the specific Origin if credentials (cookies/auth) are used
                 origin = request.headers.get("Origin")
-                if origin and config.cors_origins and origin in config.cors_origins:
-                    headers["Access-Control-Allow-Origin"] = origin
-                    headers["Access-Control-Allow-Credentials"] = "true"
+                allowed_origins = config.cors_origins
+                
+                if origin:
+                    is_allowed = False
+                    if allowed_origins == "*" or (isinstance(allowed_origins, list) and "*" in allowed_origins):
+                        is_allowed = True
+                    elif isinstance(allowed_origins, list) and origin in allowed_origins:
+                        is_allowed = True
+                    elif isinstance(allowed_origins, str) and origin == allowed_origins:
+                        is_allowed = True
+                        
+                    if is_allowed:
+                        headers["Access-Control-Allow-Origin"] = origin
+                        headers["Access-Control-Allow-Credentials"] = "true"
                 else:
-                    # Fallback to wildcard for non-credentialed or unexpected origins
                     headers["Access-Control-Allow-Origin"] = "*"
                 
                 headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
