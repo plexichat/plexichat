@@ -768,6 +768,7 @@ async def acknowledge_messages(
 
         try:
             from starlette.concurrency import run_in_threadpool
+            # messaging.mark_read already validates access internally
             count = await run_in_threadpool(messaging.mark_read, current_user.user_id, conv_id, up_to_id)
         except Exception as e:
             from src.core.messaging.exceptions import ConversationNotFoundError, ConversationAccessDeniedError
@@ -796,15 +797,15 @@ async def acknowledge_messages(
                     dispatcher = get_dispatcher()
                     user_ids = []
                     
-                    # For DMs/Groups, notify all participants
-                    # For server channels, we only notify if it's a small set of people (optional)
-                    # or skip to save resources as server channels don't usually show read receipts
+                    # For DMs/Groups, notify the other participant(s)
+                    # We can get participants from the channel if it's a DM
                     if not is_server_channel:
+                        # Fetch participants ONLY if it's a small group to avoid blocking
+                        # This lookup should be fast
                         try:
-                            participants = messaging.get_participants(
-                                current_user.user_id, cid
-                            )
-                            user_ids = [p.user_id for p in (participants or [])]
+                            # Use current_user.user_id to satisfy participant check
+                            participants = messaging.get_participants(current_user.user_id, conv_id)
+                            user_ids = [p.user_id for p in participants if p.user_id != current_user.user_id]
                         except Exception:
                             pass
                     
