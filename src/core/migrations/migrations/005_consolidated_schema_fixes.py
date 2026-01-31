@@ -51,26 +51,31 @@ def _add_ip_index_to_auth(db, db_type: str):
         logger.info("Migration 005: Adding ip_index to auth_sessions")
         db.execute("ALTER TABLE auth_sessions ADD COLUMN ip_index TEXT")
 
-    # Table: auth_known_ips
-    if not _column_exists(db, "auth_known_ips", "ip_index", db_type):
-        logger.info("Migration 005: Adding ip_index to auth_known_ips")
-        db.execute("ALTER TABLE auth_known_ips ADD COLUMN ip_index TEXT")
-        # Note: In postgres we might want NOT NULL, but for migration it's safer to allow NULL initially
-        # or provide a default if it's required. auth_known_ips in schema says NOT NULL.
-        # However, existing rows won't have it.
-        db.execute("UPDATE auth_known_ips SET ip_index = 'legacy' WHERE ip_index IS NULL")
-        
-    # Ensure index/unique constraint for auth_known_ips (user_id, ip_index)
-    # This is harder to do idempotently via ALTER TABLE in a cross-db way if it already exists.
-    try:
-        if db_type == "postgres":
-            db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_known_ips_user_ip ON auth_known_ips(user_id, ip_index)")
-        else:
-            db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_known_ips_user_ip ON auth_known_ips(user_id, ip_index)")
-    except Exception as e:
-        logger.debug(f"Index idx_auth_known_ips_user_ip creation (might already exist): {e}")
+        # Table: auth_known_ips
 
-    # Table: auth_2fa_challenges
+        if not _column_exists(db, "auth_known_ips", "ip_index", db_type):
+
+            logger.info("Migration 005: Adding ip_index to auth_known_ips")
+
+            db.execute("ALTER TABLE auth_known_ips ADD COLUMN ip_index TEXT")
+
+            # Populate with legacy marker for existing rows
+
+            db.execute("UPDATE auth_known_ips SET ip_index = 'legacy' || id")
+
+        
+
+        if not _column_exists(db, "auth_known_ips", "ip_encrypted", db_type):
+
+            logger.info("Migration 005: Adding ip_encrypted to auth_known_ips")
+
+            db.execute("ALTER TABLE auth_known_ips ADD COLUMN ip_encrypted TEXT")
+
+    
+
+        # Table: auth_2fa_challenges
+
+    
     if not _column_exists(db, "auth_2fa_challenges", "ip_index", db_type):
         logger.info("Migration 005: Adding ip_index to auth_2fa_challenges")
         db.execute("ALTER TABLE auth_2fa_challenges ADD COLUMN ip_index TEXT")
