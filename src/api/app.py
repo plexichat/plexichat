@@ -17,6 +17,7 @@ from .middleware import (
     SecurityHeadersMiddleware,
     create_rate_limit_middleware,
     IPBlockingMiddleware,
+    DatabaseMiddleware,
 )
 from .routes import create_api_router, create_docs_router, is_docs_enabled
 from .routes.docs import get_docs_config
@@ -62,6 +63,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             app.add_middleware(RateLimitMiddleware)
 
     app.add_middleware(IPBlockingMiddleware)
+    app.add_middleware(DatabaseMiddleware)
     app.add_middleware(AuthenticationMiddleware)
     app.add_middleware(ErrorHandlingMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)

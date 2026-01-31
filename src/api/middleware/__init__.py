@@ -16,6 +16,7 @@ from .rate_limiting import (
     RateLimitMiddleware,
 )
 from .ip_blocking import IPBlockingMiddleware
+from .database import DatabaseMiddleware
 
 __all__ = [
     "AuthenticationMiddleware",
@@ -29,4 +30,5 @@ __all__ = [
     "get_user_info_from_request",
     "create_rate_limit_middleware",
     "IPBlockingMiddleware",
+    "DatabaseMiddleware",
 ]
