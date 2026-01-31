@@ -97,7 +97,7 @@ class Database:
         self._max_connection_age_seconds = max_age_hours * 3600
         
         logger.info(f"Database initialized with type: {self.type}")
-        self.start_pool_monitoring()
+        # self.start_pool_monitoring() # DISABLED TO DEBUG HANG
 
     @property
     def transaction_depth(self) -> int:
