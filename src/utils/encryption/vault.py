@@ -67,6 +67,7 @@ class HardwareVault:
         system_key = os.environ.get("PLEXICHAT_SYSTEM_KEY")
         if system_key:
             self._master_key = hashlib.sha512(system_key.encode("utf-8")).digest()[:32]
+            self._source = "env"
             logger.info("Using environment-provided system encryption key")
             return self._master_key
 
@@ -75,6 +76,7 @@ class HardwareVault:
             try:
                 self._master_key = self._get_tpm_key()
                 if self._master_key:
+                    self._source = "tpm"
                     logger.info("Using TPM-derived hardware encryption key")
                     return self._master_key
             except Exception as e:
@@ -86,6 +88,7 @@ class HardwareVault:
             try:
                 self._master_key = key_file.read_bytes()
                 if len(self._master_key) == 32:
+                    self._source = "local"
                     logger.debug("Loaded machine-local encryption key from file")
                     return self._master_key
             except Exception as e:
@@ -97,6 +100,7 @@ class HardwareVault:
             "For distributed deployments, set PLEXICHAT_SYSTEM_KEY environment variable."
         )
         self._master_key = os.urandom(32)
+        self._source = "local"
         try:
             key_file.parent.mkdir(parents=True, exist_ok=True)
             key_file.write_bytes(self._master_key)
@@ -165,5 +169,12 @@ class HardwareVault:
             logger.debug(f"TPM key derivation failed: {e}")
             return None
 
+
+    def is_using_secure_source(self) -> bool:
+        """Check if the current master key is from a secure source (Env or TPM)."""
+        # Ensure key is loaded
+        if not self._master_key:
+            self.get_kek()
+        return self._source in ("env", "tpm")
 
 vault = HardwareVault()

@@ -96,6 +96,11 @@ class PlexiChatServer:
                 },
             },
             "authentication": {
+                "encryption": {
+                    # SECURITY: Enforce TPM or Environment Variable key source for production
+                    # Set to False only for development/testing
+                    "require_secure_source": True,
+                },
                 "accounts": {
                     "allow_registration": True,
                     "require_email_verification": False,
@@ -1124,6 +1129,23 @@ class PlexiChatServer:
         # Initialize encryption with config values
         from src.utils import encryption
         encryption_config = config.get("encryption", {})
+        
+        # SECURITY: Check for secure key source if configured
+        auth_config = config.get("authentication", {})
+        enc_security = auth_config.get("encryption", {})
+        if enc_security.get("require_secure_source", False):
+            from src.utils.encryption.vault import vault
+            if not vault.is_using_secure_source():
+                error_msg = (
+                    "CRITICAL SECURITY ERROR: Application is configured to require a secure "
+                    "encryption key source (TPM or Environment Variable), but none was found. "
+                    "The application has fallen back to an insecure local key file. "
+                    "To fix: Set PLEXICHAT_SYSTEM_KEY env var or ensure TPM is accessible. "
+                    "To bypass (DEV ONLY): Set authentication.encryption.require_secure_source to False."
+                )
+                logger.critical(error_msg)
+                raise RuntimeError(error_msg)
+        
         encryption.setup(
             worker_id=encryption_config.get("snowflake", {}).get("worker_id", 1) or 1,
             datacenter_id=encryption_config.get("snowflake", {}).get("datacenter_id", 1) or 1,

@@ -22,6 +22,7 @@ hiredis>=2.3.0             # Redis parser (optional, for performance)
 argon2-cffi>=23.1.0        # Password hashing
 cryptography>=42.0.0       # Encryption
 pyotp>=2.9.0               # TOTP 2FA
+xxhash>=3.4.1              # Fast non-cryptographic hashing
 
 # Validation & Serialization
 pydantic>=2.5.0

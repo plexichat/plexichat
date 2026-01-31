@@ -36,7 +36,10 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
     user_id INTEGER NOT NULL,
     token_hash TEXT NOT NULL,
     device_id INTEGER,
-    ip_address TEXT,
+    -- Blind index for IP matching
+    ip_index TEXT,
+    -- Encrypted IP for display
+    ip_encrypted TEXT,
     user_agent TEXT,
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
@@ -75,16 +78,18 @@ CREATE TABLE IF NOT EXISTS auth_devices (
 CREATE TABLE IF NOT EXISTS auth_known_ips (
     id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL,
-    ip_address TEXT NOT NULL,
+    ip_index TEXT NOT NULL,
+    ip_encrypted TEXT,
     first_seen_at INTEGER NOT NULL,
     last_seen_at INTEGER NOT NULL,
     FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
-    UNIQUE(user_id, ip_address)
+    UNIQUE(user_id, ip_index)
 );
 
 -- IP Blacklist table
 CREATE TABLE IF NOT EXISTS auth_ip_blacklist (
-    ip_address TEXT PRIMARY KEY,
+    ip_index TEXT PRIMARY KEY,
+    ip_encrypted TEXT,
     reason TEXT,
     blocked_at INTEGER NOT NULL,
     blocked_by INTEGER,
@@ -109,7 +114,9 @@ CREATE TABLE IF NOT EXISTS auth_2fa_challenges (
     user_id INTEGER NOT NULL,
     token_hash TEXT NOT NULL,
     device_id INTEGER,
-    ip_address TEXT,
+    -- Encrypted IP address
+    ip_index TEXT,
+    ip_encrypted TEXT,
     user_agent TEXT,
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
@@ -143,7 +150,8 @@ CREATE TABLE IF NOT EXISTS auth_audit_log (
     id INTEGER PRIMARY KEY,
     user_id INTEGER,
     event_type TEXT NOT NULL,
-    ip_address TEXT,
+    ip_index TEXT,
+    ip_encrypted TEXT,
     device_id INTEGER,
     timestamp INTEGER NOT NULL,
     details_encrypted TEXT,

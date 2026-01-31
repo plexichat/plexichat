@@ -129,13 +129,21 @@ class AuthManager(BaseManager):
             if details
             else None
         )
+        
+        ip_index = None
+        ip_encrypted = None
+        if ip_address:
+            ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
+            ip_encrypted = self.crypto.encrypt_data(ip_address, context=str(audit_id))
+
         self._db.insert_or_ignore(
             "auth_audit_log",
             [
                 "id",
                 "user_id",
                 "event_type",
-                "ip_address",
+                "ip_index",
+                "ip_encrypted",
                 "device_id",
                 "timestamp",
                 "details_encrypted",
@@ -145,7 +153,8 @@ class AuthManager(BaseManager):
                 audit_id,
                 user_id,
                 event_type.value,
-                ip_address,
+                ip_index,
+                ip_encrypted,
                 device_id,
                 self._get_timestamp(),
                 details_encrypted,
@@ -426,9 +435,16 @@ class AuthManager(BaseManager):
         expire_hours = self._config.get("sessions.expire_hours", 720)
         expires = now + (expire_hours * 3600 * 1000)
         token, token_hash = create_session_token(sid)
+        
+        ip_index = None
+        ip_encrypted = None
+        if ip:
+            ip_index = self.crypto.fast_blind_index(ip, "ip_address")
+            ip_encrypted = self.crypto.encrypt_data(ip, context=str(sid))
+            
         self._db.execute(
-            "INSERT INTO auth_sessions (id, user_id, token_hash, device_id, ip_address, user_agent, created_at, expires_at, last_activity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (sid, user_id, token_hash, device_id, ip, ua, now, expires, now),
+            "INSERT INTO auth_sessions (id, user_id, token_hash, device_id, ip_index, ip_encrypted, user_agent, created_at, expires_at, last_activity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (sid, user_id, token_hash, device_id, ip_index, ip_encrypted, ua, now, expires, now),
         )
         return Session(
             id=sid,
@@ -474,12 +490,15 @@ class AuthManager(BaseManager):
             raise TokenInvalidError("Invalid/Revoked")
         if row["expires_at"] < self._get_timestamp():
             raise TokenExpiredError("Expired")
+            
         if (
             self._get_config("security.token_binding", False)
             and ip_address
-            and row["ip_address"] != ip_address
         ):
-            raise TokenInvalidError("IP Binding Mismatch")
+            current_ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
+            if row["ip_index"] != current_ip_index:
+                raise TokenInvalidError("IP Binding Mismatch")
+                
         now = self._get_timestamp()
         updates = ["last_activity = ?"]
         params = [now]
@@ -1072,13 +1091,18 @@ class AuthManager(BaseManager):
     # === IP Tracking ===
 
     def _track_ip(self, user_id: int, ip: str):
+        record_id = self._generate_id()
+        ip_index = self.crypto.fast_blind_index(ip, "ip_address")
+        ip_encrypted = self.crypto.encrypt_data(ip, context=str(record_id))
+        
         self._db.insert_or_ignore(
             "auth_known_ips",
-            ["id", "user_id", "ip_address", "first_seen_at", "last_seen_at"],
+            ["id", "user_id", "ip_index", "ip_encrypted", "first_seen_at", "last_seen_at"],
             (
-                self._generate_id(),
+                record_id,
                 user_id,
-                ip,
+                ip_index,
+                ip_encrypted,
                 self._get_timestamp(),
                 self._get_timestamp(),
             ),
@@ -1094,13 +1118,16 @@ class AuthManager(BaseManager):
         now = self._get_timestamp()
         expires_at = now + (duration_hours * 3600 * 1000) if duration_hours else None
         
+        ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
+        ip_encrypted = self.crypto.encrypt_data(ip_address, context="ip_blacklist")
+        
         self._db.upsert(
             "auth_ip_blacklist",
-            ["ip_address", "reason", "blocked_at", "blocked_by", "expires_at"],
-            (ip_address, reason, now, blocked_by, expires_at),
-            conflict_columns=["ip_address"]
+            ["ip_index", "ip_encrypted", "reason", "blocked_at", "blocked_by", "expires_at"],
+            (ip_index, ip_encrypted, reason, now, blocked_by, expires_at),
+            conflict_columns=["ip_index"]
         )
-        logger.info(f"IP {ip_address} blocked by {blocked_by}: {reason}")
+        logger.info(f"IP blocked by {blocked_by}: {reason}")
         return True
 
     def unblock_ip(self, ip_address: str) -> bool:
@@ -1108,14 +1135,16 @@ class AuthManager(BaseManager):
         # Invalidate cache for this IP
         invalidate_pattern("ip_blocked:*")
         
-        self._db.execute("DELETE FROM auth_ip_blacklist WHERE ip_address = ?", (ip_address,))
-        logger.info(f"IP {ip_address} unblocked")
+        ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
+        self._db.execute("DELETE FROM auth_ip_blacklist WHERE ip_index = ?", (ip_index,))
+        logger.info(f"IP unblocked")
         return True
 
     @cached(ttl=300, prefix="ip_blocked")
     def is_ip_blocked(self, ip_address: str) -> bool:
         """Check if an IP address is blocked."""
-        row = self._db.fetch_one("SELECT expires_at FROM auth_ip_blacklist WHERE ip_address = ?", (ip_address,))
+        ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
+        row = self._db.fetch_one("SELECT expires_at FROM auth_ip_blacklist WHERE ip_index = ?", (ip_index,))
         if not row:
             return False
         
@@ -1129,7 +1158,13 @@ class AuthManager(BaseManager):
 
     def get_blocked_ips(self) -> List[Dict[str, Any]]:
         """Get all blocked IPs."""
-        return self._db.fetch_all("SELECT * FROM auth_ip_blacklist ORDER BY blocked_at DESC")
+        rows = self._db.fetch_all("SELECT * FROM auth_ip_blacklist ORDER BY blocked_at DESC")
+        for r in rows:
+            try:
+                r["ip_address"] = self.crypto.decrypt_data(r["ip_encrypted"], context="ip_blacklist")
+            except Exception:
+                r["ip_address"] = "UNKNOWN"
+        return rows
 
     # === Audit & History ===
 
@@ -1148,7 +1183,7 @@ class AuthManager(BaseManager):
                 id=r["id"],
                 user_id=r["user_id"],
                 event_type=AuditEventType(r["event_type"]),
-                ip_address=r["ip_address"],
+                ip_address=self.crypto.decrypt_data(r["ip_encrypted"], context=str(r["id"])) if r.get("ip_encrypted") else None,
                 device_id=r["device_id"],
                 timestamp=r["timestamp"],
                 details=None,
@@ -1167,7 +1202,7 @@ class AuthManager(BaseManager):
                 id=r["id"],
                 user_id=r["user_id"],
                 event_type=AuditEventType(r["event_type"]),
-                ip_address=r["ip_address"],
+                ip_address=self.crypto.decrypt_data(r["ip_encrypted"], context=str(r["id"])) if r.get("ip_encrypted") else None,
                 device_id=r["device_id"],
                 timestamp=r["timestamp"],
                 details=None,

@@ -1,4 +1,4 @@
-﻿import base64
+import base64
 import hashlib
 import os
 import time
@@ -162,6 +162,12 @@ class Keyring:
             with open(temp_path, "w") as f:
                 json.dump(final_data, f)
 
+            # Restrict permissions (Unix only, Windows ignores)
+            try:
+                os.chmod(temp_path, 0o600)
+            except (OSError, AttributeError):
+                pass
+
             # Atomic swap
             os.replace(temp_path, self.path)
 
@@ -221,6 +227,12 @@ class Keyring:
         temp_path = self.path.with_suffix(".tmp")
         with open(temp_path, "w") as f:
             json.dump(final_data, f)
+        
+        # Restrict permissions (Unix only, Windows ignores)
+        try:
+            os.chmod(temp_path, 0o600)
+        except (OSError, AttributeError):
+            pass
 
         os.replace(temp_path, self.path)
 
@@ -333,6 +345,22 @@ class EncryptionManager:
         return hashlib.blake2b(
             data.lower().strip().encode(), key=index_key, digest_size=32
         ).hexdigest()
+
+    def fast_blind_index(self, data: str, scope: str) -> str:
+        """
+        Generate a fast keyed hash (xxhash) for high-volume enforcement fields (e.g. IPs).
+        Falls back to blind_index (BLAKE2b) if xxhash is not available.
+        """
+        if not XXHASH_AVAILABLE:
+            return self.blind_index(data, scope)
+            
+        kek = self.keyring._get_kek()
+        # Derive a 64-bit seed from KEK + Scope
+        seed_bytes = hashlib.blake2b(kek, key=scope.encode(), digest_size=8).digest()
+        seed = int.from_bytes(seed_bytes, byteorder="big")
+        
+        # Use xxhash with seed
+        return xxhash.xxh64(data.lower().strip().encode(), seed=seed).hexdigest()
 
     def rotate_keys(self, force: bool = False) -> bool:
         """Rotate keys if enough time has passed."""
