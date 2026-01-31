@@ -11,6 +11,12 @@ from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, VerificationError, InvalidHash
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+try:
+    import xxhash
+    XXHASH_AVAILABLE = True
+except ImportError:
+    XXHASH_AVAILABLE = False
+
 import utils.logger as logger
 from .vault import vault
 
