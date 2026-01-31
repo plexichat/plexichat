@@ -10,7 +10,6 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Receive, Send, Scope
 
 import traceback
-import src.api as api
 import utils.config as config
 try:
     from utils.logger import sanitize_log_message
@@ -129,6 +128,7 @@ class ErrorHandlingMiddleware:
             # 1. Config says it's enabled
             # 2. Request is from localhost
             # 3. Secure internal secret is present and matches
+            import src.api as api
             selftest_config = config.get("selftest", {})
             is_local = (
                 request.client.host in ("127.0.0.1", "::1") if request.client else False

@@ -5,7 +5,6 @@ IP Blocking Middleware - Intercepts requests from blacklisted IPs.
 from fastapi import Request
 from starlette.types import ASGIApp, Receive, Send, Scope
 
-import src.api as api
 import utils.logger as logger
 
 
@@ -20,6 +19,7 @@ class IPBlockingMiddleware:
             await self.app(scope, receive, send)
             return
 
+        import src.api as api
         request = Request(scope, receive)
         
         # Get client IP (handle proxies if trust is enabled)

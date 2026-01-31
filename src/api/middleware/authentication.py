@@ -7,7 +7,6 @@ from fastapi import Request, HTTPException
 from fastapi.security import HTTPBearer
 from starlette.types import ASGIApp, Receive, Send, Scope
 
-import src.api as api
 from src.core.auth.models import TokenInfo
 from src.core.auth.exceptions import AuthError
 
@@ -24,6 +23,8 @@ class AuthenticationMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+            
+        import src.api as api
 
         if "state" not in scope:
             scope["state"] = {}

@@ -3,7 +3,6 @@ Database middleware - Ensures database connections are returned to the pool.
 """
 
 from starlette.types import ASGIApp, Receive, Send, Scope
-import src.api as api
 
 class DatabaseMiddleware:
     """
@@ -23,7 +22,9 @@ class DatabaseMiddleware:
             await self.app(scope, receive, send)
         finally:
             # Force close the thread-local connection to return it to the pool
+            # Import inside to avoid circular dependency
             try:
+                import src.api as api
                 db = api.get_db()
                 if db:
                     db.close()
