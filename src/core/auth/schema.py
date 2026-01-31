@@ -173,22 +173,6 @@ CREATE INDEX IF NOT EXISTS idx_auth_audit_user ON auth_audit_log(user_id);
 
 
 def create_tables(db) -> None:
-    # Check for auth_ip_blacklist schema mismatch (missing ip_index)
-    try:
-        db.execute("SELECT ip_index FROM auth_ip_blacklist LIMIT 1")
-    except Exception:
-        # Column likely missing or table doesn't exist
-        try:
-            # Check if table exists at all
-            db.execute("SELECT 1 FROM auth_ip_blacklist LIMIT 1")
-            # If success, table exists but ip_index is missing
-            logger.warning("auth_ip_blacklist schema mismatch (missing ip_index). Backing up and recreating.")
-            timestamp = int(time.time())
-            db.execute(f"ALTER TABLE auth_ip_blacklist RENAME TO auth_ip_blacklist_backup_{timestamp}")
-        except Exception:
-            # Table probably doesn't exist, regular creation will handle it
-            pass
-
     statements = [stmt.strip() for stmt in SCHEMA_SQLITE.split(";") if stmt.strip()]
     for statement in statements:
         # Convert schema types for PostgreSQL compatibility (BLOB -> BYTEA, etc.)
