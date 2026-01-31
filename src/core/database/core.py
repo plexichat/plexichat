@@ -210,15 +210,20 @@ class Database:
         if self.type not in ["sqlite", "postgres"]:
             raise ValueError(f"Unsupported database type: {self.type}")
 
+        logger.info(f"DB: Starting connect() for thread {threading.current_thread().name}")
         with self._lock:
+            logger.info("DB: Acquired _lock")
             # Close existing if any
             if hasattr(self._local, "connection") and self._local.connection:
+                logger.info("DB: Closing existing thread-local connection")
                 self.engine.close_connection(self._local.connection, self._pool)
                 self._local.connection = None
             
             start_time = time.time()
             if self.type == "postgres":
+                logger.info("DB: Attempting Postgres connection")
                 if not self._pool:
+                    logger.info("DB: Initializing pool (calling engine.create_pool)")
                     pool_config = self.config.get("connection_pool", {})
                     # Use config value with a safe default of 1 to prevent startup hangs
                     min_conn = pool_config.get("min_connections", 1)
@@ -227,11 +232,17 @@ class Database:
                         min_conn,
                         pool_config.get("max_connections", 50)
                     )
+                    logger.info("DB: engine.create_pool returned")
+                
+                logger.info("DB: Calling engine.connect")
                 conn = self.engine.connect(self._pool)
+                logger.info("DB: engine.connect returned")
             else:
+                logger.info("DB: Attempting SQLite connection")
                 conn = self.engine.connect()
             
             duration = time.time() - start_time
+            logger.info(f"DB: connection established in {duration:.4f}s")
             self.monitor.record_acquisition(duration)
             
             self._local.connection = conn
@@ -239,12 +250,14 @@ class Database:
             self.in_transaction = False
             
             conn_id = id(conn)
+            logger.info(f"DB: Updating metadata for conn_id {conn_id}")
             self.monitor.add_connection_metadata(conn_id, {
                 "created_at": time.time(),
                 "last_used": time.time(),
                 "thread_id": threading.current_thread().ident,
                 "acquired_at": time.time()
             })
+            logger.info("DB: connect() completed")
             
             return conn
 
