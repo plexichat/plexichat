@@ -220,8 +220,8 @@ class Database:
             if self.type == "postgres":
                 if not self._pool:
                     pool_config = self.config.get("connection_pool", {})
-                    # Use config value with a healthy default of 5
-                    min_conn = pool_config.get("min_connections", 5)
+                    # Use config value with a safe default of 1 to prevent startup hangs
+                    min_conn = pool_config.get("min_connections", 1)
                         
                     self._pool = self.engine.create_pool(
                         min_conn,
