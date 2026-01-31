@@ -27,7 +27,8 @@ class PostgresEngine(BaseEngine):
               f"user={pg_config.get('user', 'postgres')} " \
               f"password={pg_config.get('password', '')} " \
               f"dbname={pg_config.get('dbname', 'plexichat')} " \
-              f"sslmode={pg_config.get('sslmode', 'prefer')}"
+              f"sslmode={pg_config.get('sslmode', 'prefer')} " \
+              f"gssencmode=disable"
 
         return psycopg2.connect(dsn, cursor_factory=RealDictCursor, connect_timeout=connect_timeout)
 
@@ -47,7 +48,8 @@ class PostgresEngine(BaseEngine):
               f"user={pg_config.get('user', 'postgres')} " \
               f"password={pg_config.get('password', '')} " \
               f"dbname={pg_config.get('dbname', 'plexichat')} " \
-              f"sslmode={pg_config.get('sslmode', 'prefer')}"
+              f"sslmode={pg_config.get('sslmode', 'prefer')} " \
+              f"gssencmode=disable"
               
         logger.info(f"Creating ThreadedConnectionPool ({min_conn}-{max_conn}) with timeout {connect_timeout}s")
         start_time = time.time()
