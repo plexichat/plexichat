@@ -89,12 +89,18 @@ class GatewayDispatcher:
         user_ids = [int(uid) for uid in user_ids]
 
         connections = self._session_manager.get_connections_for_users(user_ids)
-        logger.info(
+        
+        # Use DEBUG level for very frequent events to reduce log noise
+        log_level = logger.info
+        if event.event_type.value in ["presence_update", "typing_start"]:
+            log_level = logger.debug
+            
+        log_level(
             f"dispatch_event: {event.event_type} to {len(user_ids)} users, found {len(connections)} connections"
         )
 
         if not connections:
-            logger.info(f"No connections found for users: {user_ids[:5]}...")
+            log_level(f"No connections found for users: {user_ids[:5]}...")
             return 0
 
         sent_count = 0

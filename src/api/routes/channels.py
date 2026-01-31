@@ -29,7 +29,7 @@ import utils.logger as logger
 router = APIRouter(tags=["Channels"])
 
 
-def _channel_to_response(channel) -> ChannelResponse:
+def _channel_to_response(channel, current_user_id: Optional[int] = None) -> ChannelResponse:
     """Convert channel object to response model."""
     try:
         channel_type = getattr(channel, "channel_type", None)
@@ -41,6 +41,38 @@ def _channel_to_response(channel) -> ChannelResponse:
         
         # If it's a Conversation model but lacks name (e.g. DM), use a placeholder
         name = getattr(channel, "name", None) or f"Conversation {channel.id}"
+
+        # Initialize DM-specific fields
+        recipient_id = None
+        recipient = None
+
+        # If it's a DM, try to find the recipient
+        if channel_type == "dm":
+            messaging_mod = api.get_messaging()
+            auth_mod = api.get_auth()
+            if messaging_mod and auth_mod:
+                try:
+                    # Look for recipient_id if it exists on the object
+                    recipient_id = getattr(channel, "recipient_id", None)
+                    
+                    if not recipient_id:
+                        # Try to get participants
+                        participants = messaging_mod.get_participant_ids(channel.id)
+                        
+                        # If it's exactly 2 participants, find the one that isn't current_user
+                        if len(participants) == 2 and current_user_id:
+                            recipient_id = next((p for p in participants if int(p) != int(current_user_id)), participants[0])
+                        elif participants:
+                            # Fallback to first participant if we can't filter
+                            recipient_id = participants[0]
+                    
+                    if recipient_id:
+                        user = auth_mod.get_user(recipient_id)
+                        if user:
+                            from src.api.routes.users import _user_to_public_response
+                            recipient = _user_to_public_response(user)
+                except Exception as de:
+                    logger.debug(f"Failed to populate DM recipient for channel {channel.id}: {de}")
 
         return ChannelResponse(
             id=SnowflakeID(channel.id),
@@ -55,6 +87,8 @@ def _channel_to_response(channel) -> ChannelResponse:
             nsfw=getattr(channel, "nsfw", False),
             slowmode_seconds=getattr(channel, "slowmode_seconds", 0),
             created_at=channel.created_at,
+            recipient_id=SnowflakeID(recipient_id) if recipient_id else None,
+            recipient=recipient
         )
     except Exception as e:
         logger.error(f"Error converting channel object to response: {e}")
@@ -113,7 +147,7 @@ async def get_channel(
                     status_code=404,
                     detail={"error": {"code": 404, "message": "Channel not found"}},
                 )
-            return _channel_to_response(channel)
+            return _channel_to_response(channel, current_user.user_id)
         except Exception as e:
             exc_name = type(e).__name__
             if "NotFound" in exc_name:
@@ -194,7 +228,7 @@ async def update_channel(
                 current_user.user_id, cid, **update_data
             )
 
-            response = _channel_to_response(channel)
+            response = _channel_to_response(channel, current_user.user_id)
             sid = channel.server_id
 
             # Broadcast CHANNEL_UPDATE event via WebSocket (fire and forget)

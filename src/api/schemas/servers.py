@@ -86,6 +86,10 @@ class ChannelResponse(BaseModel):
     nsfw: bool = Field(False, description="NSFW flag")
     slowmode_seconds: int = Field(0, description="Slowmode delay in seconds")
     created_at: int = Field(..., description="Creation timestamp")
+    
+    # Optional fields for DM support
+    recipient_id: Optional[SnowflakeID] = Field(None, description="Recipient user ID (DMs only)")
+    recipient: Optional[UserPublicResponse] = Field(None, description="Recipient details (DMs only)")
 
 
 class ChannelUpdateRequest(BaseModel):

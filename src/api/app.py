@@ -13,6 +13,9 @@ from .config import get_api_config
 from .routes import create_api_router, create_docs_router, is_docs_enabled
 from .routes.docs import get_docs_config
 
+# Local in-memory cache for media file metadata to avoid redundant DB lookups
+_media_metadata_cache = {} # {filename: metadata_row}
+
 def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> FastAPI:
     """
     Create and configure the FastAPI application.
@@ -287,11 +290,15 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             if not db:
                 raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Database module unavailable"}})
 
-            # Find file in database
-            row = db.fetch_one(
-                "SELECT id, storage_backend, storage_path, content_type, original_filename FROM media_files WHERE filename = ? AND deleted = 0",
-                (filename,)
-            )
+            # Find file in database (check cache first)
+            row = _media_metadata_cache.get(filename)
+            if not row:
+                row = db.fetch_one(
+                    "SELECT id, storage_backend, storage_path, content_type, original_filename FROM media_files WHERE filename = ? AND deleted = 0",
+                    (filename,)
+                )
+                if row:
+                    _media_metadata_cache[filename] = row
             
             if not row:
                 raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "File not found"}})
@@ -362,7 +369,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 
                 # Log duration after the stream is acquired
                 duration = (time.perf_counter() - start_time) * 1000
-                if duration > 100:
+                if duration > 1000:
                     logger.warning(f"Slow file retrieval for {filename}: {duration:.1f}ms (backend: {backend})")
                 
                 return StreamingResponse(
