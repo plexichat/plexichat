@@ -33,12 +33,42 @@ class PostgresEngine(BaseEngine):
         return psycopg2.connect(dsn, cursor_factory=RealDictCursor, connect_timeout=connect_timeout)
 
     def create_pool(self, min_conn: int, max_conn: int) -> Any:
-        # DEBUG: Bypassing ThreadedConnectionPool to investigate hang
-        logger.warning("BYPASSING ThreadedConnectionPool for debugging")
-        return None
+        try:
+            from psycopg2.pool import ThreadedConnectionPool
+            from psycopg2.extras import RealDictCursor
+        except ImportError:
+            raise ImportError("psycopg2 not installed")
+
+        pg_config = self.config.get("postgres", {})
+        pool_config = self.config.get("connection_pool", {})
+        connect_timeout = pool_config.get("connect_timeout", 10)
+
+        # Build DSN - disable GSSAPI encryption which can cause hangs with some poolers
+        dsn = f"host={pg_config.get('host', 'localhost')} " \
+              f"port={pg_config.get('port', 5432)} " \
+              f"user={pg_config.get('user', 'postgres')} " \
+              f"password={pg_config.get('password', '')} " \
+              f"dbname={pg_config.get('dbname', 'plexichat')} " \
+              f"sslmode={pg_config.get('sslmode', 'prefer')} " \
+              f"gssencmode=disable"
+              
+        logger.info(f"Creating ThreadedConnectionPool ({min_conn}-{max_conn}) with timeout {connect_timeout}s")
+        start_time = time.time()
+        try:
+            pool = ThreadedConnectionPool(
+                min_conn, max_conn, dsn, 
+                cursor_factory=RealDictCursor,
+                connect_timeout=connect_timeout
+            )
+            elapsed = time.time() - start_time
+            logger.info(f"ThreadedConnectionPool created successfully in {elapsed:.2f}s")
+            return pool
+        except Exception as e:
+            elapsed = time.time() - start_time
+            logger.error(f"ThreadedConnectionPool creation FAILED after {elapsed:.2f}s: {e}")
+            raise
 
     def connect(self, pool: Optional[Any] = None) -> Any:
-        # If pool is None (due to bypass), this will create a direct connection
         if pool:
             return pool.getconn()
 

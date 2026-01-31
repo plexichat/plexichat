@@ -9,22 +9,6 @@ import time
 
 import utils.config as global_config
 from .config import get_api_config
-from .middleware import (
-    AuthenticationMiddleware,
-    setup_exception_handlers,
-    ErrorHandlingMiddleware,
-    LoggingMiddleware,
-    SecurityHeadersMiddleware,
-    create_rate_limit_middleware,
-    IPBlockingMiddleware,
-    DatabaseMiddleware,
-)
-from .routes import create_api_router, create_docs_router, is_docs_enabled
-from .routes.docs import get_docs_config
-
-import utils.logger as logger
-
-
 def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> FastAPI:
     """
     Create and configure the FastAPI application.
@@ -37,6 +21,17 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     Returns:
         Configured FastAPI application instance.
     """
+    from .middleware import (
+        AuthenticationMiddleware,
+        setup_exception_handlers,
+        ErrorHandlingMiddleware,
+        LoggingMiddleware,
+        SecurityHeadersMiddleware,
+        create_rate_limit_middleware,
+        IPBlockingMiddleware,
+        DatabaseMiddleware,
+    )
+    
     config = get_api_config()
     # Debug CORS config
     if "pytest" in sys.modules:
