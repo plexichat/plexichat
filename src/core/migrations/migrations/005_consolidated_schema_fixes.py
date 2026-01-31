@@ -45,48 +45,93 @@ def _column_exists(db, table_name: str, column_name: str, db_type: str) -> bool:
 
 
 def _add_ip_index_to_auth(db, db_type: str):
-    """Add ip_index to authentication tables."""
-    # Table: auth_sessions
-    if not _column_exists(db, "auth_sessions", "ip_index", db_type):
-        logger.info("Migration 005: Adding ip_index to auth_sessions")
-        db.execute("ALTER TABLE auth_sessions ADD COLUMN ip_index TEXT")
 
-        # Table: auth_known_ips
 
-        if not _column_exists(db, "auth_known_ips", "ip_index", db_type):
+    """Add ip_index to authentication tables and remove old columns."""
 
-            logger.info("Migration 005: Adding ip_index to auth_known_ips")
 
-            db.execute("ALTER TABLE auth_known_ips ADD COLUMN ip_index TEXT")
+    auth_tables = ["auth_sessions", "auth_known_ips", "auth_2fa_challenges", "auth_audit_log"]
 
-            # Populate with legacy marker for existing rows
 
-            db.execute("UPDATE auth_known_ips SET ip_index = 'legacy' || id")
+    
+
+
+    for table in auth_tables:
+
+
+        # 1. Add ip_index if missing
+
+
+        if not _column_exists(db, table, "ip_index", db_type):
+
+
+            logger.info(f"Migration 005: Adding ip_index to {table}")
+
+
+            db.execute(f"ALTER TABLE {table} ADD COLUMN ip_index TEXT")
+
+
+            if table == "auth_known_ips":
+
+
+                db.execute("UPDATE auth_known_ips SET ip_index = 'legacy' || id")
+
 
         
 
-        if not _column_exists(db, "auth_known_ips", "ip_encrypted", db_type):
 
-            logger.info("Migration 005: Adding ip_encrypted to auth_known_ips")
+        # 2. Add ip_encrypted if missing
 
-            db.execute("ALTER TABLE auth_known_ips ADD COLUMN ip_encrypted TEXT")
 
-    
+        if not _column_exists(db, table, "ip_encrypted", db_type):
 
-        # Table: auth_2fa_challenges
 
-    
-    if not _column_exists(db, "auth_2fa_challenges", "ip_index", db_type):
-        logger.info("Migration 005: Adding ip_index to auth_2fa_challenges")
-        db.execute("ALTER TABLE auth_2fa_challenges ADD COLUMN ip_index TEXT")
+            logger.info(f"Migration 005: Adding ip_encrypted to {table}")
 
-    # Table: auth_audit_log
-    if not _column_exists(db, "auth_audit_log", "ip_index", db_type):
-        logger.info("Migration 005: Adding ip_index to auth_audit_log")
-        db.execute("ALTER TABLE auth_audit_log ADD COLUMN ip_index TEXT")
+
+            db.execute(f"ALTER TABLE {table} ADD COLUMN ip_encrypted TEXT")
+
+
+            
+
+
+        # 3. Drop old ip_address column if it exists
+
+
+        if _column_exists(db, table, "ip_address", db_type):
+
+
+            logger.info(f"Migration 005: Dropping old ip_address column from {table}")
+
+
+            if db_type == "postgres":
+
+
+                db.execute(f"ALTER TABLE {table} DROP COLUMN ip_address")
+
+
+            else:
+
+
+                # SQLite doesn't support DROP COLUMN in older versions, 
+
+
+                # but we can at least make it nullable or ignore it.
+
+
+                pass
+
+
+
+
 
     # Table: auth_ip_blacklist
+
+
     # This one is tricky because ip_index is often the PRIMARY KEY in the new schema.
+
+
+
     if not _column_exists(db, "auth_ip_blacklist", "ip_index", db_type):
         logger.info("Migration 005: auth_ip_blacklist missing ip_index. Recreating table.")
         # If it doesn't have ip_index, it's likely using the old schema where 'ip' was likely the key or it's empty.
