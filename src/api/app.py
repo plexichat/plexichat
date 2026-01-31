@@ -8,7 +8,11 @@ import sys
 import time
 
 import utils.config as global_config
+import utils.logger as logger
 from .config import get_api_config
+from .routes import create_api_router, create_docs_router, is_docs_enabled
+from .routes.docs import get_docs_config
+
 def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> FastAPI:
     """
     Create and configure the FastAPI application.
