@@ -66,9 +66,11 @@ class MigrationManager:
         
         applied = self.tracker.get_applied_migrations()
         applied_set = set(applied)
+        logger.info(f"Currently applied migrations: {applied_set}")
         
         try:
             migration_files = validator.get_migration_files(str(self.migrations_dir))
+            logger.info(f"Discovered migration files: {[Path(f[1]).name for f in migration_files]}")
         except NotADirectoryError:
             logger.warning(f"Migrations directory not found: {self.migrations_dir}")
             return []
@@ -76,6 +78,7 @@ class MigrationManager:
         pending = []
         for version, file_path in migration_files:
             if version not in applied_set:
+                logger.info(f"Found pending migration: {version}")
                 # Calculate checksum
                 with open(file_path, 'rb') as f:
                     content = f.read()
@@ -86,6 +89,8 @@ class MigrationManager:
                 name = filename.split('_', 1)[1] if '_' in filename else filename
                 
                 pending.append(Migration(version, name, file_path, checksum))
+            else:
+                logger.debug(f"Migration {version} already applied")
         
         return pending
     
