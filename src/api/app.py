@@ -2,10 +2,14 @@
 FastAPI application factory - Creates and configures the API application.
 """
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, status, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse, RedirectResponse
 import sys
 import time
+import re
+import unicodedata
+from typing import Optional
 
 import utils.config as global_config
 import utils.logger as logger
@@ -196,10 +200,6 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 detail={"error": {"code": 500, "message": "Internal server error"}},
             )
 
-    # Serve uploaded media files (requires authentication)
-    from fastapi import status, Response
-    from typing import Optional
-
     @app.get(
         "/api/v1/media/attachments/{filename}",
         summary="Serve attachment",
@@ -314,10 +314,6 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             # 2. Authentication works (we use our own session/cookie)
             # 3. CORS/AccessDenied issues with direct S3 redirects are avoided
             try:
-                from fastapi.responses import StreamingResponse
-                import re
-                import unicodedata
-                
                 start_time = time.perf_counter()
                 # Optimized: Use metadata we already have to skip DB lookup
                 # stream, size, ct = media.get_file_stream(file_id)

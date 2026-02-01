@@ -265,6 +265,20 @@ DEFAULT_ROUTE_LIMITS: Dict[str, RateLimitConfig] = {
         algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
         scope=BucketType.USER,
     ),
+    "GET /relationships/@me": RateLimitConfig(
+        requests=100,
+        window_seconds=60.0,
+        burst=20,
+        algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
+        scope=BucketType.USER,
+    ),
+    "GET /servers/{id}/channels": RateLimitConfig(
+        requests=100,
+        window_seconds=60.0,
+        burst=20,
+        algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
+        scope=BucketType.ROUTE,
+    ),
     "POST /webhooks": RateLimitConfig(
         requests=5,
         window_seconds=60.0,
