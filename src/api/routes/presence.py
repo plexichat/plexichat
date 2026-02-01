@@ -171,15 +171,18 @@ async def update_presence(
             visible_status = body.status if body.status != "invisible" else "offline"
 
             if target_user_ids:
-                await _dispatch_presence_event(
-                    current_user.user_id,
-                    {
-                        "user_id": str(current_user.user_id),
-                        "status": visible_status,
-                        "custom_status": body.custom_status,
-                        "custom_emoji": body.custom_emoji,
-                    },
-                    target_user_ids,
+                import asyncio
+                asyncio.create_task(
+                    _dispatch_presence_event(
+                        current_user.user_id,
+                        {
+                            "user_id": str(current_user.user_id),
+                            "status": visible_status,
+                            "custom_status": body.custom_status,
+                            "custom_emoji": body.custom_emoji,
+                        },
+                        target_user_ids,
+                    )
                 )
 
             return response
