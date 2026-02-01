@@ -160,6 +160,12 @@ class Database:
             is_valid = True
             conn_id = id(conn)
             
+            # Optimization: Cache validity status for a few seconds to reduce overhead
+            now = time.time()
+            last_valid_check = getattr(self._local, "last_valid_check", 0)
+            if now - last_valid_check < 5.0:
+                return conn
+
             # Validation logic
             if self.type == "postgres":
                 if hasattr(conn, "closed") and conn.closed != 0:
@@ -168,7 +174,6 @@ class Database:
             if is_valid:
                 metadata = self.monitor.get_connection_metadata(conn_id)
                 if metadata:
-                    now = time.time()
                     # Max idle time check
                     last_used = metadata.get("last_used", now)
                     if self._max_idle_time > 0 and (now - last_used) > self._max_idle_time:
@@ -196,12 +201,14 @@ class Database:
                                 is_valid = False
             
             if is_valid:
+                self._local.last_valid_check = now
                 self.monitor.update_connection_last_used(conn_id)
                 return conn
             else:
                 logger.warning("Thread-local connection invalid, reconnecting")
                 self.engine.close_connection(conn, self._pool, {"close": True})
                 self._local.connection = None
+                self._local.last_valid_check = 0
 
         if not auto_connect:
             raise ConnectionError("Database not connected. Call connect() first.")
