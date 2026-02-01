@@ -39,38 +39,37 @@ def _channel_to_response(channel, current_user_id: Optional[int] = None) -> Chan
         # Handle different model types (Channel vs Conversation)
         server_id = getattr(channel, "server_id", 0)
         
-        # If it's a Conversation model but lacks name (e.g. DM), use a placeholder
+        # Default name
         name = getattr(channel, "name", None) or f"Conversation {channel.id}"
 
         # Initialize DM-specific fields
         recipient_id = None
         recipient = None
 
-        # If it's a DM, try to find the recipient
+        # If it's a DM, try to find the recipient and set name
         if channel_type == "dm":
             messaging_mod = api.get_messaging()
-            auth_mod = api.get_auth()
-            if messaging_mod and auth_mod:
+            if messaging_mod:
                 try:
-                    # Look for recipient_id if it exists on the object
+                    # Check if recipient_id is already on the object (some models might have it)
                     recipient_id = getattr(channel, "recipient_id", None)
                     
                     if not recipient_id:
-                        # Try to get participants
+                        # Fetch from DB/Cache
                         participants = messaging_mod.get_participant_ids(channel.id)
-                        
-                        # If it's exactly 2 participants, find the one that isn't current_user
                         if len(participants) == 2 and current_user_id:
                             recipient_id = next((p for p in participants if int(p) != int(current_user_id)), participants[0])
                         elif participants:
-                            # Fallback to first participant if we can't filter
                             recipient_id = participants[0]
                     
                     if recipient_id:
-                        user = auth_mod.get_user(recipient_id)
-                        if user:
-                            from src.api.routes.users import _user_to_public_response
-                            recipient = _user_to_public_response(user)
+                        # Use the cached user fetch helper from users.py if possible
+                        from .users import _get_user_cached, _user_to_public_response
+                        user_data = _get_user_cached(recipient_id)
+                        if user_data:
+                            recipient = _user_to_public_response(user_data)
+                            # CRITICAL FIX: Set the name to the recipient's username
+                            name = recipient.username
                 except Exception as de:
                     logger.debug(f"Failed to populate DM recipient for channel {channel.id}: {de}")
 

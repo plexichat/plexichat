@@ -90,10 +90,10 @@ class Database:
         self._enable_validation = pool_config.get("enable_validation", True)
         self._validation_query = pool_config.get("validation_query", "SELECT 1")
         self._validation_interval = pool_config.get("validation_interval", 60)
-        self._max_idle_time = pool_config.get("max_idle_time", 600)
+        self._max_idle_time = pool_config.get("max_idle_time", 3600)
         
-        # Max age threshold (default 30 minutes)
-        max_age_hours = pool_config.get("max_connection_age_hours", 0.5)
+        # Max age threshold (default 2 hours)
+        max_age_hours = pool_config.get("max_connection_age_hours", 2.0)
         self._max_connection_age_seconds = max_age_hours * 3600
         
         logger.info(f"Database initialized with type: {self.type}")
