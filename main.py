@@ -86,8 +86,8 @@ class PlexiChatServer:
                     "sslmode": "prefer",
                 },
                 "connection_pool": {
-                    "min_connections": 2,
-                    "max_connections": 20,
+                    "min_connections": 5,
+                    "max_connections": 50,
                     "connect_timeout": 10,
                     "max_idle_time": 3600,
                     "validation_interval": 60,

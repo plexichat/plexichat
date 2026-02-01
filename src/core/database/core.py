@@ -410,12 +410,30 @@ class Database:
         cursor.close()
 
     def close(self) -> None:
-        """Close thread-local connection."""
-        self.stop_pool_monitoring()
-        if hasattr(self._local, "connection") and self._local.connection:
+        """Close thread-local connection and return to pool."""
+        # Note: we don't stop pool monitoring here as it's global, 
+        # only the connection is thread-local.
+        
+        conn = None
+        if hasattr(self._local, "connection"):
             conn = self._local.connection
+            self._local.connection = None
+            
+        if conn:
             conn_id = id(conn)
             
+            # Safety: rollback any dangling transaction
+            # Check if connection is still open before rollback
+            is_closed = False
+            if self.type == "postgres":
+                is_closed = getattr(conn, "closed", 0) != 0
+            
+            if not is_closed and (getattr(self._local, "in_transaction", False) or getattr(self._local, "transaction_depth", 0) > 0):
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
             # Check age to decide if we should close or return to pool
             force_close = False
             metadata = self.monitor.get_connection_metadata(conn_id)
@@ -425,10 +443,19 @@ class Database:
                     logger.info(f"Closing connection {conn_id} on thread exit (age: {age:.1f}s > {self._max_connection_age_seconds}s)")
                     force_close = True
             
-            self.engine.close_connection(conn, self._pool, {"close": force_close})
-            self.monitor.remove_connection_metadata(conn_id)
-            self._local.connection = None
+            try:
+                self.engine.close_connection(conn, self._pool, {"close": force_close})
+            except Exception as e:
+                logger.error(f"Error returning connection {conn_id} to pool: {e}")
+            finally:
+                self.monitor.remove_connection_metadata(conn_id)
         
+        # Reset all thread-local state
+        self._local.transaction_depth = 0
+        self._local.in_transaction = False
+        self._local.correlation_id = None
+        
+        # Backward compatibility for any external access
         self.transaction_depth = 0
         self.in_transaction = False
 
