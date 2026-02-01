@@ -125,7 +125,8 @@ def _channel_to_dict(channel) -> dict:
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_servers(
+@cached(ttl=30, prefix="user_servers_api")
+def get_servers(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> List[ServerResponse]:
     """
@@ -411,7 +412,7 @@ async def delete_server(
     },
 )
 @cached(ttl=30, prefix="server_channels_api")
-async def get_server_channels(
+def get_server_channels(
     server_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> List[ChannelResponse]:
     """
@@ -478,7 +479,7 @@ async def get_server_channels(
     },
 )
 @cached(ttl=30, prefix="server_members_api")
-async def get_server_members(
+def get_server_members(
     server_id: str,
     limit: int = 100,
     after: Optional[str] = None,

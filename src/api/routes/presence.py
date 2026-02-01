@@ -53,7 +53,10 @@ async def _dispatch_presence_event(
         logger.debug(f"Failed to dispatch presence event for user {user_id}: {e}")
 
 
-async def _get_presence_targets(user_id: int) -> list:
+from src.core.database import cached
+
+@cached(ttl=60, prefix="presence_targets")
+def _get_presence_targets(user_id: int) -> list:
     """Get all user IDs who should receive presence updates for a user."""
     target_user_ids = set()
 
@@ -142,25 +145,27 @@ async def update_presence(
     try:
         try:
             from src.core.presence.models import UserStatus
+            from fastapi.concurrency import run_in_threadpool
 
             status_enum = UserStatus(body.status)
-            presence.set_status(current_user.user_id, status_enum)
+            await run_in_threadpool(presence.set_status, current_user.user_id, status_enum)
 
             if body.custom_status is not None or body.custom_emoji is not None:
                 if body.custom_status or body.custom_emoji:
-                    presence.set_custom_status(
+                    await run_in_threadpool(
+                        presence.set_custom_status,
                         user_id=current_user.user_id,
                         text=body.custom_status,
                         emoji=body.custom_emoji,
                     )
                 else:
-                    presence.clear_custom_status(current_user.user_id)
+                    await run_in_threadpool(presence.clear_custom_status, current_user.user_id)
 
-            pres = presence.get_presence(current_user.user_id)
+            pres = await run_in_threadpool(presence.get_presence, current_user.user_id)
             response = _presence_to_response(pres, current_user.user_id)
 
-            # Get all users who should receive this presence update
-            target_user_ids = await _get_presence_targets(current_user.user_id)
+            # Get all users who should receive this presence update (uses cached function)
+            target_user_ids = _get_presence_targets(current_user.user_id)
 
             # For invisible status, show as offline to others
             visible_status = body.status if body.status != "invisible" else "offline"
@@ -220,7 +225,7 @@ async def update_presence(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_user_presence(
+def get_user_presence(
     user_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> PresenceResponse:
     """

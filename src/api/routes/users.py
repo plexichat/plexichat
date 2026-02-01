@@ -468,7 +468,8 @@ async def get_notes_channel(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_dm_channels(
+@cached(ttl=30, prefix="user_dm_channels_api")
+def get_dm_channels(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> List[DMChannelResponse]:
     """

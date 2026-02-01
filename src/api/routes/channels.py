@@ -108,6 +108,8 @@ def _channel_to_response(channel, current_user_id: Optional[int] = None) -> Chan
         raise e
 
 
+from src.core.database import cached
+
 @router.get(
     "/{channel_id}",
     response_model=ChannelResponse,
@@ -120,7 +122,8 @@ def _channel_to_response(channel, current_user_id: Optional[int] = None) -> Chan
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_channel(
+@cached(ttl=30, prefix="channel_api")
+def get_channel(
     channel_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> ChannelResponse:
     """

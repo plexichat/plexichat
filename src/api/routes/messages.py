@@ -124,8 +124,8 @@ def _message_to_response(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-@cached(ttl=30, prefix="messages_api")
-async def get_channel_messages(
+@cached(ttl=10, prefix="messages_api")
+def get_channel_messages(
     channel_id: str,
     limit: int = Query(default=50, ge=1, le=100),
     before: Optional[SnowflakeID] = Query(default=None),
