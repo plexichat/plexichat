@@ -155,9 +155,15 @@ class LoggingMiddleware:
                     else:
                         _log_info(log_msg)
 
-                    # Submit server-side telemetry for API endpoints
+                    # Submit server-side telemetry for API endpoints in the background
                     if path.startswith("/api/"):
-                        _submit_server_telemetry(path, method, duration_ms, status_code)
+                        import asyncio
+                        from fastapi.concurrency import run_in_threadpool
+                        asyncio.create_task(
+                            run_in_threadpool(
+                                _submit_server_telemetry, path, method, duration_ms, status_code
+                            )
+                        )
 
             await send(message)
 

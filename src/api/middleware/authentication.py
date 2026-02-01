@@ -58,7 +58,10 @@ class AuthenticationMiddleware:
                     try:
                         ip = request.client.host if request.client else None
                         ua = request.headers.get("User-Agent")
-                        token_info = auth.verify_token(token, ip, ua)
+                        
+                        from fastapi.concurrency import run_in_threadpool
+                        token_info = await run_in_threadpool(auth.verify_token, token, ip, ua)
+                        
                         if token_info:
                             scope["state"]["user"] = token_info
                             logger.debug(f"Auth: Successfully authenticated user {token_info.user_id} for path {path}")
