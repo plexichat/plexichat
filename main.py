@@ -1248,8 +1248,9 @@ class PlexiChatServer:
         except Exception as e:
             logger.error(f"Failed to check encryption key rotation: {e}")
 
-        # Initialize core modules in dependency order
+        # Initialize core modules in parallel where possible
         startup_times = {}
+        startup_lock = threading.Lock()
         
         def timed_init(name: str, init_func):
             """Initialize a module and track how long it takes."""
@@ -1258,54 +1259,101 @@ class PlexiChatServer:
             try:
                 result = init_func()
                 elapsed = (time.perf_counter() - start) * 1000
-                startup_times[name] = elapsed
+                with startup_lock:
+                    startup_times[name] = elapsed
                 logger.info(f"  -> {name} initialized in {elapsed:.1f}ms")
                 return result
             except Exception as e:
                 elapsed = (time.perf_counter() - start) * 1000
-                startup_times[name] = elapsed
+                with startup_lock:
+                    startup_times[name] = elapsed
                 logger.error(f"  -> {name} FAILED after {elapsed:.1f}ms: {e}")
                 raise
-        
-        # Initialize email sender if configured
-        email_config = config.get("email", {})
-        email_sender = None
-        smtp_password = os.getenv("PLEXICHAT_SMTP_PASSWORD")
-        if email_config.get("smtp_host") and smtp_password:
-            from src.utils.email import SMTPEmailSender
-            email_sender = SMTPEmailSender(
-                host=email_config["smtp_host"],
-                port=email_config.get("smtp_port", 587),
-                user=email_config.get("smtp_user", ""),
-                password=smtp_password,
-                from_email=email_config.get("from_email", "noreply@plexichat.internal"),
-                use_tls=email_config.get("use_tls", True)
-            )
-            logger.info(f"Email sender initialized via SMTP ({email_config['smtp_host']})")
-        else:
-            logger.info("Email sender not initialized (SMTP host or PLEXICHAT_SMTP_PASSWORD missing)")
 
+        # Core initialization group (Serial due to deep dependencies)
         timed_init("auth", lambda: auth.setup(self.db, email_sender=email_sender))
         self._modules["auth"] = auth
 
         timed_init("messaging", lambda: messaging.setup(self.db, auth))
         self._modules["messaging"] = messaging
 
-        timed_init("servers", lambda: servers.setup(self.db, auth, messaging))
-        self._modules["servers"] = servers
+        # Independent initialization group (Parallel)
+        def init_independent():
+            threads = []
+            
+            # 1. Servers (Heavy DB)
+            def init_servers():
+                timed_init("servers", lambda: servers.setup(self.db, auth, messaging))
+                self._modules["servers"] = servers
+            threads.append(threading.Thread(target=init_servers, name="InitServers"))
 
-        timed_init("relationships", lambda: relationships.setup(self.db, auth, servers))
-        self._modules["relationships"] = relationships
+            # 2. Relationships
+            def init_rel():
+                timed_init("relationships", lambda: relationships.setup(self.db, auth, servers))
+                self._modules["relationships"] = relationships
+            threads.append(threading.Thread(target=init_rel, name="InitRel"))
 
-        timed_init("presence", lambda: presence.setup(self.db, auth, relationships, servers))
-        self._modules["presence"] = presence
+            # 3. Media
+            def init_media():
+                timed_init("media", lambda: media.setup(self.db))
+                self._modules["media"] = media
+            threads.append(threading.Thread(target=init_media, name="InitMedia"))
 
-        timed_init("reactions", lambda: reactions.setup(self.db, messaging, servers, relationships))
-        self._modules["reactions"] = reactions
+            # 4. Settings
+            def init_settings():
+                timed_init("settings", lambda: settings.setup(self.db))
+                self._modules["settings"] = settings
+            threads.append(threading.Thread(target=init_settings, name="InitSettings"))
 
-        timed_init("embeds", lambda: embeds.setup(self.db, messaging, servers))
-        self._modules["embeds"] = embeds
+            for t in threads: t.start()
+            for t in threads: t.join()
 
+        init_independent()
+
+        # Dependent initialization group (Parallel)
+        def init_dependent():
+            threads = []
+            
+            # 1. Presence
+            def init_presence():
+                timed_init("presence", lambda: presence.setup(self.db, auth, relationships, servers))
+                self._modules["presence"] = presence
+            threads.append(threading.Thread(target=init_presence, name="InitPresence"))
+
+            # 2. Reactions
+            def init_reactions():
+                timed_init("reactions", lambda: reactions.setup(self.db, messaging, servers, relationships))
+                self._modules["reactions"] = reactions
+            threads.append(threading.Thread(target=init_reactions, name="InitReactions"))
+
+            # 3. Embeds
+            def init_embeds():
+                timed_init("embeds", lambda: embeds.setup(self.db, messaging, servers))
+                self._modules["embeds"] = embeds
+            threads.append(threading.Thread(target=init_embeds, name="InitEmbeds"))
+
+            # 4. Notifications (Complex)
+            def init_notifications():
+                try:
+                    timed_init("notifications", lambda: notifications.setup(
+                        self.db,
+                        auth_module=auth,
+                        messaging_module=messaging,
+                        servers_module=servers,
+                        relationships_module=relationships,
+                        presence_module=presence,
+                    ))
+                    self._modules["notifications"] = notifications
+                except Exception as e:
+                    logger.warning(f"Failed to initialize notifications module: {e}")
+            threads.append(threading.Thread(target=init_notifications, name="InitNotifications"))
+
+            for t in threads: t.start()
+            for t in threads: t.join()
+
+        init_dependent()
+
+        # Final non-critical group
         timed_init("events", lambda: events.setup(
             relationships_module=relationships,
             servers_module=servers,
@@ -1315,23 +1363,6 @@ class PlexiChatServer:
 
         timed_init("webhooks", lambda: webhooks.setup(self.db, auth, messaging, servers, embeds))
         self._modules["webhooks"] = webhooks
-
-        timed_init("settings", lambda: settings.setup(self.db))
-        self._modules["settings"] = settings
-
-        try:
-            timed_init("notifications", lambda: notifications.setup(
-                self.db,
-                auth_module=auth,
-                messaging_module=messaging,
-                servers_module=servers,
-                relationships_module=relationships,
-                presence_module=presence,
-            ))
-            self._modules["notifications"] = notifications
-        except Exception as e:
-            logger.warning(f"Failed to initialize notifications module: {e}")
-            failed_modules.append("notifications")
 
         try:
             timed_init("threads", lambda: threads.setup(self.db, messaging, servers))
