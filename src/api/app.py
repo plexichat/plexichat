@@ -319,7 +319,13 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 import unicodedata
                 
                 start_time = time.perf_counter()
-                stream, size, ct = media.get_file_stream(file_id)
+                # Optimized: Use metadata we already have to skip DB lookup
+                # stream, size, ct = media.get_file_stream(file_id)
+                stream, size, ct = media.get_file_stream_optimized(
+                    row["storage_path"], 
+                    row["content_type"], 
+                    row["storage_backend"]
+                )
                 
                 # Sanitize original filename for Content-Disposition
                 # This ensures downloads retain their initial names while being safe for headers
@@ -332,10 +338,19 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
                 safe_name = sanitize_header_filename(original_filename)
                 
+                # Generate ETag from file_id and size (simple but effective for immutable files)
+                etag = f'"{file_id}-{size}"'
+                
+                # Check If-None-Match
+                if_none_match = request.headers.get("If-None-Match")
+                if if_none_match and (if_none_match == etag or if_none_match == etag.replace('"', '')):
+                     return Response(status_code=304)
+
                 headers = {
                     "Content-Length": str(size),
                     "Content-Disposition": f'attachment; filename="{safe_name}"' if download else "inline",
-                    "Cache-Control": "private, max-age=3600"
+                    "Cache-Control": "private, max-age=3600",
+                    "ETag": etag
                 }
                 
                 # Add CORS headers specifically for media to avoid policy blocks

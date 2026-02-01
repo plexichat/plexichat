@@ -962,6 +962,22 @@ class MediaManager(BaseManager):
         stream, size = storage.retrieve_stream(file.storage_path)
         return stream, size, file.content_type
 
+    def get_file_stream_optimized(self, path: str, content_type: str, backend: str) -> Tuple[BinaryIO, int, str]:
+        """
+        Get file data as a stream directly (avoids DB lookup).
+
+        Args:
+            path: Storage path
+            content_type: Content type
+            backend: Storage backend value (s3, local, database)
+
+        Returns:
+            Tuple of (file stream, size, content_type)
+        """
+        storage = self._get_storage_by_backend(backend)
+        stream, size = storage.retrieve_stream(path)
+        return stream, size, content_type
+
     def delete_file(self, user_id: int, file_id: int) -> bool:
         """
         Delete a file (soft delete).

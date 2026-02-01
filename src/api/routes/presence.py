@@ -76,11 +76,20 @@ async def _get_presence_targets(user_id: int) -> list:
             user_servers = servers.get_servers(user_id)
             if user_servers:
                 for server in user_servers:
-                    members = servers.get_members(user_id, server.id)
-                    if members:
-                        for member in members:
-                            if member.user_id != user_id:
-                                target_user_ids.add(member.user_id)
+                    # Optimized: Get only user IDs to avoid N+1 queries fetching full member objects
+                    # member_ids = servers.get_member_user_ids(server.id, exclude_user_id=user_id)
+                    # We check if the method exists (it should in the optimized manager)
+                    if hasattr(servers, "get_member_user_ids"):
+                        member_ids = servers.get_member_user_ids(server.id, exclude_user_id=user_id)
+                        if member_ids:
+                            target_user_ids.update(member_ids)
+                    else:
+                        # Fallback for older managers
+                        members = servers.get_members(user_id, server.id)
+                        if members:
+                            for member in members:
+                                if member.user_id != user_id:
+                                    target_user_ids.add(member.user_id)
         except Exception as e:
             logger.debug(
                 f"Error fetching shared server members for presence targets (user {user_id}): {e}"

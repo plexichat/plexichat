@@ -73,8 +73,14 @@ async def get_user_avatar(user_id: str, request: Request):
             except Exception:
                 pass
 
-        if checksum and etag_client == f'"{checksum}"':
-            return Response(status_code=304)
+        # Flexible ETag check (handles weak tags and quotes)
+        if checksum and etag_client:
+            # Check for exact match, quoted match, or weak match
+            if etag_client == checksum or \
+               etag_client == f'"{checksum}"' or \
+               etag_client == f'W/"{checksum}"' or \
+               checksum in etag_client:
+                return Response(status_code=304)
 
         # 2. Fetch full data (no threadpool - the module handles caching internally)
         try:
