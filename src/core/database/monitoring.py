@@ -131,7 +131,7 @@ class DatabaseMonitor:
             
             return (recent_errors / self._error_rate_window_seconds) * 60
 
-    def start_pool_monitoring(self, get_stats_cb):
+    def start_pool_monitoring(self, get_stats_cb, reap_cb=None):
         """Start the background logging thread."""
         with self._lock:
             if self._periodic_logging_thread and self._periodic_logging_thread.is_alive():
@@ -140,7 +140,7 @@ class DatabaseMonitor:
             self._stop_logging = False
             self._periodic_logging_thread = threading.Thread(
                 target=self._periodic_logging_loop,
-                args=(get_stats_cb,),
+                args=(get_stats_cb, reap_cb),
                 name="DatabasePoolMonitor",
                 daemon=True
             )
@@ -157,10 +157,20 @@ class DatabaseMonitor:
         pairs = [f"{k}={v}" for k, v in kwargs.items() if v is not None]
         return f"[{' '.join(pairs)}]" if pairs else ""
 
-    def _periodic_logging_loop(self, get_stats_cb):
+    def _periodic_logging_loop(self, get_stats_cb, reap_cb=None):
         """Main loop for the periodic logging thread."""
         while not self._stop_logging:
             try:
+                # 1. Proactively reap leaked connections if callback provided
+                if reap_cb:
+                    try:
+                        reaped = reap_cb()
+                        if reaped > 0:
+                            logger.info(f"Pool maintenance: reaped {reaped} leaked/idle connections")
+                    except Exception as reap_err:
+                        logger.error(f"Error during connection reaping: {reap_err}")
+
+                # 2. Collect and log statistics
                 stats = get_stats_cb()
                 error_rate = self.calculate_error_rate()
                 

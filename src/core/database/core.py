@@ -239,6 +239,7 @@ class Database:
             
             conn_id = id(conn)
             self.monitor.add_connection_metadata(conn_id, {
+                "connection": conn,
                 "created_at": time.time(),
                 "last_used": time.time(),
                 "thread_id": threading.current_thread().ident,
@@ -461,7 +462,46 @@ class Database:
 
     def start_pool_monitoring(self):
         """Start periodic pool monitoring."""
-        self.monitor.start_pool_monitoring(self.get_pool_stats)
+        self.monitor.start_pool_monitoring(self.get_pool_stats, self.reap_connections)
+
+    def reap_connections(self) -> int:
+        """
+        Proactively close connections that are idle or leaked in other threads.
+        Returns the number of connections reaped.
+        """
+        if self.type != "postgres" or not self._pool:
+            return 0
+
+        reaped_count = 0
+        current_time = time.time()
+        
+        # We need a list of IDs to avoid dictionary mutation during iteration
+        connection_ids = list(self.monitor._connection_metadata.keys())
+        
+        for conn_id in connection_ids:
+            metadata = self.monitor.get_connection_metadata(conn_id)
+            if not metadata or "connection" not in metadata:
+                continue
+                
+            last_used = metadata.get("last_used", 0)
+            idle_time = current_time - last_used
+            
+            # If it's been idle longer than our threshold, and it's NOT the current thread's connection
+            is_current_thread_conn = (hasattr(self._local, "connection") and 
+                                     id(self._local.connection) == conn_id)
+            
+            if idle_time > self._max_idle_time and not is_current_thread_conn:
+                conn = metadata["connection"]
+                logger.warning(f"Reaping leaked/idle connection {conn_id} (idle {idle_time:.1f}s)")
+                try:
+                    self.engine.close_connection(conn, self._pool, {"close": True})
+                    reaped_count += 1
+                except Exception as e:
+                    logger.error(f"Error reaping connection {conn_id}: {e}")
+                finally:
+                    self.monitor.remove_connection_metadata(conn_id)
+
+        return reaped_count
 
     def stop_pool_monitoring(self):
         """Stop periodic pool monitoring."""

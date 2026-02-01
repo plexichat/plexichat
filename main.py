@@ -87,7 +87,7 @@ class PlexiChatServer:
                 },
                 "connection_pool": {
                     "min_connections": 5,
-                    "max_connections": 50,
+                    "max_connections": 100,
                     "connect_timeout": 10,
                     "max_idle_time": 3600,
                     "validation_interval": 60,
