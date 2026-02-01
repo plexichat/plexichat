@@ -32,31 +32,37 @@ router = APIRouter(tags=["Channels"])
 def _channel_to_response(channel, current_user_id: Optional[int] = None) -> ChannelResponse:
     """Convert channel object to response model."""
     try:
+        # Handle different model types (Channel vs Conversation)
+        # Server channels use 'channel_type', Messaging conversations use 'conversation_type'
         channel_type = getattr(channel, "channel_type", None)
+        if channel_type is None:
+            channel_type = getattr(channel, "conversation_type", None)
+            
         if channel_type is not None and hasattr(channel_type, "value"):
             channel_type = channel_type.value
         
-        # Handle different model types (Channel vs Conversation)
+        # Default name
+        name = getattr(channel, "name", None)
+        
+        # Handle different model types for server_id
         server_id = getattr(channel, "server_id", 0)
         
-        # Default name
-        name = getattr(channel, "name", None) or f"Conversation {channel.id}"
-
         # Initialize DM-specific fields
         recipient_id = None
         recipient = None
 
         # If it's a DM, try to find the recipient and set name
-        if channel_type == "dm":
+        if channel_type == "dm" or channel_type == "group_dm":
             messaging_mod = api.get_messaging()
             if messaging_mod:
                 try:
-                    # Check if recipient_id is already on the object (some models might have it)
+                    # Check if recipient_id is already on the object
                     recipient_id = getattr(channel, "recipient_id", None)
                     
                     if not recipient_id:
-                        # Fetch from DB/Cache
-                        participants = messaging_mod.get_participant_ids(channel.id)
+                        # Fetch participants from manager
+                        manager = messaging_mod.get_manager()
+                        participants = manager.get_participant_ids(channel.id)
                         if len(participants) == 2 and current_user_id:
                             recipient_id = next((p for p in participants if int(p) != int(current_user_id)), participants[0])
                         elif participants:
@@ -65,13 +71,21 @@ def _channel_to_response(channel, current_user_id: Optional[int] = None) -> Chan
                     if recipient_id:
                         # Use the cached user fetch helper from users.py if possible
                         from .users import _get_user_cached, _user_to_public_response
-                        user_data = _get_user_cached(recipient_id)
+                        user_data = _get_user_cached(int(recipient_id))
                         if user_data:
                             recipient = _user_to_public_response(user_data)
-                            # CRITICAL FIX: Set the name to the recipient's username
-                            name = recipient.username
+                            # Set the name to the recipient's username for DMs
+                            if channel_type == "dm":
+                                name = recipient.username
                 except Exception as de:
                     logger.debug(f"Failed to populate DM recipient for channel {channel.id}: {de}")
+
+        # Final fallback for name if still None or weird
+        if not name or (isinstance(name, str) and "pyc" in name):
+            if channel_type == "dm" and recipient:
+                name = recipient.username
+            else:
+                name = f"Conversation {channel.id}"
 
         return ChannelResponse(
             id=SnowflakeID(channel.id),
@@ -90,8 +104,7 @@ def _channel_to_response(channel, current_user_id: Optional[int] = None) -> Chan
             recipient=recipient
         )
     except Exception as e:
-        logger.error(f"Error converting channel object to response: {e}")
-        # Fallback to minimal response if possible, or re-raise
+        logger.error(f"Error converting channel object to response: {e}", exc_info=True)
         raise e
 
 
