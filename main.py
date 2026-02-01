@@ -1270,13 +1270,6 @@ class PlexiChatServer:
                 logger.error(f"  -> {name} FAILED after {elapsed:.1f}ms: {e}")
                 raise
 
-        # Core initialization group (Serial due to deep dependencies)
-        timed_init("auth", lambda: auth.setup(self.db, email_sender=email_sender))
-        self._modules["auth"] = auth
-
-        timed_init("messaging", lambda: messaging.setup(self.db, auth))
-        self._modules["messaging"] = messaging
-
         # Independent initialization group (Parallel)
         def init_independent():
             threads = []
@@ -1307,6 +1300,31 @@ class PlexiChatServer:
 
             for t in threads: t.start()
             for t in threads: t.join()
+
+        # Initialize email sender if configured
+        email_config = config.get("email", {})
+        email_sender = None
+        smtp_password = os.getenv("PLEXICHAT_SMTP_PASSWORD")
+        if email_config.get("smtp_host") and smtp_password:
+            from src.utils.email import SMTPEmailSender
+            email_sender = SMTPEmailSender(
+                host=email_config["smtp_host"],
+                port=email_config.get("smtp_port", 587),
+                user=email_config.get("smtp_user", ""),
+                password=smtp_password,
+                from_email=email_config.get("from_email", "noreply@plexichat.internal"),
+                use_tls=email_config.get("use_tls", True)
+            )
+            logger.info(f"Email sender initialized via SMTP ({email_config['smtp_host']})")
+        else:
+            logger.info("Email sender not initialized (SMTP host or PLEXICHAT_SMTP_PASSWORD missing)")
+
+        # Core initialization group (Serial due to deep dependencies)
+        timed_init("auth", lambda: auth.setup(self.db, email_sender=email_sender))
+        self._modules["auth"] = auth
+
+        timed_init("messaging", lambda: messaging.setup(self.db, auth))
+        self._modules["messaging"] = messaging
 
         init_independent()
 
