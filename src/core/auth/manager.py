@@ -76,6 +76,19 @@ class AuthManager(BaseManager):
         create_tables(db)
         self._ensure_system_user()
 
+    def _json_dumps(self, data: Any) -> str:
+        """Serialize data to JSON string."""
+        return json.dumps(data)
+
+    def _json_loads(self, data: str) -> Any:
+        """Deserialize data from JSON string."""
+        if not data:
+            return None
+        try:
+            return json.loads(data)
+        except (json.JSONDecodeError, TypeError):
+            return None
+
     def _ensure_system_user(self) -> None:
         now = self._get_timestamp()
         self._db.insert_or_ignore(

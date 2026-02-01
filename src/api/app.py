@@ -197,7 +197,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             )
 
     # Serve uploaded media files (requires authentication)
-    from fastapi import status
+    from fastapi import status, Response
     from typing import Optional
 
     @app.get(
