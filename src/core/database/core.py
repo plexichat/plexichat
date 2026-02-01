@@ -67,6 +67,10 @@ class Database:
         self._local = DatabaseLocal()
         self._lock = threading.RLock()
         
+        # Local cache for redundant queries within the same request context
+        self._query_cache: Dict[str, Tuple[float, Any]] = {}
+        self._query_cache_ttl = 1.0  # 1 second TTL for identical queries
+        
         # Initialize components
         if self.type == "postgres":
             self.engine = PostgresEngine(self.config)
@@ -253,6 +257,11 @@ class Database:
         if self.transaction_depth > 0:
             self._validate_transaction_state()
             
+        # Invalidate cache on any potentially modifying operation
+        upper_query = query.strip().upper()
+        if any(upper_query.startswith(word) for word in ["INSERT", "UPDATE", "DELETE", "REPLACE", "DROP", "CREATE", "ALTER"]):
+            self._query_cache.clear()
+            
         conn = self._get_conn()
         query = dialect.convert_placeholders(query, self.type)
         
@@ -303,18 +312,53 @@ class Database:
             raise
 
     def fetch_one(self, query: str, params: Optional[Tuple] = None) -> Optional[Dict[str, Any]]:
-        """Fetch a single result as a dict."""
+        """Fetch a single result as a dict with local caching."""
+        cache_key = f"one:{query}:{params}"
+        now = time.time()
+        
+        # Check local cache
+        if cache_key in self._query_cache:
+            expiry, result = self._query_cache[cache_key]
+            if now < expiry:
+                return result
+            del self._query_cache[cache_key]
+
         cursor = self.execute(query, params)
         result = cursor.fetchone()
         cursor.close()
-        return dict(result) if result else None
+        
+        final_result = dict(result) if result else None
+        
+        # Store in local cache
+        self._query_cache[cache_key] = (now + self._query_cache_ttl, final_result)
+        # Periodic cleanup of cache to avoid memory growth
+        if len(self._query_cache) > 100:
+            self._query_cache = {k: v for k, v in self._query_cache.items() if v[0] > now}
+            
+        return final_result
 
     def fetch_all(self, query: str, params: Optional[Tuple] = None) -> List[Dict[str, Any]]:
-        """Fetch all results as a list of dicts."""
+        """Fetch all results as a list of dicts with local caching."""
+        cache_key = f"all:{query}:{params}"
+        now = time.time()
+        
+        # Check local cache
+        if cache_key in self._query_cache:
+            expiry, result = self._query_cache[cache_key]
+            if now < expiry:
+                return result
+            del self._query_cache[cache_key]
+
         cursor = self.execute(query, params)
         results = cursor.fetchall()
         cursor.close()
-        return [dict(row) for row in results]
+        
+        final_results = [dict(row) for row in results]
+        
+        # Store in local cache
+        self._query_cache[cache_key] = (now + self._query_cache_ttl, final_results)
+        
+        return final_results
 
     def table_exists(self, table_name: str) -> bool:
         """Check if a table exists."""
