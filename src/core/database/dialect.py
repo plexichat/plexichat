@@ -4,6 +4,9 @@ from typing import Any
 # Regex pattern to match ? placeholders (not inside single or double quotes)
 _PLACEHOLDER_PATTERN = re.compile(r'''('(?:''|[^'])*'|"(?:""|[^"])*")|(\?)''')
 
+# Global cache for converted queries to avoid redundant regex processing
+_QUERY_CONVERSION_CACHE = {}
+
 def convert_placeholders(query: str, db_type: str) -> str:
     """
     Convert ? placeholders to engine-specific placeholders.
@@ -12,6 +15,12 @@ def convert_placeholders(query: str, db_type: str) -> str:
     if db_type != "postgres":
         return query
 
+    # Check cache first
+    cache_key = f"{db_type}:{query}"
+    if cache_key in _QUERY_CONVERSION_CACHE:
+        return _QUERY_CONVERSION_CACHE[cache_key]
+
+    original_query = query
     # 1. Convert abs(random()) to floor(random() * ...) for PostgreSQL
     if "abs(random())" in query.lower():
         query = re.sub(r"abs\(random\(\)\)", "floor(random() * 9223372036854775807)::bigint", query, flags=re.IGNORECASE)
@@ -38,7 +47,13 @@ def convert_placeholders(query: str, db_type: str) -> str:
 
     # Pattern to match quoted strings, ? placeholders, OR literal %
     pattern = re.compile(r'''('(?:''|[^'])*'|"(?:""|[^"])*")|(\?) | (%)'''.replace(" ", ""), re.VERBOSE)
-    return pattern.sub(replace, query)
+    converted_query = pattern.sub(replace, query)
+    
+    # Store in cache (limit size to prevent memory growth)
+    if len(_QUERY_CONVERSION_CACHE) < 1000:
+        _QUERY_CONVERSION_CACHE[cache_key] = converted_query
+        
+    return converted_query
 
 def sanitize_identifier(identifier: str, db_type: str) -> str:
     """

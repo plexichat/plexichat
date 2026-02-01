@@ -262,8 +262,8 @@ class Database:
         if any(upper_query.startswith(word) for word in ["INSERT", "UPDATE", "DELETE", "REPLACE", "DROP", "CREATE", "ALTER"]):
             self._query_cache.clear()
             
-        conn = self._get_conn()
         query = dialect.convert_placeholders(query, self.type)
+        conn = self._get_conn()
         
         cursor = conn.cursor()
         start_time = time.time()
