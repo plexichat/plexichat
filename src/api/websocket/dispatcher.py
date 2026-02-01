@@ -92,7 +92,7 @@ class GatewayDispatcher:
         
         # Use DEBUG level for very frequent events to reduce log noise
         log_level = logger.info
-        if event.event_type.value in ["presence_update", "typing_start"]:
+        if event.event_type.value in ["presence_update", "typing_start", "message_ack"]:
             log_level = logger.debug
             
         log_level(
