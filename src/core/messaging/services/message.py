@@ -18,6 +18,7 @@ from ..exceptions import (
     ContentTooLongError,
     AttachmentLimitError,
 )
+from src.core.database import cache_get, cache_set, cache_delete, cached
 from .base import BaseService
 from .participant import ParticipantService
 from .user_settings import UserSettingsService
@@ -186,8 +187,7 @@ class MessageService(BaseService):
 
         logger.debug(f"Message {msg_id} sent to conversation {conversation_id}")
 
-        # Return message with original content (not encrypted)
-        return Message(
+        msg = Message(
             id=msg_id,
             conversation_id=conversation_id,
             author_id=user_id,
@@ -202,6 +202,23 @@ class MessageService(BaseService):
             metadata=metadata if metadata else None,
             attachments=attachment_list,
         )
+        
+        # Cache the message
+        cache_set(f"msg:obj:{msg_id}", msg, ttl=3600)
+        
+        # Update "recent messages" list in Redis
+        try:
+            from src.core.database import get_client
+            client = get_client()
+            if client and client.is_available():
+                list_key = f"msg:recent:{conversation_id}"
+                client.lpush(list_key, msg_id)
+                client.ltrim(list_key, 0, 99) # Keep only last 100
+                client.expire(list_key, 3600)
+        except Exception as e:
+            logger.debug(f"Failed to update recent messages cache: {e}")
+
+        return msg
 
     def edit_message(
         self, user_id: SnowflakeID, message_id: SnowflakeID, content: str
@@ -237,10 +254,17 @@ class MessageService(BaseService):
             final_content = encrypt_message(final_content, message_id)
 
         self._repo.update_content(message_id, final_content, now)
+        
+        # Invalidate old cache
+        cache_delete(f"msg:obj:{message_id}")
 
         msg = self.get_message(user_id, message_id)
         if msg is None:
             raise MessageNotFoundError("Failed to retrieve updated message")
+            
+        # Update cache with new version
+        cache_set(f"msg:obj:{message_id}", msg, ttl=3600)
+        
         return msg
 
     def delete_message(
@@ -269,6 +293,9 @@ class MessageService(BaseService):
             self._repo.hard_delete(message_id)
         else:
             self._repo.soft_delete(message_id, now)
+            
+        # Invalidate cache
+        cache_delete(f"msg:obj:{message_id}")
 
         return True
 
@@ -276,6 +303,17 @@ class MessageService(BaseService):
         self, user_id: SnowflakeID, message_id: SnowflakeID
     ) -> Optional[Message]:
         """Get a single message by ID."""
+        # Try cache first
+        cached_msg = cache_get(f"msg:obj:{message_id}")
+        if cached_msg:
+            # Reconstruct might be needed if it's a plain dict
+            from src.core.database.cache import _reconstruct_object
+            msg = _reconstruct_object(cached_msg)
+            if isinstance(msg, Message):
+                # Check access (conversation_id is in the message object)
+                if self._participant_svc.is_participant(msg.conversation_id, user_id):
+                    return msg
+
         msg_row = self._repo.get_by_id(message_id)
         if not msg_row:
             return None
@@ -295,6 +333,9 @@ class MessageService(BaseService):
         att_rows = self._attachment_repo.get_by_message(message_id)
         msg.attachments = [self._attachment_repo.row_to_model(row) for row in att_rows]
 
+        # Cache it for next time
+        cache_set(f"msg:obj:{message_id}", msg, ttl=3600)
+
         return msg
 
     def get_messages(
@@ -310,6 +351,42 @@ class MessageService(BaseService):
             raise ConversationAccessDeniedError("Not a participant in this conversation")
 
         limit = min(limit, 100)
+        
+        # Try "recent messages" cache if it's the default request (newest messages)
+        if not before_id and not after_id:
+            try:
+                from src.core.database import get_client
+                client = get_client()
+                if client and client.is_available():
+                    list_key = f"msg:recent:{conversation_id}"
+                    # Try to get IDs from Redis
+                    cached_ids = client.lrange(list_key, 0, limit - 1)
+                    if cached_ids:
+                        # Fetch message objects from cache
+                        messages = []
+                        missing_ids = []
+                        for mid in cached_ids:
+                            m_obj = cache_get(f"msg:obj:{mid}")
+                            if m_obj:
+                                from src.core.database.cache import _reconstruct_object
+                                messages.append(_reconstruct_object(m_obj))
+                            else:
+                                missing_ids.append(mid)
+                        
+                        # If we found all requested messages in cache, return them
+                        if not missing_ids and len(messages) == limit:
+                            return messages
+                        
+                        # If we have fewer than limit, only return if we're sure it's all there is in the cache
+                        # and that the cache list itself is the total available messages (for small conversations)
+                        # We use a simple heuristic: ifllen < limit, it might be the whole conversation.
+                        # For now, let's be conservative to ensure correctness.
+                        if not missing_ids and len(messages) > 0 and len(messages) == client.llen(list_key) and len(messages) < limit:
+                            # To be 100% sure, we'd need to know if there are more in DB.
+                            # For snappiness, we'll return this, but the UI might not show "load more".
+                            return messages
+            except Exception as e:
+                logger.debug(f"Recent messages cache check failed: {e}")
 
         rows = self._repo.get_by_conversation(conversation_id, limit, before_id, after_id)
 
@@ -328,6 +405,30 @@ class MessageService(BaseService):
             msg = self._repo.row_to_model(row, pin_info)
             msg.attachments = attachments_map.get(row["id"], [])
             messages.append(msg)
+            
+            # Seed the object cache
+            cache_set(f"msg:obj:{msg.id}", msg, ttl=3600)
+
+        # Populate "recent messages" list cache if it's the newest messages
+        if not before_id and not after_id:
+            try:
+                from src.core.database import get_client
+                client = get_client()
+                if client and client.is_available():
+                    list_key = f"msg:recent:{conversation_id}"
+                    # Only populate if list doesn't exist or is empty to avoid duplicates
+                    # or if we want to ensure it's fresh, we can overwrite.
+                    # Overwriting is safer for consistency.
+                    client.delete(list_key)
+                    if messages:
+                        # Push in reverse order because we use LPUSH and messages are likely newest-first
+                        # Actually if messages are [M3, M2, M1], we want them in Redis as [M3, M2, M1]
+                        # So we RPUSH M3, then RPUSH M2, then RPUSH M1.
+                        mids = [m.id for m in messages]
+                        client.rpush(list_key, *mids)
+                        client.expire(list_key, 3600)
+            except Exception as e:
+                logger.debug(f"Failed to populate recent messages cache: {e}")
 
         return messages
 

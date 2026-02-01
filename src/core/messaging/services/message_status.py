@@ -85,11 +85,12 @@ class MessageStatusService(BaseService):
                 user_id, conversation_id, up_to_message_id, now, status_id
             )
             
-            # Invalidate reader IDs cache for this conversation
+            # Invalidate reader IDs and status batch cache for this conversation
             try:
                 from src.core.database import invalidate_pattern
-                # Key format: msg_reader_ids:*
+                # Key format: msg_reader_ids:* and msg_status_batch:*
                 invalidate_pattern("msg_reader_ids:*")
+                invalidate_pattern("msg_status_batch:*")
             except Exception:
                 pass
 

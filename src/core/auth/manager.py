@@ -1269,8 +1269,34 @@ class AuthManager(BaseManager):
         return self.get_user(row["id"])
 
     @cached(ttl=60, prefix="users_bulk")
+    @cached(ttl=300, prefix="user_profile_bulk")
+    def get_user_profiles_bulk(self, user_ids: List[int]) -> Dict[str, Any]:
+        """Get public profile information for multiple users (bulk-cached)."""
+        if not user_ids:
+            return {}
+            
+        placeholders = ",".join("?" for _ in user_ids)
+        rows = self._db.fetch_all(
+            f"SELECT id, username, permissions, account_type FROM auth_users WHERE id IN ({placeholders})", 
+            tuple(user_ids)
+        )
+        
+        result = {}
+        for row in rows:
+            user_id = row["id"]
+            # Only include safe, non-PII fields
+            result[str(user_id)] = {
+                "id": user_id,
+                "username": row["username"],
+                "permissions": self._json_loads(row["permissions"]) if isinstance(row["permissions"], str) else row["permissions"],
+                "account_type": row["account_type"],
+                "avatar_url": f"/api/v1/avatars/users/{user_id}"
+            }
+                
+        return result
+
     def get_users_bulk(self, user_ids: List[int]) -> Dict[str, User]:
-        """Get multiple users by ID (bulk-cached)."""
+        """Get multiple users by ID (uncached, full data)."""
         if not user_ids:
             return {}
             

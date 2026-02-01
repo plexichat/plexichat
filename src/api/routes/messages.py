@@ -200,11 +200,11 @@ async def get_channel_messages(
         author_cache = {}  # {user_id: {"username": str, "avatar_url": str}}
         if auth and author_ids:
             try:
-                users = auth.get_users_bulk(author_ids)
+                users = auth.get_user_profiles_bulk(author_ids)
                 author_cache = {
                     uid: {
-                        "username": u.username,
-                        "avatar_url": getattr(u, "avatar_url", None),
+                        "username": u["username"],
+                        "avatar_url": u.get("avatar_url"),
                     }
                     for uid, u in users.items()
                 }
@@ -243,12 +243,12 @@ async def get_channel_messages(
                         all_reader_ids.update(r_ids)
                     
                     if all_reader_ids:
-                        reader_users = auth.get_users_bulk(list(all_reader_ids))
+                        reader_users = auth.get_user_profiles_bulk(list(all_reader_ids))
                         
                         # Build the readers cache with usernames
                         for mid, r_ids in reader_ids_map.items():
                             readers_cache[mid] = [
-                                reader_users[rid].username 
+                                reader_users[rid]["username"] 
                                 for rid in r_ids if rid in reader_users
                             ]
             except Exception as e:
@@ -356,11 +356,11 @@ async def search_messages(
         author_cache = {}
         if auth and author_ids:
             try:
-                users = auth.get_users_bulk(author_ids)
+                users = auth.get_user_profiles_bulk(author_ids)
                 author_cache = {
                     uid: {
-                        "username": u.username,
-                        "avatar_url": getattr(u, "avatar_url", None),
+                        "username": u["username"],
+                        "avatar_url": u.get("avatar_url"),
                     }
                     for uid, u in users.items()
                 }

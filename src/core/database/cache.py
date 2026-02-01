@@ -90,10 +90,16 @@ def _generate_cache_key(prefix: str, *args, **kwargs) -> str:
                 uid = getattr(val, "user_id", None) or getattr(val, "id", "unknown")
                 return f"{class_name}:{uid}"
             
-            # Check for core managers by looking at the module or base classes
+            # Check for core managers and repositories by looking at the module or base classes
+            # This avoids including instance memory addresses in cache keys
             from src.core.base import BaseManager
-            if isinstance(val, BaseManager):
-                return f"Manager:{class_name}"
+            try:
+                # We use a broad check for anything that looks like a Repository or Manager
+                # to ensure stable keys for all core components
+                if isinstance(val, BaseManager) or class_name.endswith(("Repository", "Service", "Manager")):
+                    return f"Core:{class_name}"
+            except Exception:
+                pass
                 
         if isinstance(val, (dict, list)):
             return f"{type(val).__name__}:{hashlib.md5(json.dumps(val, sort_keys=True).encode()).hexdigest()[:8]}"
