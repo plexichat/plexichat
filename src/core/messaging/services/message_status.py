@@ -79,7 +79,7 @@ class MessageStatusService(BaseService):
         user_settings = self._user_settings_svc.get_message_settings(user_id)
         
         count = 0
-        if user_settings.read_receipt_enabled:
+        if user_settings.read_receipts_enabled:
             status_id = self._generate_id()
             count = self._repo.batch_mark_read(
                 user_id, conversation_id, up_to_message_id, now, status_id

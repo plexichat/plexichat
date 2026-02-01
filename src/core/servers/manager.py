@@ -2461,7 +2461,7 @@ class ServerManager(BaseManager):
         """Convert database row to Server model."""
         sid = row["id"]
         owner_id = row["owner_id"]
-        logger.info(f"_row_to_server: sid={sid}, owner={owner_id}")
+        logger.debug(f"_row_to_server: sid={sid}, owner={owner_id}")
 
         # Handle both dict and sqlite3.Row
         member_count = 0

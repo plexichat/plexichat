@@ -90,12 +90,8 @@ class GatewayDispatcher:
 
         connections = self._session_manager.get_connections_for_users(user_ids)
         
-        # Use DEBUG level for very frequent events to reduce log noise
-        log_level = logger.info
-        if event.event_type.value in ["presence_update", "typing_start", "message_ack"]:
-            log_level = logger.debug
-            
-        log_level(
+        # Use DEBUG level for dispatch events to reduce log noise
+        logger.debug(
             f"dispatch_event: {event.event_type} to {len(user_ids)} users, found {len(connections)} connections"
         )
 
@@ -127,7 +123,7 @@ class GatewayDispatcher:
         if tasks:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             sent_count = sum(1 for r in results if r is True)
-            logger.info(
+            logger.debug(
                 f"Dispatched {event.event_type} to {sent_count}/{len(tasks)} connections"
             )
 
