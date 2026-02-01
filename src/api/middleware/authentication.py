@@ -42,11 +42,12 @@ class AuthenticationMiddleware:
             logger.debug(f"Auth: Internal service authenticated for path {path}")
 
         # 2. Extract and Verify Bearer Token
-        # Skip for admin routes which manage their own sessions
+        # Skip for admin routes which manage their own sessions, and public status/health routes
         is_admin_path = path.startswith("/admin/") or path.startswith("/api/v1/admin/")
+        is_public_status = path.endswith("/status") or path.endswith("/health") or path == "/"
         
         auth_header = request.headers.get("Authorization")
-        if auth_header and not is_admin_path:
+        if auth_header and not is_admin_path and not is_public_status:
             token = self._extract_token(auth_header)
             if token:
                 import utils.logger as logger
@@ -59,8 +60,17 @@ class AuthenticationMiddleware:
                         ip = request.client.host if request.client else None
                         ua = request.headers.get("User-Agent")
                         
+                        # Use a wrapper to ensure DB connection is returned to pool in the worker thread
+                        def _verify_with_cleanup(token_str, client_ip, user_agent):
+                            db = api.get_db()
+                            try:
+                                return auth.verify_token(token_str, client_ip, user_agent)
+                            finally:
+                                if db:
+                                    db.close()
+
                         from fastapi.concurrency import run_in_threadpool
-                        token_info = await run_in_threadpool(auth.verify_token, token, ip, ua)
+                        token_info = await run_in_threadpool(_verify_with_cleanup, token, ip, ua)
                         
                         if token_info:
                             scope["state"]["user"] = token_info

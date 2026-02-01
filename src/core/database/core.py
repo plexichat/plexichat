@@ -608,3 +608,32 @@ class Database:
         if correlation_id:
             ctx.append(f"correlation_id={correlation_id}")
         return f"[{' '.join(ctx)}]"
+
+
+def with_db_worker(func):
+    """
+    Decorator for synchronous functions run in run_in_threadpool
+    that ensures the database connection is closed after execution.
+    """
+    if inspect.iscoroutinefunction(func):
+        @wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            import src.api as api
+            db = api.get_db()
+            try:
+                return await func(*args, **kwargs)
+            finally:
+                if db:
+                    db.close()
+        return async_wrapper
+    else:
+        @wraps(func)
+        def sync_wrapper(*args, **kwargs):
+            import src.api as api
+            db = api.get_db()
+            try:
+                return func(*args, **kwargs)
+            finally:
+                if db:
+                    db.close()
+        return sync_wrapper

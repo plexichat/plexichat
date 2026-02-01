@@ -1443,7 +1443,16 @@ async def request_password_reset(body: PasswordResetRequest) -> SuccessResponse:
     try:
         # Use run_in_threadpool if auth methods are blocking
         from fastapi.concurrency import run_in_threadpool
-        await run_in_threadpool(auth.request_password_reset, body.email)
+        
+        def _request_reset_with_cleanup(email_str):
+            db = api.get_db()
+            try:
+                return auth.request_password_reset(email_str)
+            finally:
+                if db:
+                    db.close()
+
+        await run_in_threadpool(_request_reset_with_cleanup, body.email)
         return SuccessResponse(success=True)
     except Exception as e:
         logger.error(f"Password reset request failed: {e}", exc_info=True)
@@ -1474,7 +1483,16 @@ async def confirm_password_reset(body: PasswordResetConfirm) -> SuccessResponse:
 
     try:
         from fastapi.concurrency import run_in_threadpool
-        success = await run_in_threadpool(auth.reset_password, body.token, body.new_password)
+        
+        def _reset_with_cleanup(token_str, new_password):
+            db = api.get_db()
+            try:
+                return auth.reset_password(token_str, new_password)
+            finally:
+                if db:
+                    db.close()
+
+        success = await run_in_threadpool(_reset_with_cleanup, body.token, body.new_password)
         if success:
             return SuccessResponse(success=True)
         else:

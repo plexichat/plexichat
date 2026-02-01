@@ -769,7 +769,17 @@ async def acknowledge_messages(
         try:
             from starlette.concurrency import run_in_threadpool
             # messaging.mark_read already validates access internally
-            count = await run_in_threadpool(messaging.mark_read, current_user.user_id, conv_id, up_to_id)
+            
+            def _mark_read_with_cleanup(uid, cid, mid):
+                import src.api as api
+                db = api.get_db()
+                try:
+                    return messaging.mark_read(uid, cid, mid)
+                finally:
+                    if db:
+                        db.close()
+
+            count = await run_in_threadpool(_mark_read_with_cleanup, current_user.user_id, conv_id, up_to_id)
         except Exception as e:
             from src.core.messaging.exceptions import ConversationNotFoundError, ConversationAccessDeniedError
             if isinstance(e, ConversationNotFoundError):
@@ -1542,7 +1552,8 @@ async def unpin_message(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_all_unread_counts(
+@cached(ttl=10, prefix="unread_counts_api")
+def get_all_unread_counts(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> AllUnreadCountsResponse:
     """Get unread message counts for all conversations."""

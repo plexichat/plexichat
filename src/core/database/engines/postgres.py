@@ -21,13 +21,14 @@ class PostgresEngine(BaseEngine):
         pool_config = self.config.get("connection_pool", {})
         connect_timeout = pool_config.get("connect_timeout", 10)
         
-        # Build DSN
+        # Build DSN with keepalives for stability
         dsn = f"host={pg_config.get('host', 'localhost')} " \
               f"port={pg_config.get('port', 5432)} " \
               f"user={pg_config.get('user', 'postgres')} " \
               f"password={pg_config.get('password', '')} " \
               f"dbname={pg_config.get('dbname', 'plexichat')} " \
-              f"sslmode={pg_config.get('sslmode', 'prefer')}"
+              f"sslmode={pg_config.get('sslmode', 'prefer')} " \
+              f"keepalives=1 keepalives_idle=60 keepalives_interval=10 keepalives_count=5"
 
         return psycopg2.connect(dsn, cursor_factory=RealDictCursor, connect_timeout=connect_timeout)
 
@@ -42,12 +43,14 @@ class PostgresEngine(BaseEngine):
         pool_config = self.config.get("connection_pool", {})
         connect_timeout = pool_config.get("connect_timeout", 10)
 
+        # Build DSN with keepalives for stability
         dsn = f"host={pg_config.get('host', 'localhost')} " \
               f"port={pg_config.get('port', 5432)} " \
               f"user={pg_config.get('user', 'postgres')} " \
               f"password={pg_config.get('password', '')} " \
               f"dbname={pg_config.get('dbname', 'plexichat')} " \
-              f"sslmode={pg_config.get('sslmode', 'prefer')}"
+              f"sslmode={pg_config.get('sslmode', 'prefer')} " \
+              f"keepalives=1 keepalives_idle=60 keepalives_interval=10 keepalives_count=5"
               
         logger.info(f"Creating ThreadedConnectionPool ({min_conn}-{max_conn}) with timeout {connect_timeout}s")
         start_time = time.time()

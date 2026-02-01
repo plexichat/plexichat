@@ -1011,8 +1011,18 @@ async def upload_attachment(
         try:
             from starlette.concurrency import run_in_threadpool
             content = await file.read()
+            
+            def _upload_with_cleanup(**kwargs):
+                import src.api as api
+                db = api.get_db()
+                try:
+                    return media.upload_file(**kwargs)
+                finally:
+                    if db:
+                        db.close()
+
             result = await run_in_threadpool(
-                media.upload_file,
+                _upload_with_cleanup,
                 user_id=current_user.user_id,
                 file_data=content,
                 filename=file.filename or "attachment",

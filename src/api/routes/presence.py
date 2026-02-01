@@ -147,21 +147,30 @@ async def update_presence(
             from src.core.presence.models import UserStatus
             from fastapi.concurrency import run_in_threadpool
 
-            status_enum = UserStatus(body.status)
-            await run_in_threadpool(presence.set_status, current_user.user_id, status_enum)
+            def perform_presence_update():
+                """All synchronous DB/logic calls in one threadpool execution."""
+                import src.api as api
+                db = api.get_db()
+                try:
+                    status_enum = UserStatus(body.status)
+                    presence.set_status(current_user.user_id, status_enum)
 
-            if body.custom_status is not None or body.custom_emoji is not None:
-                if body.custom_status or body.custom_emoji:
-                    await run_in_threadpool(
-                        presence.set_custom_status,
-                        user_id=current_user.user_id,
-                        text=body.custom_status,
-                        emoji=body.custom_emoji,
-                    )
-                else:
-                    await run_in_threadpool(presence.clear_custom_status, current_user.user_id)
+                    if body.custom_status is not None or body.custom_emoji is not None:
+                        if body.custom_status or body.custom_emoji:
+                            presence.set_custom_status(
+                                user_id=current_user.user_id,
+                                text=body.custom_status,
+                                emoji=body.custom_emoji,
+                            )
+                        else:
+                            presence.clear_custom_status(current_user.user_id)
 
-            pres = await run_in_threadpool(presence.get_presence, current_user.user_id)
+                    return presence.get_presence(current_user.user_id)
+                finally:
+                    if db:
+                        db.close()
+
+            pres = await run_in_threadpool(perform_presence_update)
             response = _presence_to_response(pres, current_user.user_id)
 
             # Get all users who should receive this presence update (uses cached function)
