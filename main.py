@@ -684,7 +684,7 @@ class PlexiChatServer:
                 # - The 'alpha' tier (higher limits)
                 # - The 'alpha_tester' badge
                 # Set to true during alpha testing, false to disable for new registrations
-                "alpha_registration_enabled": False,
+                "alpha_registration_enabled": True,
                 # Default tier for new users (when alpha_registration_enabled is false)
                 "default_tier": "standard",
                 # Maximum badges displayed on profile
