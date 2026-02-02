@@ -43,7 +43,8 @@ def _relationship_to_response(rel) -> RelationshipResponse:
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
-)@cached(ttl=60, prefix="relationships_api")
+)
+@cached(ttl=60, prefix="relationships_api")
 def get_relationships(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> List[DetailedRelationshipInfo]:

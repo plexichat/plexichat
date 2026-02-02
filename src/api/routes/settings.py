@@ -24,7 +24,8 @@ from src.core.database import cached
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
-)@cached(ttl=60, prefix="user_settings_all_api")
+)
+@cached(ttl=60, prefix="user_settings_all_api")
 def get_all_settings(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SettingsResponse:
