@@ -477,12 +477,33 @@ class MediaManager(BaseManager):
         allowed = self._config.get("allowed_types", DEFAULT_ALLOWED_TYPES)
         type_key = media_type.value
 
+        ct_lower = content_type.lower()
+        
+        # Check against global blocked MIME types first
+        if ct_lower in BLOCKED_MIME_TYPES:
+            raise FileTypeError(
+                f"File type '{content_type}' is blocked for security reasons.",
+                content_type,
+                ["Contact an administrator for more information"]
+            )
+
         if type_key in allowed:
-            if content_type.lower() not in allowed[type_key]:
+            if ct_lower not in allowed[type_key]:
+                # If it's a generic type but the media type is more specific, it might be allowed elsewhere
+                # but we strictly check the whitelist here
                 raise FileTypeError(
-                    f"Content type not allowed: {content_type}",
+                    f"Content type '{content_type}' is not allowed for {type_key} uploads.",
                     content_type,
                     allowed[type_key],
+                )
+        elif type_key == "other":
+            # For 'other' category, we only allow what's explicitly in the whitelist
+            other_allowed = allowed.get("other", [])
+            if other_allowed and ct_lower not in other_allowed and "*" not in other_allowed:
+                raise FileTypeError(
+                    f"File type '{content_type}' is not supported.",
+                    content_type,
+                    other_allowed
                 )
 
     def _validate_file_size(self, size: int, media_type: MediaType):
