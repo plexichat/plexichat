@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS auth_users (
     backup_codes_hash TEXT,
     avatar_url TEXT,
     age_verified INTEGER DEFAULT 0,
-    date_of_birth TEXT
+    date_of_birth TEXT,
+    force_username_change INTEGER DEFAULT 0
 );
 
 -- Sessions table with Token Binding

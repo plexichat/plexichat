@@ -498,6 +498,43 @@ class RelationshipManager(BaseManager):
 
         return True
 
+    def get_all_relationships(self, user_id: SnowflakeID) -> Dict[str, List]:
+        """
+        Get all relationships (friends, pending, blocked) in fewer database passes.
+        
+        Returns:
+            Dict containing lists of Friend, FriendRequest, and BlockedUser objects.
+        """
+        # 1. Fetch friends
+        friends = self.get_friends(user_id)
+        
+        # 2. Fetch all pending requests (incoming and outgoing) in one query
+        pending_rows = self._db.fetch_all(
+            """SELECT * FROM rel_friend_requests 
+               WHERE (sender_id = ? OR recipient_id = ?) AND status = 'pending'
+               ORDER BY created_at DESC""",
+            (user_id, user_id),
+        )
+        
+        pending_in = []
+        pending_out = []
+        for row in pending_rows:
+            req = self._row_to_friend_request(row)
+            if int(row["recipient_id"]) == int(user_id):
+                pending_in.append(req)
+            else:
+                pending_out.append(req)
+                
+        # 3. Fetch blocked users
+        blocked = self.get_blocked_users(user_id)
+        
+        return {
+            "friends": friends,
+            "pending_incoming": pending_in,
+            "pending_outgoing": pending_out,
+            "blocked": blocked
+        }
+
     def get_block(self, block_id: SnowflakeID) -> Optional[BlockedUser]:
         """Get a block record by ID."""
         row = self._db.fetch_one("SELECT * FROM rel_blocked WHERE id = ?", (block_id,))

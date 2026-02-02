@@ -68,6 +68,7 @@ class User:
     updated_at: int
     email_verified: bool = False
     account_locked: bool = False
+    force_username_change: bool = False
     locked_until: Optional[int] = None
     failed_login_attempts: int = 0
     last_login_at: Optional[int] = None

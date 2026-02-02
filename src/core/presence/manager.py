@@ -892,10 +892,19 @@ class PresenceManager(BaseManager):
         
         if self._relationships:
             try:
-                # Users WE blocked
-                blocked_ids = set(self._relationships.get_blocked_user_ids(viewer_id))
-                # Users who blocked US
-                blocked_by_ids = set(self._relationships.get_blocked_by_user_ids(viewer_id))
+                # Use optimized set conversion if possible
+                if hasattr(self._relationships, "get_blocked_user_ids"):
+                    blocked_ids = set(self._relationships.get_blocked_user_ids(viewer_id))
+                else:
+                    blocked_ids = set(b.blocked_id for b in self._relationships.get_blocked_users(viewer_id))
+                    
+                if hasattr(self._relationships, "get_blocked_by_user_ids"):
+                    blocked_by_ids = set(self._relationships.get_blocked_by_user_ids(viewer_id))
+                else:
+                    # Fallback for older manager versions
+                    for tid in target_ids:
+                        if self._relationships.is_blocked(tid, viewer_id):
+                            blocked_by_ids.add(tid)
             except Exception:
                 pass
 

@@ -347,11 +347,14 @@ class MigrationManager:
                 # Validate checksum if already recorded
                 existing_status = self.tracker.get_migration_status(migration.version)
                 if existing_status:
-                    validator.validate_checksum(
-                        migration.version,
-                        existing_status['checksum'],
-                        migration.checksum
-                    )
+                    try:
+                        # Signature: (file_path, expected_checksum)
+                        if not validator.validate_checksum(migration.file_path, existing_status['checksum']):
+                            logger.error(f"Migration checksum mismatch for {migration.version}")
+                            raise ValueError(f"Checksum mismatch for migration {migration.version}")
+                    except Exception as e:
+                        logger.error(f"Error validating checksum for migration {migration.version}: {str(e)}")
+                        raise
                 
                 # Record migration start (uses upsert to handle retries)
                 self.tracker.record_migration_start(

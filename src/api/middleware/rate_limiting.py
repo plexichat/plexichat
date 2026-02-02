@@ -82,10 +82,12 @@ def create_rate_limit_middleware(
     default_excludes = [
         "/",
         "/health",
+        "/status",
+        "/api/v1/status",
+        "/api/v1/health",
         "/docs",
         "/redoc",
         "/openapi.json",
-        # Removed /docs/api to allow centralized rate limiting for documentation
     ]
     all_excludes = list(set(default_excludes + (exclude_paths or [])))
     user_info_getter = custom_user_info_getter or get_user_info_from_request

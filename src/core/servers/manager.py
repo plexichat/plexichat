@@ -430,21 +430,27 @@ class ServerManager(BaseManager):
         return server
 
     def get_servers(self, user_id: SnowflakeID, limit: int = 100) -> List[Server]:
-        """Get all servers a user is a member of."""
+        """Get all servers a user is a member of with optimized count fetching."""
         limit = min(limit, 200)
 
-        rows = self._db.fetch_all(
-            """SELECT s.*,
-                      (SELECT COUNT(*) FROM srv_members WHERE server_id = s.id) as member_count,
-                      (SELECT COUNT(*) FROM srv_channels WHERE server_id = s.id AND deleted = 0) as channel_count,
-                      (SELECT COUNT(*) FROM srv_roles WHERE server_id = s.id AND deleted = 0) as role_count
-               FROM srv_servers s
-               INNER JOIN srv_members m ON s.id = m.server_id
-               WHERE m.user_id = ? AND s.deleted = 0
-               ORDER BY s.name
-               LIMIT ?""",
-            (user_id, limit),
-        )
+        # Optimized query using JOINs and GROUP BY instead of scalar subqueries
+        # This significantly reduces latency for users in multiple servers
+        query = """
+            SELECT s.*, 
+                   COUNT(DISTINCT m2.id) as member_count,
+                   COUNT(DISTINCT c.id) as channel_count,
+                   COUNT(DISTINCT r.id) as role_count
+            FROM srv_servers s
+            INNER JOIN srv_members m1 ON s.id = m1.server_id
+            LEFT JOIN srv_members m2 ON s.id = m2.server_id
+            LEFT JOIN srv_channels c ON s.id = c.server_id AND c.deleted = 0
+            LEFT JOIN srv_roles r ON s.id = r.server_id AND r.deleted = 0
+            WHERE m1.user_id = ? AND s.deleted = 0
+            GROUP BY s.id
+            ORDER BY s.name
+            LIMIT ?
+        """
+        rows = self._db.fetch_all(query, (user_id, limit))
 
         return [self._row_to_server(row) for row in rows]
 

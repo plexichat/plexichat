@@ -63,7 +63,7 @@ def _version_to_info(ver) -> VersionInfo:
 @router.get(
     "/version", response_model=ServerVersionResponse, summary="Get server version"
 )
-async def get_server_version() -> ServerVersionResponse:
+def get_server_version() -> ServerVersionResponse:
     """
     Get server version information.
 
@@ -99,7 +99,7 @@ async def get_server_version() -> ServerVersionResponse:
         500: {"model": VersionErrorResponse, "description": "Internal server error"},
     },
 )
-async def negotiate_version(
+def negotiate_version(
     request: VersionNegotiateRequest,
 ) -> VersionNegotiateResponse:
     """
@@ -221,7 +221,7 @@ async def negotiate_version(
 
 
 @router.get("/status", response_model=ServerStatusResponse, summary="Get server status")
-async def get_server_status() -> ServerStatusResponse:
+def get_server_status() -> ServerStatusResponse:
     """
     Get current server status.
 

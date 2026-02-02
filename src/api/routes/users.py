@@ -134,7 +134,8 @@ _get_user_cached = cached(ttl=60, prefix="user_api")(_get_user_cached)
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_current_user_info(
+@cached(ttl=60, prefix="current_user_api")
+def get_current_user_info(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> UserResponse:
     """
@@ -809,7 +810,8 @@ async def get_user(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_messaging_settings(
+@cached(ttl=60, prefix="messaging_settings_api")
+def get_messaging_settings(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> MessagingSettingsResponse:
     """Get current user's messaging settings."""

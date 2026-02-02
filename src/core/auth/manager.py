@@ -14,6 +14,7 @@ from src.core.base import BaseManager, SnowflakeID
 from src.utils.encryption import EncryptionManager
 
 from src.core.database import cached, invalidate_pattern
+from .blacklist import BlacklistManager
 from .models import (
     User,
     Session,
@@ -74,6 +75,7 @@ class AuthManager(BaseManager):
         self._config = config.get("authentication", {})
         logger.info("Initializing authentication module")
         create_tables(db)
+        self.blacklist = BlacklistManager(db)
         self._ensure_system_user()
 
     def _json_dumps(self, data: Any) -> str:
@@ -228,6 +230,12 @@ class AuthManager(BaseManager):
         valid, issues = validate_username(username)
         if not valid:
             raise InvalidUsernameError(f"Invalid: {issues}", issues)
+
+        # Check blacklist
+        blocked, reason = self.blacklist.is_blocked(username)
+        if blocked:
+            raise InvalidUsernameError(f"Username is blocked: {reason}", [reason])
+
         if not validate_email(email):
             raise InvalidEmailError("Invalid email")
 
@@ -411,6 +419,7 @@ class AuthManager(BaseManager):
             permissions=permissions_from_json(row["permissions"]),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            force_username_change=bool(row.get("force_username_change", 0)),
         )
         self._log_audit(
             AuditEventType.LOGIN_SUCCESS, user_id, True, ip_address, device_id
@@ -471,7 +480,7 @@ class AuthManager(BaseManager):
             token=token,
         )
 
-    @cached(ttl=30, prefix="token_verify")
+    @cached(ttl=120, prefix="token_verify")
     def verify_token(
         self,
         token: str,
@@ -513,23 +522,30 @@ class AuthManager(BaseManager):
                 raise TokenInvalidError("IP Binding Mismatch")
                 
         now = self._get_timestamp()
-        updates = ["last_activity = ?"]
-        params = [now]
+        
+        # Only update database if last activity was more than 60 seconds ago
+        # to reduce write pressure on frequent polling/requests
+        last_activity = row.get("last_activity", 0)
+        should_update = (now - last_activity) > 60000
+        
+        if should_update:
+            updates = ["last_activity = ?"]
+            params = [now]
 
-        # Extend session if enabled
-        if self._config.get("sessions.extend_on_activity", True):
-            extend_threshold = self._config.get("sessions.extend_threshold_hours", 24) * 3600 * 1000
-            if (row["expires_at"] - now) < extend_threshold:
-                expire_hours = self._config.get("sessions.expire_hours", 720)
-                new_expires = now + (expire_hours * 3600 * 1000)
-                updates.append("expires_at = ?")
-                params.append(new_expires)
+            # Extend session if enabled
+            if self._config.get("sessions.extend_on_activity", True):
+                extend_threshold = self._config.get("sessions.extend_threshold_hours", 24) * 3600 * 1000
+                if (row["expires_at"] - now) < extend_threshold:
+                    expire_hours = self._config.get("sessions.expire_hours", 720)
+                    new_expires = now + (expire_hours * 3600 * 1000)
+                    updates.append("expires_at = ?")
+                    params.append(new_expires)
 
-        params.append(row["id"])
-        self._db.execute(
-            f"UPDATE auth_sessions SET {', '.join(updates)} WHERE id = ?",
-            tuple(params),
-        )
+            params.append(row["id"])
+            self._db.execute(
+                f"UPDATE auth_sessions SET {', '.join(updates)} WHERE id = ?",
+                tuple(params),
+            )
 
         # Get rate limit tier (simplified for now)
         rate_limit_tier = row.get("rate_limit_tier", "standard")
@@ -626,7 +642,7 @@ class AuthManager(BaseManager):
                 id=r["id"],
                 user_id=r["user_id"],
                 device_id=r["device_id"],
-                ip_address=r["ip_address"],
+                ip_address=self.crypto.decrypt_data(r["ip_encrypted"], context=str(r["id"])) if r.get("ip_encrypted") else None,
                 user_agent=r["user_agent"],
                 created_at=r["created_at"],
                 expires_at=r["expires_at"],
@@ -656,8 +672,25 @@ class AuthManager(BaseManager):
         updates = []
         params = []
         if username:
+            current_user = self.get_user(user_id)
+            if not current_user:
+                raise UserNotFoundError("User not found")
+
+            valid, issues = validate_username(username)
+            if not valid:
+                raise InvalidUsernameError(f"Invalid: {issues}", issues)
+
+            blocked, reason = self.blacklist.is_blocked(username, old_username=current_user.username)
+            if blocked:
+                raise InvalidUsernameError(f"Username is blocked: {reason}", [reason])
+
             updates.append("username = ?")
             params.append(username)
+            
+            # Reset forced change flag
+            updates.append("force_username_change = ?")
+            params.append(0)
+
         if email:
             email_index = self.crypto.blind_index(email, "user_email")
             email_encrypted = self.crypto.encrypt_data(email, context=str(user_id))
@@ -766,6 +799,7 @@ class AuthManager(BaseManager):
             permissions=permissions_from_json(user_row["permissions"]),
             created_at=user_row["created_at"],
             updated_at=user_row["updated_at"],
+            force_username_change=bool(user_row.get("force_username_change", 0)),
         )
         return AuthResult(
             status=AuthStatus.SUCCESS,
@@ -1271,6 +1305,7 @@ class AuthManager(BaseManager):
             totp_enabled=bool(row["totp_enabled"]),
             age_verified=bool(row["age_verified"]),
             date_of_birth=row.get("dob_decrypted") or row.get("date_of_birth"),
+            force_username_change=bool(row.get("force_username_change", 0)),
         )
 
     def get_user_by_username(self, username: str) -> Optional[User]:

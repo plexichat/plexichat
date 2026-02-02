@@ -38,18 +38,17 @@ def _relationship_to_response(rel) -> RelationshipResponse:
 @router.get(
     "/@me",
     response_model=List[DetailedRelationshipInfo],
-    summary="Get my relationships",
+    summary="Get relationships",
     responses={
-        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
-)
-@cached(ttl=30, prefix="relationships_api")
-async def get_relationships(
+)@cached(ttl=60, prefix="relationships_api")
+def get_relationships(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> List[DetailedRelationshipInfo]:
     """
-    Get all relationships for current user (cached for 30s).
+    Get all relationships for current user (cached for 60s).
 
     Returns friends, pending requests, and blocked users with user info.
     """
@@ -67,16 +66,13 @@ async def get_relationships(
         )
 
     try:
-        # 1. Fetch raw relationship rows
+        # 1. Fetch raw relationship rows in fewer passes
         try:
-            friends = relationships.get_friends(current_user.user_id)
-            pending_in = relationships.get_pending_requests_incoming(
-                current_user.user_id
-            )
-            pending_out = relationships.get_pending_requests_outgoing(
-                current_user.user_id
-            )
-            blocked = relationships.get_blocked_users(current_user.user_id)
+            rel_data = relationships.get_all_relationships(current_user.user_id)
+            friends = rel_data["friends"]
+            pending_in = rel_data["pending_incoming"]
+            pending_out = rel_data["pending_outgoing"]
+            blocked = rel_data["blocked"]
         except Exception as e:
             logger.error(
                 f"Database error fetching relationships for user {current_user.user_id}: {e}",

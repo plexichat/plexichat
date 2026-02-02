@@ -14,6 +14,8 @@ import utils.logger as logger
 router = APIRouter(tags=["User Settings"])
 
 
+from src.core.database import cached
+
 @router.get(
     "",
     response_model=SettingsResponse,
@@ -22,8 +24,8 @@ router = APIRouter(tags=["User Settings"])
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
-)
-async def get_all_settings(
+)@cached(ttl=60, prefix="user_settings_all_api")
+def get_all_settings(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SettingsResponse:
     """
@@ -70,7 +72,8 @@ async def get_all_settings(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_setting(
+@cached(ttl=60, prefix="user_setting_api")
+def get_setting(
     key: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> SettingResponse:
     """
