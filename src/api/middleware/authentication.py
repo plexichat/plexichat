@@ -44,10 +44,19 @@ class AuthenticationMiddleware:
         # 2. Extract and Verify Bearer Token
         # Skip for admin routes which manage their own sessions, and public status/health routes
         is_admin_path = path.startswith("/admin/") or path.startswith("/api/v1/admin/")
-        is_public_status = path.endswith("/status") or path.endswith("/health") or path == "/"
+        
+        # Only skip auth for specific known public endpoints, not anything ending in /status
+        public_endpoints = [
+            "/api/v1/status",
+            "/api/v1/health",
+            "/health",
+            "/status",
+            "/"
+        ]
+        is_public_endpoint = path in public_endpoints
         
         auth_header = request.headers.get("Authorization")
-        if auth_header and not is_admin_path and not is_public_status:
+        if auth_header and not is_admin_path and not is_public_endpoint:
             token = self._extract_token(auth_header)
             if token:
                 import utils.logger as logger
