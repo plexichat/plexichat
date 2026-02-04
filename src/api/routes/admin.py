@@ -295,6 +295,21 @@ def _check_host_restriction(request: Request) -> None:
     # Extract real client IP using consolidated utility which handles trusted proxies securely
     from src.utils.net import get_client_ip
     client_ip = get_client_ip(request) or "unknown"
+    
+    # SECURITY: Verify that if the client_ip is a 'protected' local IP, 
+    # the direct connection MUST also be from a trusted source or localhost.
+    localhost_variants = ["127.0.0.1", "localhost", "::1"]
+    if client_ip in localhost_variants:
+        direct_ip = request.client.host if request.client else "unknown"
+        api_config = config.get("api", {})
+        trusted_proxies = api_config.get("trusted_proxies", [])
+        
+        if direct_ip not in localhost_variants and direct_ip not in trusted_proxies:
+            logger.warning(f"CRITICAL: Attempted admin access spoofing. Extracted IP {client_ip} but direct connection from untrusted {direct_ip}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": {"code": 403, "message": "Access denied: Connection security violation"}},
+            )
 
     # Check for explicitly blocked IPs or prefixes (e.g. to block tunnels)
     blocked_ips = admin_config.get("blocked_ips", [])
