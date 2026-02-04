@@ -28,11 +28,13 @@ class AuthenticationMiddleware:
         if "state" not in scope:
             scope["state"] = {}
 
-        request = Request(scope, receive)
+        # Create request from scope ONLY to avoid consuming the 'receive' stream
+        request = Request(scope)
         path = scope.get("path", "")
 
         # 1. Check for Internal Service Authentication
         internal_secret = api.get_internal_secret()
+        # Header access remains the same
         provided_secret = request.headers.get("X-Plexichat-Internal-Secret")
         is_internal = bool(internal_secret and provided_secret == internal_secret)
 

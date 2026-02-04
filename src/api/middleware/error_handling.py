@@ -121,7 +121,7 @@ class ErrorHandlingMiddleware:
                 message = "Internal server error"
 
             # Check for self-test debug mode
-            request = Request(scope, receive)
+            request = Request(scope)
             include_traceback = False
 
             # Only allow traceback capture if:

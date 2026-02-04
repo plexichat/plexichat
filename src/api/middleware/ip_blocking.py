@@ -20,10 +20,12 @@ class IPBlockingMiddleware:
             return
 
         import src.api as api
-        request = Request(scope, receive)
-        
-        # Get client IP (handle proxies if trust is enabled)
+        # Extract IP without consuming 'receive' stream
         from src.utils.net import get_client_ip
+        
+        # We can create a Request object with a dummy receive to avoid consuming the stream
+        # Or just use the scope directly if get_client_ip supports it
+        request = Request(scope)
         client_ip = get_client_ip(request)
 
         # Check if IP is blacklisted
