@@ -13,7 +13,7 @@ Usage:
     request = relationships.send_friend_request(user_id=1, recipient_id=2)
 """
 
-from typing import Any, Optional, List
+from typing import Any, Optional, List, Dict
 
 from .models import (
     Relationship,
@@ -82,6 +82,7 @@ __all__ = [
     "is_blocked_by_either",
     # Relationship status
     "get_relationship",
+    "get_all_relationships",
     # Mutual information
     "get_mutual_friends",
     "get_mutual_friend_count",
@@ -225,6 +226,11 @@ def is_blocked_by_either(user_id: int, other_id: int) -> bool:
 def get_relationship(user_id: int, target_id: int) -> Relationship:
     """Get the relationship status between two users."""
     return _get_manager().get_relationship(user_id, target_id)
+
+
+def get_all_relationships(user_id: int) -> Dict[str, List]:
+    """Get all relationships (friends, pending, blocked) for a user."""
+    return _get_manager().get_all_relationships(user_id)
 
 
 # === Mutual Information ===

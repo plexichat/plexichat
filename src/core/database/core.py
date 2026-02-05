@@ -168,8 +168,18 @@ class Database:
 
             # Validation logic
             if self.type == "postgres":
+                # Check if connection object says it's closed
                 if hasattr(conn, "closed") and conn.closed != 0:
                     is_valid = False
+                
+                # Proactive check for network/server-side closure
+                if is_valid and hasattr(conn, "poll"):
+                    try:
+                        from psycopg2 import OperationalError
+                        conn.poll()
+                    except (OperationalError, Exception) as e:
+                        logger.debug(f"Connection {conn_id} failed poll check: {e}")
+                        is_valid = False
             
             if is_valid:
                 metadata = self.monitor.get_connection_metadata(conn_id)
