@@ -263,8 +263,9 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module unavailable"}})
                 
                 try:
-                    # Try validating as standard user token (disable strict IP/UA binding for media serving)
-                    token_info = auth.verify_token(token, check_ip=False, check_ua=False)
+                    # Try validating as standard user token
+                    # TODO: Implement optional binding validation in AuthManager if needed
+                    token_info = auth.verify_token(token)
                     if not token_info:
                         raise ValueError("Invalid user token")
                 except Exception as e:
