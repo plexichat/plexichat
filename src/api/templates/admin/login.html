@@ -27,10 +27,10 @@
 </head>
 <body>
     <div class="login-card">
-        <div id="login-form">
+        <div id="login-form-container">
             <h1>Plexichat Admin</h1>
             <p class="subtitle">Sign in to access the admin panel</p>
-            <form onsubmit="login(event)">
+            <form id="login-form">
                 <div class="form-group">
                     <label for="username">Username</label>
                     <input type="text" id="username" required autocomplete="username">
@@ -50,7 +50,7 @@
             <img id="qr-code" src="" alt="QR Code">
             <p>Or enter this secret manually:</p>
             <div class="secret" id="otp-secret"></div>
-            <form onsubmit="verifyOTP(event, true)">
+            <form id="otp-setup-form">
                 <div class="form-group">
                     <label for="setup-code">Enter code from app</label>
                     <input type="text" id="setup-code" required maxlength="6" pattern="[0-9]{6}" autocomplete="one-time-code">
@@ -62,7 +62,7 @@
         <div id="otp-verify" class="otp-setup">
             <h1>Enter 2FA Code</h1>
             <p class="subtitle">Enter the code from your authenticator app</p>
-            <form onsubmit="verifyOTP(event, false)">
+            <form id="otp-verify-form">
                 <div class="form-group">
                     <label for="verify-code">6-digit code</label>
                     <input type="text" id="verify-code" required maxlength="6" pattern="[0-9]{6}" autocomplete="one-time-code">
@@ -72,8 +72,9 @@
             <div class="error" id="verify-error"></div>
         </div>
     </div>
-    <script>
+    <script nonce="{{ nonce }}">
         let adminId = null;
+
         async function login(e) {
             e.preventDefault();
             const btn = document.getElementById('login-btn');
@@ -92,13 +93,13 @@
                 if (!res.ok) throw new Error(data.detail || 'Login failed');
                 if (data.status === 'otp_setup_required') {
                     adminId = data.admin_id;
-                    document.getElementById('login-form').style.display = 'none';
+                    document.getElementById('login-form-container').style.display = 'none';
                     document.getElementById('otp-setup').style.display = 'block';
                     document.getElementById('qr-code').src = '/api/v1/qr?size=200x200&data=' + encodeURIComponent(data.otp_qr_uri);
                     document.getElementById('otp-secret').textContent = data.otp_secret;
                 } else if (data.status === 'otp_required') {
                     adminId = data.admin_id;
-                    document.getElementById('login-form').style.display = 'none';
+                    document.getElementById('login-form-container').style.display = 'none';
                     document.getElementById('otp-verify').style.display = 'block';
                 } else if (data.token) {
                     localStorage.setItem('plexichat-admin-token', data.token);
@@ -107,10 +108,13 @@
             } catch (e) { err.textContent = e.message; err.style.display = 'block'; }
             btn.disabled = false;
         }
-        async function verifyOTP(e, isSetup) {
+
+        async function handleOTP(e, isSetup) {
             e.preventDefault();
-            const code = document.getElementById(isSetup ? 'setup-code' : 'verify-code').value;
-            const err = document.getElementById(isSetup ? 'setup-error' : 'verify-error');
+            const codeId = isSetup ? 'setup-code' : 'verify-code';
+            const errorId = isSetup ? 'setup-error' : 'verify-error';
+            const code = document.getElementById(codeId).value;
+            const err = document.getElementById(errorId);
             err.style.display = 'none';
             try {
                 const res = await fetch('/api/v1/admin/verify-otp', {
@@ -124,6 +128,12 @@
                 window.location.href = '/api/v1/admin/ui';
             } catch (e) { err.textContent = e.message; err.style.display = 'block'; }
         }
+
+        // Event listeners to avoid CSP script-src-attr violations
+        document.getElementById('login-form').addEventListener('submit', login);
+        document.getElementById('otp-setup-form').addEventListener('submit', (e) => handleOTP(e, true));
+        document.getElementById('otp-verify-form').addEventListener('submit', (e) => handleOTP(e, false));
+
         // Check if already logged in
         const token = localStorage.getItem('plexichat-admin-token');
         if (token) {
