@@ -73,79 +73,86 @@
         </div>
     </div>
     <script nonce="{{ nonce }}">
-        let adminId = null;
+        document.addEventListener('DOMContentLoaded', () => {
+            let adminId = null;
 
-        async function login(e) {
-            e.preventDefault();
-            const btn = document.getElementById('login-btn');
-            const err = document.getElementById('login-error');
-            btn.disabled = true; err.style.display = 'none';
-            try {
-                const res = await fetch('/api/v1/admin/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        username: document.getElementById('username').value,
-                        password: document.getElementById('password').value
-                    })
-                });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.detail || 'Login failed');
-                if (data.status === 'otp_setup_required') {
-                    adminId = data.admin_id;
-                    document.getElementById('login-form-container').style.display = 'none';
-                    document.getElementById('otp-setup').style.display = 'block';
-                    document.getElementById('qr-code').src = '/api/v1/qr?size=200x200&data=' + encodeURIComponent(data.otp_qr_uri);
-                    document.getElementById('otp-secret').textContent = data.otp_secret;
-                } else if (data.status === 'otp_required') {
-                    adminId = data.admin_id;
-                    document.getElementById('login-form-container').style.display = 'none';
-                    document.getElementById('otp-verify').style.display = 'block';
-                } else if (data.token) {
+            async function login(e) {
+                e.preventDefault();
+                const btn = document.getElementById('login-btn');
+                const err = document.getElementById('login-error');
+                btn.disabled = true; err.style.display = 'none';
+                try {
+                    const res = await fetch('/api/v1/admin/login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            username: document.getElementById('username').value,
+                            password: document.getElementById('password').value
+                        })
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.detail || 'Login failed');
+                    if (data.status === 'otp_setup_required') {
+                        adminId = data.admin_id;
+                        document.getElementById('login-form-container').style.display = 'none';
+                        document.getElementById('otp-setup').style.display = 'block';
+                        document.getElementById('qr-code').src = '/api/v1/qr?size=200x200&data=' + encodeURIComponent(data.otp_qr_uri);
+                        document.getElementById('otp-secret').textContent = data.otp_secret;
+                    } else if (data.status === 'otp_required') {
+                        adminId = data.admin_id;
+                        document.getElementById('login-form-container').style.display = 'none';
+                        document.getElementById('otp-verify').style.display = 'block';
+                    } else if (data.token) {
+                        localStorage.setItem('plexichat-admin-token', data.token);
+                        window.location.href = '/api/v1/admin/ui';
+                    }
+                } catch (e) { err.textContent = e.message; err.style.display = 'block'; }
+                btn.disabled = false;
+            }
+
+            async function handleOTP(e, isSetup) {
+                e.preventDefault();
+                const codeId = isSetup ? 'setup-code' : 'verify-code';
+                const errorId = isSetup ? 'setup-error' : 'verify-error';
+                const code = document.getElementById(codeId).value;
+                const err = document.getElementById(errorId);
+                err.style.display = 'none';
+                try {
+                    const res = await fetch('/api/v1/admin/verify-otp', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ admin_id: adminId, code: code, is_setup: isSetup })
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.detail || 'Verification failed');
                     localStorage.setItem('plexichat-admin-token', data.token);
                     window.location.href = '/api/v1/admin/ui';
-                }
-            } catch (e) { err.textContent = e.message; err.style.display = 'block'; }
-            btn.disabled = false;
-        }
+                } catch (e) { err.textContent = e.message; err.style.display = 'block'; }
+            }
 
-        async function handleOTP(e, isSetup) {
-            e.preventDefault();
-            const codeId = isSetup ? 'setup-code' : 'verify-code';
-            const errorId = isSetup ? 'setup-error' : 'verify-error';
-            const code = document.getElementById(codeId).value;
-            const err = document.getElementById(errorId);
-            err.style.display = 'none';
-            try {
-                const res = await fetch('/api/v1/admin/verify-otp', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ admin_id: adminId, code: code, is_setup: isSetup })
-                });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.detail || 'Verification failed');
-                localStorage.setItem('plexichat-admin-token', data.token);
-                window.location.href = '/api/v1/admin/ui';
-            } catch (e) { err.textContent = e.message; err.style.display = 'block'; }
-        }
+            // Event listeners to avoid CSP script-src-attr violations
+            const loginForm = document.getElementById('login-form');
+            if (loginForm) loginForm.addEventListener('submit', login);
+            
+            const otpSetupForm = document.getElementById('otp-setup-form');
+            if (otpSetupForm) otpSetupForm.addEventListener('submit', (e) => handleOTP(e, true));
+            
+            const otpVerifyForm = document.getElementById('otp-verify-form');
+            if (otpVerifyForm) otpVerifyForm.addEventListener('submit', (e) => handleOTP(e, false));
 
-        // Event listeners to avoid CSP script-src-attr violations
-        document.getElementById('login-form').addEventListener('submit', login);
-        document.getElementById('otp-setup-form').addEventListener('submit', (e) => handleOTP(e, true));
-        document.getElementById('otp-verify-form').addEventListener('submit', (e) => handleOTP(e, false));
-
-        // Check if already logged in
-        const token = localStorage.getItem('plexichat-admin-token');
-        if (token) {
-            fetch('/api/v1/admin/dashboard', { headers: { 'Authorization': 'Bearer ' + token } })
-                .then(r => { 
-                    if (r.ok) {
-                        window.location.href = '/api/v1/admin/ui';
-                    } else if (r.status === 401) {
-                        localStorage.removeItem('plexichat-admin-token');
-                    }
-                });
-        }
+            // Check if already logged in
+            const token = localStorage.getItem('plexichat-admin-token');
+            if (token) {
+                fetch('/api/v1/admin/dashboard', { headers: { 'Authorization': 'Bearer ' + token } })
+                    .then(r => { 
+                        if (r.ok) {
+                            window.location.href = '/api/v1/admin/ui';
+                        } else if (r.status === 401) {
+                            localStorage.removeItem('plexichat-admin-token');
+                        }
+                    });
+            }
+        });
     </script>
 </body>
 </html>
