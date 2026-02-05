@@ -270,7 +270,7 @@ class Database:
             return conn
 
     def execute(self, query: str, params: Optional[Tuple] = None, auto_commit: bool = True) -> DbCursor:
-        """Execute a query and return a cursor."""
+        """Execute a query and return a cursor with one-time retry on connection failure."""
         if self.transaction_depth > 0:
             self._validate_transaction_state()
             
@@ -279,54 +279,90 @@ class Database:
         if any(upper_query.startswith(word) for word in ["INSERT", "UPDATE", "DELETE", "REPLACE", "DROP", "CREATE", "ALTER"]):
             self._query_cache.clear()
             
-        query = dialect.convert_placeholders(query, self.type)
-        conn = self._get_conn()
+        query_conv = dialect.convert_placeholders(query, self.type)
         
-        cursor = conn.cursor()
-        start_time = time.time()
-        try:
-            if params:
-                cursor.execute(query, params)
-            else:
-                cursor.execute(query)
-            
-            duration_ms = (time.time() - start_time) * 1000
-            self.monitor.record_query_execution(duration_ms)
-            
-            if duration_ms > self._slow_query_threshold_ms:
-                logger.warning(f"Slow query detected ({duration_ms:.2f}ms): {query[:100]}")
-            
-            if auto_commit and not self.in_transaction:
-                conn.commit()
+        # Max 2 attempts (initial + 1 retry)
+        for attempt in range(2):
+            try:
+                conn = self._get_conn()
+                cursor = conn.cursor()
+                start_time = time.time()
                 
-            return cursor
-        except Exception as e:
-            self.monitor.record_error(type(e).__name__)
-            self._handle_execution_error(conn, cursor, e, query)
-            raise
+                if params:
+                    cursor.execute(query_conv, params)
+                else:
+                    cursor.execute(query_conv)
+                
+                duration_ms = (time.time() - start_time) * 1000
+                self.monitor.record_query_execution(duration_ms)
+                
+                if duration_ms > self._slow_query_threshold_ms:
+                    logger.warning(f"Slow query detected ({duration_ms:.2f}ms): {query[:100]}")
+                
+                if auto_commit and not self.in_transaction:
+                    conn.commit()
+                    
+                return cursor
+            except Exception as e:
+                # Check for connection-related errors that warrant a retry
+                is_conn_error = "OperationalError" in type(e).__name__ or "closed" in str(e).lower()
+                
+                if attempt == 0 and is_conn_error and not self.in_transaction:
+                    logger.warning(f"Database connection error during query, retrying: {e}")
+                    # Force a new connection on next attempt
+                    if hasattr(self._local, "connection"):
+                        try:
+                            self.engine.close_connection(self._local.connection, self._pool, {"close": True})
+                        except Exception:
+                            pass
+                        self._local.connection = None
+                    continue
+                
+                # If retry failed or not a retryable error, handle and re-raise
+                self.monitor.record_error(type(e).__name__)
+                # We need a conn and cursor for the handler, but they might be None if _get_conn failed
+                temp_conn = getattr(self._local, "connection", None)
+                self._handle_execution_error(temp_conn, locals().get("cursor"), e, query)
+                raise
 
     def execute_many(self, query: str, params_list: List[Tuple], auto_commit: bool = True) -> DbCursor:
-        """Execute a batch query."""
+        """Execute a batch query with one-time retry on connection failure."""
         if self.transaction_depth > 0:
             self._validate_transaction_state()
             
-        conn = self._get_conn()
-        query = dialect.convert_placeholders(query, self.type)
+        query_conv = dialect.convert_placeholders(query, self.type)
         
-        cursor = conn.cursor()
-        start_time = time.time()
-        try:
-            cursor.executemany(query, params_list)
-            exec_time = (time.time() - start_time) * 1000
-            self.monitor.record_query_execution(exec_time)
-            
-            if auto_commit and not self.in_transaction:
-                conn.commit()
-            return cursor
-        except Exception as e:
-            self.monitor.record_error(type(e).__name__)
-            self._handle_execution_error(conn, cursor, e, query)
-            raise
+        # Max 2 attempts
+        for attempt in range(2):
+            try:
+                conn = self._get_conn()
+                cursor = conn.cursor()
+                start_time = time.time()
+                
+                cursor.executemany(query_conv, params_list)
+                exec_time = (time.time() - start_time) * 1000
+                self.monitor.record_query_execution(exec_time)
+                
+                if auto_commit and not self.in_transaction:
+                    conn.commit()
+                return cursor
+            except Exception as e:
+                is_conn_error = "OperationalError" in type(e).__name__ or "closed" in str(e).lower()
+                
+                if attempt == 0 and is_conn_error and not self.in_transaction:
+                    logger.warning(f"Database connection error during execute_many, retrying: {e}")
+                    if hasattr(self._local, "connection"):
+                        try:
+                            self.engine.close_connection(self._local.connection, self._pool, {"close": True})
+                        except Exception:
+                            pass
+                        self._local.connection = None
+                    continue
+                    
+                self.monitor.record_error(type(e).__name__)
+                temp_conn = getattr(self._local, "connection", None)
+                self._handle_execution_error(temp_conn, locals().get("cursor"), e, query)
+                raise
 
     def fetch_one(self, query: str, params: Optional[Tuple] = None) -> Optional[Dict[str, Any]]:
         """Fetch a single result as a dict with local caching."""
