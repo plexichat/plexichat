@@ -58,6 +58,8 @@ from src.api.schemas.admin import (
     BlockedIPResponse,
     ForceLogoutRequest,
     UserLockRequest,
+    BannedUsernameResponse,
+    BannedUsernameCreate,
 )
 from src.api.schemas.common import ErrorResponse, SuccessResponse
 
