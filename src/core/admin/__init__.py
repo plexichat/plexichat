@@ -230,23 +230,12 @@ def _ensure_admin_user() -> None:
     # Generate random password
     password = _generate_password()
 
-    # Hash password using auth module if available, otherwise use basic hash
-    try:
-        from src.utils.encryption import hash_password
-
-        password_hash = hash_password(password)
-    except ImportError:
-        import hashlib
-
-        password_hash = hashlib.sha256(password.encode()).hexdigest()
+    # Hash password using Argon2id from utils.encryption
+    import src.utils.encryption as encryption
+    password_hash = encryption.hash_password(password)
 
     # Generate snowflake ID
-    try:
-        from src.utils.encryption import generate_snowflake_id
-
-        admin_id = generate_snowflake_id()
-    except ImportError:
-        admin_id = int(time.time() * 1000000)
+    admin_id = encryption.generate_snowflake_id()
 
     now = int(time.time() * 1000)
 
@@ -260,7 +249,7 @@ def _ensure_admin_user() -> None:
     # Save credentials to file
     _save_admin_credentials(password)
 
-    logger.info("Created admin user with random password")
+    logger.info("Created admin user with random password using Argon2id")
 
 
 def _save_admin_credentials(password: str) -> None:
@@ -408,18 +397,27 @@ def login(username: str, password: str, ip: str = "unknown") -> AdminLoginResult
         must_setup_otp = bool(must_setup_otp)
 
     # Verify password
-    try:
-        from src.utils.encryption import verify_password
+    import src.utils.encryption as encryption
+    authenticated = False
+    is_legacy_hash = not password_hash.startswith("$argon2")
 
-        if not verify_password(password, password_hash):
-            _record_login_attempt(ip)
-            return AdminLoginResult(success=False, error="Invalid credentials")
-    except ImportError:
+    if is_legacy_hash:
+        # Check legacy SHA256
         import hashlib
+        if hashlib.sha256(password.encode()).hexdigest() == password_hash:
+            authenticated = True
+            # Auto-migrate to Argon2id
+            new_hash = encryption.hash_password(password)
+            db.execute("UPDATE admin_users SET password_hash = ? WHERE id = ?", (new_hash, admin_id))
+            logger.info(f"Admin '{username}' password migrated to Argon2id")
+    else:
+        # Standard Argon2id verification
+        if encryption.verify_password(password, password_hash):
+            authenticated = True
 
-        if hashlib.sha256(password.encode()).hexdigest() != password_hash:
-            _record_login_attempt(ip)
-            return AdminLoginResult(success=False, error="Invalid credentials")
+    if not authenticated:
+        _record_login_attempt(ip)
+        return AdminLoginResult(success=False, error="Invalid credentials")
 
     _clear_login_attempts(ip)
 
