@@ -60,6 +60,9 @@ from src.api.schemas.admin import (
     UserLockRequest,
     BannedUsernameResponse,
     BannedUsernameCreate,
+    AdminChangePasswordRequest,
+    UserNotesResponse,
+    UserNotesUpdate,
 )
 from src.api.schemas.common import ErrorResponse, SuccessResponse
 
@@ -711,6 +714,55 @@ async def admin_logout(request: Request) -> SuccessResponse:
         raise HTTPException(
             status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
+
+
+@router.post(
+    "/auth/change-password",
+    response_model=SuccessResponse,
+    summary="Change admin password",
+)
+async def admin_change_password(request: Request, body: AdminChangePasswordRequest) -> SuccessResponse:
+    """Change current admin's password."""
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
+
+    from src.core import admin
+    success, message = admin.change_password(admin_id, body.current_password, body.new_password)
+    
+    if not success:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": message}})
+        
+    return SuccessResponse(success=True)
+
+
+@router.get(
+    "/users/{user_id}/notes",
+    response_model=UserNotesResponse,
+    summary="Get user internal notes",
+)
+async def get_user_notes(request: Request, user_id: int) -> UserNotesResponse:
+    """Get private admin notes for a user."""
+    _check_host_restriction(request)
+    _get_admin_from_token(request)
+
+    from src.core import admin
+    notes = admin.get_user_notes(user_id)
+    return UserNotesResponse(user_id=str(user_id), notes=notes)
+
+
+@router.post(
+    "/users/{user_id}/notes",
+    response_model=SuccessResponse,
+    summary="Update user internal notes",
+)
+async def update_user_notes(request: Request, user_id: int, body: UserNotesUpdate) -> SuccessResponse:
+    """Update private admin notes for a user."""
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
+
+    from src.core import admin
+    admin.save_user_notes(user_id, body.notes, admin_id)
+    return SuccessResponse(success=True)
 
 
 # ==================== Dashboard Routes ====================

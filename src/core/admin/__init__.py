@@ -1172,7 +1172,7 @@ class AdminBannedUsername:
     is_regex: bool
     reason: Optional[str]
     created_by: Optional[int]
-    created_at: str
+    created_at: datetime
 
 
 def search_users(q: str, limit: int = 20, offset: int = 0) -> List[AdminUserDetail]:
@@ -1344,9 +1344,19 @@ def get_banned_usernames() -> List[AdminBannedUsername]:
     result = []
     for row in rows:
         if isinstance(row, dict):
+            # Ensure boolean types are handled correctly
+            row['is_regex'] = bool(row['is_regex'])
             result.append(AdminBannedUsername(**row))
         else:
-            result.append(AdminBannedUsername(*row))
+            # Positional mapping based on \d output: id, pattern, is_regex, reason, created_by, created_at
+            result.append(AdminBannedUsername(
+                id=row[0],
+                pattern=row[1],
+                is_regex=bool(row[2]),
+                reason=row[3],
+                created_by=row[4],
+                created_at=row[5]
+            ))
     return result
 
 
@@ -1577,6 +1587,50 @@ def unlock_user(user_id: int) -> bool:
         "UPDATE auth_users SET account_locked = 0, locked_until = NULL WHERE id = ?",
         (user_id,),
     )
+    return True
+
+
+def change_password(admin_id: int, current_password: str, new_password: str) -> Tuple[bool, str]:
+    """Change admin password with Argon2id verification."""
+    db = _get_db()
+    
+    # Get current hash
+    row = db.fetch_one("SELECT password_hash FROM admin_users WHERE id = ?", (admin_id,))
+    if not row:
+        return False, "Admin user not found"
+    
+    password_hash = row["password_hash"] if isinstance(row, dict) else row[0]
+    
+    # Verify current
+    import src.utils.encryption as encryption
+    if not encryption.verify_password(current_password, password_hash):
+        return False, "Incorrect current password"
+    
+    # Hash new and update
+    new_hash = encryption.hash_password(new_password)
+    db.execute("UPDATE admin_users SET password_hash = ? WHERE id = ?", (new_hash, admin_id))
+    
+    logger.info(f"Admin ID {admin_id} changed their password")
+    return True, "Password updated successfully"
+
+
+def get_user_notes(user_id: int) -> str:
+    """Get internal admin notes for a user."""
+    db = _get_db()
+    row = db.fetch_one("SELECT internal_notes FROM auth_users WHERE id = ?", (user_id,))
+    if row:
+        return (row["internal_notes"] if isinstance(row, dict) else row[0]) or ""
+    return ""
+
+
+def save_user_notes(user_id: int, notes: str, admin_id: int) -> bool:
+    """Save internal admin notes for a user."""
+    db = _get_db()
+    db.execute(
+        "UPDATE auth_users SET internal_notes = ? WHERE id = ?",
+        (notes, user_id)
+    )
+    logger.info(f"Admin {admin_id} updated notes for user {user_id}")
     return True
 
 

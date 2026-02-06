@@ -315,7 +315,7 @@ class BannedUsernameResponse(BaseModel):
     pattern: str
     is_regex: bool
     reason: Optional[str]
-    created_at: str
+    created_at: Union[str, datetime]
 
 
 class BannedUsernameCreate(BaseModel):
@@ -323,6 +323,23 @@ class BannedUsernameCreate(BaseModel):
     pattern: str = Field(..., min_length=1, max_length=100)
     reason: Optional[str] = Field(None, max_length=200)
     is_regex: bool = Field(False)
+
+
+class AdminChangePasswordRequest(BaseModel):
+    """Request to change admin password."""
+    current_password: str = Field(...)
+    new_password: str = Field(..., min_length=12)
+
+
+class UserNotesResponse(BaseModel):
+    """Response for user notes."""
+    user_id: str
+    notes: str
+
+
+class UserNotesUpdate(BaseModel):
+    """Request to update user notes."""
+    notes: str = Field(..., max_length=5000)
 
 
 class UserTierUpdateResponse(BaseModel):

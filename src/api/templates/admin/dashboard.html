@@ -59,6 +59,7 @@
             transition: all 0.2s;
             display: inline-flex;
             align-items: center;
+            justify-content: center;
             gap: 0.5rem;
             font-size: 0.875rem;
         }
@@ -138,9 +139,16 @@
             font-weight: 600;
         }
 
-        .avatar-img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background: var(--bg); }
+        .avatar-img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background: var(--bg); border: 1px solid var(--border); }
         
         .hidden { display: none !important; }
+
+        /* Chart Customization */
+        .chart-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
+            gap: 1.5rem;
+        }
     </style>
 </head>
 
@@ -154,26 +162,29 @@
     </div>
 
     <div class="container">
-        <div id="error" class="card btn-danger hidden"></div>
+        <div id="error" class="card btn-danger hidden" style="background: var(--bad); color: white; margin-bottom: 1rem;"></div>
         <div id="loading" style="text-align: center; padding: 4rem; color: var(--text-dim);">
-            Loading secure administrative session...
+            Initializing administrative dashboard...
         </div>
 
         <div id="content" class="hidden">
-            <!-- Top Stats -->
-            <div class="grid grid-4" id="stats-summary"></div>
+            <!-- Top Stats Summary -->
+            <div class="grid grid-4" id="stats-summary" style="margin-bottom: 2rem;"></div>
 
+            <!-- Navigation Tabs -->
             <div class="tabs">
                 <button class="tab active" data-click="showTab" data-tab="tickets">Tickets</button>
                 <button class="tab" data-click="showTab" data-tab="users">Users</button>
                 <button class="tab" data-click="showTab" data-tab="security">Security</button>
                 <button class="tab" data-click="showTab" data-tab="metrics">Metrics</button>
+                <button class="tab" data-click="showTab" data-tab="account">Account</button>
             </div>
 
-            <!-- Tab: Tickets -->
+            <!-- TAB: TICKETS -->
             <div id="tab-tickets" class="tab-content">
                 <div class="card">
-                    <div class="table-container">
+                    <h3>Support Queue</h3>
+                    <div class="table-container" style="margin-top: 1rem;">
                         <table id="tickets-table">
                             <thead>
                                 <tr>
@@ -191,19 +202,14 @@
                 </div>
 
                 <div id="ticket-view" class="card hidden" style="border-left: 4px solid var(--accent);">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 1.5rem;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 1.5rem; align-items: center;">
                         <h2 id="view-ticket-title">Ticket #...</h2>
-                        <div style="display: flex; gap: 0.5rem;">
-                            <select id="ticket-status-select" style="width: auto;">
-                                <option value="open">Open</option>
-                                <option value="in_progress">In Progress</option>
-                                <option value="resolved">Resolved</option>
-                                <option value="closed">Closed</option>
-                            </select>
+                        <div style="display: flex; gap: 0.5rem; align-items: center;">
+                            <select id="ticket-status-select" style="width: auto;"></select>
                             <button class="btn btn-primary" data-click="updateTicketStatus">Update</button>
                         </div>
                     </div>
-                    <div id="view-ticket-content" class="card" style="background: var(--bg);"></div>
+                    <div id="view-ticket-content" class="card" style="background: var(--bg); white-space: pre-wrap;"></div>
                     <div class="grid grid-2">
                         <div>
                             <h3>Internal Notes</h3>
@@ -218,30 +224,30 @@
                 </div>
             </div>
 
-            <!-- Tab: Users -->
+            <!-- TAB: USERS -->
             <div id="tab-users" class="tab-content hidden">
                 <div class="card">
-                    <h3>Search Users</h3>
+                    <h3>User Search</h3>
                     <div style="display: flex; gap: 1rem; margin-top: 1rem;">
-                        <input type="text" id="user-search-input" placeholder="Username or snowflake ID...">
+                        <input type="text" id="user-search-input" placeholder="Enter username or snowflake ID...">
                         <button class="btn btn-primary" data-click="searchUsers">Search</button>
                     </div>
                     <div id="user-results" style="margin-top: 1.5rem;" class="table-container"></div>
                 </div>
 
                 <div id="user-manage" class="card hidden">
-                    <div style="display: flex; gap: 2rem; align-items: flex-start;">
+                    <div style="display: flex; gap: 2rem; align-items: flex-start; flex-wrap: wrap;">
                         <div style="text-align: center;">
                             <img id="user-avatar-large" class="avatar-img" style="width: 120px; height: 120px; border-radius: 1rem; margin-bottom: 1rem;" src="">
                             <button class="btn btn-outline" style="width: 100%;" data-click="resetUserAvatar">Reset Avatar</button>
                         </div>
-                        <div style="flex: 1;">
+                        <div style="flex: 1; min-width: 300px;">
                             <h2 id="user-display-name">Username</h2>
                             <p id="user-display-id" style="color: var(--text-dim); font-family: monospace;"></p>
                             
                             <div class="grid grid-2" style="margin-top: 1.5rem;">
                                 <div>
-                                    <label>Access Tier</label>
+                                    <label style="font-size: 0.75rem; color: var(--text-dim);">Access Tier</label>
                                     <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
                                         <select id="user-tier-select">
                                             <option value="free">Free</option>
@@ -254,18 +260,18 @@
                                     </div>
                                 </div>
                                 <div>
-                                    <label>Moderation Actions</label>
+                                    <label style="font-size: 0.75rem; color: var(--text-dim);">Account Control</label>
                                     <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem; flex-wrap: wrap;">
-                                        <button class="btn btn-warn" data-click="forceLogoutUserAction">Logout Sessions</button>
+                                        <button class="btn btn-warn" data-click="forceLogoutUserAction">Kill Sessions</button>
                                         <button class="btn btn-danger" data-click="suspendUser">Suspend</button>
-                                        <button class="btn btn-secondary" data-click="forceUsernameChange">Force Name Change</button>
+                                        <button class="btn btn-secondary" data-click="forceUsernameChange">Rename</button>
                                     </div>
                                 </div>
                             </div>
 
                             <div style="margin-top: 1.5rem;">
-                                <label>Badges</label>
-                                <div id="user-badges-list" style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0; min-height: 2rem; background: rgba(0,0,0,0.1); padding: 0.5rem; border-radius: 0.5rem;"></div>
+                                <label style="font-size: 0.75rem; color: var(--text-dim);">Assigned Badges</label>
+                                <div id="user-badges-list" style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0; min-height: 2.5rem; background: rgba(0,0,0,0.1); padding: 0.5rem; border-radius: 0.5rem; align-items: center;"></div>
                                 <div style="display: flex; gap: 0.5rem;">
                                     <select id="add-badge-select" style="width: auto;">
                                         <option value="verified">Verified</option>
@@ -280,8 +286,8 @@
                             </div>
 
                             <div style="margin-top: 1.5rem;">
-                                <label>Internal Admin Notes</label>
-                                <textarea id="user-internal-notes" style="margin-top: 0.5rem; min-height: 80px;" placeholder="Add private notes about this user..."></textarea>
+                                <label style="font-size: 0.75rem; color: var(--text-dim);">Private Admin Notes</label>
+                                <textarea id="user-internal-notes" style="margin-top: 0.5rem; min-height: 100px;" placeholder="Keep track of user history or behavior..."></textarea>
                                 <button class="btn btn-secondary" style="margin-top: 0.5rem;" data-click="saveUserNotes">Save Notes</button>
                             </div>
                         </div>
@@ -289,14 +295,15 @@
                 </div>
             </div>
 
-            <!-- Tab: Security -->
+            <!-- TAB: SECURITY -->
             <div id="tab-security" class="tab-content hidden">
                 <div class="grid grid-2">
                     <div class="card">
                         <h3>IP Blocking</h3>
-                        <div style="display: flex; gap: 0.5rem; margin: 1rem 0;">
+                        <p style="font-size: 0.8rem; color: var(--text-dim); margin-bottom: 1rem;">Ban specific IPs from accessing any part of the service.</p>
+                        <div style="display: flex; gap: 0.5rem; margin-bottom: 1.5rem;">
                             <input type="text" id="block-ip-val" placeholder="IP Address">
-                            <button class="btn btn-danger" data-click="blockIP">Block</button>
+                            <button class="btn btn-danger" data-click="blockIP">Block IP</button>
                         </div>
                         <div class="table-container">
                             <table id="blocked-ips-table">
@@ -306,10 +313,11 @@
                         </div>
                     </div>
                     <div class="card">
-                        <h3>Banned Usernames</h3>
-                        <div style="display: flex; gap: 0.5rem; margin: 1rem 0;">
+                        <h3>Name Blacklist</h3>
+                        <p style="font-size: 0.8rem; color: var(--text-dim); margin-bottom: 1rem;">Prevent users from registering or using specific names.</p>
+                        <div style="display: flex; gap: 0.5rem; margin-bottom: 1.5rem;">
                             <input type="text" id="ban-username-val" placeholder="Username pattern...">
-                            <button class="btn btn-danger" data-click="addBannedUsername">Ban</button>
+                            <button class="btn btn-danger" data-click="addBannedUsername">Ban Name</button>
                         </div>
                         <div class="table-container">
                             <table id="banned-usernames-table">
@@ -319,48 +327,100 @@
                         </div>
                     </div>
                 </div>
+                
                 <div class="card">
                     <h3>Media Hash Reports</h3>
-                    <div class="table-container" style="margin-top: 1rem;">
+                    <p style="font-size: 0.8rem; color: var(--text-dim); margin-bottom: 1rem;">Review reported media content. Blocking a hash prevents it from being uploaded again.</p>
+                    <div class="table-container">
                         <table id="hash-reports-table">
-                            <thead><tr><th>Hash</th><th>Reason</th><th>Reporter</th><th>Status</th><th>Actions</th></tr></thead>
+                            <thead><tr><th>Hash (SHA-256)</th><th>Reason</th><th>Reporter</th><th>Status</th><th>Actions</th></tr></thead>
                             <tbody></tbody>
                         </table>
                     </div>
                 </div>
+
+                <div class="card" style="border: 1px solid var(--bad); background: rgba(239, 68, 68, 0.05);">
+                    <h3 style="color: var(--bad)">Crisis Management</h3>
+                    <p style="font-size: 0.875rem; color: var(--text-dim); margin: 0.5rem 0 1rem;">
+                        <strong>Global Session Purge:</strong> Immediately invalidates ALL active user sessions. 
+                        Useful for major security breaches or database migrations requiring zero active state.
+                    </p>
+                    <button class="btn btn-danger" data-click="globalSessionPurge">PURGE ALL SESSIONS</button>
+                </div>
             </div>
 
-            <!-- Tab: Metrics -->
+            <!-- TAB: METRICS -->
             <div id="tab-metrics" class="tab-content hidden">
                 <div class="card">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
-                        <h3>Endpoint Performance</h3>
-                        <select id="metric-range" style="width: auto;" data-change="loadMetrics">
-                            <option value="1">Last Hour</option>
-                            <option value="24" selected>Last 24 Hours</option>
-                            <option value="168">Last 7 Days</option>
-                        </select>
+                        <h3>Performance Metrics</h3>
+                        <div style="display: flex; gap: 1rem; align-items: center;">
+                            <select id="metric-range" style="width: auto;" data-change="loadMetrics">
+                                <option value="1">Last Hour</option>
+                                <option value="24" selected>Last 24 Hours</option>
+                                <option value="168">Last 7 Days</option>
+                            </select>
+                            <button class="btn btn-secondary" data-click="exportStats">Export JSON</button>
+                        </div>
                     </div>
                     <div class="table-container">
                         <table id="metrics-table">
                             <thead>
                                 <tr>
-                                    <th>Endpoint</th>
+                                    <th>Endpoint Pattern</th>
                                     <th>Calls</th>
-                                    <th>Avg (ms)</th>
-                                    <th>P95</th>
+                                    <th>Latency (Avg)</th>
+                                    <th>Latency (P95)</th>
                                     <th>DB Queries</th>
                                     <th>DB Time</th>
-                                    <th>Errors</th>
+                                    <th>Error Rate</th>
                                 </tr>
                             </thead>
                             <tbody></tbody>
                         </table>
                     </div>
                 </div>
+                <div class="chart-grid">
+                    <div class="card"><h3>Response Time Trend (ms)</h3><canvas id="latency-chart"></canvas></div>
+                    <div class="card"><h3>Database Impact</h3><canvas id="db-impact-chart"></canvas></div>
+                    <div class="card"><h3>Error Distribution</h3><canvas id="error-chart"></canvas></div>
+                    <div class="card"><h3>Request Volume</h3><canvas id="volume-chart"></canvas></div>
+                </div>
+            </div>
+
+            <!-- TAB: ACCOUNT -->
+            <div id="tab-account" class="tab-content hidden">
                 <div class="grid grid-2">
-                    <div class="card"><canvas id="latency-chart"></canvas></div>
-                    <div class="card"><canvas id="error-chart"></canvas></div>
+                    <div class="card">
+                        <h3>Admin Security</h3>
+                        <p style="font-size: 0.875rem; color: var(--text-dim); margin-bottom: 1.5rem;">Update your admin password. We recommend using a unique password stored in a manager.</p>
+                        
+                        <div style="display: flex; flex-direction: column; gap: 1rem;">
+                            <div>
+                                <label style="font-size: 0.75rem; color: var(--text-dim); display: block; margin-bottom: 0.25rem;">Current Password</label>
+                                <input type="password" id="admin-current-pass">
+                            </div>
+                            <div>
+                                <label style="font-size: 0.75rem; color: var(--text-dim); display: block; margin-bottom: 0.25rem;">New Password</label>
+                                <input type="password" id="admin-new-pass" placeholder="Min 12 chars">
+                            </div>
+                            <div>
+                                <label style="font-size: 0.75rem; color: var(--text-dim); display: block; margin-bottom: 0.25rem;">Confirm New Password</label>
+                                <input type="password" id="admin-confirm-pass">
+                            </div>
+                            <button class="btn btn-primary" data-click="changeAdminPassword" style="width: fit-content; margin-top: 0.5rem;">Update Admin Password</button>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h3>Session Management</h3>
+                        <div id="admin-session-details" style="font-size: 0.875rem; line-height: 2;">
+                            <p><strong>Administrator Session</strong></p>
+                            <p style="color: var(--text-dim)">Current Token: <span style="font-family: monospace; color: var(--accent);">••••••••</span></p>
+                            <p style="color: var(--text-dim)">Expires: 8 hours from login</p>
+                            <hr style="border: 0; border-top: 1px solid var(--border); margin: 1rem 0;">
+                            <p>All administrative actions are logged for security auditing.</p>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -370,19 +430,21 @@
         const token = localStorage.getItem('plexichat-admin-token');
         if (!token) window.location.replace('/api/v1/admin/login');
 
-        // State
+        // State & Charts
         let currentTab = 'tickets';
         let selectedUserId = null;
         let selectedTicketId = null;
         let userData = null;
+        let charts = {};
 
-        // Utilities
+        // Core API Wrapper
         const api = async (path, options = {}) => {
             const res = await fetch(path, {
                 ...options,
                 headers: {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json',
+                    'Accept': 'application/json',
                     ...options.headers
                 }
             });
@@ -391,12 +453,12 @@
                 window.location.replace('/api/v1/admin/login');
                 return;
             }
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                throw new Error(err.detail?.error?.message || err.detail || 'API Request failed');
-            }
-            return res.json();
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.detail?.error?.message || data.detail || 'Administrative request failed');
+            return data;
         };
+
+        const escapeHtml = (t) => { if(!t) return ''; const d = document.createElement('div'); d.textContent = String(t); return d.innerHTML; };
 
         const showTab = (name) => {
             document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
@@ -407,30 +469,28 @@
 
         const loadTabData = () => {
             if (currentTab === 'tickets') loadTickets();
-            if (currentTab === 'users' && !selectedUserId) { /* Just show search */ }
             if (currentTab === 'security') loadSecurity();
             if (currentTab === 'metrics') loadMetrics();
         };
 
-        const escapeHtml = (t) => { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; };
-
-        // Ticket Functions
+        // --- Ticket Handlers ---
         async function loadTickets() {
             try {
                 const data = await api('/api/v1/admin/tickets?limit=20');
-                const tbody = document.querySelector('#tickets-table tbody');
-                tbody.innerHTML = data.map(t => `
+                document.querySelector('#tickets-table tbody').innerHTML = data.map(t => `
                     <tr>
                         <td>#${t.id}</td>
                         <td>${escapeHtml(t.username)}</td>
                         <td>${t.category || '-'}</td>
-                        <td><span class="badge status ${t.status}">${t.status}</span></td>
+                        <td><span class="badge status ${t.status}" style="background:${statusColor(t.status)}">${t.status}</span></td>
                         <td>${new Date(t.created_at).toLocaleString()}</td>
-                        <td><button class="btn btn-outline" data-click="viewTicket" data-id="${t.id}">View</button></td>
+                        <td><button class="btn btn-outline btn-sm" data-click="viewTicket" data-id="${t.id}">View</button></td>
                     </tr>
-                `).join('') || '<tr><td colspan="6">No open tickets.</td></tr>';
+                `).join('') || '<tr><td colspan="6" style="text-align:center; padding:2rem; color:var(--text-dim)">No active support tickets.</td></tr>';
             } catch (e) { showError(e.message); }
         }
+
+        const statusColor = (s) => ({ 'open': '#f59e0b', 'in_progress': '#3b82f6', 'resolved': '#10b981', 'closed': '#64748b' }[s] || '#334155');
 
         async function viewTicket(id) {
             selectedTicketId = id;
@@ -438,10 +498,15 @@
                 const t = await api(`/api/v1/admin/tickets/${id}`);
                 document.getElementById('view-ticket-title').textContent = `Ticket #${t.id}`;
                 document.getElementById('view-ticket-content').textContent = t.content;
-                document.getElementById('ticket-status-select').value = t.status;
                 document.getElementById('ticket-view').classList.remove('hidden');
                 document.getElementById('ticket-view').scrollIntoView({ behavior: 'smooth' });
                 
+                // Populate Status Select
+                const sel = document.getElementById('ticket-status-select');
+                sel.innerHTML = ['open', 'in_progress', 'resolved', 'closed'].map(s => 
+                    `<option value="${s}" ${t.status === s ? 'selected' : ''}>${s.toUpperCase()}</option>`
+                ).join('');
+
                 loadTicketNotes(id);
             } catch (e) { alert(e.message); }
         }
@@ -450,7 +515,7 @@
             const notes = await api(`/api/v1/admin/tickets/${id}/notes`);
             document.getElementById('ticket-notes-list').innerHTML = notes.map(n => `
                 <div style="background:rgba(255,255,255,0.05); padding:0.75rem; border-radius:0.5rem; border-left:3px solid var(--accent);">
-                    <div style="display:flex; justify-content:space-between; font-size:0.75rem; color:var(--text-dim); margin-bottom:0.25rem;">
+                    <div style="display:flex; justify-content:space-between; font-size:0.7rem; color:var(--text-dim); margin-bottom:0.25rem;">
                         <span>${escapeHtml(n.admin_username)}</span>
                         <span>${new Date(n.created_at).toLocaleString()}</span>
                     </div>
@@ -462,10 +527,7 @@
         async function updateTicketStatus() {
             const status = document.getElementById('ticket-status-select').value;
             try {
-                await api(`/api/v1/admin/tickets/${selectedTicketId}/status`, {
-                    method: 'PATCH',
-                    body: JSON.stringify({ status })
-                });
+                await api(`/api/v1/admin/tickets/${selectedTicketId}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
                 alert('Status updated');
                 loadTickets();
             } catch (e) { alert(e.message); }
@@ -475,16 +537,13 @@
             const content = document.getElementById('new-note-input').value.trim();
             if (!content) return;
             try {
-                await api(`/api/v1/admin/tickets/${selectedTicketId}/notes`, {
-                    method: 'POST',
-                    body: JSON.stringify({ content })
-                });
+                await api(`/api/v1/admin/tickets/${selectedTicketId}/notes`, { method: 'POST', body: JSON.stringify({ content }) });
                 document.getElementById('new-note-input').value = '';
                 loadTicketNotes(selectedTicketId);
             } catch (e) { alert(e.message); }
         }
 
-        // User Functions
+        // --- User Handlers ---
         async function searchUsers() {
             const q = document.getElementById('user-search-input').value.trim();
             if (!q) return;
@@ -492,15 +551,15 @@
                 const data = await api(`/api/v1/admin/users/search?q=${encodeURIComponent(q)}`);
                 document.getElementById('user-results').innerHTML = `
                     <table>
-                        <thead><tr><th>Avatar</th><th>Username</th><th>ID</th><th>Tier</th><th>Actions</th></tr></thead>
+                        <thead><tr><th>Profile</th><th>Username</th><th>Snowflake ID</th><th>Tier</th><th>Actions</th></tr></thead>
                         <tbody>
                             ${data.users.map(u => `
                                 <tr>
                                     <td><img src="/api/v1/avatars/users/${u.id}" class="avatar-img" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%23334155%22/><text y=%2250%25%22 x=%2250%25%22 font-family=%22sans-serif%22 font-size=%2240%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%2394a3b8%22>${u.username[0].toUpperCase()}</text></svg>'"></td>
-                                    <td><strong>${escapeHtml(u.username)}</strong><br><span style="font-size:0.7rem; color:var(--text-dim)">${u.email || ''}</span></td>
-                                    <td style="font-family:monospace">${u.id}</td>
+                                    <td><strong>${escapeHtml(u.username)}</strong></td>
+                                    <td style="font-family:monospace; color:var(--accent)">${u.id}</td>
                                     <td><span class="badge" style="background:var(--primary)">${u.tier}</span></td>
-                                    <td><button class="btn btn-outline" data-click="manageUser" data-id="${u.id}">Manage</button></td>
+                                    <td><button class="btn btn-outline btn-sm" data-click="manageUser" data-id="${u.id}">Manage</button></td>
                                 </tr>
                             `).join('')}
                         </tbody>
@@ -513,8 +572,11 @@
             selectedUserId = id;
             try {
                 userData = await api(`/api/v1/admin/users/${id}`);
+                const notesData = await api(`/api/v1/admin/users/${id}/notes`);
+                
                 document.getElementById('user-display-name').textContent = userData.username;
-                document.getElementById('user-display-id').textContent = userData.id;
+                document.getElementById('user-display-id').textContent = `Snowflake: ${userData.id}`;
+                document.getElementById('user-internal-notes').value = notesData.notes || '';
                 
                 const avatarImg = document.getElementById('user-avatar-large');
                 avatarImg.src = `/api/v1/avatars/users/${id}?size=256&t=${Date.now()}`;
@@ -533,9 +595,9 @@
         function renderUserBadges(badges) {
             document.getElementById('user-badges-list').innerHTML = (badges || []).map(b => `
                 <span class="badge" style="background:var(--good); color:black; display:inline-flex; align-items:center; gap:0.25rem;">
-                    ${b} <span style="cursor:pointer; font-weight:bold;" data-click="removeBadge" data-badge="${b}">×</span>
+                    ${b} <span style="cursor:pointer; font-weight:bold; padding:0 2px" data-click="removeBadge" data-badge="${b}">×</span>
                 </span>
-            `).join('') || '<span style="color:var(--text-dim)">No badges</span>';
+            `).join('') || '<span style="color:var(--text-dim)">No badges assigned.</span>';
         }
 
         async function addBadge() {
@@ -547,7 +609,7 @@
         }
 
         async function removeBadge(badge) {
-            if (!confirm(`Remove ${badge}?`)) return;
+            if (!confirm(`Remove badge "${badge}"?`)) return;
             try {
                 const data = await api(`/api/v1/admin/users/${selectedUserId}/badges/${badge}`, { method: 'DELETE' });
                 renderUserBadges(data.badges);
@@ -557,20 +619,21 @@
         async function updateUserTier() {
             const tier = document.getElementById('user-tier-select').value;
             try {
-                await api(`/api/v1/admin/users/${selectedUserId}/tier`, {
-                    method: 'PUT',
-                    body: JSON.stringify({ tier })
-                });
-                alert('Tier updated');
+                await api(`/api/v1/admin/users/${selectedUserId}/tier`, { method: 'PUT', body: JSON.stringify({ tier }) });
+                alert('Tier updated successfully');
             } catch (e) { alert(e.message); }
         }
 
         async function saveUserNotes() {
-            alert('Notes system implementation pending backend expansion.');
+            const notes = document.getElementById('user-internal-notes').value;
+            try {
+                await api(`/api/v1/admin/users/${selectedUserId}/notes`, { method: 'POST', body: JSON.stringify({ notes }) });
+                alert('User notes saved.');
+            } catch (e) { alert(e.message); }
         }
 
         async function forceUsernameChange() {
-            if (!confirm('Force this user to change their name on next login?')) return;
+            if (!confirm('Force this user to pick a new name on next login?')) return;
             try {
                 await api(`/api/v1/admin/users/${selectedUserId}/force-username-change`, { method: 'POST' });
                 alert('User flagged for name change.');
@@ -578,45 +641,37 @@
         }
 
         async function suspendUser() {
-            const duration = prompt('Enter suspension duration (e.g. 1h, 1d, 7d) or "perm" for permanent:', 'perm');
-            if (duration === null) return;
-            
-            let seconds = null;
-            if (duration !== 'perm') {
-                const match = duration.match(/^(\d+)([hdw])$/);
-                if (!match) return alert('Invalid format. Use 1h, 1d, etc.');
-                const val = parseInt(match[1]);
-                if (match[2] === 'h') seconds = val * 3600;
-                if (match[2] === 'd') seconds = val * 86400;
-                if (match[2] === 'w') seconds = val * 604800;
+            const dur = prompt('Suspension (perm, 1h, 1d, 7d):', 'perm');
+            if (!dur) return;
+            let sec = null;
+            if (dur !== 'perm') {
+                const m = dur.match(/^(\d+)([hdw])$/);
+                if (!m) return alert('Invalid format');
+                const v = parseInt(m[1]);
+                if (m[2] === 'h') sec = v * 3600;
+                if (m[2] === 'd') sec = v * 86400;
+                if (m[2] === 'w') sec = v * 604800;
             }
-
             try {
-                await api(`/api/v1/admin/security/lock-user`, {
-                    method: 'POST',
-                    body: JSON.stringify({ user_id: String(selectedUserId), duration_seconds: seconds })
-                });
-                alert('User suspended.');
+                await api(`/api/v1/admin/security/lock-user`, { method: 'POST', body: JSON.stringify({ user_id: String(selectedUserId), duration_seconds: sec }) });
+                alert('User account suspended.');
             } catch (e) { alert(e.message); }
         }
 
         async function forceLogoutUserAction() {
-            if (!confirm('Invalidate all active sessions for this user?')) return;
+            if (!confirm('Kill all active sessions for this user?')) return;
             try {
-                await api(`/api/v1/admin/security/force-logout`, {
-                    method: 'POST',
-                    body: JSON.stringify({ user_id: String(selectedUserId) })
-                });
-                alert('User sessions purged.');
+                await api(`/api/v1/admin/security/force-logout`, { method: 'POST', body: JSON.stringify({ user_id: String(selectedUserId) }) });
+                alert('User sessions terminated.');
             } catch (e) { alert(e.message); }
         }
 
         async function resetUserAvatar() {
-            if (!confirm('Reset user avatar to default?')) return;
-            alert('Backend reset endpoint coming soon.');
+            if (!confirm('Clear user avatar and revert to default?')) return;
+            alert('Avatar reset functionality coming in next backend patch.');
         }
 
-        // Security Functions
+        // --- Security Handlers ---
         async function loadSecurity() {
             try {
                 const [ips, banned] = await Promise.all([
@@ -627,18 +682,18 @@
                 document.querySelector('#blocked-ips-table tbody').innerHTML = ips.map(ip => `
                     <tr>
                         <td>${escapeHtml(ip.ip_address)}</td>
-                        <td>${escapeHtml(ip.reason || '-')}</td>
-                        <td><button class="btn btn-outline" data-click="unblockIP" data-ip="${ip.ip_address}">Unblock</button></td>
+                        <td>${escapeHtml(ip.reason || 'Manual block')}</td>
+                        <td><button class="btn btn-outline btn-sm" data-click="unblockIP" data-ip="${ip.ip_address}">Unblock</button></td>
                     </tr>
-                `).join('') || '<tr><td colspan="3">No blocked IPs</td></tr>';
+                `).join('') || '<tr><td colspan="3">No blocked IP addresses.</td></tr>';
 
                 document.querySelector('#banned-usernames-table tbody').innerHTML = banned.map(b => `
                     <tr>
                         <td>${escapeHtml(b.pattern)}</td>
-                        <td>${escapeHtml(b.reason || '-')}</td>
-                        <td><button class="btn btn-outline" data-click="unblockUsername" data-id="${b.id}">Remove</button></td>
+                        <td>${escapeHtml(b.reason || 'Restricted name')}</td>
+                        <td><button class="btn btn-outline btn-sm" data-click="unblockUsername" data-id="${b.id}">Remove</button></td>
                     </tr>
-                `).join('') || '<tr><td colspan="3">No banned usernames</td></tr>';
+                `).join('') || '<tr><td colspan="3">No name restrictions.</td></tr>';
                 
                 loadHashReports();
             } catch (e) { console.error(e); }
@@ -649,17 +704,25 @@
                 const reports = await api('/api/v1/admin/hash-reports?limit=20');
                 document.querySelector('#hash-reports-table tbody').innerHTML = reports.map(r => `
                     <tr>
-                        <td style="font-family:monospace">${r.hash_value.substring(0,12)}...</td>
+                        <td style="font-family:monospace; color:var(--accent)">${r.hash_value.substring(0,16)}...</td>
                         <td>${escapeHtml(r.reason)}</td>
                         <td>${escapeHtml(r.reporter_username)}</td>
-                        <td><span class="badge status ${r.status}">${r.status}</span></td>
-                        <td><button class="btn btn-outline" data-click="viewHashReport" data-id="${r.id}">View</button></td>
+                        <td><span class="badge" style="background:var(--border)">${r.status}</span></td>
+                        <td><button class="btn btn-outline btn-sm" data-click="viewHashReport" data-id="${r.id}">View</button></td>
                     </tr>
-                `).join('') || '<tr><td colspan="5">No hash reports.</td></tr>';
+                `).join('') || '<tr><td colspan="5">No pending content reports.</td></tr>';
             } catch (e) { console.error(e); }
         }
 
-        // Metrics
+        async function globalSessionPurge() {
+            if (!confirm('URGENT: This will log out EVERY user on the platform. Are you absolutely sure?')) return;
+            try {
+                await api('/api/v1/admin/security/logout-all', { method: 'POST' });
+                alert('platform-wide logout initiated.');
+            } catch (e) { alert(e.message); }
+        }
+
+        // --- Metrics & Charts ---
         async function loadMetrics() {
             const hours = document.getElementById('metric-range').value;
             try {
@@ -669,83 +732,137 @@
                     <tr>
                         <td style="font-family:monospace; font-size:0.75rem">${s.endpoint}</td>
                         <td>${s.count}</td>
-                        <td>${s.avg_ms.toFixed(1)}</td>
-                        <td>${s.p95_ms.toFixed(1)}</td>
+                        <td style="color:${latencyColor(s.avg_ms)}">${s.avg_ms.toFixed(1)}ms</td>
+                        <td>${s.p95_ms.toFixed(1)}ms</td>
                         <td>${s.avg_queries?.toFixed(1) || '0'}</td>
                         <td>${s.avg_query_time_ms?.toFixed(1) || '0'}ms</td>
-                        <td style="color:${s.error_rate > 5 ? 'var(--bad)' : 'inherit'}">${(s.error_rate).toFixed(1)}%</td>
+                        <td style="color:${s.error_rate > 5 ? 'var(--bad)' : 'var(--good)'}">${(s.error_rate).toFixed(1)}%</td>
                     </tr>
                 `).join('');
+                
+                renderCharts(data.stats);
             } catch (e) { console.error(e); }
         }
 
-        // Event Router
+        const latencyColor = (ms) => ms > 500 ? 'var(--bad)' : (ms > 200 ? 'var(--warn)' : 'var(--good)');
+
+        function renderCharts(stats) {
+            const top = stats.slice(0, 8);
+            const labels = top.map(s => s.endpoint.replace('/api/v1', ''));
+            
+            // Latency Chart
+            if(charts.latency) charts.latency.destroy();
+            charts.latency = new Chart(document.getElementById('latency-chart'), {
+                type: 'bar',
+                data: { labels, datasets: [{ label: 'Avg ms', data: top.map(s => s.avg_ms), backgroundColor: '#3b82f6' }] },
+                options: { plugins: { legend: { display: false } }, scales: { y: { grid: { color: '#334155' } } } }
+            });
+
+            // DB Impact Chart
+            if(charts.db) charts.db.destroy();
+            charts.db = new Chart(document.getElementById('db-impact-chart'), {
+                type: 'line',
+                data: { labels, datasets: [{ label: 'Queries', data: top.map(s => s.avg_queries), borderColor: '#e94560', tension: 0.3 }] },
+                options: { plugins: { legend: { display: false } } }
+            });
+        }
+
+        async function exportStats() {
+            try {
+                const data = await api(`/api/v1/admin/telemetry/export?format=json&hours=24`);
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `telemetry_${new Date().toISOString().split('T')[0]}.json`;
+                a.click();
+            } catch (e) { alert('Export failed: ' + e.message); }
+        }
+
+        // --- Account Handlers ---
+        async function changeAdminPassword() {
+            const current = document.getElementById('admin-current-pass').value;
+            const newPass = document.getElementById('admin-new-pass').value;
+            const confirmPass = document.getElementById('admin-confirm-pass').value;
+
+            if (newPass.length < 12) return alert('Password too short (min 12)');
+            if (newPass !== confirmPass) return alert('Passwords do not match');
+
+            try {
+                await api('/api/v1/admin/auth/change-password', {
+                    method: 'POST',
+                    body: JSON.stringify({ current_password: current, new_password: newPass })
+                });
+                alert('Password updated. Session invalidated.');
+                logout();
+            } catch (e) { alert(e.message); }
+        }
+
+        function logout() {
+            localStorage.removeItem('plexichat-admin-token');
+            window.location.replace('/api/v1/admin/login');
+        }
+
+        // --- Event Routing ---
         document.addEventListener('click', (e) => {
             const target = e.target.closest('[data-click]');
             if (!target) return;
-            
-            const action = target.dataset.click;
+            const act = target.dataset.click;
             const id = target.dataset.id;
 
-            if (action === 'logout') {
-                localStorage.removeItem('plexichat-admin-token');
-                window.location.replace('/api/v1/admin/login');
-            }
-            else if (action === 'showTab') showTab(target.dataset.tab);
-            else if (action === 'viewTicket') viewTicket(id);
-            else if (action === 'updateTicketStatus') updateTicketStatus();
-            else if (action === 'addTicketNote') addTicketNote();
-            else if (action === 'searchUsers') searchUsers();
-            else if (action === 'manageUser') manageUser(id);
-            else if (action === 'updateUserTier') updateUserTier();
-            else if (action === 'addBadge') addBadge();
-            else if (action === 'removeBadge') removeBadge(target.dataset.badge);
-            else if (action === 'saveUserNotes') saveUserNotes();
-            else if (action === 'forceUsernameChange') forceUsernameChange();
-            else if (action === 'suspendUser') suspendUser();
-            else if (action === 'forceLogoutUserAction') forceLogoutUserAction();
-            else if (action === 'resetUserAvatar') resetUserAvatar();
-            else if (action === 'blockIP') {
+            if (act === 'logout') logout();
+            else if (act === 'showTab') showTab(target.dataset.tab);
+            else if (act === 'viewTicket') viewTicket(id);
+            else if (act === 'updateTicketStatus') updateTicketStatus();
+            else if (act === 'addTicketNote') addTicketNote();
+            else if (act === 'searchUsers') searchUsers();
+            else if (act === 'manageUser') manageUser(id);
+            else if (act === 'updateUserTier') updateUserTier();
+            else if (act === 'addBadge') addBadge();
+            else if (act === 'removeBadge') removeBadge(target.dataset.badge);
+            else if (act === 'saveUserNotes') saveUserNotes();
+            else if (act === 'forceUsernameChange') forceUsernameChange();
+            else if (act === 'suspendUser') suspendUser();
+            else if (act === 'forceLogoutUserAction') forceLogoutUserAction();
+            else if (act === 'globalSessionPurge') globalSessionPurge();
+            else if (act === 'changeAdminPassword') changeAdminPassword();
+            else if (act === 'exportStats') exportStats();
+            else if (act === 'blockIP') {
                 const ip = document.getElementById('block-ip-val').value;
-                api('/api/v1/admin/security/block-ip', { method: 'POST', body: JSON.stringify({ ip_address: ip, reason: 'Admin manual block' }) })
-                    .then(() => { alert('IP Blocked'); loadSecurity(); });
+                api('/api/v1/admin/security/block-ip', { method: 'POST', body: JSON.stringify({ ip_address: ip, reason: 'Admin block' }) })
+                    .then(() => { alert('Blocked'); loadSecurity(); });
             }
-            else if (action === 'unblockIP') {
-                api(`/api/v1/admin/security/unblock-ip/${encodeURIComponent(target.dataset.ip)}`, { method: 'DELETE' })
-                    .then(() => loadSecurity());
+            else if (act === 'unblockIP') {
+                api(`/api/v1/admin/security/unblock-ip/${encodeURIComponent(target.dataset.ip)}`, { method: 'DELETE' }).then(() => loadSecurity());
             }
-            else if (action === 'addBannedUsername') {
+            else if (act === 'addBannedUsername') {
                 const p = document.getElementById('ban-username-val').value;
-                api('/api/v1/admin/security/banned-usernames', { method: 'POST', body: JSON.stringify({ pattern: p, reason: 'Admin manual ban' }) })
-                    .then(() => { alert('Username Banned'); loadSecurity(); });
+                api('/api/v1/admin/security/banned-usernames', { method: 'POST', body: JSON.stringify({ pattern: p, reason: 'Restricted' }) })
+                    .then(() => { alert('Banned'); loadSecurity(); });
             }
-            else if (action === 'unblockUsername') {
-                api(`/api/v1/admin/security/banned-usernames/${id}`, { method: 'DELETE' })
-                    .then(() => loadSecurity());
+            else if (act === 'unblockUsername') {
+                api(`/api/v1/admin/security/banned-usernames/${id}`, { method: 'DELETE' }).then(() => loadSecurity());
             }
         });
 
-        const showError = (msg) => {
-            const el = document.getElementById('error');
-            el.textContent = msg;
-            el.classList.remove('hidden');
-            setTimeout(() => el.classList.add('hidden'), 5000);
-        };
+        document.addEventListener('change', (e) => {
+            if (e.target.dataset.change === 'loadMetrics') loadMetrics();
+        });
 
         async function verifyAndLoad() {
             try {
-                const dashboard = await api('/api/v1/admin/dashboard');
+                const d = await api('/api/v1/admin/dashboard');
                 document.getElementById('stats-summary').innerHTML = `
-                    <div class="card"><h3>Open Tickets</h3><div style="font-size:2rem; font-weight:bold; color:var(--warn)">${dashboard.tickets.open}</div></div>
-                    <div class="card"><h3>Total Users</h3><div style="font-size:2rem; font-weight:bold; color:var(--good)">${dashboard.total_users}</div></div>
-                    <div class="card"><h3>DB Health</h3><div style="font-size:2rem; font-weight:bold; color:${dashboard.db_status === 'healthy' ? 'var(--good)' : 'var(--bad)'}">${dashboard.db_status.toUpperCase()}</div></div>
-                    <div class="card"><h3>Active (24h)</h3><div style="font-size:2rem; font-weight:bold; color:var(--primary)">${dashboard.active_users}</div></div>
+                    <div class="card"><h3>Open Tickets</h3><div style="font-size:2rem; font-weight:bold; color:var(--warn)">${d.tickets.open}</div></div>
+                    <div class="card"><h3>Total Users</h3><div style="font-size:2rem; font-weight:bold; color:var(--good)">${d.total_users}</div></div>
+                    <div class="card"><h3>DB Status</h3><div style="font-size:2rem; font-weight:bold; color:${d.db_status === 'healthy' ? 'var(--good)' : 'var(--bad)'}">${d.db_status.toUpperCase()}</div></div>
+                    <div class="card"><h3>Active (24h)</h3><div style="font-size:2rem; font-weight:bold; color:var(--primary)">${d.active_users}</div></div>
                 `;
                 document.getElementById('loading').classList.add('hidden');
                 document.getElementById('content').classList.remove('hidden');
                 showTab('tickets');
             } catch (e) {
-                document.getElementById('loading').textContent = 'Security verification failed: ' + e.message;
+                document.getElementById('loading').innerHTML = `<div class="card btn-danger">Security Verification Failed: ${e.message}</div>`;
             }
         }
 
