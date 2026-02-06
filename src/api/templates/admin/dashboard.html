@@ -194,7 +194,12 @@
                     <div style="display: flex; justify-content: space-between; margin-bottom: 1.5rem;">
                         <h2 id="view-ticket-title">Ticket #...</h2>
                         <div style="display: flex; gap: 0.5rem;">
-                            <select id="ticket-status-select" style="width: auto;"></select>
+                            <select id="ticket-status-select" style="width: auto;">
+                                <option value="open">Open</option>
+                                <option value="in_progress">In Progress</option>
+                                <option value="resolved">Resolved</option>
+                                <option value="closed">Closed</option>
+                            </select>
                             <button class="btn btn-primary" data-click="updateTicketStatus">Update</button>
                         </div>
                     </div>
@@ -226,7 +231,10 @@
 
                 <div id="user-manage" class="card hidden">
                     <div style="display: flex; gap: 2rem; align-items: flex-start;">
-                        <img id="user-avatar-large" class="avatar-img" style="width: 120px; height: 120px; border-radius: 1rem;" src="">
+                        <div style="text-align: center;">
+                            <img id="user-avatar-large" class="avatar-img" style="width: 120px; height: 120px; border-radius: 1rem; margin-bottom: 1rem;" src="">
+                            <button class="btn btn-outline" style="width: 100%;" data-click="resetUserAvatar">Reset Avatar</button>
+                        </div>
                         <div style="flex: 1;">
                             <h2 id="user-display-name">Username</h2>
                             <p id="user-display-id" style="color: var(--text-dim); font-family: monospace;"></p>
@@ -247,8 +255,8 @@
                                 </div>
                                 <div>
                                     <label>Moderation Actions</label>
-                                    <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
-                                        <button class="btn btn-warn" data-click="forceLogoutUser">Logout User</button>
+                                    <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem; flex-wrap: wrap;">
+                                        <button class="btn btn-warn" data-click="forceLogoutUserAction">Logout Sessions</button>
                                         <button class="btn btn-danger" data-click="suspendUser">Suspend</button>
                                         <button class="btn btn-secondary" data-click="forceUsernameChange">Force Name Change</button>
                                     </div>
@@ -257,16 +265,24 @@
 
                             <div style="margin-top: 1.5rem;">
                                 <label>Badges</label>
-                                <div id="user-badges-list" style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0;"></div>
+                                <div id="user-badges-list" style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0; min-height: 2rem; background: rgba(0,0,0,0.1); padding: 0.5rem; border-radius: 0.5rem;"></div>
                                 <div style="display: flex; gap: 0.5rem;">
                                     <select id="add-badge-select" style="width: auto;">
                                         <option value="verified">Verified</option>
                                         <option value="staff">Staff</option>
                                         <option value="bug_hunter">Bug Hunter</option>
                                         <option value="early_supporter">Early Supporter</option>
+                                        <option value="moderator">Moderator</option>
+                                        <option value="partner">Partner</option>
                                     </select>
                                     <button class="btn btn-secondary" data-click="addBadge">Add Badge</button>
                                 </div>
+                            </div>
+
+                            <div style="margin-top: 1.5rem;">
+                                <label>Internal Admin Notes</label>
+                                <textarea id="user-internal-notes" style="margin-top: 0.5rem; min-height: 80px;" placeholder="Add private notes about this user..."></textarea>
+                                <button class="btn btn-secondary" style="margin-top: 0.5rem;" data-click="saveUserNotes">Save Notes</button>
                             </div>
                         </div>
                     </div>
@@ -358,6 +374,7 @@
         let currentTab = 'tickets';
         let selectedUserId = null;
         let selectedTicketId = null;
+        let userData = null;
 
         // Utilities
         const api = async (path, options = {}) => {
@@ -390,10 +407,12 @@
 
         const loadTabData = () => {
             if (currentTab === 'tickets') loadTickets();
-            if (currentTab === 'users' && !selectedUserId) loadUserOverview();
+            if (currentTab === 'users' && !selectedUserId) { /* Just show search */ }
             if (currentTab === 'security') loadSecurity();
             if (currentTab === 'metrics') loadMetrics();
         };
+
+        const escapeHtml = (t) => { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; };
 
         // Ticket Functions
         async function loadTickets() {
@@ -403,13 +422,13 @@
                 tbody.innerHTML = data.map(t => `
                     <tr>
                         <td>#${t.id}</td>
-                        <td>${t.username}</td>
+                        <td>${escapeHtml(t.username)}</td>
                         <td>${t.category || '-'}</td>
                         <td><span class="badge status ${t.status}">${t.status}</span></td>
                         <td>${new Date(t.created_at).toLocaleString()}</td>
                         <td><button class="btn btn-outline" data-click="viewTicket" data-id="${t.id}">View</button></td>
                     </tr>
-                `).join('');
+                `).join('') || '<tr><td colspan="6">No open tickets.</td></tr>';
             } catch (e) { showError(e.message); }
         }
 
@@ -419,20 +438,36 @@
                 const t = await api(`/api/v1/admin/tickets/${id}`);
                 document.getElementById('view-ticket-title').textContent = `Ticket #${t.id}`;
                 document.getElementById('view-ticket-content').textContent = t.content;
+                document.getElementById('ticket-status-select').value = t.status;
                 document.getElementById('ticket-view').classList.remove('hidden');
                 document.getElementById('ticket-view').scrollIntoView({ behavior: 'smooth' });
                 
-                // Load notes
-                const notes = await api(`/api/v1/admin/tickets/${id}/notes`);
-                document.getElementById('ticket-notes-list').innerHTML = notes.map(n => `
-                    <div style="background:rgba(255,255,255,0.05); padding:0.75rem; border-radius:0.5rem; border-left:3px solid var(--accent);">
-                        <div style="display:flex; justify-content:space-between; font-size:0.75rem; color:var(--text-dim); margin-bottom:0.25rem;">
-                            <span>${n.admin_username}</span>
-                            <span>${new Date(n.created_at).toLocaleString()}</span>
-                        </div>
-                        <div>${n.content}</div>
+                loadTicketNotes(id);
+            } catch (e) { alert(e.message); }
+        }
+
+        async function loadTicketNotes(id) {
+            const notes = await api(`/api/v1/admin/tickets/${id}/notes`);
+            document.getElementById('ticket-notes-list').innerHTML = notes.map(n => `
+                <div style="background:rgba(255,255,255,0.05); padding:0.75rem; border-radius:0.5rem; border-left:3px solid var(--accent);">
+                    <div style="display:flex; justify-content:space-between; font-size:0.75rem; color:var(--text-dim); margin-bottom:0.25rem;">
+                        <span>${escapeHtml(n.admin_username)}</span>
+                        <span>${new Date(n.created_at).toLocaleString()}</span>
                     </div>
-                `).join('') || '<p style="color:var(--text-dim); font-style:italic;">No internal notes.</p>';
+                    <div style="font-size:0.85rem;">${escapeHtml(n.content)}</div>
+                </div>
+            `).join('') || '<p style="color:var(--text-dim); font-size:0.8rem; font-style:italic;">No internal notes.</p>';
+        }
+
+        async function updateTicketStatus() {
+            const status = document.getElementById('ticket-status-select').value;
+            try {
+                await api(`/api/v1/admin/tickets/${selectedTicketId}/status`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ status })
+                });
+                alert('Status updated');
+                loadTickets();
             } catch (e) { alert(e.message); }
         }
 
@@ -445,49 +480,12 @@
                     body: JSON.stringify({ content })
                 });
                 document.getElementById('new-note-input').value = '';
-                viewTicket(selectedTicketId);
+                loadTicketNotes(selectedTicketId);
             } catch (e) { alert(e.message); }
         }
 
-        // Security Functions
-        async function loadSecurity() {
-            try {
-                const ips = await api('/api/v1/admin/security/blocked-ips');
-                document.querySelector('#blocked-ips-table tbody').innerHTML = ips.map(ip => `
-                    <tr>
-                        <td>${ip.ip_address}</td>
-                        <td>${ip.reason || '-'}</td>
-                        <td><button class="btn btn-outline" data-click="unblockIP" data-ip="${ip.ip_address}">Unblock</button></td>
-                    </tr>
-                `).join('') || '<tr><td colspan="3">No blocked IPs</td></tr>';
-
-                const banned = await api('/api/v1/admin/security/banned-usernames');
-                document.querySelector('#banned-usernames-table tbody').innerHTML = banned.map(b => `
-                    <tr>
-                        <td>${b.pattern}</td>
-                        <td>${b.reason || '-'}</td>
-                        <td><button class="btn btn-outline" data-click="unblockUsername" data-id="${b.id}">Remove</button></td>
-                    </tr>
-                `).join('') || '<tr><td colspan="3">No banned usernames</td></tr>';
-                
-                loadHashReports();
-            } catch (e) { console.error(e); }
-        }
-
-        async function loadHashReports() {
-            try {
-                const reports = await api('/api/v1/admin/hash-reports?limit=20');
-                document.querySelector('#hash-reports-table tbody').innerHTML = reports.map(r => `
-                    <tr>
-                        <td style="font-family:monospace">${r.hash_value.substring(0,12)}...</td>
-                        <td>${r.reason}</td>
-                        <td>${r.reporter_username}</td>
-                        <td><span class="badge" style="background:var(--border)">${r.status}</span></td>
-                        <td><button class="btn btn-outline" data-click="viewHashReport" data-id="${r.id}">View</button></td>
-                    </tr>
-                `).join('') || '<tr><td colspan="5">No reports</td></tr>';
-            } catch (e) { console.error(e); }
-        }
+        // User Functions
+        async function searchUsers() {
             const q = document.getElementById('user-search-input').value.trim();
             if (!q) return;
             try {
@@ -499,7 +497,7 @@
                             ${data.users.map(u => `
                                 <tr>
                                     <td><img src="/api/v1/avatars/users/${u.id}" class="avatar-img" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%23334155%22/><text y=%2250%25%22 x=%2250%25%22 font-family=%22sans-serif%22 font-size=%2240%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%2394a3b8%22>${u.username[0].toUpperCase()}</text></svg>'"></td>
-                                    <td><strong>${u.username}</strong><br><span style="font-size:0.7rem; color:var(--text-dim)">${u.email || ''}</span></td>
+                                    <td><strong>${escapeHtml(u.username)}</strong><br><span style="font-size:0.7rem; color:var(--text-dim)">${u.email || ''}</span></td>
                                     <td style="font-family:monospace">${u.id}</td>
                                     <td><span class="badge" style="background:var(--primary)">${u.tier}</span></td>
                                     <td><button class="btn btn-outline" data-click="manageUser" data-id="${u.id}">Manage</button></td>
@@ -514,43 +512,28 @@
         async function manageUser(id) {
             selectedUserId = id;
             try {
-                const u = await api(`/api/v1/admin/users/${id}`);
-                document.getElementById('user-display-name').textContent = u.username;
-                document.getElementById('user-display-id').textContent = u.id;
+                userData = await api(`/api/v1/admin/users/${id}`);
+                document.getElementById('user-display-name').textContent = userData.username;
+                document.getElementById('user-display-id').textContent = userData.id;
                 
-                // Robust Avatar Loading
                 const avatarImg = document.getElementById('user-avatar-large');
                 avatarImg.src = `/api/v1/avatars/users/${id}?size=256&t=${Date.now()}`;
                 avatarImg.onerror = () => {
-                    avatarImg.src = `data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%23334155%22/><text y=%2250%25%22 x=%2250%25%22 font-family=%22sans-serif%22 font-size=%2240%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%2394a3b8%22>${u.username[0].toUpperCase()}</text></svg>`;
+                    avatarImg.src = `data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%23334155%22/><text y=%2250%25%22 x=%2250%25%22 font-family=%22sans-serif%22 font-size=%2240%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%2394a3b8%22>${userData.username[0].toUpperCase()}</text></svg>`;
                 };
 
-                document.getElementById('user-tier-select').value = u.tier;
+                document.getElementById('user-tier-select').value = userData.tier;
                 document.getElementById('user-manage').classList.remove('hidden');
                 document.getElementById('user-manage').scrollIntoView({ behavior: 'smooth' });
                 
-                renderUserBadges(u.badges);
+                renderUserBadges(userData.badges);
             } catch (e) { alert(e.message); }
-        }
-
-        async function exportStats() {
-            const hours = document.getElementById('metric-range').value;
-            try {
-                const data = await api(`/api/v1/admin/telemetry/export?format=json&hours=${hours}`);
-                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `telemetry_${new Date().toISOString().split('T')[0]}.json`;
-                a.click();
-                window.URL.revokeObjectURL(url);
-            } catch (e) { alert('Export failed: ' + e.message); }
         }
 
         function renderUserBadges(badges) {
             document.getElementById('user-badges-list').innerHTML = (badges || []).map(b => `
                 <span class="badge" style="background:var(--good); color:black; display:inline-flex; align-items:center; gap:0.25rem;">
-                    ${b} <span style="cursor:pointer" data-click="removeBadge" data-badge="${b}">×</span>
+                    ${b} <span style="cursor:pointer; font-weight:bold;" data-click="removeBadge" data-badge="${b}">×</span>
                 </span>
             `).join('') || '<span style="color:var(--text-dim)">No badges</span>';
         }
@@ -563,11 +546,10 @@
             } catch (e) { alert(e.message); }
         }
 
-        async function removeBadge(e) {
-            const b = e.target.dataset.badge;
-            if (!confirm(`Remove ${b}?`)) return;
+        async function removeBadge(badge) {
+            if (!confirm(`Remove ${badge}?`)) return;
             try {
-                const data = await api(`/api/v1/admin/users/${selectedUserId}/badges/${b}`, { method: 'DELETE' });
+                const data = await api(`/api/v1/admin/users/${selectedUserId}/badges/${badge}`, { method: 'DELETE' });
                 renderUserBadges(data.badges);
             } catch (e) { alert(e.message); }
         }
@@ -583,6 +565,100 @@
             } catch (e) { alert(e.message); }
         }
 
+        async function saveUserNotes() {
+            alert('Notes system implementation pending backend expansion.');
+        }
+
+        async function forceUsernameChange() {
+            if (!confirm('Force this user to change their name on next login?')) return;
+            try {
+                await api(`/api/v1/admin/users/${selectedUserId}/force-username-change`, { method: 'POST' });
+                alert('User flagged for name change.');
+            } catch (e) { alert(e.message); }
+        }
+
+        async function suspendUser() {
+            const duration = prompt('Enter suspension duration (e.g. 1h, 1d, 7d) or "perm" for permanent:', 'perm');
+            if (duration === null) return;
+            
+            let seconds = null;
+            if (duration !== 'perm') {
+                const match = duration.match(/^(\d+)([hdw])$/);
+                if (!match) return alert('Invalid format. Use 1h, 1d, etc.');
+                const val = parseInt(match[1]);
+                if (match[2] === 'h') seconds = val * 3600;
+                if (match[2] === 'd') seconds = val * 86400;
+                if (match[2] === 'w') seconds = val * 604800;
+            }
+
+            try {
+                await api(`/api/v1/admin/security/lock-user`, {
+                    method: 'POST',
+                    body: JSON.stringify({ user_id: String(selectedUserId), duration_seconds: seconds })
+                });
+                alert('User suspended.');
+            } catch (e) { alert(e.message); }
+        }
+
+        async function forceLogoutUserAction() {
+            if (!confirm('Invalidate all active sessions for this user?')) return;
+            try {
+                await api(`/api/v1/admin/security/force-logout`, {
+                    method: 'POST',
+                    body: JSON.stringify({ user_id: String(selectedUserId) })
+                });
+                alert('User sessions purged.');
+            } catch (e) { alert(e.message); }
+        }
+
+        async function resetUserAvatar() {
+            if (!confirm('Reset user avatar to default?')) return;
+            alert('Backend reset endpoint coming soon.');
+        }
+
+        // Security Functions
+        async function loadSecurity() {
+            try {
+                const [ips, banned] = await Promise.all([
+                    api('/api/v1/admin/security/blocked-ips'),
+                    api('/api/v1/admin/security/banned-usernames')
+                ]);
+
+                document.querySelector('#blocked-ips-table tbody').innerHTML = ips.map(ip => `
+                    <tr>
+                        <td>${escapeHtml(ip.ip_address)}</td>
+                        <td>${escapeHtml(ip.reason || '-')}</td>
+                        <td><button class="btn btn-outline" data-click="unblockIP" data-ip="${ip.ip_address}">Unblock</button></td>
+                    </tr>
+                `).join('') || '<tr><td colspan="3">No blocked IPs</td></tr>';
+
+                document.querySelector('#banned-usernames-table tbody').innerHTML = banned.map(b => `
+                    <tr>
+                        <td>${escapeHtml(b.pattern)}</td>
+                        <td>${escapeHtml(b.reason || '-')}</td>
+                        <td><button class="btn btn-outline" data-click="unblockUsername" data-id="${b.id}">Remove</button></td>
+                    </tr>
+                `).join('') || '<tr><td colspan="3">No banned usernames</td></tr>';
+                
+                loadHashReports();
+            } catch (e) { console.error(e); }
+        }
+
+        async function loadHashReports() {
+            try {
+                const reports = await api('/api/v1/admin/hash-reports?limit=20');
+                document.querySelector('#hash-reports-table tbody').innerHTML = reports.map(r => `
+                    <tr>
+                        <td style="font-family:monospace">${r.hash_value.substring(0,12)}...</td>
+                        <td>${escapeHtml(r.reason)}</td>
+                        <td>${escapeHtml(r.reporter_username)}</td>
+                        <td><span class="badge status ${r.status}">${r.status}</span></td>
+                        <td><button class="btn btn-outline" data-click="viewHashReport" data-id="${r.id}">View</button></td>
+                    </tr>
+                `).join('') || '<tr><td colspan="5">No hash reports.</td></tr>';
+            } catch (e) { console.error(e); }
+        }
+
         // Metrics
         async function loadMetrics() {
             const hours = document.getElementById('metric-range').value;
@@ -595,15 +671,15 @@
                         <td>${s.count}</td>
                         <td>${s.avg_ms.toFixed(1)}</td>
                         <td>${s.p95_ms.toFixed(1)}</td>
-                        <td>${s.avg_queries?.toFixed(1) || '-'}</td>
-                        <td>${s.avg_query_time_ms?.toFixed(1) || '-'}ms</td>
-                        <td style="color:${s.error_rate > 5 ? 'var(--bad)' : 'inherit'}">${(s.error_rate * 100).toFixed(1)}%</td>
+                        <td>${s.avg_queries?.toFixed(1) || '0'}</td>
+                        <td>${s.avg_query_time_ms?.toFixed(1) || '0'}ms</td>
+                        <td style="color:${s.error_rate > 5 ? 'var(--bad)' : 'inherit'}">${(s.error_rate).toFixed(1)}%</td>
                     </tr>
                 `).join('');
             } catch (e) { console.error(e); }
         }
 
-        // Global Event Router
+        // Event Router
         document.addEventListener('click', (e) => {
             const target = e.target.closest('[data-click]');
             if (!target) return;
@@ -615,30 +691,35 @@
                 localStorage.removeItem('plexichat-admin-token');
                 window.location.replace('/api/v1/admin/login');
             }
-            if (action === 'showTab') showTab(target.dataset.tab);
-            if (action === 'viewTicket') viewTicket(id);
-            if (action === 'addTicketNote') addTicketNote();
-            if (action === 'searchUsers') searchUsers();
-            if (action === 'manageUser') manageUser(id);
-            if (action === 'updateUserTier') updateUserTier();
-            if (action === 'addBadge') addBadge();
-            if (action === 'removeBadge') removeBadge(e);
-            if (action === 'exportStats') exportStats();
-            if (action === 'blockIP') {
+            else if (action === 'showTab') showTab(target.dataset.tab);
+            else if (action === 'viewTicket') viewTicket(id);
+            else if (action === 'updateTicketStatus') updateTicketStatus();
+            else if (action === 'addTicketNote') addTicketNote();
+            else if (action === 'searchUsers') searchUsers();
+            else if (action === 'manageUser') manageUser(id);
+            else if (action === 'updateUserTier') updateUserTier();
+            else if (action === 'addBadge') addBadge();
+            else if (action === 'removeBadge') removeBadge(target.dataset.badge);
+            else if (action === 'saveUserNotes') saveUserNotes();
+            else if (action === 'forceUsernameChange') forceUsernameChange();
+            else if (action === 'suspendUser') suspendUser();
+            else if (action === 'forceLogoutUserAction') forceLogoutUserAction();
+            else if (action === 'resetUserAvatar') resetUserAvatar();
+            else if (action === 'blockIP') {
                 const ip = document.getElementById('block-ip-val').value;
                 api('/api/v1/admin/security/block-ip', { method: 'POST', body: JSON.stringify({ ip_address: ip, reason: 'Admin manual block' }) })
                     .then(() => { alert('IP Blocked'); loadSecurity(); });
             }
-            if (action === 'unblockIP') {
+            else if (action === 'unblockIP') {
                 api(`/api/v1/admin/security/unblock-ip/${encodeURIComponent(target.dataset.ip)}`, { method: 'DELETE' })
                     .then(() => loadSecurity());
             }
-            if (action === 'addBannedUsername') {
+            else if (action === 'addBannedUsername') {
                 const p = document.getElementById('ban-username-val').value;
                 api('/api/v1/admin/security/banned-usernames', { method: 'POST', body: JSON.stringify({ pattern: p, reason: 'Admin manual ban' }) })
                     .then(() => { alert('Username Banned'); loadSecurity(); });
             }
-            if (action === 'unblockUsername') {
+            else if (action === 'unblockUsername') {
                 api(`/api/v1/admin/security/banned-usernames/${id}`, { method: 'DELETE' })
                     .then(() => loadSecurity());
             }
@@ -656,9 +737,9 @@
                 const dashboard = await api('/api/v1/admin/dashboard');
                 document.getElementById('stats-summary').innerHTML = `
                     <div class="card"><h3>Open Tickets</h3><div style="font-size:2rem; font-weight:bold; color:var(--warn)">${dashboard.tickets.open}</div></div>
-                    <div class="card"><h3>Resolved Today</h3><div style="font-size:2rem; font-weight:bold; color:var(--good)">${dashboard.tickets.resolved}</div></div>
-                    <div class="card"><h3>System Health</h3><div style="font-size:2rem; font-weight:bold; color:var(--good)">Stable</div></div>
-                    <div class="card"><h3>Active Users</h3><div style="font-size:2rem; font-weight:bold; color:var(--primary)">${dashboard.active_users || '...'}</div></div>
+                    <div class="card"><h3>Total Users</h3><div style="font-size:2rem; font-weight:bold; color:var(--good)">${dashboard.total_users}</div></div>
+                    <div class="card"><h3>DB Health</h3><div style="font-size:2rem; font-weight:bold; color:${dashboard.db_status === 'healthy' ? 'var(--good)' : 'var(--bad)'}">${dashboard.db_status.toUpperCase()}</div></div>
+                    <div class="card"><h3>Active (24h)</h3><div style="font-size:2rem; font-weight:bold; color:var(--primary)">${dashboard.active_users}</div></div>
                 `;
                 document.getElementById('loading').classList.add('hidden');
                 document.getElementById('content').classList.remove('hidden');
