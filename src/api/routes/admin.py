@@ -402,14 +402,28 @@ def _load_admin_template(template_name: str, csp_nonce: Optional[str] = None) ->
         # Inject CSP nonce into template if provided
         if csp_nonce:
             import re
-            # Replace <script> with <script nonce="...">
-            # Use regex to find <script> tags and inject nonce, handling potential existing attributes
-            # This handles <script>, <script type="...">, etc.
-            content = re.sub(r'<script(\s|>|)', f'<script nonce="{csp_nonce}"\\1', content)
+            escaped_nonce = re.escape(csp_nonce)
             
-            # Replace any placeholders if they exist
+            # 1. Replace explicit placeholders (preferred)
+            # Use a lambda for replacement to avoid backslash issues in nonce
             content = content.replace("{{ csp_nonce }}", csp_nonce)
-            content = content.replace("{{ nonce }}", csp_nonce)  # Backwards compatibility
+            content = content.replace("{{ nonce }}", csp_nonce)
+            
+            # 2. Inject nonce into any <script> tags that don't have one yet
+            # We look for <script> and <script ...> but skip if it already has a nonce
+            # This is safer than the previous re.sub
+            def script_repl(match):
+                tag = match.group(0)
+                if 'nonce=' in tag:
+                    return tag
+                return tag.replace('<script', f'<script nonce="{csp_nonce}"')
+            
+            content = re.sub(r'<script[^>]*>', script_repl, content)
+            
+            # 3. Clean up any accidental double nonces (e.g. if placeholder was inside tag)
+            content = re.sub(f'nonce="{escaped_nonce}"\\s+nonce="{escaped_nonce}"', f'nonce="{csp_nonce}"', content)
+            
+            logger.debug(f"Injected CSP nonce into {template_name} (nonce: {csp_nonce[:8]}...)")
             
         return content
     except Exception as e:
