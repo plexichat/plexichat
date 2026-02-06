@@ -209,26 +209,14 @@ def report_message(
 ) -> MessageReport:
     """
     Report a message for content moderation.
-
-    Args:
-        reporter_id: User ID of reporter
-        message_id: ID of the message being reported
-        channel_id: Channel containing the message
-        reason: Brief reason for report
-        category: Report category
-        details: Additional details
-        server_id: Server ID (if applicable)
-        reported_user_id: Author of the message
-        message_content: Snapshot of message content
-
-    Returns:
-        MessageReport object
+    Automatically captures attachment hashes if present.
     """
     db = _get_db()
 
     report_id = generate_snowflake_id()
     now = int(time.time() * 1000)
 
+    # 1. Store the primary message report
     db.execute(
         """INSERT INTO message_reports 
            (id, message_id, channel_id, server_id, reporter_id, reported_user_id,
@@ -248,6 +236,40 @@ def report_message(
             now,
         ),
     )
+
+    # 2. If message has attachments, also create media hash reports
+    # This allows the media moderation system to block the specific file hash
+    if _messaging:
+        try:
+            msg = _messaging.get_message(reporter_id, message_id)
+            if msg and msg.attachments:
+                for att in msg.attachments:
+                    if hasattr(att, 'checksum') and att.checksum:
+                        # Add to media_hash_reports table if it doesn't exist
+                        try:
+                            # Use generate_snowflake_id() for the media report too
+                            media_report_id = generate_snowflake_id()
+                            db.execute(
+                                """INSERT INTO media_hash_reports 
+                                   (id, hash_value, reporter_id, reason, details, status, reported_at, uploader_id, message_id, attachment_url)
+                                   VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)""",
+                                (
+                                    media_report_id,
+                                    att.checksum,
+                                    reporter_id,
+                                    reason,
+                                    f"Reported via message {message_id}: {details or ''}",
+                                    now,
+                                    reported_user_id,
+                                    message_id,
+                                    att.url
+                                )
+                            )
+                            logger.info(f"Automatically created media hash report for {att.checksum[:16]} from message {message_id}")
+                        except Exception as e:
+                            logger.debug(f"Media report already exists or failed: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to extract attachments for media report: {e}")
 
     logger.info(f"Message {message_id} reported by user {reporter_id}: {reason}")
 

@@ -40,6 +40,8 @@ class ResponseTimeEntry:
     status_code: int
     timestamp: int
     client_id: Optional[str] = None
+    db_queries: int = 0
+    db_time_ms: float = 0.0
 
 
 @dataclass
@@ -57,6 +59,8 @@ class EndpointStats:
     p99_response_time_ms: float
     error_rate: float
     last_updated: int
+    avg_queries: float = 0.0
+    avg_query_time_ms: float = 0.0
 
 
 def setup(db: Any) -> None:
@@ -244,6 +248,8 @@ def submit_response_times(
                     status_code,
                     timestamp,
                     client_id,
+                    int(entry.get("db_queries", 0)),
+                    float(entry.get("db_time_ms", 0.0)),
                 )
             )
 
@@ -257,8 +263,8 @@ def submit_response_times(
     try:
         db.executemany(
             """INSERT INTO telemetry_response_times 
-               (id, endpoint, method, response_time_ms, status_code, timestamp, client_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               (id, endpoint, method, response_time_ms, status_code, timestamp, client_id, db_queries, db_time_ms)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             batch_data,
         )
         return len(batch_data)
@@ -269,8 +275,8 @@ def submit_response_times(
             try:
                 db.execute(
                     """INSERT INTO telemetry_response_times 
-                       (id, endpoint, method, response_time_ms, status_code, timestamp, client_id)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                       (id, endpoint, method, response_time_ms, status_code, timestamp, client_id, db_queries, db_time_ms)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     data,
                 )
                 stored += 1
@@ -337,9 +343,11 @@ def get_endpoint_stats(
     for (pattern, method), endpoints in pattern_groups.items():
         all_times = []
         error_count = 0
+        total_db_queries = 0
+        total_db_time = 0.0
 
         for endpoint in endpoints:
-            times_query = """SELECT response_time_ms, status_code FROM telemetry_response_times 
+            times_query = """SELECT response_time_ms, status_code, db_queries, db_time_ms FROM telemetry_response_times 
                    WHERE endpoint = ? AND method = ? AND timestamp > ?"""
             times_params: list = [endpoint, method, cutoff]
 
@@ -352,7 +360,12 @@ def get_endpoint_stats(
             for r in times_rows:
                 rt = r["response_time_ms"] if isinstance(r, dict) else r[0]
                 sc = r["status_code"] if isinstance(r, dict) else r[1]
+                db_q = r["db_queries"] if isinstance(r, dict) else r[2]
+                db_t = r["db_time_ms"] if isinstance(r, dict) else r[3]
+                
                 all_times.append(rt)
+                total_db_queries += db_q or 0
+                total_db_time += db_t or 0.0
                 if sc >= 400:
                     error_count += 1
 
@@ -378,6 +391,8 @@ def get_endpoint_stats(
                 p99_response_time_ms=sorted_times[min(p99_idx, count - 1)],
                 error_rate=error_count / count if count > 0 else 0,
                 last_updated=int(time.time() * 1000),
+                avg_queries=total_db_queries / count,
+                avg_query_time_ms=total_db_time / count,
             )
         )
 

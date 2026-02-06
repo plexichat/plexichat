@@ -67,6 +67,65 @@ router = APIRouter(tags=["Admin Management"])
 # ==================== Security Tools Routes ====================
 
 
+@router.post(
+    "/users/{user_id}/force-username-change",
+    response_model=SuccessResponse,
+    summary="Force user to change username",
+)
+async def admin_force_username_change(request: Request, user_id: int) -> SuccessResponse:
+    """Force a user to change their username on next login."""
+    _check_host_restriction(request)
+    _get_admin_from_token(request)
+
+    from src.core import admin
+    admin.force_username_change(user_id, True)
+    return SuccessResponse(success=True)
+
+
+@router.get(
+    "/security/banned-usernames",
+    response_model=List[BannedUsernameResponse],
+    summary="Get banned username patterns",
+)
+async def get_banned_usernames(request: Request) -> List[BannedUsernameResponse]:
+    """Get list of banned username patterns."""
+    _check_host_restriction(request)
+    _get_admin_from_token(request)
+
+    from src.core import admin
+    return [BannedUsernameResponse(**p.__dict__) if hasattr(p, '__dict__') else p for p in admin.get_banned_usernames()]
+
+
+@router.post(
+    "/security/banned-usernames",
+    response_model=SuccessResponse,
+    summary="Ban a username pattern",
+)
+async def add_banned_username(request: Request, body: BannedUsernameCreate) -> SuccessResponse:
+    """Add a pattern to the username blacklist."""
+    _check_host_restriction(request)
+    admin_id = _get_admin_from_token(request)
+
+    from src.core import admin
+    admin.add_banned_username(body.pattern, body.reason, admin_id, body.is_regex)
+    return SuccessResponse(success=True)
+
+
+@router.delete(
+    "/security/banned-usernames/{pattern_id}",
+    response_model=SuccessResponse,
+    summary="Remove a banned username pattern",
+)
+async def remove_banned_username(request: Request, pattern_id: int) -> SuccessResponse:
+    """Remove a pattern from the username blacklist."""
+    _check_host_restriction(request)
+    _get_admin_from_token(request)
+
+    from src.core import admin
+    admin.remove_banned_username(pattern_id)
+    return SuccessResponse(success=True)
+
+
 @router.get(
     "/security/blocked-ips",
     response_model=List[BlockedIPResponse],
@@ -697,14 +756,35 @@ async def get_dashboard(request: Request) -> AdminDashboardResponse:
                         p95_ms=round(s.p95_response_time_ms, 2),
                         p99_ms=round(getattr(s, "p99_response_time_ms", 0), 2),
                         error_rate=round(s.error_rate * 100, 2),
+                        avg_queries=round(getattr(s, "avg_queries", 0), 1),
+                        avg_query_time_ms=round(getattr(s, "avg_query_time_ms", 0), 2),
                     )
                     for s in stats[:20]
                 ]
         except Exception as te:
             logger.debug(f"Failed to get telemetry stats for dashboard: {te}")
 
+        # Add user activity stats
+        total_users = 0
+        active_users = 0
+        db_status = "healthy"
+        try:
+            db = api.get_db()
+            total_users = db.fetch_one("SELECT COUNT(*) as c FROM auth_users")["c"]
+            cutoff = int((time.time() - 86400) * 1000)
+            active_users = db.fetch_one("SELECT COUNT(*) as c FROM auth_users WHERE last_login_at > ?", (cutoff,))["c"]
+        except Exception as ue:
+            logger.warning(f"Failed to get user stats for dashboard: {ue}")
+            db_status = "degraded"
+
         logger.info(f"Admin {admin_id} retrieved dashboard data")
-        return AdminDashboardResponse(tickets=ticket_counts, telemetry=telemetry_stats)
+        return AdminDashboardResponse(
+            tickets=ticket_counts, 
+            telemetry=telemetry_stats,
+            total_users=total_users,
+            active_users=active_users,
+            db_status=db_status
+        )
     except Exception as e:
         logger.error(
             f"Failed to get dashboard data for admin {admin_id}: {e}", exc_info=True

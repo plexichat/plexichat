@@ -127,6 +127,8 @@ class TelemetryEndpointStat(BaseModel):
         None, description="99th percentile response time in ms"
     )
     error_rate: float = Field(..., description="Error rate percentage")
+    avg_queries: Optional[float] = Field(0.0, description="Average DB queries per request")
+    avg_query_time_ms: Optional[float] = Field(0.0, description="Average DB query time in ms")
 
 
 class AdminDashboardResponse(BaseModel):
@@ -138,6 +140,9 @@ class AdminDashboardResponse(BaseModel):
     telemetry: List[TelemetryEndpointStat] = Field(
         ..., description="Top telemetry stats"
     )
+    active_users: int = Field(0, description="Active users in last 24h")
+    total_users: int = Field(0, description="Total registered users")
+    db_status: str = Field("healthy", description="Database connection health")
 
 
 class TelemetryStatsResponse(BaseModel):
@@ -301,6 +306,23 @@ class UserDetailsResponse(BaseModel):
     last_login: Optional[int] = Field(None, description="Last login timestamp")
     account_locked: bool = Field(False, description="Whether account is locked")
     locked_until: Optional[int] = Field(None, description="Lock expiration timestamp")
+    force_username_change: bool = Field(False, description="Whether user must change name")
+
+
+class BannedUsernameResponse(BaseModel):
+    """Banned username pattern response."""
+    id: int
+    pattern: str
+    is_regex: bool
+    reason: Optional[str]
+    created_at: str
+
+
+class BannedUsernameCreate(BaseModel):
+    """Create banned username pattern."""
+    pattern: str = Field(..., min_length=1, max_length=100)
+    reason: Optional[str] = Field(None, max_length=200)
+    is_regex: bool = Field(False)
 
 
 class UserTierUpdateResponse(BaseModel):

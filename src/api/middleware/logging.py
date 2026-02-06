@@ -24,7 +24,8 @@ def _get_logger():
 
 
 def _submit_server_telemetry(
-    endpoint: str, method: str, response_time_ms: float, status_code: int
+    endpoint: str, method: str, response_time_ms: float, status_code: int,
+    db_queries: int = 0, db_time_ms: float = 0.0
 ):
     """Submit server-side telemetry data."""
     try:
@@ -39,6 +40,8 @@ def _submit_server_telemetry(
                         "response_time_ms": response_time_ms,
                         "status_code": status_code,
                         "timestamp": int(time.time() * 1000),
+                        "db_queries": db_queries,
+                        "db_time_ms": db_time_ms
                     }
                 ],
                 client_id="server",
@@ -147,30 +150,35 @@ class LoggingMiddleware:
                     end_time = time.perf_counter()
                     duration_ms = (end_time - start_time) * 1000
 
-                    async def background_logging():
-                        # Generate and write log message in a threadpool to avoid HDD bottlenecks
-                        log_msg = f"{method} {path} - {status_code} - {duration_ms:.2f}ms - {client_ip}"
-                        
-                        def write_log():
-                            if status_code >= 500:
-                                _log_error(log_msg)
-                            elif status_code >= 400:
-                                _log_warning(log_msg)
-                            else:
-                                _log_info(log_msg)
-                        
-                        await run_in_threadpool(write_log)
+                    # Generate and write log message in a threadpool to avoid HDD bottlenecks
+                    log_msg = f"{method} {path} - {status_code} - {duration_ms:.2f}ms - {client_ip}"
 
-                        # Submit server-side telemetry for API endpoints
-                        if path.startswith("/api/"):
-                            try:
-                                await run_in_threadpool(
-                                    _submit_server_telemetry, path, method, duration_ms, status_code
-                                )
-                            except Exception:
-                                pass
+                    def write_log():
+                        if status_code >= 500:
+                            _log_error(log_msg)
+                        elif status_code >= 400:
+                            _log_warning(log_msg)
+                        else:
+                            _log_info(log_msg)
 
-                    asyncio.create_task(background_logging())
+                    await run_in_threadpool(write_log)
+
+                    # Submit server-side telemetry for API endpoints
+                    if path.startswith("/api/"):
+                        try:
+                            # Get DB metrics if available
+                            import src.api as api
+                            db = api.get_db()
+                            db_metrics = db.get_request_metrics() if db else {"query_count": 0, "query_time_ms": 0.0}
+                            
+                            await run_in_threadpool(
+                                _submit_server_telemetry, 
+                                path, method, duration_ms, status_code,
+                                db_metrics["query_count"],
+                                db_metrics["query_time_ms"]
+                            )
+                        except Exception:
+                            pass
 
             await send(message)
 

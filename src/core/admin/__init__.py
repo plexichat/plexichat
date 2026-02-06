@@ -1161,6 +1161,18 @@ class AdminUserDetail:
     last_login: Optional[int]
     account_locked: bool = False
     locked_until: Optional[int] = None
+    force_username_change: bool = False
+
+
+@dataclass
+class AdminBannedUsername:
+    """A pattern for banned usernames."""
+    id: int
+    pattern: str
+    is_regex: bool
+    reason: Optional[str]
+    created_by: Optional[int]
+    created_at: str
 
 
 def search_users(q: str, limit: int = 20, offset: int = 0) -> List[AdminUserDetail]:
@@ -1171,7 +1183,7 @@ def search_users(q: str, limit: int = 20, offset: int = 0) -> List[AdminUserDeta
         # Try to parse as ID first
         user_id = int(q)
         rows = db.fetch_all(
-            """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at, u.account_locked, u.locked_until
+            """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at, u.account_locked, u.locked_until, u.force_username_change
                FROM auth_users u
                LEFT JOIN user_features f ON u.id = f.user_id
                WHERE u.id = ? LIMIT ? OFFSET ?""",
@@ -1180,7 +1192,7 @@ def search_users(q: str, limit: int = 20, offset: int = 0) -> List[AdminUserDeta
     except ValueError:
         # Search by username or email index
         rows = db.fetch_all(
-            """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at, u.account_locked, u.locked_until
+            """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at, u.account_locked, u.locked_until, u.force_username_change
                FROM auth_users u
                LEFT JOIN user_features f ON u.id = f.user_id
                WHERE u.username LIKE ? OR u.email_index LIKE ? LIMIT ? OFFSET ?""",
@@ -1214,6 +1226,7 @@ def search_users(q: str, limit: int = 20, offset: int = 0) -> List[AdminUserDeta
                     last_login=None,  # Not in search results for performance
                     account_locked=bool(row.get("account_locked", 0)),
                     locked_until=row.get("locked_until"),
+                    force_username_change=bool(row.get("force_username_change", 0)),
                 )
             )
         else:
@@ -1240,6 +1253,7 @@ def search_users(q: str, limit: int = 20, offset: int = 0) -> List[AdminUserDeta
                     last_login=None,
                     account_locked=bool(row[6]),
                     locked_until=row[7],
+                    force_username_change=bool(row[8]),
                 )
             )
     return users
@@ -1250,7 +1264,7 @@ def get_user_details(user_id: int) -> Optional[AdminUserDetail]:
     db = _get_db()
 
     row = db.fetch_one(
-        """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at, u.last_login_at, u.account_locked, u.locked_until
+        """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at, u.last_login_at, u.account_locked, u.locked_until, u.force_username_change
            FROM auth_users u
            LEFT JOIN user_features f ON u.id = f.user_id
            WHERE u.id = ?""",
@@ -1283,6 +1297,7 @@ def get_user_details(user_id: int) -> Optional[AdminUserDetail]:
             last_login=row.get("last_login_at"),
             account_locked=bool(row.get("account_locked", 0)),
             locked_until=row.get("locked_until"),
+            force_username_change=bool(row.get("force_username_change", 0)),
         )
     else:
         badges_json = row[4] or "[]"
@@ -1307,7 +1322,53 @@ def get_user_details(user_id: int) -> Optional[AdminUserDetail]:
             last_login=row[6],
             account_locked=bool(row[7]),
             locked_until=row[8],
+            force_username_change=bool(row[9]),
         )
+
+
+def force_username_change(user_id: int, forced: bool = True) -> bool:
+    """Force a user to change their username on next login."""
+    db = _get_db()
+    db.execute(
+        "UPDATE auth_users SET force_username_change = ? WHERE id = ?",
+        (1 if forced else 0, user_id)
+    )
+    return True
+
+
+def get_banned_usernames() -> List[AdminBannedUsername]:
+    """Get list of banned username patterns."""
+    db = _get_db()
+    rows = db.fetch_all("SELECT * FROM username_blacklist ORDER BY created_at DESC")
+    
+    result = []
+    for row in rows:
+        if isinstance(row, dict):
+            result.append(AdminBannedUsername(**row))
+        else:
+            result.append(AdminBannedUsername(*row))
+    return result
+
+
+def add_banned_username(pattern: str, reason: str, admin_id: int, is_regex: bool = False) -> bool:
+    """Add a pattern to the username blacklist."""
+    db = _get_db()
+    try:
+        db.execute(
+            "INSERT INTO username_blacklist (pattern, is_regex, reason, created_by) VALUES (?, ?, ?, ?)",
+            (pattern, 1 if is_regex else 0, reason, admin_id)
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Failed to ban username pattern: {e}")
+        return False
+
+
+def remove_banned_username(pattern_id: int) -> bool:
+    """Remove a pattern from the username blacklist."""
+    db = _get_db()
+    db.execute("DELETE FROM username_blacklist WHERE id = ?", (pattern_id,))
+    return True
 
 
 def update_user_tier(user_id: int, tier: str, admin_id: int = 0) -> bool:
