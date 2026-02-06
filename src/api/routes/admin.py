@@ -401,10 +401,15 @@ def _load_admin_template(template_name: str, csp_nonce: Optional[str] = None) ->
         
         # Inject CSP nonce into template if provided
         if csp_nonce:
+            import re
             # Replace <script> with <script nonce="...">
-            content = content.replace("<script>", f'<script nonce="{csp_nonce}">')
+            # Use regex to find <script> tags and inject nonce, handling potential existing attributes
+            # This handles <script>, <script type="...">, etc.
+            content = re.sub(r'<script(\s|>|)', f'<script nonce="{csp_nonce}"\\1', content)
+            
             # Replace any placeholders if they exist
             content = content.replace("{{ csp_nonce }}", csp_nonce)
+            content = content.replace("{{ nonce }}", csp_nonce)  # Backwards compatibility
             
         return content
     except Exception as e:
