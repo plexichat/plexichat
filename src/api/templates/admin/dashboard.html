@@ -233,6 +233,10 @@
                     <div class="stat-label">Active Users (24h)</div>
                     <div class="stat-value" id="stat-active-users">0</div>
                 </div>
+                <div class="card" style="border-left: 4px solid #fff;">
+                    <div class="stat-label">Total Registered</div>
+                    <div class="stat-value" id="stat-total-users">0</div>
+                </div>
                 <div class="card" style="border-left: 4px solid var(--good);">
                     <div class="stat-label">Avg Latency</div>
                     <div style="display: flex; align-items: baseline; gap: 0.5rem;"><div class="stat-value" id="stat-avg-latency">0</div><span style="font-size: 0.75rem; color: #555; font-weight: 800;">MS</span></div>
@@ -240,10 +244,6 @@
                 <div class="card" style="border-left: 4px solid var(--bad);">
                     <div class="stat-label">Error Rate</div>
                     <div style="display: flex; align-items: baseline; gap: 0.5rem;"><div class="stat-value" id="stat-error-rate">0.0</div><span style="font-size: 0.75rem; color: #555; font-weight: 800;">%</span></div>
-                </div>
-                <div class="card" style="border-left: 4px solid var(--warn);">
-                    <div class="stat-label">CPU Load</div>
-                    <div style="display: flex; align-items: baseline; gap: 0.5rem;"><div class="stat-value" id="stat-sys-load">0.0</div><span style="font-size: 0.75rem; color: #555; font-weight: 800;">%</span></div>
                 </div>
             </div>
 
@@ -424,7 +424,10 @@
             
             document.getElementById('stat-avg-latency').textContent = Math.round(avgLat);
             document.getElementById('stat-error-rate').textContent = total > 0 ? (errors / total * 100).toFixed(1) : '0.0';
-            document.getElementById('stat-sys-load').textContent = d.system?.cpu_percent?.toFixed(1) || '0.0';
+            // No stat-sys-load in HTML? Let's use the 4th card which is stat-error-rate? No, wait.
+            // Ah, the 4th card is CPU Load in HTML. ID was stat-sys-load.
+            const sysLoadEl = document.getElementById('stat-sys-load');
+            if (sysLoadEl) sysLoadEl.textContent = d.system?.cpu_percent?.toFixed(1) || '0.0';
         }
 
         function renderEndpointTable() {
@@ -445,8 +448,22 @@
         }
 
         function updateCharts(dash, stats) {
-            const opt = { responsive: true, maintainAspectRatio: false, animation: false, plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { grid: { color: '#1a1a1a' }, ticks: { color: '#555', font: { size: 9 } } } } };
+            // Keep labels for X axis visibility
             const top = stats.slice(0, 10), labels = top.map(s => s.endpoint.split('/').pop() || '/');
+            const opt = { 
+                responsive: true, 
+                maintainAspectRatio: false, 
+                animation: false, 
+                plugins: { legend: { display: false } }, 
+                scales: { 
+                    x: { 
+                        display: true, // X Axis enabled
+                        grid: { color: '#1a1a1a' }, 
+                        ticks: { color: '#555', font: { size: 8 } } 
+                    }, 
+                    y: { grid: { color: '#1a1a1a' }, ticks: { color: '#555', font: { size: 9 } } } 
+                } 
+            };
             
             renderChart('chart-tps', 'bar', { labels, datasets: [ { data: top.map(s => s.count), backgroundColor: 'rgba(0, 170, 255, 0.7)' }, { data: top.map(s => s.count * s.avg_queries), backgroundColor: 'rgba(255, 153, 0, 0.7)' } ] }, opt);
             renderChart('chart-latency', 'line', { labels, datasets: [ { data: top.map(s => s.avg_ms), borderColor: 'var(--good)', tension: 0.4, pointRadius: 0, borderWidth: 3 }, { data: top.map(s => s.p95_ms), borderColor: 'var(--bad)', tension: 0.4, pointRadius: 0, borderWidth: 3 } ] }, opt);
@@ -467,7 +484,7 @@
             renderChart('chart-status-dist', 'doughnut', { labels: ['OK', 'ERR'], datasets: [{ data: [t-e, e], backgroundColor: ['var(--good)', 'var(--bad)'], borderWidth: 0 }]}, { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: true, position: 'bottom', labels: { color: '#888' } } } });
         }
 
-        function renderChart(id, type, data, options) { if (charts[id]) charts[id].destroy(); charts[id] = new Chart(document.getElementById(id).getContext('2d'), { type, data, options }); }
+        function renderChart(id, type, data, options) { if (charts[id]) charts[id].destroy(); const ctx = document.getElementById(id); if(!ctx) return; charts[id] = new Chart(ctx.getContext('2d'), { type, data, options }); }
         
         function updateHist(id, metrics) {
             if (!historicalData[id]) historicalData[id] = { labels: Array(60).fill(''), datasets: metrics.map(m => ({ data: Array(60).fill(0), borderColor: m.col, tension: 0.4, pointRadius: 0, borderWidth: 2 }))};
@@ -520,7 +537,7 @@
                         <td><button class="btn btn-secondary btn-sm" data-click="manageUser" data-id="${u.id}">Manage</button></td></tr>
                     `).join('')}</tbody></table>
                 `;
-            } catch (e) { alert('Search failed'); }
+            } catch (e) { alert('Search failed: ' + e.message); }
         }
 
         async function manageUser(id) {
@@ -533,14 +550,15 @@
                 document.getElementById('user-tier-select').value = u.tier;
                 document.getElementById('suspend-btn').textContent = u.account_locked ? 'Unlock' : 'Suspend';
                 document.getElementById('user-manage').classList.remove('hidden');
+                document.getElementById('user-manage').scrollIntoView({ behavior: 'smooth' });
             } catch (e) { alert('Failed to load user data'); }
         }
 
         async function loadSecurity() {
             try {
                 const [ips, bans] = await Promise.all([api('/api/v1/admin/security/blocked-ips'), api('/api/v1/admin/security/banned-usernames')]);
-                document.getElementById('blocked-ips-tbody').innerHTML = ips.map(i => `<tr><td>${i.ip_address}</td><td>${i.reason || ''}</td><td><button class="btn btn-outline" data-click="unblockIP" data-val="${i.ip_address}">Unblock</button></td></tr>`).join('');
-                document.getElementById('banned-usernames-tbody').innerHTML = bans.map(b => `<tr><td>${b.pattern}</td><td>${b.reason || ''}</td><td><button class="btn btn-outline" data-click="removeBan" data-id="${b.id}">Remove</button></td></tr>`).join('');
+                document.getElementById('blocked-ips-tbody').innerHTML = ips.map(i => `<tr><td>${i.ip_address}</td><td>${i.reason || ''}</td><td><button class="btn btn-outline btn-sm" data-click="unblockIP" data-val="${i.ip_address}">Unblock</button></td></tr>`).join('');
+                document.getElementById('banned-usernames-tbody').innerHTML = bans.map(b => `<tr><td>${b.pattern}</td><td>${b.reason || ''}</td><td><button class="btn btn-outline btn-sm" data-click="removeBan" data-id="${b.id}">Remove</button></td></tr>`).join('');
             } catch (e) {}
         }
 
@@ -559,14 +577,14 @@
                 const d = await api(`/api/v1/admin/logs/${f}?limit=300${search ? '&q='+encodeURIComponent(search) : ''}`);
                 const viewer = document.getElementById('log-viewer');
                 viewer.innerHTML = d.lines.map(l => {
-                    const cls = l.level === 'ERROR' ? 'log-error' : (l.level === 'WARNING' ? 'log-warning' : 'log-info');
+                    const cls = l.level === 'ERROR' ? 'log-error' : (l.level === 'WARNING' ? 'log-warning' : (l.level === 'DEBUG' ? 'log-debug' : 'log-info'));
                     return `<div class="${cls}">${l.raw}</div>`;
                 }).join('');
                 if (document.getElementById('log-auto-refresh').checked) viewer.scrollTop = viewer.scrollHeight;
             } catch (e) { document.getElementById('log-viewer').textContent = 'Error loading logs'; }
         }
 
-        // Global Event Delegation (Fixed CSP)
+        // Event Delegation (Fixed CSP)
         document.addEventListener('click', (e) => {
             const el = e.target.closest('[data-click]');
             if (!el) {
@@ -617,18 +635,21 @@
             else if (a === 'scrollLogBottom') document.getElementById('log-viewer').scrollTop = 1e9;
         });
 
-        // Enter Key Handling
+        // Enter Key Support
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 if (e.target.id === 'user-search-input') searchUsers();
                 else if (e.target.id === 'endpoint-filter') renderEndpointTable();
                 else if (e.target.id === 'log-search') loadLogFile(document.getElementById('log-file-select').value);
                 else if (e.target.id === 'new-note-input') document.querySelector('[data-click="addTicketNote"]').click();
+                else if (e.target.id === 'block-ip-val') document.querySelector('[data-click="blockIP"]').click();
+                else if (e.target.id === 'ban-username-val') document.querySelector('[data-click="addBannedUsername"]').click();
             }
         });
 
         document.getElementById('log-file-select').addEventListener('change', (e) => loadLogFile(e.target.value));
         document.getElementById('metric-hours').addEventListener('change', refreshMetrics);
+        document.getElementById('endpoint-filter').addEventListener('input', renderEndpointTable);
 
         setInterval(() => {
             if (currentTab === 'logs' && document.getElementById('log-auto-refresh').checked) {
