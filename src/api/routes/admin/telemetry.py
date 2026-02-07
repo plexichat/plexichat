@@ -6,6 +6,8 @@ from fastapi import APIRouter, Request, HTTPException, Response, status
 from typing import List, Optional, Union
 import time
 import urllib.parse
+import csv
+import io
 from src.api.schemas.admin import (
     TelemetryStatsResponse, TelemetryEndpointStat, TelemetryHistoryResponse, TelemetryHistoryBucket,
     TelemetryResetResponse, TelemetryExportResponse
@@ -71,9 +73,44 @@ async def export_telemetry_stats(request: Request, format: str = "json", hours: 
         if not telemetry.is_setup(): raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Telemetry not setup"}})
         stats = telemetry.get_endpoint_stats(hours=hours)
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        
         if format == "json":
-            return TelemetryExportResponse(export_time=ts, hours=hours, stats=[TelemetryEndpointStat(endpoint=s.endpoint, method=s.method, count=s.count, avg_ms=round(s.avg_response_time_ms, 2), p95_ms=round(s.p95_response_time_ms, 2), error_rate=round(s.error_rate * 100, 2), avg_queries=round(s.avg_queries, 1), avg_query_time_ms=round(s.avg_query_time_ms, 2)) for s in stats])
-        # Add other formats if needed
+            return TelemetryExportResponse(
+                export_time=ts, 
+                hours=hours, 
+                stats=[TelemetryEndpointStat(
+                    endpoint=s.endpoint, method=s.method, count=s.count, 
+                    avg_ms=round(s.avg_response_time_ms, 2), p95_ms=round(s.p95_response_time_ms, 2), 
+                    error_rate=round(s.error_rate * 100, 2), avg_queries=round(s.avg_queries, 1), 
+                    avg_query_time_ms=round(s.avg_query_time_ms, 2)
+                ) for s in stats]
+            )
+        
+        elif format == "csv":
+            output = io.StringIO()
+            writer = csv.writer(output)
+            writer.writerow(["Endpoint", "Method", "Hits", "Avg Latency (ms)", "P95 Latency (ms)", "Avg Queries", "Avg DB Time (ms)", "Error Rate %"])
+            for s in stats:
+                writer.writerow([s.endpoint, s.method, s.count, round(s.avg_response_time_ms, 2), round(s.p95_response_time_ms, 2), round(s.avg_queries, 1), round(s.avg_query_time_ms, 2), round(s.error_rate * 100, 2)])
+            return Response(
+                content=output.getvalue(),
+                media_type="text/csv",
+                headers={"Content-Disposition": f"attachment; filename=telemetry_{ts.replace(' ', '_').replace(':', '-')}.csv"}
+            )
+            
+        elif format == "txt":
+            lines = [f"PlexiChat Telemetry Export - {ts}", f"Time Window: {hours} hours", ""]
+            header = f"{'Endpoint':<50} {'Method':<8} {'Hits':>8} {'Avg':>8} {'P95':>8} {'Q/Req':>6} {'DB ms':>8} {'Err%':>6}"
+            lines.append(header)
+            lines.append("-" * len(header))
+            for s in stats:
+                lines.append(f"{s.endpoint[:50]:<50} {s.method:<8} {s.count:>8} {s.avg_response_time_ms:>8.1f} {s.p95_response_time_ms:>8.1f} {s.avg_queries:>6.1f} {s.avg_query_time_ms:>8.1f} {s.error_rate*100:>6.1f}")
+            return Response(
+                content="\n".join(lines),
+                media_type="text/plain",
+                headers={"Content-Disposition": f"attachment; filename=telemetry_{ts.replace(' ', '_').replace(':', '-')}.txt"}
+            )
+
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": f"Unsupported format: {format}"}})
     except Exception as e:
         if isinstance(e, HTTPException): raise
