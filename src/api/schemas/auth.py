@@ -50,6 +50,7 @@ class UserResponse(BaseModel):
     email_verified: bool = Field(False, description="Email verification status")
     totp_enabled: bool = Field(False, description="2FA enabled status")
     age_verified: bool = Field(False, description="Age verification status")
+    badges: List[str] = Field(default_factory=list, description="User badges")
 
 
 class SessionResponse(BaseModel):

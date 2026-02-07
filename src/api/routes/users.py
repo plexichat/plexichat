@@ -40,8 +40,21 @@ def _get_attr(obj, key, default=None):
 def _user_to_response(user, include_private: bool = False) -> UserResponse:
     """Convert user object or dict to response model."""
     try:
+        user_id = _get_attr(user, "id")
+        
+        # Get badges from user object or re-fetch if missing
+        badges = _get_attr(user, "badges")
+        if badges is None:
+            badges = []
+            try:
+                from src.core import features
+                if features._setup_complete:
+                    badges = features.get_user_badges(user_id)
+            except Exception:
+                pass
+
         return UserResponse(
-            id=SnowflakeID(_get_attr(user, "id")),
+            id=SnowflakeID(user_id),
             username=str(_get_attr(user, "username") or ""),
             email=_get_attr(user, "email") if include_private else None,
             avatar_url=_get_attr(user, "avatar_url"),
@@ -52,6 +65,7 @@ def _user_to_response(user, include_private: bool = False) -> UserResponse:
             totp_enabled=_get_attr(user, "totp_enabled", False)
             if include_private
             else False,
+            badges=badges,
         )
     except Exception as e:
         logger.error(f"Error converting user object to response: {e}")
@@ -63,14 +77,18 @@ def _user_to_public_response(user) -> UserPublicResponse:
     try:
         user_id = _get_attr(user, "id")
         
-        # Fetch badges from features module
-        badges = []
-        try:
-            from src.core import features
-            if features._setup_complete:
-                badges = features.get_user_badges(user_id)
-        except Exception as e:
-            logger.debug(f"Failed to fetch badges for user {user_id}: {e}")
+        # Use badges from user object if available (already joined in AuthManager)
+        # Fallback to empty list or re-fetch only if absolutely necessary
+        badges = _get_attr(user, "badges")
+        
+        if badges is None:
+            badges = []
+            try:
+                from src.core import features
+                if features._setup_complete:
+                    badges = features.get_user_badges(user_id)
+            except Exception as e:
+                logger.debug(f"Failed to fetch badges for user {user_id}: {e}")
 
         return UserPublicResponse(
             id=SnowflakeID(user_id),
@@ -101,6 +119,7 @@ def _user_to_dict(user) -> dict:
             "totp_enabled": getattr(user, "totp_enabled", False),
             "account_type": account_type,
             "permissions": getattr(user, "permissions", {}),
+            "badges": getattr(user, "badges", []),
         }
     except Exception as e:
         logger.error(f"Error converting user object to dict: {e}")

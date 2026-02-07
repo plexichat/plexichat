@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Depends
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
-from src.core.auth.models import User
+from src.core.auth.models import User, AccountType
 from src.api.schemas.relationships import (
     FriendRequestCreate,
     BlockCreate,
@@ -579,7 +579,7 @@ async def accept_friend_request(
         try:
             get_relationships.invalidate(current_user=current_user)
             # Create a dummy user object for cache key generation
-            other_user = User(id=sender_id, username="", account_type=None, permissions={}, created_at=0, updated_at=0)
+            other_user = User(id=sender_id, username="", email=None, account_type=AccountType.USER, permissions={}, created_at=0, updated_at=0)
             get_relationships.invalidate(current_user=other_user)
         except Exception as e:
             logger.debug(f"Failed to invalidate relationship cache: {e}")

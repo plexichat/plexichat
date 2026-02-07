@@ -814,10 +814,10 @@ class ServerManager(BaseManager):
         self._cache_invalidate(self._permission_cache, (user_id, server_id, None))
 
         # Invalidate Redis
-        from src.core.database import cache_delete, invalidate_pattern, invalidate_cached
+        from src.core.database import cache_delete, invalidate_pattern
         cache_delete(f"is_member:{server_id}:{user_id}")
         invalidate_pattern(f"perms:{user_id}:{server_id}:*")
-        invalidate_cached(self.get_servers, user_id)
+        self.get_servers.invalidate(user_id)
 
         # Also invalidate any channel-specific permission caches
         for key in list(self._permission_cache.keys()):

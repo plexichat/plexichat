@@ -4,7 +4,7 @@ Member, ban, and invite handler for server operations.
 
 import string
 import secrets
-from typing import Optional
+from typing import Optional, List, Any
 from src.core.base import SnowflakeID
 from ..models import Member, Ban, Invite, ChannelType, AuditLogAction
 from ..exceptions import (
@@ -178,7 +178,7 @@ class MemberHandler:
             raise MemberNotFoundError("Member not found")
 
         updates = []
-        params = []
+        params: List[Any] = []
         changes = {}
 
         if nickname is not None:
@@ -237,6 +237,32 @@ class MemberHandler:
         invalidate_pattern(f"perms:{member_user_id}:{server_id}:*")
 
         self.manager._log_audit(server_id, user_id, AuditLogAction.MEMBER_KICK, "member", member_user_id, reason=reason)
+        return True
+
+    def unban_member(
+        self, user_id: SnowflakeID, server_id: SnowflakeID, banned_user_id: SnowflakeID
+    ) -> bool:
+        """Unban a user from a server."""
+        self.db.execute("DELETE FROM srv_bans WHERE server_id = ? AND user_id = ?", (server_id, banned_user_id))
+        self.manager._log_audit(server_id, user_id, AuditLogAction.MEMBER_UNBAN, "member", banned_user_id)
+        return True
+
+    def get_bans(self, user_id: SnowflakeID, server_id: SnowflakeID) -> List[Ban]:
+        """Get all bans for a server."""
+        rows = self.db.fetch_all("SELECT * FROM srv_bans WHERE server_id = ?", (server_id,))
+        return [self.manager._row_to_ban(row) for row in rows]
+
+    def use_invite(self, code: str) -> Optional[Invite]:
+        """Get and use an invite."""
+        row = self.db.fetch_one("SELECT * FROM srv_invites WHERE code = ?", (code,))
+        if not row:
+            return None
+        self.db.execute("UPDATE srv_invites SET uses = uses + 1 WHERE code = ?", (code,))
+        return self.manager._row_to_invite(row)
+
+    def delete_invite(self, code: str) -> bool:
+        """Delete an invite."""
+        self.db.execute("DELETE FROM srv_invites WHERE code = ?", (code,))
         return True
 
     def ban_member(self, user_id: SnowflakeID, server_id: SnowflakeID, member_user_id: SnowflakeID, reason: Optional[str] = None) -> Ban:

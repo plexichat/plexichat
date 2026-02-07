@@ -496,6 +496,14 @@ def add_badge(user_id: int, admin_id: int, badge: str) -> List[str]:
             (json.dumps(badges), admin_id, int(time.time() * 1000), user_id),
         )
 
+        # Invalidate profile cache
+        try:
+            from src.core.database import cache_delete, redis_available
+            if redis_available():
+                cache_delete(f"user_profile:{user_id}")
+        except Exception:
+            pass
+
         logger.info(f"Added badge '{badge}' to user {user_id} by admin {admin_id}")
 
     return badges
@@ -527,6 +535,14 @@ def remove_badge(user_id: int, admin_id: int, badge: str) -> List[str]:
             "UPDATE user_features SET badges = ?, granted_by = ?, granted_at = ? WHERE user_id = ?",
             (json.dumps(badges), admin_id, int(time.time() * 1000), user_id),
         )
+
+        # Invalidate profile cache
+        try:
+            from src.core.database import cache_delete, redis_available
+            if redis_available():
+                cache_delete(f"user_profile:{user_id}")
+        except Exception:
+            pass
 
         logger.info(f"Removed badge '{badge}' from user {user_id} by admin {admin_id}")
 

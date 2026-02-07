@@ -512,8 +512,7 @@ class RelationshipManager(BaseManager):
         )
 
         # Invalidate cache
-        from src.core.database import invalidate_cached
-        invalidate_cached(self.get_blocked_user_ids, blocker_id)
+        self.get_blocked_user_ids.invalidate(blocker_id)
 
         logger.debug(f"User {blocker_id} unblocked user {blocked_id}")
 

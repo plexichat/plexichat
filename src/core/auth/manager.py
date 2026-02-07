@@ -1280,12 +1280,28 @@ class AuthManager(BaseManager):
 
     @cached(ttl=60, prefix="user_data")
     def _get_user_data_cached(self, user_id: int) -> Optional[Dict[str, Any]]:
-        """Internal helper to fetch raw user data from DB for caching."""
-        row = self._db.fetch_one("SELECT * FROM auth_users WHERE id = ?", (user_id,))
+        """Internal helper to fetch raw user data from DB for caching (including badges)."""
+        query = """
+            SELECT u.*, f.badges
+            FROM auth_users u
+            LEFT JOIN user_features f ON u.id = f.user_id
+            WHERE u.id = ?
+        """
+        row = self._db.fetch_one(query, (user_id,))
         if not row:
             return None
             
         user_dict = dict(row)
+        
+        # Parse badges
+        if user_dict.get("badges"):
+            try:
+                user_dict["badges_list"] = json.loads(user_dict["badges"]) if isinstance(user_dict["badges"], str) else user_dict["badges"]
+            except Exception:
+                user_dict["badges_list"] = []
+        else:
+            user_dict["badges_list"] = []
+
         # Decrypt sensitive fields for the cached dictionary
         if user_dict.get("email_encrypted"):
             try:
@@ -1317,6 +1333,7 @@ class AuthManager(BaseManager):
             age_verified=bool(row["age_verified"]),
             date_of_birth=row.get("dob_decrypted") or row.get("date_of_birth"),
             force_username_change=bool(row.get("force_username_change", 0)),
+            badges=row.get("badges_list", []),
         )
 
     def get_user_by_username(self, username: str) -> Optional[User]:
@@ -1328,7 +1345,7 @@ class AuthManager(BaseManager):
         return self.get_user(row["id"])
 
     def get_user_profiles_bulk(self, user_ids: List[int]) -> Dict[str, Any]:
-        """Get public profile information for multiple users (granular Redis caching)."""
+        """Get public profile information for multiple users (including badges, with granular Redis caching)."""
         if not user_ids:
             return {}
             
@@ -1355,19 +1372,31 @@ class AuthManager(BaseManager):
         # 2. Fetch missing from DB
         if missing_ids:
             placeholders = ",".join("?" for _ in missing_ids)
-            rows = self._db.fetch_all(
-                f"SELECT id, username, permissions, account_type FROM auth_users WHERE id IN ({placeholders})", 
-                tuple(missing_ids)
-            )
+            # JOIN with user_features to get badges
+            query = f"""
+                SELECT u.id, u.username, u.permissions, u.account_type, f.badges
+                FROM auth_users u
+                LEFT JOIN user_features f ON u.id = f.user_id
+                WHERE u.id IN ({placeholders})
+            """
+            rows = self._db.fetch_all(query, tuple(missing_ids))
             
             for row in rows:
                 user_id = row["id"]
+                badges = []
+                if row.get("badges"):
+                    try:
+                        badges = json.loads(row["badges"]) if isinstance(row["badges"], str) else row["badges"]
+                    except Exception:
+                        badges = []
+
                 profile = {
                     "id": user_id,
                     "username": row["username"],
                     "permissions": self._json_loads(row["permissions"]) if isinstance(row["permissions"], str) else row["permissions"],
                     "account_type": row["account_type"],
-                    "avatar_url": f"/api/v1/avatars/users/{user_id}"
+                    "avatar_url": f"/api/v1/avatars/users/{user_id}",
+                    "badges": badges
                 }
                 result[str(user_id)] = profile
                 
