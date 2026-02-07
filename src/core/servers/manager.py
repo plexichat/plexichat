@@ -106,6 +106,17 @@ class ServerManager(BaseManager):
 
         create_tables(db)
 
+        # Initialize sub-handlers for modularity
+        from .handlers.audit_handler import AuditHandler
+        from .handlers.channel_handler import ChannelHandler
+        from .handlers.role_handler import RoleHandler
+        from .handlers.member_handler import MemberHandler
+
+        self.audit_handler = AuditHandler(self)
+        self.channel_handler = ChannelHandler(self)
+        self.role_handler = RoleHandler(self)
+        self.member_handler = MemberHandler(self)
+
         logger.info("Server module initialized")
 
     def _cache_get(self, cache: dict, key, default=None) -> Any:
@@ -244,24 +255,8 @@ class ServerManager(BaseManager):
         reason: Optional[str] = None,
     ) -> None:
         """Log an audit entry."""
-        entry_id = self._generate_id()
-        now = self._get_timestamp()
-
-        self._db.execute(
-            """INSERT INTO srv_audit_log 
-               (id, server_id, user_id, action, target_type, target_id, changes, reason, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                entry_id,
-                server_id,
-                user_id,
-                action.value,
-                target_type,
-                target_id,
-                json.dumps(changes) if changes else None,
-                reason,
-                now,
-            ),
+        self.audit_handler.log_audit(
+            server_id, user_id, action, target_type, target_id, changes, reason
         )
 
     # === Server Operations ===
@@ -605,91 +600,9 @@ class ServerManager(BaseManager):
         slowmode_seconds: int = 0,
     ) -> Channel:
         """Create a new channel in a server."""
-        # Convert string to Enum if needed
-        if isinstance(channel_type, str):
-            try:
-                channel_type = ChannelType(channel_type.lower())
-            except ValueError:
-                # Default to TEXT if invalid
-                channel_type = ChannelType.TEXT
-
-        server = self.get_server(server_id, user_id)
-        if not server:
-            raise ServerNotFoundError("Server not found")
-
-        self.require_permission(user_id, server_id, "channels.manage")
-
-        name = self._validate_channel_name(name, channel_type)
-
-        if category_id:
-            cat = self._db.fetch_one(
-                "SELECT 1 FROM srv_categories WHERE id = ? AND server_id = ?",
-                (category_id, server_id),
-            )
-            if not cat:
-                raise CategoryNotFoundError("Category not found")
-
-        # Get next position
-        pos_row = self._db.fetch_one(
-            "SELECT COALESCE(MAX(position), -1) + 1 as next_pos FROM srv_channels WHERE server_id = ?",
-            (server_id,),
+        return self.channel_handler.create_channel(
+            user_id, server_id, name, channel_type, category_id, topic, nsfw, slowmode_seconds
         )
-        position = pos_row["next_pos"] if pos_row else 0
-
-        now = self._get_timestamp()
-        channel_id = self._generate_id()
-
-        self._db.execute(
-            """INSERT INTO srv_channels 
-               (id, server_id, name, channel_type, category_id, position, topic, nsfw, slowmode_seconds, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                channel_id,
-                server_id,
-                name,
-                channel_type.value,
-                category_id,
-                position,
-                topic,
-                1 if nsfw else 0,
-                slowmode_seconds,
-                now,
-                now,
-            ),
-        )
-
-        # Create conversation for text channels if messaging module available
-        if channel_type == ChannelType.TEXT and self._messaging:
-            conv = (
-                self._messaging.create_server_channel_conversation(
-                    server_id, channel_id
-                )
-                if hasattr(self._messaging, "create_server_channel_conversation")
-                else None
-            )
-            if conv:
-                self._db.execute(
-                    "UPDATE srv_channels SET conversation_id = ? WHERE id = ?",
-                    (conv.id, channel_id),
-                )
-
-        self._log_audit(
-            server_id,
-            user_id,
-            AuditLogAction.CHANNEL_CREATE,
-            "channel",
-            channel_id,
-        )
-
-        # Invalidate server channels cache
-        if redis_available():
-            cache_delete(f"server_channels:{server_id}")
-
-        logger.debug(f"Created channel {channel_id} in server {server_id}")
-
-        result = self.get_channel(channel_id, user_id)
-        assert result is not None  # Should exist since we just created it
-        return result
 
     def create_category(
         self,
@@ -698,68 +611,21 @@ class ServerManager(BaseManager):
         name: str,
     ) -> ChannelCategory:
         """Create a new channel category."""
-        server = self.get_server(server_id, user_id)
-        if not server:
-            raise ServerNotFoundError("Server not found")
-
-        self.require_permission(user_id, server_id, "channels.manage")
-
-        name = name.strip()
-        if not name:
-            raise InvalidChannelNameError("Category name cannot be empty")
-
-        pos_row = self._db.fetch_one(
-            "SELECT COALESCE(MAX(position), -1) + 1 as next_pos FROM srv_categories WHERE server_id = ?",
-            (server_id,),
-        )
-        position = pos_row["next_pos"] if pos_row else 0
-
-        now = self._get_timestamp()
-        cat_id = self._generate_id()
-
-        self._db.execute(
-            """INSERT INTO srv_categories (id, server_id, name, position, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (cat_id, server_id, name, position, now, now),
-        )
-
-        row = self._db.fetch_one("SELECT * FROM srv_categories WHERE id = ?", (cat_id,))
-        return self._row_to_category(row)
+        return self.channel_handler.create_category(user_id, server_id, name)
 
     def delete_category(self, user_id: SnowflakeID, category_id: SnowflakeID) -> bool:
         """Delete a channel category."""
-        category_row = self._db.fetch_one(
-            "SELECT * FROM srv_categories WHERE id = ?", (category_id,)
-        )
-        if not category_row:
-            raise CategoryNotFoundError("Category not found")
-
-        server_id = category_row["server_id"]
-        server = self.get_server(server_id, user_id)
-        if not server:
-            raise ServerNotFoundError("Server not found")
-
-        self.require_permission(user_id, server_id, "channels.manage")
-
-        # Unset category_id for all channels in this category
-        self._db.execute(
-            "UPDATE srv_channels SET category_id = NULL WHERE category_id = ?",
-            (category_id,),
-        )
-
-        # Delete category
-        self._db.execute("DELETE FROM srv_categories WHERE id = ?", (category_id,))
-
-        self._log_audit(
-            server_id, user_id, AuditLogAction.CHANNEL_DELETE, "category", category_id
-        )
-
-        return True
+        return self.channel_handler.delete_category(user_id, category_id)
 
     def get_channel(
         self, channel_id: SnowflakeID, user_id: SnowflakeID
     ) -> Optional[Channel]:
         """Get a channel by ID if user has access (cached)."""
+        # We keep the caching logic here or move it to handler. 
+        # For now, let's just delegate to ensure the same logic is used if I moved it.
+        # Wait, I didn't move get_channel to handler yet because of its tight cache integration.
+        # Let's see if I should.
+        
         # Check channel cache first (channel data rarely changes)
         cache_key = channel_id
         cached_row = self._cache_get(self._channel_cache, cache_key)
@@ -804,31 +670,7 @@ class ServerManager(BaseManager):
         channel_type: Optional[ChannelType] = None,
     ) -> List[Channel]:
         """Get all channels in a server."""
-        if not self._server_exists(server_id):
-            from .exceptions import ServerNotFoundError
-
-            raise ServerNotFoundError(f"Server {server_id} not found")
-
-        if not self._is_member(server_id, user_id):
-            raise ServerAccessDeniedError("Not a member of this server")
-
-        query = "SELECT * FROM srv_channels WHERE server_id = ? AND deleted = 0"
-        params: list[SnowflakeID | str] = [server_id]
-
-        if channel_type:
-            query += " AND channel_type = ?"
-            params.append(channel_type.value)
-
-        query += " ORDER BY position"
-
-        rows = self._db.fetch_all(query, tuple(params))
-
-        channels = []
-        for row in rows:
-            if self.has_permission(user_id, server_id, "channels.view", row["id"]):
-                channels.append(self._row_to_channel(row))
-
-        return channels
+        return self.channel_handler.get_channels(user_id, server_id, channel_type)
 
     def update_channel(
         self,
@@ -841,140 +683,19 @@ class ServerManager(BaseManager):
         category_id: Optional[SnowflakeID] = None,
     ) -> Channel:
         """Update channel settings."""
-        channel = self.get_channel(channel_id, user_id)
-        if not channel:
-            raise ChannelNotFoundError("Channel not found")
-
-        self.require_permission(user_id, channel.server_id, "channels.manage")
-
-        updates = []
-        params = []
-        changes = {}
-
-        if name is not None:
-            name = self._validate_channel_name(name, channel.channel_type)
-            updates.append("name = ?")
-            params.append(name)
-            changes["name"] = {"old": channel.name, "new": name}
-
-        if topic is not None:
-            updates.append("topic = ?")
-            params.append(topic)
-            changes["topic"] = {"old": channel.topic, "new": topic}
-
-        if nsfw is not None:
-            updates.append("nsfw = ?")
-            params.append(1 if nsfw else 0)
-            changes["nsfw"] = {"old": channel.nsfw, "new": nsfw}
-
-        if slowmode_seconds is not None:
-            updates.append("slowmode_seconds = ?")
-            params.append(slowmode_seconds)
-            changes["slowmode_seconds"] = {
-                "old": channel.slowmode_seconds,
-                "new": slowmode_seconds,
-            }
-
-        if category_id is not None:
-            if category_id != 0:
-                cat = self._db.fetch_one(
-                    "SELECT 1 FROM srv_categories WHERE id = ? AND server_id = ?",
-                    (category_id, channel.server_id),
-                )
-                if not cat:
-                    raise CategoryNotFoundError("Category not found")
-            updates.append("category_id = ?")
-            params.append(category_id if category_id != 0 else None)
-            changes["category_id"] = {"old": channel.category_id, "new": category_id}
-
-        if updates:
-            updates.append("updated_at = ?")
-            params.append(self._get_timestamp())
-            params.append(channel_id)
-
-            self._db.execute(
-                f"UPDATE srv_channels SET {', '.join(updates)} WHERE id = ?",
-                tuple(params),
-            )
-
-            # Invalidate cache
-            self._cache_invalidate(self._channel_cache, channel_id)
-
-            self._log_audit(
-                channel.server_id,
-                user_id,
-                AuditLogAction.CHANNEL_UPDATE,
-                "channel",
-                channel_id,
-                changes,
-            )
-
-        result = self.get_channel(channel_id, user_id)
-        assert result is not None  # Should exist since we just updated it
-        return result
+        return self.channel_handler.update_channel(
+            user_id, channel_id, name, topic, nsfw, slowmode_seconds, category_id
+        )
 
     def delete_channel(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> bool:
         """Delete a channel."""
-        channel = self.get_channel(channel_id, user_id)
-        if not channel:
-            raise ChannelNotFoundError("Channel not found")
-
-        self.require_permission(
-            user_id, channel.server_id, "channels.manage", channel_id
-        )
-
-        now = self._get_timestamp()
-
-        # Unset category_id for all channels in this category - WRONG logic here?
-        # delete_category unsets category_id. delete_channel sets deleted=1.
-
-        self._db.execute(
-            "UPDATE srv_channels SET deleted = 1, deleted_at = ? WHERE id = ?",
-            (now, channel_id),
-        )
-
-        # Invalidate channel cache
-        self._cache_invalidate(self._channel_cache, channel_id)
-
-        if redis_available():
-            cache_delete(f"channel:{channel_id}")
-            cache_delete(f"server_channels:{channel.server_id}")
-
-        self._log_audit(
-            channel.server_id,
-            user_id,
-            AuditLogAction.CHANNEL_DELETE,
-            "channel",
-            channel_id,
-        )
-
-        logger.debug(f"Deleted channel {channel_id}")
-        return True
+        return self.channel_handler.delete_channel(user_id, channel_id)
 
     def move_channel(
         self, user_id: SnowflakeID, channel_id: SnowflakeID, position: int
     ) -> Channel:
         """Move a channel to a new position."""
-        channel = self.get_channel(channel_id, user_id)
-        if not channel:
-            raise ChannelNotFoundError("Channel not found")
-
-        self.require_permission(user_id, channel.server_id, "channels.manage")
-
-        self._db.execute(
-            "UPDATE srv_channels SET position = ?, updated_at = ? WHERE id = ?",
-            (position, self._get_timestamp(), channel_id),
-        )
-
-        self._cache_invalidate(self._channel_cache, channel_id)
-
-        if redis_available():
-            cache_delete(f"channel:{channel_id}")
-            cache_delete(f"server_channels:{channel.server_id}")
-
-        result = self.get_channel(channel_id, user_id)
-        assert result is not None  # Should exist since we just updated it
-        return result
+        return self.channel_handler.move_channel(user_id, channel_id, position)
 
     # === Role Operations ===
 

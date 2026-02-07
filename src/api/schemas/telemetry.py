@@ -15,6 +15,8 @@ class ResponseTimeEntry(BaseModel):
     status_code: int = Field(
         ..., ge=100, le=599, description="The HTTP status code returned"
     )
+    db_queries: Optional[int] = Field(0, description="Number of database queries executed")
+    db_time_ms: Optional[float] = Field(0.0, description="Time spent executing database queries in ms")
     timestamp: Optional[int] = Field(
         None, description="The Unix timestamp of the measurement"
     )

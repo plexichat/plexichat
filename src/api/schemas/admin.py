@@ -132,6 +132,18 @@ class TelemetryEndpointStat(BaseModel):
     avg_query_time_ms: Optional[float] = Field(0.0, description="Average DB query time in ms")
 
 
+class SystemMetrics(BaseModel):
+    """System health metrics."""
+    cpu_percent: float = Field(..., description="CPU usage percentage")
+    memory_percent: float = Field(..., description="Memory usage percentage")
+    memory_used_mb: float = Field(..., description="Memory used in MB")
+    memory_total_mb: float = Field(..., description="Total memory in MB")
+    disk_percent: float = Field(..., description="Disk usage percentage")
+    process_memory_mb: float = Field(..., description="Process RSS memory in MB")
+    thread_count: int = Field(..., description="Number of active threads")
+    uptime_seconds: float = Field(..., description="Process uptime in seconds")
+
+
 class AdminDashboardResponse(BaseModel):
     """Admin dashboard data."""
 
@@ -144,6 +156,7 @@ class AdminDashboardResponse(BaseModel):
     active_users: int = Field(0, description="Active users in last 24h")
     total_users: int = Field(0, description="Total registered users")
     db_status: str = Field("healthy", description="Database connection health")
+    system: Optional[SystemMetrics] = Field(None, description="System health metrics")
 
 
 class TelemetryStatsResponse(BaseModel):

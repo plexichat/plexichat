@@ -131,6 +131,15 @@ class LoggingMiddleware:
             await self.app(scope, receive, send)
             return
 
+        # Reset DB metrics for the new request context
+        try:
+            import src.api as api
+            db = api.get_db()
+            if db:
+                db.reset_request_metrics()
+        except Exception:
+            pass
+
         # Start timing from when request is received
         start_time = time.perf_counter()
         status_code = 0

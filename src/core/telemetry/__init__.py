@@ -94,7 +94,9 @@ def _create_tables() -> None:
         response_time_ms REAL NOT NULL,
         status_code INTEGER NOT NULL,
         timestamp INTEGER NOT NULL,
-        client_id TEXT
+        client_id TEXT,
+        db_queries INTEGER DEFAULT 0,
+        db_time_ms REAL DEFAULT 0.0
     )
     """
     convert_schema: Optional[Callable[[str], str]] = getattr(db, "convert_schema", None)

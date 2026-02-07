@@ -80,6 +80,8 @@ async def submit_response_times(
                     "response_time_ms": entry.response_time_ms,
                     "status_code": entry.status_code,
                     "timestamp": entry.timestamp,
+                    "db_queries": entry.db_queries,
+                    "db_time_ms": entry.db_time_ms,
                 }
                 for entry in submission.entries
             ]

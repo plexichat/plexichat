@@ -8,32 +8,37 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
-            --bg: #0f172a;
-            --card: #1e293b;
-            --accent: #e94560;
-            --accent-hover: #ff5e78;
-            --text: #f1f5f9;
-            --text-dim: #94a3b8;
-            --border: #334155;
-            --good: #10b981;
-            --warn: #f59e0b;
-            --bad: #ef4444;
-            --primary: #3b82f6;
+            --bg: #111111;
+            --card: #1e1e1e;
+            --accent: #3366ff;
+            --accent-hover: #5588ff;
+            --text: #e0e0e0;
+            --text-dim: #888888;
+            --border: #333333;
+            --good: #00cc66;
+            --warn: #ff9900;
+            --bad: #ff3333;
+            --primary: #3366ff;
+            --chart-bg: #181818;
+            --pg-blue: #3366ff;
+            --pg-orange: #ff9900;
+            --pg-green: #00cc66;
+            --pg-red: #ff3333;
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
 
         body {
-            font-family: Inter, -apple-system, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             background: var(--bg);
             color: var(--text);
-            line-height: 1.5;
+            line-height: 1.4;
         }
 
         /* Layout */
         .header {
-            background: var(--card);
-            padding: 1rem 2rem;
+            background: #252525;
+            padding: 0.5rem 1.5rem;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -44,174 +49,333 @@
         }
 
         .container {
-            max-width: 1400px;
+            max-width: 1600px;
             margin: 0 auto;
-            padding: 2rem;
+            padding: 1rem;
         }
 
         /* Components */
         .btn {
-            padding: 0.5rem 1rem;
-            border-radius: 0.375rem;
+            padding: 0.4rem 0.8rem;
+            border-radius: 2px;
             border: 1px solid transparent;
             font-weight: 500;
             cursor: pointer;
-            transition: all 0.2s;
+            transition: all 0.1s;
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            gap: 0.5rem;
-            font-size: 0.875rem;
+            gap: 0.4rem;
+            font-size: 0.8rem;
         }
 
-        .btn-primary { background: var(--accent); color: white; }
+        .btn-primary { background: var(--pg-blue); color: white; }
         .btn-primary:hover { background: var(--accent-hover); }
-        .btn-secondary { background: var(--border); color: var(--text); }
-        .btn-secondary:hover { background: #475569; }
-        .btn-danger { background: var(--bad); color: white; }
-        .btn-warn { background: var(--warn); color: #000; }
-        .btn-outline { background: transparent; border-color: var(--border); color: var(--text); }
+        .btn-secondary { background: #444; color: var(--text); border-color: #555; }
+        .btn-secondary:hover { background: #555; }
+        .btn-danger { background: var(--pg-red); color: white; }
+        .btn-outline { background: transparent; border-color: #444; color: var(--text); }
         .btn-outline:hover { border-color: var(--accent); color: var(--accent); }
 
         .card {
             background: var(--card);
-            border-radius: 0.75rem;
+            border-radius: 4px;
             border: 1px solid var(--border);
-            padding: 1.5rem;
-            margin-bottom: 1.5rem;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
         }
 
-        .grid { display: grid; gap: 1.5rem; }
-        .grid-4 { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+        .grid { display: grid; gap: 1rem; }
+        .grid-4 { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+        .grid-3 { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
         .grid-2 { grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); }
 
         /* Tabs */
         .tabs {
             display: flex;
-            gap: 0.5rem;
-            margin-bottom: 2rem;
-            background: rgba(30, 41, 59, 0.5);
-            padding: 0.25rem;
-            border-radius: 0.5rem;
-            width: fit-content;
+            gap: 2px;
+            margin-bottom: 1rem;
+            border-bottom: 1px solid var(--border);
         }
 
         .tab {
-            padding: 0.5rem 1.25rem;
-            border-radius: 0.375rem;
-            border: none;
+            padding: 0.6rem 1.2rem;
+            border: 1px solid transparent;
+            border-bottom: none;
             background: transparent;
             color: var(--text-dim);
             cursor: pointer;
+            font-size: 0.85rem;
             font-weight: 500;
-            transition: all 0.2s;
+            margin-bottom: -1px;
         }
 
         .tab.active {
             background: var(--card);
             color: var(--accent);
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            border-color: var(--border);
+            border-top: 2px solid var(--accent);
+        }
+
+        /* Metrics Specific Styles */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(480px, 1fr));
+            gap: 1rem;
+        }
+
+        .metric-tile {
+            background: var(--card);
+            border: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            height: 320px;
+        }
+
+        .tile-header {
+            padding: 0.5rem 0.75rem;
+            background: #252525;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .tile-title {
+            font-size: 0.75rem;
+            font-weight: bold;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            letter-spacing: 0.5px;
+        }
+
+        .tile-body {
+            flex: 1;
+            padding: 0.75rem;
+            position: relative;
+            background: var(--chart-bg);
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: bold;
+            font-family: "SF Mono", "Fira Code", monospace;
+        }
+
+        .stat-label {
+            font-size: 0.7rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
         }
 
         /* Tables */
-        .table-container { overflow-x: auto; border-radius: 0.5rem; }
-        table { width: 100%; border-collapse: collapse; text-align: left; }
-        th { background: #0f172a; padding: 0.75rem 1rem; font-size: 0.75rem; text-transform: uppercase; color: var(--text-dim); border-bottom: 1px solid var(--border); }
-        td { padding: 1rem; border-bottom: 1px solid var(--border); font-size: 0.875rem; }
-        tr:hover td { background: rgba(255,255,255,0.02); }
+        .table-container { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.8rem; }
+        th { background: #252525; padding: 0.6rem 0.75rem; color: var(--text-dim); border-bottom: 1px solid var(--border); font-weight: 600; cursor: pointer; }
+        th:hover { color: var(--text); background: #2a2a2a; }
+        td { padding: 0.6rem 0.75rem; border-bottom: 1px solid #252525; }
+        tr:hover td { background: rgba(255,255,255,0.03); }
 
-        /* Forms */
         input, select, textarea {
-            background: var(--bg);
-            border: 1px solid var(--border);
+            background: #111;
+            border: 1px solid #444;
             color: var(--text);
-            padding: 0.625rem;
-            border-radius: 0.375rem;
-            width: 100%;
-            font-size: 0.875rem;
+            padding: 0.4rem 0.6rem;
+            border-radius: 2px;
+            font-size: 0.8rem;
         }
         input:focus { outline: none; border-color: var(--accent); }
 
         .badge {
-            padding: 0.25rem 0.5rem;
-            border-radius: 0.25rem;
-            font-size: 0.75rem;
-            font-weight: 600;
+            padding: 0.15rem 0.4rem;
+            border-radius: 2px;
+            font-size: 0.7rem;
+            font-weight: bold;
         }
 
-        .avatar-img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background: var(--bg); border: 1px solid var(--border); }
-        
         .hidden { display: none !important; }
 
-        /* Modal */
-        .modal {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.8);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 9999;
-        }
-        .modal-content {
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: 1rem;
-            padding: 2rem;
-            max-width: 450px;
-            width: 90%;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-        }
-        .modal-footer {
-            display: flex;
-            justify-content: flex-end;
-            gap: 1rem;
-            margin-top: 2rem;
-        }
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #111; }
+        ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #444; }
 
-        /* Chart Customization */
-        .chart-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
-            gap: 1.5rem;
-        }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
     </style>
 </head>
 
 <body>
     <div class="header">
         <div style="display: flex; align-items: center; gap: 1rem;">
-            <h1 style="color: var(--accent); font-size: 1.25rem;">Plexichat Admin</h1>
-            <span id="server-version" style="font-size: 0.75rem; color: var(--text-dim);"></span>
+            <div style="background: var(--accent); width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-weight: bold; color: white; border-radius: 2px;">P</div>
+            <h1 style="color: var(--text); font-size: 1rem; font-weight: 600;">Plexichat Management</h1>
+            <span id="server-version" style="font-size: 0.7rem; background: #333; padding: 2px 6px; border-radius: 10px; color: var(--text-dim);">v1.0.0</span>
         </div>
-        <button class="btn btn-outline" data-click="logout">Logout</button>
+        <div style="display: flex; gap: 1rem; align-items: center;">
+            <div id="connection-status" style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.7rem; color: var(--good);">
+                <div style="width: 8px; height: 8px; border-radius: 50%; background: var(--good);"></div> CONNECTED
+            </div>
+            <button class="btn btn-outline" data-click="logout">Logout</button>
+        </div>
     </div>
 
     <div class="container">
-        <div id="error" class="card btn-danger hidden" style="background: var(--bad); color: white; margin-bottom: 1rem;"></div>
+        <div id="error" class="card btn-danger hidden" style="background: var(--bad); color: white; margin-bottom: 1rem; border-radius: 2px;"></div>
+        
+        <!-- Navigation Tabs -->
+        <div class="tabs">
+            <button class="tab active" data-click="showTab" data-tab="metrics">Dashboard</button>
+            <button class="tab" data-click="showTab" data-tab="tickets">Tickets</button>
+            <button class="tab" data-click="showTab" data-tab="users">Users</button>
+            <button class="tab" data-click="showTab" data-tab="security">Security</button>
+            <button class="tab" data-click="showTab" data-tab="logs">Logs</button>
+            <button class="tab" data-click="showTab" data-tab="account">Account</button>
+        </div>
+
         <div id="loading" style="text-align: center; padding: 4rem; color: var(--text-dim);">
-            Initializing administrative dashboard...
+            <div style="display: inline-block; width: 30px; height: 30px; border: 3px solid rgba(255,255,255,.1); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 1rem;"></div>
+            <br>Loading system state...
         </div>
 
         <div id="content" class="hidden">
-            <!-- Top Stats Summary -->
-            <div class="grid grid-4" id="stats-summary" style="margin-bottom: 2rem;"></div>
+            <!-- TAB: METRICS (DASHBOARD) -->
+            <div id="tab-metrics" class="tab-content">
+                <!-- Overview Stats Row -->
+                <div class="grid grid-4" style="margin-bottom: 1rem;">
+                    <div class="card" style="padding: 0.75rem;">
+                        <div class="stat-label">Request Rate</div>
+                        <div style="display: flex; align-items: baseline; gap: 0.5rem;">
+                            <div class="stat-value" id="stat-req-rate">0.0</div>
+                            <span style="font-size: 0.75rem; color: var(--text-dim);">req/s</span>
+                        </div>
+                    </div>
+                    <div class="card" style="padding: 0.75rem;">
+                        <div class="stat-label">Avg. Latency</div>
+                        <div style="display: flex; align-items: baseline; gap: 0.5rem;">
+                            <div class="stat-value" id="stat-avg-latency">0</div>
+                            <span style="font-size: 0.75rem; color: var(--text-dim);">ms</span>
+                        </div>
+                    </div>
+                    <div class="card" style="padding: 0.75rem;">
+                        <div class="stat-label">Error Rate</div>
+                        <div style="display: flex; align-items: baseline; gap: 0.5rem;">
+                            <div class="stat-value" id="stat-error-rate">0.0</div>
+                            <span style="font-size: 0.75rem; color: var(--text-dim);">%</span>
+                        </div>
+                    </div>
+                    <div class="card" style="padding: 0.75rem;">
+                        <div class="stat-label">System Load</div>
+                        <div style="display: flex; align-items: baseline; gap: 0.5rem;">
+                            <div class="stat-value" id="stat-sys-load">0.0</div>
+                            <span style="font-size: 0.75rem; color: var(--text-dim);">% CPU</span>
+                        </div>
+                    </div>
+                </div>
 
-            <!-- Navigation Tabs -->
-            <div class="tabs">
-                <button class="tab active" data-click="showTab" data-tab="tickets">Tickets</button>
-                <button class="tab" data-click="showTab" data-tab="users">Users</button>
-                <button class="tab" data-click="showTab" data-tab="security">Security</button>
-                <button class="tab" data-click="showTab" data-tab="metrics">Metrics</button>
-                <button class="tab" data-click="showTab" data-tab="logs">Logs</button>
-                <button class="tab" data-click="showTab" data-tab="account">Account</button>
+                <!-- Graphs Grid -->
+                <div class="metrics-grid">
+                    <div class="metric-tile">
+                        <div class="tile-header">
+                            <span class="tile-title">Transactions per second</span>
+                            <div style="display: flex; gap: 0.5rem;">
+                                <div style="display: flex; align-items: center; gap: 0.25rem; font-size: 0.6rem; color: var(--pg-blue);"><div style="width:8px;height:2px;background:var(--pg-blue);"></div> REQUESTS</div>
+                                <div style="display: flex; align-items: center; gap: 0.25rem; font-size: 0.6rem; color: var(--pg-orange);"><div style="width:8px;height:2px;background:var(--pg-orange);"></div> QUERIES</div>
+                            </div>
+                        </div>
+                        <div class="tile-body"><canvas id="chart-tps"></canvas></div>
+                    </div>
+
+                    <div class="metric-tile">
+                        <div class="tile-header">
+                            <span class="tile-title">Response Time Trend (ms)</span>
+                            <div style="display: flex; gap: 0.5rem;">
+                                <div style="display: flex; align-items: center; gap: 0.25rem; font-size: 0.6rem; color: var(--pg-green);"><div style="width:8px;height:2px;background:var(--pg-green);"></div> AVG</div>
+                                <div style="display: flex; align-items: center; gap: 0.25rem; font-size: 0.6rem; color: var(--pg-red);"><div style="width:8px;height:2px;background:var(--pg-red);"></div> P95</div>
+                            </div>
+                        </div>
+                        <div class="tile-body"><canvas id="chart-latency"></canvas></div>
+                    </div>
+
+                    <div class="metric-tile">
+                        <div class="tile-header">
+                            <span class="tile-title">Database Pool Utilization</span>
+                            <span id="db-conn-count" style="font-size: 0.65rem; color: var(--text-dim);">0 / 0 Connections</span>
+                        </div>
+                        <div class="tile-body"><canvas id="chart-db-pool"></canvas></div>
+                    </div>
+
+                    <div class="metric-tile">
+                        <div class="tile-header">
+                            <span class="tile-title">System Resources (%)</span>
+                            <div style="display: flex; gap: 0.5rem;">
+                                <div style="display: flex; align-items: center; gap: 0.25rem; font-size: 0.6rem; color: var(--pg-blue);"><div style="width:8px;height:2px;background:var(--pg-blue);"></div> CPU</div>
+                                <div style="display: flex; align-items: center; gap: 0.25rem; font-size: 0.6rem; color: var(--pg-orange);"><div style="width:8px;height:2px;background:var(--pg-orange);"></div> RAM</div>
+                            </div>
+                        </div>
+                        <div class="tile-body"><canvas id="chart-sys-res"></canvas></div>
+                    </div>
+
+                    <div class="metric-tile">
+                        <div class="tile-header">
+                            <span class="tile-title">Database Performance (Avg)</span>
+                            <div style="display: flex; gap: 0.5rem;">
+                                <div style="display: flex; align-items: center; gap: 0.25rem; font-size: 0.6rem; color: var(--pg-blue);"><div style="width:8px;height:2px;background:var(--pg-blue);"></div> QUERIES/REQ</div>
+                                <div style="display: flex; align-items: center; gap: 0.25rem; font-size: 0.6rem; color: var(--pg-orange);"><div style="width:8px;height:2px;background:var(--pg-orange);"></div> TIME (ms)</div>
+                            </div>
+                        </div>
+                        <div class="tile-body"><canvas id="chart-db-perf"></canvas></div>
+                    </div>
+
+                    <div class="metric-tile">
+                        <div class="tile-header">
+                            <span class="tile-title">Memory & Threads</span>
+                            <div style="display: flex; gap: 0.5rem;">
+                                <div style="display: flex; align-items: center; gap: 0.25rem; font-size: 0.6rem; color: var(--pg-green);"><div style="width:8px;height:2px;background:var(--pg-green);"></div> RSS (MB)</div>
+                                <div style="display: flex; align-items: center; gap: 0.25rem; font-size: 0.6rem; color: var(--pg-blue);"><div style="width:8px;height:2px;background:var(--pg-blue);"></div> THREADS</div>
+                            </div>
+                        </div>
+                        <div class="tile-body"><canvas id="chart-process"></canvas></div>
+                    </div>
+                </div>
+
+                <!-- Granular Endpoint Analysis Table -->
+                <div class="card" style="margin-top: 1rem; border-radius: 2px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                        <h3 style="font-size: 0.8rem; font-weight: bold; text-transform: uppercase; color: var(--text-dim);">Endpoint Latency Analysis</h3>
+                        <div style="display: flex; gap: 0.5rem; align-items: center;">
+                            <input type="text" id="endpoint-filter" placeholder="Filter endpoints..." style="width: 250px; height: 28px;">
+                            <select id="metric-hours" style="height: 28px; width: auto;" data-change="refreshMetrics">
+                                <option value="1">1 Hour</option>
+                                <option value="24" selected>24 Hours</option>
+                                <option value="168">7 Days</option>
+                            </select>
+                            <button class="btn btn-secondary" style="height: 28px;" data-click="exportStats">Export</button>
+                        </div>
+                    </div>
+                    <div class="table-container">
+                        <table id="endpoints-table">
+                            <thead>
+                                <tr>
+                                    <th data-sort="endpoint">Endpoint <span class="sort-icon">↕</span></th>
+                                    <th data-sort="method">Method <span class="sort-icon">↕</span></th>
+                                    <th data-sort="count">Hits <span class="sort-icon">↕</span></th>
+                                    <th data-sort="avg_ms">Avg Latency <span class="sort-icon">↕</span></th>
+                                    <th data-sort="p95_ms">P95 <span class="sort-icon">↕</span></th>
+                                    <th data-sort="avg_queries">Queries <span class="sort-icon">↕</span></th>
+                                    <th data-sort="avg_query_time_ms">DB Time <span class="sort-icon">↕</span></th>
+                                    <th data-sort="error_rate">Errors <span class="sort-icon">↕</span></th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
 
             <!-- TAB: TICKETS -->
-            <div id="tab-tickets" class="tab-content">
+            <div id="tab-tickets" class="tab-content hidden">
                 <div class="card">
                     <h3>Support Queue</h3>
                     <div class="table-container" style="margin-top: 1rem;">
@@ -231,7 +395,7 @@
                     </div>
                 </div>
 
-                <div id="ticket-view" class="card hidden" style="border-left: 4px solid var(--accent);">
+                <div id="ticket-view" class="card hidden" style="border-left: 4px solid var(--pg-blue);">
                     <div style="display: flex; justify-content: space-between; margin-bottom: 1.5rem; align-items: center;">
                         <h2 id="view-ticket-title">Ticket #...</h2>
                         <div style="display: flex; gap: 0.5rem; align-items: center;">
@@ -239,7 +403,7 @@
                             <button class="btn btn-primary" data-click="updateTicketStatus">Update</button>
                         </div>
                     </div>
-                    <div id="view-ticket-content" class="card" style="background: var(--bg); white-space: pre-wrap;"></div>
+                    <div id="view-ticket-content" class="card" style="background: var(--bg); white-space: pre-wrap; font-size: 0.9rem;"></div>
                     <div class="grid grid-2">
                         <div>
                             <h3>Internal Notes</h3>
@@ -268,16 +432,19 @@
                 <div id="user-manage" class="card hidden">
                     <div style="display: flex; gap: 2rem; align-items: flex-start; flex-wrap: wrap;">
                         <div style="text-align: center;">
-                            <img id="user-avatar-large" class="avatar-img" style="width: 120px; height: 120px; border-radius: 1rem; margin-bottom: 1rem;" src="">
+                            <div style="position: relative;">
+                                <img id="user-avatar-large" class="avatar-img" style="width: 120px; height: 120px; border-radius: 4px; margin-bottom: 1rem;" src="">
+                                <div id="user-locked-overlay" class="hidden" style="position: absolute; top: 0; left: 0; width: 120px; height: 120px; background: rgba(255,0,0,0.3); display: flex; align-items: center; justify-content: center; border-radius: 4px;"><span style="background: var(--pg-red); color: white; padding: 2px 6px; font-size: 0.6rem; font-weight: bold;">LOCKED</span></div>
+                            </div>
                             <button class="btn btn-outline" style="width: 100%;" data-click="resetUserAvatar">Reset Avatar</button>
                         </div>
                         <div style="flex: 1; min-width: 300px;">
                             <h2 id="user-display-name">Username</h2>
-                            <p id="user-display-id" style="color: var(--text-dim); font-family: monospace;"></p>
+                            <p id="user-display-id" style="color: var(--text-dim); font-family: monospace; font-size: 0.8rem;"></p>
                             
                             <div class="grid grid-2" style="margin-top: 1.5rem;">
                                 <div>
-                                    <label style="font-size: 0.75rem; color: var(--text-dim);">Access Tier</label>
+                                    <label style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase;">Access Tier</label>
                                     <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
                                         <select id="user-tier-select">
                                             <option value="free">Free</option>
@@ -290,18 +457,19 @@
                                     </div>
                                 </div>
                                 <div>
-                                    <label style="font-size: 0.75rem; color: var(--text-dim);">Account Control</label>
+                                    <label style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase;">Account Control</label>
                                     <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem; flex-wrap: wrap;">
-                                        <button class="btn btn-warn" data-click="forceLogoutUserAction">Kill Sessions</button>
-                                        <button class="btn btn-danger" data-click="suspendUser">Suspend</button>
+                                        <button class="btn btn-secondary" data-click="forceLogoutUserAction">Kill Sessions</button>
+                                        <button class="btn id-unlock-btn btn-primary hidden" data-click="unlockUserAction">Unlock</button>
+                                        <button class="btn id-lock-btn btn-danger" data-click="suspendUser">Suspend</button>
                                         <button class="btn btn-secondary" data-click="forceUsernameChange">Rename</button>
                                     </div>
                                 </div>
                             </div>
 
                             <div style="margin-top: 1.5rem;">
-                                <label style="font-size: 0.75rem; color: var(--text-dim);">Assigned Badges</label>
-                                <div id="user-badges-list" style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0; min-height: 2.5rem; background: rgba(0,0,0,0.1); padding: 0.5rem; border-radius: 0.5rem; align-items: center;"></div>
+                                <label style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase;">Assigned Badges</label>
+                                <div id="user-badges-list" style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0; min-height: 2.5rem; background: rgba(0,0,0,0.2); padding: 0.5rem; border-radius: 2px; align-items: center;"></div>
                                 <div style="display: flex; gap: 0.5rem;">
                                     <select id="add-badge-select" style="width: auto;">
                                         <option value="verified">Verified</option>
@@ -316,8 +484,8 @@
                             </div>
 
                             <div style="margin-top: 1.5rem;">
-                                <label style="font-size: 0.75rem; color: var(--text-dim);">Private Admin Notes</label>
-                                <textarea id="user-internal-notes" style="margin-top: 0.5rem; min-height: 100px;" placeholder="Keep track of user history or behavior..."></textarea>
+                                <label style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase;">Private Admin Notes</label>
+                                <textarea id="user-internal-notes" style="margin-top: 0.5rem; min-height: 100px; font-family: inherit; font-size: 0.85rem;" placeholder="Keep track of user history or behavior..."></textarea>
                                 <button class="btn btn-secondary" style="margin-top: 0.5rem;" data-click="saveUserNotes">Save Notes</button>
                             </div>
                         </div>
@@ -330,7 +498,7 @@
                 <div class="grid grid-2">
                     <div class="card">
                         <h3>IP Blocking</h3>
-                        <p style="font-size: 0.8rem; color: var(--text-dim); margin-bottom: 1rem;">Ban specific IPs from accessing any part of the service.</p>
+                        <p style="font-size: 0.75rem; color: var(--text-dim); margin-bottom: 1rem;">Ban specific IPs from accessing any part of the service.</p>
                         <div style="display: flex; gap: 0.5rem; margin-bottom: 1.5rem;">
                             <input type="text" id="block-ip-val" placeholder="IP Address">
                             <button class="btn btn-danger" data-click="blockIP">Block IP</button>
@@ -344,7 +512,7 @@
                     </div>
                     <div class="card">
                         <h3>Name Blacklist</h3>
-                        <p style="font-size: 0.8rem; color: var(--text-dim); margin-bottom: 1rem;">Prevent users from registering or using specific names.</p>
+                        <p style="font-size: 0.75rem; color: var(--text-dim); margin-bottom: 1rem;">Prevent users from registering or using specific names.</p>
                         <div style="display: flex; gap: 0.5rem; margin-bottom: 1.5rem;">
                             <input type="text" id="ban-username-val" placeholder="Username pattern...">
                             <button class="btn btn-danger" data-click="addBannedUsername">Ban Name</button>
@@ -360,7 +528,7 @@
                 
                 <div class="card">
                     <h3>Media Hash Reports</h3>
-                    <p style="font-size: 0.8rem; color: var(--text-dim); margin-bottom: 1rem;">Review reported media content. Blocking a hash prevents it from being uploaded again.</p>
+                    <p style="font-size: 0.75rem; color: var(--text-dim); margin-bottom: 1rem;">Review reported media content. Blocking a hash prevents it from being uploaded again.</p>
                     <div class="table-container">
                         <table id="hash-reports-table">
                             <thead><tr><th>Hash (SHA-256)</th><th>Reason</th><th>Reporter</th><th>Status</th><th>Actions</th></tr></thead>
@@ -369,52 +537,13 @@
                     </div>
                 </div>
 
-                <div class="card" style="border: 1px solid var(--bad); background: rgba(239, 68, 68, 0.05);">
-                    <h3 style="color: var(--bad)">Crisis Management</h3>
-                    <p style="font-size: 0.875rem; color: var(--text-dim); margin: 0.5rem 0 1rem;">
+                <div class="card" style="border: 1px solid var(--pg-red); background: rgba(255, 51, 51, 0.05);">
+                    <h3 style="color: var(--pg-red)">Crisis Management</h3>
+                    <p style="font-size: 0.8rem; color: var(--text-dim); margin: 0.5rem 0 1rem;">
                         <strong>Global Session Purge:</strong> Immediately invalidates ALL active user sessions. 
                         Useful for major security breaches or database migrations requiring zero active state.
                     </p>
                     <button class="btn btn-danger" data-click="globalSessionPurge">PURGE ALL SESSIONS</button>
-                </div>
-            </div>
-
-            <!-- TAB: METRICS -->
-            <div id="tab-metrics" class="tab-content hidden">
-                <div class="card">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
-                        <h3>Performance Metrics</h3>
-                        <div style="display: flex; gap: 1rem; align-items: center;">
-                            <select id="metric-range" style="width: auto;" data-change="loadMetrics">
-                                <option value="1">Last Hour</option>
-                                <option value="24" selected>Last 24 Hours</option>
-                                <option value="168">Last 7 Days</option>
-                            </select>
-                            <button class="btn btn-secondary" data-click="exportStats">Export JSON</button>
-                        </div>
-                    </div>
-                    <div class="table-container">
-                        <table id="metrics-table">
-                            <thead>
-                                <tr>
-                                    <th>Endpoint Pattern</th>
-                                    <th>Calls</th>
-                                    <th>Latency (Avg)</th>
-                                    <th>Latency (P95)</th>
-                                    <th>DB Queries</th>
-                                    <th>DB Time</th>
-                                    <th>Error Rate</th>
-                                </tr>
-                            </thead>
-                            <tbody></tbody>
-                        </table>
-                    </div>
-                </div>
-                <div class="chart-grid">
-                    <div class="card"><h3>Response Time Trend (ms)</h3><canvas id="latency-chart"></canvas></div>
-                    <div class="card"><h3>Database Impact</h3><canvas id="db-impact-chart"></canvas></div>
-                    <div class="card"><h3>Error Distribution</h3><canvas id="error-chart"></canvas></div>
-                    <div class="card"><h3>Request Volume</h3><canvas id="volume-chart"></canvas></div>
                 </div>
             </div>
 
@@ -446,7 +575,7 @@
                         </div>
                     </div>
                     
-                    <div id="log-viewer" style="background: #000; color: #d1d5db; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.8125rem; padding: 1rem; border-radius: 0.5rem; height: 600px; overflow-y: auto; white-space: pre-wrap; border: 1px solid var(--border); line-height: 1.4;">
+                    <div id="log-viewer" style="background: #000; color: #aaa; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.75rem; padding: 1rem; border-radius: 2px; height: 600px; overflow-y: auto; white-space: pre-wrap; border: 1px solid var(--border); line-height: 1.4;">
                         <div style="color: var(--text-dim); text-align: center; padding: 2rem;">Select a log file to view content...</div>
                     </div>
                     
@@ -466,19 +595,19 @@
                 <div class="grid grid-2">
                     <div class="card">
                         <h3>Admin Security</h3>
-                        <p style="font-size: 0.875rem; color: var(--text-dim); margin-bottom: 1.5rem;">Update your admin password. We recommend using a unique password stored in a manager.</p>
+                        <p style="font-size: 0.8rem; color: var(--text-dim); margin-bottom: 1.5rem;">Update your admin password. We recommend using a unique password stored in a manager.</p>
                         
                         <div style="display: flex; flex-direction: column; gap: 1rem;">
                             <div>
-                                <label style="font-size: 0.75rem; color: var(--text-dim); display: block; margin-bottom: 0.25rem;">Current Password</label>
+                                <label style="font-size: 0.7rem; color: var(--text-dim); display: block; margin-bottom: 0.25rem; text-transform: uppercase;">Current Password</label>
                                 <input type="password" id="admin-current-pass">
                             </div>
                             <div>
-                                <label style="font-size: 0.75rem; color: var(--text-dim); display: block; margin-bottom: 0.25rem;">New Password</label>
+                                <label style="font-size: 0.7rem; color: var(--text-dim); display: block; margin-bottom: 0.25rem; text-transform: uppercase;">New Password</label>
                                 <input type="password" id="admin-new-pass" placeholder="Min 12 chars">
                             </div>
                             <div>
-                                <label style="font-size: 0.75rem; color: var(--text-dim); display: block; margin-bottom: 0.25rem;">Confirm New Password</label>
+                                <label style="font-size: 0.7rem; color: var(--text-dim); display: block; margin-bottom: 0.25rem; text-transform: uppercase;">Confirm New Password</label>
                                 <input type="password" id="admin-confirm-pass">
                             </div>
                             <button class="btn btn-primary" data-click="changeAdminPassword" style="width: fit-content; margin-top: 0.5rem;">Update Admin Password</button>
@@ -486,9 +615,9 @@
                     </div>
                     <div class="card">
                         <h3>Session Management</h3>
-                        <div id="admin-session-details" style="font-size: 0.875rem; line-height: 2;">
+                        <div id="admin-session-details" style="font-size: 0.85rem; line-height: 2;">
                             <p><strong>Administrator Session</strong></p>
-                            <p style="color: var(--text-dim)">Current Token: <span style="font-family: monospace; color: var(--accent);">••••••••</span></p>
+                            <p style="color: var(--text-dim)">Current Token: <span style="font-family: monospace; color: var(--pg-blue);">••••••••</span></p>
                             <p style="color: var(--text-dim)">Expires: 8 hours from login</p>
                             <hr style="border: 0; border-top: 1px solid var(--border); margin: 1rem 0;">
                             <p>All administrative actions are logged for security auditing.</p>
@@ -499,16 +628,43 @@
         </div>
     </div>
 
+    <!-- Modals -->
+    <div id="rename-modal" class="modal hidden">
+        <div class="modal-content">
+            <h3>Force Username Change</h3>
+            <p style="font-size: 0.8rem; color: var(--text-dim); margin: 1rem 0;">
+                Require <strong id="rename-user-name" style="color: var(--text)"></strong> to choose a new name on next login.
+            </p>
+            <div style="display: flex; flex-direction: column; gap: 1rem;">
+                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.85rem;">
+                    <input type="checkbox" id="ban-current-name-check" style="width: auto;">
+                    <span>Ban current username pattern</span>
+                </label>
+                <div>
+                    <label style="font-size: 0.7rem; color: var(--text-dim); display: block; margin-bottom: 0.25rem;">REASON</label>
+                    <input type="text" id="rename-reason" placeholder="e.g. Offensive username" style="width: 100%;">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" data-click="closeRenameModal">Cancel</button>
+                <button class="btn btn-primary" data-click="confirmRename">Force Change</button>
+            </div>
+        </div>
+    </div>
+
     <script nonce="{{ csp_nonce }}">
         const token = localStorage.getItem('plexichat-admin-token');
         if (!token) window.location.replace('/api/v1/admin/login');
 
-        // State & Charts
-        let currentTab = 'tickets';
+        // State
+        let currentTab = 'metrics';
         let selectedUserId = null;
         let selectedTicketId = null;
         let userData = null;
         let charts = {};
+        let metricData = [];
+        let sortConfig = { key: 'count', dir: 'desc' };
+        let refreshInterval = null;
 
         // Core API Wrapper
         const api = async (path, options = {}) => {
@@ -533,21 +689,188 @@
 
         const escapeHtml = (t) => { if(!t) return ''; const d = document.createElement('div'); d.textContent = String(t); return d.innerHTML; };
 
+        // --- Navigation ---
         const showTab = (name) => {
             document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
             document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('hidden', c.id !== `tab-${name}`));
             currentTab = name;
-            loadTabData();
+            
+            if (refreshInterval) clearInterval(refreshInterval);
+            
+            if (currentTab === 'metrics') {
+                refreshMetrics();
+                refreshInterval = setInterval(refreshMetrics, 10000); // 10s auto-refresh
+            } else {
+                loadTabData();
+            }
         };
 
         const loadTabData = () => {
             if (currentTab === 'tickets') loadTickets();
             if (currentTab === 'security') loadSecurity();
-            if (currentTab === 'metrics') loadMetrics();
             if (currentTab === 'logs') loadLogs();
         };
 
-        // --- Ticket Handlers ---
+        // --- Metrics Dashboard Implementation ---
+        async function refreshMetrics() {
+            try {
+                const hours = document.getElementById('metric-hours')?.value || 24;
+                const [dash, stats] = await Promise.all([
+                    api('/api/v1/admin/dashboard'),
+                    api(`/api/v1/admin/telemetry/stats?hours=${hours}`)
+                ]);
+
+                metricData = stats.stats;
+                updateOverview(dash);
+                renderEndpointTable();
+                updateCharts(dash, stats.stats);
+                
+                document.getElementById('loading').classList.add('hidden');
+                document.getElementById('content').classList.remove('hidden');
+            } catch (e) { console.error('Dashboard refresh failed:', e); }
+        }
+
+        function updateOverview(dash) {
+            // Update Overview Cards
+            const totalHits = dash.telemetry.reduce((a, b) => a + b.count, 0);
+            const reqPerSec = (totalHits / (24 * 3600)).toFixed(2);
+            const avgLat = dash.telemetry.length > 0 ? 
+                (dash.telemetry.reduce((a, b) => a + (b.avg_ms * b.count), 0) / totalHits).toFixed(0) : 0;
+            const errRate = dash.telemetry.length > 0 ?
+                (dash.telemetry.reduce((a, b) => a + (b.error_rate * b.count), 0) / totalHits).toFixed(1) : 0;
+
+            document.getElementById('stat-req-rate').textContent = reqPerSec;
+            document.getElementById('stat-avg-latency').textContent = avgLat;
+            document.getElementById('stat-error-rate').textContent = errRate;
+            document.getElementById('stat-sys-load').textContent = dash.system?.cpu_percent?.toFixed(1) || '0.0';
+            
+            // Status colors
+            document.getElementById('stat-error-rate').style.color = errRate > 5 ? 'var(--pg-red)' : (errRate > 1 ? 'var(--pg-orange)' : 'var(--pg-green)');
+            document.getElementById('stat-avg-latency').style.color = avgLat > 500 ? 'var(--pg-red)' : (avgLat > 200 ? 'var(--pg-orange)' : 'var(--pg-green)');
+        }
+
+        function updateCharts(dash, stats) {
+            const chartOptions = {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 0 },
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { display: false, grid: { display: false } },
+                    y: { 
+                        grid: { color: '#222' },
+                        ticks: { color: '#666', font: { size: 9 }, maxTicksLimit: 5 }
+                    }
+                }
+            };
+
+            // 1. TPS Chart (Requests vs Queries)
+            const topEndpoints = stats.slice(0, 10);
+            const labels = topEndpoints.map(s => s.endpoint.split('/').pop() || '/');
+            
+            renderChart('chart-tps', 'bar', {
+                labels,
+                datasets: [
+                    { label: 'Hits', data: topEndpoints.map(s => s.count), backgroundColor: 'rgba(51, 102, 255, 0.6)' },
+                    { label: 'Queries', data: topEndpoints.map(s => s.count * s.avg_queries), backgroundColor: 'rgba(255, 153, 0, 0.6)' }
+                ]
+            }, chartOptions);
+
+            // 2. Latency Chart (Avg vs P95)
+            renderChart('chart-latency', 'line', {
+                labels,
+                datasets: [
+                    { label: 'Avg', data: topEndpoints.map(s => s.avg_ms), borderColor: 'var(--pg-green)', tension: 0.3, pointRadius: 0 },
+                    { label: 'P95', data: topEndpoints.map(s => s.p95_ms), borderColor: 'var(--pg-red)', tension: 0.3, pointRadius: 0 }
+                ]
+            }, chartOptions);
+
+            // 3. System Resources
+            if (dash.system) {
+                updateHistoricalChart('chart-sys-res', [
+                    { label: 'CPU', val: dash.system.cpu_percent, color: 'var(--pg-blue)' },
+                    { label: 'RAM', val: dash.system.memory_percent, color: 'var(--pg-orange)' }
+                ], 60);
+            }
+
+            // 4. Database Performance (Avg Queries & Time)
+            renderChart('chart-db-perf', 'bar', {
+                labels,
+                datasets: [
+                    { label: 'Q/Req', data: topEndpoints.map(s => s.avg_queries), backgroundColor: 'var(--pg-blue)' },
+                    { label: 'Time', data: topEndpoints.map(s => s.avg_query_time_ms), backgroundColor: 'var(--pg-orange)' }
+                ]
+            }, chartOptions);
+
+            // 5. Process Stats
+            if (dash.system) {
+                updateHistoricalChart('chart-process', [
+                    { label: 'RSS', val: dash.system.process_memory_mb, color: 'var(--pg-green)' },
+                    { label: 'Threads', val: dash.system.thread_count, color: 'var(--pg-blue)' }
+                ], 60);
+            }
+
+            // 6. DB Pool
+            api('/api/v1/admin/database/pool-health').then(db => {
+                document.getElementById('db-conn-count').textContent = `${db.active_connections} / ${db.max_connections} Connections`;
+                updateHistoricalChart('chart-db-pool', [
+                    { label: 'Active', val: db.active_connections, color: 'var(--pg-orange)' },
+                    { label: 'Total', val: db.total_connections, color: 'var(--pg-blue)' }
+                ], 60);
+            }).catch(() => {});
+        }
+
+        function renderChart(id, type, data, options) {
+            if (charts[id]) charts[id].destroy();
+            const ctx = document.getElementById(id).getContext('2d');
+            charts[id] = new Chart(ctx, { type, data, options });
+        }
+
+        const historicalData = {};
+        function updateHistoricalChart(id, metrics, maxPoints) {
+            if (!historicalData[id]) {
+                historicalData[id] = { labels: Array(maxPoints).fill(''), datasets: metrics.map(m => ({
+                    label: m.label, data: Array(maxPoints).fill(0), borderColor: m.color, tension: 0.4, pointRadius: 0, borderWidth: 1.5
+                }))};
+            }
+            const data = historicalData[id];
+            metrics.forEach((m, i) => {
+                data.datasets[i].data.push(m.val);
+                if (data.datasets[i].data.length > maxPoints) data.datasets[i].data.shift();
+            });
+            renderChart(id, 'line', data, {
+                responsive: true, maintainAspectRatio: false, animation: false,
+                plugins: { legend: { display: false } },
+                scales: { x: { display: false }, y: { grid: { color: '#222' }, ticks: { color: '#666', font: { size: 8 } } } }
+            });
+        }
+
+        function renderEndpointTable() {
+            const filter = document.getElementById('endpoint-filter').value.toLowerCase();
+            const filtered = metricData.filter(s => s.endpoint.toLowerCase().includes(filter) || s.method.toLowerCase().includes(filter));
+            
+            filtered.sort((a, b) => {
+                let vA = a[sortConfig.key], vB = b[sortConfig.key];
+                return sortConfig.dir === 'asc' ? (vA > vB ? 1 : -1) : (vA < vB ? 1 : -1);
+            });
+
+            document.querySelector('#endpoints-table tbody').innerHTML = filtered.map(s => `
+                <tr>
+                    <td style="font-family:monospace; color:var(--pg-blue);">${s.endpoint}</td>
+                    <td><span class="badge" style="background:#333; color:#aaa;">${s.method}</span></td>
+                    <td style="font-weight:bold;">${s.count.toLocaleString()}</td>
+                    <td style="color:${latencyColor(s.avg_ms)}">${s.avg_ms.toFixed(1)}ms</td>
+                    <td>${s.p95_ms.toFixed(1)}ms</td>
+                    <td style="color:var(--pg-orange);">${s.avg_queries.toFixed(1)}</td>
+                    <td>${s.avg_query_time_ms.toFixed(1)}ms</td>
+                    <td style="color:${s.error_rate > 1 ? 'var(--pg-red)' : 'var(--text-dim)'};">${s.error_rate.toFixed(1)}%</td>
+                </tr>
+            `).join('');
+        }
+
+        const latencyColor = (ms) => ms > 500 ? 'var(--pg-red)' : (ms > 200 ? 'var(--pg-orange)' : 'var(--pg-green)');
+
+        // --- Existing Handlers (Adapted) ---
         async function loadTickets() {
             try {
                 const data = await api('/api/v1/admin/tickets?limit=20');
@@ -574,13 +897,8 @@
                 document.getElementById('view-ticket-content').textContent = t.content;
                 document.getElementById('ticket-view').classList.remove('hidden');
                 document.getElementById('ticket-view').scrollIntoView({ behavior: 'smooth' });
-                
-                // Populate Status Select
                 const sel = document.getElementById('ticket-status-select');
-                sel.innerHTML = ['open', 'in_progress', 'resolved', 'closed'].map(s => 
-                    `<option value="${s}" ${t.status === s ? 'selected' : ''}>${s.toUpperCase()}</option>`
-                ).join('');
-
+                sel.innerHTML = ['open', 'in_progress', 'resolved', 'closed'].map(s => `<option value="${s}" ${t.status === s ? 'selected' : ''}>${s.toUpperCase()}</option>`).join('');
                 loadTicketNotes(id);
             } catch (e) { alert(e.message); }
         }
@@ -588,21 +906,20 @@
         async function loadTicketNotes(id) {
             const notes = await api(`/api/v1/admin/tickets/${id}/notes`);
             document.getElementById('ticket-notes-list').innerHTML = notes.map(n => `
-                <div style="background:rgba(255,255,255,0.05); padding:0.75rem; border-radius:0.5rem; border-left:3px solid var(--accent);">
-                    <div style="display:flex; justify-content:space-between; font-size:0.7rem; color:var(--text-dim); margin-bottom:0.25rem;">
+                <div style="background:rgba(255,255,255,0.02); padding:0.75rem; border-radius:2px; border-left:2px solid var(--accent); margin-bottom:0.5rem;">
+                    <div style="display:flex; justify-content:space-between; font-size:0.65rem; color:var(--text-dim); margin-bottom:0.25rem;">
                         <span>${escapeHtml(n.admin_username)}</span>
                         <span>${new Date(n.created_at).toLocaleString()}</span>
                     </div>
-                    <div style="font-size:0.85rem;">${escapeHtml(n.content)}</div>
+                    <div style="font-size:0.8rem;">${escapeHtml(n.content)}</div>
                 </div>
-            `).join('') || '<p style="color:var(--text-dim); font-size:0.8rem; font-style:italic;">No internal notes.</p>';
+            `).join('') || '<p style="color:var(--text-dim); font-size:0.75rem; font-style:italic;">No internal notes.</p>';
         }
 
         async function updateTicketStatus() {
             const status = document.getElementById('ticket-status-select').value;
             try {
                 await api(`/api/v1/admin/tickets/${selectedTicketId}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
-                alert('Status updated');
                 loadTickets();
             } catch (e) { alert(e.message); }
         }
@@ -617,7 +934,6 @@
             } catch (e) { alert(e.message); }
         }
 
-        // --- User Handlers ---
         async function searchUsers() {
             const q = document.getElementById('user-search-input').value.trim();
             if (!q) return;
@@ -629,10 +945,10 @@
                         <tbody>
                             ${data.users.map(u => `
                                 <tr>
-                                    <td><img src="/api/v1/avatars/users/${u.id}" class="avatar-img" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%23334155%22/><text y=%2250%25%22 x=%2250%25%22 font-family=%22sans-serif%22 font-size=%2240%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%2394a3b8%22>${u.username[0].toUpperCase()}</text></svg>'"></td>
+                                    <td><img src="/api/v1/avatars/users/${u.id}" class="avatar-img" style="border-radius:2px;width:32px;height:32px;" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%23222%22/><text y=%2250%25%22 x=%2250%25%22 font-family=%22sans-serif%22 font-size=%2240%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%23666%22>${u.username[0].toUpperCase()}</text></svg>'"></td>
                                     <td><strong>${escapeHtml(u.username)}</strong></td>
-                                    <td style="font-family:monospace; color:var(--accent)">${u.id}</td>
-                                    <td><span class="badge" style="background:var(--primary)">${u.tier}</span></td>
+                                    <td style="font-family:monospace; color:var(--pg-blue)">${u.id}</td>
+                                    <td><span class="badge" style="background:#333; color:var(--pg-blue); border:1px solid var(--pg-blue)">${u.tier.toUpperCase()}</span></td>
                                     <td><button class="btn btn-outline btn-sm" data-click="manageUser" data-id="${u.id}">Manage</button></td>
                                 </tr>
                             `).join('')}
@@ -647,31 +963,27 @@
             try {
                 userData = await api(`/api/v1/admin/users/${id}`);
                 const notesData = await api(`/api/v1/admin/users/${id}/notes`);
-                
                 document.getElementById('user-display-name').textContent = userData.username;
-                document.getElementById('user-display-id').textContent = `Snowflake: ${userData.id}`;
+                document.getElementById('user-display-id').textContent = `ID: ${userData.id}`;
                 document.getElementById('user-internal-notes').value = notesData.notes || '';
-                
                 const avatarImg = document.getElementById('user-avatar-large');
                 avatarImg.src = `/api/v1/avatars/users/${id}?size=256&t=${Date.now()}`;
-                avatarImg.onerror = () => {
-                    avatarImg.src = `data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%23334155%22/><text y=%2250%25%22 x=%2250%25%22 font-family=%22sans-serif%22 font-size=%2240%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%2394a3b8%22>${userData.username[0].toUpperCase()}</text></svg>`;
-                };
-
                 document.getElementById('user-tier-select').value = userData.tier;
                 document.getElementById('user-manage').classList.remove('hidden');
                 document.getElementById('user-manage').scrollIntoView({ behavior: 'smooth' });
-                
+                document.getElementById('user-locked-overlay').classList.toggle('hidden', !userData.account_locked);
+                document.querySelector('.id-unlock-btn').classList.toggle('hidden', !userData.account_locked);
+                document.querySelector('.id-lock-btn').classList.toggle('hidden', userData.account_locked);
                 renderUserBadges(userData.badges);
             } catch (e) { alert(e.message); }
         }
 
         function renderUserBadges(badges) {
             document.getElementById('user-badges-list').innerHTML = (badges || []).map(b => `
-                <span class="badge" style="background:var(--good); color:black; display:inline-flex; align-items:center; gap:0.25rem;">
+                <span class="badge" style="background:var(--pg-blue); color:white; display:inline-flex; align-items:center; gap:0.25rem;">
                     ${b} <span style="cursor:pointer; font-weight:bold; padding:0 2px" data-click="removeBadge" data-badge="${b}">×</span>
                 </span>
-            `).join('') || '<span style="color:var(--text-dim)">No badges assigned.</span>';
+            `).join('') || '<span style="color:var(--text-dim);font-size:0.75rem;">No badges.</span>';
         }
 
         async function addBadge() {
@@ -694,7 +1006,7 @@
             const tier = document.getElementById('user-tier-select').value;
             try {
                 await api(`/api/v1/admin/users/${selectedUserId}/tier`, { method: 'PUT', body: JSON.stringify({ tier }) });
-                alert('Tier updated successfully');
+                alert('Tier updated');
             } catch (e) { alert(e.message); }
         }
 
@@ -702,7 +1014,7 @@
             const notes = document.getElementById('user-internal-notes').value;
             try {
                 await api(`/api/v1/admin/users/${selectedUserId}/notes`, { method: 'POST', body: JSON.stringify({ notes }) });
-                alert('User notes saved.');
+                alert('Saved');
             } catch (e) { alert(e.message); }
         }
 
@@ -711,30 +1023,21 @@
             document.getElementById('rename-modal').classList.remove('hidden');
         }
 
-        function closeRenameModal() {
-            document.getElementById('rename-modal').classList.add('hidden');
-        }
+        function closeRenameModal() { document.getElementById('rename-modal').classList.add('hidden'); }
 
         async function confirmRename() {
             const ban = document.getElementById('ban-current-name-check').checked;
             const reason = document.getElementById('rename-reason').value.trim();
-            
             try {
-                await api(`/api/v1/admin/users/${selectedUserId}/force-username-change`, { 
-                    method: 'POST',
-                    body: JSON.stringify({
-                        ban_current: ban,
-                        reason: reason || 'Forced change by admin'
-                    })
-                });
-                alert('User flagged for name change' + (ban ? ' and username banned.' : '.'));
+                await api(`/api/v1/admin/users/${selectedUserId}/force-username-change`, { method: 'POST', body: JSON.stringify({ ban_current: ban, reason }) });
+                alert('Success');
                 closeRenameModal();
                 manageUser(selectedUserId);
             } catch (e) { alert(e.message); }
         }
 
         async function suspendUser() {
-            const dur = prompt('Suspension (perm, 1h, 1d, 7d):', 'perm');
+            const dur = prompt('Duration (perm, 1h, 1d, 7d):', 'perm');
             if (!dur) return;
             let sec = null;
             if (dur !== 'perm') {
@@ -742,122 +1045,105 @@
                 if (!m) return alert('Invalid format');
                 const v = parseInt(m[1]);
                 if (m[2] === 'h') sec = v * 3600;
-                if (m[2] === 'd') sec = v * 86400;
-                if (m[2] === 'w') sec = v * 604800;
+                else if (m[2] === 'd') sec = v * 86400;
+                else if (m[2] === 'w') sec = v * 604800;
             }
             try {
                 await api(`/api/v1/admin/security/lock-user`, { method: 'POST', body: JSON.stringify({ user_id: String(selectedUserId), duration_seconds: sec }) });
-                alert('User account suspended.');
+                manageUser(selectedUserId);
+            } catch (e) { alert(e.message); }
+        }
+
+        async function unlockUserAction() {
+            try {
+                await api(`/api/v1/admin/security/unlock-user`, { method: 'POST', body: JSON.stringify({ user_id: String(selectedUserId) }) });
+                manageUser(selectedUserId);
             } catch (e) { alert(e.message); }
         }
 
         async function forceLogoutUserAction() {
-            if (!confirm('Kill all active sessions for this user?')) return;
+            if (!confirm('Logout user from all devices?')) return;
             try {
                 await api(`/api/v1/admin/security/force-logout`, { method: 'POST', body: JSON.stringify({ user_id: String(selectedUserId) }) });
-                alert('User sessions terminated.');
+                alert('Sessions killed');
             } catch (e) { alert(e.message); }
         }
 
-        async function resetUserAvatar() {
-            if (!confirm('Clear user avatar and revert to default?')) return;
-            alert('Avatar reset functionality coming in next backend patch.');
-        }
-
-        // --- Security Handlers ---
+        // --- Security & Logs ---
         async function loadSecurity() {
             try {
-                const [ips, banned] = await Promise.all([
-                    api('/api/v1/admin/security/blocked-ips'),
-                    api('/api/v1/admin/security/banned-usernames')
-                ]);
-
-                document.querySelector('#blocked-ips-table tbody').innerHTML = ips.map(ip => `
-                    <tr>
-                        <td>${escapeHtml(ip.ip_address)}</td>
-                        <td>${escapeHtml(ip.reason || 'Manual block')}</td>
-                        <td><button class="btn btn-outline btn-sm" data-click="unblockIP" data-ip="${ip.ip_address}">Unblock</button></td>
-                    </tr>
-                `).join('') || '<tr><td colspan="3">No blocked IP addresses.</td></tr>';
-
-                document.querySelector('#banned-usernames-table tbody').innerHTML = banned.map(b => `
-                    <tr>
-                        <td>${escapeHtml(b.pattern)}</td>
-                        <td>${escapeHtml(b.reason || 'Restricted name')}</td>
-                        <td><button class="btn btn-outline btn-sm" data-click="unblockUsername" data-id="${b.id}">Remove</button></td>
-                    </tr>
-                `).join('') || '<tr><td colspan="3">No name restrictions.</td></tr>';
-                
+                const [ips, banned] = await Promise.all([api('/api/v1/admin/security/blocked-ips'), api('/api/v1/admin/security/banned-usernames')]);
+                document.querySelector('#blocked-ips-table tbody').innerHTML = ips.map(ip => `<tr><td>${escapeHtml(ip.ip_address)}</td><td>${escapeHtml(ip.reason)}</td><td><button class="btn btn-outline btn-sm" data-click="unblockIP" data-ip="${ip.ip_address}">Unblock</button></td></tr>`).join('') || '<tr><td colspan="3">None.</td></tr>';
+                document.querySelector('#banned-usernames-table tbody').innerHTML = banned.map(b => `<tr><td>${escapeHtml(b.pattern)}</td><td>${escapeHtml(b.reason)}</td><td><button class="btn btn-outline btn-sm" data-click="unblockUsername" data-id="${b.id}">Remove</button></td></tr>`).join('') || '<tr><td colspan="3">None.</td></tr>';
                 loadHashReports();
-            } catch (e) { console.error(e); }
+            } catch (e) {}
         }
 
         async function loadHashReports() {
             try {
                 const reports = await api('/api/v1/admin/hash-reports?limit=20');
-                document.querySelector('#hash-reports-table tbody').innerHTML = reports.map(r => `
-                    <tr>
-                        <td style="font-family:monospace; color:var(--accent)">${r.hash_value.substring(0,16)}...</td>
-                        <td>${escapeHtml(r.reason)}</td>
-                        <td>${escapeHtml(r.reporter_username)}</td>
-                        <td><span class="badge" style="background:var(--border)">${r.status}</span></td>
-                        <td><button class="btn btn-outline btn-sm" data-click="viewHashReport" data-id="${r.id}">View</button></td>
-                    </tr>
-                `).join('') || '<tr><td colspan="5">No pending content reports.</td></tr>';
-            } catch (e) { console.error(e); }
+                document.querySelector('#hash-reports-table tbody').innerHTML = reports.map(r => `<tr><td style="font-family:monospace; color:var(--pg-blue)">${r.hash_value.substring(0,16)}...</td><td>${escapeHtml(r.reason)}</td><td>${escapeHtml(r.reporter_username)}</td><td><span class="badge" style="background:#333;">${r.status}</span></td><td><button class="btn btn-outline btn-sm" data-click="viewHashReport" data-id="${r.id}">View</button></td></tr>`).join('') || '<tr><td colspan="5">None.</td></tr>';
+            } catch (e) {}
         }
 
         async function globalSessionPurge() {
             if (!confirm('URGENT: This will log out EVERY user on the platform. Are you absolutely sure?')) return;
             try {
                 await api('/api/v1/admin/security/logout-all', { method: 'POST' });
-                alert('platform-wide logout initiated.');
+                alert('Logout initiated.');
             } catch (e) { alert(e.message); }
         }
 
-        // --- Metrics & Charts ---
-        async function loadMetrics() {
-            const hours = document.getElementById('metric-range').value;
+        async function loadLogs() {
             try {
-                const data = await api(`/api/v1/admin/telemetry/stats?hours=${hours}`);
-                const tbody = document.querySelector('#metrics-table tbody');
-                tbody.innerHTML = data.stats.map(s => `
-                    <tr>
-                        <td style="font-family:monospace; font-size:0.75rem">${s.endpoint}</td>
-                        <td>${s.count}</td>
-                        <td style="color:${latencyColor(s.avg_ms)}">${s.avg_ms.toFixed(1)}ms</td>
-                        <td>${s.p95_ms.toFixed(1)}ms</td>
-                        <td>${s.avg_queries?.toFixed(1) || '0'}</td>
-                        <td>${s.avg_query_time_ms?.toFixed(1) || '0'}ms</td>
-                        <td style="color:${s.error_rate > 5 ? 'var(--bad)' : 'var(--good)'}">${(s.error_rate).toFixed(1)}%</td>
-                    </tr>
-                `).join('');
-                
-                renderCharts(data.stats);
-            } catch (e) { console.error(e); }
+                const logs = await api('/api/v1/admin/logs');
+                const select = document.getElementById('log-file-select');
+                const currentVal = select.value;
+                select.innerHTML = logs.map(l => `<option value="${l.filename}" ${l.filename === currentVal ? 'selected' : ''}>${l.filename} (${(l.size / 1024).toFixed(1)} KB)</option>`).join('');
+                if (!currentVal && logs.length > 0) select.value = logs[0].filename;
+                loadLogContent();
+            } catch (e) {}
         }
 
-        const latencyColor = (ms) => ms > 500 ? 'var(--bad)' : (ms > 200 ? 'var(--warn)' : 'var(--good)');
+        async function loadLogContent() {
+            const filename = document.getElementById('log-file-select').value;
+            if (!filename) return;
+            try {
+                const search = document.getElementById('log-search').value;
+                const level = document.getElementById('log-level-filter').value;
+                const query = new URLSearchParams({ limit: 2000 });
+                if (search) query.append('search', search);
+                if (level) query.append('level', level);
+                const data = await api(`/api/v1/admin/logs/${encodeURIComponent(filename)}?${query.toString()}`);
+                const viewer = document.getElementById('log-viewer');
+                viewer.innerHTML = data.lines.map(l => {
+                    let color = '#aaa';
+                    if (l.level === 'ERROR' || l.level === 'CRITICAL') color = 'var(--pg-red)';
+                    else if (l.level === 'WARNING') color = 'var(--pg-orange)';
+                    return `<div style="margin-bottom: 2px;"><span style="color: #555;">${l.timestamp}</span> <span style="color: ${color}; font-weight: bold;">[${l.level}]</span> ${escapeHtml(l.message)}</div>`;
+                }).join('') || '<div style="text-align:center;padding:2rem;">Empty.</div>';
+                document.getElementById('log-stats').textContent = `Showing ${data.lines.length} of ${data.total_lines} lines`;
+            } catch (e) { document.getElementById('log-viewer').textContent = 'Error: ' + e.message; }
+        }
 
-        function renderCharts(stats) {
-            const top = stats.slice(0, 8);
-            const labels = top.map(s => s.endpoint.replace('/api/v1', ''));
-            
-            // Latency Chart
-            if(charts.latency) charts.latency.destroy();
-            charts.latency = new Chart(document.getElementById('latency-chart'), {
-                type: 'bar',
-                data: { labels, datasets: [{ label: 'Avg ms', data: top.map(s => s.avg_ms), backgroundColor: '#3b82f6' }] },
-                options: { plugins: { legend: { display: false } }, scales: { y: { grid: { color: '#334155' } } } }
-            });
+        function scrollLogTop() { document.getElementById('log-viewer').scrollTop = 0; }
+        function scrollLogBottom() { document.getElementById('log-viewer').scrollTop = document.getElementById('log-viewer').scrollHeight; }
 
-            // DB Impact Chart
-            if(charts.db) charts.db.destroy();
-            charts.db = new Chart(document.getElementById('db-impact-chart'), {
-                type: 'line',
-                data: { labels, datasets: [{ label: 'Queries', data: top.map(s => s.avg_queries), borderColor: '#e94560', tension: 0.3 }] },
-                options: { plugins: { legend: { display: false } } }
-            });
+        async function logout() {
+            localStorage.removeItem('plexichat-admin-token');
+            window.location.replace('/api/v1/admin/login');
+        }
+
+        async function changeAdminPassword() {
+            const current = document.getElementById('admin-current-pass').value;
+            const newPass = document.getElementById('admin-new-pass').value;
+            const confirmPass = document.getElementById('admin-confirm-pass').value;
+            if (newPass.length < 12 || newPass !== confirmPass) return alert('Invalid input');
+            try {
+                await api('/api/v1/admin/auth/change-password', { method: 'POST', body: JSON.stringify({ current_password: current, new_password: newPass }) });
+                alert('Success. Please login again.');
+                logout();
+            } catch (e) { alert(e.message); }
         }
 
         async function exportStats() {
@@ -872,131 +1158,12 @@
             } catch (e) { alert('Export failed: ' + e.message); }
         }
 
-        // --- Log Handlers ---
-        let logAutoRefreshInterval = null;
-
-        async function loadLogs() {
-            try {
-                const logs = await api('/api/v1/admin/logs');
-                const select = document.getElementById('log-file-select');
-                const currentVal = select.value;
-                
-                select.innerHTML = logs.map(l => {
-                    const date = new Date(l.modified).toLocaleString();
-                    const size = (l.size / 1024).toFixed(1) + ' KB';
-                    return `<option value="${l.filename}" ${l.filename === currentVal ? 'selected' : ''}>${l.filename} (${size}) - ${date}</option>`;
-                }).join('');
-                
-                if (!currentVal && logs.length > 0) {
-                    select.value = logs.find(l => l.filename === 'latest.log')?.filename || logs[0].filename;
-                }
-                
-                loadLogContent();
-            } catch (e) { console.error(e); }
-        }
-
-        async function refreshLogList() {
-            await loadLogs();
-        }
-
-        async function loadLogContent() {
-            const filename = document.getElementById('log-file-select').value;
-            const search = document.getElementById('log-search').value;
-            const level = document.getElementById('log-level-filter').value;
-            
-            if (!filename) return;
-            
-            try {
-                const query = new URLSearchParams({ limit: 2000 });
-                if (search) query.append('search', search);
-                if (level) query.append('level', level);
-                
-                const data = await api(`/api/v1/admin/logs/${encodeURIComponent(filename)}?${query.toString()}`);
-                const viewer = document.getElementById('log-viewer');
-                
-                // Check if viewer is at bottom BEFORE updating content
-                const isAtBottom = viewer.scrollHeight - viewer.scrollTop <= viewer.clientHeight + 50;
-                const previousTotalLines = viewer.dataset.totalLines || 0;
-                
-                if (data.lines.length === 0) {
-                    viewer.innerHTML = '<div style="color: var(--text-dim); text-align: center; padding: 2rem;">No matching log entries found.</div>';
-                } else {
-                    viewer.innerHTML = data.lines.map(l => {
-                        let color = '#d1d5db';
-                        if (l.level === 'ERROR' || l.level === 'CRITICAL') color = '#f87171';
-                        else if (l.level === 'WARNING') color = '#fbbf24';
-                        else if (l.level === 'DEBUG') color = '#94a3b8';
-                        
-                        return `<div style="margin-bottom: 2px;"><span style="color: #64748b;">${escapeHtml(l.timestamp)}</span> <span style="color: ${color}; font-weight: bold;">[${l.level}]</span> ${escapeHtml(l.message)}</div>`;
-                    }).join('');
-                }
-                
-                document.getElementById('log-stats').textContent = `Showing ${data.lines.length} of ${data.total_lines} lines`;
-                viewer.dataset.totalLines = data.total_lines;
-                
-                // Auto-scroll if we were at the bottom and new lines were added
-                if (isAtBottom && data.total_lines > previousTotalLines) {
-                    viewer.scrollTop = viewer.scrollHeight;
-                }
-                
-                if (document.getElementById('log-auto-refresh').checked) {
-                    if (!logAutoRefreshInterval) {
-                        logAutoRefreshInterval = setInterval(loadLogContent, 5000);
-                    }
-                } else {
-                    if (logAutoRefreshInterval) {
-                        clearInterval(logAutoRefreshInterval);
-                        logAutoRefreshInterval = null;
-                    }
-                }
-            } catch (e) { 
-                document.getElementById('log-viewer').innerHTML = `<div style="color: var(--bad); padding: 1rem;">Error: ${escapeHtml(e.message)}</div>`;
-            }
-        }
-
-        function scrollLogTop() { document.getElementById('log-viewer').scrollTop = 0; }
-        function scrollLogBottom() { 
-            const v = document.getElementById('log-viewer');
-            v.scrollTop = v.scrollHeight; 
-        }
-
-        async function downloadLog() {
-            const filename = document.getElementById('log-file-select').value;
-            if (!filename) return;
-            window.open(`/api/v1/admin/logs/${encodeURIComponent(filename)}?limit=100000`, '_blank');
-        }
-
-        // --- Account Handlers ---
-        async function changeAdminPassword() {
-            const current = document.getElementById('admin-current-pass').value;
-            const newPass = document.getElementById('admin-new-pass').value;
-            const confirmPass = document.getElementById('admin-confirm-pass').value;
-
-            if (newPass.length < 12) return alert('Password too short (min 12)');
-            if (newPass !== confirmPass) return alert('Passwords do not match');
-
-            try {
-                await api('/api/v1/admin/auth/change-password', {
-                    method: 'POST',
-                    body: JSON.stringify({ current_password: current, new_password: newPass })
-                });
-                alert('Password updated. Session invalidated.');
-                logout();
-            } catch (e) { alert(e.message); }
-        }
-
-        function logout() {
-            localStorage.removeItem('plexichat-admin-token');
-            window.location.replace('/api/v1/admin/login');
-        }
-
         // --- Event Routing ---
         document.addEventListener('click', (e) => {
             const target = e.target.closest('[data-click]');
             if (!target) return;
             const act = target.dataset.click;
             const id = target.dataset.id;
-
             if (act === 'logout') logout();
             else if (act === 'showTab') showTab(target.dataset.tab);
             else if (act === 'viewTicket') viewTicket(id);
@@ -1012,110 +1179,55 @@
             else if (act === 'closeRenameModal') closeRenameModal();
             else if (act === 'confirmRename') confirmRename();
             else if (act === 'suspendUser') suspendUser();
+            else if (act === 'unlockUserAction') unlockUserAction();
             else if (act === 'forceLogoutUserAction') forceLogoutUserAction();
             else if (act === 'globalSessionPurge') globalSessionPurge();
             else if (act === 'changeAdminPassword') changeAdminPassword();
-            else if (act === 'exportStats') exportStats();
-            else if (act === 'refreshLogList') refreshLogList();
+            else if (act === 'refreshLogList') loadLogs();
             else if (act === 'loadLogContent') loadLogContent();
             else if (act === 'scrollLogTop') scrollLogTop();
             else if (act === 'scrollLogBottom') scrollLogBottom();
-            else if (act === 'downloadLog') downloadLog();
+            else if (act === 'exportStats') exportStats();
             else if (act === 'blockIP') {
                 const ip = document.getElementById('block-ip-val').value;
-                api('/api/v1/admin/security/block-ip', { method: 'POST', body: JSON.stringify({ ip_address: ip, reason: 'Admin block' }) })
-                    .then(() => { alert('Blocked'); loadSecurity(); });
+                api('/api/v1/admin/security/block-ip', { method: 'POST', body: JSON.stringify({ ip_address: ip, reason: 'Admin block' }) }).then(() => loadSecurity());
             }
-            else if (act === 'unblockIP') {
-                api(`/api/v1/admin/security/unblock-ip/${encodeURIComponent(target.dataset.ip)}`, { method: 'DELETE' }).then(() => loadSecurity());
-            }
+            else if (act === 'unblockIP') api(`/api/v1/admin/security/unblock-ip/${encodeURIComponent(target.dataset.ip)}`, { method: 'DELETE' }).then(() => loadSecurity());
             else if (act === 'addBannedUsername') {
                 const p = document.getElementById('ban-username-val').value;
-                api('/api/v1/admin/security/banned-usernames', { method: 'POST', body: JSON.stringify({ pattern: p, reason: 'Restricted' }) })
-                    .then(() => { alert('Banned'); loadSecurity(); });
+                api('/api/v1/admin/security/banned-usernames', { method: 'POST', body: JSON.stringify({ pattern: p, reason: 'Restricted' }) }).then(() => loadSecurity());
             }
-            else if (act === 'unblockUsername') {
-                api(`/api/v1/admin/security/banned-usernames/${id}`, { method: 'DELETE' }).then(() => loadSecurity());
-            }
+            else if (act === 'unblockUsername') api(`/api/v1/admin/security/banned-usernames/${id}`, { method: 'DELETE' }).then(() => loadSecurity());
         });
 
         document.addEventListener('change', (e) => {
-            if (e.target.dataset.change === 'loadMetrics') loadMetrics();
+            if (e.target.dataset.change === 'refreshMetrics') refreshMetrics();
             if (e.target.dataset.change === 'loadLogContent') loadLogContent();
-            if (e.target.id === 'log-auto-refresh') loadLogContent();
         });
 
-        // Add Enter key listeners for all search/action inputs
-        document.addEventListener('keydown', (e) => {
-            if (e.key !== 'Enter') return;
-            
-            if (e.target.id === 'user-search-input') {
-                e.preventDefault();
-                searchUsers();
-            } else if (e.target.id === 'new-note-input') {
-                e.preventDefault();
-                addTicketNote();
-            } else if (e.target.id === 'block-ip-val') {
-                e.preventDefault();
-                const ip = e.target.value;
-                api('/api/v1/admin/security/block-ip', { 
-                    method: 'POST', 
-                    body: JSON.stringify({ ip_address: ip, reason: 'Admin block' }) 
-                }).then(() => { alert('Blocked'); loadSecurity(); });
-            } else if (e.target.id === 'ban-username-val') {
-                e.preventDefault();
-                const p = e.target.value;
-                api('/api/v1/admin/security/banned-usernames', { 
-                    method: 'POST', 
-                    body: JSON.stringify({ pattern: p, reason: 'Restricted' }) 
-                }).then(() => { alert('Banned'); loadSecurity(); });
-            }
+        // Sorting for Endpoint Table
+        document.querySelectorAll('th[data-sort]').forEach(th => {
+            th.addEventListener('click', () => {
+                const key = th.dataset.sort;
+                sortConfig.dir = (sortConfig.key === key && sortConfig.dir === 'desc') ? 'asc' : 'desc';
+                sortConfig.key = key;
+                renderEndpointTable();
+            });
         });
+
+        document.getElementById('endpoint-filter').addEventListener('input', renderEndpointTable);
 
         async function verifyAndLoad() {
             try {
                 const d = await api('/api/v1/admin/dashboard');
-                document.getElementById('stats-summary').innerHTML = `
-                    <div class="card"><h3>Open Tickets</h3><div style="font-size:2rem; font-weight:bold; color:var(--warn)">${d.tickets.open}</div></div>
-                    <div class="card"><h3>Total Users</h3><div style="font-size:2rem; font-weight:bold; color:var(--good)">${d.total_users}</div></div>
-                    <div class="card"><h3>DB Status</h3><div style="font-size:2rem; font-weight:bold; color:${d.db_status === 'healthy' ? 'var(--good)' : 'var(--bad)'}">${d.db_status.toUpperCase()}</div></div>
-                    <div class="card"><h3>Active (24h)</h3><div style="font-size:2rem; font-weight:bold; color:var(--primary)">${d.active_users}</div></div>
-                `;
-                document.getElementById('loading').classList.add('hidden');
-                document.getElementById('content').classList.remove('hidden');
-                showTab('tickets');
+                document.getElementById('server-version').textContent = 'v1.0.0';
+                showTab('metrics');
             } catch (e) {
-                document.getElementById('loading').innerHTML = `<div class="card btn-danger">Security Verification Failed: ${e.message}</div>`;
+                document.getElementById('loading').innerHTML = `<div class="card btn-danger" style="border-radius:2px;">Security Verification Failed: ${e.message}</div>`;
             }
         }
 
         verifyAndLoad();
     </script>
-
-    <!-- Force Username Change Modal -->
-    <div id="rename-modal" class="modal hidden">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>Force Username Change</h3>
-            </div>
-            <p style="font-size: 0.875rem; color: var(--text-dim); margin-bottom: 1rem;">
-                This will require <strong id="rename-user-name" style="color: var(--text)"></strong> to choose a new username on their next login.
-            </p>
-            <div style="display: flex; flex-direction: column; gap: 1rem;">
-                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-                    <input type="checkbox" id="ban-current-name-check" style="width: auto;">
-                    <span>Ban current username pattern</span>
-                </label>
-                <div>
-                    <label style="font-size: 0.75rem; color: var(--text-dim); display: block; margin-bottom: 0.25rem;">Reason (Optional)</label>
-                    <input type="text" id="rename-reason" placeholder="e.g. Offensive username" style="width: 100%;">
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-outline" data-click="closeRenameModal">Cancel</button>
-                <button class="btn btn-primary" data-click="confirmRename">Force Change</button>
-            </div>
-        </div>
-    </div>
 </body>
 </html>
