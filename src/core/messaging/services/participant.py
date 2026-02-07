@@ -48,6 +48,38 @@ class ParticipantService(BaseService):
             raise ParticipantNotFoundError("Failed to create participant")
         return self._repo.row_to_model(row)
 
+    def add_user_to_multiple_conversations(
+        self,
+        user_id: SnowflakeID,
+        conversation_ids: List[SnowflakeID],
+        role: ParticipantRole,
+    ) -> None:
+        """Add a user to multiple conversations in batch."""
+        if not conversation_ids:
+            return
+
+        now = self._get_timestamp()
+        participants_data = []
+        
+        for cid in conversation_ids:
+            # We skip exists check for speed in batch, assuming caller knows what they are doing
+            # or we catch duplicate errors. However, for "server join", we know they are new.
+            # But to be safe and robust, we could check. But checking N times defeats the purpose.
+            # Since this is used for "User joins Server", and they just joined, they shouldn't be in any server channels yet.
+            participants_data.append({
+                "id": self._generate_id(),
+                "conversation_id": cid,
+                "user_id": user_id,
+                "role": role,
+                "joined_at": now
+            })
+
+        self._repo.create_bulk(participants_data)
+        
+        # Invalidate caches
+        for cid in conversation_ids:
+            self._cache_invalidate((cid, user_id))
+
     def remove_participant(
         self,
         conversation_id: SnowflakeID,

@@ -31,6 +31,7 @@ async def get_dashboard(request: Request):
                         avg_ms=round(s.avg_response_time_ms, 2),
                         p95_ms=round(s.p95_response_time_ms, 2),
                         error_rate=round(s.error_rate * 100, 2),
+                        error_count=s.error_count,
                         avg_queries=round(s.avg_queries, 1),
                         avg_query_time_ms=round(s.avg_query_time_ms, 2)
                     )

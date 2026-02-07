@@ -390,7 +390,7 @@
                 document.getElementById('db-conn-count').textContent = `${db.active_connections} / ${db.max_connections}`;
                 updateHist('chart-db-pool', [{ val: db.active_connections, col: '#ff9900' }, { val: db.total_connections, col: '#00aaff' }]);
             }).catch(()=>{});
-            const t = stats.reduce((a,b)=>a+b.count,0), e = stats.reduce((a,b)=>a+(b.error_rate/100*b.count),0);
+            const t = stats.reduce((a,b)=>a+b.count,0), e = stats.reduce((a,b)=>a+b.error_count,0);
             updateHist('chart-errors', [{ val: t>0?(e/t*100):0, col: '#ff3333' }]);
             renderChart('chart-status-dist', 'doughnut', { labels: ['OK', 'ERR'], datasets: [{ data: [t-e, e], backgroundColor: ['#00cc66', '#ff3333'], borderWidth: 0 }]}, { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: true, position: 'bottom', labels: { color: '#888', font: { size: 10, weight: 'bold' } } } } });
         }

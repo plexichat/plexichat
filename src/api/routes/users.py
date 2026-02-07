@@ -511,42 +511,55 @@ def get_dm_channels(
 
         auth = api.get_auth()
         result = []
-        for ch in channels or []:
-            try:
-                recipient_id = getattr(ch, "recipient_id", None)
-                recipient_username = None
-                if recipient_id and auth:
-                    try:
-                        user = auth.get_user(recipient_id)
-                        if user:
-                            recipient_username = user.username
-                    except Exception:
-                        pass
+        
+        # Optimize by bulk fetching users to avoid N+1 queries
+        if channels and auth:
+            recipient_ids = []
+            for ch in channels:
+                rid = getattr(ch, "recipient_id", None)
+                if rid: recipient_ids.append(rid)
+            
+            # Use profiles bulk which is safer for public info
+            users_map = {}
+            if recipient_ids:
+                try:
+                    users_map = auth.get_user_profiles_bulk(recipient_ids)
+                except Exception:
+                    pass
 
-                result.append(
-                    DMChannelResponse(
-                        id=SnowflakeID(ch.id),
-                        channel_type="dm",
-                        recipient_id=SnowflakeID(recipient_id)
-                        if recipient_id
-                        else None,
-                        recipient=RecipientResponse(
-                            id=SnowflakeID(recipient_id),
-                            username=recipient_username or f"User {recipient_id}",
+            for ch in channels:
+                try:
+                    rid = getattr(ch, "recipient_id", None)
+                    recipient_username = None
+                    if rid:
+                        user_data = users_map.get(str(rid))
+                        if user_data:
+                            recipient_username = user_data.get("username")
+                        else:
+                            # Fallback if not in bulk (shouldn't happen often)
+                            try:
+                                user = auth.get_user(rid)
+                                if user: recipient_username = user.username
+                            except Exception: pass
+
+                    result.append(
+                        DMChannelResponse(
+                            id=SnowflakeID(ch.id),
+                            channel_type="dm",
+                            recipient_id=SnowflakeID(rid) if rid else None,
+                            recipient=RecipientResponse(
+                                id=SnowflakeID(rid),
+                                username=recipient_username or f"User {rid}",
+                            ) if rid else None,
+                            last_message_id=SnowflakeID(ch.last_message_id)
+                            if hasattr(ch, "last_message_id") and ch.last_message_id
+                            else None,
                         )
-                        if recipient_id
-                        else None,
-                        last_message_id=SnowflakeID(ch.last_message_id)
-                        if hasattr(ch, "last_message_id") and ch.last_message_id
-                        else None,
                     )
-                )
-            except Exception as e:
-                logger.debug(
-                    f"Failed to process DM channel {getattr(ch, 'id', 'unknown')} for user {current_user.user_id}: {e}"
-                )
-                continue
-
+                except Exception as e:
+                    logger.debug(f"Failed to process DM channel {getattr(ch, 'id', 'unknown')}: {e}")
+                    continue
+        
         return result
     except Exception as e:
         logger.error(

@@ -5,7 +5,7 @@ Role and permission handler for server operations.
 import json
 from typing import Optional, List, Dict, Any
 from src.core.base import SnowflakeID
-from ..models import Role, ChannelOverride, AuditLogAction
+from ..models import Role, ChannelOverride, AuditLogAction, SERVER_PERMISSIONS
 from ..exceptions import (
     RoleNotFoundError,
     RoleHierarchyError,
@@ -325,6 +325,70 @@ class RoleHandler:
             {"channel_id": channel_id, "target_type": target_type, "target_id": target_id},
         )
         return True
+
+    def get_permissions_batch(
+        self,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
+        channel_ids: List[SnowflakeID],
+    ) -> Dict[SnowflakeID, Dict[str, bool]]:
+        """Get permissions for multiple channels in a server."""
+        if not channel_ids:
+            return {}
+
+        # 1. Base permissions
+        # This uses existing cache/logic for base perms
+        base_perms = self.get_permissions(user_id, server_id)
+        
+        # If admin, return all true for all channels
+        if base_perms.get("administrator"):
+             return {cid: base_perms for cid in channel_ids}
+
+        # 2. Get user's roles
+        role_rows = self.manager._get_member_role_rows(server_id, user_id)
+        role_ids = [r["id"] for r in role_rows]
+
+        # 3. Fetch overrides
+        placeholders = ",".join("?" * len(channel_ids))
+        query_params = list(channel_ids)
+        
+        or_parts = ["(target_type = 'member' AND target_id = ?)"]
+        query_params.append(user_id)
+        
+        if role_ids:
+            r_placeholders = ",".join("?" * len(role_ids))
+            or_parts.append(f"(target_type = 'role' AND target_id IN ({r_placeholders}))")
+            query_params.extend(role_ids)
+            
+        query = f"""SELECT * FROM srv_channel_overrides 
+                    WHERE channel_id IN ({placeholders}) 
+                    AND ({' OR '.join(or_parts)})"""
+        
+        overrides_rows = self.db.fetch_all(query, tuple(query_params))
+        
+        # Group overrides by channel
+        channel_overrides: Dict[SnowflakeID, List[Dict[str, Any]]] = {cid: [] for cid in channel_ids}
+        member_overrides: Dict[SnowflakeID, Dict[str, Any]] = {}
+        
+        for row in overrides_rows:
+            cid = row["channel_id"]
+            if cid in channel_overrides:
+                if row["target_type"] == "member":
+                    member_overrides[cid] = dict(row)
+                else:
+                    channel_overrides[cid].append(dict(row))
+                
+        # 4. Calculate permissions for each channel
+        result = {}
+        for cid in channel_ids:
+            perms = apply_channel_overrides(base_perms, channel_overrides[cid], member_overrides.get(cid))
+            result[cid] = perms
+            
+            # Populate cache
+            cache_key = (user_id, server_id, cid)
+            self.manager._cache_set(self.manager._permission_cache, cache_key, perms)
+            
+        return result
 
     def get_permissions(
         self,

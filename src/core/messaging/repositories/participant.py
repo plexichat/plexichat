@@ -30,6 +30,37 @@ class ParticipantRepository(BaseRepository[Participant]):
             auto_commit=auto_commit,
         )
 
+    def create_bulk(
+        self,
+        participants: List[Dict[str, Any]],
+        auto_commit: bool = True,
+    ) -> None:
+        """Create multiple participants in batch."""
+        if not participants:
+            return
+
+        self.begin_transaction()
+        try:
+            for p in participants:
+                self._execute(
+                    """INSERT INTO msg_participants 
+                       (id, conversation_id, user_id, role, joined_at)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (
+                        p["id"],
+                        p["conversation_id"],
+                        p["user_id"],
+                        p["role"].value,
+                        p["joined_at"],
+                    ),
+                    auto_commit=False,
+                )
+            if auto_commit:
+                self.commit()
+        except Exception:
+            self.rollback()
+            raise
+
     def get_by_conversation_and_user(
         self, conversation_id: SnowflakeID, user_id: SnowflakeID
     ) -> Optional[Dict[str, Any]]:

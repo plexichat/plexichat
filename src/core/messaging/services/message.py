@@ -153,20 +153,21 @@ class MessageService(BaseService):
             # Add attachments
             attachment_list: List[Attachment] = []
             if attachments:
+                bulk_data = []
                 for att_data in attachments:
                     att_id = self._generate_id()
-                    self._attachment_repo.create(
-                        att_id,
-                        msg_id,
-                        att_data.get("filename", "file"),
-                        att_data.get("content_type", "application/octet-stream"),
-                        att_data.get("size", 0),
-                        att_data.get("url", ""),
-                        now,
-                        metadata=att_data.get("metadata"),
-                        checksum=att_data.get("hash") or att_data.get("checksum"),
-                        auto_commit=False,
-                    )
+                    bulk_data.append({
+                        "id": att_id,
+                        "message_id": msg_id,
+                        "filename": att_data.get("filename", "file"),
+                        "content_type": att_data.get("content_type", "application/octet-stream"),
+                        "size": att_data.get("size", 0),
+                        "url": att_data.get("url", ""),
+                        "url_encrypted": None,
+                        "created_at": now,
+                        "metadata": att_data.get("metadata"),
+                        "checksum": att_data.get("hash") or att_data.get("checksum"),
+                    })
                     attachment_list.append(
                         Attachment(
                             id=att_id,
@@ -179,6 +180,8 @@ class MessageService(BaseService):
                             checksum=att_data.get("hash") or att_data.get("checksum"),
                         )
                     )
+                
+                self._attachment_repo.create_bulk(bulk_data, auto_commit=False)
 
             self._repo.commit()
         except Exception:

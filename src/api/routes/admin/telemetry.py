@@ -30,7 +30,8 @@ async def get_telemetry_stats(request: Request, hours: int = 24, endpoint: Optio
             stats=[TelemetryEndpointStat(
                 endpoint=urllib.parse.unquote(s.endpoint), method=s.method, count=s.count,
                 avg_ms=round(s.avg_response_time_ms, 2), p95_ms=round(s.p95_response_time_ms, 2),
-                error_rate=round(s.error_rate, 2), avg_queries=round(s.avg_queries, 1),
+                error_rate=round(s.error_rate, 2), error_count=s.error_count,
+                avg_queries=round(s.avg_queries, 1),
                 avg_query_time_ms=round(s.avg_query_time_ms, 2)
             ) for s in stats],
             source=source or "all"
@@ -96,7 +97,8 @@ async def export_telemetry_stats(
                 stats=[TelemetryEndpointStat(
                     endpoint=s.endpoint, method=s.method, count=s.count, 
                     avg_ms=round(s.avg_response_time_ms, 2), p95_ms=round(s.p95_response_time_ms, 2), 
-                    error_rate=round(s.error_rate, 2), avg_queries=round(s.avg_queries, 1), 
+                    error_rate=round(s.error_rate, 2), error_count=s.error_count,
+                    avg_queries=round(s.avg_queries, 1), 
                     avg_query_time_ms=round(s.avg_query_time_ms, 2)
                 ) for s in stats]
             )

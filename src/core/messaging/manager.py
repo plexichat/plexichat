@@ -304,6 +304,17 @@ class MessagingManager(BaseManager):
 
         return participant
 
+    def add_participant_to_conversations(
+        self,
+        user_id: SnowflakeID,
+        conversation_ids: List[SnowflakeID],
+        role: ParticipantRole = ParticipantRole.MEMBER,
+    ) -> None:
+        """Add a participant to multiple conversations (for server joins)."""
+        self._participant_svc.add_user_to_multiple_conversations(
+            user_id, conversation_ids, role
+        )
+
     def remove_participant(
         self,
         user_id: SnowflakeID,

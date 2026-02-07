@@ -43,6 +43,7 @@ class EndpointStats:
     last_updated: int
     avg_queries: float = 0.0
     avg_query_time_ms: float = 0.0
+    error_count: int = 0
 
 
 def setup(db: Any) -> None:
@@ -134,6 +135,7 @@ def get_endpoint_stats(hours: int = 24, endpoint_filter: Optional[str] = None, c
             endpoint, method, COUNT(*) as count,
             AVG(response_time_ms) as avg_ms, MIN(response_time_ms) as min_ms, MAX(response_time_ms) as max_ms,
             AVG(db_queries) as avg_q, AVG(db_time_ms) as avg_dt,
+            SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) as err_count,
             SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as err_rate
         FROM telemetry_response_times 
         WHERE timestamp > ?
@@ -158,7 +160,8 @@ def get_endpoint_stats(hours: int = 24, endpoint_filter: Optional[str] = None, c
             avg_response_time_ms=r["avg_ms"], min_response_time_ms=r["min_ms"], max_response_time_ms=r["max_ms"],
             p50_response_time_ms=r["avg_ms"], p95_response_time_ms=r["avg_ms"] * 1.2, p99_response_time_ms=r["max_ms"], # Approximations for speed
             error_rate=r["err_rate"], last_updated=now,
-            avg_queries=r["avg_q"], avg_query_time_ms=r["avg_dt"]
+            avg_queries=r["avg_q"], avg_query_time_ms=r["avg_dt"],
+            error_count=int(r["err_count"])
         ))
     return stats
 

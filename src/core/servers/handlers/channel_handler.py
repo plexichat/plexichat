@@ -13,6 +13,7 @@ from ..exceptions import (
     CategoryNotFoundError,
     InvalidChannelNameError,
 )
+from ..permissions import has_permission as check_permission
 from src.core.database import cache_delete, redis_available
 
 class ChannelHandler:
@@ -201,9 +202,20 @@ class ChannelHandler:
         query += " ORDER BY position"
         rows = self.db.fetch_all(query, tuple(params))
 
+        if not rows:
+            return []
+
+        # Optimization: Batch permission check
+        channel_ids = [row["id"] for row in rows]
+        perms_map = self.manager.role_handler.get_permissions_batch(user_id, server_id, channel_ids)
+
         channels = []
         for row in rows:
-            if self.manager.has_permission(user_id, server_id, "channels.view", row["id"]):
+            cid = row["id"]
+            perms = perms_map.get(cid, {})
+            # If batch fails or returns empty for some reason, we default to denied (safe)
+            # unless administrator (handled in get_permissions_batch)
+            if check_permission(perms, "channels.view"):
                 channels.append(self.manager._row_to_channel(row))
 
         return channels

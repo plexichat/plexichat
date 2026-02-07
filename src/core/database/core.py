@@ -10,6 +10,7 @@ import threading
 import time
 import uuid
 from typing import Any, List, Optional, Tuple, Union, Dict
+from contextvars import ContextVar
 
 import utils.config as config
 import utils.logger as logger
@@ -18,6 +19,10 @@ from .engines.sqlite import SqliteEngine
 from .engines.postgres import PostgresEngine
 from .monitoring import DatabaseMonitor
 from . import dialect
+
+# Context variables for request-local database metrics
+_query_count: ContextVar[int] = ContextVar("_query_count", default=0)
+_query_time_ms: ContextVar[float] = ContextVar("_query_time_ms", default=0.0)
 
 # Export for backward compatibility with tests
 class _CompatibilityRegex:
@@ -39,16 +44,15 @@ DbConnection = Union[sqlite3.Connection, Any]  # Any for psycopg2 connection
 DbCursor = Union[sqlite3.Cursor, Any]  # Any for psycopg2 cursor
 
 class DatabaseLocal(threading.local):
-    """Thread-local storage for database connections and state."""
+    """Thread-local storage for database connections."""
     def __init__(self):
-        self.query_count = 0
-        self.query_time_ms = 0.0
+        pass
 
 class Database:
     """
     Database connection manager supporting SQLite and PostgreSQL.
-    Ensures thread-safety using thread-local storage.
-    Acts as a facade for modular database components.
+    Ensures thread-safety using thread-local storage for connections.
+    Uses ContextVars for request-scoped metrics.
     """
 
     def __init__(self):
@@ -298,9 +302,9 @@ class Database:
                 duration_ms = (time.time() - start_time) * 1000
                 self.monitor.record_query_execution(duration_ms)
                 
-                # Update request context metrics
-                self._local.query_count = getattr(self._local, "query_count", 0) + 1
-                self._local.query_time_ms = getattr(self._local, "query_time_ms", 0.0) + duration_ms
+                # Update request context metrics using ContextVars
+                _query_count.set(_query_count.get() + 1)
+                _query_time_ms.set(_query_time_ms.get() + duration_ms)
                 
                 if duration_ms > self._slow_query_threshold_ms:
                     logger.warning(f"Slow query detected ({duration_ms:.2f}ms): {query[:100]}")
@@ -349,9 +353,9 @@ class Database:
                 exec_time = (time.time() - start_time) * 1000
                 self.monitor.record_query_execution(exec_time)
                 
-                # Update request context metrics
-                self._local.query_count = getattr(self._local, "query_count", 0) + 1
-                self._local.query_time_ms = getattr(self._local, "query_time_ms", 0.0) + exec_time
+                # Update request context metrics using ContextVars
+                _query_count.set(_query_count.get() + 1)
+                _query_time_ms.set(_query_time_ms.get() + exec_time)
                 
                 if auto_commit and not self.in_transaction:
                     conn.commit()
@@ -625,14 +629,14 @@ class Database:
     def get_request_metrics(self) -> Dict[str, Union[int, float]]:
         """Get database metrics for the current request context."""
         return {
-            "query_count": getattr(self._local, "query_count", 0),
-            "query_time_ms": getattr(self._local, "query_time_ms", 0.0)
+            "query_count": _query_count.get(),
+            "query_time_ms": _query_time_ms.get()
         }
 
     def reset_request_metrics(self):
         """Reset database metrics for the current request context."""
-        self._local.query_count = 0
-        self._local.query_time_ms = 0.0
+        _query_count.set(0)
+        _query_time_ms.set(0.0)
 
     def _generate_correlation_id(self) -> str:
         """Generate a unique correlation ID."""

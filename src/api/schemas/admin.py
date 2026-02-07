@@ -128,6 +128,7 @@ class TelemetryEndpointStat(BaseModel):
         None, description="99th percentile response time in ms"
     )
     error_rate: float = Field(..., description="Error rate percentage")
+    error_count: int = Field(0, description="Total error count")
     avg_queries: Optional[float] = Field(0.0, description="Average DB queries per request")
     avg_query_time_ms: Optional[float] = Field(0.0, description="Average DB query time in ms")
 

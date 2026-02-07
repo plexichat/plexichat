@@ -47,6 +47,42 @@ class AttachmentRepository(BaseRepository[Attachment]):
             auto_commit=auto_commit,
         )
 
+    def create_bulk(
+        self,
+        attachments: List[Dict[str, Any]],
+        auto_commit: bool = True,
+    ) -> None:
+        """Create multiple attachments in batch."""
+        if not attachments:
+            return
+
+        self.begin_transaction()
+        try:
+            for att in attachments:
+                self._execute(
+                    """INSERT INTO msg_attachments 
+                       (id, message_id, filename, content_type, size, url, url_encrypted, created_at, metadata, checksum)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        att["id"],
+                        att["message_id"],
+                        att["filename"],
+                        att["content_type"],
+                        att["size"],
+                        att["url"],
+                        att.get("url_encrypted"),
+                        att["created_at"],
+                        self._json_dumps(att.get("metadata")),
+                        att.get("checksum"),
+                    ),
+                    auto_commit=False,
+                )
+            if auto_commit:
+                self.commit()
+        except Exception:
+            self.rollback()
+            raise
+
     def get_by_id(self, att_id: SnowflakeID) -> Optional[Dict[str, Any]]:
         """Get attachment by ID."""
         return self._fetch_one(

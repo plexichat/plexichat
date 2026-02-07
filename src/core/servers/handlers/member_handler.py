@@ -115,10 +115,11 @@ class MemberHandler:
                     "SELECT conversation_id FROM srv_channels WHERE server_id = ? AND channel_type = ? AND deleted = 0",
                     (server_id, ChannelType.TEXT.value)
                 )
-                for ch in channels:
-                    if ch["conversation_id"]:
-                        from src.core.messaging.models import ParticipantRole
-                        self.manager._messaging.add_participant(ch["conversation_id"], user_id, ParticipantRole.USER)
+                conv_ids = [ch["conversation_id"] for ch in channels if ch["conversation_id"]]
+                
+                if conv_ids:
+                    from src.core.messaging.models import ParticipantRole
+                    self.manager._messaging.add_participant_to_conversations(user_id, conv_ids, ParticipantRole.USER)
             except Exception as e:
                 logger.error(f"Error adding member {user_id} to server conversations: {e}")
 
