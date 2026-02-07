@@ -90,6 +90,7 @@ class MessageResponse(BaseModel):
     )
     author_username: Optional[str] = Field(None, description="Author's username")
     author_avatar_url: Optional[str] = Field(None, description="Author's avatar URL")
+    author_badges: List[str] = Field(default_factory=list, description="Author's profile badges")
     reactions: List[ReactionResponse] = Field(
         default_factory=list, description="Message reactions"
     )

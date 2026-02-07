@@ -20,7 +20,7 @@ class BlacklistManager(BaseManager):
         # For now, fetch from DB.
         return self._db.fetch_all("SELECT * FROM username_blacklist ORDER BY created_at DESC")
 
-    def add_pattern(self, pattern: str, is_regex: bool = False, reason: str = None, admin_id: int = None) -> int:
+    def add_pattern(self, pattern: str, is_regex: bool = False, reason: Optional[str] = None, admin_id: Optional[int] = None) -> int:
         """Add a pattern to the blacklist."""
         pattern = pattern.lower().strip()
         if not pattern:
@@ -44,7 +44,7 @@ class BlacklistManager(BaseManager):
         self._db.execute("DELETE FROM username_blacklist WHERE id = ?", (pattern_id,))
         return True
 
-    def is_blocked(self, username: str, old_username: str = None) -> Tuple[bool, Optional[str]]:
+    def is_blocked(self, username: str, old_username: Optional[str] = None) -> Tuple[bool, Optional[str]]:
         """
         Check if username is blocked.
         Returns (is_blocked, reason).

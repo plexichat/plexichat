@@ -11,6 +11,11 @@ import threading
 import hmac
 from typing import List, Tuple, Optional, Dict, Any
 
+try:
+    import qrcode  # type: ignore
+except ImportError:
+    qrcode = None  # type: ignore
+
 import utils.config as config
 
 # Import encryption for storing secrets

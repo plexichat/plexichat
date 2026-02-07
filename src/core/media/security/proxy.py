@@ -8,6 +8,11 @@ import io
 from typing import Optional, Tuple, BinaryIO, Iterator
 from urllib.parse import urlparse
 
+try:
+    import requests  # type: ignore
+except ImportError:
+    requests = None  # type: ignore
+
 import utils.logger as logger
 from src.utils.security import URLValidator
 

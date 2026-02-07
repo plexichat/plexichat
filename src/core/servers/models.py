@@ -72,6 +72,7 @@ class AuditLogAction(Enum):
     MEMBER_ROLE_ADD = "member_role_add"
     MEMBER_ROLE_REMOVE = "member_role_remove"
     INVITE_CREATE = "invite_create"
+    INVITE_USE = "invite_use"
     INVITE_DELETE = "invite_delete"
     OVERRIDE_CREATE = "override_create"
     OVERRIDE_UPDATE = "override_update"

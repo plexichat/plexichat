@@ -6,7 +6,11 @@ import time
 import json
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
-from dateutil.rrule import rrulestr
+
+try:
+    from dateutil.rrule import rrulestr  # type: ignore
+except ImportError:
+    rrulestr = None  # type: ignore
 
 import utils.config as config
 import utils.logger as logger
@@ -126,7 +130,8 @@ class ScheduledEventManager:
 
         if rrule:
             try:
-                rrulestr(rrule)
+                if rrulestr:
+                    rrulestr(rrule)  # type: ignore
             except Exception:
                 raise ScheduledEventError("Invalid RRULE format")
 

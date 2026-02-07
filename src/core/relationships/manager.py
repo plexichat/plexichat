@@ -225,9 +225,9 @@ class RelationshipManager(BaseManager):
         )
 
         # Invalidate friends cache for both users
-        from src.core.database import invalidate_cached
-        invalidate_cached(self.get_friend_ids, row["sender_id"])
-        invalidate_cached(self.get_friend_ids, row["recipient_id"])
+        # from src.core.database import invalidate_cached
+        self.get_friend_ids.invalidate(row["sender_id"])  # type: ignore
+        self.get_friend_ids.invalidate(row["recipient_id"])  # type: ignore
 
         logger.debug(f"Friend request {request_id} accepted")
 
@@ -410,9 +410,9 @@ class RelationshipManager(BaseManager):
         )
 
         # Invalidate friends cache for both users
-        from src.core.database import invalidate_cached
-        invalidate_cached(self.get_friend_ids, user_id)
-        invalidate_cached(self.get_friend_ids, friend_id)
+        # from src.core.database import invalidate_cached
+        self.get_friend_ids.invalidate(user_id)  # type: ignore
+        self.get_friend_ids.invalidate(friend_id)  # type: ignore
 
         logger.debug(f"Friendship removed between {user_id} and {friend_id}")
 
@@ -477,11 +477,11 @@ class RelationshipManager(BaseManager):
         )
 
         # Invalidate caches
-        from src.core.database import invalidate_cached
-        invalidate_cached(self.get_blocked_user_ids, blocker_id)
+        # from src.core.database import invalidate_cached
+        self.get_blocked_user_ids.invalidate(blocker_id)  # type: ignore
         # Also invalidate friends in case they were friends
-        invalidate_cached(self.get_friend_ids, blocker_id)
-        invalidate_cached(self.get_friend_ids, blocked_id)
+        self.get_friend_ids.invalidate(blocker_id)  # type: ignore
+        self.get_friend_ids.invalidate(blocked_id)  # type: ignore
 
         logger.debug(f"User {blocker_id} blocked user {blocked_id}")
 
@@ -512,7 +512,7 @@ class RelationshipManager(BaseManager):
         )
 
         # Invalidate cache
-        self.get_blocked_user_ids.invalidate(blocker_id)
+        self.get_blocked_user_ids.invalidate(blocker_id)  # type: ignore
 
         logger.debug(f"User {blocker_id} unblocked user {blocked_id}")
 

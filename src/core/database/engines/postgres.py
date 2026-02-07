@@ -3,6 +3,13 @@ import time
 from .base import BaseEngine
 import utils.logger as logger
 
+try:
+    import psycopg2  # type: ignore
+    import psycopg2.extras  # type: ignore
+    import psycopg2.pool  # type: ignore
+except ImportError:
+    psycopg2 = None  # type: ignore
+
 class PostgresEngine(BaseEngine):
     """PostgreSQL database engine implementation."""
 
@@ -11,8 +18,8 @@ class PostgresEngine(BaseEngine):
             return pool.getconn()
             
         try:
-            import psycopg2
-            from psycopg2.extras import RealDictCursor
+            import psycopg2  # type: ignore
+            from psycopg2.extras import RealDictCursor  # type: ignore
         except ImportError:
             logger.error("psycopg2 not installed. Please install with: pip install psycopg2-binary")
             raise ImportError("psycopg2 not installed")
@@ -35,8 +42,8 @@ class PostgresEngine(BaseEngine):
 
     def create_pool(self, min_conn: int, max_conn: int) -> Any:
         try:
-            from psycopg2.pool import ThreadedConnectionPool
-            from psycopg2.extras import RealDictCursor
+            from psycopg2.pool import ThreadedConnectionPool  # type: ignore
+            from psycopg2.extras import RealDictCursor  # type: ignore
         except ImportError:
             raise ImportError("psycopg2 not installed")
 

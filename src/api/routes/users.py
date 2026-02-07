@@ -40,7 +40,7 @@ def _get_attr(obj, key, default=None):
 def _user_to_response(user, include_private: bool = False) -> UserResponse:
     """Convert user object or dict to response model."""
     try:
-        user_id = _get_attr(user, "id")
+        user_id = int(_get_attr(user, "id") or 0)
         
         # Get badges from user object or re-fetch if missing
         badges = _get_attr(user, "badges")
@@ -81,6 +81,8 @@ def _user_to_public_response(user) -> UserPublicResponse:
         # Fallback to empty list or re-fetch only if absolutely necessary
         badges = _get_attr(user, "badges")
         
+        # If badges is None or empty list, double check features module if setup
+        # (This is a safety fallback for any migration gap)
         if badges is None:
             badges = []
             try:
@@ -173,7 +175,7 @@ def get_current_user_info(
     try:
         account_type = getattr(current_user, "account_type", None)
         if hasattr(account_type, "value"):
-            account_type = account_type.value
+            account_type = account_type.value  # type: ignore
 
         lookup_id = current_user.user_id
         if account_type != "bot":

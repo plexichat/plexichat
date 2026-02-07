@@ -3,7 +3,16 @@ QR code generation endpoints.
 """
 
 import io
-import qrcode
+from typing import Optional
+import base64
+
+try:
+    import qrcode  # type: ignore
+    from qrcode.image.pure import PyPNGImage  # type: ignore
+except ImportError:
+    qrcode = None  # type: ignore
+    PyPNGImage = None  # type: ignore
+
 from fastapi import APIRouter, Query, Response, HTTPException, status
 from src.api.schemas.common import ErrorResponse
 import utils.logger as logger

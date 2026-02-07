@@ -132,6 +132,7 @@ class MemberResponse(BaseModel):
     presence: PresenceResponse = Field(
         default_factory=lambda: PresenceResponse(status="offline")
     )
+    badges: List[str] = Field(default_factory=list, description="User badges")
 
 
 class RoleResponse(BaseModel):

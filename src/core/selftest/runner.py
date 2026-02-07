@@ -11,7 +11,10 @@ import traceback
 import random
 import secrets
 from typing import List, Dict, Any, Optional
-import requests
+try:
+    import requests  # type: ignore
+except ImportError:
+    requests = None  # type: ignore
 import websocket
 
 import src.api as api

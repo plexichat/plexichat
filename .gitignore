@@ -98,6 +98,7 @@ node_modules/
 
 # Type check reports
 type_check_reports/
+pyrightconfig.json
 
 # Pyright
 pyrightconfig.json

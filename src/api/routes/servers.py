@@ -506,7 +506,7 @@ def get_server_members(
             )
 
         # Reconstruct TokenInfo if it's a dict from cache
-        curr_user_id = current_user.user_id if hasattr(current_user, "user_id") else current_user.get("user_id")
+        curr_user_id = current_user.user_id if hasattr(current_user, "user_id") else getattr(current_user, "get", lambda k: None)("user_id")
 
         members = servers_mod.get_members(curr_user_id, sid)
         if not members:
@@ -570,6 +570,7 @@ def get_server_members(
                     joined_at=joined_at,
                     roles=[SnowflakeID(r) for r in (roles or [])],
                     presence=presence_data,
+                    badges=getattr(user, "badges", []),
                 )
             )
         return result

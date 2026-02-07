@@ -160,6 +160,7 @@ class Database:
 
     def _get_conn(self, auto_connect: bool = True) -> DbConnection:
         """Get or create a thread-local database connection with validation."""
+        assert self.engine is not None, "Database engine not initialized"
         if self.get_correlation_id() is None:
             self.set_correlation_id(self._generate_correlation_id())
         
@@ -183,7 +184,7 @@ class Database:
                 # Proactive check for network/server-side closure
                 if is_valid and hasattr(conn, "poll"):
                     try:
-                        from psycopg2 import OperationalError
+                        from psycopg2 import OperationalError  # type: ignore
                         conn.poll()
                     except (OperationalError, Exception) as e:
                         logger.debug(f"Connection {conn_id} failed poll check: {e}")
@@ -324,7 +325,8 @@ class Database:
                     # Force a new connection on next attempt
                     if hasattr(self._local, "connection"):
                         try:
-                            self.engine.close_connection(self._local.connection, self._pool, {"close": True})
+                            if self.engine:
+                                self.engine.close_connection(self._local.connection, self._pool, {"close": True})
                         except Exception:
                             pass
                         self._local.connection = None
@@ -522,6 +524,12 @@ class Database:
         query = self.engine.get_upsert_query(safe_table, safe_cols, safe_conflict, safe_updates)
         cursor = self.execute(query, values)
         cursor.close()
+
+    def close_connection(self, conn: DbConnection, pool: Optional[Any] = None, params: Optional[Dict] = None) -> None:
+        """Close a database connection."""
+        if self.engine is None:
+            return
+        self.engine.close_connection(conn, pool, params)
 
     def close(self) -> None:
         """Close thread-local connection and return to pool."""

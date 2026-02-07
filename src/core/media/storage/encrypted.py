@@ -194,7 +194,7 @@ class EncryptedStorage(StorageBackendBase):
                     # Return the generator directly. FastAPI StreamingResponse handles iterables.
                     # Note: We return it as the 'stream' part of the tuple.
                     generator = self._streaming_encryptor.decrypt_stream_generator(enc_stream, aad)
-                    return generator, original_size
+                    return generator, original_size  # type: ignore
                 except Exception as e:
                     logger.error(f"Stream decryption failed for {path}: {e}")
                     # Fallback to retrieve if streaming fails

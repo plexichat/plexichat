@@ -137,14 +137,14 @@ def _ensure_serializable(obj: Any) -> Any:
     
     # Handle Pydantic models (common in API responses)
     if hasattr(obj, "model_dump") and callable(obj.model_dump):
-        data = _ensure_serializable(obj.model_dump())
+        data = _ensure_serializable(obj.model_dump())  # type: ignore
         if isinstance(data, dict):
-            data["__type__"] = f"{obj.__class__.__module__}.{obj.__class__.__name__}"
+            data["__type__"] = f"{obj.__class__.__module__}.{obj.__class__.__name__}"  # type: ignore
         return data
     if hasattr(obj, "dict") and callable(obj.dict):
-        data = _ensure_serializable(obj.dict())
+        data = _ensure_serializable(obj.dict())  # type: ignore
         if isinstance(data, dict):
-            data["__type__"] = f"{obj.__class__.__module__}.{obj.__class__.__name__}"
+            data["__type__"] = f"{obj.__class__.__module__}.{obj.__class__.__name__}"  # type: ignore
         return data
         
     # Last resort fallback for custom types that might behave like strings (e.g. SnowflakeID)
@@ -228,7 +228,7 @@ def cached(
 
             # Check if we should skip caching
             if skip_cache_if and skip_cache_if(*args, **kwargs):
-                return await func(*args, **kwargs)
+                return await func(*args, **kwargs)  # type: ignore
 
             # Check if Redis is available
             client = get_client()
@@ -272,9 +272,10 @@ def cached(
             serializable_result = _ensure_serializable(result)
 
             # Store in cache (Redis and/or Memory)
-            cache_ttl = ttl if ttl is not None else (client.ttl_cache if redis_ready else 300)
+            cache_ttl = ttl if ttl is not None else (client.ttl_cache if redis_ready and client else 300)
             
             if redis_ready:
+                assert client is not None
                 try:
                     client.set_json(
                         cache_key, cast(JsonSerializable, serializable_result), ttl=cache_ttl

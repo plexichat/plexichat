@@ -19,7 +19,6 @@ from ..permissions import (
     has_permission as check_permission,
     can_manage_role,
 )
-import utils.logger as logger
 
 class RoleHandler:
     def __init__(self, manager):

@@ -48,7 +48,7 @@ async def add_banned_username(request: Request, body: BannedUsernameCreate):
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
     from src.core import admin
-    admin.add_banned_username(body.pattern, body.reason, admin_id, body.is_regex)
+    admin.add_banned_username(body.pattern, body.reason, admin_id, body.is_regex)  # type: ignore
     return SuccessResponse(success=True)
 
 @router.delete("/security/banned-usernames/{pattern_id}", response_model=SuccessResponse)

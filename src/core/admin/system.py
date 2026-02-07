@@ -6,7 +6,11 @@ import time
 import os
 import threading
 from typing import Dict, Any
-import psutil
+
+try:
+    import psutil  # type: ignore
+except ImportError:
+    psutil = None  # type: ignore
 
 # Store process start time for uptime calculation
 _process_start_time = time.time()

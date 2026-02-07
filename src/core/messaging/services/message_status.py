@@ -106,9 +106,9 @@ class MessageStatusService(BaseService):
             
             # Invalidate unread counts cache
             try:
-                from src.core.database import invalidate_cached
-                invalidate_cached(self.get_unread_count, user_id, conversation_id)
-                invalidate_cached(self.get_unread_count, user_id, None)
+                # from src.core.database import invalidate_cached
+                self.get_unread_count.invalidate(user_id, conversation_id)  # type: ignore
+                self.get_unread_count.invalidate(user_id, None)  # type: ignore
             except Exception:
                 pass
 

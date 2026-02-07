@@ -12,7 +12,7 @@ from src.core.ratelimit.middleware import extract_route_info
 from src.utils.net import get_client_ip
 
 
-def extract_ip(request: Request) -> str:
+def extract_ip(request: Request) -> Optional[str]:
     """Extract IP address using consolidated utility."""
     return get_client_ip(request)
 

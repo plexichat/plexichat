@@ -149,10 +149,10 @@ class MemberHandler:
         self.manager._cache_invalidate(self.manager._member_cache, (server_id, user_id))
         
         # Invalidate Redis
-        from src.core.database import cache_delete, invalidate_pattern, invalidate_cached
+        from src.core.database import cache_delete, invalidate_pattern
         cache_delete(f"is_member:{server_id}:{user_id}")
         invalidate_pattern(f"perms:{user_id}:{server_id}:*")
-        invalidate_cached(self.manager.get_servers, user_id)
+        self.manager.get_servers.invalidate(user_id)  # type: ignore
         
         result = self.get_member(server_id, user_id)
         assert result is not None
@@ -252,17 +252,33 @@ class MemberHandler:
         rows = self.db.fetch_all("SELECT * FROM srv_bans WHERE server_id = ?", (server_id,))
         return [self.manager._row_to_ban(row) for row in rows]
 
-    def use_invite(self, code: str) -> Optional[Invite]:
+    def use_invite(self, user_id: SnowflakeID, code: str) -> Member:
         """Get and use an invite."""
         row = self.db.fetch_one("SELECT * FROM srv_invites WHERE code = ?", (code,))
         if not row:
-            return None
+            raise ValueError("Invite not found")
+        
+        invite = self.manager._row_to_invite(row)
+        
+        # Add member
+        member = self.add_member(invite.server_id, user_id, invite.inviter_id)
+        
         self.db.execute("UPDATE srv_invites SET uses = uses + 1 WHERE code = ?", (code,))
-        return self.manager._row_to_invite(row)
+        
+        self.manager._log_audit(invite.server_id, user_id, AuditLogAction.INVITE_USE, "invite", invite.code)
+        
+        return member
 
-    def delete_invite(self, code: str) -> bool:
+    def delete_invite(self, user_id: SnowflakeID, code: str) -> bool:
         """Delete an invite."""
+        row = self.db.fetch_one("SELECT * FROM srv_invites WHERE code = ?", (code,))
+        if not row:
+            return False
+            
+        server_id = row["server_id"]
         self.db.execute("DELETE FROM srv_invites WHERE code = ?", (code,))
+        
+        self.manager._log_audit(server_id, user_id, AuditLogAction.INVITE_DELETE, "invite", code)
         return True
 
     def ban_member(self, user_id: SnowflakeID, server_id: SnowflakeID, member_user_id: SnowflakeID, reason: Optional[str] = None) -> Ban:
@@ -314,7 +330,9 @@ class MemberHandler:
             (invite_id, code, channel.server_id, channel_id, user_id, max_age, max_uses, 1 if temporary else 0, now, expires_at),
         )
         self.manager._log_audit(channel.server_id, user_id, AuditLogAction.INVITE_CREATE, "invite", invite_id)
-        return self.get_invite(code)
+        result = self.get_invite(code)
+        assert result is not None
+        return result
 
     def get_invite(self, code: str) -> Optional[Invite]:
         """Get an invite by code."""

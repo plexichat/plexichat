@@ -31,7 +31,7 @@ class EnhancedJSONEncoder(json.JSONEncoder):
     """JSON encoder that handles dataclasses, enums, and sets."""
     def default(self, o):
         if dataclasses.is_dataclass(o):
-            return dataclasses.asdict(o)
+            return dataclasses.asdict(o)  # type: ignore
         if isinstance(o, Enum):
             return o.value
         if isinstance(o, set):

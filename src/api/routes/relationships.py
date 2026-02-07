@@ -391,9 +391,9 @@ async def create_relationship(
 
         # Invalidate cache for both users
         try:
-            get_relationships.invalidate(current_user=current_user)
-            other_user = User(id=target_id, username="", email=None, account_type=None, permissions={}, created_at=0, updated_at=0)
-            get_relationships.invalidate(current_user=other_user)
+            get_relationships.invalidate(current_user=current_user)  # type: ignore
+            other_user = User(id=target_id, username="", email=None, account_type=AccountType.USER, permissions={}, created_at=0, updated_at=0)
+            get_relationships.invalidate(current_user=other_user)  # type: ignore
         except Exception as e:
             logger.debug(f"Failed to invalidate relationship cache in create: {e}")
 
@@ -577,10 +577,10 @@ async def accept_friend_request(
 
         # Invalidate cache for both users
         try:
-            get_relationships.invalidate(current_user=current_user)
+            get_relationships.invalidate(current_user=current_user)  # type: ignore
             # Create a dummy user object for cache key generation
             other_user = User(id=sender_id, username="", email=None, account_type=AccountType.USER, permissions={}, created_at=0, updated_at=0)
-            get_relationships.invalidate(current_user=other_user)
+            get_relationships.invalidate(current_user=other_user)  # type: ignore
         except Exception as e:
             logger.debug(f"Failed to invalidate relationship cache: {e}")
 
@@ -766,10 +766,10 @@ async def delete_relationship(
 
             # Invalidate cache for both users
             try:
-                get_relationships.invalidate(current_user=current_user)
+                get_relationships.invalidate(current_user=current_user)  # type: ignore
                 # Create a dummy user object for cache key generation
-                other_user = User(id=target_id, username="", email=None, account_type=None, permissions={}, created_at=0, updated_at=0)
-                get_relationships.invalidate(current_user=other_user)
+                other_user = User(id=target_id, username="", email=None, account_type=AccountType.USER, permissions={}, created_at=0, updated_at=0)
+                get_relationships.invalidate(current_user=other_user)  # type: ignore
             except Exception as e:
                 logger.debug(f"Failed to invalidate relationship cache during delete: {e}")
 

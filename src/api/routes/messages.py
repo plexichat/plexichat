@@ -28,6 +28,7 @@ def _message_to_response(
     msg,
     author_username: Optional[str] = None,
     author_avatar_url: Optional[str] = None,
+    author_badges: Optional[List[str]] = None,
     channel_id: Optional[int] = None,
     reactions_data=None,
     read_by_usernames: Optional[List[str]] = None,
@@ -110,6 +111,7 @@ def _message_to_response(
         or getattr(msg, "author_username", None)
         or f"User {msg.author_id}",
         author_avatar_url=author_avatar_url or getattr(msg, "author_avatar_url", None),
+        author_badges=author_badges or getattr(msg, "author_badges", []) or [],
         reactions=reactions_data or [],
     )
 
@@ -198,7 +200,7 @@ def get_channel_messages(
 
         # Bulk fetch all author usernames and avatars in single query (avoids N+1)
         author_ids = list(set(m.author_id for m in messages))
-        author_cache = {}  # {user_id: {"username": str, "avatar_url": str}}
+        author_cache = {}  # {user_id: {"username": str, "avatar_url": str, "badges": list}}
         if auth and author_ids:
             try:
                 users = auth.get_user_profiles_bulk(author_ids)
@@ -206,6 +208,7 @@ def get_channel_messages(
                     uid: {
                         "username": u["username"],
                         "avatar_url": u.get("avatar_url"),
+                        "badges": u.get("badges", []),
                     }
                     for uid, u in users.items()
                 }
@@ -266,6 +269,7 @@ def get_channel_messages(
                     m,
                     author_username=author_info.get("username"),
                     author_avatar_url=author_info.get("avatar_url"),
+                    author_badges=author_info.get("badges"),
                     reactions_data=reactions_cache.get(m.id, []),
                     read_by_usernames=readers_cache.get(m.id),
                     media_mod=media_mod,
@@ -362,6 +366,7 @@ async def search_messages(
                     uid: {
                         "username": u["username"],
                         "avatar_url": u.get("avatar_url"),
+                        "badges": u.get("badges", []),
                     }
                     for uid, u in users.items()
                 }
@@ -379,6 +384,7 @@ async def search_messages(
                     m, 
                     author_username=author_info.get("username"), 
                     author_avatar_url=author_info.get("avatar_url"),
+                    author_badges=author_info.get("badges"),
                     media_mod=media_mod
                 )
             )
@@ -570,22 +576,27 @@ async def send_channel_message(
         # Use username and avatar from token/auth - no need for extra DB lookup!
         author_username = current_user.username
         author_avatar_url = getattr(current_user, "avatar_url", None)
+        author_badges = getattr(current_user, "badges", [])
 
-        # If avatar not in token, try to get from auth
-        if not author_avatar_url:
+        # If avatar or badges not in token, try to get from auth
+        if not author_avatar_url or not author_badges:
             auth = api.get_auth()
             if auth:
                 try:
                     user = auth.get_user(current_user.user_id)
                     if user:
-                        author_avatar_url = getattr(user, "avatar_url", None)
+                        if not author_avatar_url:
+                            author_avatar_url = getattr(user, "avatar_url", None)
+                        if not author_badges:
+                            author_badges = getattr(user, "badges", [])
                 except Exception:
                     pass
 
         response = _message_to_response(
             msg, 
             author_username, 
-            author_avatar_url, 
+            author_avatar_url,
+            author_badges=author_badges,
             channel_id=cid,
             media_mod=api.get_media()
         )
@@ -908,10 +919,27 @@ async def get_message(
                 detail={"error": {"code": 404, "message": "Message not found"}},
             )
 
-        # Check permission (simple check for now)
-        # TODO: Implement proper channel access check
+        # Fetch author info for badges and username
+        author_info = {"username": None, "avatar_url": None, "badges": []}
+        auth = api.get_auth()
+        if auth:
+            try:
+                user = auth.get_user(message.author_id)
+                if user:
+                    author_info["username"] = user.username
+                    author_info["avatar_url"] = getattr(user, "avatar_url", None)
+                    author_info["badges"] = getattr(user, "badges", [])
+            except Exception:
+                pass
 
-        return _message_to_response(message, channel_id=cid, media_mod=api.get_media())
+        return _message_to_response(
+            message, 
+            author_username=author_info["username"],
+            author_avatar_url=author_info["avatar_url"],
+            author_badges=author_info["badges"],
+            channel_id=cid, 
+            media_mod=api.get_media()
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -990,20 +1018,26 @@ async def edit_message(
         # Get author username and avatar
         author_username = current_user.username
         author_avatar_url = getattr(current_user, "avatar_url", None)
+        author_badges = getattr(current_user, "badges", [])
 
-        # If avatar not in token, try to get from auth
-        if not author_avatar_url and auth:
-            try:
-                user = auth.get_user(current_user.user_id)
-                if user:
-                    author_avatar_url = getattr(user, "avatar_url", None)
-            except Exception:
-                pass
+        # If avatar or badges not in token, try to get from auth
+        if not author_avatar_url or not author_badges:
+            if auth:
+                try:
+                    user = auth.get_user(current_user.user_id)
+                    if user:
+                        if not author_avatar_url:
+                            author_avatar_url = getattr(user, "avatar_url", None)
+                        if not author_badges:
+                            author_badges = getattr(user, "badges", [])
+                except Exception:
+                    pass
 
         response = _message_to_response(
             msg, 
             author_username, 
             author_avatar_url, 
+            author_badges=author_badges,
             channel_id=cid,
             media_mod=api.get_media()
         )
@@ -1277,12 +1311,12 @@ async def get_pinned_messages(
             except Exception:
                 pass
 
-        author_cache = {}  # {user_id: {"username": str, "avatar_url": str}}
+        author_cache = {}  # {user_id: {"username": str, "avatar_url": str, "badges": list}}
         result = []
         for m in messages:
             author_id = m.author_id
             if author_id not in author_cache:
-                author_info = {"username": None, "avatar_url": None}
+                author_info = {"username": None, "avatar_url": None, "badges": []}
                 if auth:
                     try:
                         user = auth.get_user(author_id)
@@ -1291,6 +1325,7 @@ async def get_pinned_messages(
                             author_info["avatar_url"] = getattr(
                                 user, "avatar_url", None
                             )
+                            author_info["badges"] = getattr(user, "badges", [])
                     except Exception:
                         pass
                 author_cache[author_id] = author_info
@@ -1300,6 +1335,7 @@ async def get_pinned_messages(
                     m, 
                     info.get("username"), 
                     info.get("avatar_url"),
+                    author_badges=info.get("badges"),
                     media_mod=api.get_media()
                 )
             )

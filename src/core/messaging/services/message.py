@@ -211,13 +211,13 @@ class MessageService(BaseService):
         
         # Update "recent messages" list in Redis
         try:
-            from src.core.database import get_client
+            from src.core.database import get_redis_client as get_client
             client = get_client()
-            if client and client.is_available():
+            if client:
                 list_key = f"msg:recent:{conversation_id}"
-                client.lpush(list_key, msg_id)
-                client.ltrim(list_key, 0, 99) # Keep only last 100
-                client.expire(list_key, 3600)
+                client.lpush(list_key, msg_id)  # type: ignore
+                client.ltrim(list_key, 0, 99)  # type: ignore # Keep only last 100
+                client.expire(list_key, 3600)  # type: ignore
         except Exception as e:
             logger.debug(f"Failed to update recent messages cache: {e}")
 
@@ -358,9 +358,9 @@ class MessageService(BaseService):
         # Try "recent messages" cache if it's the default request (newest messages)
         if not before_id and not after_id:
             try:
-                from src.core.database import get_client
+                from src.core.database import get_redis_client as get_client
                 client = get_client()
-                if client and client.is_available():
+                if client:
                     list_key = f"msg:recent:{conversation_id}"
                     # Try to get IDs from Redis
                     cached_ids = client.lrange(list_key, 0, limit - 1)

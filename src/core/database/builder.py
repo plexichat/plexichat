@@ -341,7 +341,7 @@ class SelectQuery(TableQuery):
         """
         super().__init__(connection, table_name, db_type, schema_registry)
         self.columns = columns
-        self._where_conditions: List[tuple[str, Any]] = []
+        self._where_conditions: List[tuple[str, str, Any]] = []
         self._limit_value: Optional[int] = None
         self._offset_value: Optional[int] = None
     
@@ -459,7 +459,7 @@ class UpdateQuery(TableQuery):
         """
         super().__init__(connection, table_name, db_type, schema_registry)
         self.data = data
-        self._where_conditions: List[tuple[str, Any]] = []
+        self._where_conditions: List[tuple[str, str, Any]] = []
     
     def validate(self, model: Type[T]) -> 'UpdateQuery':
         """Set validation model and validate data.

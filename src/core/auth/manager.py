@@ -234,7 +234,7 @@ class AuthManager(BaseManager):
         # Check blacklist
         blocked, reason = self.blacklist.is_blocked(username)
         if blocked:
-            raise InvalidUsernameError(f"Username is blocked: {reason}", [reason])
+            raise InvalidUsernameError(f"Username is blocked: {reason}", [reason or "Blocked"])
 
         if not validate_email(email):
             raise InvalidEmailError("Invalid email")
@@ -684,7 +684,7 @@ class AuthManager(BaseManager):
 
             blocked, reason = self.blacklist.is_blocked(username, old_username=current_user.username)
             if blocked:
-                raise InvalidUsernameError(f"Username is blocked: {reason}", [reason])
+                raise InvalidUsernameError(f"Username is blocked: {reason}", [reason or "Blocked"])
 
             updates.append("username = ?")
             params.append(username)
@@ -1406,21 +1406,35 @@ class AuthManager(BaseManager):
                     
         return result
 
-    def get_users_bulk(self, user_ids: List[int]) -> Dict[str, User]:
-        """Get multiple users by ID (uncached, full data)."""
+    def get_users_bulk(self, user_ids: List[int]) -> Dict[int, User]:
+        """Get multiple users by ID (including badges, full data)."""
         if not user_ids:
             return {}
             
         placeholders = ",".join("?" for _ in user_ids)
-        rows = self._db.fetch_all(
-            f"SELECT * FROM auth_users WHERE id IN ({placeholders})", tuple(user_ids)
-        )
+        # JOIN with user_features to get badges
+        query = f"""
+            SELECT u.*, f.badges
+            FROM auth_users u
+            LEFT JOIN user_features f ON u.id = f.user_id
+            WHERE u.id IN ({placeholders})
+        """
+        rows = self._db.fetch_all(query, tuple(user_ids))
         
         result = {}
         for row in rows:
             user_id = row["id"]
             user_dict = dict(row)
             
+            # Parse badges
+            if user_dict.get("badges"):
+                try:
+                    user_dict["badges_list"] = json.loads(user_dict["badges"]) if isinstance(user_dict["badges"], str) else user_dict["badges"]
+                except Exception:
+                    user_dict["badges_list"] = []
+            else:
+                user_dict["badges_list"] = []
+
             # Decrypt sensitive fields for individual users
             if user_dict.get("email_encrypted"):
                 try:
@@ -1434,7 +1448,7 @@ class AuthManager(BaseManager):
                 except Exception:
                     user_dict["dob_decrypted"] = None
             
-            result[str(user_id)] = self._dict_to_user(user_dict)
+            result[user_id] = self._dict_to_user(user_dict)
                 
         return result
 

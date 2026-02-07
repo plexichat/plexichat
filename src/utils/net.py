@@ -1,7 +1,9 @@
 
 from fastapi import Request
 
-def get_client_ip(request: Request) -> str:
+from typing import Optional
+
+def get_client_ip(request: Request) -> Optional[str]:
     """
     Extract IP address considering trusted proxies configuration.
     

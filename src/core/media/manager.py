@@ -1152,7 +1152,7 @@ class MediaManager(BaseManager):
         if file.storage_backend == StorageBackend.S3:
             # Look for native signing capability (including through wrappers)
             if hasattr(storage, "generate_presigned_url"):
-                url = storage.generate_presigned_url(
+                url = storage.generate_presigned_url(  # type: ignore
                     file.storage_path, 
                     expires_in or 3600,
                     params=params

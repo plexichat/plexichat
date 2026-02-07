@@ -42,9 +42,10 @@ async def get_dashboard(request: Request):
         total_users, active_users, db_status = 0, 0, "healthy"
         try:
             db = api.get_db()
-            total_users = db.fetch_one("SELECT COUNT(*) as c FROM auth_users")["c"]
-            cutoff = int((time.time() - 86400) * 1000)
-            active_users = db.fetch_one("SELECT COUNT(*) as c FROM auth_users WHERE last_login_at > ?", (cutoff,))["c"]
+            if db:
+                total_users = db.fetch_one("SELECT COUNT(*) as c FROM auth_users")["c"]
+                cutoff = int((time.time() - 86400) * 1000)
+                active_users = db.fetch_one("SELECT COUNT(*) as c FROM auth_users WHERE last_login_at > ?", (cutoff,))["c"]
         except Exception as ue:
             logger.warning(f"User stats dashboard error: {ue}")
             db_status = "degraded"

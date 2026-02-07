@@ -744,7 +744,7 @@ async def join_server_via_invite(
                         roles = servers_mod.get_roles(sid)
                         
                         event = events_mod.create_guild_create(
-                            server_id=sid,
+                            server_id=int(sid or 0),
                             name=server.name,
                             owner_id=server.owner_id,
                             member_count=getattr(server, "member_count", 0),
@@ -776,7 +776,7 @@ async def join_server_via_invite(
                             }
                     
                     member_event = events_mod.create_guild_member_add(
-                        server_id=sid,
+                        server_id=int(sid or 0),
                         user_id=current_user.user_id,
                         user=user_data
                     )
