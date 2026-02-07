@@ -4,9 +4,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Plexichat Admin Dashboard</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <title>PlexiChat Admin Dashboard</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js" nonce="{{ csp_nonce }}"></script>
     <style>
         :root {
             --bg: #0a0a0a;
@@ -21,11 +21,8 @@
             --warn: #ffaa00;
             --bad: #ff4444;
             --chart-bg: #0d0d0f;
-            /* High contrast line colors */
             --line-primary: #00aaff;
             --line-secondary: #ff9900;
-            --line-tertiary: #00ffcc;
-            --line-quaternary: #ff33ff;
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -35,10 +32,8 @@
             background: var(--bg);
             color: var(--text);
             line-height: 1.4;
-            -webkit-font-smoothing: antialiased;
         }
 
-        /* Layout */
         .header {
             background: var(--header-bg);
             padding: 0.6rem 1.5rem;
@@ -52,32 +47,27 @@
         }
 
         .container {
-            max-width: 1800px;
+            max-width: 1600px;
             margin: 0 auto;
             padding: 1rem;
         }
 
-        /* Components */
         .btn {
             padding: 0.5rem 1rem;
-            border-radius: 3px;
+            border-radius: 4px;
             border: 1px solid transparent;
             font-weight: 600;
             cursor: pointer;
-            transition: all 0.1s ease;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 0.5rem;
             font-size: 0.8rem;
+            transition: background 0.2s;
         }
 
         .btn-primary { background: var(--accent); color: white; }
         .btn-primary:hover { background: var(--accent-hover); }
         .btn-secondary { background: #2a2a2a; color: var(--text); border-color: #3a3a3a; }
-        .btn-secondary:hover { background: #3a3a3a; }
+        .btn-danger { background: var(--bad); color: white; }
         .btn-outline { background: transparent; border-color: #333; color: var(--text-dim); }
-        .btn-outline:hover { border-color: var(--accent); color: var(--text); background: rgba(0, 102, 255, 0.05); }
+        .btn-outline:hover { color: #fff; border-color: #555; }
 
         .card {
             background: var(--card);
@@ -85,261 +75,216 @@
             border: 1px solid var(--border);
             padding: 1.25rem;
             margin-bottom: 1rem;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
         }
 
         .grid { display: grid; gap: 1rem; }
-        .grid-4 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+        .grid-4 { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+        .grid-2 { grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); }
 
-        /* Tabs */
         .tabs {
             display: flex;
-            gap: 2px;
-            margin-bottom: 1rem;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
             border-bottom: 1px solid var(--border);
         }
 
         .tab {
-            padding: 0.75rem 1.5rem;
-            border: 1px solid transparent;
-            border-bottom: none;
+            padding: 0.75rem 1rem;
             background: transparent;
             color: var(--text-dim);
             cursor: pointer;
-            font-size: 0.85rem;
+            border: none;
+            border-bottom: 2px solid transparent;
             font-weight: 600;
-            margin-bottom: -1px;
-            transition: all 0.2s;
         }
 
         .tab.active {
-            background: var(--card);
-            color: var(--line-primary);
-            border-color: var(--border);
-            border-top: 3px solid var(--line-primary);
+            color: var(--accent);
+            border-bottom-color: var(--accent);
         }
 
-        /* Metrics Layout */
-        .metrics-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
-            gap: 1.25rem;
-        }
+        .stat-value { font-size: 1.5rem; font-weight: 700; }
+        .stat-label { font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase; margin-bottom: 0.25rem; }
 
-        .metric-tile {
-            background: var(--card);
-            border: 1px solid var(--border);
-            display: flex;
-            flex-direction: column;
-            height: 320px;
-            border-radius: 4px;
-            overflow: hidden;
-        }
-
-        .tile-header {
-            padding: 0.6rem 1rem;
-            background: #1c1c1e;
-            border-bottom: 1px solid var(--border);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .tile-title {
-            font-size: 0.7rem;
-            font-weight: 800;
-            text-transform: uppercase;
-            color: #888;
-            letter-spacing: 1px;
-        }
-
-        .tile-body {
-            flex: 1;
-            padding: 0.75rem;
-            position: relative;
-            background: var(--chart-bg);
-        }
-
-        .stat-value {
-            font-size: 1.75rem;
-            font-weight: 800;
-            font-family: "JetBrains Mono", "SF Mono", "Fira Code", monospace;
-            color: #fff;
-        }
-
-        .stat-label {
-            font-size: 0.7rem;
-            color: #777;
-            text-transform: uppercase;
-            font-weight: 800;
-            margin-bottom: 0.25rem;
-        }
-
-        /* Tables */
-        table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.85rem; }
-        th { background: #1c1c1e; padding: 0.75rem 1rem; color: #888; border-bottom: 1px solid var(--border); font-weight: 800; text-transform: uppercase; font-size: 0.65rem; }
-        td { padding: 0.75rem 1rem; border-bottom: 1px solid #1c1c1e; }
-        tr:hover td { background: rgba(255,255,255,0.03); }
+        table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+        th { text-align: left; padding: 0.75rem; border-bottom: 2px solid var(--border); font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase; }
+        td { padding: 0.75rem; border-bottom: 1px solid var(--border); font-size: 0.85rem; }
 
         input, select, textarea {
             background: #000;
             border: 1px solid #333;
-            color: #eee;
-            padding: 0.5rem 0.75rem;
-            border-radius: 2px;
-            font-size: 0.85rem;
-        }
-        input:focus { outline: none; border-color: var(--accent); }
-
-        .badge {
-            padding: 0.2rem 0.5rem;
-            border-radius: 2px;
-            font-size: 0.7rem;
-            font-weight: 900;
+            color: #fff;
+            padding: 0.5rem;
+            border-radius: 4px;
         }
 
         .hidden { display: none !important; }
 
-        /* Modal */
-        .modal {
-            position: fixed;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0, 0, 0, 0.9);
-            backdrop-filter: blur(5px);
-            display: flex; align-items: center; justify-content: center; z-index: 10000;
-            opacity: 0; pointer-events: none; transition: opacity 0.2s;
-        }
-        .modal.active { opacity: 1; pointer-events: auto; }
-        .modal-content {
-            background: #111;
-            border: 1px solid #333;
-            padding: 2.5rem;
-            max-width: 500px;
-            width: 90%;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        .metric-tile {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            height: 300px;
+            display: flex;
+            flex-direction: column;
         }
 
-        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .tile-header {
+            padding: 0.5rem 1rem;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.7rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: var(--text-dim);
+        }
+
+        .tile-body { flex: 1; padding: 0.5rem; position: relative; }
+
+        #log-viewer {
+            background: #000;
+            color: #00ff00;
+            font-family: monospace;
+            padding: 1rem;
+            height: 500px;
+            overflow: auto;
+            white-space: pre-wrap;
+            font-size: 0.75rem;
+        }
     </style>
 </head>
 
 <body>
     <div class="header">
+        <h1 style="font-size: 1.2rem;">PlexiChat Admin</h1>
         <div style="display: flex; align-items: center; gap: 1rem;">
-            <div style="background: var(--accent); width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; font-weight: 900; color: white; border-radius: 4px;">P</div>
-            <h1 style="color: #fff; font-size: 1.1rem; font-weight: 700;">System Dashboard</h1>
-            <span id="server-version" style="font-size: 0.75rem; background: #222; padding: 3px 10px; border-radius: 12px; color: var(--line-primary); font-weight: 800; font-family: monospace;">...</span>
+            <span id="server-version" style="font-size: 0.7rem; color: var(--text-dim);"></span>
+            <button class="btn btn-outline" data-click="logout">Logout</button>
         </div>
-        <button class="btn btn-outline" data-click="logout">Logout</button>
     </div>
 
     <div class="container">
-        <div id="error" class="card btn-danger hidden" style="background: var(--bad); color: white; margin-bottom: 1rem;"></div>
-        
         <div class="tabs">
-            <button class="tab active" data-click="showTab" data-tab="metrics">Metrics</button>
-            <button class="tab" data-click="showTab" data-tab="tickets">Tickets</button>
-            <button class="tab" data-click="showTab" data-tab="users">Users</button>
-            <button class="tab" data-click="showTab" data-tab="security">Security</button>
-            <button class="tab" data-click="showTab" data-tab="logs">Logs</button>
-            <button class="tab" data-click="showTab" data-tab="account">Account</button>
+            <button class="tab active" data-tab="metrics">Metrics</button>
+            <button class="tab" data-tab="tickets">Tickets</button>
+            <button class="tab" data-tab="users">Users</button>
+            <button class="tab" data-tab="security">Security</button>
+            <button class="tab" data-tab="logs">Logs</button>
         </div>
 
-        <div id="loading" style="text-align: center; padding: 6rem; color: var(--text-dim);">
-            <div style="display: inline-block; width: 40px; height: 40px; border: 4px solid rgba(255,255,255,.05); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 1.5rem;"></div>
-            <div style="font-weight: 800; font-size: 0.8rem; letter-spacing: 2px; text-transform: uppercase;">Awaiting Telemetry Feed</div>
-        </div>
-
-        <div id="content" class="hidden">
-            <div id="tab-metrics" class="tab-content">
-                <div class="grid grid-4" style="margin-bottom: 1.25rem;">
-                    <div class="card" style="border-left: 4px solid var(--line-primary);">
-                        <div class="stat-label">Request Rate</div>
-                        <div style="display: flex; align-items: baseline; gap: 0.5rem;"><div class="stat-value" id="stat-req-rate">0.0</div><span style="font-size: 0.75rem; color: #555; font-weight: 800;">REQ/S</span></div>
-                    </div>
-                    <div class="card" style="border-left: 4px solid var(--good);">
-                        <div class="stat-label">Avg Latency</div>
-                        <div style="display: flex; align-items: baseline; gap: 0.5rem;"><div class="stat-value" id="stat-avg-latency">0</div><span style="font-size: 0.75rem; color: #555; font-weight: 800;">MS</span></div>
-                    </div>
-                    <div class="card" style="border-left: 4px solid var(--bad);">
-                        <div class="stat-label">Error Rate</div>
-                        <div style="display: flex; align-items: baseline; gap: 0.5rem;"><div class="stat-value" id="stat-error-rate">0.0</div><span style="font-size: 0.75rem; color: #555; font-weight: 800;">%</span></div>
-                    </div>
-                    <div class="card" style="border-left: 4px solid var(--warn);">
-                        <div class="stat-label">System Load</div>
-                        <div style="display: flex; align-items: baseline; gap: 0.5rem;"><div class="stat-value" id="stat-sys-load">0.0</div><span style="font-size: 0.75rem; color: #555; font-weight: 800;">% CPU</span></div>
-                    </div>
+        <div id="tab-metrics" class="tab-content">
+            <div class="grid grid-4" style="margin-bottom: 1rem;">
+                <div class="card">
+                    <div class="stat-label">Active Users (24h)</div>
+                    <div class="stat-value" id="stat-active-users">0</div>
                 </div>
-
-                <div class="metrics-grid">
-                    <div class="metric-tile">
-                        <div class="tile-header"><span class="tile-title">Transactions per second</span><div style="display: flex; gap: 0.75rem;"><div style="display: flex; align-items: center; gap: 0.3rem; font-size: 0.6rem; color: var(--line-primary); font-weight: 900;"><div style="width:10px;height:3px;background:var(--line-primary);"></div> REQ</div><div style="display: flex; align-items: center; gap: 0.3rem; font-size: 0.6rem; color: var(--line-secondary); font-weight: 900;"><div style="width:10px;height:3px;background:var(--line-secondary);"></div> DB</div></div></div>
-                        <div class="tile-body"><canvas id="chart-tps"></canvas></div>
-                    </div>
-                    <div class="metric-tile">
-                        <div class="tile-header"><span class="tile-title">Response Latency (ms)</span><div style="display: flex; gap: 0.75rem;"><div style="display: flex; align-items: center; gap: 0.3rem; font-size: 0.6rem; color: var(--good); font-weight: 900;"><div style="width:10px;height:3px;background:var(--good);"></div> AVG</div><div style="display: flex; align-items: center; gap: 0.3rem; font-size: 0.6rem; color: var(--bad); font-weight: 900;"><div style="width:10px;height:3px;background:var(--bad);"></div> P95</div></div></div>
-                        <div class="tile-body"><canvas id="chart-latency"></canvas></div>
-                    </div>
-                    <div class="metric-tile">
-                        <div class="tile-header"><span class="tile-title">Database Connections</span><span id="db-conn-count" style="font-size: 0.65rem; color: var(--line-primary); font-family: monospace; font-weight: 900;">0/0</span></div>
-                        <div class="tile-body"><canvas id="chart-db-pool"></canvas></div>
-                    </div>
-                    <div class="metric-tile">
-                        <div class="tile-header"><span class="tile-title">CPU & Disk Load (%)</span><div style="display: flex; gap: 0.75rem;"><div style="display: flex; align-items: center; gap: 0.3rem; font-size: 0.6rem; color: var(--line-primary); font-weight: 900;"><div style="width:10px;height:3px;background:var(--line-primary);"></div> CPU</div><div style="display: flex; align-items: center; gap: 0.3rem; font-size: 0.6rem; color: var(--line-quaternary); font-weight: 900;"><div style="width:10px;height:3px;background:var(--line-quaternary);"></div> DISK</div></div></div>
-                        <div class="tile-body"><canvas id="chart-sys-res"></canvas></div>
-                    </div>
-                    <div class="metric-tile">
-                        <div class="tile-header"><span class="tile-title">Queries per Request</span></div>
-                        <div class="tile-body"><canvas id="chart-db-perf"></canvas></div>
-                    </div>
-                    <div class="metric-tile">
-                        <div class="tile-header"><span class="tile-title">Memory & Thread Count</span><div style="display: flex; gap: 0.75rem;"><div style="display: flex; align-items: center; gap: 0.3rem; font-size: 0.6rem; color: var(--good); font-weight: 900;"><div style="width:10px;height:3px;background:var(--good);"></div> MB</div><div style="display: flex; align-items: center; gap: 0.3rem; font-size: 0.6rem; color: var(--line-primary); font-weight: 900;"><div style="width:10px;height:3px;background:var(--line-primary);"></div> THREADS</div></div></div>
-                        <div class="tile-body"><canvas id="chart-process"></canvas></div>
-                    </div>
-                    <div class="metric-tile"><div class="tile-header"><span class="tile-title">Error Rate Trend (%)</span></div><div class="tile-body"><canvas id="chart-errors"></canvas></div></div>
-                    <div class="metric-tile"><div class="tile-header"><span class="tile-title">HTTP Status Distribution</span></div><div class="tile-body"><canvas id="chart-status-dist"></canvas></div></div>
+                <div class="card">
+                    <div class="stat-label">Total Users</div>
+                    <div class="stat-value" id="stat-total-users">0</div>
                 </div>
-
-                <div class="card" style="margin-top: 1.25rem;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
-                        <h3 style="font-size: 0.8rem; font-weight: 900; text-transform: uppercase; color: #666;">Granular Endpoint Analysis</h3>
-                        <div style="display: flex; gap: 0.75rem; align-items: center;">
-                            <input type="text" id="endpoint-filter" placeholder="Filter Matrix..." style="width: 300px;">
-                            <select id="metric-hours" data-change="refreshMetrics"><option value="1">1 Hour</option><option value="24" selected>24 Hours</option><option value="168">7 Days</option></select>
-                            <button class="btn btn-primary" data-click="openExportModal">Export</button>
-                        </div>
-                    </div>
-                    <div class="table-container">
-                        <table id="endpoints-table">
-                            <thead>
-                                <tr>
-                                    <th data-sort="endpoint">Endpoint</th><th data-sort="method">Method</th><th data-sort="count">Hits</th><th data-sort="avg_ms">Avg Latency</th><th data-sort="p95_ms">P95</th><th data-sort="avg_queries">Queries</th><th data-sort="avg_query_time_ms">DB Time</th><th data-sort="error_rate">Errors</th>
-                                </tr>
-                            </thead>
-                            <tbody></tbody>
-                        </table>
-                    </div>
+                <div class="card">
+                    <div class="stat-label">Avg Latency</div>
+                    <div class="stat-value"><span id="stat-avg-latency">0</span>ms</div>
+                </div>
+                <div class="card">
+                    <div class="stat-label">Error Rate</div>
+                    <div class="stat-value"><span id="stat-error-rate">0.0</span>%</div>
                 </div>
             </div>
 
-            <!-- Other tabs omitted for brevity but preserved in full logic -->
-            <div id="tab-tickets" class="tab-content hidden"><div class="card"><h3>Support Queue</h3><div class="table-container"><table id="tickets-table"><thead><tr><th>ID</th><th>User</th><th>Category</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead><tbody></tbody></table></div></div><div id="ticket-view" class="card hidden"><h2 id="view-ticket-title"></h2><div id="view-ticket-content" class="card" style="background:#000;"></div><div class="grid grid-2"><div><h3>Internal Notes</h3><div id="ticket-notes-list"></div><div style="display:flex;gap:0.5rem;"><input type="text" id="new-note-input" style="flex:1;"><button class="btn btn-primary" data-click="addTicketNote">Add</button></div></div></div></div></div>
-            <div id="tab-users" class="tab-content hidden"><div class="card"><h3>Search Protocol</h3><div style="display:flex;gap:1rem;margin-top:1rem;"><input type="text" id="user-search-input" style="flex:1;"><button class="btn btn-primary" data-click="searchUsers">Execute Search</button></div><div id="user-results" class="table-container" style="margin-top:1.5rem;"></div></div><div id="user-manage" class="card hidden"><div style="display:flex;gap:2rem;"><div style="position:relative;"><img id="user-avatar-large" style="width:120px;height:120px;border-radius:4px;"><div id="user-locked-overlay" class="hidden" style="position:absolute;top:0;left:0;width:100%;height:100%;background:rgba(255,0,0,0.4);display:flex;align-items:center;justify-content:center;"><span style="font-weight:900;color:#fff;">SUSPENDED</span></div></div><div style="flex:1;"><h2 id="user-display-name"></h2><p id="user-display-id"></p><div class="grid grid-2" style="margin-top:1.5rem;"><div><label>TIER</label><div style="display:flex;gap:0.5rem;"><select id="user-tier-select" style="flex:1;"><option value="free">Free</option><option value="alpha">Alpha</option><option value="beta">Beta</option><option value="premium">Premium</option><option value="staff">Staff</option></select><button class="btn btn-primary" data-click="updateUserTier">Set</button></div></div><div><label>ACTIONS</label><div style="display:flex;gap:0.5rem;"><button class="btn btn-secondary" data-click="forceLogoutUserAction">Kill Sessions</button><button class="btn id-lock-btn btn-danger" data-click="suspendUser">Suspend</button><button class="btn id-unlock-btn btn-primary hidden" data-click="unlockUserAction">Unlock</button></div></div></div><div style="margin-top:1.5rem;"><label>NOTES</label><textarea id="user-internal-notes" style="width:100%;min-height:100px;margin-top:0.5rem;"></textarea><button class="btn btn-secondary" style="margin-top:0.5rem;" data-click="saveUserNotes">Save Record</button></div></div></div></div></div>
-            <div id="tab-security" class="tab-content hidden"><div class="grid grid-2"><div class="card"><h3>IP Control</h3><div style="display:flex;gap:0.5rem;"><input type="text" id="block-ip-val" style="flex:1;"><button class="btn btn-danger" data-click="blockIP">Block</button></div><div class="table-container"><table id="blocked-ips-table"><thead><tr><th>IP</th><th>Reason</th><th>Actions</th></tr></thead><tbody></tbody></table></div></div><div class="card"><h3>Identity Control</h3><div style="display:flex;gap:0.5rem;"><input type="text" id="ban-username-val" style="flex:1;"><button class="btn btn-danger" data-click="addBannedUsername">Ban</button></div><div class="table-container"><table id="banned-usernames-table"><thead><tr><th>Pattern</th><th>Reason</th><th>Actions</th></tr></thead><tbody></tbody></table></div></div></div></div>
-            <div id="tab-logs" class="tab-content hidden"><div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem;"><div style="display:flex;gap:1rem;align-items:center;"><h3>System Logs</h3><select id="log-file-select" style="min-width:250px;" data-change="loadLogContent"></select></div><div style="display:flex;gap:0.5rem;align-items:center;"><input type="text" id="log-search" placeholder="Grep..."><select id="log-level-filter" data-change="loadLogContent"><option value="">All</option><option value="DEBUG">DEBUG</option><option value="INFO">INFO</option><option value="WARNING">WARN</option><option value="ERROR">ERROR</option></select><label><input type="checkbox" id="log-auto-refresh"> LIVE</label></div></div><div id="log-viewer" style="background:#000;color:#fff;font-family:monospace;font-size:0.75rem;padding:1rem;height:600px;overflow:auto;line-height:1.4;"></div><div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-top:1rem;"><button class="btn btn-outline" data-click="scrollLogTop">Top</button><button class="btn btn-outline" data-click="scrollLogBottom">Bottom</button><button class="btn btn-secondary" data-click="downloadLog">Download</button></div></div></div>
-            <div id="tab-account" class="tab-content hidden"><div class="grid grid-2"><div class="card"><h3>Credentials</h3><div style="display:flex;flex-direction:column;gap:1rem;"><div><label>CURRENT</label><input type="password" id="admin-current-pass"></div><div><label>NEW</label><input type="password" id="admin-new-pass"></div><div><label>VERIFY</label><input type="password" id="admin-confirm-pass"></div><button class="btn btn-primary" data-click="changeAdminPassword">ROTATE</button></div></div></div></div>
+            <div class="grid grid-2">
+                <div class="metric-tile">
+                    <div class="tile-header">Request Rate & DB Activity</div>
+                    <div class="tile-body"><canvas id="chart-tps"></canvas></div>
+                </div>
+                <div class="metric-tile">
+                    <div class="tile-header">System Resource Load</div>
+                    <div class="tile-body"><canvas id="chart-sys"></canvas></div>
+                </div>
+            </div>
+
+            <div class="card" style="margin-top: 1rem;">
+                <h3>Endpoint Performance</h3>
+                <div style="display: flex; gap: 1rem; margin: 1rem 0;">
+                    <input type="text" id="endpoint-filter" placeholder="Filter endpoints..." style="flex: 1;">
+                    <select id="metric-hours"><option value="1">1 Hour</option><option value="24" selected>24 Hours</option></select>
+                </div>
+                <table id="endpoints-table">
+                    <thead>
+                        <tr>
+                            <th>Endpoint</th><th>Method</th><th>Hits</th><th>Avg Latency</th><th>P95</th><th>Queries</th><th>Errors</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="tab-tickets" class="tab-content hidden">
+            <div class="card">
+                <h3>Support Tickets</h3>
+                <table id="tickets-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th><th>User</th><th>Category</th><th>Status</th><th>Created</th><th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="tab-users" class="tab-content hidden">
+            <div class="card">
+                <h3>User Directory</h3>
+                <div style="display: flex; gap: 1rem; margin: 1rem 0;">
+                    <input type="text" id="user-search-input" placeholder="Search by username..." style="flex: 1;">
+                    <button class="btn btn-primary" data-click="searchUsers">Search</button>
+                </div>
+                <div id="user-results"></div>
+            </div>
+        </div>
+
+        <div id="tab-security" class="tab-content hidden">
+            <div class="grid grid-2">
+                <div class="card">
+                    <h3>IP Blocks</h3>
+                    <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+                        <input type="text" id="block-ip-val" placeholder="IP Address" style="flex: 1;">
+                        <button class="btn btn-danger" data-click="blockIP">Block</button>
+                    </div>
+                    <table id="blocked-ips-table">
+                        <thead><tr><th>IP</th><th>Reason</th><th>Action</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div class="card">
+                    <h3>Username Bans</h3>
+                    <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+                        <input type="text" id="ban-username-val" placeholder="Username/Pattern" style="flex: 1;">
+                        <button class="btn btn-danger" data-click="addBannedUsername">Ban</button>
+                    </div>
+                    <table id="banned-usernames-table">
+                        <thead><tr><th>Pattern</th><th>Action</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div id="tab-logs" class="tab-content hidden">
+            <div class="card">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                    <h3>System Logs</h3>
+                    <select id="log-file-select"></select>
+                </div>
+                <div id="log-viewer">Select a log file to view...</div>
+            </div>
         </div>
     </div>
-
-    <!-- Export Modal -->
-    <div id="export-modal" class="modal"><div class="modal-content"><h3>Export System Metrics</h3><div style="display:flex;flex-direction:column;gap:1.5rem;margin-top:1.5rem;"><div><label style="font-weight:900;font-size:0.7rem;color:#666;">FORMAT</label><div style="display:flex;gap:0.5rem;margin-top:0.5rem;"><button class="btn btn-outline id-fmt-btn active" data-fmt="json" style="flex:1;">JSON</button><button class="btn btn-outline id-fmt-btn" data-fmt="csv" style="flex:1;">CSV</button><button class="btn btn-outline id-fmt-btn" data-fmt="txt" style="flex:1;">TXT</button></div></div><div><label style="font-weight:900;font-size:0.7rem;color:#666;">PREVIEW</label><div id="export-preview" style="background:#000;color:var(--good);padding:1rem;font-family:monospace;font-size:0.7rem;height:150px;overflow:auto;margin-top:0.5rem;border:1px solid #222;"></div></div></div><div class="modal-footer"><button class="btn btn-outline" data-click="closeExportModal">Cancel</button><button class="btn btn-secondary" data-click="copyExportToClipboard">Copy Clipboard</button><button class="btn btn-primary" data-click="executeDownload">Download File</button></div></div></div>
 
     <script nonce="{{ csp_nonce }}">
         const token = localStorage.getItem('plexichat-admin-token');
         if (!token) window.location.replace('/api/v1/admin/login');
-
-        let currentTab = 'metrics', selectedUserId = null, selectedTicketId = null, charts = {}, metricData = [], sortConfig = { key: 'count', dir: 'desc' }, refreshInterval = null, selectedExportFmt = 'json';
-        const historicalData = {};
 
         const api = async (p, o = {}) => {
             const r = await fetch(p, { ...o, headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...o.headers } });
@@ -349,136 +294,191 @@
             return d;
         };
 
-        const escapeHtml = (t) => { if(!t) return ''; const d = document.createElement('div'); d.textContent = String(t); return d.innerHTML; };
-
-        const showTab = (n) => {
-            document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === n));
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('hidden', c.id !== `tab-${n}`));
-            currentTab = n; if (refreshInterval) clearInterval(refreshInterval);
-            if (n === 'metrics') { refreshMetrics(); refreshInterval = setInterval(refreshMetrics, 10000); }
-            else if (n === 'tickets') loadTickets(); else if (n === 'security') loadSecurity(); else if (n === 'logs') loadLogs();
-        };
+        let charts = {}, refreshInterval = null, metricData = [];
 
         async function refreshMetrics() {
             try {
-                const hrs = document.getElementById('metric-hours')?.value || 24;
-                const [dash, stats] = await Promise.all([ api('/api/v1/admin/dashboard'), api(`/api/v1/admin/telemetry/stats?hours=${hrs}`) ]);
-                metricData = stats.stats; updateOverview(dash); renderEndpointTable(); updateCharts(dash, stats.stats);
-                document.getElementById('loading').classList.add('hidden'); document.getElementById('content').classList.remove('hidden');
-            } catch (e) { console.error(e); }
-        }
-
-        function updateOverview(d) {
-            const total = d.telemetry.reduce((a,b)=>a+b.count,0);
-            document.getElementById('stat-req-rate').textContent = (total/(24*3600)).toFixed(2);
-            document.getElementById('stat-avg-latency').textContent = total>0?(d.telemetry.reduce((a,b)=>a+(b.avg_ms*b.count),0)/total).toFixed(0):0;
-            document.getElementById('stat-error-rate').textContent = total>0?(d.telemetry.reduce((a,b)=>a+(b.error_rate*b.count),0)/total).toFixed(1):0;
-            document.getElementById('stat-sys-load').textContent = d.system?.cpu_percent?.toFixed(1) || '0.0';
-        }
-
-        function updateCharts(dash, stats) {
-            const opt = { responsive: true, maintainAspectRatio: false, animation: false, plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { grid: { color: '#1a1a1a' }, ticks: { color: '#555', font: { size: 9, weight: 800 } } } } };
-            const top = stats.slice(0, 10), labels = top.map(s => s.endpoint.split('/').pop() || '/');
-            renderChart('chart-tps', 'bar', { labels, datasets: [ { data: top.map(s => s.count), backgroundColor: 'rgba(0, 170, 255, 0.8)' }, { data: top.map(s => s.count * s.avg_queries), backgroundColor: 'rgba(255, 153, 0, 0.8)' } ] }, opt);
-            renderChart('chart-latency', 'line', { labels, datasets: [ { data: top.map(s => s.avg_ms), borderColor: '#00ff88', tension: 0.4, pointRadius: 0, borderWidth: 3 }, { data: top.map(s => s.p95_ms), borderColor: '#ff3333', tension: 0.4, pointRadius: 0, borderWidth: 3 } ] }, opt);
-            if (dash.system) {
-                updateHist('chart-sys-res', [{ val: dash.system.cpu_percent, col: '#00aaff' }, { val: dash.system.disk_percent, col: '#bb66ff' }]);
-                updateHist('chart-process', [{ val: dash.system.process_memory_mb, col: '#00ff88' }, { val: dash.system.thread_count, col: '#00eeee' }]);
-            }
-            renderChart('chart-db-perf', 'bar', { labels, datasets: [ { data: top.map(s => s.avg_queries), backgroundColor: '#00aaff' } ] }, opt);
-            api('/api/v1/admin/database/pool-health').then(db => {
-                document.getElementById('db-conn-count').textContent = `${db.active_connections} / ${db.max_connections}`;
-                updateHist('chart-db-pool', [{ val: db.active_connections, col: '#ff9900' }, { val: db.total_connections, col: '#00aaff' }]);
-            }).catch(()=>{});
-            const t = stats.reduce((a,b)=>a+b.count,0), e = stats.reduce((a,b)=>a+b.error_count,0);
-            updateHist('chart-errors', [{ val: t>0?(e/t*100):0, col: '#ff3333' }]);
-            renderChart('chart-status-dist', 'doughnut', { labels: ['OK', 'ERR'], datasets: [{ data: [t-e, e], backgroundColor: ['#00cc66', '#ff3333'], borderWidth: 0 }]}, { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: true, position: 'bottom', labels: { color: '#888', font: { size: 10, weight: 'bold' } } } } });
-        }
-
-        function renderChart(id, type, data, options) { if (charts[id]) charts[id].destroy(); charts[id] = new Chart(document.getElementById(id).getContext('2d'), { type, data, options }); }
-        function updateHist(id, metrics) {
-            if (!historicalData[id]) historicalData[id] = { labels: Array(60).fill(''), datasets: metrics.map(m => ({ data: Array(60).fill(0), borderColor: m.col, tension: 0.4, pointRadius: 0, borderWidth: 3 }))};
-            metrics.forEach((m, i) => { historicalData[id].datasets[i].data.push(m.val); historicalData[id].datasets[i].data.shift(); });
-            renderChart(id, 'line', historicalData[id], { responsive: true, maintainAspectRatio: false, animation: false, plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { grid: { color: '#1a1a1a' }, ticks: { color: '#555', font: { size: 8, weight: 800 } } } } });
+                const hrs = document.getElementById('metric-hours').value;
+                const [dash, stats] = await Promise.all([api('/api/v1/admin/dashboard'), api(`/api/v1/admin/telemetry/stats?hours=${hrs}`)]);
+                
+                document.getElementById('stat-active-users').textContent = dash.active_users;
+                document.getElementById('stat-total-users').textContent = dash.total_users;
+                
+                const totalReq = stats.stats.reduce((a, b) => a + b.count, 0);
+                const avgLat = totalReq > 0 ? (stats.stats.reduce((a, b) => a + (b.avg_ms * b.count), 0) / totalReq) : 0;
+                const totalErr = stats.stats.reduce((a, b) => a + b.error_count, 0);
+                
+                document.getElementById('stat-avg-latency').textContent = Math.round(avgLat);
+                document.getElementById('stat-error-rate').textContent = totalReq > 0 ? (totalErr / totalReq * 100).toFixed(1) : '0.0';
+                
+                metricData = stats.stats;
+                renderEndpointTable();
+                updateCharts(dash, stats.stats);
+            } catch (e) { console.error('Refresh failed:', e); }
         }
 
         function renderEndpointTable() {
             const f = document.getElementById('endpoint-filter').value.toLowerCase();
-            const filtered = metricData.filter(s => s.endpoint.toLowerCase().includes(f) || s.method.toLowerCase().includes(f));
-            filtered.sort((a, b) => { let vA = a[sortConfig.key], vB = b[sortConfig.key]; return sortConfig.dir === 'asc' ? (vA > vB ? 1 : -1) : (vA < vB ? 1 : -1); });
-            document.querySelector('#endpoints-table tbody').innerHTML = filtered.map(s => `<tr><td style="font-family:monospace; color:#00aaff; font-weight:800; font-size:0.75rem;">${s.endpoint}</td><td><span class="badge" style="background:#111; color:#888; border:1px solid #222;">${s.method}</span></td><td style="font-weight:900;">${s.count.toLocaleString()}</td><td style="color:${latencyColor(s.avg_ms)};font-weight:800;">${s.avg_ms.toFixed(1)}ms</td><td style="color:${latencyColor(s.p95_ms)};font-weight:800;">${s.p95_ms.toFixed(1)}ms</td><td style="color:#ff9900;font-weight:800;">${s.avg_queries.toFixed(1)}</td><td>${s.avg_query_time_ms.toFixed(1)}ms</td><td style="color:${s.error_rate>1?'#ff3333':'#555'};font-weight:800;">${s.error_rate.toFixed(1)}%</td></tr>`).join('');
+            const filtered = metricData.filter(s => s.endpoint.toLowerCase().includes(f));
+            const tbody = document.querySelector('#endpoints-table tbody');
+            tbody.innerHTML = filtered.slice(0, 15).map(s => `
+                <tr>
+                    <td style="font-family:monospace; font-size:0.75rem;">${s.endpoint}</td>
+                    <td>${s.method}</td>
+                    <td>${s.count}</td>
+                    <td>${Math.round(s.avg_ms)}ms</td>
+                    <td>${Math.round(s.p95_ms)}ms</td>
+                    <td>${s.avg_queries.toFixed(1)}</td>
+                    <td style="color:${s.error_rate > 1 ? 'var(--bad)' : 'inherit'}">${s.error_count} (${s.error_rate.toFixed(1)}%)</td>
+                </tr>
+            `).join('');
         }
 
-        const latencyColor = (ms) => ms > 500 ? '#ff3333' : (ms > 200 ? '#ff9900' : '#00cc66');
+        function updateCharts(dash, stats) {
+            const top = stats.slice(0, 8);
+            const labels = top.map(s => s.endpoint.split('/').pop() || '/');
+            
+            renderChart('chart-tps', 'bar', {
+                labels,
+                datasets: [
+                    { label: 'Hits', data: top.map(s => s.count), backgroundColor: 'rgba(0, 170, 255, 0.6)' },
+                    { label: 'Avg Queries', data: top.map(s => s.avg_queries), backgroundColor: 'rgba(255, 153, 0, 0.6)' }
+                ]
+            });
 
-        function openExportModal() { document.getElementById('export-modal').classList.add('active'); updateExportPreview(); }
-        function closeExportModal() { document.getElementById('export-modal').classList.remove('active'); }
-        async function updateExportPreview() {
-            const preview = document.getElementById('export-preview'), hrs = document.getElementById('metric-hours').value;
-            preview.textContent = 'Streaming...';
-            try {
-                const res = await fetch(`/api/v1/admin/telemetry/export?format=${selectedExportFmt}&hours=${hrs}`, { headers: { 'Authorization': `Bearer ${token}` } });
-                const txt = await res.text(); preview.textContent = txt.substring(0, 2000) + (txt.length>2000?'...':'');
-            } catch (e) { preview.textContent = 'Fail: ' + e.message; }
-        }
-
-        async function copyExportToClipboard() {
-            const hrs = document.getElementById('metric-hours').value;
-            try {
-                const res = await fetch(`/api/v1/admin/telemetry/export?format=${selectedExportFmt}&hours=${hrs}`, { headers: { 'Authorization': `Bearer ${token}` } });
-                const txt = await res.text();
-                const el = document.createElement('textarea'); el.value = txt; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el);
-                alert('Buffer Copied');
-            } catch (e) { alert('Clipboard Fail'); }
-        }
-
-        function executeDownload() {
-            const hrs = document.getElementById('metric-hours').value;
-            window.open(`/api/v1/admin/telemetry/export?format=${selectedExportFmt}&hours=${hrs}&Authorization=Bearer ${token}`, '_blank');
-        }
-
-        document.addEventListener('click', (e) => {
-            const t = e.target.closest('[data-click]'); if (!t) return;
-            const a = t.dataset.click, id = t.dataset.id;
-            if (a === 'logout') { localStorage.removeItem('plexichat-admin-token'); window.location.replace('/api/v1/admin/login'); }
-            else if (a === 'showTab') showTab(t.dataset.tab);
-            else if (a === 'searchUsers') searchUsers();
-            else if (a === 'openExportModal') openExportModal();
-            else if (a === 'closeExportModal') closeExportModal();
-            else if (a === 'copyExportToClipboard') copyExportToClipboard();
-            else if (a === 'executeDownload') executeDownload();
-            else if (a === 'manageUser') manageUser(id);
-            else if (a === 'scrollLogTop') document.getElementById('log-viewer').scrollTop = 0;
-            else if (a === 'scrollLogBottom') document.getElementById('log-viewer').scrollTop = 1e9;
-        });
-
-        document.addEventListener('click', (e) => {
-            if (e.target.classList.contains('id-fmt-btn')) {
-                document.querySelectorAll('.id-fmt-btn').forEach(b => b.classList.remove('active'));
-                e.target.classList.add('active'); selectedExportFmt = e.target.dataset.fmt; updateExportPreview();
+            if (dash.system) {
+                renderChart('chart-sys', 'line', {
+                    labels: Array(10).fill(''),
+                    datasets: [
+                        { label: 'CPU %', data: Array(10).fill(dash.system.cpu_percent), borderColor: 'var(--accent)', tension: 0.4 },
+                        { label: 'Disk %', data: Array(10).fill(dash.system.disk_percent), borderColor: 'var(--bad)', tension: 0.4 }
+                    ]
+                }, { scales: { x: { display: false }, y: { min: 0, max: 100 } } });
             }
-        });
-
-        document.addEventListener('keydown', (e) => {
-            if (e.key !== 'Enter') return;
-            if (e.target.id === 'user-search-input') searchUsers();
-            else if (e.target.id === 'endpoint-filter') renderEndpointTable();
-            else if (e.target.id === 'log-search') loadLogContent();
-        });
-
-        document.addEventListener('change', (e) => {
-            if (e.target.dataset.change === 'refreshMetrics') refreshMetrics();
-            if (e.target.dataset.change === 'loadLogContent') loadLogContent();
-        });
-
-        async function verifyAndLoad() {
-            try {
-                const [d, v] = await Promise.all([api('/api/v1/admin/dashboard'), api('/api/v1/version')]);
-                document.getElementById('server-version').textContent = v.version.string;
-                showTab('metrics');
-            } catch (e) { document.getElementById('loading').innerHTML = `<div class="card btn-danger">SYSTEM FAULT: ${e.message}</div>`; }
         }
-        verifyAndLoad();
+
+        function renderChart(id, type, data, options = {}) {
+            if (charts[id]) charts[id].destroy();
+            charts[id] = new Chart(document.getElementById(id).getContext('2d'), {
+                type, data,
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#888', font: { size: 10 } } } }, ...options }
+            });
+        }
+
+        async function loadTickets() {
+            try {
+                const tickets = await api('/api/v1/admin/tickets');
+                const tbody = document.querySelector('#tickets-table tbody');
+                tbody.innerHTML = tickets.map(t => `
+                    <tr>
+                        <td>${t.id}</td><td>${t.username}</td><td>${t.category}</td>
+                        <td>${t.status}</td><td>${new Date(t.created_at).toLocaleString()}</td>
+                        <td><button class="btn btn-secondary" onclick="viewTicket('${t.id}')">View</button></td>
+                    </tr>
+                `).join('');
+            } catch (e) { console.error('Tickets failed:', e); }
+        }
+
+        async function searchUsers() {
+            const q = document.getElementById('user-search-input').value;
+            if (!q) return;
+            try {
+                const results = await api(`/api/v1/admin/users/search?q=${encodeURIComponent(q)}`);
+                const container = document.getElementById('user-results');
+                if (!results.users || results.users.length === 0) {
+                    container.innerHTML = '<p style="padding:1rem;color:var(--text-dim);">No users found.</p>';
+                    return;
+                }
+                container.innerHTML = `
+                    <table>
+                        <thead><tr><th>ID</th><th>Username</th><th>Tier</th><th>Badges</th><th>Created</th><th>Action</th></tr></thead>
+                        <tbody>
+                            ${results.users.map(u => `
+                                <tr>
+                                    <td>${u.id}</td><td>${u.username}</td><td>${u.tier}</td>
+                                    <td>${u.badges.join(', ')}</td><td>${new Date(u.created_at).toLocaleDateString()}</td>
+                                    <td><button class="btn btn-secondary" onclick="manageUser('${u.id}')">Manage</button></td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+            } catch (e) { alert(e.message); }
+        }
+
+        async function loadSecurity() {
+            try {
+                const [ips, bans] = await Promise.all([api('/api/v1/admin/security/blocked-ips'), api('/api/v1/admin/security/banned-usernames')]);
+                document.querySelector('#blocked-ips-table tbody').innerHTML = ips.map(i => `
+                    <tr><td>${i.ip_address}</td><td>${i.reason || ''}</td><td><button class="btn btn-outline" onclick="unblockIP('${i.ip_address}')">Unblock</button></td></tr>
+                `).join('');
+                document.querySelector('#banned-usernames-table tbody').innerHTML = bans.map(b => `
+                    <tr><td>${b.pattern}</td><td><button class="btn btn-outline" onclick="removeBan('${b.id}')">Remove</button></td></tr>
+                `).join('');
+            } catch (e) { console.error('Security load failed:', e); }
+        }
+
+        async function loadLogs() {
+            try {
+                const logs = await api('/api/v1/admin/logs');
+                const select = document.getElementById('log-file-select');
+                select.innerHTML = logs.map(l => `<option value="${l.filename}">${l.filename} (${(l.size / 1024).toFixed(1)} KB)</option>`).join('');
+                if (logs.length > 0) loadLogFile(logs[0].filename);
+            } catch (e) { console.error('Logs failed:', e); }
+        }
+
+        async function loadLogFile(file) {
+            try {
+                const data = await api(`/api/v1/admin/logs/${file}?limit=200`);
+                const viewer = document.getElementById('log-viewer');
+                viewer.textContent = data.lines.map(l => l.raw).join('\n');
+                viewer.scrollTop = viewer.scrollHeight;
+            } catch (e) { document.getElementById('log-viewer').textContent = 'Error: ' + e.message; }
+        }
+
+        document.querySelectorAll('.tab').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                btn.classList.add('active');
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+                const tabId = btn.dataset.tab;
+                document.getElementById(`tab-${tabId}`).classList.remove('hidden');
+                
+                if (refreshInterval) clearInterval(refreshInterval);
+                if (tabId === 'metrics') { refreshMetrics(); refreshInterval = setInterval(refreshMetrics, 15000); }
+                else if (tabId === 'tickets') loadTickets();
+                else if (tabId === 'security') loadSecurity();
+                else if (tabId === 'logs') loadLogs();
+            });
+        });
+
+        document.getElementById('log-file-select').addEventListener('change', (e) => loadLogFile(e.target.value));
+        document.getElementById('metric-hours').addEventListener('change', refreshMetrics);
+        document.getElementById('endpoint-filter').addEventListener('input', renderEndpointTable);
+
+        document.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-click]');
+            if (!btn) return;
+            const action = btn.dataset.click;
+            if (action === 'logout') { localStorage.removeItem('plexichat-admin-token'); window.location.replace('/api/v1/admin/login'); }
+            else if (action === 'searchUsers') searchUsers();
+        });
+
+        // Initialize
+        (async () => {
+            try {
+                const v = await api('/api/v1/version');
+                document.getElementById('server-version').textContent = `v${v.version.string}`;
+                refreshMetrics();
+                refreshInterval = setInterval(refreshMetrics, 15000);
+            } catch (e) { console.error('Init failed:', e); }
+        })();
+
+        // Global stubs for onclick handlers
+        window.manageUser = (id) => alert('Manage User: ' + id);
+        window.viewTicket = (id) => alert('View Ticket: ' + id);
+        window.unblockIP = async (ip) => { if(confirm(`Unblock ${ip}?`)) { await api('/api/v1/admin/security/blocked-ips', { method: 'DELETE', body: JSON.stringify({ip_address: ip}) }); loadSecurity(); } };
     </script>
 </body>
+
 </html>
