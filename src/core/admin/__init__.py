@@ -1390,6 +1390,9 @@ def update_user_tier(user_id: int, tier: str, admin_id: int = 0) -> bool:
     if _features:
         try:
             _features.set_user_tier(user_id, admin_id, tier)
+            # Invalidate caches
+            invalidate_pattern(f"user_data:{user_id}")
+            invalidate_pattern(f"current_user_api:{user_id}")
             return True
         except Exception as e:
             logger.warning(f"Failed to update tier via features module: {e}")
@@ -1422,6 +1425,10 @@ def update_user_tier(user_id: int, tier: str, admin_id: int = 0) -> bool:
     else:
         # Emergency fallback to auth_users if user_features doesn't exist
         db.execute("UPDATE auth_users SET tier = ? WHERE id = ?", (tier, user_id))
+    
+    # Invalidate caches
+    invalidate_pattern(f"user_data:{user_id}")
+    invalidate_pattern(f"current_user_api:{user_id}")
     return True
 
 
@@ -1458,6 +1465,9 @@ def add_user_badge(user_id: int, badge: str, admin_id: int = 0) -> Optional[List
     if _features:
         try:
             _features.add_badge(user_id, admin_id, badge)
+            # Invalidate caches
+            invalidate_pattern(f"user_data:{user_id}")
+            invalidate_pattern(f"current_user_api:{user_id}")
             # Fetch updated badges to return
             features = _features.get_user_features(user_id)
             return features.badges if features else []
@@ -1470,6 +1480,9 @@ def add_user_badge(user_id: int, badge: str, admin_id: int = 0) -> Optional[List
     if not row:
         # Create entry
         update_user_badges(user_id, [badge], admin_id)
+        # Caches invalidated inside update_user_badges (via update_user_badges) - Wait, update_user_badges doesn't have it yet
+        invalidate_pattern(f"user_data:{user_id}")
+        invalidate_pattern(f"current_user_api:{user_id}")
         return [badge]
 
     current_badges_json = (row["badges"] if isinstance(row, dict) else row[0]) or "[]"
@@ -1481,6 +1494,9 @@ def add_user_badge(user_id: int, badge: str, admin_id: int = 0) -> Optional[List
     if badge not in badges_list:
         badges_list.append(badge)
         update_user_badges(user_id, badges_list, admin_id)
+        # Invalidate caches
+        invalidate_pattern(f"user_data:{user_id}")
+        invalidate_pattern(f"current_user_api:{user_id}")
 
     return badges_list
 
@@ -1490,6 +1506,9 @@ def remove_user_badge(user_id: int, badge: str, admin_id: int = 0) -> Optional[L
     if _features:
         try:
             _features.remove_badge(user_id, admin_id, badge)
+            # Invalidate caches
+            invalidate_pattern(f"user_data:{user_id}")
+            invalidate_pattern(f"current_user_api:{user_id}")
             features = _features.get_user_features(user_id)
             return features.badges if features else []
         except Exception as e:
@@ -1510,6 +1529,9 @@ def remove_user_badge(user_id: int, badge: str, admin_id: int = 0) -> Optional[L
     if badge in badges_list:
         badges_list.remove(badge)
         update_user_badges(user_id, badges_list, admin_id)
+        # Invalidate caches
+        invalidate_pattern(f"user_data:{user_id}")
+        invalidate_pattern(f"current_user_api:{user_id}")
 
     return badges_list
 

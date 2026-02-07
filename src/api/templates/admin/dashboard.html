@@ -914,6 +914,10 @@
                 const data = await api(`/api/v1/admin/logs/${encodeURIComponent(filename)}?${query.toString()}`);
                 const viewer = document.getElementById('log-viewer');
                 
+                // Check if viewer is at bottom BEFORE updating content
+                const isAtBottom = viewer.scrollHeight - viewer.scrollTop <= viewer.clientHeight + 50;
+                const previousTotalLines = viewer.dataset.totalLines || 0;
+                
                 if (data.lines.length === 0) {
                     viewer.innerHTML = '<div style="color: var(--text-dim); text-align: center; padding: 2rem;">No matching log entries found.</div>';
                 } else {
@@ -928,6 +932,12 @@
                 }
                 
                 document.getElementById('log-stats').textContent = `Showing ${data.lines.length} of ${data.total_lines} lines`;
+                viewer.dataset.totalLines = data.total_lines;
+                
+                // Auto-scroll if we were at the bottom and new lines were added
+                if (isAtBottom && data.total_lines > previousTotalLines) {
+                    viewer.scrollTop = viewer.scrollHeight;
+                }
                 
                 if (document.getElementById('log-auto-refresh').checked) {
                     if (!logAutoRefreshInterval) {
