@@ -158,92 +158,6 @@ class ServerManager(BaseManager):
         server_config = config.get("servers", {})
         return {**defaults, **server_config}
 
-    def _generate_invite_code(self) -> str:
-        """Generate a unique invite code."""
-        length = self._config.get("invite_code_length", 8)
-        chars = string.ascii_letters + string.digits
-        while True:
-            code = "".join(secrets.choice(chars) for _ in range(length))
-            existing = self._db.fetch_one(
-                "SELECT 1 FROM srv_invites WHERE code = ?", (code,)
-            )
-            if not existing:
-                return code
-
-    def _validate_server_name(self, name: str) -> str:
-        """Validate and sanitize server name."""
-        if not name or not name.strip():
-            raise InvalidServerNameError("Server name cannot be empty")
-
-        name = name.strip()
-        min_len = self._config.get("server_name_min_length", 2)
-        max_len = self._config.get("server_name_max_length", 100)
-
-        if len(name) < min_len:
-            raise InvalidServerNameError(
-                f"Server name must be at least {min_len} characters", name
-            )
-        if len(name) > max_len:
-            raise InvalidServerNameError(
-                f"Server name cannot exceed {max_len} characters", name
-            )
-
-        return name
-
-    def _validate_channel_name(
-        self, name: str, channel_type: ChannelType = ChannelType.TEXT
-    ) -> str:
-        """Validate and sanitize channel name.
-        
-        Text and announcement channels are strictly lowercase, alphanumeric, and hyphenated (no unicode).
-        Voice and stage channels allow spaces and mixed case but are also sanitized for security.
-        """
-        if not name or not name.strip():
-            raise InvalidChannelNameError("Channel name cannot be empty")
-
-        name = name.strip()
-        
-        # Strict ASCII-only hyphenated naming for text-based channels
-        if channel_type in (ChannelType.TEXT, ChannelType.ANNOUNCEMENT):
-            # Convert to lowercase, replace multiple spaces/non-alphanumeric with single hyphen
-            name = name.lower()
-            name = re.sub(r"[^a-z0-9]+", "-", name)
-            # Remove leading/trailing hyphens
-            name = name.strip("-")
-            
-            if not name:
-                raise InvalidChannelNameError("Channel name must contain alphanumeric characters")
-        else:
-            # Voice/Stage: Allow more characters but collapse multiple spaces and remove dangerous ones
-            name = re.sub(r"\s+", " ", name)
-            # Remove non-printable and potentially dangerous characters (keep ASCII mostly)
-            name = re.sub(r"[^\x20-\x7E]", "", name)
-            name = name.strip()
-
-        max_len = self._config.get("channel_name_max_length", 100)
-
-        if len(name) > max_len:
-            raise InvalidChannelNameError(
-                f"Channel name cannot exceed {max_len} characters", name
-            )
-
-        return name
-
-    def _validate_role_name(self, name: str) -> str:
-        """Validate and sanitize role name."""
-        if not name or not name.strip():
-            raise InvalidRoleNameError("Role name cannot be empty")
-
-        name = name.strip()
-        max_len = self._config.get("role_name_max_length", 100)
-
-        if len(name) > max_len:
-            raise InvalidRoleNameError(
-                f"Role name cannot exceed {max_len} characters", name
-            )
-
-        return name
-
     def _log_audit(
         self,
         server_id: SnowflakeID,
@@ -269,7 +183,21 @@ class ServerManager(BaseManager):
         icon_url: Optional[str] = None,
     ) -> Server:
         """Create a new server."""
-        name = self._validate_server_name(name)
+        if not name or not name.strip():
+            raise InvalidServerNameError("Server name cannot be empty")
+
+        name = name.strip()
+        min_len = self._config.get("server_name_min_length", 2)
+        max_len = self._config.get("server_name_max_length", 100)
+
+        if len(name) < min_len:
+            raise InvalidServerNameError(
+                f"Server name must be at least {min_len} characters", name
+            )
+        if len(name) > max_len:
+            raise InvalidServerNameError(
+                f"Server name cannot exceed {max_len} characters", name
+            )
 
         now = self._get_timestamp()
         server_id = self._generate_id()
@@ -621,12 +549,6 @@ class ServerManager(BaseManager):
         self, channel_id: SnowflakeID, user_id: SnowflakeID
     ) -> Optional[Channel]:
         """Get a channel by ID if user has access (cached)."""
-        # We keep the caching logic here or move it to handler. 
-        # For now, let's just delegate to ensure the same logic is used if I moved it.
-        # Wait, I didn't move get_channel to handler yet because of its tight cache integration.
-        # Let's see if I should.
-        
-        # Check channel cache first (channel data rarely changes)
         cache_key = channel_id
         cached_row = self._cache_get(self._channel_cache, cache_key)
 
@@ -640,21 +562,17 @@ class ServerManager(BaseManager):
                     f"get_channel: channel {channel_id} NOT FOUND in database (or deleted)"
                 )
                 return None
-            # Cache the raw row data
             self._cache_set(self._channel_cache, cache_key, dict(row))
             cached_row = dict(row)
 
         server_id = cached_row["server_id"]
 
-        # Membership check is already cached in _is_member
         if not self._is_member(server_id, user_id):
             logger.warning(
                 f"get_channel: user {user_id} is NOT a member of server {server_id}"
             )
             return None
 
-        # Check if user is server owner (use cached permission check)
-        # has_permission already handles owner check internally
         if not self.has_permission(user_id, server_id, "channels.view", channel_id):
             logger.warning(
                 f"get_channel: user {user_id} does NOT have channels.view permission for channel {channel_id}"
@@ -710,76 +628,17 @@ class ServerManager(BaseManager):
         mentionable: bool = False,
     ) -> Role:
         """Create a new role in a server."""
-        server = self.get_server(server_id, user_id)
-        if not server:
-            raise ServerNotFoundError("Server not found")
-
-        self.require_permission(user_id, server_id, "roles.manage")
-
-        name = self._validate_role_name(name)
-
-        # Get next position (above @everyone which is 0)
-        pos_row = self._db.fetch_one(
-            "SELECT COALESCE(MAX(position), 0) + 1 as next_pos FROM srv_roles WHERE server_id = ? AND deleted = 0",
-            (server_id,),
+        return self.role_handler.create_role(
+            user_id, server_id, name, permissions, color, hoist, mentionable
         )
-        position = pos_row["next_pos"] if pos_row else 1
-
-        now = self._get_timestamp()
-        role_id = self._generate_id()
-
-        self._db.execute(
-            """INSERT INTO srv_roles 
-               (id, server_id, name, permissions, color, hoist, mentionable, position, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                role_id,
-                server_id,
-                name,
-                json.dumps(permissions or {}),
-                color,
-                1 if hoist else 0,
-                1 if mentionable else 0,
-                position,
-                now,
-                now,
-            ),
-        )
-
-        self._log_audit(server_id, user_id, AuditLogAction.ROLE_CREATE, "role", role_id)
-
-        logger.debug(f"Created role {role_id} in server {server_id}")
-
-        result = self.get_role(role_id, user_id)
-        assert result is not None  # Should exist since we just created it
-        return result
 
     def get_role(self, role_id: SnowflakeID, user_id: SnowflakeID) -> Optional[Role]:
         """Get a role by ID."""
-        row = self._db.fetch_one(
-            "SELECT * FROM srv_roles WHERE id = ? AND deleted = 0",
-            (role_id,),
-        )
-
-        if not row:
-            return None
-
-        if not self._is_member(row["server_id"], user_id):
-            return None
-
-        return self._row_to_role(row)
+        return self.role_handler.get_role(role_id, user_id)
 
     def get_roles(self, user_id: SnowflakeID, server_id: SnowflakeID) -> List[Role]:
         """Get all roles in a server."""
-        if not self._is_member(server_id, user_id):
-            raise ServerAccessDeniedError("Not a member of this server")
-
-        rows = self._db.fetch_all(
-            "SELECT * FROM srv_roles WHERE server_id = ? AND deleted = 0 ORDER BY position DESC",
-            (server_id,),
-        )
-
-        return [self._row_to_role(row) for row in rows]
+        return self.role_handler.get_roles(user_id, server_id)
 
     def update_role(
         self,
@@ -792,149 +651,19 @@ class ServerManager(BaseManager):
         mentionable: Optional[bool] = None,
     ) -> Role:
         """Update role settings."""
-        role = self.get_role(role_id, user_id)
-        if not role:
-            raise RoleNotFoundError("Role not found")
-
-        self.require_permission(user_id, role.server_id, "roles.manage")
-
-        # Check hierarchy
-        user_roles = self._get_member_role_rows(role.server_id, user_id)
-        server = self.get_server(role.server_id, user_id)
-        is_owner = server is not None and server.owner_id == user_id
-
-        if not can_manage_role(user_roles, {"position": role.position}, is_owner):
-            raise RoleHierarchyError(
-                "Cannot modify a role at or above your highest role"
-            )
-
-        updates = []
-        params = []
-        changes = {}
-
-        if name is not None:
-            if role.is_default:
-                raise DefaultRoleError("Cannot rename the default role")
-            name = self._validate_role_name(name)
-            updates.append("name = ?")
-            params.append(name)
-            changes["name"] = {"old": role.name, "new": name}
-
-        if permissions is not None:
-            updates.append("permissions = ?")
-            params.append(json.dumps(permissions))
-            changes["permissions"] = {"old": role.permissions, "new": permissions}
-
-        if color is not None:
-            updates.append("color = ?")
-            params.append(color)
-            changes["color"] = {"old": role.color, "new": color}
-
-        if hoist is not None:
-            updates.append("hoist = ?")
-            params.append(1 if hoist else 0)
-            changes["hoist"] = {"old": role.hoist, "new": hoist}
-
-        if mentionable is not None:
-            updates.append("mentionable = ?")
-            params.append(1 if mentionable else 0)
-            changes["mentionable"] = {"old": role.mentionable, "new": mentionable}
-
-        if updates:
-            updates.append("updated_at = ?")
-            params.append(self._get_timestamp())
-            params.append(role_id)
-
-            self._db.execute(
-                f"UPDATE srv_roles SET {', '.join(updates)} WHERE id = ?",
-                tuple(params),
-            )
-
-            self._log_audit(
-                role.server_id,
-                user_id,
-                AuditLogAction.ROLE_UPDATE,
-                "role",
-                role_id,
-                changes,
-            )
-
-        updated_role = self.get_role(role_id, user_id)
-        assert updated_role is not None
-        return updated_role
+        return self.role_handler.update_role(
+            user_id, role_id, name, permissions, color, hoist, mentionable
+        )
 
     def delete_role(self, user_id: SnowflakeID, role_id: SnowflakeID) -> bool:
         """Delete a role."""
-        role = self.get_role(role_id, user_id)
-        if not role:
-            raise RoleNotFoundError("Role not found")
-
-        if role.is_default:
-            raise DefaultRoleError("Cannot delete the default role")
-
-        self.require_permission(user_id, role.server_id, "roles.manage")
-
-        # Check hierarchy
-        user_roles = self._get_member_role_rows(role.server_id, user_id)
-        server = self.get_server(role.server_id, user_id)
-        is_owner = server is not None and server.owner_id == user_id
-
-        if not can_manage_role(user_roles, {"position": role.position}, is_owner):
-            raise RoleHierarchyError(
-                "Cannot delete a role at or above your highest role"
-            )
-
-        self._db.execute(
-            "UPDATE srv_roles SET deleted = 1 WHERE id = ?",
-            (role_id,),
-        )
-
-        # Remove role from all members
-        self._db.execute(
-            "DELETE FROM srv_member_roles WHERE role_id = ?",
-            (role_id,),
-        )
-
-        self._log_audit(
-            role.server_id, user_id, AuditLogAction.ROLE_DELETE, "role", role_id
-        )
-
-        return True
+        return self.role_handler.delete_role(user_id, role_id)
 
     def move_role(
         self, user_id: SnowflakeID, role_id: SnowflakeID, position: int
     ) -> Role:
         """Move a role to a new position in hierarchy."""
-        role = self.get_role(role_id, user_id)
-        if not role:
-            raise RoleNotFoundError("Role not found")
-
-        if role.is_default:
-            raise DefaultRoleError("Cannot move the default role")
-
-        self.require_permission(user_id, role.server_id, "roles.manage")
-
-        # Check hierarchy
-        user_roles = self._get_member_role_rows(role.server_id, user_id)
-        server = self.get_server(role.server_id, user_id)
-        is_owner = server is not None and server.owner_id == user_id
-
-        if not can_manage_role(user_roles, {"position": role.position}, is_owner):
-            raise RoleHierarchyError("Cannot move a role at or above your highest role")
-
-        # Cannot move above own highest role
-        user_highest = max((r.get("position", 0) for r in user_roles), default=0)
-        if position >= user_highest and not is_owner:
-            raise RoleHierarchyError("Cannot move role above your highest role")
-
-        self._db.execute(
-            "UPDATE srv_roles SET position = ?, updated_at = ? WHERE id = ?",
-            (position, self._get_timestamp(), role_id),
-        )
-
-        result = self.get_role(role_id, user_id)
-        assert result is not None  # Should exist since we just updated it
-        return result
+        return self.role_handler.move_role(user_id, role_id, position)
 
     # === Member Operations ===
 
@@ -945,98 +674,13 @@ class ServerManager(BaseManager):
         inviter_id: Optional[SnowflakeID] = None,
     ) -> Member:
         """Add a user as a member of a server."""
-        # Check if banned
-        ban = self._db.fetch_one(
-            "SELECT 1 FROM srv_bans WHERE server_id = ? AND user_id = ?",
-            (server_id, user_id),
-        )
-        if ban:
-            raise UserBannedError("User is banned from this server")
-
-        # Check if already member
-        if self._is_member(server_id, user_id):
-            raise MemberExistsError("User is already a member of this server")
-
-        # Verify server exists
-        server = self._db.fetch_one(
-            "SELECT * FROM srv_servers WHERE id = ? AND deleted = 0",
-            (server_id,),
-        )
-        if not server:
-            raise ServerNotFoundError("Server not found")
-
-        now = self._get_timestamp()
-        member_id = self._generate_id()
-
-        self._db.execute(
-            """INSERT INTO srv_members 
-               (id, server_id, user_id, joined_at, updated_at, inviter_id)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (member_id, server_id, user_id, now, now, inviter_id),
-        )
-
-        # Assign default role
-        default_role = self._db.fetch_one(
-            "SELECT id FROM srv_roles WHERE server_id = ? AND is_default = 1",
-            (server_id,),
-        )
-        if default_role:
-            mr_id = self._generate_id()
-            self._db.execute(
-                """INSERT INTO srv_member_roles (id, member_id, role_id, assigned_at)
-                   VALUES (?, ?, ?, ?)""",
-                (mr_id, member_id, default_role["id"], now),
-            )
-
-        self._log_audit(
-            server_id, user_id, AuditLogAction.MEMBER_JOIN, "member", user_id
-        )
-
-        # Add user to all existing channel conversations in this server
-        if self._messaging:
-            try:
-                # Fetch all text channels for this server
-                channels = self._db.fetch_all(
-                    "SELECT conversation_id FROM srv_channels WHERE server_id = ? AND channel_type = ? AND deleted = 0",
-                    (server_id, ChannelType.TEXT.value)
-                )
-                for ch in channels:
-                    if ch["conversation_id"]:
-                        try:
-                            # Use default role for participant
-                            from src.core.messaging.models import ParticipantRole
-                            self._messaging.add_participant(
-                                conversation_id=ch["conversation_id"],
-                                user_id=user_id,
-                                role=ParticipantRole.USER
-                            )
-                        except Exception as e:
-                            logger.warning(f"Failed to add new member {user_id} to conversation {ch['conversation_id']}: {e}")
-            except Exception as e:
-                logger.error(f"Error adding member {user_id} to server conversations: {e}")
-
-        # Invalidate member cache for the joining user
-        self._cache_invalidate(self._member_cache, (server_id, user_id))
-
-        logger.debug(f"Added member {user_id} to server {server_id}")
-
-        result = self.get_member(server_id, user_id)
-        assert result is not None  # Should exist since we just created it
-        return result
+        return self.member_handler.add_member(server_id, user_id, inviter_id)
 
     def get_member(
         self, server_id: SnowflakeID, user_id: SnowflakeID
     ) -> Optional[Member]:
         """Get a member by user ID."""
-        row = self._db.fetch_one(
-            "SELECT * FROM srv_members WHERE server_id = ? AND user_id = ?",
-            (server_id, user_id),
-        )
-
-        if not row:
-            return None
-
-        return self._row_to_member(row)
+        return self.member_handler.get_member(server_id, user_id)
 
     @cached(ttl=30, prefix="server_members")
     def get_members(
@@ -1133,60 +777,9 @@ class ServerManager(BaseManager):
         deafened: Optional[bool] = None,
     ) -> Member:
         """Update member settings."""
-        if not self._is_member(server_id, user_id):
-            raise ServerAccessDeniedError("Not a member of this server")
-
-        member = self.get_member(server_id, member_user_id)
-        if not member:
-            raise MemberNotFoundError("Member not found")
-
-        # Check permissions for modifying others
-        if user_id != member_user_id:
-            if nickname is not None:
-                self.require_permission(user_id, server_id, "members.manage_nicknames")
-
-        updates = []
-        params = []
-        changes = {}
-
-        if nickname is not None:
-            updates.append("nickname = ?")
-            params.append(nickname if nickname else None)
-            changes["nickname"] = {"old": member.nickname, "new": nickname}
-
-        if muted is not None:
-            self.require_permission(user_id, server_id, "voice.mute_members")
-            updates.append("muted = ?")
-            params.append(1 if muted else 0)
-            changes["muted"] = {"old": member.muted, "new": muted}
-
-        if deafened is not None:
-            self.require_permission(user_id, server_id, "voice.deafen_members")
-            updates.append("deafened = ?")
-            params.append(1 if deafened else 0)
-            changes["deafened"] = {"old": member.deafened, "new": deafened}
-
-        if updates:
-            params.extend([server_id, member_user_id])
-
-            self._db.execute(
-                f"UPDATE srv_members SET {', '.join(updates)} WHERE server_id = ? AND user_id = ?",
-                tuple(params),
-            )
-
-            if user_id != member_user_id:
-                self._log_audit(
-                    server_id,
-                    user_id,
-                    AuditLogAction.MEMBER_UPDATE,
-                    "member",
-                    member_user_id,
-                    changes,
-                )
-
-        result = self.get_member(server_id, member_user_id)
-        assert result is not None  # Should exist since we just updated it
-        return result
+        return self.member_handler.update_member(
+            user_id, server_id, member_user_id, nickname, muted, deafened
+        )
 
     def remove_member(self, user_id: SnowflakeID, server_id: SnowflakeID) -> bool:
         """Remove yourself from a server (leave)."""
@@ -1239,59 +832,7 @@ class ServerManager(BaseManager):
         reason: Optional[str] = None,
     ) -> bool:
         """Kick a member from a server."""
-        server = self.get_server(server_id, user_id)
-        if not server:
-            raise ServerNotFoundError("Server not found")
-
-        self.require_permission(user_id, server_id, "members.kick")
-
-        if server.owner_id == member_user_id:
-            raise CannotModifyOwnerError("Cannot kick the server owner")
-
-        member = self.get_member(server_id, member_user_id)
-        if not member:
-            raise MemberNotFoundError("Member not found")
-
-        # Check hierarchy
-        user_roles = self._get_member_role_rows(server_id, user_id)
-        target_roles = self._get_member_role_rows(server_id, member_user_id)
-        is_owner = server.owner_id == user_id
-
-        if not can_manage_member(user_roles, target_roles, is_owner, False):
-            raise RoleHierarchyError("Cannot kick a member with equal or higher role")
-
-        # Remove member roles
-        self._db.execute(
-            "DELETE FROM srv_member_roles WHERE member_id = ?",
-            (member.id,),
-        )
-
-        # Remove member
-        self._db.execute(
-            "DELETE FROM srv_members WHERE server_id = ? AND user_id = ?",
-            (server_id, member_user_id),
-        )
-
-        # Invalidate caches for the kicked member
-        self._cache_invalidate(self._member_cache, (server_id, member_user_id))
-        self._cache_invalidate(
-            self._permission_cache, (member_user_id, server_id, None)
-        )
-        # Also invalidate any channel-specific permission caches
-        for key in list(self._permission_cache.keys()):
-            if key[0] == member_user_id and key[1] == server_id:
-                self._cache_invalidate(self._permission_cache, key)
-
-        self._log_audit(
-            server_id,
-            user_id,
-            AuditLogAction.MEMBER_KICK,
-            "member",
-            member_user_id,
-            reason=reason,
-        )
-
-        return True
+        return self.member_handler.kick_member(user_id, server_id, member_user_id, reason)
 
     def ban_member(
         self,
@@ -1302,124 +843,17 @@ class ServerManager(BaseManager):
         delete_message_days: int = 0,
     ) -> Ban:
         """Ban a user from a server."""
-        server = self.get_server(server_id, user_id)
-        if not server:
-            raise ServerNotFoundError("Server not found")
-
-        self.require_permission(user_id, server_id, "members.ban")
-
-        if server.owner_id == member_user_id:
-            raise CannotModifyOwnerError("Cannot ban the server owner")
-
-        # Check if already banned
-        existing = self._db.fetch_one(
-            "SELECT 1 FROM srv_bans WHERE server_id = ? AND user_id = ?",
-            (server_id, member_user_id),
-        )
-        if existing:
-            raise BanExistsError("User is already banned")
-
-        # Check hierarchy if member
-        member = self.get_member(server_id, member_user_id)
-        if member:
-            user_roles = self._get_member_role_rows(server_id, user_id)
-            target_roles = self._get_member_role_rows(server_id, member_user_id)
-            is_owner = server.owner_id == user_id
-
-            if not can_manage_member(user_roles, target_roles, is_owner, False):
-                raise RoleHierarchyError(
-                    "Cannot ban a member with equal or higher role"
-                )
-
-            # Remove member
-            self._db.execute(
-                "DELETE FROM srv_member_roles WHERE member_id = ?",
-                (member.id,),
-            )
-            self._db.execute(
-                "DELETE FROM srv_members WHERE server_id = ? AND user_id = ?",
-                (server_id, member_user_id),
-            )
-
-            # Invalidate caches for the banned member
-            self._cache_invalidate(self._member_cache, (server_id, member_user_id))
-            for key in list(self._permission_cache.keys()):
-                if key[0] == member_user_id and key[1] == server_id:
-                    self._cache_invalidate(self._permission_cache, key)
-
-        now = self._get_timestamp()
-        ban_id = self._generate_id()
-
-        self._db.execute(
-            """INSERT INTO srv_bans (id, server_id, user_id, banned_by, reason, created_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (ban_id, server_id, member_user_id, user_id, reason, now),
-        )
-
-        self._log_audit(
-            server_id,
-            user_id,
-            AuditLogAction.MEMBER_BAN,
-            "member",
-            member_user_id,
-            reason=reason,
-        )
-
-        return Ban(
-            id=ban_id,
-            server_id=server_id,
-            user_id=member_user_id,
-            banned_by=user_id,
-            reason=reason,
-            created_at=now,
-        )
+        return self.member_handler.ban_member(user_id, server_id, member_user_id, reason)
 
     def unban_member(
         self, user_id: SnowflakeID, server_id: SnowflakeID, banned_user_id: SnowflakeID
     ) -> bool:
         """Unban a user from a server."""
-        server = self.get_server(server_id, user_id)
-        if not server:
-            raise ServerNotFoundError("Server not found")
-
-        self.require_permission(user_id, server_id, "members.ban")
-
-        existing = self._db.fetch_one(
-            "SELECT 1 FROM srv_bans WHERE server_id = ? AND user_id = ?",
-            (server_id, banned_user_id),
-        )
-        if not existing:
-            raise BanNotFoundError("User is not banned")
-
-        self._db.execute(
-            "DELETE FROM srv_bans WHERE server_id = ? AND user_id = ?",
-            (server_id, banned_user_id),
-        )
-
-        self._log_audit(
-            server_id,
-            user_id,
-            AuditLogAction.MEMBER_UNBAN,
-            "member",
-            banned_user_id,
-        )
-
-        return True
+        return self.member_handler.unban_member(user_id, server_id, banned_user_id)
 
     def get_bans(self, user_id: SnowflakeID, server_id: SnowflakeID) -> List[Ban]:
         """Get all bans for a server."""
-        server = self.get_server(server_id, user_id)
-        if not server:
-            raise ServerNotFoundError("Server not found")
-
-        self.require_permission(user_id, server_id, "members.ban")
-
-        rows = self._db.fetch_all(
-            "SELECT * FROM srv_bans WHERE server_id = ? ORDER BY created_at DESC",
-            (server_id,),
-        )
-
-        return [self._row_to_ban(row) for row in rows]
+        return self.member_handler.get_bans(user_id, server_id)
 
     # === Role Assignment ===
 
@@ -1431,61 +865,7 @@ class ServerManager(BaseManager):
         role_id: SnowflakeID,
     ) -> bool:
         """Assign a role to a member."""
-        server = self.get_server(server_id, user_id)
-        if not server:
-            raise ServerNotFoundError("Server not found")
-
-        self.require_permission(user_id, server_id, "members.manage_roles")
-
-        role = self.get_role(role_id, user_id)
-        if not role or role.server_id != server_id:
-            raise RoleNotFoundError("Role not found")
-
-        member = self.get_member(server_id, member_user_id)
-        if not member:
-            raise MemberNotFoundError("Member not found")
-
-        # Check hierarchy
-        user_roles = self._get_member_role_rows(server_id, user_id)
-        is_owner = server.owner_id == user_id
-
-        if not can_manage_role(user_roles, {"position": role.position}, is_owner):
-            raise RoleHierarchyError(
-                "Cannot assign a role at or above your highest role"
-            )
-
-        # Check if already has role
-        existing = self._db.fetch_one(
-            "SELECT 1 FROM srv_member_roles WHERE member_id = ? AND role_id = ?",
-            (member.id, role_id),
-        )
-        if existing:
-            return True
-
-        now = self._get_timestamp()
-        mr_id = self._generate_id()
-
-        self._db.execute(
-            """INSERT INTO srv_member_roles (id, member_id, role_id, assigned_at, assigned_by)
-               VALUES (?, ?, ?, ?, ?)""",
-            (mr_id, member.id, role_id, now, user_id),
-        )
-
-        # Invalidate permission cache for the affected member
-        for key in list(self._permission_cache.keys()):
-            if key[0] == member_user_id and key[1] == server_id:
-                self._cache_invalidate(self._permission_cache, key)
-
-        self._log_audit(
-            server_id,
-            user_id,
-            AuditLogAction.MEMBER_ROLE_ADD,
-            "member",
-            member_user_id,
-            {"role_id": role_id},
-        )
-
-        return True
+        return self.role_handler.assign_role(user_id, server_id, member_user_id, role_id)
 
     def remove_role(
         self,
@@ -1495,70 +875,13 @@ class ServerManager(BaseManager):
         role_id: SnowflakeID,
     ) -> bool:
         """Remove a role from a member."""
-        server = self.get_server(server_id, user_id)
-        if not server:
-            raise ServerNotFoundError("Server not found")
-
-        self.require_permission(user_id, server_id, "members.manage_roles")
-
-        role = self.get_role(role_id, user_id)
-        if not role or role.server_id != server_id:
-            raise RoleNotFoundError("Role not found")
-
-        if role.is_default:
-            raise DefaultRoleError("Cannot remove the default role")
-
-        member = self.get_member(server_id, member_user_id)
-        if not member:
-            raise MemberNotFoundError("Member not found")
-
-        # Check hierarchy
-        user_roles = self._get_member_role_rows(server_id, user_id)
-        is_owner = server.owner_id == user_id
-
-        if not can_manage_role(user_roles, {"position": role.position}, is_owner):
-            raise RoleHierarchyError(
-                "Cannot remove a role at or above your highest role"
-            )
-
-        self._db.execute(
-            "DELETE FROM srv_member_roles WHERE member_id = ? AND role_id = ?",
-            (member.id, role_id),
-        )
-
-        # Invalidate permission cache for the affected member
-        for key in list(self._permission_cache.keys()):
-            if key[0] == member_user_id and key[1] == server_id:
-                self._cache_invalidate(self._permission_cache, key)
-
-        self._log_audit(
-            server_id,
-            user_id,
-            AuditLogAction.MEMBER_ROLE_REMOVE,
-            "member",
-            member_user_id,
-            {"role_id": role_id},
-        )
-
-        return True
+        return self.role_handler.remove_role(user_id, server_id, member_user_id, role_id)
 
     def get_member_roles(
         self, server_id: SnowflakeID, member_user_id: SnowflakeID
     ) -> List[Role]:
         """Get all roles assigned to a member."""
-        member = self.get_member(server_id, member_user_id)
-        if not member:
-            return []
-
-        rows = self._db.fetch_all(
-            """SELECT r.* FROM srv_roles r
-               INNER JOIN srv_member_roles mr ON r.id = mr.role_id
-               WHERE mr.member_id = ? AND r.deleted = 0
-               ORDER BY r.position DESC""",
-            (member.id,),
-        )
-
-        return [self._row_to_role(row) for row in rows]
+        return self.role_handler.get_member_roles(server_id, member_user_id)
 
     # === Permission Operations ===
 
@@ -1569,16 +892,7 @@ class ServerManager(BaseManager):
         target_id: SnowflakeID,
     ) -> Optional[ChannelOverride]:
         """Get permission override for a channel."""
-        row = self._db.fetch_one(
-            """SELECT * FROM srv_channel_overrides 
-               WHERE channel_id = ? AND target_type = ? AND target_id = ?""",
-            (channel_id, target_type, target_id),
-        )
-
-        if not row:
-            return None
-
-        return self._row_to_override(row)
+        return self.role_handler.get_channel_override(channel_id, target_type, target_id)
 
     def set_channel_override(
         self,
@@ -1590,65 +904,7 @@ class ServerManager(BaseManager):
         deny: Optional[Dict[str, bool]] = None,
     ) -> ChannelOverride:
         """Set permission override for a channel."""
-        channel = self.get_channel(channel_id, user_id)
-        if not channel:
-            raise ChannelNotFoundError("Channel not found")
-
-        self.require_permission(user_id, channel.server_id, "channels.manage")
-
-        now = self._get_timestamp()
-
-        existing = self._db.fetch_one(
-            """SELECT id FROM srv_channel_overrides 
-               WHERE channel_id = ? AND target_type = ? AND target_id = ?""",
-            (channel_id, target_type, target_id),
-        )
-
-        if existing:
-            self._db.execute(
-                """UPDATE srv_channel_overrides 
-                   SET allow = ?, deny = ?, updated_at = ?
-                   WHERE id = ?""",
-                (
-                    json.dumps(allow or {}),
-                    json.dumps(deny or {}),
-                    now,
-                    existing["id"],
-                ),
-            )
-            override_id = existing["id"]
-            action = AuditLogAction.OVERRIDE_UPDATE
-        else:
-            override_id = self._generate_id()
-            self._db.execute(
-                """INSERT INTO srv_channel_overrides 
-                   (id, channel_id, target_type, target_id, allow, deny, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    override_id,
-                    channel_id,
-                    target_type,
-                    target_id,
-                    json.dumps(allow or {}),
-                    json.dumps(deny or {}),
-                    now,
-                    now,
-                ),
-            )
-            action = AuditLogAction.OVERRIDE_CREATE
-
-        self._log_audit(
-            channel.server_id,
-            user_id,
-            action,
-            "override",
-            override_id,
-            {"target_type": target_type, "target_id": target_id},
-        )
-
-        result = self.get_channel_override(channel_id, target_type, target_id)
-        assert result is not None  # Should exist since we just created/updated it
-        return result
+        return self.role_handler.set_channel_override(user_id, channel_id, target_type, target_id, allow, deny)
 
     def delete_channel_override(
         self,
@@ -1658,32 +914,7 @@ class ServerManager(BaseManager):
         target_id: SnowflakeID,
     ) -> bool:
         """Delete a permission override."""
-        channel = self.get_channel(channel_id, user_id)
-        if not channel:
-            raise ChannelNotFoundError("Channel not found")
-
-        self.require_permission(user_id, channel.server_id, "channels.manage")
-
-        self._db.execute(
-            """DELETE FROM srv_channel_overrides 
-               WHERE channel_id = ? AND target_type = ? AND target_id = ?""",
-            (channel_id, target_type, target_id),
-        )
-
-        self._log_audit(
-            channel.server_id,
-            user_id,
-            AuditLogAction.OVERRIDE_DELETE,
-            "override",
-            None,
-            {
-                "channel_id": channel_id,
-                "target_type": target_type,
-                "target_id": target_id,
-            },
-        )
-
-        return True
+        return self.role_handler.delete_channel_override(user_id, channel_id, target_type, target_id)
 
     def has_permission(
         self,
@@ -1693,8 +924,7 @@ class ServerManager(BaseManager):
         channel_id: Optional[SnowflakeID] = None,
     ) -> bool:
         """Check if a user has a permission in a server/channel."""
-        permissions = self.get_permissions(user_id, server_id, channel_id)
-        return check_permission(permissions, permission)
+        return self.role_handler.has_permission(user_id, server_id, permission, channel_id)
 
     def get_permissions(
         self,
@@ -1703,79 +933,7 @@ class ServerManager(BaseManager):
         channel_id: Optional[SnowflakeID] = None,
     ) -> Dict[str, bool]:
         """Get all permissions for a user in a server/channel (cached)."""
-        cache_key = (user_id, server_id, channel_id)
-        cached = self._cache_get(self._permission_cache, cache_key)
-        if cached is not None:
-            return cached
-
-        # Check server owner cache first
-        owner_id = self._cache_get(self._server_owner_cache, server_id)
-        if owner_id is None:
-            server = self._db.fetch_one(
-                "SELECT owner_id FROM srv_servers WHERE id = ? AND deleted = 0",
-                (server_id,),
-            )
-            if not server:
-                logger.warning(f"get_permissions: server {server_id} NOT FOUND")
-                return {}
-            owner_id = server["owner_id"]
-            self._cache_set(self._server_owner_cache, server_id, owner_id)
-
-        is_owner = owner_id == user_id
-        if is_owner:
-            logger.debug(
-                f"get_permissions: user {user_id} is OWNER of server {server_id}"
-            )
-
-        # Get member's roles (cached)
-        roles_cache_key = (server_id, user_id)
-        role_rows = self._cache_get(self._member_roles_cache, roles_cache_key)
-        if role_rows is None:
-            role_rows = self._get_member_role_rows(server_id, user_id)
-            self._cache_set(self._member_roles_cache, roles_cache_key, role_rows)
-
-        # Calculate base permissions
-        base_perms = calculate_base_permissions(role_rows, is_owner)
-
-        if not channel_id:
-            self._cache_set(self._permission_cache, cache_key, base_perms)
-            return base_perms
-
-        # Get channel overrides - use cached member if available
-        member_cache_key = (server_id, user_id)
-        member = self._cache_get(self._member_cache, member_cache_key)
-        if member is None or member is False:
-            member = self.get_member(server_id, user_id)
-            if member:
-                self._cache_set(self._member_cache, member_cache_key, member)
-
-        if not member or member is False:
-            return {}
-
-        # Get role overrides for this channel
-        role_ids = [r["id"] for r in role_rows]
-        role_overrides = []
-
-        if role_ids:
-            placeholders = ",".join("?" * len(role_ids))
-            override_rows = self._db.fetch_all(
-                f"""SELECT * FROM srv_channel_overrides 
-                   WHERE channel_id = ? AND target_type = 'role' AND target_id IN ({placeholders})""",
-                (channel_id, *role_ids),
-            )
-            role_overrides = [dict(row) for row in override_rows]
-
-        # Get member override
-        member_override_row = self._db.fetch_one(
-            """SELECT * FROM srv_channel_overrides 
-               WHERE channel_id = ? AND target_type = 'member' AND target_id = ?""",
-            (channel_id, user_id),
-        )
-        member_override = dict(member_override_row) if member_override_row else None
-
-        result = apply_channel_overrides(base_perms, role_overrides, member_override)
-        self._cache_set(self._permission_cache, cache_key, result)
-        return result
+        return self.role_handler.get_permissions(user_id, server_id, channel_id)
 
     def require_permission(
         self,
@@ -1801,59 +959,11 @@ class ServerManager(BaseManager):
         temporary: bool = False,
     ) -> Invite:
         """Create an invite to a channel."""
-        channel = self.get_channel(channel_id, user_id)
-        if not channel:
-            raise ChannelNotFoundError("Channel not found")
-
-        self.require_permission(user_id, channel.server_id, "invites.create")
-
-        now = self._get_timestamp()
-        expires_at = now + (max_age * 1000) if max_age > 0 else None
-
-        invite_id = self._generate_id()
-        code = self._generate_invite_code()
-
-        self._db.execute(
-            """INSERT INTO srv_invites 
-               (id, code, server_id, channel_id, inviter_id, max_age, max_uses, temporary, created_at, expires_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                invite_id,
-                code,
-                channel.server_id,
-                channel_id,
-                user_id,
-                max_age,
-                max_uses,
-                1 if temporary else 0,
-                now,
-                expires_at,
-            ),
-        )
-
-        self._log_audit(
-            channel.server_id,
-            user_id,
-            AuditLogAction.INVITE_CREATE,
-            "invite",
-            invite_id,
-        )
-
-        result = self.get_invite(code)
-        assert result is not None  # Should exist since we just created it
-        return result
+        return self.member_handler.create_invite(user_id, channel_id, max_age, max_uses, temporary)
 
     def get_invite(self, code: str) -> Optional[Invite]:
         """Get an invite by code."""
-        row = self._db.fetch_one(
-            "SELECT * FROM srv_invites WHERE code = ? AND revoked = 0",
-            (code,),
-        )
-
-        if not row:
-            return None
-
-        return self._row_to_invite(row)
+        return self.member_handler.get_invite(code)
 
     def get_invites(self, user_id: SnowflakeID, server_id: SnowflakeID) -> List[Invite]:
         """Get all invites for a server."""
@@ -1878,61 +988,11 @@ class ServerManager(BaseManager):
 
     def use_invite(self, user_id: SnowflakeID, code: str) -> Member:
         """Use an invite to join a server."""
-        invite = self.get_invite(code)
-        if not invite:
-            raise InviteNotFoundError("Invite not found or has been revoked")
-
-        now = self._get_timestamp()
-
-        # Check expiration
-        if invite.expires_at and invite.expires_at < now:
-            raise InviteExpiredError("Invite has expired", invite.expires_at)
-
-        # Check max uses
-        if invite.max_uses > 0 and invite.uses >= invite.max_uses:
-            raise InviteMaxUsesError(
-                "Invite has reached maximum uses", invite.max_uses, invite.uses
-            )
-
-        # Add member
-        member = self.add_member(invite.server_id, user_id, invite.inviter_id)
-
-        # Increment uses
-        self._db.execute(
-            "UPDATE srv_invites SET uses = uses + 1 WHERE code = ?",
-            (code,),
-        )
-
-        return member
+        return self.member_handler.use_invite(user_id, code)
 
     def delete_invite(self, user_id: SnowflakeID, code: str) -> bool:
         """Delete an invite."""
-        invite = self.get_invite(code)
-        if not invite:
-            raise InviteNotFoundError("Invite not found")
-
-        server = self.get_server(invite.server_id, user_id)
-        if not server:
-            raise ServerNotFoundError("Server not found")
-
-        # Can delete own invites or with manage permission
-        if invite.inviter_id != user_id:
-            self.require_permission(user_id, invite.server_id, "invites.manage")
-
-        self._db.execute(
-            "UPDATE srv_invites SET revoked = 1 WHERE code = ?",
-            (code,),
-        )
-
-        self._log_audit(
-            invite.server_id,
-            user_id,
-            AuditLogAction.INVITE_DELETE,
-            "invite",
-            invite.id,
-        )
-
-        return True
+        return self.member_handler.delete_invite(user_id, code)
 
     # === Channel Messaging ===
 

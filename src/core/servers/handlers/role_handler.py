@@ -384,6 +384,17 @@ class RoleHandler:
         self.manager._cache_set(self.manager._permission_cache, cache_key, result)
         return result
 
+    def has_permission(
+        self,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
+        permission: str,
+        channel_id: Optional[SnowflakeID] = None,
+    ) -> bool:
+        """Check if a user has a permission in a server/channel."""
+        permissions = self.get_permissions(user_id, server_id, channel_id)
+        return check_permission(permissions, permission)
+
     def get_member_roles(self, server_id: SnowflakeID, member_user_id: SnowflakeID) -> List[Role]:
         """Get all roles assigned to a member."""
         member = self.manager.get_member(server_id, member_user_id)
