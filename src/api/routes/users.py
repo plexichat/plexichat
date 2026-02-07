@@ -255,7 +255,7 @@ async def update_current_user(
         # Update profile fields via auth module (replaces direct database access)
         if update_data:
             try:
-                auth.update_user(
+                user = auth.update_user(
                     current_user.user_id,
                     username=update_data.get("username"),
                     email=update_data.get("email"),
@@ -267,6 +267,7 @@ async def update_current_user(
                     logger.debug(
                         f"Cache invalidation failed for user {current_user.user_id}: {ce}"
                     )
+                return _user_to_response(user, include_private=True)
             except Exception as e:
                 exc_name = type(e).__name__
                 if "Exists" in exc_name:
