@@ -57,6 +57,7 @@ from src.api.schemas.admin import (
     IPBlockRequest,
     BlockedIPResponse,
     ForceLogoutRequest,
+    ForceUsernameChangeRequest,
     UserLockRequest,
     BannedUsernameResponse,
     BannedUsernameCreate,
