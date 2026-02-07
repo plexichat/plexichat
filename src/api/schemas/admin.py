@@ -411,6 +411,12 @@ class ForceLogoutRequest(BaseModel):
     user_id: str = Field(..., description="User ID to logout")
 
 
+class ForceUsernameChangeRequest(BaseModel):
+    """Request to force a username change."""
+    ban_current: bool = Field(False, description="Whether to add current username to blacklist")
+    reason: Optional[str] = Field("Forced change by admin", max_length=200)
+
+
 class UserLockRequest(BaseModel):
     """Request to lock/suspend a user account."""
     user_id: str = Field(..., description="User ID to lock")

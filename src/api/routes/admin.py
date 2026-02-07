@@ -77,12 +77,19 @@ router = APIRouter(tags=["Admin Management"])
     response_model=SuccessResponse,
     summary="Force user to change username",
 )
-async def admin_force_username_change(request: Request, user_id: int) -> SuccessResponse:
+async def admin_force_username_change(request: Request, user_id: int, body: ForceUsernameChangeRequest) -> SuccessResponse:
     """Force a user to change their username on next login."""
     _check_host_restriction(request)
-    _get_admin_from_token(request)
+    admin_id = _get_admin_from_token(request)
 
     from src.core import admin
+    
+    if body.ban_current:
+        user = admin.get_user_details(user_id)
+        if user:
+            admin.add_banned_username(user.username, body.reason or "Forced change", admin_id, False)
+            logger.info(f"Admin {admin_id} banned username '{user.username}' while forcing change for user {user_id}")
+
     admin.force_username_change(user_id, True)
     return SuccessResponse(success=True)
 

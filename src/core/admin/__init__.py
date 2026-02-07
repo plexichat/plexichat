@@ -1332,7 +1332,7 @@ def force_username_change(user_id: int, forced: bool = True) -> bool:
     db = _get_db()
     db.execute(
         "UPDATE auth_users SET force_username_change = ? WHERE id = ?",
-        (1 if forced else 0, user_id)
+        (forced, user_id)
     )
     return True
 
@@ -1367,7 +1367,7 @@ def add_banned_username(pattern: str, reason: str, admin_id: int, is_regex: bool
     try:
         db.execute(
             "INSERT INTO username_blacklist (pattern, is_regex, reason, created_by) VALUES (?, ?, ?, ?)",
-            (pattern, 1 if is_regex else 0, reason, admin_id)
+            (pattern, is_regex, reason, admin_id)
         )
         return True
     except Exception as e:
