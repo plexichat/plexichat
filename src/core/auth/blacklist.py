@@ -82,8 +82,20 @@ class BlacklistManager(BaseManager):
             # Only check similarity if the old username was actually "bad" (which implies we are forcing change)
             # But here we just check if new is similar to old.
             # If the user is forced to change, they shouldn't pick something similar.
-            similarity = SequenceMatcher(None, normalized, old_norm).ratio()
-            if similarity > 0.8: # 80% similarity
+            
+            # 1. Sequence similarity (SequenceMatcher)
+            seq_similarity = SequenceMatcher(None, normalized, old_norm).ratio()
+            
+            # 2. Character set similarity (catch anagrams/rearrangements)
+            # Sort normalized strings to compare character sets
+            new_sorted = "".join(sorted(normalized))
+            old_sorted = "".join(sorted(old_norm))
+            charset_similarity = SequenceMatcher(None, new_sorted, old_sorted).ratio()
+            
+            # Use the higher of the two
+            max_similarity = max(seq_similarity, charset_similarity)
+            
+            if max_similarity > 0.8: # 80% similarity
                 return True, "New username is too similar to the old one"
 
         return False, None

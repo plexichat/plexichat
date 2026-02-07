@@ -710,6 +710,8 @@ class AuthManager(BaseManager):
                 f"UPDATE auth_users SET {', '.join(updates)} WHERE id = ?",
                 tuple(params),
             )
+            # Clear auth cache so middleware sees change immediately
+            invalidate_pattern("token_verify:*")
 
         user = self.get_user(user_id)
         if not user:
