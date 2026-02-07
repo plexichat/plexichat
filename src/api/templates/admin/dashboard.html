@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PlexiChat Admin Dashboard</title>
-    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <script src="https://cdn.jsdelivr.net/npm/chart.js" nonce="{{ csp_nonce }}"></script>
     <style>
         :root {
@@ -23,6 +23,8 @@
             --chart-bg: #0d0d0f;
             --line-primary: #00aaff;
             --line-secondary: #ff9900;
+            --line-tertiary: #00ffcc;
+            --line-quaternary: #ff33ff;
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -32,6 +34,7 @@
             background: var(--bg);
             color: var(--text);
             line-height: 1.4;
+            -webkit-font-smoothing: antialiased;
         }
 
         .header {
@@ -47,27 +50,30 @@
         }
 
         .container {
-            max-width: 1600px;
+            max-width: 1800px;
             margin: 0 auto;
             padding: 1rem;
         }
 
         .btn {
             padding: 0.5rem 1rem;
-            border-radius: 4px;
+            border-radius: 3px;
             border: 1px solid transparent;
             font-weight: 600;
             cursor: pointer;
+            transition: all 0.1s ease;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
             font-size: 0.8rem;
-            transition: background 0.2s;
         }
 
         .btn-primary { background: var(--accent); color: white; }
         .btn-primary:hover { background: var(--accent-hover); }
         .btn-secondary { background: #2a2a2a; color: var(--text); border-color: #3a3a3a; }
-        .btn-danger { background: var(--bad); color: white; }
         .btn-outline { background: transparent; border-color: #333; color: var(--text-dim); }
-        .btn-outline:hover { color: #fff; border-color: #555; }
+        .btn-danger { background: var(--bad); color: white; }
 
         .card {
             background: var(--card);
@@ -78,88 +84,138 @@
         }
 
         .grid { display: grid; gap: 1rem; }
-        .grid-4 { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
-        .grid-2 { grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); }
+        .grid-4 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
 
         .tabs {
             display: flex;
-            gap: 1rem;
-            margin-bottom: 1.5rem;
+            gap: 2px;
+            margin-bottom: 1rem;
             border-bottom: 1px solid var(--border);
         }
 
         .tab {
-            padding: 0.75rem 1rem;
+            padding: 0.75rem 1.5rem;
+            border: 1px solid transparent;
+            border-bottom: none;
             background: transparent;
             color: var(--text-dim);
             cursor: pointer;
-            border: none;
-            border-bottom: 2px solid transparent;
+            font-size: 0.85rem;
             font-weight: 600;
+            margin-bottom: -1px;
         }
 
         .tab.active {
-            color: var(--accent);
-            border-bottom-color: var(--accent);
+            background: var(--card);
+            color: var(--line-primary);
+            border-color: var(--border);
+            border-top: 3px solid var(--line-primary);
         }
 
-        .stat-value { font-size: 1.5rem; font-weight: 700; }
-        .stat-label { font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase; margin-bottom: 0.25rem; }
-
-        table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
-        th { text-align: left; padding: 0.75rem; border-bottom: 2px solid var(--border); font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase; }
-        td { padding: 0.75rem; border-bottom: 1px solid var(--border); font-size: 0.85rem; }
-
-        input, select, textarea {
-            background: #000;
-            border: 1px solid #333;
-            color: #fff;
-            padding: 0.5rem;
-            border-radius: 4px;
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
+            gap: 1.25rem;
         }
-
-        .hidden { display: none !important; }
 
         .metric-tile {
             background: var(--card);
             border: 1px solid var(--border);
-            border-radius: 4px;
-            height: 300px;
             display: flex;
             flex-direction: column;
+            height: 320px;
+            border-radius: 4px;
+            overflow: hidden;
         }
 
         .tile-header {
-            padding: 0.5rem 1rem;
+            padding: 0.6rem 1rem;
+            background: #1c1c1e;
             border-bottom: 1px solid var(--border);
-            font-size: 0.7rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            color: var(--text-dim);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
 
-        .tile-body { flex: 1; padding: 0.5rem; position: relative; }
+        .tile-title {
+            font-size: 0.7rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            color: #888;
+            letter-spacing: 1px;
+        }
+
+        .tile-body {
+            flex: 1;
+            padding: 0.75rem;
+            position: relative;
+            background: var(--chart-bg);
+        }
+
+        .stat-value {
+            font-size: 1.75rem;
+            font-weight: 800;
+            font-family: monospace;
+            color: #fff;
+        }
+
+        .stat-label {
+            font-size: 0.7rem;
+            color: #777;
+            text-transform: uppercase;
+            font-weight: 800;
+            margin-bottom: 0.25rem;
+        }
+
+        table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.85rem; }
+        th { background: #1c1c1e; padding: 0.75rem 1rem; color: #888; border-bottom: 1px solid var(--border); font-weight: 800; text-transform: uppercase; font-size: 0.65rem; }
+        td { padding: 0.75rem 1rem; border-bottom: 1px solid #1c1c1e; }
+
+        input, select, textarea {
+            background: #000;
+            border: 1px solid #333;
+            color: #eee;
+            padding: 0.5rem 0.75rem;
+            border-radius: 2px;
+            font-size: 0.85rem;
+        }
+
+        .badge {
+            padding: 0.2rem 0.5rem;
+            border-radius: 2px;
+            font-size: 0.7rem;
+            font-weight: 900;
+        }
+
+        .hidden { display: none !important; }
 
         #log-viewer {
             background: #000;
-            color: #00ff00;
+            color: #eee;
             font-family: monospace;
-            padding: 1rem;
-            height: 500px;
-            overflow: auto;
-            white-space: pre-wrap;
             font-size: 0.75rem;
+            padding: 1rem;
+            height: 600px;
+            overflow: auto;
+            line-height: 1.4;
+            white-space: pre-wrap;
         }
+
+        .log-debug { color: #888; }
+        .log-info { color: #fff; }
+        .log-warning { color: #ffaa00; }
+        .log-error { color: #ff4444; font-weight: bold; }
     </style>
 </head>
 
 <body>
     <div class="header">
-        <h1 style="font-size: 1.2rem;">PlexiChat Admin</h1>
         <div style="display: flex; align-items: center; gap: 1rem;">
-            <span id="server-version" style="font-size: 0.7rem; color: var(--text-dim);"></span>
-            <button class="btn btn-outline" data-click="logout">Logout</button>
+            <div style="background: var(--accent); width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; font-weight: 900; color: white; border-radius: 4px;">P</div>
+            <h1 style="color: #fff; font-size: 1.1rem; font-weight: 700;">System Dashboard</h1>
+            <span id="server-version" style="font-size: 0.75rem; background: #222; padding: 3px 10px; border-radius: 12px; color: var(--line-primary); font-weight: 800; font-family: monospace;">...</span>
         </div>
+        <button class="btn btn-outline" data-click="logout">Logout</button>
     </div>
 
     <div class="container">
@@ -172,112 +228,153 @@
         </div>
 
         <div id="tab-metrics" class="tab-content">
-            <div class="grid grid-4" style="margin-bottom: 1rem;">
-                <div class="card">
+            <div class="grid grid-4" style="margin-bottom: 1.25rem;">
+                <div class="card" style="border-left: 4px solid var(--line-primary);">
                     <div class="stat-label">Active Users (24h)</div>
                     <div class="stat-value" id="stat-active-users">0</div>
                 </div>
-                <div class="card">
-                    <div class="stat-label">Total Users</div>
-                    <div class="stat-value" id="stat-total-users">0</div>
-                </div>
-                <div class="card">
+                <div class="card" style="border-left: 4px solid var(--good);">
                     <div class="stat-label">Avg Latency</div>
-                    <div class="stat-value"><span id="stat-avg-latency">0</span>ms</div>
+                    <div style="display: flex; align-items: baseline; gap: 0.5rem;"><div class="stat-value" id="stat-avg-latency">0</div><span style="font-size: 0.75rem; color: #555; font-weight: 800;">MS</span></div>
                 </div>
-                <div class="card">
+                <div class="card" style="border-left: 4px solid var(--bad);">
                     <div class="stat-label">Error Rate</div>
-                    <div class="stat-value"><span id="stat-error-rate">0.0</span>%</div>
+                    <div style="display: flex; align-items: baseline; gap: 0.5rem;"><div class="stat-value" id="stat-error-rate">0.0</div><span style="font-size: 0.75rem; color: #555; font-weight: 800;">%</span></div>
+                </div>
+                <div class="card" style="border-left: 4px solid var(--warn);">
+                    <div class="stat-label">CPU Load</div>
+                    <div style="display: flex; align-items: baseline; gap: 0.5rem;"><div class="stat-value" id="stat-sys-load">0.0</div><span style="font-size: 0.75rem; color: #555; font-weight: 800;">%</span></div>
                 </div>
             </div>
 
-            <div class="grid grid-2">
+            <div class="metrics-grid">
                 <div class="metric-tile">
-                    <div class="tile-header">Request Rate & DB Activity</div>
+                    <div class="tile-header"><span class="tile-title">Transactions & DB Intensity</span></div>
                     <div class="tile-body"><canvas id="chart-tps"></canvas></div>
                 </div>
                 <div class="metric-tile">
-                    <div class="tile-header">System Resource Load</div>
-                    <div class="tile-body"><canvas id="chart-sys"></canvas></div>
+                    <div class="tile-header"><span class="tile-title">Response Latency (ms)</span></div>
+                    <div class="tile-body"><canvas id="chart-latency"></canvas></div>
+                </div>
+                <div class="metric-tile">
+                    <div class="tile-header"><span class="tile-title">Database Connections</span><span id="db-conn-count" style="font-size: 0.65rem; color: var(--line-primary); font-family: monospace; font-weight: 900;">0/0</span></div>
+                    <div class="tile-body"><canvas id="chart-db-pool"></canvas></div>
+                </div>
+                <div class="metric-tile">
+                    <div class="tile-header"><span class="tile-title">CPU & Disk Load (%)</span></div>
+                    <div class="tile-body"><canvas id="chart-sys-res"></canvas></div>
+                </div>
+                <div class="metric-tile">
+                    <div class="tile-header"><span class="tile-title">Queries per Request</span></div>
+                    <div class="tile-body"><canvas id="chart-db-perf"></canvas></div>
+                </div>
+                <div class="metric-tile">
+                    <div class="tile-header"><span class="tile-title">Memory & Thread Count</span></div>
+                    <div class="tile-body"><canvas id="chart-process"></canvas></div>
+                </div>
+                <div class="metric-tile">
+                    <div class="tile-header"><span class="tile-title">Error Rate Trend (%)</span></div>
+                    <div class="tile-body"><canvas id="chart-errors"></canvas></div>
+                </div>
+                <div class="metric-tile">
+                    <div class="tile-header"><span class="tile-title">HTTP Status Distribution</span></div>
+                    <div class="tile-body"><canvas id="chart-status-dist"></canvas></div>
                 </div>
             </div>
 
-            <div class="card" style="margin-top: 1rem;">
-                <h3>Endpoint Performance</h3>
-                <div style="display: flex; gap: 1rem; margin: 1rem 0;">
-                    <input type="text" id="endpoint-filter" placeholder="Filter endpoints..." style="flex: 1;">
-                    <select id="metric-hours"><option value="1">1 Hour</option><option value="24" selected>24 Hours</option></select>
+            <div class="card" style="margin-top: 1.25rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                    <h3>Endpoint Performance Analysis</h3>
+                    <div style="display: flex; gap: 0.75rem; align-items: center;">
+                        <input type="text" id="endpoint-filter" placeholder="Filter endpoints...">
+                        <select id="metric-hours"><option value="1">1 Hour</option><option value="24" selected>24 Hours</option><option value="168">7 Days</option></select>
+                    </div>
                 </div>
-                <table id="endpoints-table">
+                <table>
                     <thead>
                         <tr>
-                            <th>Endpoint</th><th>Method</th><th>Hits</th><th>Avg Latency</th><th>P95</th><th>Queries</th><th>Errors</th>
+                            <th>Endpoint</th><th>Method</th><th>Hits</th><th>Avg Latency</th><th>P95</th><th>Queries</th><th>DB Time</th><th>Errors</th>
                         </tr>
                     </thead>
-                    <tbody></tbody>
+                    <tbody id="endpoints-tbody"></tbody>
                 </table>
             </div>
         </div>
 
         <div id="tab-tickets" class="tab-content hidden">
             <div class="card">
-                <h3>Support Tickets</h3>
-                <table id="tickets-table">
+                <h3>Support Queue</h3>
+                <table>
                     <thead>
-                        <tr>
-                            <th>ID</th><th>User</th><th>Category</th><th>Status</th><th>Created</th><th>Actions</th>
-                        </tr>
+                        <tr><th>ID</th><th>User</th><th>Category</th><th>Status</th><th>Created</th><th>Actions</th></tr>
                     </thead>
-                    <tbody></tbody>
+                    <tbody id="tickets-tbody"></tbody>
                 </table>
+            </div>
+            <div id="ticket-detail" class="card hidden">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <h2 id="view-ticket-title"></h2>
+                    <button class="btn btn-outline" data-click="closeTicketDetail">Close</button>
+                </div>
+                <div id="view-ticket-content" style="background:#000; padding:1rem; margin:1rem 0; border-radius:4px;"></div>
+                <div id="ticket-notes-section">
+                    <h4>Internal Notes</h4>
+                    <div id="ticket-notes-list" style="margin:1rem 0;"></div>
+                    <div style="display:flex;gap:0.5rem;"><input type="text" id="new-note-input" style="flex:1;"><button class="btn btn-primary" data-click="addTicketNote">Add Note</button></div>
+                </div>
             </div>
         </div>
 
         <div id="tab-users" class="tab-content hidden">
             <div class="card">
-                <h3>User Directory</h3>
-                <div style="display: flex; gap: 1rem; margin: 1rem 0;">
-                    <input type="text" id="user-search-input" placeholder="Search by username..." style="flex: 1;">
-                    <button class="btn btn-primary" data-click="searchUsers">Search</button>
-                </div>
+                <h3>User Search</h3>
+                <div style="display:flex;gap:1rem;margin:1rem 0;"><input type="text" id="user-search-input" placeholder="Search by username..." style="flex:1;"><button class="btn btn-primary" data-click="searchUsers">Execute Search</button></div>
                 <div id="user-results"></div>
+            </div>
+            <div id="user-manage" class="card hidden">
+                <div style="display:flex;gap:2rem;">
+                    <img id="user-avatar-large" style="width:100px;height:100px;border-radius:4px;background:#222;">
+                    <div style="flex:1;">
+                        <h2 id="user-display-name"></h2>
+                        <p id="user-display-id" style="color:#666; font-family:monospace; font-size:0.8rem;"></p>
+                        <div class="grid grid-2" style="margin-top:1.5rem;">
+                            <div>
+                                <label style="font-size:0.7rem; font-weight:800; color:#555;">TIER</label>
+                                <div style="display:flex;gap:0.5rem;margin-top:0.25rem;"><select id="user-tier-select" style="flex:1;"><option value="free">Free</option><option value="alpha">Alpha</option><option value="beta">Beta</option><option value="premium">Premium</option><option value="staff">Staff</option></select><button class="btn btn-primary" data-click="updateUserTier">Set</button></div>
+                            </div>
+                            <div>
+                                <label style="font-size:0.7rem; font-weight:800; color:#555;">ACTIONS</label>
+                                <div style="display:flex;gap:0.5rem;margin-top:0.25rem;"><button class="btn btn-secondary" data-click="killUserSessions">Kill Sessions</button><button class="btn btn-danger" id="suspend-btn" data-click="suspendUser">Suspend</button></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
         <div id="tab-security" class="tab-content hidden">
             <div class="grid grid-2">
                 <div class="card">
-                    <h3>IP Blocks</h3>
-                    <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
-                        <input type="text" id="block-ip-val" placeholder="IP Address" style="flex: 1;">
-                        <button class="btn btn-danger" data-click="blockIP">Block</button>
-                    </div>
-                    <table id="blocked-ips-table">
-                        <thead><tr><th>IP</th><th>Reason</th><th>Action</th></tr></thead>
-                        <tbody></tbody>
-                    </table>
+                    <h3>IP Access Control</h3>
+                    <div style="display:flex;gap:0.5rem;margin:1rem 0;"><input type="text" id="block-ip-val" placeholder="IP Address" style="flex:1;"><button class="btn btn-danger" data-click="blockIP">Block IP</button></div>
+                    <table><thead><tr><th>IP Address</th><th>Reason</th><th>Action</th></tr></thead><tbody id="blocked-ips-tbody"></tbody></table>
                 </div>
                 <div class="card">
-                    <h3>Username Bans</h3>
-                    <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
-                        <input type="text" id="ban-username-val" placeholder="Username/Pattern" style="flex: 1;">
-                        <button class="btn btn-danger" data-click="addBannedUsername">Ban</button>
-                    </div>
-                    <table id="banned-usernames-table">
-                        <thead><tr><th>Pattern</th><th>Action</th></tr></thead>
-                        <tbody></tbody>
-                    </table>
+                    <h3>Username Blacklist</h3>
+                    <div style="display:flex;gap:0.5rem;margin:1rem 0;"><input type="text" id="ban-username-val" placeholder="Pattern (e.g. admin*)" style="flex:1;"><button class="btn btn-danger" data-click="addBannedUsername">Ban Pattern</button></div>
+                    <table><thead><tr><th>Pattern</th><th>Reason</th><th>Action</th></tr></thead><tbody id="banned-usernames-tbody"></tbody></table>
                 </div>
             </div>
         </div>
 
         <div id="tab-logs" class="tab-content hidden">
             <div class="card">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-                    <h3>System Logs</h3>
-                    <select id="log-file-select"></select>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+                    <div style="display:flex;gap:1rem;align-items:center;"><h3>System Logs</h3><select id="log-file-select" style="min-width:250px;"></select></div>
+                    <div style="display:flex;gap:0.5rem;align-items:center;"><input type="text" id="log-search" placeholder="Grep..."><label style="font-size:0.8rem;"><input type="checkbox" id="log-auto-refresh"> LIVE</label></div>
                 </div>
-                <div id="log-viewer">Select a log file to view...</div>
+                <div id="log-viewer">Select a log file...</div>
+                <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-top:1rem;"><button class="btn btn-outline" data-click="scrollLogTop">Top</button><button class="btn btn-outline" data-click="scrollLogBottom">Bottom</button></div>
             </div>
         </div>
     </div>
@@ -285,6 +382,8 @@
     <script nonce="{{ csp_nonce }}">
         const token = localStorage.getItem('plexichat-admin-token');
         if (!token) window.location.replace('/api/v1/admin/login');
+
+        let currentTab = 'metrics', charts = {}, metricData = [], historicalData = {}, selectedUserId = null, selectedTicketId = null;
 
         const api = async (p, o = {}) => {
             const r = await fetch(p, { ...o, headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...o.headers } });
@@ -294,191 +393,255 @@
             return d;
         };
 
-        let charts = {}, refreshInterval = null, metricData = [];
+        const showTab = (n) => {
+            document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === n));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('hidden', c.id !== `tab-${n}`));
+            currentTab = n;
+            if (n === 'metrics') refreshMetrics();
+            else if (n === 'tickets') loadTickets();
+            else if (n === 'security') loadSecurity();
+            else if (n === 'logs') loadLogs();
+        };
 
         async function refreshMetrics() {
             try {
                 const hrs = document.getElementById('metric-hours').value;
                 const [dash, stats] = await Promise.all([api('/api/v1/admin/dashboard'), api(`/api/v1/admin/telemetry/stats?hours=${hrs}`)]);
-                
-                document.getElementById('stat-active-users').textContent = dash.active_users;
-                document.getElementById('stat-total-users').textContent = dash.total_users;
-                
-                const totalReq = stats.stats.reduce((a, b) => a + b.count, 0);
-                const avgLat = totalReq > 0 ? (stats.stats.reduce((a, b) => a + (b.avg_ms * b.count), 0) / totalReq) : 0;
-                const totalErr = stats.stats.reduce((a, b) => a + b.error_count, 0);
-                
-                document.getElementById('stat-avg-latency').textContent = Math.round(avgLat);
-                document.getElementById('stat-error-rate').textContent = totalReq > 0 ? (totalErr / totalReq * 100).toFixed(1) : '0.0';
-                
                 metricData = stats.stats;
-                renderEndpointTable();
+                updateOverview(dash, stats.stats);
                 updateCharts(dash, stats.stats);
+                renderEndpointTable();
             } catch (e) { console.error('Refresh failed:', e); }
+        }
+
+        function updateOverview(d, s) {
+            document.getElementById('stat-active-users').textContent = d.active_users.toLocaleString();
+            document.getElementById('stat-total-users').textContent = d.total_users.toLocaleString();
+            
+            const total = s.reduce((a, b) => a + b.count, 0);
+            const errors = s.reduce((a, b) => a + b.error_count, 0);
+            const avgLat = total > 0 ? (s.reduce((a, b) => a + (b.avg_ms * b.count), 0) / total) : 0;
+            
+            document.getElementById('stat-avg-latency').textContent = Math.round(avgLat);
+            document.getElementById('stat-error-rate').textContent = total > 0 ? (errors / total * 100).toFixed(1) : '0.0';
+            document.getElementById('stat-sys-load').textContent = d.system?.cpu_percent?.toFixed(1) || '0.0';
         }
 
         function renderEndpointTable() {
             const f = document.getElementById('endpoint-filter').value.toLowerCase();
             const filtered = metricData.filter(s => s.endpoint.toLowerCase().includes(f));
-            const tbody = document.querySelector('#endpoints-table tbody');
-            tbody.innerHTML = filtered.slice(0, 15).map(s => `
+            document.getElementById('endpoints-tbody').innerHTML = filtered.slice(0, 20).map(s => `
                 <tr>
-                    <td style="font-family:monospace; font-size:0.75rem;">${s.endpoint}</td>
-                    <td>${s.method}</td>
-                    <td>${s.count}</td>
+                    <td style="font-family:monospace; color:var(--line-primary); font-weight:700;">${s.endpoint}</td>
+                    <td><span class="badge" style="background:#222;color:#888;">${s.method}</span></td>
+                    <td style="font-weight:700;">${s.count.toLocaleString()}</td>
                     <td>${Math.round(s.avg_ms)}ms</td>
                     <td>${Math.round(s.p95_ms)}ms</td>
-                    <td>${s.avg_queries.toFixed(1)}</td>
-                    <td style="color:${s.error_rate > 1 ? 'var(--bad)' : 'inherit'}">${s.error_count} (${s.error_rate.toFixed(1)}%)</td>
+                    <td style="color:var(--line-secondary);font-weight:700;">${s.avg_queries.toFixed(1)}</td>
+                    <td>${s.avg_query_time_ms.toFixed(1)}ms</td>
+                    <td style="color:${s.error_rate > 1 ? 'var(--bad)' : 'inherit'};font-weight:700;">${s.error_count} (${s.error_rate.toFixed(1)}%)</td>
                 </tr>
             `).join('');
         }
 
         function updateCharts(dash, stats) {
-            const top = stats.slice(0, 8);
-            const labels = top.map(s => s.endpoint.split('/').pop() || '/');
+            const opt = { responsive: true, maintainAspectRatio: false, animation: false, plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { grid: { color: '#1a1a1a' }, ticks: { color: '#555', font: { size: 9 } } } } };
+            const top = stats.slice(0, 10), labels = top.map(s => s.endpoint.split('/').pop() || '/');
             
-            renderChart('chart-tps', 'bar', {
-                labels,
-                datasets: [
-                    { label: 'Hits', data: top.map(s => s.count), backgroundColor: 'rgba(0, 170, 255, 0.6)' },
-                    { label: 'Avg Queries', data: top.map(s => s.avg_queries), backgroundColor: 'rgba(255, 153, 0, 0.6)' }
-                ]
-            });
-
+            renderChart('chart-tps', 'bar', { labels, datasets: [ { data: top.map(s => s.count), backgroundColor: 'rgba(0, 170, 255, 0.7)' }, { data: top.map(s => s.count * s.avg_queries), backgroundColor: 'rgba(255, 153, 0, 0.7)' } ] }, opt);
+            renderChart('chart-latency', 'line', { labels, datasets: [ { data: top.map(s => s.avg_ms), borderColor: 'var(--good)', tension: 0.4, pointRadius: 0, borderWidth: 3 }, { data: top.map(s => s.p95_ms), borderColor: 'var(--bad)', tension: 0.4, pointRadius: 0, borderWidth: 3 } ] }, opt);
+            renderChart('chart-db-perf', 'bar', { labels, datasets: [ { data: top.map(s => s.avg_queries), backgroundColor: 'var(--line-primary)' } ] }, opt);
+            
             if (dash.system) {
-                renderChart('chart-sys', 'line', {
-                    labels: Array(10).fill(''),
-                    datasets: [
-                        { label: 'CPU %', data: Array(10).fill(dash.system.cpu_percent), borderColor: 'var(--accent)', tension: 0.4 },
-                        { label: 'Disk %', data: Array(10).fill(dash.system.disk_percent), borderColor: 'var(--bad)', tension: 0.4 }
-                    ]
-                }, { scales: { x: { display: false }, y: { min: 0, max: 100 } } });
+                updateHist('chart-sys-res', [{ val: dash.system.cpu_percent, col: 'var(--line-primary)' }, { val: dash.system.disk_percent, col: 'var(--line-quaternary)' }]);
+                updateHist('chart-process', [{ val: dash.system.process_memory_mb, col: 'var(--good)' }, { val: dash.system.thread_count, col: 'var(--line-primary)' }]);
             }
+
+            api('/api/v1/admin/database/pool-health').then(db => {
+                document.getElementById('db-conn-count').textContent = `${db.active_connections} / ${db.max_connections}`;
+                updateHist('chart-db-pool', [{ val: db.active_connections, col: 'var(--line-secondary)' }, { val: db.total_connections, col: 'var(--line-primary)' }]);
+            }).catch(()=>{});
+
+            const t = stats.reduce((a,b)=>a+b.count,0), e = stats.reduce((a,b)=>a+b.error_count,0);
+            updateHist('chart-errors', [{ val: t>0?(e/t*100):0, col: 'var(--bad)' }]);
+            renderChart('chart-status-dist', 'doughnut', { labels: ['OK', 'ERR'], datasets: [{ data: [t-e, e], backgroundColor: ['var(--good)', 'var(--bad)'], borderWidth: 0 }]}, { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: true, position: 'bottom', labels: { color: '#888' } } } });
         }
 
-        function renderChart(id, type, data, options = {}) {
-            if (charts[id]) charts[id].destroy();
-            charts[id] = new Chart(document.getElementById(id).getContext('2d'), {
-                type, data,
-                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#888', font: { size: 10 } } } }, ...options }
-            });
+        function renderChart(id, type, data, options) { if (charts[id]) charts[id].destroy(); charts[id] = new Chart(document.getElementById(id).getContext('2d'), { type, data, options }); }
+        
+        function updateHist(id, metrics) {
+            if (!historicalData[id]) historicalData[id] = { labels: Array(60).fill(''), datasets: metrics.map(m => ({ data: Array(60).fill(0), borderColor: m.col, tension: 0.4, pointRadius: 0, borderWidth: 2 }))};
+            metrics.forEach((m, i) => { historicalData[id].datasets[i].data.push(m.val); historicalData[id].datasets[i].data.shift(); });
+            renderChart(id, 'line', historicalData[id], { responsive: true, maintainAspectRatio: false, animation: false, plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { grid: { color: '#1a1a1a' }, ticks: { color: '#555', font: { size: 8 } } } } });
         }
 
         async function loadTickets() {
             try {
                 const tickets = await api('/api/v1/admin/tickets');
-                const tbody = document.querySelector('#tickets-table tbody');
-                tbody.innerHTML = tickets.map(t => `
-                    <tr>
-                        <td>${t.id}</td><td>${t.username}</td><td>${t.category}</td>
-                        <td>${t.status}</td><td>${new Date(t.created_at).toLocaleString()}</td>
-                        <td><button class="btn btn-secondary" onclick="viewTicket('${t.id}')">View</button></td>
-                    </tr>
+                document.getElementById('tickets-tbody').innerHTML = tickets.map(t => `
+                    <tr><td>${t.id}</td><td>${t.username}</td><td>${t.category}</td><td><span class="badge" style="background:#222;">${t.status}</span></td><td>${new Date(t.created_at).toLocaleString()}</td>
+                    <td><button class="btn btn-secondary btn-sm" data-click="viewTicket" data-id="${t.id}">View</button></td></tr>
                 `).join('');
-            } catch (e) { console.error('Tickets failed:', e); }
+            } catch (e) { console.error('Tickets load failed'); }
+        }
+
+        async function viewTicket(id) {
+            try {
+                const t = await api(`/api/v1/admin/tickets/${id}`);
+                selectedTicketId = id;
+                document.getElementById('view-ticket-title').textContent = `Ticket #${id} - ${t.username}`;
+                document.getElementById('view-ticket-content').textContent = t.content;
+                document.getElementById('ticket-detail').classList.remove('hidden');
+                loadTicketNotes(id);
+            } catch (e) { alert('Failed to load ticket'); }
+        }
+
+        async function loadTicketNotes(id) {
+            try {
+                const notes = await api(`/api/v1/admin/tickets/${id}/notes`);
+                document.getElementById('ticket-notes-list').innerHTML = notes.map(n => `
+                    <div style="border-left:2px solid var(--accent);padding:0.5rem;margin-bottom:0.5rem;background:#1a1a1c;">
+                        <div style="font-size:0.7rem;color:#888;margin-bottom:0.2rem;">${n.admin_username} • ${new Date(n.created_at).toLocaleString()}</div>
+                        <div style="font-size:0.85rem;">${n.content}</div>
+                    </div>
+                `).join('');
+            } catch (e) {}
         }
 
         async function searchUsers() {
             const q = document.getElementById('user-search-input').value;
             if (!q) return;
             try {
-                const results = await api(`/api/v1/admin/users/search?q=${encodeURIComponent(q)}`);
-                const container = document.getElementById('user-results');
-                if (!results.users || results.users.length === 0) {
-                    container.innerHTML = '<p style="padding:1rem;color:var(--text-dim);">No users found.</p>';
-                    return;
-                }
-                container.innerHTML = `
-                    <table>
-                        <thead><tr><th>ID</th><th>Username</th><th>Tier</th><th>Badges</th><th>Created</th><th>Action</th></tr></thead>
-                        <tbody>
-                            ${results.users.map(u => `
-                                <tr>
-                                    <td>${u.id}</td><td>${u.username}</td><td>${u.tier}</td>
-                                    <td>${u.badges.join(', ')}</td><td>${new Date(u.created_at).toLocaleDateString()}</td>
-                                    <td><button class="btn btn-secondary" onclick="manageUser('${u.id}')">Manage</button></td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
+                const r = await api(`/api/v1/admin/users/search?q=${encodeURIComponent(q)}`);
+                document.getElementById('user-results').innerHTML = `
+                    <table style="margin-top:1rem;"><thead><tr><th>ID</th><th>Username</th><th>Tier</th><th>Badges</th><th>Action</th></tr></thead>
+                    <tbody>${r.users.map(u => `
+                        <tr><td>${u.id}</td><td>${u.username}</td><td>${u.tier}</td><td>${u.badges.join(', ')}</td>
+                        <td><button class="btn btn-secondary btn-sm" data-click="manageUser" data-id="${u.id}">Manage</button></td></tr>
+                    `).join('')}</tbody></table>
                 `;
-            } catch (e) { alert(e.message); }
+            } catch (e) { alert('Search failed'); }
+        }
+
+        async function manageUser(id) {
+            try {
+                const u = await api(`/api/v1/admin/users/${id}`);
+                selectedUserId = id;
+                document.getElementById('user-display-name').textContent = u.username;
+                document.getElementById('user-display-id').textContent = `ID: ${u.id}`;
+                document.getElementById('user-avatar-large').src = `/api/v1/avatars/users/${u.id}`;
+                document.getElementById('user-tier-select').value = u.tier;
+                document.getElementById('suspend-btn').textContent = u.account_locked ? 'Unlock' : 'Suspend';
+                document.getElementById('user-manage').classList.remove('hidden');
+            } catch (e) { alert('Failed to load user data'); }
         }
 
         async function loadSecurity() {
             try {
                 const [ips, bans] = await Promise.all([api('/api/v1/admin/security/blocked-ips'), api('/api/v1/admin/security/banned-usernames')]);
-                document.querySelector('#blocked-ips-table tbody').innerHTML = ips.map(i => `
-                    <tr><td>${i.ip_address}</td><td>${i.reason || ''}</td><td><button class="btn btn-outline" onclick="unblockIP('${i.ip_address}')">Unblock</button></td></tr>
-                `).join('');
-                document.querySelector('#banned-usernames-table tbody').innerHTML = bans.map(b => `
-                    <tr><td>${b.pattern}</td><td><button class="btn btn-outline" onclick="removeBan('${b.id}')">Remove</button></td></tr>
-                `).join('');
-            } catch (e) { console.error('Security load failed:', e); }
+                document.getElementById('blocked-ips-tbody').innerHTML = ips.map(i => `<tr><td>${i.ip_address}</td><td>${i.reason || ''}</td><td><button class="btn btn-outline" data-click="unblockIP" data-val="${i.ip_address}">Unblock</button></td></tr>`).join('');
+                document.getElementById('banned-usernames-tbody').innerHTML = bans.map(b => `<tr><td>${b.pattern}</td><td>${b.reason || ''}</td><td><button class="btn btn-outline" data-click="removeBan" data-id="${b.id}">Remove</button></td></tr>`).join('');
+            } catch (e) {}
         }
 
         async function loadLogs() {
             try {
                 const logs = await api('/api/v1/admin/logs');
                 const select = document.getElementById('log-file-select');
-                select.innerHTML = logs.map(l => `<option value="${l.filename}">${l.filename} (${(l.size / 1024).toFixed(1)} KB)</option>`).join('');
+                select.innerHTML = logs.map(l => `<option value="${l.filename}">${l.filename} (${(l.size/1024).toFixed(1)}KB)</option>`).join('');
                 if (logs.length > 0) loadLogFile(logs[0].filename);
-            } catch (e) { console.error('Logs failed:', e); }
+            } catch (e) {}
         }
 
-        async function loadLogFile(file) {
+        async function loadLogFile(f) {
             try {
-                const data = await api(`/api/v1/admin/logs/${file}?limit=200`);
+                const search = document.getElementById('log-search').value;
+                const d = await api(`/api/v1/admin/logs/${f}?limit=300${search ? '&q='+encodeURIComponent(search) : ''}`);
                 const viewer = document.getElementById('log-viewer');
-                viewer.textContent = data.lines.map(l => l.raw).join('\n');
-                viewer.scrollTop = viewer.scrollHeight;
-            } catch (e) { document.getElementById('log-viewer').textContent = 'Error: ' + e.message; }
+                viewer.innerHTML = d.lines.map(l => {
+                    const cls = l.level === 'ERROR' ? 'log-error' : (l.level === 'WARNING' ? 'log-warning' : 'log-info');
+                    return `<div class="${cls}">${l.raw}</div>`;
+                }).join('');
+                if (document.getElementById('log-auto-refresh').checked) viewer.scrollTop = viewer.scrollHeight;
+            } catch (e) { document.getElementById('log-viewer').textContent = 'Error loading logs'; }
         }
 
-        document.querySelectorAll('.tab').forEach(btn => {
-            btn.addEventListener('click', () => {
-                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-                btn.classList.add('active');
-                document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
-                const tabId = btn.dataset.tab;
-                document.getElementById(`tab-${tabId}`).classList.remove('hidden');
-                
-                if (refreshInterval) clearInterval(refreshInterval);
-                if (tabId === 'metrics') { refreshMetrics(); refreshInterval = setInterval(refreshMetrics, 15000); }
-                else if (tabId === 'tickets') loadTickets();
-                else if (tabId === 'security') loadSecurity();
-                else if (tabId === 'logs') loadLogs();
-            });
+        // Global Event Delegation (Fixed CSP)
+        document.addEventListener('click', (e) => {
+            const el = e.target.closest('[data-click]');
+            if (!el) {
+                const tab = e.target.closest('.tab');
+                if (tab) showTab(tab.dataset.tab);
+                return;
+            }
+            const a = el.dataset.click, id = el.dataset.id, val = el.dataset.val;
+            if (a === 'logout') { localStorage.removeItem('plexichat-admin-token'); window.location.replace('/api/v1/admin/login'); }
+            else if (a === 'viewTicket') viewTicket(id);
+            else if (a === 'closeTicketDetail') document.getElementById('ticket-detail').classList.add('hidden');
+            else if (a === 'addTicketNote') {
+                const content = document.getElementById('new-note-input').value;
+                if (!content) return;
+                api(`/api/v1/admin/tickets/${selectedTicketId}/notes`, { method: 'POST', body: JSON.stringify({content}) }).then(() => {
+                    document.getElementById('new-note-input').value = ''; loadTicketNotes(selectedTicketId);
+                });
+            }
+            else if (a === 'searchUsers') searchUsers();
+            else if (a === 'manageUser') manageUser(id);
+            else if (a === 'updateUserTier') {
+                const tier = document.getElementById('user-tier-select').value;
+                api(`/api/v1/admin/users/${selectedUserId}/tier`, { method: 'PUT', body: JSON.stringify({tier}) }).then(() => alert('Tier updated'));
+            }
+            else if (a === 'suspendUser') {
+                api(`/api/v1/admin/users/${selectedUserId}/lock`, { method: 'POST', body: JSON.stringify({user_id: selectedUserId}) }).then(() => manageUser(selectedUserId));
+            }
+            else if (a === 'killUserSessions') {
+                api(`/api/v1/admin/security/logout-all`, { method: 'POST', body: JSON.stringify({user_id: selectedUserId}) }).then(() => alert('Sessions cleared'));
+            }
+            else if (a === 'blockIP') {
+                const ip = document.getElementById('block-ip-val').value;
+                if (!ip) return;
+                api('/api/v1/admin/security/blocked-ips', { method: 'POST', body: JSON.stringify({ip_address: ip, reason: 'Manual block'}) }).then(() => { document.getElementById('block-ip-val').value = ''; loadSecurity(); });
+            }
+            else if (a === 'unblockIP') {
+                api('/api/v1/admin/security/blocked-ips', { method: 'DELETE', body: JSON.stringify({ip_address: val}) }).then(() => loadSecurity());
+            }
+            else if (a === 'addBannedUsername') {
+                const pattern = document.getElementById('ban-username-val').value;
+                if (!pattern) return;
+                api('/api/v1/admin/security/banned-usernames', { method: 'POST', body: JSON.stringify({pattern, reason: 'Manual ban'}) }).then(() => { document.getElementById('ban-username-val').value = ''; loadSecurity(); });
+            }
+            else if (a === 'removeBan') {
+                api(`/api/v1/admin/security/banned-usernames/${id}`, { method: 'DELETE' }).then(() => loadSecurity());
+            }
+            else if (a === 'scrollLogTop') document.getElementById('log-viewer').scrollTop = 0;
+            else if (a === 'scrollLogBottom') document.getElementById('log-viewer').scrollTop = 1e9;
+        });
+
+        // Enter Key Handling
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                if (e.target.id === 'user-search-input') searchUsers();
+                else if (e.target.id === 'endpoint-filter') renderEndpointTable();
+                else if (e.target.id === 'log-search') loadLogFile(document.getElementById('log-file-select').value);
+                else if (e.target.id === 'new-note-input') document.querySelector('[data-click="addTicketNote"]').click();
+            }
         });
 
         document.getElementById('log-file-select').addEventListener('change', (e) => loadLogFile(e.target.value));
         document.getElementById('metric-hours').addEventListener('change', refreshMetrics);
-        document.getElementById('endpoint-filter').addEventListener('input', renderEndpointTable);
 
-        document.addEventListener('click', (e) => {
-            const btn = e.target.closest('[data-click]');
-            if (!btn) return;
-            const action = btn.dataset.click;
-            if (action === 'logout') { localStorage.removeItem('plexichat-admin-token'); window.location.replace('/api/v1/admin/login'); }
-            else if (action === 'searchUsers') searchUsers();
+        setInterval(() => {
+            if (currentTab === 'logs' && document.getElementById('log-auto-refresh').checked) {
+                loadLogFile(document.getElementById('log-file-select').value);
+            }
+        }, 3000);
+
+        // Init
+        api('/api/v1/version').then(v => {
+            document.getElementById('server-version').textContent = v.version.string;
+            showTab('metrics');
+            setInterval(refreshMetrics, 15000);
         });
-
-        // Initialize
-        (async () => {
-            try {
-                const v = await api('/api/v1/version');
-                document.getElementById('server-version').textContent = `v${v.version.string}`;
-                refreshMetrics();
-                refreshInterval = setInterval(refreshMetrics, 15000);
-            } catch (e) { console.error('Init failed:', e); }
-        })();
-
-        // Global stubs for onclick handlers
-        window.manageUser = (id) => alert('Manage User: ' + id);
-        window.viewTicket = (id) => alert('View Ticket: ' + id);
-        window.unblockIP = async (ip) => { if(confirm(`Unblock ${ip}?`)) { await api('/api/v1/admin/security/blocked-ips', { method: 'DELETE', body: JSON.stringify({ip_address: ip}) }); loadSecurity(); } };
     </script>
 </body>
-
 </html>
