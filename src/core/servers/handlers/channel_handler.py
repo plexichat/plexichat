@@ -13,6 +13,7 @@ from ..exceptions import (
 )
 from ..permissions import has_permission as check_permission
 from src.core.database import cache_delete, redis_available
+from src.core.database.cache import cached, invalidate_pattern
 
 class ChannelHandler:
     def __init__(self, manager):
@@ -129,6 +130,7 @@ class ChannelHandler:
 
         if redis_available():
             cache_delete(f"server_channels:{server_id}")
+        invalidate_pattern(f"server_channels:*{server_id}*")
 
         result = self.manager.get_channel(channel_id, user_id)
         assert result is not None
@@ -183,6 +185,7 @@ class ChannelHandler:
         )
         return True
 
+    @cached(ttl=30, prefix="server_channels")
     def get_channels(
         self,
         user_id: SnowflakeID,
@@ -293,6 +296,7 @@ class ChannelHandler:
                 changes,
             )
 
+        invalidate_pattern(f"server_channels:*{channel.server_id}*")
         result = self.manager.get_channel(channel_id, user_id)
         assert result is not None
         return result
@@ -313,6 +317,7 @@ class ChannelHandler:
         if redis_available():
             cache_delete(f"channel:{channel_id}")
             cache_delete(f"server_channels:{channel.server_id}")
+        invalidate_pattern(f"server_channels:*{channel.server_id}*")
 
         self.manager._log_audit(
             channel.server_id,
@@ -344,3 +349,8 @@ class ChannelHandler:
         result = self.manager.get_channel(channel_id, user_id)
         assert result is not None
         return result
+
+        result = self.manager.get_channel(channel_id, user_id)
+        assert result is not None
+        return result
+

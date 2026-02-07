@@ -3,8 +3,7 @@ QR code generation endpoints.
 """
 
 import io
-from typing import Optional
-import base64
+from typing import Any, cast
 
 try:
     import qrcode  # type: ignore
@@ -50,8 +49,15 @@ async def generate_qr(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": "Data is required"}},
         )
+    if qrcode is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": 500, "message": "QR code dependency missing"}},
+        )
 
     from fastapi.concurrency import run_in_threadpool
+
+    qr_lib = qrcode
 
     def _generate():
         try:
@@ -65,16 +71,16 @@ async def generate_qr(
             height = max(10, min(1000, height))
 
             # Create QR code
-            qr = qrcode.QRCode(
+            qr = qr_lib.QRCode(
                 version=None,  # Automatically determine version
-                error_correction=qrcode.ERROR_CORRECT_L,
+                error_correction=qr_lib.ERROR_CORRECT_L,
                 box_size=10,
                 border=4,
             )
             qr.add_data(data)
             qr.make(fit=True)
 
-            img = qr.make_image(fill_color="black", back_color="white")
+            img = cast(Any, qr.make_image(fill_color="black", back_color="white"))
 
             # Resize to requested dimensions if supported (PIL image)
             if hasattr(img, "resize") and callable(getattr(img, "resize", None)):

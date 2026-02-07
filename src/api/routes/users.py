@@ -49,7 +49,7 @@ def _user_to_response(user, include_private: bool = False) -> UserResponse:
             try:
                 from src.core import features
                 if features._setup_complete:
-                    badges = features.get_user_badges(user_id)
+                    badges = features.get_user_badges(int(user_id or 0))
             except Exception:
                 pass
 
@@ -75,7 +75,7 @@ def _user_to_response(user, include_private: bool = False) -> UserResponse:
 def _user_to_public_response(user) -> UserPublicResponse:
     """Convert user object or dict to public response model."""
     try:
-        user_id = _get_attr(user, "id")
+        user_id = int(_get_attr(user, "id") or 0)
         
         # Use badges from user object if available (already joined in AuthManager)
         # Fallback to empty list or re-fetch only if absolutely necessary
@@ -785,6 +785,7 @@ async def search_user_by_username(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@cached(ttl=60, prefix="user_profile_api")
 async def get_user(
     user_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> UserPublicResponse:
@@ -923,3 +924,4 @@ async def update_messaging_settings(
         raise HTTPException(
             status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
+

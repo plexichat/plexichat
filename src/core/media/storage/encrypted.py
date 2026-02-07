@@ -278,8 +278,9 @@ class EncryptedStorage(StorageBackendBase):
         if self.is_encrypted(path):
             raise RuntimeError("Cannot generate presigned URL for encrypted file")
 
-        if hasattr(self._backend, "generate_presigned_url"):
-            return self._backend.generate_presigned_url(path, expires_in, params)
+        func = getattr(self._backend, "generate_presigned_url", None)
+        if callable(func):
+            return str(func(path, expires_in, params))
 
         raise RuntimeError("Underlying backend does not support presigned URLs")
 

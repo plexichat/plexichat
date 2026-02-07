@@ -18,6 +18,18 @@ _process_start_time = time.time()
 def get_system_metrics() -> Dict[str, Any]:
     """Get real-time system and process health metrics."""
     try:
+        if psutil is None:
+            return {
+                "cpu_percent": 0.0,
+                "memory_percent": 0.0,
+                "memory_used_mb": 0.0,
+                "memory_total_mb": 0.0,
+                "disk_percent": 0.0,
+                "process_memory_mb": 0.0,
+                "thread_count": 0,
+                "uptime_seconds": 0.0,
+            }
+
         # System-wide metrics
         cpu_percent = psutil.cpu_percent(interval=None)
         virtual_mem = psutil.virtual_memory()

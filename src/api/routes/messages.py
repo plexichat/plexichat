@@ -1272,6 +1272,7 @@ async def delete_message(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@cached(ttl=120, prefix="channel_pins_api")
 async def get_pinned_messages(
     channel_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> List[MessageResponse]:
@@ -1764,3 +1765,4 @@ async def trigger_typing(
         raise HTTPException(
             status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
+

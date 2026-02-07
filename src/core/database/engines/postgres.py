@@ -78,7 +78,7 @@ class PostgresEngine(BaseEngine):
             raise
 
     def get_pool_stats(self, pool: Any) -> Dict[str, Any]:
-        stats = {
+        stats: Dict[str, Any] = {
             "active_connections": 0,
             "idle_connections": 0,
             "total_connections": 0,

@@ -27,6 +27,9 @@ class SelfTestRunner:
 
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip("/")
+        if requests is None:
+            raise RuntimeError("requests dependency is required for selftest runner")
+        requests_module = requests
         # Always reload config from utility to ensure latest values
         self.config = config.get("selftest", {})
         self.token: Optional[str] = None
@@ -42,7 +45,7 @@ class SelfTestRunner:
         self.test_webhook_token: Optional[str] = None
         self.results: List[Dict[str, Any]] = []
         self.start_time = 0.0
-        self.session = requests.Session()
+        self.session = requests_module.Session()
         self.openapi_spec: Dict[str, Any] = {}
 
     def run_all(self) -> bool:

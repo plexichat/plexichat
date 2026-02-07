@@ -129,9 +129,10 @@ class ScheduledEventManager:
             location = None
 
         if rrule:
+            if rrulestr is None:
+                raise ScheduledEventError("Recurring events require python-dateutil")
             try:
-                if rrulestr:
-                    rrulestr(rrule)  # type: ignore
+                rrulestr(rrule)  # type: ignore
             except Exception:
                 raise ScheduledEventError("Invalid RRULE format")
 
@@ -466,6 +467,9 @@ class ScheduledEventManager:
 
         max_instances = self._config.get("max_recurring_instances", 50)
         count = min(count, max_instances)
+
+        if rrulestr is None:
+            raise ScheduledEventError("Recurring events require python-dateutil")
 
         try:
             rule = rrulestr(

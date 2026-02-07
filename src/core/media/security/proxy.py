@@ -5,13 +5,14 @@ External URL proxy for fetching, caching, and serving external content.
 import hashlib
 import time
 import io
+import importlib
 from typing import Optional, Tuple, BinaryIO, Iterator
 from urllib.parse import urlparse
 
 try:
-    import requests  # type: ignore
-except ImportError:
-    requests = None  # type: ignore
+    requests = importlib.import_module("requests")
+except Exception:
+    requests = None
 
 import utils.logger as logger
 from src.utils.security import URLValidator
@@ -129,14 +130,11 @@ class ExternalProxy:
         self._buffer_size = buffer_size
         self._url_validator = URLValidator()
 
-        try:
-            import requests
-
-            self._requests = requests
-        except ImportError:
+        if requests is None:
             raise ProxyError(
                 "requests is required for proxy. Install with: pip install requests"
             )
+        self._requests = requests
 
     def fetch(self, url: str, force_refresh: bool = False) -> ProxiedContent:
         """

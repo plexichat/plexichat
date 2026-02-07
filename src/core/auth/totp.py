@@ -9,12 +9,13 @@ import os
 import time
 import threading
 import hmac
+import importlib
 from typing import List, Tuple, Optional, Dict, Any
 
 try:
-    import qrcode  # type: ignore
-except ImportError:
-    qrcode = None  # type: ignore
+    qrcode = importlib.import_module("qrcode")
+except Exception:
+    qrcode = None
 
 import utils.config as config
 
@@ -318,8 +319,10 @@ def generate_qr_code_data(uri: str) -> bytes:
     Returns:
         PNG image data as bytes
     """
-    import qrcode
     from io import BytesIO
+    
+    if qrcode is None:
+        raise RuntimeError("qrcode is required to generate QR codes")
 
     qr = qrcode.QRCode(
         version=1,

@@ -548,7 +548,7 @@ class DeleteQuery(TableQuery):
             schema_registry: Optional schema registry for validation
         """
         super().__init__(connection, table_name, db_type, schema_registry)
-        self._where_conditions: List[tuple[str, Any]] = []
+        self._where_conditions: List[tuple[str, str, Any]] = []
     
     def where(self, column: str, operator: str, value: Any) -> 'DeleteQuery':
         """Add a WHERE condition.

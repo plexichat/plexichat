@@ -17,6 +17,7 @@ from contextvars import ContextVar
 import utils.config as config
 import utils.logger as logger
 
+from .engines.base import BaseEngine
 from .engines.sqlite import SqliteEngine
 from .engines.postgres import PostgresEngine
 from .monitoring import DatabaseMonitor
@@ -80,15 +81,15 @@ class Database:
         self._query_cache_ttl = 1.0  # 1 second TTL for identical queries
         
         # Initialize components
+        self.engine: BaseEngine
         if self.type == "postgres":
             self.engine = PostgresEngine(self.config)
-            # Pool will be initialized on-demand in connect()
             self._pool = None
             logger.info("PostgreSQL engine initialized (pool creation deferred)")
         elif self.type == "sqlite":
             self.engine = SqliteEngine(self.config)
         else:
-            self.engine = None
+            raise ValueError(f"Unsupported database type: {self.type}")
 
         self.monitor = DatabaseMonitor(self.config, self.type)
         
@@ -178,15 +179,22 @@ class Database:
             # Validation logic
             if self.type == "postgres":
                 # Check if connection object says it's closed
-                if hasattr(conn, "closed") and conn.closed != 0:
+                if getattr(conn, "closed", 0) != 0:
                     is_valid = False
                 
                 # Proactive check for network/server-side closure
                 if is_valid and hasattr(conn, "poll"):
+                    PsycopgOperationalError = Exception
                     try:
-                        from psycopg2 import OperationalError  # type: ignore
+                        from psycopg2 import OperationalError as PsycopgOperationalError  # type: ignore
+                    except Exception:
+                        pass
+                    try:
                         conn.poll()
-                    except (OperationalError, Exception) as e:
+                    except PsycopgOperationalError as e:
+                        logger.debug(f"Connection {conn_id} failed poll check: {e}")
+                        is_valid = False
+                    except Exception as e:
                         logger.debug(f"Connection {conn_id} failed poll check: {e}")
                         is_valid = False
             
@@ -237,9 +245,6 @@ class Database:
 
     def connect(self) -> Optional[DbConnection]:
         """Establish a connection for the current thread."""
-        if self.type not in ["sqlite", "postgres"]:
-            raise ValueError(f"Unsupported database type: {self.type}")
-
         with self._lock:
             # Close existing if any
             if hasattr(self._local, "connection") and self._local.connection:
@@ -247,11 +252,10 @@ class Database:
                 self._local.connection = None
             
             start_time = time.time()
-            if self.type == "postgres":
+            if self.type == "postgres" and isinstance(self.engine, PostgresEngine):
                 if not self._pool:
                     pool_config = self.config.get("connection_pool", {})
                     min_conn = pool_config.get("min_connections", 1)
-                        
                     self._pool = self.engine.create_pool(
                         min_conn,
                         pool_config.get("max_connections", 50)
@@ -442,7 +446,8 @@ class Database:
         conn = self._get_conn()
         if self.transaction_depth == 0:
             if self.type == "sqlite":
-                conn.execute("BEGIN")
+                # Use IMMEDIATE to acquire write lock upfront, preventing deadlocks
+                conn.execute("BEGIN IMMEDIATE")
             self.in_transaction = True
 
         self.transaction_depth += 1
@@ -688,7 +693,7 @@ class Database:
         
         try:
             if self.type == "postgres":
-                if hasattr(conn, "closed") and conn.closed > 0:
+                if getattr(conn, "closed", 0) > 0:
                     self.transaction_depth = 0
                     self.in_transaction = False
                 elif self.transaction_depth > 0:

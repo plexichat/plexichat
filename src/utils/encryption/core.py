@@ -15,6 +15,7 @@ try:
     import xxhash
     XXHASH_AVAILABLE = True
 except ImportError:
+    xxhash = None
     XXHASH_AVAILABLE = False
 
 import utils.logger as logger
@@ -357,7 +358,7 @@ class EncryptionManager:
         Generate a fast keyed hash (xxhash) for high-volume enforcement fields (e.g. IPs).
         Falls back to blind_index (BLAKE2b) if xxhash is not available.
         """
-        if not XXHASH_AVAILABLE:
+        if not XXHASH_AVAILABLE or xxhash is None:
             return self.blind_index(data, scope)
             
         kek = self.keyring._get_kek()

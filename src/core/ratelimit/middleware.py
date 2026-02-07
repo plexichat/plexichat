@@ -127,7 +127,7 @@ class RateLimitMiddlewareASGI:
 
     def _get_ip_address(self, request: Request) -> str:
         """Extract IP address using consolidated utility."""
-        return get_client_ip(request)
+        return get_client_ip(request) or "unknown"
 
     async def __call__(self, scope, receive, send):
         """ASGI interface."""

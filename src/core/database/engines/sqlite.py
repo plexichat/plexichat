@@ -17,6 +17,16 @@ class SqliteEngine(BaseEngine):
 
         conn = sqlite3.connect(db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
+        
+        # Enable WAL (Write-Ahead Logging) for concurrency
+        conn.execute("PRAGMA journal_mode=WAL;")
+        
+        # Set busy timeout to wait for locks (5 seconds)
+        conn.execute("PRAGMA busy_timeout=5000;")
+        
+        # Enforce foreign keys (disabled by default in SQLite)
+        conn.execute("PRAGMA foreign_keys=ON;")
+        
         return conn
 
     def get_pool_stats(self, pool: Any) -> Dict[str, Any]:

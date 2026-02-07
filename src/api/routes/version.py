@@ -9,6 +9,7 @@ from typing import Optional
 import utils.version as version_util
 from utils.version import InvalidVersionError
 import utils.logger as logger
+from src.core.database.cache import cached
 
 from ..schemas.version import (
     ServerVersionResponse,
@@ -63,6 +64,7 @@ def _version_to_info(ver) -> VersionInfo:
 @router.get(
     "/version", response_model=ServerVersionResponse, summary="Get server version"
 )
+@cached(ttl=3600, prefix="api_version")
 def get_server_version() -> ServerVersionResponse:
     """
     Get server version information.
@@ -221,6 +223,7 @@ def negotiate_version(
 
 
 @router.get("/status", response_model=ServerStatusResponse, summary="Get server status")
+@cached(ttl=10, prefix="api_status")
 def get_server_status() -> ServerStatusResponse:
     """
     Get current server status.
@@ -291,3 +294,6 @@ def set_update_url(url: Optional[str]):
 def get_server_state() -> ServerState:
     """Get current server state."""
     return _server_state
+    """Get current server state."""
+    return _server_state
+

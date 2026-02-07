@@ -415,9 +415,9 @@ class MessageService(BaseService):
         # Populate "recent messages" list cache if it's the newest messages
         if not before_id and not after_id:
             try:
-                from src.core.database import get_client
+                from src.core.database import get_redis_client as get_client, redis_available
                 client = get_client()
-                if client and client.is_available():
+                if client and redis_available():
                     list_key = f"msg:recent:{conversation_id}"
                     # Only populate if list doesn't exist or is empty to avoid duplicates
                     # or if we want to ensure it's fresh, we can overwrite.
