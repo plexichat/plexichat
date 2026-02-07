@@ -183,7 +183,10 @@ class LoggingMiddleware:
                             telemetry_path = path
                             if "route" in scope:
                                 route = scope["route"]
-                                if hasattr(route, "path"):
+                                # path_format is the standard attribute for the template (e.g. /api/v1/users/{user_id})
+                                if hasattr(route, "path_format"):
+                                    telemetry_path = route.path_format
+                                elif hasattr(route, "path"):
                                     telemetry_path = route.path
 
                             await run_in_threadpool(

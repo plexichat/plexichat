@@ -21,10 +21,10 @@
             --warn: #ffaa00;
             --bad: #ff4444;
             --chart-bg: #0d0d0f;
-            --line-primary: #00aaff;
-            --line-secondary: #ff9900;
-            --line-tertiary: #00ffcc;
-            --line-quaternary: #ff33ff;
+            --line-primary: #36a2eb;
+            --line-secondary: #ff9f40;
+            --line-tertiary: #4bc0c0;
+            --line-quaternary: #ff6384;
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -346,7 +346,11 @@
                                 
                                 <label style="font-size:0.7rem; font-weight:800; color:#555; margin-top:1rem; display:block;">BADGES</label>
                                 <div id="user-badges-list" style="display:flex;flex-wrap:wrap;gap:0.25rem;margin-top:0.25rem;margin-bottom:0.5rem;"></div>
-                                <div style="display:flex;gap:0.5rem;"><input type="text" id="new-badge-input" placeholder="Badge code" style="flex:1;"><button class="btn btn-secondary btn-sm" data-click="addUserBadge">Add</button></div>
+                                <div style="display:flex;gap:0.5rem;">
+                                    <input type="text" id="new-badge-input" list="available-badges-list" placeholder="Select badge..." style="flex:1;">
+                                    <datalist id="available-badges-list"></datalist>
+                                    <button class="btn btn-secondary btn-sm" data-click="addUserBadge">Add</button>
+                                </div>
                             </div>
                             <div>
                                 <label style="font-size:0.7rem; font-weight:800; color:#555;">ACTIONS</label>
@@ -433,6 +437,27 @@
         const token = localStorage.getItem('plexichat-admin-token');
         if (!token) window.location.replace('/api/v1/admin/login');
 
+        // Global Chart Defaults for High Visibility
+        Chart.defaults.color = '#ccc';
+        Chart.defaults.borderColor = 'rgba(255,255,255,0.1)';
+        Chart.defaults.plugins.legend.display = true;
+        Chart.defaults.plugins.legend.position = 'top';
+        Chart.defaults.plugins.legend.align = 'end';
+        Chart.defaults.plugins.legend.labels.boxWidth = 12;
+        Chart.defaults.plugins.legend.labels.font = { size: 10 };
+        Chart.defaults.elements.line.borderWidth = 2;
+        Chart.defaults.elements.point.radius = 3;
+        Chart.defaults.elements.point.hoverRadius = 5;
+
+        const COLORS = {
+            blue: '#36a2eb',
+            orange: '#ff9f40',
+            green: '#4bc0c0',
+            red: '#ff6384',
+            purple: '#9966ff',
+            yellow: '#ffcd56'
+        };
+
         let currentTab = 'metrics', charts = {}, metricData = [], historicalData = {}, selectedUserId = null, selectedTicketId = null;
 
         const api = async (p, o = {}) => {
@@ -498,56 +523,81 @@
         }
 
         function updateCharts(dash, stats) {
-            // Keep labels for X axis visibility
             const top = stats.slice(0, 10), labels = top.map(s => s.endpoint.split('/').pop() || '/');
-            const gridColor = '#555';
-            const tickColor = '#bbb';
-
+            
             const opt = { 
                 responsive: true, 
                 maintainAspectRatio: false, 
                 animation: false, 
-                plugins: { legend: { display: false } }, 
                 scales: { 
-                    x: { 
-                        display: true, 
-                        grid: { color: gridColor }, 
-                        ticks: { color: tickColor, font: { size: 9 } } 
-                    }, 
-                    y: { grid: { color: gridColor }, ticks: { color: tickColor, font: { size: 10 } } } 
+                    x: { grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: '#aaa', font: { size: 9 } } }, 
+                    y: { grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: '#aaa', font: { size: 10 } } } 
                 } 
             };
             
-            renderChart('chart-tps', 'bar', { labels, datasets: [ { data: top.map(s => s.count), backgroundColor: 'rgba(0, 170, 255, 0.7)' }, { data: top.map(s => s.count * s.avg_queries), backgroundColor: 'rgba(255, 153, 0, 0.7)' } ] }, opt);
-            renderChart('chart-latency', 'line', { labels, datasets: [ { data: top.map(s => s.avg_ms), borderColor: 'var(--good)', tension: 0.4, pointRadius: 0, borderWidth: 3 }, { data: top.map(s => s.p95_ms), borderColor: 'var(--bad)', tension: 0.4, pointRadius: 0, borderWidth: 3 } ] }, opt);
-            renderChart('chart-db-perf', 'bar', { labels, datasets: [ { data: top.map(s => s.avg_queries), backgroundColor: 'var(--line-primary)' } ] }, opt);
+            renderChart('chart-tps', 'bar', { labels, datasets: [ 
+                { label: 'Hits', data: top.map(s => s.count), backgroundColor: COLORS.blue + 'cc' }, 
+                { label: 'DB Intensity', data: top.map(s => s.count * s.avg_queries), backgroundColor: COLORS.orange + 'cc' } 
+            ] }, opt);
+            
+            renderChart('chart-latency', 'line', { labels, datasets: [ 
+                { label: 'Avg Latency', data: top.map(s => s.avg_ms), borderColor: COLORS.green, backgroundColor: COLORS.green, tension: 0.3 }, 
+                { label: 'P95 Latency', data: top.map(s => s.p95_ms), borderColor: COLORS.red, backgroundColor: COLORS.red, tension: 0.3 } 
+            ] }, opt);
+            
+            renderChart('chart-db-perf', 'bar', { labels, datasets: [ 
+                { label: 'Queries/Req', data: top.map(s => s.avg_queries), backgroundColor: COLORS.purple + 'cc' } 
+            ] }, opt);
             
             if (dash.system) {
-                updateHist('chart-sys-res', [{ val: dash.system.cpu_percent, col: 'var(--line-primary)' }, { val: dash.system.disk_percent, col: 'var(--line-quaternary)' }]);
-                updateHist('chart-process', [{ val: dash.system.process_memory_mb, col: 'var(--good)' }, { val: dash.system.thread_count, col: 'var(--line-primary)' }]);
+                updateHist('chart-sys-res', [
+                    { label: 'CPU %', val: dash.system.cpu_percent, col: COLORS.blue }, 
+                    { label: 'Disk %', val: dash.system.disk_percent, col: COLORS.purple }
+                ]);
+                updateHist('chart-process', [
+                    { label: 'Mem MB', val: dash.system.process_memory_mb, col: COLORS.green }, 
+                    { label: 'Threads', val: dash.system.thread_count, col: COLORS.blue }
+                ]);
             }
 
             api('/api/v1/admin/database/pool-health').then(db => {
                 document.getElementById('db-conn-count').textContent = `${db.active_connections} / ${db.max_connections}`;
-                updateHist('chart-db-pool', [{ val: db.active_connections, col: 'var(--line-secondary)' }, { val: db.total_connections, col: 'var(--line-primary)' }]);
+                updateHist('chart-db-pool', [
+                    { label: 'Active', val: db.active_connections, col: COLORS.orange }, 
+                    { label: 'Total', val: db.total_connections, col: COLORS.blue }
+                ]);
             }).catch(()=>{});
 
             const t = stats.reduce((a,b)=>a+b.count,0), e = stats.reduce((a,b)=>a+b.error_count,0);
-            updateHist('chart-errors', [{ val: t>0?(e/t*100):0, col: 'var(--bad)' }]);
-            renderChart('chart-status-dist', 'doughnut', { labels: ['OK', 'ERR'], datasets: [{ data: [t-e, e], backgroundColor: ['var(--good)', 'var(--bad)'], borderWidth: 0 }]}, { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: true, position: 'bottom', labels: { color: '#888' } } } });
+            updateHist('chart-errors', [{ label: 'Error %', val: t>0?(e/t*100):0, col: COLORS.red }]);
+            renderChart('chart-status-dist', 'doughnut', { labels: ['OK', 'ERR'], datasets: [{ data: [t-e, e], backgroundColor: [COLORS.green, COLORS.red], borderWidth: 0 }]}, { responsive: true, maintainAspectRatio: false });
         }
 
         function renderChart(id, type, data, options) { if (charts[id]) charts[id].destroy(); const ctx = document.getElementById(id); if(!ctx) return; charts[id] = new Chart(ctx.getContext('2d'), { type, data, options }); }
         
         function updateHist(id, metrics) {
-            if (!historicalData[id]) historicalData[id] = { labels: Array(60).fill(''), datasets: metrics.map(m => ({ data: Array(60).fill(0), borderColor: m.col, tension: 0.4, pointRadius: 0, borderWidth: 2 }))};
-            metrics.forEach((m, i) => { historicalData[id].datasets[i].data.push(m.val); historicalData[id].datasets[i].data.shift(); });
+            if (!historicalData[id]) {
+                historicalData[id] = { 
+                    labels: Array(60).fill(''), 
+                    datasets: metrics.map(m => ({ 
+                        label: m.label,
+                        data: Array(60).fill(0), 
+                        borderColor: m.col, 
+                        backgroundColor: m.col,
+                        tension: 0.3,
+                        pointRadius: 2
+                    }))
+                };
+            }
+            metrics.forEach((m, i) => { 
+                historicalData[id].datasets[i].data.push(m.val); 
+                historicalData[id].datasets[i].data.shift(); 
+            });
             renderChart(id, 'line', historicalData[id], { 
                 responsive: true, maintainAspectRatio: false, animation: false, 
-                plugins: { legend: { display: false } }, 
                 scales: { 
                     x: { display: false }, 
-                    y: { grid: { color: '#555' }, ticks: { color: '#bbb', font: { size: 8 } } } 
+                    y: { grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { font: { size: 8 } } } 
                 } 
             });
         }
@@ -689,6 +739,14 @@
             document.body.removeChild(textArea);
         }
 
+        async function fetchAvailableBadges() {
+            try {
+                const r = await api('/api/v1/admin/badges');
+                const list = document.getElementById('available-badges-list');
+                list.innerHTML = r.badges.map(b => `<option value="${b.name}">${b.display_name}</option>`).join('');
+            } catch (e) { console.error('Failed to fetch badges'); }
+        }
+
         // Event Delegation (Fixed CSP)
         document.addEventListener('click', (e) => {
             const el = e.target.closest('[data-click]');
@@ -822,6 +880,7 @@
         api('/api/v1/version').then(v => {
             document.getElementById('server-version').textContent = v.version.string;
             showTab('metrics');
+            fetchAvailableBadges();
             setInterval(refreshMetrics, 15000);
         });
     </script>
