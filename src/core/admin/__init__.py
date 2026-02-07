@@ -52,6 +52,7 @@ import json
 
 import utils.logger as logger
 import utils.config as config
+from src.core.database import invalidate_pattern
 
 _db: Any = None
 _auth: Any = None
@@ -1334,6 +1335,8 @@ def force_username_change(user_id: int, forced: bool = True) -> bool:
         "UPDATE auth_users SET force_username_change = ? WHERE id = ?",
         (forced, user_id)
     )
+    # Clear auth cache so middleware sees change immediately
+    invalidate_pattern("token_verify:*")
     return True
 
 
@@ -1578,6 +1581,7 @@ def lock_user(user_id: int, duration_seconds: Optional[int] = None) -> bool:
     if auth:
         auth.logout_all(user_id)
 
+    invalidate_pattern("token_verify:*")
     return True
 
 
@@ -1588,6 +1592,7 @@ def unlock_user(user_id: int) -> bool:
         "UPDATE auth_users SET account_locked = 0, locked_until = NULL WHERE id = ?",
         (user_id,),
     )
+    invalidate_pattern("token_verify:*")
     return True
 
 
