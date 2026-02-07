@@ -691,7 +691,7 @@ class AuthManager(BaseManager):
             
             # Reset forced change flag
             updates.append("force_username_change = ?")
-            params.append(0)
+            params.append(False)
 
         if email:
             email_index = self.crypto.blind_index(email, "user_email")
