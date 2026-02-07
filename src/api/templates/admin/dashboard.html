@@ -206,6 +206,7 @@
                 <button class="tab" data-click="showTab" data-tab="users">Users</button>
                 <button class="tab" data-click="showTab" data-tab="security">Security</button>
                 <button class="tab" data-click="showTab" data-tab="metrics">Metrics</button>
+                <button class="tab" data-click="showTab" data-tab="logs">Logs</button>
                 <button class="tab" data-click="showTab" data-tab="account">Account</button>
             </div>
 
@@ -417,6 +418,49 @@
                 </div>
             </div>
 
+            <!-- TAB: LOGS -->
+            <div id="tab-logs" class="tab-content hidden">
+                <div class="card">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
+                        <div style="display: flex; gap: 1rem; align-items: center; flex: 1;">
+                            <h3 style="white-space: nowrap;">System Logs</h3>
+                            <select id="log-file-select" style="max-width: 300px;" data-change="loadLogContent">
+                                <option value="latest.log">latest.log</option>
+                            </select>
+                            <button class="btn btn-secondary btn-sm" data-click="refreshLogList">↻ Refresh List</button>
+                        </div>
+                        <div style="display: flex; gap: 0.5rem; align-items: center;">
+                            <input type="text" id="log-search" placeholder="Search logs..." style="width: 200px;">
+                            <select id="log-level-filter" style="width: auto;">
+                                <option value="">All Levels</option>
+                                <option value="DEBUG">DEBUG</option>
+                                <option value="INFO">INFO</option>
+                                <option value="WARNING">WARNING</option>
+                                <option value="ERROR">ERROR</option>
+                                <option value="CRITICAL">CRITICAL</option>
+                            </select>
+                            <label style="display: flex; align-items: center; gap: 0.25rem; cursor: pointer; font-size: 0.75rem; color: var(--text-dim);">
+                                <input type="checkbox" id="log-auto-refresh" style="width: auto;"> Auto
+                            </label>
+                            <button class="btn btn-primary" data-click="loadLogContent">Apply</button>
+                        </div>
+                    </div>
+                    
+                    <div id="log-viewer" style="background: #000; color: #d1d5db; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.8125rem; padding: 1rem; border-radius: 0.5rem; height: 600px; overflow-y: auto; white-space: pre-wrap; border: 1px solid var(--border); line-height: 1.4;">
+                        <div style="color: var(--text-dim); text-align: center; padding: 2rem;">Select a log file to view content...</div>
+                    </div>
+                    
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; font-size: 0.75rem; color: var(--text-dim);">
+                        <div id="log-stats">Showing 0 lines</div>
+                        <div style="display: flex; gap: 0.5rem;">
+                            <button class="btn btn-outline btn-sm" data-click="scrollLogTop">Top</button>
+                            <button class="btn btn-outline btn-sm" data-click="scrollLogBottom">Bottom</button>
+                            <button class="btn btn-secondary btn-sm" data-click="downloadLog">Download</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- TAB: ACCOUNT -->
             <div id="tab-account" class="tab-content hidden">
                 <div class="grid grid-2">
@@ -500,6 +544,7 @@
             if (currentTab === 'tickets') loadTickets();
             if (currentTab === 'security') loadSecurity();
             if (currentTab === 'metrics') loadMetrics();
+            if (currentTab === 'logs') loadLogs();
         };
 
         // --- Ticket Handlers ---
@@ -827,6 +872,90 @@
             } catch (e) { alert('Export failed: ' + e.message); }
         }
 
+        // --- Log Handlers ---
+        let logAutoRefreshInterval = null;
+
+        async function loadLogs() {
+            try {
+                const logs = await api('/api/v1/admin/logs');
+                const select = document.getElementById('log-file-select');
+                const currentVal = select.value;
+                
+                select.innerHTML = logs.map(l => {
+                    const date = new Date(l.modified).toLocaleString();
+                    const size = (l.size / 1024).toFixed(1) + ' KB';
+                    return `<option value="${l.filename}" ${l.filename === currentVal ? 'selected' : ''}>${l.filename} (${size}) - ${date}</option>`;
+                }).join('');
+                
+                if (!currentVal && logs.length > 0) {
+                    select.value = logs.find(l => l.filename === 'latest.log')?.filename || logs[0].filename;
+                }
+                
+                loadLogContent();
+            } catch (e) { console.error(e); }
+        }
+
+        async function refreshLogList() {
+            await loadLogs();
+        }
+
+        async function loadLogContent() {
+            const filename = document.getElementById('log-file-select').value;
+            const search = document.getElementById('log-search').value;
+            const level = document.getElementById('log-level-filter').value;
+            
+            if (!filename) return;
+            
+            try {
+                const query = new URLSearchParams({ limit: 2000 });
+                if (search) query.append('search', search);
+                if (level) query.append('level', level);
+                
+                const data = await api(`/api/v1/admin/logs/${encodeURIComponent(filename)}?${query.toString()}`);
+                const viewer = document.getElementById('log-viewer');
+                
+                if (data.lines.length === 0) {
+                    viewer.innerHTML = '<div style="color: var(--text-dim); text-align: center; padding: 2rem;">No matching log entries found.</div>';
+                } else {
+                    viewer.innerHTML = data.lines.map(l => {
+                        let color = '#d1d5db';
+                        if (l.level === 'ERROR' || l.level === 'CRITICAL') color = '#f87171';
+                        else if (l.level === 'WARNING') color = '#fbbf24';
+                        else if (l.level === 'DEBUG') color = '#94a3b8';
+                        
+                        return `<div style="margin-bottom: 2px;"><span style="color: #64748b;">${escapeHtml(l.timestamp)}</span> <span style="color: ${color}; font-weight: bold;">[${l.level}]</span> ${escapeHtml(l.message)}</div>`;
+                    }).join('');
+                }
+                
+                document.getElementById('log-stats').textContent = `Showing ${data.lines.length} of ${data.total_lines} lines`;
+                
+                if (document.getElementById('log-auto-refresh').checked) {
+                    if (!logAutoRefreshInterval) {
+                        logAutoRefreshInterval = setInterval(loadLogContent, 5000);
+                    }
+                } else {
+                    if (logAutoRefreshInterval) {
+                        clearInterval(logAutoRefreshInterval);
+                        logAutoRefreshInterval = null;
+                    }
+                }
+            } catch (e) { 
+                document.getElementById('log-viewer').innerHTML = `<div style="color: var(--bad); padding: 1rem;">Error: ${escapeHtml(e.message)}</div>`;
+            }
+        }
+
+        function scrollLogTop() { document.getElementById('log-viewer').scrollTop = 0; }
+        function scrollLogBottom() { 
+            const v = document.getElementById('log-viewer');
+            v.scrollTop = v.scrollHeight; 
+        }
+
+        async function downloadLog() {
+            const filename = document.getElementById('log-file-select').value;
+            if (!filename) return;
+            window.open(`/api/v1/admin/logs/${encodeURIComponent(filename)}?limit=100000`, '_blank');
+        }
+
         // --- Account Handlers ---
         async function changeAdminPassword() {
             const current = document.getElementById('admin-current-pass').value;
@@ -877,6 +1006,11 @@
             else if (act === 'globalSessionPurge') globalSessionPurge();
             else if (act === 'changeAdminPassword') changeAdminPassword();
             else if (act === 'exportStats') exportStats();
+            else if (act === 'refreshLogList') refreshLogList();
+            else if (act === 'loadLogContent') loadLogContent();
+            else if (act === 'scrollLogTop') scrollLogTop();
+            else if (act === 'scrollLogBottom') scrollLogBottom();
+            else if (act === 'downloadLog') downloadLog();
             else if (act === 'blockIP') {
                 const ip = document.getElementById('block-ip-val').value;
                 api('/api/v1/admin/security/block-ip', { method: 'POST', body: JSON.stringify({ ip_address: ip, reason: 'Admin block' }) })
@@ -897,6 +1031,8 @@
 
         document.addEventListener('change', (e) => {
             if (e.target.dataset.change === 'loadMetrics') loadMetrics();
+            if (e.target.dataset.change === 'loadLogContent') loadLogContent();
+            if (e.target.id === 'log-auto-refresh') loadLogContent();
         });
 
         // Add Enter key listeners for all search/action inputs

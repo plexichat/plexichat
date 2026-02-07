@@ -64,6 +64,8 @@ from src.api.schemas.admin import (
     AdminChangePasswordRequest,
     UserNotesResponse,
     UserNotesUpdate,
+    LogFileInfo,
+    LogViewResponse,
 )
 from src.api.schemas.common import ErrorResponse, SuccessResponse
 
@@ -2664,6 +2666,51 @@ async def get_database_pool_health(request: Request) -> Dict[str, Any]:
             status_code=500,
             detail={"error": {"code": 500, "message": "Internal server error"}},
         )
+
+
+# ==================== Log Viewer Routes ====================
+
+
+@router.get(
+    "/logs",
+    response_model=List[LogFileInfo],
+    summary="List available log files",
+)
+async def list_admin_logs(request: Request) -> List[LogFileInfo]:
+    """List all available log files in the logs directory."""
+    _check_host_restriction(request)
+    _get_admin_from_token(request)
+
+    from src.core.admin import logs
+    return [LogFileInfo(**l) for l in logs.list_logs()]
+
+
+@router.get(
+    "/logs/{filename:path}",
+    response_model=LogViewResponse,
+    summary="Read a log file",
+)
+async def read_admin_log(
+    request: Request,
+    filename: str,
+    limit: int = 1000,
+    offset: int = 0,
+    search: Optional[str] = None,
+    level: Optional[str] = None
+) -> LogViewResponse:
+    """Read content from a specific log file with filtering."""
+    _check_host_restriction(request)
+    _get_admin_from_token(request)
+
+    from src.core.admin import logs
+    try:
+        data = logs.read_log_lines(filename, limit, offset, search, level)
+        return LogViewResponse(**data)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": str(e)}})
+    except Exception as e:
+        logger.error(f"Error reading log {filename}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
 
 
 # ==================== Admin UI Routes ====================
