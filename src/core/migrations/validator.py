@@ -8,12 +8,14 @@ import hashlib
 import os
 import logging
 import importlib.util
-from typing import List, Tuple
+import re
+from typing import List, Tuple, Optional, Iterable
 
 logger = logging.getLogger(__name__)
 
-def validate_migration_order(pending_versions: List[str], 
-                            applied_versions: List[str]) -> bool:
+def validate_migration_order(
+    pending_versions: List[str], applied_versions: List[str]
+) -> bool:
     """
     Validate that migration versions have no gaps.
     
@@ -42,12 +44,13 @@ def validate_migration_order(pending_versions: List[str],
         # relative to the highest applied migration.
         
         if curr_num != prev_num + 1:
-            # Only warn instead of error if we're adding a migration at the end
-            msg = f"Gap in migration version sequence: missing version between {all_versions[i-1]} and {all_versions[i]}"
-            logger.warning(msg)
-            # For now, let's keep it as warning to avoid blocking development
-            # if previous migrations had issues.
-    
+            msg = (
+                "Gap in migration version sequence: missing version between "
+                f"{all_versions[i-1]} and {all_versions[i]}"
+            )
+            logger.error(msg)
+            raise ValueError(msg)
+
     return True
 
 def get_migration_files(migrations_dir: str) -> List[Tuple[str, str]]:
@@ -116,6 +119,9 @@ def validate_migration_file(file_path: str) -> bool:
     Raises:
         ValueError: If file is invalid
     """
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(file_path)
+
     spec = importlib.util.spec_from_file_location("migration_module", file_path)
     if not spec or not spec.loader:
         raise ValueError(f"Could not load migration file: {file_path}")
@@ -123,36 +129,89 @@ def validate_migration_file(file_path: str) -> bool:
     module = importlib.util.module_from_spec(spec)
     try:
         spec.loader.exec_module(module)
+    except FileNotFoundError:
+        raise
     except Exception as e:
         raise ValueError(f"Error loading migration file {file_path}: {e}")
     
     if not hasattr(module, 'up'):
-        raise ValueError(f"Migration file {file_path} missing 'up' function")
-        
+        raise ValueError(f"Migration file {file_path} missing required up function")
+
     if not hasattr(module, 'down'):
-        raise ValueError(f"Migration file {file_path} missing 'down' function")
+        raise ValueError(f"Migration file {file_path} missing required down function")
         
     return True
 
-def validate_checksum(file_path: str, expected_checksum: str) -> bool:
+def validate_checksum(
+    file_path: str,
+    expected_checksum: str,
+    actual_checksum: Optional[str] = None,
+) -> bool:
     """
     Validate that file content matches expected checksum.
-    
+
     Args:
-        file_path: Path to file
+        file_path: Path to file (or identifier for test assertions)
         expected_checksum: Expected SHA256 checksum
-        
+        actual_checksum: Actual checksum to compare (optional)
+
     Returns:
         True if matches
-        
+
     Raises:
         ValueError: If checksum mismatch
     """
-    with open(file_path, 'rb') as f:
-        content = f.read()
-    
-    actual = calculate_checksum(content)
-    if actual != expected_checksum:
-        raise ValueError(f"Checksum mismatch for {file_path}. Expected {expected_checksum}, got {actual}")
-    
+    if actual_checksum is None:
+        with open(file_path, "rb") as f:
+            content = f.read()
+        actual_checksum = calculate_checksum(content)
+
+    if actual_checksum != expected_checksum:
+        raise ValueError(
+            f"Checksum mismatch for {file_path}. Expected {expected_checksum}, got {actual_checksum}"
+        )
+
     return True
+
+
+_DANGEROUS_SQL_PATTERNS: Iterable[tuple[re.Pattern[str], str]] = (
+    (re.compile(r"\bDROP\s+DATABASE\b", re.IGNORECASE), "DROP DATABASE"),
+    (re.compile(r"\bDROP\s+SCHEMA\b", re.IGNORECASE), "DROP SCHEMA"),
+    (
+        re.compile(r"\bTRUNCATE\s+migrations_history\b", re.IGNORECASE),
+        "TRUNCATE migrations_history",
+    ),
+)
+
+_WARNING_SQL_PATTERNS: Iterable[tuple[re.Pattern[str], str]] = (
+    (re.compile(r"\bTRUNCATE\b", re.IGNORECASE), "TRUNCATE"),
+    (re.compile(r"\bDROP\s+TABLE\b", re.IGNORECASE), "DROP TABLE"),
+    (re.compile(r"\bALTER\s+TABLE\b", re.IGNORECASE), "ALTER TABLE"),
+)
+
+
+def validate_sql_safety(sql: str) -> tuple[bool, list[str]]:
+    """
+    Validate SQL safety for migration content.
+
+    Args:
+        sql: Raw SQL content
+
+    Returns:
+        (is_safe, warnings)
+
+    Raises:
+        ValueError: If dangerous SQL is detected
+    """
+    normalized_sql = sql.strip()
+
+    for pattern, label in _DANGEROUS_SQL_PATTERNS:
+        if pattern.search(normalized_sql):
+            raise ValueError(f"Dangerous SQL detected: {label}")
+
+    warnings: list[str] = []
+    for pattern, label in _WARNING_SQL_PATTERNS:
+        if pattern.search(normalized_sql):
+            warnings.append(f"Potentially destructive SQL detected: {label}")
+
+    return True, warnings

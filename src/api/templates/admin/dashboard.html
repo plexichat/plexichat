@@ -849,6 +849,33 @@
             if (e.target.dataset.change === 'loadMetrics') loadMetrics();
         });
 
+        // Add Enter key listeners for all search/action inputs
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter') return;
+            
+            if (e.target.id === 'user-search-input') {
+                e.preventDefault();
+                searchUsers();
+            } else if (e.target.id === 'new-note-input') {
+                e.preventDefault();
+                addTicketNote();
+            } else if (e.target.id === 'block-ip-val') {
+                e.preventDefault();
+                const ip = e.target.value;
+                api('/api/v1/admin/security/block-ip', { 
+                    method: 'POST', 
+                    body: JSON.stringify({ ip_address: ip, reason: 'Admin block' }) 
+                }).then(() => { alert('Blocked'); loadSecurity(); });
+            } else if (e.target.id === 'ban-username-val') {
+                e.preventDefault();
+                const p = e.target.value;
+                api('/api/v1/admin/security/banned-usernames', { 
+                    method: 'POST', 
+                    body: JSON.stringify({ pattern: p, reason: 'Restricted' }) 
+                }).then(() => { alert('Banned'); loadSecurity(); });
+            }
+        });
+
         async function verifyAndLoad() {
             try {
                 const d = await api('/api/v1/admin/dashboard');

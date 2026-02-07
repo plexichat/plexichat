@@ -170,6 +170,16 @@ CREATE INDEX IF NOT EXISTS idx_auth_sessions_token ON auth_sessions(token_hash);
 CREATE INDEX IF NOT EXISTS idx_auth_bots_owner ON auth_bots(owner_id);
 CREATE INDEX IF NOT EXISTS idx_auth_devices_user ON auth_devices(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_audit_user ON auth_audit_log(user_id);
+
+-- Username blacklist table (used by auth blacklist checks)
+CREATE TABLE IF NOT EXISTS username_blacklist (
+    id INTEGER PRIMARY KEY,
+    pattern TEXT NOT NULL UNIQUE,
+    is_regex BOOLEAN DEFAULT 0,
+    reason TEXT,
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 

@@ -43,6 +43,106 @@ for path in [project_root, src_path, utils_path, common_utils_path]:
     if path not in sys.path:
         sys.path.insert(0, path)
 
+import utils.config as config  # noqa: E402
+import utils.version as version  # noqa: E402
+
+DEFAULT_TEST_CONFIG = {
+    "authentication": {
+        "accounts": {
+            "allow_registration": True,
+            "require_email_verification": False,
+            "max_bots_per_user": 5,
+            "username_min_length": 3,
+            "username_max_length": 32,
+        },
+        "sessions": {
+            "token_bytes": 32,
+            "expire_hours": 168,
+            "max_per_user": 20,
+            "extend_on_activity": True,
+            "extend_threshold_hours": 24,
+        },
+        "totp": {"backup_code_count": 10, "issuer": "TestApp"},
+        "security": {
+            "max_failed_attempts": 100,
+            "lockout_duration_minutes": 1,
+        },
+        "password": {
+            "min_length": 12,
+            "max_length": 128,
+            "require_uppercase": True,
+            "require_lowercase": True,
+            "require_digit": True,
+            "require_special": True,
+        },
+    },
+    "messaging": {
+        "max_message_length": 4000,
+        "max_attachments": 10,
+        "max_attachments_per_message": 10,
+    },
+    "media": {"compression": {"enabled": False}},
+    "applications": {"max_applications_per_user": 1000},
+    "ratelimit": {
+        "enabled": True,
+        "global": {"limit": 100, "window": 60},
+        "user": {"limit": 5, "window": 60},
+        "ip": {"limit": 10, "window": 60},
+    },
+    "rate_limiting": {
+        "enabled": True,
+        "admin_bypass": True,
+        "internal_bypass": True,
+        "global": {"requests": 50, "window_seconds": 1.0, "burst": 10},
+        "user": {
+            "requests": 70,
+            "window_seconds": 60.0,
+            "burst": 20,
+            "hourly_limit": 3600,
+            "daily_limit": 50000,
+        },
+        "ip": {
+            "requests": 70,
+            "window_seconds": 60.0,
+            "burst": 10,
+            "hourly_limit": 1800,
+            "daily_limit": 10000,
+        },
+        "routes": {"send_message": {"requests": 5, "window": 5.0}},
+        "bot_multiplier": 1.5,
+        "webhook_multiplier": 1.0,
+    },
+    "api": {
+        "cors_origins": ["http://testserver", "http://localhost:3000"],
+        "allow_wildcard_cors": True,
+        "cors_allow_headers": [
+            "Authorization",
+            "Content-Type",
+            "X-Requested-With",
+            "Accept",
+            "Origin",
+            "X-Custom-Header",
+        ],
+    },
+    "version": {"current": "r.1.0-1", "min_client": "a.1.0-1"},
+    "servers": {"templates": {"max_templates_per_user": 1000}},
+}
+
+
+def _ensure_test_config() -> None:
+    """Ensure config is initialized before any test imports."""
+    if getattr(config, "_setup_called", False):
+        return
+
+    config_dir = "temp_test_config"
+    os.makedirs(config_dir, exist_ok=True)
+    config_path = os.path.join(config_dir, "config.yaml")
+    config.setup(config_path=config_path, default_config=DEFAULT_TEST_CONFIG)
+    version.setup(current_version="r.1.0-1", min_supported_version="a.1.0-1")
+
+
+_ensure_test_config()
+
 from unittest.mock import Mock  # noqa: E402
 from src.tests.fixtures.config import TEST_PASSWORD  # noqa: E402
 from src.tests.fixtures.database import DatabaseManager  # noqa: E402
@@ -70,9 +170,6 @@ settings.load_profile("ci")
 @pytest.fixture(scope="session", autouse=True)
 def setup_config():
     """Initialize global configuration for tests."""
-    import utils.config as config
-    import utils.version as version
-
     config_dir = "temp_test_config"
     os.makedirs(config_dir, exist_ok=True)
     config_path = os.path.join(config_dir, "config.yaml")
@@ -85,66 +182,7 @@ def setup_config():
             pass
 
     # Minimal default config for tests
-    default_config = {
-        "authentication": {
-            "accounts": {
-                "allow_registration": True,
-                "require_email_verification": False,
-                "max_bots_per_user": 5,
-                "username_min_length": 3,
-                "username_max_length": 32,
-            },
-            "sessions": {
-                "token_bytes": 32,
-                "expire_hours": 168,
-                "max_per_user": 20,
-                "extend_on_activity": True,
-                "extend_threshold_hours": 24,
-            },
-            "totp": {"backup_code_count": 10, "issuer": "TestApp"},
-            "security": {
-                "max_failed_attempts": 100,
-                "lockout_duration_minutes": 1,
-            },
-            "password": {
-                "min_length": 12,
-                "max_length": 128,
-                "require_uppercase": True,
-                "require_lowercase": True,
-                "require_digit": True,
-                "require_special": True,
-            },
-        },
-        "messaging": {
-            "max_message_length": 4000,
-            "max_attachments": 10,
-            "max_attachments_per_message": 10,
-        },
-        "media": {"compression": {"enabled": False}},
-        "applications": {"max_applications_per_user": 1000},
-        "ratelimit": {
-            "enabled": True,
-            "global": {"limit": 100, "window": 60},
-            "user": {"limit": 5, "window": 60},
-            "ip": {"limit": 10, "window": 60},
-        },
-        "api": {
-            "cors_origins": ["http://testserver", "http://localhost:3000"],
-            "allow_wildcard_cors": True,
-            "cors_allow_headers": [
-                "Authorization",
-                "Content-Type",
-                "X-Requested-With",
-                "Accept",
-                "Origin",
-                "X-Custom-Header",
-            ],
-        },
-        "version": {"current": "r.1.0-1", "min_client": "a.1.0-1"},
-        "servers": {"templates": {"max_templates_per_user": 1000}},
-    }
-
-    config.setup(config_path=config_path, default_config=default_config)
+    config.setup(config_path=config_path, default_config=DEFAULT_TEST_CONFIG)
     version.setup(current_version="r.1.0-1", min_supported_version="a.1.0-1")
 
     # Initialize logger for tests

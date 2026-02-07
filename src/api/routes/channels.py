@@ -163,6 +163,8 @@ def get_channel(
                     detail={"error": {"code": 404, "message": "Channel not found"}},
                 )
             return _channel_to_response(channel, current_user.user_id)
+        except HTTPException:
+            raise
         except Exception as e:
             exc_name = type(e).__name__
             if "NotFound" in exc_name:
@@ -278,6 +280,8 @@ async def update_channel(
             asyncio.create_task(dispatch_channel_update())
 
             return response
+        except HTTPException:
+            raise
         except Exception as e:
             exc_name = type(e).__name__
             if "NotFound" in exc_name:

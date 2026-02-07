@@ -502,7 +502,13 @@ class TestServersManagerPropertyBased:
             assert len(sanitized) <= 100
             assert " " not in sanitized
         except InvalidChannelNameError:
-            assert not name or not name.strip()
+            stripped = name.strip()
+            assert (
+                not stripped
+                or len(stripped) > 100
+                or not any(ch.isalnum() for ch in stripped)
+                or not stripped.isascii()
+            )
 
     @given(
         st.text(

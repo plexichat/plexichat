@@ -1,10 +1,10 @@
 # Getting Started
 
-This guide covers server setup, authentication, and making your first API calls.
+Server setup, authentication, and first API calls.
 
 ## Prerequisites
 
-- Python 3.10+
+- Python 3.11+
 - pip package manager
 - HTTP client (curl, Postman, or your preferred library)
 
@@ -26,7 +26,7 @@ The server starts on `http://localhost:8000` with:
 
 ### Optional: Video Processing
 
-For video metadata extraction (duration, resolution, codec), install ffmpeg:
+For video metadata extraction, install ffmpeg:
 
 | Platform | Command |
 |----------|---------|

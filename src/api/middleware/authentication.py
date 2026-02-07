@@ -3,6 +3,7 @@ Authentication middleware - Token validation and user extraction.
 """
 
 from typing import Optional
+import re
 from fastapi import Request, HTTPException
 from fastapi.security import HTTPBearer
 from starlette.types import ASGIApp, Receive, Send, Scope
@@ -57,20 +58,32 @@ class AuthenticationMiddleware:
         ]
         is_public_endpoint = path in public_endpoints
         
-        auth_header = request.headers.get("Authorization")
+        # Detect multiple Authorization headers (possible header injection)
+        auth_header_count = sum(
+            1
+            for k, _ in scope.get("headers", [])
+            if isinstance(k, (bytes, bytearray)) and k.lower() == b"authorization"
+        )
+        if auth_header_count > 1:
+            scope["state"]["auth_error"] = "Multiple Authorization headers"
+            auth_header = None
+        else:
+            auth_header = request.headers.get("Authorization")
+            if auth_header and "," in auth_header:
+                scope["state"]["auth_error"] = "Multiple Authorization headers"
+                auth_header = None
+
         if auth_header and not is_admin_path and not is_public_endpoint:
             token = self._extract_token(auth_header)
             if token:
                 import utils.logger as logger
-                token_parts = token.split(".")
-                is_plexichat_token = len(token_parts) >= 2
-                
+
                 auth = api.get_auth()
-                if auth and is_plexichat_token:
+                if auth:
                     try:
                         ip = request.client.host if request.client else None
                         ua = request.headers.get("User-Agent")
-                        
+
                         # Use a wrapper to ensure DB connection is returned to pool in the worker thread
                         def _verify_with_cleanup(token_str, client_ip, user_agent):
                             db = api.get_db()
@@ -82,12 +95,15 @@ class AuthenticationMiddleware:
 
                         from fastapi.concurrency import run_in_threadpool
                         token_info = await run_in_threadpool(_verify_with_cleanup, token, ip, ua)
-                        
+
                         if token_info:
                             scope["state"]["user"] = token_info
-                            logger.debug(f"Auth: Successfully authenticated user {token_info.user_id} for path {path}")
+                            logger.debug(
+                                f"Auth: Successfully authenticated user {token_info.user_id} for path {path}"
+                            )
                         else:
                             logger.warning(f"Auth: verify_token returned None for path {path}")
+                            scope["state"]["auth_error"] = "Invalid token"
                     except Exception as e:
                         # Distinguish between AuthError (invalid token) and other errors (DB failed)
                         if isinstance(e, AuthError):
@@ -97,13 +113,14 @@ class AuthenticationMiddleware:
                         else:
                             # This is likely a database or system error
                             # We should log it as an error and potentially return a 500 instead of 401
-                            logger.error(f"System error during authentication for path {path}: {e}", exc_info=True)
+                            logger.error(
+                                f"System error during authentication for path {path}: {e}",
+                                exc_info=True,
+                            )
                             scope["state"]["system_error"] = str(e)
-                elif not is_plexichat_token:
-                    logger.debug(f"Auth: Identified potential admin token for path {path}")
-                    scope["state"]["potential_admin_token"] = token
-                elif not auth:
+                else:
                     logger.error(f"Auth: Auth module NOT AVAILABLE for path {path}")
+                    scope["state"]["system_error"] = "Auth module not available"
             else:
                 import utils.logger as logger
                 from utils.logger import mask_string
@@ -113,10 +130,9 @@ class AuthenticationMiddleware:
         await self.app(scope, receive, send)
 
     def _extract_token(self, auth_header: str) -> Optional[str]:
-        # Split by any whitespace and handle case-insensitivity
-        parts = auth_header.split()
-        if len(parts) == 2 and parts[0].title() in ("Bearer", "Bot"):
-            return parts[1]
+        match = re.fullmatch(r"(Bearer|Bot) ([A-Za-z0-9._-]+)", auth_header)
+        if match:
+            return match.group(2)
         return None
 
 
@@ -143,7 +159,10 @@ async def get_current_user(request: Request) -> TokenInfo:
         import utils.logger as logger
         logger.debug(f"get_current_user: No user in state for path {request.url.path}. Error: {error}")
 
-        raise HTTPException(status_code=401, detail={"error": {"message": error}})
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": error}},
+        )
 
     return user
 

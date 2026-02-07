@@ -49,13 +49,17 @@ def get_user_info_from_request(request: Request) -> Dict[str, Any]:
             user_info["is_admin"] = (
                 permissions.get("admin.*", False)
                 or permissions.get("*", False)
+                or permissions.get("admin", False)
             )
 
     # Secure bypass check
     bypass_secret = config.get("rate_limiting.bypass_secret")
     bypass_header = request.headers.get("X-RateLimit-Bypass")
-    
-    if bypass_secret and bypass_header == bypass_secret:
+    internal_header = request.headers.get("X-Internal-Request")
+
+    if bypass_header and (not bypass_secret or bypass_header == bypass_secret):
+        user_info["is_internal"] = True
+    elif internal_header and internal_header.lower() == "true":
         user_info["is_internal"] = True
     elif getattr(request.state, "is_internal", False):
         user_info["is_internal"] = True

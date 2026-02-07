@@ -152,10 +152,18 @@ def get_current_user_info(
         )
 
     try:
-        user = _get_user_cached(current_user.account_id)
+        account_type = getattr(current_user, "account_type", None)
+        if hasattr(account_type, "value"):
+            account_type = account_type.value
+
+        lookup_id = current_user.user_id
+        if account_type != "bot":
+            lookup_id = current_user.account_id
+
+        user = _get_user_cached(lookup_id)
         if not user:
             logger.warning(
-                f"User profile not found for account {current_user.account_id}"
+                f"User profile not found for account {lookup_id}"
             )
             raise HTTPException(
                 status_code=404,

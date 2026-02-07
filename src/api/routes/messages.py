@@ -19,6 +19,7 @@ from src.api.schemas.messages import (
     AckResponse,
 )
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
+from src.core.messaging.exceptions import AttachmentLimitError
 
 router = APIRouter(tags=["Messages"])
 
@@ -502,6 +503,11 @@ async def send_channel_message(
                                 msg = None
             except Exception as e:
                 exc_name = type(e).__name__
+                if isinstance(e, AttachmentLimitError):
+                    raise HTTPException(
+                        status_code=400,
+                        detail={"error": {"code": 400, "message": str(e)}},
+                    )
                 if "NotFound" not in exc_name:
                     if "Permission" in exc_name or "Access" in exc_name:
                         raise HTTPException(
@@ -535,6 +541,11 @@ async def send_channel_message(
                 )
             except Exception as e:
                 exc_name = type(e).__name__
+                if isinstance(e, AttachmentLimitError):
+                    raise HTTPException(
+                        status_code=400,
+                        detail={"error": {"code": 400, "message": str(e)}},
+                    )
                 if "NotFound" in exc_name or "Access" in exc_name:
                     raise HTTPException(
                         status_code=404,

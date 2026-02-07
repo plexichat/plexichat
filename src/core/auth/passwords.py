@@ -190,16 +190,27 @@ def validate_email(email: str) -> bool:
     # Basic format check
     if not email or "@" not in email:
         return False
-        
+
+    if any(c.isspace() for c in email):
+        return False
+
     try:
-        parts = email.split("@")
-        if len(parts) != 2:
+        local, domain = email.rsplit("@", 1)
+        if not local or not domain:
             return False
-            
-        domain = parts[1]
+
+        if local.startswith(".") or local.endswith("."):
+            return False
+
+        if domain.startswith(".") or domain.endswith("."):
+            return False
+
+        if ".." in local or ".." in domain:
+            return False
+
         if "." not in domain:
             return False
-            
+
         tld = domain.split(".")[-1].lower()
     except Exception:
         return False

@@ -18,6 +18,7 @@ import hashlib
 import time
 import inspect
 import dataclasses
+import fnmatch
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, cast
 from functools import wraps
@@ -174,17 +175,20 @@ def _reconstruct_object(data: Any) -> Any:
     """Recursively reconstruct objects from dictionaries using __type__ hints."""
     if isinstance(data, list):
         return [_reconstruct_object(item) for item in data]
-    
+
     if isinstance(data, dict):
         if "__type__" in data:
-            type_name = data.pop("__type__")
+            data_copy = dict(data)
+            type_name = data_copy.pop("__type__")
             cls = _get_type_from_name(type_name)
             
             if not cls:
-                return data
+                return data_copy
                 
             # Reconstruct children of this object
-            reconstructed_params = {k: _reconstruct_object(v) for k, v in data.items()}
+            reconstructed_params = {
+                k: _reconstruct_object(v) for k, v in data_copy.items()
+            }
             
             try:
                 if issubclass(cls, Enum):
@@ -473,21 +477,26 @@ def invalidate_pattern(pattern: str) -> int:
     Returns:
         Number of keys invalidated.
     """
+    # Always clear in-memory cache entries that match the pattern
+    mem_keys = [k for k in _mem_cache.keys() if fnmatch.fnmatch(k, pattern)]
+    for k in mem_keys:
+        _mem_cache.pop(k, None)
+
     client = get_client()
     if not client or not is_available():
-        return 0
+        return len(mem_keys)
 
     try:
         keys = client.keys(pattern)
         if keys:
             count = client.delete(*keys)
             logger.debug(f"Cache INVALIDATE pattern '{pattern}': {count} keys")
-            return count
-        return 0
+            return count + len(mem_keys)
+        return len(mem_keys)
     except RedisOperationError as e:
         _cache_stats["errors"] += 1
         logger.warning(f"Cache INVALIDATE pattern failed for {pattern}: {e}")
-        return 0
+        return len(mem_keys)
 
 
 def cache_stats() -> Dict[str, int]:

@@ -14,36 +14,36 @@ git submodule update --init --recursive
 
 ## Features
 
-- **REST API**: Comprehensive FastAPI-based API for all messaging features.
-- **Real-time Gateway**: WebSocket-based event delivery system.
+- **REST API**: Comprehensive FastAPI-based API for all messaging features
+- **Real-time Gateway**: WebSocket-based event delivery system
 - **Advanced Messaging**:
-  - Direct messaging, group chats, and server channels.
-  - **Thread Support**: Organize conversations within channels.
-  - Reactions, pinned messages, and rich embeds.
-  - System messages for audit and automation.
+  - Direct messaging, group chats, and server channels
+  - Thread support for organized conversations
+  - Reactions, pinned messages, and rich embeds
+  - System messages for audit and automation
 - **Identity & Security**:
-  - User authentication with 2FA (TOTP) support.
-  - Multi-session management and device tracking.
-  - **Hardened Security**: Argon2id password hashing and Blind Indexing for private data.
-  - **Zero-friction At-Rest Encryption**: Automatic server-side encryption for messages.
-  - **Local QR Generation**: Privacy-focused QR code generation without external services.
+  - User authentication with 2FA (TOTP) support
+  - Multi-session management and device tracking
+  - Hardened security with Argon2id password hashing and blind indexing
+  - Zero-friction at-rest encryption for messages
+  - Local QR code generation for privacy
 - **Community Management**:
-  - Flexible server and channel hierarchies.
-  - Powerful role-based access control (RBAC) with granular permissions.
-  - Audit logging for server moderation.
+  - Flexible server and channel hierarchies
+  - Role-based access control (RBAC) with granular permissions
+  - Audit logging for server moderation
 - **Media & Content**:
-  - File attachments and media uploads with S3/MinIO support.
-  - User avatars and server icons.
-  - **Auto-moderation**: Built-in rules for content filtering (caps, spam, etc.).
+  - File attachments and media uploads with S3/MinIO support
+  - User avatars and server icons
+  - Auto-moderation with built-in content filtering
 - **Voice & Video**:
-  - High-performance WebRTC signaling via Mediasoup or Janus.
-  - Stage channels with speaker management.
-  - Screen sharing and video call support.
+  - High-performance WebRTC signaling via Mediasoup or Janus
+  - Stage channels with speaker management
+  - Screen sharing and video call support
 - **Reliability & Maintenance**:
-  - **Self-Test System**: Automated internal API validation.
-  - Integrated telemetry for performance monitoring.
-  - Flexible database support (SQLite/PostgreSQL) with automatic migrations.
-  - Redis integration for distributed caching.
+  - Self-test system for automated API validation
+  - Integrated telemetry for performance monitoring
+  - Flexible database support (SQLite/PostgreSQL) with automatic migrations
+  - Redis integration for distributed caching
 
 ## Quick Start
 
@@ -69,7 +69,8 @@ The server will:
 - Store data in `~/.plexichat/` (home folder)
 - Start on `http://localhost:8000`
 - API available at `http://localhost:8000/api/v1`
-- Docs at `http://localhost:8000/docs`
+- Interactive docs at `http://localhost:8000/docs`
+- Alternative docs at `http://localhost:8000/redoc`
 
 ## Configuration
 
@@ -100,7 +101,7 @@ docs:
   title: PlexiChat API Documentation
 ```
 
-See the root README.md for full configuration options.
+See `gemini.md` for full configuration and deployment options.
 
 ## Project Structure
 
@@ -200,10 +201,8 @@ make test
 
 ### Documentation
 
-- **Quick Reference**: [TESTING_QUICK_REFERENCE.md](TESTING_QUICK_REFERENCE.md)
 - **Comprehensive Guide**: [docs/TESTING.md](docs/TESTING.md)
 - **Test Suite Details**: [src/tests/README.md](src/tests/README.md)
-- **Implementation Summary**: [TEST_VERIFICATION_SUMMARY.md](TEST_VERIFICATION_SUMMARY.md)
 
 ## Version
 

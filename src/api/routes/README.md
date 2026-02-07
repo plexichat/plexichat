@@ -15,11 +15,11 @@ Each file contains routes for a specific resource domain:
 | `messages.py` | `/channels/{id}/messages` | Messaging |
 | `reactions.py` | `/channels/{id}/messages/{id}/reactions` | Message reactions |
 | `relationships.py` | `/relationships` | Friends and blocks |
-| `presence.py` | `/users` | User presence/status |
+| `presence.py` | `/users/@me/presence`, `/users/{id}/presence` | User presence/status |
 | `webhooks.py` | `/webhooks` | Webhook management |
 | `avatars.py` | `/avatars` | Avatar and icon management |
 | `emojis.py` | `/servers/{id}/emojis` | Custom emoji |
-| `settings.py` | `/settings` | User settings sync |
+| `settings.py` | `/users/@me/settings` | User settings sync |
 | `features.py` | `/admin`, `/users/@me/features` | User features/badges |
 | `health.py` | `/health` | Health check |
 | `version.py` | `/version`, `/status` | Version and status |
@@ -29,8 +29,10 @@ Each file contains routes for a specific resource domain:
 | `admin.py` | `/admin` | Admin endpoints |
 | `feedback.py` | `/feedback` | User feedback |
 | `telemetry.py` | `/telemetry` | Client telemetry |
-| `notifications.py` | `/notifications` | Push notifications |
+| `notifications.py` | `/users/@me/notifications` | Push notifications |
 | `voice.py` | `/voice` | Voice channel signaling |
+| `reports.py` | `/reports` | User reports |
+| `help.py` | `/help` | Help system |
 
 ## Route Pattern
 
