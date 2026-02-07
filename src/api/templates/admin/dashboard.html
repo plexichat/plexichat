@@ -338,14 +338,27 @@
                     <div style="flex:1;">
                         <h2 id="user-display-name"></h2>
                         <p id="user-display-id" style="color:#666; font-family:monospace; font-size:0.8rem;"></p>
+                        
                         <div class="grid grid-2" style="margin-top:1.5rem;">
                             <div>
                                 <label style="font-size:0.7rem; font-weight:800; color:#555;">TIER</label>
                                 <div style="display:flex;gap:0.5rem;margin-top:0.25rem;"><select id="user-tier-select" style="flex:1;"><option value="free">Free</option><option value="alpha">Alpha</option><option value="beta">Beta</option><option value="premium">Premium</option><option value="staff">Staff</option></select><button class="btn btn-primary" data-click="updateUserTier">Set</button></div>
+                                
+                                <label style="font-size:0.7rem; font-weight:800; color:#555; margin-top:1rem; display:block;">BADGES</label>
+                                <div id="user-badges-list" style="display:flex;flex-wrap:wrap;gap:0.25rem;margin-top:0.25rem;margin-bottom:0.5rem;"></div>
+                                <div style="display:flex;gap:0.5rem;"><input type="text" id="new-badge-input" placeholder="Badge code" style="flex:1;"><button class="btn btn-secondary btn-sm" data-click="addUserBadge">Add</button></div>
                             </div>
                             <div>
                                 <label style="font-size:0.7rem; font-weight:800; color:#555;">ACTIONS</label>
-                                <div style="display:flex;gap:0.5rem;margin-top:0.25rem;"><button class="btn btn-secondary" data-click="killUserSessions">Kill Sessions</button><button class="btn btn-danger" id="suspend-btn" data-click="suspendUser">Suspend</button></div>
+                                <div style="display:flex;gap:0.5rem;margin-top:0.25rem;flex-wrap:wrap;">
+                                    <button class="btn btn-secondary" data-click="killUserSessions">Kill Sessions</button>
+                                    <button class="btn btn-danger" id="suspend-btn" data-click="suspendUser">Suspend</button>
+                                    <button class="btn btn-outline" data-click="forceUserRename">Force Rename</button>
+                                </div>
+                                
+                                <label style="font-size:0.7rem; font-weight:800; color:#555; margin-top:1rem; display:block;">NOTES</label>
+                                <textarea id="user-notes-input" rows="3" style="width:100%;margin-top:0.25rem;resize:vertical;" placeholder="Internal user notes..."></textarea>
+                                <button class="btn btn-primary btn-sm" style="margin-top:0.5rem;" data-click="saveUserNotes">Save Notes</button>
                             </div>
                         </div>
                     </div>
@@ -364,6 +377,11 @@
                     <h3>Username Blacklist</h3>
                     <div style="display:flex;gap:0.5rem;margin:1rem 0;"><input type="text" id="ban-username-val" placeholder="Pattern (e.g. admin*)" style="flex:1;"><button class="btn btn-danger" data-click="addBannedUsername">Ban Pattern</button></div>
                     <table><thead><tr><th>Pattern</th><th>Reason</th><th>Action</th></tr></thead><tbody id="banned-usernames-tbody"></tbody></table>
+                </div>
+                <div class="card" style="grid-column: span 2;">
+                    <h3>System Actions</h3>
+                    <p style="color:#888;font-size:0.8rem;margin:0.5rem 0;">Dangerous system-wide operations.</p>
+                    <button class="btn btn-danger" data-click="globalSessionPurge">PURGE ALL SESSIONS</button>
                 </div>
             </div>
         </div>
@@ -584,16 +602,36 @@
 
         async function manageUser(id) {
             try {
-                const u = await api(`/api/v1/admin/users/${id}`);
+                const [u, notes] = await Promise.all([
+                    api(`/api/v1/admin/users/${id}`),
+                    api(`/api/v1/admin/users/${id}/notes`)
+                ]);
                 selectedUserId = id;
                 document.getElementById('user-display-name').textContent = u.username;
                 document.getElementById('user-display-id').textContent = `ID: ${u.id}`;
                 document.getElementById('user-avatar-large').src = `/api/v1/avatars/users/${u.id}`;
                 document.getElementById('user-tier-select').value = u.tier;
                 document.getElementById('suspend-btn').textContent = u.account_locked ? 'Unlock' : 'Suspend';
+                
+                // Render badges
+                renderBadges(u.badges);
+                
+                // Load notes
+                document.getElementById('user-notes-input').value = notes.notes || '';
+                
                 document.getElementById('user-manage').classList.remove('hidden');
                 document.getElementById('user-manage').scrollIntoView({ behavior: 'smooth' });
             } catch (e) { alert('Failed to load user data'); }
+        }
+
+        function renderBadges(badges) {
+            const list = document.getElementById('user-badges-list');
+            list.innerHTML = (badges || []).map(b => `
+                <span class="badge" style="background:var(--accent); color:white; display:flex; align-items:center; gap:0.3rem; padding: 0.3rem 0.6rem;">
+                    ${b}
+                    <span style="cursor:pointer; font-size:1.1rem; line-height:1;" data-click="removeUserBadge" data-val="${b}">×</span>
+                </span>
+            `).join('');
         }
 
         async function loadSecurity() {
@@ -677,10 +715,38 @@
                 api(`/api/v1/admin/users/${selectedUserId}/tier`, { method: 'PUT', body: JSON.stringify({tier}) }).then(() => alert('Tier updated'));
             }
             else if (a === 'suspendUser') {
-                api(`/api/v1/admin/users/${selectedUserId}/lock`, { method: 'POST', body: JSON.stringify({user_id: selectedUserId}) }).then(() => manageUser(selectedUserId));
+                const isLocked = el.textContent === 'Unlock';
+                const endpoint = isLocked ? '/api/v1/admin/security/unlock-user' : '/api/v1/admin/security/lock-user';
+                const body = isLocked ? {user_id: selectedUserId} : {user_id: selectedUserId, duration_seconds: 315360000};
+                api(endpoint, { method: 'POST', body: JSON.stringify(body) }).then(() => manageUser(selectedUserId));
             }
             else if (a === 'killUserSessions') {
-                api(`/api/v1/admin/security/logout-all`, { method: 'POST', body: JSON.stringify({user_id: selectedUserId}) }).then(() => alert('Sessions cleared'));
+                api(`/api/v1/admin/security/force-logout`, { method: 'POST', body: JSON.stringify({user_id: selectedUserId}) }).then(() => alert('Sessions cleared'));
+            }
+            else if (a === 'forceUserRename') {
+                if (!confirm('Force this user to change their username?')) return;
+                api(`/api/v1/admin/users/${selectedUserId}/force-username-change`, { method: 'POST', body: JSON.stringify({ban_current: true, reason: 'Admin forced rename'}) }).then(() => alert('User will be forced to rename on next visit'));
+            }
+            else if (a === 'saveUserNotes') {
+                const notes = document.getElementById('user-notes-input').value;
+                api(`/api/v1/admin/users/${selectedUserId}/notes`, { method: 'POST', body: JSON.stringify({notes}) }).then(() => alert('Notes saved'));
+            }
+            else if (a === 'addUserBadge') {
+                const badge = document.getElementById('new-badge-input').value;
+                if (!badge) return;
+                api(`/api/v1/admin/users/${selectedUserId}/badges/${badge}`, { method: 'POST' }).then(r => {
+                    document.getElementById('new-badge-input').value = '';
+                    renderBadges(r.badges);
+                });
+            }
+            else if (a === 'removeUserBadge') {
+                api(`/api/v1/admin/users/${selectedUserId}/badges/${val}`, { method: 'DELETE' }).then(r => {
+                    renderBadges(r.badges);
+                });
+            }
+            else if (a === 'globalSessionPurge') {
+                if (!confirm('REALLY logout EVERY single user? This will clear all active sessions across the entire platform.')) return;
+                api(`/api/v1/admin/security/logout-all`, { method: 'POST' }).then(() => alert('Global session purge complete'));
             }
             else if (a === 'blockIP') {
                 const ip = document.getElementById('block-ip-val').value;
