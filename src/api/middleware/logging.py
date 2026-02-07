@@ -179,9 +179,16 @@ class LoggingMiddleware:
                             db = api.get_db()
                             db_metrics = db.get_request_metrics() if db else {"query_count": 0, "query_time_ms": 0.0}
                             
+                            # Try to get normalized path (route template)
+                            telemetry_path = path
+                            if "route" in scope:
+                                route = scope["route"]
+                                if hasattr(route, "path"):
+                                    telemetry_path = route.path
+
                             await run_in_threadpool(
                                 _submit_server_telemetry, 
-                                path, method, duration_ms, status_code,
+                                telemetry_path, method, duration_ms, status_code,
                                 db_metrics["query_count"],
                                 db_metrics["query_time_ms"]
                             )

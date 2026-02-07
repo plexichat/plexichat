@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PlexiChat Admin Dashboard</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%230066ff'/><text x='50' y='70' font-family='sans-serif' font-weight='900' font-size='60' text-anchor='middle' fill='white'>P</text></svg>">
     <script src="https://cdn.jsdelivr.net/npm/chart.js" nonce="{{ csp_nonce }}"></script>
     <style>
         :root {
@@ -288,6 +288,7 @@
                     <div style="display: flex; gap: 0.75rem; align-items: center;">
                         <input type="text" id="endpoint-filter" placeholder="Filter endpoints...">
                         <select id="metric-hours"><option value="1">1 Hour</option><option value="24" selected>24 Hours</option><option value="168">7 Days</option></select>
+                        <button class="btn btn-secondary" data-click="openExport">Export</button>
                     </div>
                 </div>
                 <table>
@@ -377,6 +378,21 @@
                 <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-top:1rem;"><button class="btn btn-outline" data-click="scrollLogTop">Top</button><button class="btn btn-outline" data-click="scrollLogBottom">Bottom</button></div>
             </div>
         </div>
+
+        <!-- Export Modal -->
+        <div id="export-modal" class="card hidden" style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:1000;width:400px;box-shadow:0 10px 30px rgba(0,0,0,0.5);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+                <h3>Export Telemetry</h3>
+                <button class="btn btn-outline btn-sm" data-click="closeExport">✕</button>
+            </div>
+            <p style="color:#888;font-size:0.8rem;margin-bottom:1rem;">Select a format to export the current telemetry data.</p>
+            <div class="grid" style="margin-bottom:1rem;">
+                <button class="btn btn-secondary" data-click="doExport" data-fmt="json">JSON Data</button>
+                <button class="btn btn-secondary" data-click="doExport" data-fmt="csv">CSV Spreadsheet</button>
+                <button class="btn btn-secondary" data-click="doExport" data-fmt="txt">Plain Text Report</button>
+                <button class="btn btn-secondary" data-click="doExport" data-fmt="copy">Copy to Clipboard</button>
+            </div>
+        </div>
     </div>
 
     <script nonce="{{ csp_nonce }}">
@@ -433,7 +449,7 @@
         function renderEndpointTable() {
             const f = document.getElementById('endpoint-filter').value.toLowerCase();
             const filtered = metricData.filter(s => s.endpoint.toLowerCase().includes(f));
-            document.getElementById('endpoints-tbody').innerHTML = filtered.slice(0, 20).map(s => `
+            document.getElementById('endpoints-tbody').innerHTML = filtered.map(s => `
                 <tr>
                     <td style="font-family:monospace; color:var(--line-primary); font-weight:700;">${s.endpoint}</td>
                     <td><span class="badge" style="background:#222;color:#888;">${s.method}</span></td>
@@ -457,11 +473,11 @@
                 plugins: { legend: { display: false } }, 
                 scales: { 
                     x: { 
-                        display: true, // X Axis enabled
-                        grid: { color: '#1a1a1a' }, 
-                        ticks: { color: '#555', font: { size: 8 } } 
+                        display: true, 
+                        grid: { color: '#333' }, 
+                        ticks: { color: '#999', font: { size: 9 } } 
                     }, 
-                    y: { grid: { color: '#1a1a1a' }, ticks: { color: '#555', font: { size: 9 } } } 
+                    y: { grid: { color: '#333' }, ticks: { color: '#999', font: { size: 10 } } } 
                 } 
             };
             
@@ -489,7 +505,7 @@
         function updateHist(id, metrics) {
             if (!historicalData[id]) historicalData[id] = { labels: Array(60).fill(''), datasets: metrics.map(m => ({ data: Array(60).fill(0), borderColor: m.col, tension: 0.4, pointRadius: 0, borderWidth: 2 }))};
             metrics.forEach((m, i) => { historicalData[id].datasets[i].data.push(m.val); historicalData[id].datasets[i].data.shift(); });
-            renderChart(id, 'line', historicalData[id], { responsive: true, maintainAspectRatio: false, animation: false, plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { grid: { color: '#1a1a1a' }, ticks: { color: '#555', font: { size: 8 } } } } });
+            renderChart(id, 'line', historicalData[id], { responsive: true, maintainAspectRatio: false, animation: false, plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { grid: { color: '#333' }, ticks: { color: '#999', font: { size: 9 } } } } });
         }
 
         async function loadTickets() {
@@ -633,6 +649,19 @@
             }
             else if (a === 'scrollLogTop') document.getElementById('log-viewer').scrollTop = 0;
             else if (a === 'scrollLogBottom') document.getElementById('log-viewer').scrollTop = 1e9;
+            else if (a === 'openExport') document.getElementById('export-modal').classList.remove('hidden');
+            else if (a === 'closeExport') document.getElementById('export-modal').classList.add('hidden');
+            else if (a === 'doExport') {
+                const fmt = el.dataset.fmt;
+                const hrs = document.getElementById('metric-hours').value;
+                if (fmt === 'copy') {
+                    const text = metricData.map(s => `${s.endpoint}\t${s.method}\t${s.count}\t${s.avg_ms}ms`).join('\n');
+                    navigator.clipboard.writeText(text).then(() => alert('Copied to clipboard'));
+                } else {
+                    window.location.href = `/api/v1/admin/telemetry/export?hours=${hrs}&format=${fmt}&Authorization=${token}`;
+                }
+                document.getElementById('export-modal').classList.add('hidden');
+            }
         });
 
         // Enter Key Support
