@@ -24,6 +24,8 @@
             --pg-orange: #ff9900;
             --pg-green: #00cc66;
             --pg-red: #ff3333;
+            --pg-purple: #9933ff;
+            --pg-cyan: #00cccc;
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -49,7 +51,7 @@
         }
 
         .container {
-            max-width: 1600px;
+            max-width: 1800px;
             margin: 0 auto;
             padding: 1rem;
         }
@@ -121,7 +123,7 @@
         /* Metrics Specific Styles */
         .metrics-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(480px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
             gap: 1rem;
         }
 
@@ -130,11 +132,11 @@
             border: 1px solid var(--border);
             display: flex;
             flex-direction: column;
-            height: 320px;
+            height: 300px;
         }
 
         .tile-header {
-            padding: 0.5rem 0.75rem;
+            padding: 0.4rem 0.75rem;
             background: #252525;
             border-bottom: 1px solid var(--border);
             display: flex;
@@ -143,7 +145,7 @@
         }
 
         .tile-title {
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             font-weight: bold;
             text-transform: uppercase;
             color: var(--text-dim);
@@ -152,7 +154,7 @@
 
         .tile-body {
             flex: 1;
-            padding: 0.75rem;
+            padding: 0.5rem;
             position: relative;
             background: var(--chart-bg);
         }
@@ -211,7 +213,7 @@
         <div style="display: flex; align-items: center; gap: 1rem;">
             <div style="background: var(--accent); width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-weight: bold; color: white; border-radius: 2px;">P</div>
             <h1 style="color: var(--text); font-size: 1rem; font-weight: 600;">Plexichat Management</h1>
-            <span id="server-version" style="font-size: 0.7rem; background: #333; padding: 2px 6px; border-radius: 10px; color: var(--text-dim);">v1.0.0</span>
+            <span id="server-version" style="font-size: 0.7rem; background: #333; padding: 2px 8px; border-radius: 10px; color: var(--accent); font-weight: bold; font-family: monospace;">...</span>
         </div>
         <div style="display: flex; gap: 1rem; align-items: center;">
             <div id="connection-status" style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.7rem; color: var(--good);">
@@ -308,10 +310,10 @@
 
                     <div class="metric-tile">
                         <div class="tile-header">
-                            <span class="tile-title">System Resources (%)</span>
+                            <span class="tile-title">System CPU & Disk (%)</span>
                             <div style="display: flex; gap: 0.5rem;">
                                 <div style="display: flex; align-items: center; gap: 0.25rem; font-size: 0.6rem; color: var(--pg-blue);"><div style="width:8px;height:2px;background:var(--pg-blue);"></div> CPU</div>
-                                <div style="display: flex; align-items: center; gap: 0.25rem; font-size: 0.6rem; color: var(--pg-orange);"><div style="width:8px;height:2px;background:var(--pg-orange);"></div> RAM</div>
+                                <div style="display: flex; align-items: center; gap: 0.25rem; font-size: 0.6rem; color: var(--pg-purple);"><div style="width:8px;height:2px;background:var(--pg-purple);"></div> DISK</div>
                             </div>
                         </div>
                         <div class="tile-body"><canvas id="chart-sys-res"></canvas></div>
@@ -321,8 +323,8 @@
                         <div class="tile-header">
                             <span class="tile-title">Database Performance (Avg)</span>
                             <div style="display: flex; gap: 0.5rem;">
-                                <div style="display: flex; align-items: center; gap: 0.25rem; font-size: 0.6rem; color: var(--pg-blue);"><div style="width:8px;height:2px;background:var(--pg-blue);"></div> QUERIES/REQ</div>
-                                <div style="display: flex; align-items: center; gap: 0.25rem; font-size: 0.6rem; color: var(--pg-orange);"><div style="width:8px;height:2px;background:var(--pg-orange);"></div> TIME (ms)</div>
+                                <div style="display: flex; align-items: center; gap: 0.25rem; font-size: 0.6rem; color: var(--pg-blue);"><div style="width:8px;height:2px;background:var(--pg-blue);"></div> Q/REQ</div>
+                                <div style="display: flex; align-items: center; gap: 0.25rem; font-size: 0.6rem; color: var(--pg-orange);"><div style="width:8px;height:2px;background:var(--pg-orange);"></div> TIME</div>
                             </div>
                         </div>
                         <div class="tile-body"><canvas id="chart-db-perf"></canvas></div>
@@ -330,22 +332,37 @@
 
                     <div class="metric-tile">
                         <div class="tile-header">
-                            <span class="tile-title">Memory & Threads</span>
+                            <span class="tile-title">Process Resource Usage</span>
                             <div style="display: flex; gap: 0.5rem;">
-                                <div style="display: flex; align-items: center; gap: 0.25rem; font-size: 0.6rem; color: var(--pg-green);"><div style="width:8px;height:2px;background:var(--pg-green);"></div> RSS (MB)</div>
-                                <div style="display: flex; align-items: center; gap: 0.25rem; font-size: 0.6rem; color: var(--pg-blue);"><div style="width:8px;height:2px;background:var(--pg-blue);"></div> THREADS</div>
+                                <div style="display: flex; align-items: center; gap: 0.25rem; font-size: 0.6rem; color: var(--pg-green);"><div style="width:8px;height:2px;background:var(--pg-green);"></div> MB</div>
+                                <div style="display: flex; align-items: center; gap: 0.25rem; font-size: 0.6rem; color: var(--pg-cyan);"><div style="width:8px;height:2px;background:var(--pg-cyan);"></div> THREADS</div>
                             </div>
                         </div>
                         <div class="tile-body"><canvas id="chart-process"></canvas></div>
+                    </div>
+
+                    <!-- New Graphs -->
+                    <div class="metric-tile">
+                        <div class="tile-header">
+                            <span class="tile-title">Error Rate Trend (%)</span>
+                        </div>
+                        <div class="tile-body"><canvas id="chart-errors"></canvas></div>
+                    </div>
+
+                    <div class="metric-tile">
+                        <div class="tile-header">
+                            <span class="tile-title">Request Status Distribution</span>
+                        </div>
+                        <div class="tile-body"><canvas id="chart-status-dist"></canvas></div>
                     </div>
                 </div>
 
                 <!-- Granular Endpoint Analysis Table -->
                 <div class="card" style="margin-top: 1rem; border-radius: 2px;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-                        <h3 style="font-size: 0.8rem; font-weight: bold; text-transform: uppercase; color: var(--text-dim);">Endpoint Latency Analysis</h3>
+                        <h3 style="font-size: 0.8rem; font-weight: bold; text-transform: uppercase; color: var(--text-dim);">Endpoint Performance Analysis</h3>
                         <div style="display: flex; gap: 0.5rem; align-items: center;">
-                            <input type="text" id="endpoint-filter" placeholder="Filter endpoints..." style="width: 250px; height: 28px;">
+                            <input type="text" id="endpoint-filter" placeholder="Search endpoints (Enter to filter)..." style="width: 250px; height: 28px;">
                             <select id="metric-hours" style="height: 28px; width: auto;" data-change="refreshMetrics">
                                 <option value="1">1 Hour</option>
                                 <option value="24" selected>24 Hours</option>
@@ -409,7 +426,7 @@
                             <h3>Internal Notes</h3>
                             <div id="ticket-notes-list" style="margin: 1rem 0; display: flex; flex-direction: column; gap: 0.5rem;"></div>
                             <div style="display: flex; gap: 0.5rem;">
-                                <input type="text" id="new-note-input" placeholder="Add internal note...">
+                                <input type="text" id="new-note-input" placeholder="Add internal note (Enter to send)...">
                                 <button class="btn btn-secondary" data-click="addTicketNote">Add</button>
                             </div>
                         </div>
@@ -423,7 +440,7 @@
                 <div class="card">
                     <h3>User Search</h3>
                     <div style="display: flex; gap: 1rem; margin-top: 1rem;">
-                        <input type="text" id="user-search-input" placeholder="Enter username or snowflake ID...">
+                        <input type="text" id="user-search-input" placeholder="Username or snowflake ID (Enter to search)...">
                         <button class="btn btn-primary" data-click="searchUsers">Search</button>
                     </div>
                     <div id="user-results" style="margin-top: 1.5rem;" class="table-container"></div>
@@ -433,7 +450,7 @@
                     <div style="display: flex; gap: 2rem; align-items: flex-start; flex-wrap: wrap;">
                         <div style="text-align: center;">
                             <div style="position: relative;">
-                                <img id="user-avatar-large" class="avatar-img" style="width: 120px; height: 120px; border-radius: 4px; margin-bottom: 1rem;" src="">
+                                <img id="user-avatar-large" class="avatar-img" style="width: 120px; height: 120px; border-radius: 4px; margin-bottom: 1rem; border: 1px solid var(--border);" src="">
                                 <div id="user-locked-overlay" class="hidden" style="position: absolute; top: 0; left: 0; width: 120px; height: 120px; background: rgba(255,0,0,0.3); display: flex; align-items: center; justify-content: center; border-radius: 4px;"><span style="background: var(--pg-red); color: white; padding: 2px 6px; font-size: 0.6rem; font-weight: bold;">LOCKED</span></div>
                             </div>
                             <button class="btn btn-outline" style="width: 100%;" data-click="resetUserAvatar">Reset Avatar</button>
@@ -500,7 +517,7 @@
                         <h3>IP Blocking</h3>
                         <p style="font-size: 0.75rem; color: var(--text-dim); margin-bottom: 1rem;">Ban specific IPs from accessing any part of the service.</p>
                         <div style="display: flex; gap: 0.5rem; margin-bottom: 1.5rem;">
-                            <input type="text" id="block-ip-val" placeholder="IP Address">
+                            <input type="text" id="block-ip-val" placeholder="IP Address (Enter to block)">
                             <button class="btn btn-danger" data-click="blockIP">Block IP</button>
                         </div>
                         <div class="table-container">
@@ -514,7 +531,7 @@
                         <h3>Name Blacklist</h3>
                         <p style="font-size: 0.75rem; color: var(--text-dim); margin-bottom: 1rem;">Prevent users from registering or using specific names.</p>
                         <div style="display: flex; gap: 0.5rem; margin-bottom: 1.5rem;">
-                            <input type="text" id="ban-username-val" placeholder="Username pattern...">
+                            <input type="text" id="ban-username-val" placeholder="Pattern (Enter to ban)">
                             <button class="btn btn-danger" data-click="addBannedUsername">Ban Name</button>
                         </div>
                         <div class="table-container">
@@ -559,8 +576,8 @@
                             <button class="btn btn-secondary btn-sm" data-click="refreshLogList">↻ Refresh List</button>
                         </div>
                         <div style="display: flex; gap: 0.5rem; align-items: center;">
-                            <input type="text" id="log-search" placeholder="Search logs..." style="width: 200px;">
-                            <select id="log-level-filter" style="width: auto;">
+                            <input type="text" id="log-search" placeholder="Search (Enter to filter)..." style="width: 200px;">
+                            <select id="log-level-filter" style="width: auto;" data-change="loadLogContent">
                                 <option value="">All Levels</option>
                                 <option value="DEBUG">DEBUG</option>
                                 <option value="INFO">INFO</option>
@@ -571,11 +588,10 @@
                             <label style="display: flex; align-items: center; gap: 0.25rem; cursor: pointer; font-size: 0.75rem; color: var(--text-dim);">
                                 <input type="checkbox" id="log-auto-refresh" style="width: auto;"> Auto
                             </label>
-                            <button class="btn btn-primary" data-click="loadLogContent">Apply</button>
                         </div>
                     </div>
                     
-                    <div id="log-viewer" style="background: #000; color: #aaa; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.75rem; padding: 1rem; border-radius: 2px; height: 600px; overflow-y: auto; white-space: pre-wrap; border: 1px solid var(--border); line-height: 1.4;">
+                    <div id="log-viewer" style="background: #000; color: #ddd; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.75rem; padding: 1rem; border-radius: 2px; height: 600px; overflow-y: auto; white-space: pre-wrap; border: 1px solid var(--border); line-height: 1.4;">
                         <div style="color: var(--text-dim); text-align: center; padding: 2rem;">Select a log file to view content...</div>
                     </div>
                     
@@ -665,6 +681,7 @@
         let metricData = [];
         let sortConfig = { key: 'count', dir: 'desc' };
         let refreshInterval = null;
+        const historicalData = {};
 
         // Core API Wrapper
         const api = async (path, options = {}) => {
@@ -731,7 +748,6 @@
         }
 
         function updateOverview(dash) {
-            // Update Overview Cards
             const totalHits = dash.telemetry.reduce((a, b) => a + b.count, 0);
             const reqPerSec = (totalHits / (24 * 3600)).toFixed(2);
             const avgLat = dash.telemetry.length > 0 ? 
@@ -744,7 +760,6 @@
             document.getElementById('stat-error-rate').textContent = errRate;
             document.getElementById('stat-sys-load').textContent = dash.system?.cpu_percent?.toFixed(1) || '0.0';
             
-            // Status colors
             document.getElementById('stat-error-rate').style.color = errRate > 5 ? 'var(--pg-red)' : (errRate > 1 ? 'var(--pg-orange)' : 'var(--pg-green)');
             document.getElementById('stat-avg-latency').style.color = avgLat > 500 ? 'var(--pg-red)' : (avgLat > 200 ? 'var(--pg-orange)' : 'var(--pg-green)');
         }
@@ -758,42 +773,42 @@
                 scales: {
                     x: { display: false, grid: { display: false } },
                     y: { 
-                        grid: { color: '#222' },
-                        ticks: { color: '#666', font: { size: 9 }, maxTicksLimit: 5 }
+                        grid: { color: '#252525' },
+                        ticks: { color: '#888', font: { size: 9 }, maxTicksLimit: 5 }
                     }
                 }
             };
 
-            // 1. TPS Chart (Requests vs Queries)
             const topEndpoints = stats.slice(0, 10);
             const labels = topEndpoints.map(s => s.endpoint.split('/').pop() || '/');
             
+            // 1. TPS
             renderChart('chart-tps', 'bar', {
                 labels,
                 datasets: [
-                    { label: 'Hits', data: topEndpoints.map(s => s.count), backgroundColor: 'rgba(51, 102, 255, 0.6)' },
-                    { label: 'Queries', data: topEndpoints.map(s => s.count * s.avg_queries), backgroundColor: 'rgba(255, 153, 0, 0.6)' }
+                    { label: 'Hits', data: topEndpoints.map(s => s.count), backgroundColor: 'rgba(51, 102, 255, 0.8)' },
+                    { label: 'Queries', data: topEndpoints.map(s => s.count * s.avg_queries), backgroundColor: 'rgba(255, 153, 0, 0.8)' }
                 ]
             }, chartOptions);
 
-            // 2. Latency Chart (Avg vs P95)
+            // 2. Latency
             renderChart('chart-latency', 'line', {
                 labels,
                 datasets: [
-                    { label: 'Avg', data: topEndpoints.map(s => s.avg_ms), borderColor: 'var(--pg-green)', tension: 0.3, pointRadius: 0 },
-                    { label: 'P95', data: topEndpoints.map(s => s.p95_ms), borderColor: 'var(--pg-red)', tension: 0.3, pointRadius: 0 }
+                    { label: 'Avg', data: topEndpoints.map(s => s.avg_ms), borderColor: 'var(--pg-green)', tension: 0.3, pointRadius: 0, borderWidth: 2 },
+                    { label: 'P95', data: topEndpoints.map(s => s.p95_ms), borderColor: 'var(--pg-red)', tension: 0.3, pointRadius: 0, borderWidth: 2 }
                 ]
             }, chartOptions);
 
-            // 3. System Resources
+            // 3. System
             if (dash.system) {
                 updateHistoricalChart('chart-sys-res', [
                     { label: 'CPU', val: dash.system.cpu_percent, color: 'var(--pg-blue)' },
-                    { label: 'RAM', val: dash.system.memory_percent, color: 'var(--pg-orange)' }
+                    { label: 'DISK', val: dash.system.disk_percent, color: 'var(--pg-purple)' }
                 ], 60);
             }
 
-            // 4. Database Performance (Avg Queries & Time)
+            // 4. DB Perf
             renderChart('chart-db-perf', 'bar', {
                 labels,
                 datasets: [
@@ -802,11 +817,11 @@
                 ]
             }, chartOptions);
 
-            // 5. Process Stats
+            // 5. Process
             if (dash.system) {
                 updateHistoricalChart('chart-process', [
                     { label: 'RSS', val: dash.system.process_memory_mb, color: 'var(--pg-green)' },
-                    { label: 'Threads', val: dash.system.thread_count, color: 'var(--pg-blue)' }
+                    { label: 'THREADS', val: dash.system.thread_count, color: 'var(--pg-cyan)' }
                 ], 60);
             }
 
@@ -818,6 +833,25 @@
                     { label: 'Total', val: db.total_connections, color: 'var(--pg-blue)' }
                 ], 60);
             }).catch(() => {});
+
+            // 7. Error Rate Trend
+            const avgErr = stats.length > 0 ? (stats.reduce((a,b)=>a+(b.error_rate*b.count),0) / stats.reduce((a,b)=>a+b.count,0)) : 0;
+            updateHistoricalChart('chart-errors', [{ label: 'Error%', val: avgErr, color: 'var(--pg-red)' }], 60);
+
+            // 8. Status Code Dist
+            const s2xx = stats.reduce((a,b)=>a + (b.error_rate === 0 ? b.count : 0), 0);
+            const sErr = stats.reduce((a,b)=>a + (b.error_rate > 0 ? (b.error_rate/100 * b.count) : 0), 0);
+            renderChart('chart-status-dist', 'doughnut', {
+                labels: ['Success', 'Errors'],
+                datasets: [{
+                    data: [s2xx, sErr],
+                    backgroundColor: ['rgba(0, 204, 102, 0.7)', 'rgba(255, 51, 51, 0.7)'],
+                    borderWidth: 0
+                }]
+            }, {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: true, position: 'bottom', labels: { color: '#888', boxWidth: 10, font: { size: 10 } } } }
+            });
         }
 
         function renderChart(id, type, data, options) {
@@ -826,11 +860,10 @@
             charts[id] = new Chart(ctx, { type, data, options });
         }
 
-        const historicalData = {};
         function updateHistoricalChart(id, metrics, maxPoints) {
             if (!historicalData[id]) {
                 historicalData[id] = { labels: Array(maxPoints).fill(''), datasets: metrics.map(m => ({
-                    label: m.label, data: Array(maxPoints).fill(0), borderColor: m.color, tension: 0.4, pointRadius: 0, borderWidth: 1.5
+                    label: m.label, data: Array(maxPoints).fill(0), borderColor: m.color, tension: 0.4, pointRadius: 0, borderWidth: 2
                 }))};
             }
             const data = historicalData[id];
@@ -841,26 +874,27 @@
             renderChart(id, 'line', data, {
                 responsive: true, maintainAspectRatio: false, animation: false,
                 plugins: { legend: { display: false } },
-                scales: { x: { display: false }, y: { grid: { color: '#222' }, ticks: { color: '#666', font: { size: 8 } } } }
+                scales: { 
+                    x: { display: false }, 
+                    y: { grid: { color: '#252525' }, ticks: { color: '#888', font: { size: 8 } } } 
+                }
             });
         }
 
         function renderEndpointTable() {
             const filter = document.getElementById('endpoint-filter').value.toLowerCase();
             const filtered = metricData.filter(s => s.endpoint.toLowerCase().includes(filter) || s.method.toLowerCase().includes(filter));
-            
             filtered.sort((a, b) => {
                 let vA = a[sortConfig.key], vB = b[sortConfig.key];
                 return sortConfig.dir === 'asc' ? (vA > vB ? 1 : -1) : (vA < vB ? 1 : -1);
             });
-
             document.querySelector('#endpoints-table tbody').innerHTML = filtered.map(s => `
                 <tr>
-                    <td style="font-family:monospace; color:var(--pg-blue);">${s.endpoint}</td>
-                    <td><span class="badge" style="background:#333; color:#aaa;">${s.method}</span></td>
+                    <td style="font-family:monospace; color:var(--pg-blue); font-size:0.75rem;">${s.endpoint}</td>
+                    <td><span class="badge" style="background:#222; color:#aaa; border:1px solid #333;">${s.method}</span></td>
                     <td style="font-weight:bold;">${s.count.toLocaleString()}</td>
                     <td style="color:${latencyColor(s.avg_ms)}">${s.avg_ms.toFixed(1)}ms</td>
-                    <td>${s.p95_ms.toFixed(1)}ms</td>
+                    <td style="color:${latencyColor(s.p95_ms)}">${s.p95_ms.toFixed(1)}ms</td>
                     <td style="color:var(--pg-orange);">${s.avg_queries.toFixed(1)}</td>
                     <td>${s.avg_query_time_ms.toFixed(1)}ms</td>
                     <td style="color:${s.error_rate > 1 ? 'var(--pg-red)' : 'var(--text-dim)'};">${s.error_rate.toFixed(1)}%</td>
@@ -870,152 +904,95 @@
 
         const latencyColor = (ms) => ms > 500 ? 'var(--pg-red)' : (ms > 200 ? 'var(--pg-orange)' : 'var(--pg-green)');
 
-        // --- Existing Handlers (Adapted) ---
+        // --- Core Handlers ---
         async function loadTickets() {
-            try {
-                const data = await api('/api/v1/admin/tickets?limit=20');
-                document.querySelector('#tickets-table tbody').innerHTML = data.map(t => `
-                    <tr>
-                        <td>#${t.id}</td>
-                        <td>${escapeHtml(t.username)}</td>
-                        <td>${t.category || '-'}</td>
-                        <td><span class="badge status ${t.status}" style="background:${statusColor(t.status)}">${t.status}</span></td>
-                        <td>${new Date(t.created_at).toLocaleString()}</td>
-                        <td><button class="btn btn-outline btn-sm" data-click="viewTicket" data-id="${t.id}">View</button></td>
-                    </tr>
-                `).join('') || '<tr><td colspan="6" style="text-align:center; padding:2rem; color:var(--text-dim)">No active support tickets.</td></tr>';
-            } catch (e) { showError(e.message); }
+            const data = await api('/api/v1/admin/tickets?limit=20');
+            document.querySelector('#tickets-table tbody').innerHTML = data.map(t => `<tr><td>#${t.id}</td><td>${escapeHtml(t.username)}</td><td>${t.category || '-'}</td><td><span class="badge" style="background:${statusColor(t.status)}">${t.status}</span></td><td>${new Date(t.created_at).toLocaleString()}</td><td><button class="btn btn-outline btn-sm" data-click="viewTicket" data-id="${t.id}">View</button></td></tr>`).join('') || '<tr><td colspan="6">None.</td></tr>';
         }
 
         const statusColor = (s) => ({ 'open': '#f59e0b', 'in_progress': '#3b82f6', 'resolved': '#10b981', 'closed': '#64748b' }[s] || '#334155');
 
         async function viewTicket(id) {
             selectedTicketId = id;
-            try {
-                const t = await api(`/api/v1/admin/tickets/${id}`);
-                document.getElementById('view-ticket-title').textContent = `Ticket #${t.id}`;
-                document.getElementById('view-ticket-content').textContent = t.content;
-                document.getElementById('ticket-view').classList.remove('hidden');
-                document.getElementById('ticket-view').scrollIntoView({ behavior: 'smooth' });
-                const sel = document.getElementById('ticket-status-select');
-                sel.innerHTML = ['open', 'in_progress', 'resolved', 'closed'].map(s => `<option value="${s}" ${t.status === s ? 'selected' : ''}>${s.toUpperCase()}</option>`).join('');
-                loadTicketNotes(id);
-            } catch (e) { alert(e.message); }
+            const t = await api(`/api/v1/admin/tickets/${id}`);
+            document.getElementById('view-ticket-title').textContent = `Ticket #${t.id}`;
+            document.getElementById('view-ticket-content').textContent = t.content;
+            document.getElementById('ticket-view').classList.remove('hidden');
+            document.getElementById('ticket-view').scrollIntoView({ behavior: 'smooth' });
+            const sel = document.getElementById('ticket-status-select');
+            sel.innerHTML = ['open', 'in_progress', 'resolved', 'closed'].map(s => `<option value="${s}" ${t.status === s ? 'selected' : ''}>${s.toUpperCase()}</option>`).join('');
+            loadTicketNotes(id);
         }
 
         async function loadTicketNotes(id) {
             const notes = await api(`/api/v1/admin/tickets/${id}/notes`);
-            document.getElementById('ticket-notes-list').innerHTML = notes.map(n => `
-                <div style="background:rgba(255,255,255,0.02); padding:0.75rem; border-radius:2px; border-left:2px solid var(--accent); margin-bottom:0.5rem;">
-                    <div style="display:flex; justify-content:space-between; font-size:0.65rem; color:var(--text-dim); margin-bottom:0.25rem;">
-                        <span>${escapeHtml(n.admin_username)}</span>
-                        <span>${new Date(n.created_at).toLocaleString()}</span>
-                    </div>
-                    <div style="font-size:0.8rem;">${escapeHtml(n.content)}</div>
-                </div>
-            `).join('') || '<p style="color:var(--text-dim); font-size:0.75rem; font-style:italic;">No internal notes.</p>';
+            document.getElementById('ticket-notes-list').innerHTML = notes.map(n => `<div style="background:rgba(255,255,255,0.02); padding:0.75rem; border-radius:2px; border-left:2px solid var(--accent); margin-bottom:0.5rem;"><div style="display:flex; justify-content:space-between; font-size:0.65rem; color:var(--text-dim); margin-bottom:0.25rem;"><span>${escapeHtml(n.admin_username)}</span><span>${new Date(n.created_at).toLocaleString()}</span></div><div style="font-size:0.8rem;">${escapeHtml(n.content)}</div></div>`).join('') || '<p style="color:var(--text-dim); font-size:0.75rem;">No notes.</p>';
         }
 
         async function updateTicketStatus() {
             const status = document.getElementById('ticket-status-select').value;
-            try {
-                await api(`/api/v1/admin/tickets/${selectedTicketId}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
-                loadTickets();
-            } catch (e) { alert(e.message); }
+            await api(`/api/v1/admin/tickets/${selectedTicketId}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
+            loadTickets();
         }
 
         async function addTicketNote() {
             const content = document.getElementById('new-note-input').value.trim();
             if (!content) return;
-            try {
-                await api(`/api/v1/admin/tickets/${selectedTicketId}/notes`, { method: 'POST', body: JSON.stringify({ content }) });
-                document.getElementById('new-note-input').value = '';
-                loadTicketNotes(selectedTicketId);
-            } catch (e) { alert(e.message); }
+            await api(`/api/v1/admin/tickets/${selectedTicketId}/notes`, { method: 'POST', body: JSON.stringify({ content }) });
+            document.getElementById('new-note-input').value = '';
+            loadTicketNotes(selectedTicketId);
         }
 
         async function searchUsers() {
             const q = document.getElementById('user-search-input').value.trim();
             if (!q) return;
-            try {
-                const data = await api(`/api/v1/admin/users/search?q=${encodeURIComponent(q)}`);
-                document.getElementById('user-results').innerHTML = `
-                    <table>
-                        <thead><tr><th>Profile</th><th>Username</th><th>Snowflake ID</th><th>Tier</th><th>Actions</th></tr></thead>
-                        <tbody>
-                            ${data.users.map(u => `
-                                <tr>
-                                    <td><img src="/api/v1/avatars/users/${u.id}" class="avatar-img" style="border-radius:2px;width:32px;height:32px;" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%23222%22/><text y=%2250%25%22 x=%2250%25%22 font-family=%22sans-serif%22 font-size=%2240%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%23666%22>${u.username[0].toUpperCase()}</text></svg>'"></td>
-                                    <td><strong>${escapeHtml(u.username)}</strong></td>
-                                    <td style="font-family:monospace; color:var(--pg-blue)">${u.id}</td>
-                                    <td><span class="badge" style="background:#333; color:var(--pg-blue); border:1px solid var(--pg-blue)">${u.tier.toUpperCase()}</span></td>
-                                    <td><button class="btn btn-outline btn-sm" data-click="manageUser" data-id="${u.id}">Manage</button></td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                `;
-            } catch (e) { alert(e.message); }
+            const data = await api(`/api/v1/admin/users/search?q=${encodeURIComponent(q)}`);
+            document.getElementById('user-results').innerHTML = `<table><thead><tr><th>Profile</th><th>Username</th><th>Snowflake ID</th><th>Tier</th><th>Actions</th></tr></thead><tbody>${data.users.map(u => `<tr><td><img src="/api/v1/avatars/users/${u.id}" class="avatar-img" style="border-radius:2px;width:32px;height:32px;" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%23222%22/><text y=%2250%25%22 x=%2250%25%22 font-family=%22sans-serif%22 font-size=%2240%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%23666%22>${u.username[0].toUpperCase()}</text></svg>'"></td><td><strong>${escapeHtml(u.username)}</strong></td><td style="font-family:monospace; color:var(--pg-blue)">${u.id}</td><td><span class="badge" style="background:#222; color:var(--pg-blue); border:1px solid var(--pg-blue)">${u.tier.toUpperCase()}</span></td><td><button class="btn btn-outline btn-sm" data-click="manageUser" data-id="${u.id}">Manage</button></td></tr>`).join('')}</tbody></table>`;
         }
 
         async function manageUser(id) {
             selectedUserId = id;
-            try {
-                userData = await api(`/api/v1/admin/users/${id}`);
-                const notesData = await api(`/api/v1/admin/users/${id}/notes`);
-                document.getElementById('user-display-name').textContent = userData.username;
-                document.getElementById('user-display-id').textContent = `ID: ${userData.id}`;
-                document.getElementById('user-internal-notes').value = notesData.notes || '';
-                const avatarImg = document.getElementById('user-avatar-large');
-                avatarImg.src = `/api/v1/avatars/users/${id}?size=256&t=${Date.now()}`;
-                document.getElementById('user-tier-select').value = userData.tier;
-                document.getElementById('user-manage').classList.remove('hidden');
-                document.getElementById('user-manage').scrollIntoView({ behavior: 'smooth' });
-                document.getElementById('user-locked-overlay').classList.toggle('hidden', !userData.account_locked);
-                document.querySelector('.id-unlock-btn').classList.toggle('hidden', !userData.account_locked);
-                document.querySelector('.id-lock-btn').classList.toggle('hidden', userData.account_locked);
-                renderUserBadges(userData.badges);
-            } catch (e) { alert(e.message); }
+            userData = await api(`/api/v1/admin/users/${id}`);
+            const notesData = await api(`/api/v1/admin/users/${id}/notes`);
+            document.getElementById('user-display-name').textContent = userData.username;
+            document.getElementById('user-display-id').textContent = `ID: ${userData.id}`;
+            document.getElementById('user-internal-notes').value = notesData.notes || '';
+            document.getElementById('user-avatar-large').src = `/api/v1/avatars/users/${id}?size=256&t=${Date.now()}`;
+            document.getElementById('user-tier-select').value = userData.tier;
+            document.getElementById('user-manage').classList.remove('hidden');
+            document.getElementById('user-manage').scrollIntoView({ behavior: 'smooth' });
+            document.getElementById('user-locked-overlay').classList.toggle('hidden', !userData.account_locked);
+            document.querySelector('.id-unlock-btn').classList.toggle('hidden', !userData.account_locked);
+            document.querySelector('.id-lock-btn').classList.toggle('hidden', userData.account_locked);
+            renderUserBadges(userData.badges);
         }
 
         function renderUserBadges(badges) {
-            document.getElementById('user-badges-list').innerHTML = (badges || []).map(b => `
-                <span class="badge" style="background:var(--pg-blue); color:white; display:inline-flex; align-items:center; gap:0.25rem;">
-                    ${b} <span style="cursor:pointer; font-weight:bold; padding:0 2px" data-click="removeBadge" data-badge="${b}">×</span>
-                </span>
-            `).join('') || '<span style="color:var(--text-dim);font-size:0.75rem;">No badges.</span>';
+            document.getElementById('user-badges-list').innerHTML = (badges || []).map(b => `<span class="badge" style="background:var(--pg-blue); color:white; display:inline-flex; align-items:center; gap:0.25rem;">${b} <span style="cursor:pointer; font-weight:bold; padding:0 2px" data-click="removeBadge" data-badge="${b}">×</span></span>`).join('') || '<span style="color:var(--text-dim);font-size:0.75rem;">No badges.</span>';
         }
 
         async function addBadge() {
             const b = document.getElementById('add-badge-select').value;
-            try {
-                const data = await api(`/api/v1/admin/users/${selectedUserId}/badges/${b}`, { method: 'POST' });
-                renderUserBadges(data.badges);
-            } catch (e) { alert(e.message); }
+            const data = await api(`/api/v1/admin/users/${selectedUserId}/badges/${b}`, { method: 'POST' });
+            renderUserBadges(data.badges);
         }
 
         async function removeBadge(badge) {
             if (!confirm(`Remove badge "${badge}"?`)) return;
-            try {
-                const data = await api(`/api/v1/admin/users/${selectedUserId}/badges/${badge}`, { method: 'DELETE' });
-                renderUserBadges(data.badges);
-            } catch (e) { alert(e.message); }
+            const data = await api(`/api/v1/admin/users/${selectedUserId}/badges/${badge}`, { method: 'DELETE' });
+            renderUserBadges(data.badges);
         }
 
         async function updateUserTier() {
             const tier = document.getElementById('user-tier-select').value;
-            try {
-                await api(`/api/v1/admin/users/${selectedUserId}/tier`, { method: 'PUT', body: JSON.stringify({ tier }) });
-                alert('Tier updated');
-            } catch (e) { alert(e.message); }
+            await api(`/api/v1/admin/users/${selectedUserId}/tier`, { method: 'PUT', body: JSON.stringify({ tier }) });
+            alert('Tier updated');
         }
 
         async function saveUserNotes() {
             const notes = document.getElementById('user-internal-notes').value;
-            try {
-                await api(`/api/v1/admin/users/${selectedUserId}/notes`, { method: 'POST', body: JSON.stringify({ notes }) });
-                alert('Saved');
-            } catch (e) { alert(e.message); }
+            await api(`/api/v1/admin/users/${selectedUserId}/notes`, { method: 'POST', body: JSON.stringify({ notes }) });
+            alert('Saved');
         }
 
         async function forceUsernameChange() {
@@ -1028,12 +1005,10 @@
         async function confirmRename() {
             const ban = document.getElementById('ban-current-name-check').checked;
             const reason = document.getElementById('rename-reason').value.trim();
-            try {
-                await api(`/api/v1/admin/users/${selectedUserId}/force-username-change`, { method: 'POST', body: JSON.stringify({ ban_current: ban, reason }) });
-                alert('Success');
-                closeRenameModal();
-                manageUser(selectedUserId);
-            } catch (e) { alert(e.message); }
+            await api(`/api/v1/admin/users/${selectedUserId}/force-username-change`, { method: 'POST', body: JSON.stringify({ ban_current: ban, reason }) });
+            alert('Success');
+            closeRenameModal();
+            manageUser(selectedUserId);
         }
 
         async function suspendUser() {
@@ -1048,82 +1023,65 @@
                 else if (m[2] === 'd') sec = v * 86400;
                 else if (m[2] === 'w') sec = v * 604800;
             }
-            try {
-                await api(`/api/v1/admin/security/lock-user`, { method: 'POST', body: JSON.stringify({ user_id: String(selectedUserId), duration_seconds: sec }) });
-                manageUser(selectedUserId);
-            } catch (e) { alert(e.message); }
+            await api(`/api/v1/admin/security/lock-user`, { method: 'POST', body: JSON.stringify({ user_id: String(selectedUserId), duration_seconds: sec }) });
+            manageUser(selectedUserId);
         }
 
         async function unlockUserAction() {
-            try {
-                await api(`/api/v1/admin/security/unlock-user`, { method: 'POST', body: JSON.stringify({ user_id: String(selectedUserId) }) });
-                manageUser(selectedUserId);
-            } catch (e) { alert(e.message); }
+            await api(`/api/v1/admin/security/unlock-user`, { method: 'POST', body: JSON.stringify({ user_id: String(selectedUserId) }) });
+            manageUser(selectedUserId);
         }
 
         async function forceLogoutUserAction() {
             if (!confirm('Logout user from all devices?')) return;
-            try {
-                await api(`/api/v1/admin/security/force-logout`, { method: 'POST', body: JSON.stringify({ user_id: String(selectedUserId) }) });
-                alert('Sessions killed');
-            } catch (e) { alert(e.message); }
+            await api(`/api/v1/admin/security/force-logout`, { method: 'POST', body: JSON.stringify({ user_id: String(selectedUserId) }) });
+            alert('Sessions killed');
         }
 
-        // --- Security & Logs ---
         async function loadSecurity() {
-            try {
-                const [ips, banned] = await Promise.all([api('/api/v1/admin/security/blocked-ips'), api('/api/v1/admin/security/banned-usernames')]);
-                document.querySelector('#blocked-ips-table tbody').innerHTML = ips.map(ip => `<tr><td>${escapeHtml(ip.ip_address)}</td><td>${escapeHtml(ip.reason)}</td><td><button class="btn btn-outline btn-sm" data-click="unblockIP" data-ip="${ip.ip_address}">Unblock</button></td></tr>`).join('') || '<tr><td colspan="3">None.</td></tr>';
-                document.querySelector('#banned-usernames-table tbody').innerHTML = banned.map(b => `<tr><td>${escapeHtml(b.pattern)}</td><td>${escapeHtml(b.reason)}</td><td><button class="btn btn-outline btn-sm" data-click="unblockUsername" data-id="${b.id}">Remove</button></td></tr>`).join('') || '<tr><td colspan="3">None.</td></tr>';
-                loadHashReports();
-            } catch (e) {}
+            const [ips, banned] = await Promise.all([api('/api/v1/admin/security/blocked-ips'), api('/api/v1/admin/security/banned-usernames')]);
+            document.querySelector('#blocked-ips-table tbody').innerHTML = ips.map(ip => `<tr><td>${escapeHtml(ip.ip_address)}</td><td>${escapeHtml(ip.reason)}</td><td><button class="btn btn-outline btn-sm" data-click="unblockIP" data-ip="${ip.ip_address}">Unblock</button></td></tr>`).join('') || '<tr><td colspan="3">None.</td></tr>';
+            document.querySelector('#banned-usernames-table tbody').innerHTML = banned.map(b => `<tr><td>${escapeHtml(b.pattern)}</td><td>${escapeHtml(b.reason)}</td><td><button class="btn btn-outline btn-sm" data-click="unblockUsername" data-id="${b.id}">Remove</button></td></tr>`).join('') || '<tr><td colspan="3">None.</td></tr>';
+            loadHashReports();
         }
 
         async function loadHashReports() {
-            try {
-                const reports = await api('/api/v1/admin/hash-reports?limit=20');
-                document.querySelector('#hash-reports-table tbody').innerHTML = reports.map(r => `<tr><td style="font-family:monospace; color:var(--pg-blue)">${r.hash_value.substring(0,16)}...</td><td>${escapeHtml(r.reason)}</td><td>${escapeHtml(r.reporter_username)}</td><td><span class="badge" style="background:#333;">${r.status}</span></td><td><button class="btn btn-outline btn-sm" data-click="viewHashReport" data-id="${r.id}">View</button></td></tr>`).join('') || '<tr><td colspan="5">None.</td></tr>';
-            } catch (e) {}
+            const reports = await api('/api/v1/admin/hash-reports?limit=20');
+            document.querySelector('#hash-reports-table tbody').innerHTML = reports.map(r => `<tr><td style="font-family:monospace; color:var(--pg-blue)">${r.hash_value.substring(0,16)}...</td><td>${escapeHtml(r.reason)}</td><td>${escapeHtml(r.reporter_username)}</td><td><span class="badge" style="background:#333;">${r.status}</span></td><td><button class="btn btn-outline btn-sm" data-click="viewHashReport" data-id="${r.id}">View</button></td></tr>`).join('') || '<tr><td colspan="5">None.</td></tr>';
         }
 
         async function globalSessionPurge() {
             if (!confirm('URGENT: This will log out EVERY user on the platform. Are you absolutely sure?')) return;
-            try {
-                await api('/api/v1/admin/security/logout-all', { method: 'POST' });
-                alert('Logout initiated.');
-            } catch (e) { alert(e.message); }
+            await api('/api/v1/admin/security/logout-all', { method: 'POST' });
+            alert('Logout initiated.');
         }
 
         async function loadLogs() {
-            try {
-                const logs = await api('/api/v1/admin/logs');
-                const select = document.getElementById('log-file-select');
-                const currentVal = select.value;
-                select.innerHTML = logs.map(l => `<option value="${l.filename}" ${l.filename === currentVal ? 'selected' : ''}>${l.filename} (${(l.size / 1024).toFixed(1)} KB)</option>`).join('');
-                if (!currentVal && logs.length > 0) select.value = logs[0].filename;
-                loadLogContent();
-            } catch (e) {}
+            const logs = await api('/api/v1/admin/logs');
+            const select = document.getElementById('log-file-select');
+            const currentVal = select.value;
+            select.innerHTML = logs.map(l => `<option value="${l.filename}" ${l.filename === currentVal ? 'selected' : ''}>${l.filename} (${(l.size / 1024).toFixed(1)} KB)</option>`).join('');
+            if (!currentVal && logs.length > 0) select.value = logs[0].filename;
+            loadLogContent();
         }
 
         async function loadLogContent() {
             const filename = document.getElementById('log-file-select').value;
             if (!filename) return;
-            try {
-                const search = document.getElementById('log-search').value;
-                const level = document.getElementById('log-level-filter').value;
-                const query = new URLSearchParams({ limit: 2000 });
-                if (search) query.append('search', search);
-                if (level) query.append('level', level);
-                const data = await api(`/api/v1/admin/logs/${encodeURIComponent(filename)}?${query.toString()}`);
-                const viewer = document.getElementById('log-viewer');
-                viewer.innerHTML = data.lines.map(l => {
-                    let color = '#aaa';
-                    if (l.level === 'ERROR' || l.level === 'CRITICAL') color = 'var(--pg-red)';
-                    else if (l.level === 'WARNING') color = 'var(--pg-orange)';
-                    return `<div style="margin-bottom: 2px;"><span style="color: #555;">${l.timestamp}</span> <span style="color: ${color}; font-weight: bold;">[${l.level}]</span> ${escapeHtml(l.message)}</div>`;
-                }).join('') || '<div style="text-align:center;padding:2rem;">Empty.</div>';
-                document.getElementById('log-stats').textContent = `Showing ${data.lines.length} of ${data.total_lines} lines`;
-            } catch (e) { document.getElementById('log-viewer').textContent = 'Error: ' + e.message; }
+            const search = document.getElementById('log-search').value;
+            const level = document.getElementById('log-level-filter').value;
+            const query = new URLSearchParams({ limit: 2000 });
+            if (search) query.append('search', search);
+            if (level) query.append('level', level);
+            const data = await api(`/api/v1/admin/logs/${encodeURIComponent(filename)}?${query.toString()}`);
+            const viewer = document.getElementById('log-viewer');
+            viewer.innerHTML = data.lines.map(l => {
+                let color = '#aaa';
+                if (l.level === 'ERROR' || l.level === 'CRITICAL') color = 'var(--pg-red)';
+                else if (l.level === 'WARNING') color = 'var(--pg-orange)';
+                return `<div style="margin-bottom: 2px;"><span style="color: #555;">${l.timestamp}</span> <span style="color: ${color}; font-weight: bold;">[${l.level}]</span> ${escapeHtml(l.message)}</div>`;
+            }).join('') || '<div style="text-align:center;padding:2rem;">Empty.</div>';
+            document.getElementById('log-stats').textContent = `Showing ${data.lines.length} of ${data.total_lines} lines`;
         }
 
         function scrollLogTop() { document.getElementById('log-viewer').scrollTop = 0; }
@@ -1139,23 +1097,9 @@
             const newPass = document.getElementById('admin-new-pass').value;
             const confirmPass = document.getElementById('admin-confirm-pass').value;
             if (newPass.length < 12 || newPass !== confirmPass) return alert('Invalid input');
-            try {
-                await api('/api/v1/admin/auth/change-password', { method: 'POST', body: JSON.stringify({ current_password: current, new_password: newPass }) });
-                alert('Success. Please login again.');
-                logout();
-            } catch (e) { alert(e.message); }
-        }
-
-        async function exportStats() {
-            try {
-                const data = await api(`/api/v1/admin/telemetry/export?format=json&hours=24`);
-                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `telemetry_${new Date().toISOString().split('T')[0]}.json`;
-                a.click();
-            } catch (e) { alert('Export failed: ' + e.message); }
+            await api('/api/v1/admin/auth/change-password', { method: 'POST', body: JSON.stringify({ current_password: current, new_password: newPass }) });
+            alert('Success. Please login again.');
+            logout();
         }
 
         // --- Event Routing ---
@@ -1184,20 +1128,16 @@
             else if (act === 'globalSessionPurge') globalSessionPurge();
             else if (act === 'changeAdminPassword') changeAdminPassword();
             else if (act === 'refreshLogList') loadLogs();
-            else if (act === 'loadLogContent') loadLogContent();
             else if (act === 'scrollLogTop') scrollLogTop();
             else if (act === 'scrollLogBottom') scrollLogBottom();
-            else if (act === 'exportStats') exportStats();
             else if (act === 'blockIP') {
                 const ip = document.getElementById('block-ip-val').value;
                 api('/api/v1/admin/security/block-ip', { method: 'POST', body: JSON.stringify({ ip_address: ip, reason: 'Admin block' }) }).then(() => loadSecurity());
             }
-            else if (act === 'unblockIP') api(`/api/v1/admin/security/unblock-ip/${encodeURIComponent(target.dataset.ip)}`, { method: 'DELETE' }).then(() => loadSecurity());
             else if (act === 'addBannedUsername') {
                 const p = document.getElementById('ban-username-val').value;
                 api('/api/v1/admin/security/banned-usernames', { method: 'POST', body: JSON.stringify({ pattern: p, reason: 'Restricted' }) }).then(() => loadSecurity());
             }
-            else if (act === 'unblockUsername') api(`/api/v1/admin/security/banned-usernames/${id}`, { method: 'DELETE' }).then(() => loadSecurity());
         });
 
         document.addEventListener('change', (e) => {
@@ -1205,7 +1145,23 @@
             if (e.target.dataset.change === 'loadLogContent') loadLogContent();
         });
 
-        // Sorting for Endpoint Table
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter') return;
+            const id = e.target.id;
+            if (id === 'user-search-input') searchUsers();
+            else if (id === 'endpoint-filter') renderEndpointTable();
+            else if (id === 'log-search') loadLogContent();
+            else if (id === 'new-note-input') addTicketNote();
+            else if (id === 'block-ip-val') {
+                const ip = e.target.value;
+                api('/api/v1/admin/security/block-ip', { method: 'POST', body: JSON.stringify({ ip_address: ip, reason: 'Admin block' }) }).then(() => loadSecurity());
+            }
+            else if (id === 'ban-username-val') {
+                const p = e.target.value;
+                api('/api/v1/admin/security/banned-usernames', { method: 'POST', body: JSON.stringify({ pattern: p, reason: 'Restricted' }) }).then(() => loadSecurity());
+            }
+        });
+
         document.querySelectorAll('th[data-sort]').forEach(th => {
             th.addEventListener('click', () => {
                 const key = th.dataset.sort;
@@ -1215,15 +1171,13 @@
             });
         });
 
-        document.getElementById('endpoint-filter').addEventListener('input', renderEndpointTable);
-
         async function verifyAndLoad() {
             try {
-                const d = await api('/api/v1/admin/dashboard');
-                document.getElementById('server-version').textContent = 'v1.0.0';
+                const [d, v] = await Promise.all([api('/api/v1/admin/dashboard'), api('/api/v1/version')]);
+                document.getElementById('server-version').textContent = v.version.string;
                 showTab('metrics');
             } catch (e) {
-                document.getElementById('loading').innerHTML = `<div class="card btn-danger" style="border-radius:2px;">Security Verification Failed: ${e.message}</div>`;
+                document.getElementById('loading').innerHTML = `<div class="card btn-danger">Security Verification Failed: ${e.message}</div>`;
             }
         }
 
