@@ -262,7 +262,7 @@ async def update_current_user(
                 )
                 # Invalidate user cache
                 try:
-                    invalidate_pattern(f"user:*{current_user.user_id}*")
+                    invalidate_pattern(f"user_data:*{current_user.user_id}*")
                 except Exception as ce:
                     logger.debug(
                         f"Cache invalidation failed for user {current_user.user_id}: {ce}"

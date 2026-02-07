@@ -712,6 +712,9 @@ class AuthManager(BaseManager):
             )
             # Clear auth cache so middleware sees change immediately
             invalidate_pattern("token_verify:*")
+            # Clear user data cache so subsequent calls get fresh data
+            invalidate_pattern(f"user_data:{user_id}")
+            invalidate_pattern(f"user_data:*{user_id}*")
 
         user = self.get_user(user_id)
         if not user:
