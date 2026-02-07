@@ -13,7 +13,8 @@ from fastapi import APIRouter, HTTPException, Depends, status
 
 import utils.logger as logger
 
-from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.middleware.authentication import get_current_user, TokenInfo, AccountType
+from .admin.utils import get_admin_from_token
 from src.api.schemas.features import (
     UserFeaturesResponse,
     UpdateFeaturesRequest,
@@ -31,32 +32,45 @@ from src.api.schemas.common import ErrorResponse
 router = APIRouter(tags=["User Features"])
 
 
-# === Public Endpoints ===
-
-
-@router.get(
-    "/features",
-    response_model=ServerFeaturesResponse,
-    summary="Get server features",
-)
-async def get_server_features() -> ServerFeaturesResponse:
-    """Get global server features and discovery information."""
-    import utils.config as config
-    from src.api.routes.docs import is_docs_enabled
-    
-    auth_config = config.get("authentication", {})
-    accounts_config = auth_config.get("accounts", {})
-    
-    return ServerFeaturesResponse(
-        docs_enabled=is_docs_enabled(),
-        age_restriction_enabled=accounts_config.get("age_gate_enabled", False),
-        minimum_age=accounts_config.get("minimum_age", 13),
-        registration_enabled=accounts_config.get("allow_registration", True),
-        version=config.get("api.version", "unknown")
-    )
-
-
 # === Helper Functions ===
+
+
+async def get_admin_access(
+    request: Request,
+) -> TokenInfo:
+    """
+    Dependency that allows access via either a standard user token with admin permissions
+    OR a dedicated admin session token.
+    """
+    # 1. Try standard user first (from middleware state)
+    user = request.scope.get("state", {}).get("user")
+    if user:
+        if user.permissions.get("administrator", False) or user.permissions.get("admin.*", False) or user.permissions.get("*", False):
+            return user
+            
+    # 2. Try dedicated admin session
+    try:
+        admin_id = get_admin_from_token(request)
+        
+        # Create synthetic TokenInfo for the admin session
+        return TokenInfo(
+            valid=True,
+            token_type="admin",
+            account_id=admin_id,
+            user_id=admin_id,
+            session_id=None,
+            permissions={"administrator": True, "admin.*": True},
+            rate_limit_tier="staff",
+            expires_at=None,
+            username="admin",
+            account_type=AccountType.SYSTEM
+        )
+    except Exception:
+        # Re-raise 401 if both fail
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": {"code": 401, "message": "Admin access required"}},
+        )
 
 
 def _get_features_module():
@@ -117,7 +131,7 @@ def _user_exists(user_id: int) -> bool:
     },
 )
 async def get_user_features(
-    user_id: str, current_user: TokenInfo = Depends(get_current_user)
+    user_id: str, current_user: TokenInfo = Depends(get_admin_access)
 ) -> UserFeaturesResponse:
     """
     Get features for a specific user (admin only).
@@ -203,7 +217,7 @@ async def get_user_features(
 async def update_user_features(
     user_id: str,
     body: UpdateFeaturesRequest,
-    current_user: TokenInfo = Depends(get_current_user),
+    current_user: TokenInfo = Depends(get_admin_access),
 ) -> UserFeaturesResponse:
     """
     Update features for a specific user (admin only).
@@ -301,7 +315,7 @@ async def update_user_features(
 async def set_user_tier(
     user_id: str,
     body: SetTierRequest,
-    current_user: TokenInfo = Depends(get_current_user),
+    current_user: TokenInfo = Depends(get_admin_access),
 ) -> UserFeaturesResponse:
     """
     Set rate limit tier for a user (admin only).
@@ -392,7 +406,7 @@ async def set_user_tier(
     },
 )
 async def add_user_badge(
-    user_id: str, badge: str, current_user: TokenInfo = Depends(get_current_user)
+    user_id: str, badge: str, current_user: TokenInfo = Depends(get_admin_access)
 ) -> UserBadgeUpdateResponse:
     """
     Add a badge to a user (admin only).
@@ -470,7 +484,7 @@ async def add_user_badge(
     },
 )
 async def remove_user_badge(
-    user_id: str, badge: str, current_user: TokenInfo = Depends(get_current_user)
+    user_id: str, badge: str, current_user: TokenInfo = Depends(get_admin_access)
 ) -> UserBadgeUpdateResponse:
     """
     Remove a badge from a user (admin only).
@@ -546,7 +560,7 @@ async def remove_user_badge(
     },
 )
 async def get_available_tiers(
-    current_user: TokenInfo = Depends(get_current_user),
+    current_user: TokenInfo = Depends(get_admin_access),
 ) -> TiersResponse:
     """
     Get all available rate limit tiers (admin only).
@@ -590,7 +604,7 @@ async def get_available_tiers(
     },
 )
 async def get_available_badges(
-    current_user: TokenInfo = Depends(get_current_user),
+    current_user: TokenInfo = Depends(get_admin_access),
 ) -> BadgesResponse:
     """
     Get all available badges (admin only).
