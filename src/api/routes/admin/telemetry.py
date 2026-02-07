@@ -2,7 +2,7 @@
 Admin telemetry routes.
 """
 
-from fastapi import APIRouter, Request, HTTPException, Response, status
+from fastapi import APIRouter, Request, HTTPException, Response, status, Query
 from typing import List, Optional, Union
 import time
 import urllib.parse
@@ -30,7 +30,7 @@ async def get_telemetry_stats(request: Request, hours: int = 24, endpoint: Optio
             stats=[TelemetryEndpointStat(
                 endpoint=urllib.parse.unquote(s.endpoint), method=s.method, count=s.count,
                 avg_ms=round(s.avg_response_time_ms, 2), p95_ms=round(s.p95_response_time_ms, 2),
-                error_rate=round(s.error_rate * 100, 2), avg_queries=round(s.avg_queries, 1),
+                error_rate=round(s.error_rate, 2), avg_queries=round(s.avg_queries, 1),
                 avg_query_time_ms=round(s.avg_query_time_ms, 2)
             ) for s in stats],
             source=source or "all"
@@ -59,29 +59,44 @@ async def reset_telemetry_stats(request: Request):
     try:
         from src.core import telemetry
         if not telemetry.is_setup(): return TelemetryResetResponse(success=False, deleted_count=0)
-        return TelemetryResetResponse(success=True, deleted_count=telemetry.reset_all_stats())
+        telemetry.reset_all_stats()
+        return TelemetryResetResponse(success=True, deleted_count=0)
     except Exception as e:
         logger.error(f"Telemetry reset error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}})
 
 @router.get("/telemetry/export")
-async def export_telemetry_stats(request: Request, format: str = "json", hours: int = 24):
-    check_host_restriction(request)
-    get_admin_from_token(request)
+async def export_telemetry_stats(
+    request: Request, 
+    format: str = "json", 
+    hours: int = 24,
+    token: Optional[str] = Query(None, alias="Authorization")
+):
+    # Allow token in query param for downloads
+    if token:
+        if token.startswith("Bearer "):
+            token = token[7:]
+        # Manual validation if using query param
+        from src.core import admin
+        if not admin.validate_session(token):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+    else:
+        check_host_restriction(request)
+        get_admin_from_token(request)
+
     try:
         from src.core import telemetry
-        if not telemetry.is_setup(): raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Telemetry not setup"}})
+        if not telemetry.is_setup(): raise HTTPException(status_code=500, detail="Telemetry not setup")
         stats = telemetry.get_endpoint_stats(hours=hours)
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
         
         if format == "json":
             return TelemetryExportResponse(
-                export_time=ts, 
-                hours=hours, 
+                export_time=ts, hours=hours, 
                 stats=[TelemetryEndpointStat(
                     endpoint=s.endpoint, method=s.method, count=s.count, 
                     avg_ms=round(s.avg_response_time_ms, 2), p95_ms=round(s.p95_response_time_ms, 2), 
-                    error_rate=round(s.error_rate * 100, 2), avg_queries=round(s.avg_queries, 1), 
+                    error_rate=round(s.error_rate, 2), avg_queries=round(s.avg_queries, 1), 
                     avg_query_time_ms=round(s.avg_query_time_ms, 2)
                 ) for s in stats]
             )
@@ -91,7 +106,7 @@ async def export_telemetry_stats(request: Request, format: str = "json", hours: 
             writer = csv.writer(output)
             writer.writerow(["Endpoint", "Method", "Hits", "Avg Latency (ms)", "P95 Latency (ms)", "Avg Queries", "Avg DB Time (ms)", "Error Rate %"])
             for s in stats:
-                writer.writerow([s.endpoint, s.method, s.count, round(s.avg_response_time_ms, 2), round(s.p95_response_time_ms, 2), round(s.avg_queries, 1), round(s.avg_query_time_ms, 2), round(s.error_rate * 100, 2)])
+                writer.writerow([s.endpoint, s.method, s.count, round(s.avg_response_time_ms, 2), round(s.p95_response_time_ms, 2), round(s.avg_queries, 1), round(s.avg_query_time_ms, 2), round(s.error_rate, 2)])
             return Response(
                 content=output.getvalue(),
                 media_type="text/csv",
@@ -104,15 +119,15 @@ async def export_telemetry_stats(request: Request, format: str = "json", hours: 
             lines.append(header)
             lines.append("-" * len(header))
             for s in stats:
-                lines.append(f"{s.endpoint[:50]:<50} {s.method:<8} {s.count:>8} {s.avg_response_time_ms:>8.1f} {s.p95_response_time_ms:>8.1f} {s.avg_queries:>6.1f} {s.avg_query_time_ms:>8.1f} {s.error_rate*100:>6.1f}")
+                lines.append(f"{s.endpoint[:50]:<50} {s.method:<8} {s.count:>8} {s.avg_response_time_ms:>8.1f} {s.p95_response_time_ms:>8.1f} {s.avg_queries:>6.1f} {s.avg_query_time_ms:>8.1f} {s.error_rate:>6.1f}")
             return Response(
                 content="\n".join(lines),
                 media_type="text/plain",
                 headers={"Content-Disposition": f"attachment; filename=telemetry_{ts.replace(' ', '_').replace(':', '-')}.txt"}
             )
 
-        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": f"Unsupported format: {format}"}})
+        raise HTTPException(status_code=400, detail=f"Unsupported format: {format}")
     except Exception as e:
         if isinstance(e, HTTPException): raise
         logger.error(f"Telemetry export error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}})
+        raise HTTPException(status_code=500, detail="Internal server error")
