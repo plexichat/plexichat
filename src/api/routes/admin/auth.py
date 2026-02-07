@@ -2,11 +2,11 @@
 Admin authentication routes.
 """
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request
 from src.api.schemas.admin import (
     AdminLoginRequest, AdminLoginResponse, OTPVerifyRequest, AdminChangePasswordRequest
 )
-from src.api.schemas.common import ErrorResponse, SuccessResponse
+from src.api.schemas.common import SuccessResponse
 from .utils import check_host_restriction, get_admin_from_token
 import utils.logger as logger
 
@@ -29,7 +29,8 @@ async def admin_login(request: Request, login_data: AdminLoginRequest):
             return AdminLoginResponse(status="otp_required", admin_id=str(result.user_id), message="OTP required")
         return AdminLoginResponse(status="success", token=result.token)
     except Exception as e:
-        if isinstance(e, HTTPException): raise
+        if isinstance(e, HTTPException):
+            raise
         logger.error(f"Login error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
 
@@ -44,7 +45,8 @@ async def verify_otp(request: Request, otp_data: OTPVerifyRequest):
             raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": result.error}})
         return AdminLoginResponse(status="success", token=result.token)
     except Exception as e:
-        if isinstance(e, HTTPException): raise
+        if isinstance(e, HTTPException):
+            raise
         logger.error(f"OTP error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
 

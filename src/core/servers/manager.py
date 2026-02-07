@@ -6,9 +6,7 @@ and database interactions.
 """
 
 import json
-import re
 import secrets
-import string
 from typing import Optional, List, Dict, Any, Union
 
 import utils.config as config
@@ -35,32 +33,14 @@ from .exceptions import (
     ServerAccessDeniedError,
     ChannelNotFoundError,
     ChannelTypeError,
-    CategoryNotFoundError,
-    RoleNotFoundError,
-    RoleHierarchyError,
-    DefaultRoleError,
     MemberNotFoundError,
-    MemberExistsError,
-    InviteNotFoundError,
-    InviteExpiredError,
-    InviteMaxUsesError,
-    BanExistsError,
-    UserBannedError,
     InvalidServerNameError,
-    InvalidChannelNameError,
-    InvalidRoleNameError,
     PermissionDeniedError,
-    BanNotFoundError,
     OwnerCannotLeaveError,
-    CannotModifyOwnerError,
 )
 from .schema import create_tables
 from .permissions import (
-    calculate_base_permissions,
-    apply_channel_overrides,
     has_permission as check_permission,
-    can_manage_role,
-    can_manage_member,
 )
 from src.core.database import (
     cache_get,
@@ -172,6 +152,25 @@ class ServerManager(BaseManager):
         self.audit_handler.log_audit(
             server_id, user_id, action, target_type, target_id, changes, reason
         )
+
+    def _validate_server_name(self, name: str) -> str:
+        """Validate server name."""
+        if not name or not name.strip():
+            raise InvalidServerNameError("Server name cannot be empty")
+
+        name = name.strip()
+        min_len = self._config.get("server_name_min_length", 2)
+        max_len = self._config.get("server_name_max_length", 100)
+
+        if len(name) < min_len:
+            raise InvalidServerNameError(
+                f"Server name must be at least {min_len} characters", name
+            )
+        if len(name) > max_len:
+            raise InvalidServerNameError(
+                f"Server name cannot exceed {max_len} characters", name
+            )
+        return name
 
     # === Server Operations ===
 
@@ -352,8 +351,9 @@ class ServerManager(BaseManager):
 
         return server
 
+    @cached(ttl=15, prefix="user_servers")
     def get_servers(self, user_id: SnowflakeID, limit: int = 100) -> List[Server]:
-        """Get all servers a user is a member of with optimized count fetching."""
+        """Get all servers a user is a member of with optimized count fetching (cached)."""
         limit = min(limit, 200)
 
         # Optimized query using JOINs and GROUP BY instead of scalar subqueries
@@ -813,6 +813,12 @@ class ServerManager(BaseManager):
         self._cache_invalidate(self._member_roles_cache, (server_id, user_id))
         self._cache_invalidate(self._permission_cache, (user_id, server_id, None))
 
+        # Invalidate Redis
+        from src.core.database import cache_delete, invalidate_pattern, invalidate_cached
+        cache_delete(f"is_member:{server_id}:{user_id}")
+        invalidate_pattern(f"perms:{user_id}:{server_id}:*")
+        invalidate_cached(self.get_servers, user_id)
+
         # Also invalidate any channel-specific permission caches
         for key in list(self._permission_cache.keys()):
             if key[0] == user_id and key[1] == server_id:
@@ -1142,79 +1148,71 @@ class ServerManager(BaseManager):
     # === Helper Methods ===
 
     def _is_member(self, server_id: SnowflakeID, user_id: SnowflakeID) -> bool:
-        """Check if user is a member of server (cached)."""
+        """Check if user is a member of server (cached in Redis)."""
         # Ensure we are working with ints
         try:
             sid = int(server_id)
             uid = int(user_id)
         except (ValueError, TypeError):
-            logger.error(
-                f"[Instance:{self.instance_id}] _is_member: invalid ID types: sid={type(server_id)}, uid={type(user_id)}"
-            )
             return False
 
-        cache_key = (sid, uid)
-        cached = self._cache_get(self._member_cache, cache_key)
+        cache_key = f"is_member:{sid}:{uid}"
+        
+        # 1. Try internal memory first (fastest)
+        mem_cached = self._cache_get(self._member_cache, cache_key)
+        if mem_cached is not None:
+            return mem_cached
 
-        # If cached as member, return True immediately
-        if cached is True:
-            logger.debug(
-                f"[Instance:{self.instance_id}] _is_member: user {uid} is cached as member of server {sid}"
-            )
-            return True
+        # 2. Try Redis (shared across workers)
+        if redis_available():
+            redis_cached = cache_get(cache_key)
+            if redis_cached is not None:
+                is_member = bool(int(redis_cached))
+                self._cache_set(self._member_cache, cache_key, is_member)
+                return is_member
 
-        # Check if user is the owner (from server table) - ALWAYS check even if cached as False
-        # as the user might have just become the owner or member
+        # 3. Check if user is the owner (from server table)
+        # Check owner cache (internal memory)
         owner_id = self._cache_get(self._server_owner_cache, sid)
         if owner_id is None:
-            row = self._db.fetch_one(
-                "SELECT owner_id FROM srv_servers WHERE id = ? AND deleted = 0",
-                (sid,),
-            )
-            if row:
-                owner_id = int(row["owner_id"])
-                self._cache_set(self._server_owner_cache, sid, owner_id)
-                logger.debug(
-                    f"[Instance:{self.instance_id}] _is_member: fetched owner_id {owner_id} for server {sid}"
+            # Check Redis for owner
+            owner_cache_key = f"server_owner:{sid}"
+            if redis_available():
+                owner_id_cached = cache_get(owner_cache_key)
+                if owner_id_cached:
+                    owner_id = int(owner_id_cached)
+                    self._cache_set(self._server_owner_cache, sid, owner_id)
+
+            if owner_id is None:
+                row = self._db.fetch_one(
+                    "SELECT owner_id FROM srv_servers WHERE id = ? AND deleted = 0",
+                    (sid,),
                 )
-            else:
-                logger.warning(
-                    f"[Instance:{self.instance_id}] _is_member: server {sid} NOT FOUND when checking owner"
-                )
+                if row:
+                    owner_id = int(row["owner_id"])
+                    self._cache_set(self._server_owner_cache, sid, owner_id)
+                    if redis_available():
+                        cache_set(owner_cache_key, str(owner_id), ttl=3600)
 
         if owner_id == uid:
-            logger.debug(
-                f"[Instance:{self.instance_id}] _is_member: user {uid} is recognized as owner of server {sid} (owner_id={owner_id})"
-            )
             self._cache_set(self._member_cache, cache_key, True)
+            if redis_available():
+                cache_set(cache_key, "1", ttl=300)
             return True
 
-        # If it was cached as False and we verified they aren't the owner, respect cache
-        if cached is False:
-            logger.debug(
-                f"[Instance:{self.instance_id}] _is_member: user {uid} is cached as NOT a member of server {sid}"
-            )
-            return False
-
-        logger.debug(
-            f"[Instance:{self.instance_id}] _is_member: checking DB for membership: sid={sid}, uid={uid}"
-        )
+        # 4. Final DB check
         row = self._db.fetch_one(
             "SELECT 1 FROM srv_members WHERE server_id = ? AND user_id = ?",
             (sid, uid),
         )
 
         is_member = row is not None
-        if not is_member:
-            logger.debug(
-                f"[Instance:{self.instance_id}] _is_member: user {uid} is NOT a member of server {sid} (owner is {owner_id})"
-            )
-        else:
-            logger.debug(
-                f"[Instance:{self.instance_id}] _is_member: user {uid} found in srv_members for server {sid}"
-            )
-
+        
+        # Cache result
         self._cache_set(self._member_cache, cache_key, is_member)
+        if redis_available():
+            cache_set(cache_key, "1" if is_member else "0", ttl=300)
+            
         return is_member
 
     def _server_exists(self, server_id: SnowflakeID) -> bool:

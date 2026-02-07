@@ -3,8 +3,6 @@ Hardened schema for authentication module.
 Adds blind indexes for encrypted fields and improved integrity.
 """
 
-import time
-import utils.logger as logger
 
 
 SCHEMA_SQLITE = """

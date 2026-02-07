@@ -2,8 +2,7 @@
 Admin user management routes.
 """
 
-from fastapi import APIRouter, Request, HTTPException, status
-from typing import List, Optional
+from fastapi import APIRouter, Request, HTTPException
 from src.api.schemas.admin import (
     UserSearchListResponse, UserSearchResponse, UserDetailsResponse,
     UserTierUpdate, UserBadgeUpdateResponse, UserNotesResponse, UserNotesUpdate,
@@ -11,7 +10,6 @@ from src.api.schemas.admin import (
 )
 from src.api.schemas.common import SuccessResponse
 from .utils import check_host_restriction, get_admin_from_token
-import src.api as api
 import utils.logger as logger
 
 router = APIRouter()
@@ -41,7 +39,8 @@ async def get_user_details(request: Request, user_id: str):
     try:
         uid = int(user_id)
         user = admin.get_user_details(uid)
-        if not user: raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
+        if not user:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
         return UserDetailsResponse(
             id=str(user.id), username=user.username, email=user.email, tier=user.tier,
             badges=user.badges, created_at=user.created_at, last_login=user.last_login,
@@ -72,7 +71,8 @@ async def add_user_badge(request: Request, user_id: str, badge: str):
     try:
         uid = int(user_id)
         badges = admin.add_user_badge(uid, badge, admin_id)
-        if badges is None: raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
+        if badges is None:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
         return UserBadgeUpdateResponse(success=True, badges=badges)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid user ID"}})
@@ -85,7 +85,8 @@ async def remove_user_badge(request: Request, user_id: str, badge: str):
     try:
         uid = int(user_id)
         badges = admin.remove_user_badge(uid, badge, admin_id)
-        if badges is None: raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
+        if badges is None:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "User not found"}})
         return UserBadgeUpdateResponse(success=True, badges=badges)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid user ID"}})

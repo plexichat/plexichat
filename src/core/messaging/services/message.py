@@ -18,7 +18,7 @@ from ..exceptions import (
     ContentTooLongError,
     AttachmentLimitError,
 )
-from src.core.database import cache_get, cache_set, cache_delete, cached
+from src.core.database import cache_get, cache_set, cache_delete
 from .base import BaseService
 from .participant import ParticipantService
 from .user_settings import UserSettingsService

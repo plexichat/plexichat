@@ -517,7 +517,8 @@ def get_dm_channels(
             recipient_ids = []
             for ch in channels:
                 rid = getattr(ch, "recipient_id", None)
-                if rid: recipient_ids.append(rid)
+                if rid:
+                    recipient_ids.append(rid)
             
             # Use profiles bulk which is safer for public info
             users_map = {}
@@ -539,8 +540,10 @@ def get_dm_channels(
                             # Fallback if not in bulk (shouldn't happen often)
                             try:
                                 user = auth.get_user(rid)
-                                if user: recipient_username = user.username
-                            except Exception: pass
+                                if user:
+                                    recipient_username = user.username
+                            except Exception:
+                                pass
 
                     result.append(
                         DMChannelResponse(

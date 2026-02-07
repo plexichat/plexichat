@@ -105,7 +105,8 @@ def login(db: Any, username: str, password: str, ip: str = "unknown") -> AdminLo
 
     row = db.fetch_one("SELECT id, password_hash, totp_secret, totp_enabled, must_setup_otp FROM admin_users WHERE username = ?", (username,))
     if not row:
-        if ip not in _login_attempts: _login_attempts[ip] = []
+        if ip not in _login_attempts:
+            _login_attempts[ip] = []
         _login_attempts[ip].append(time.time() * 1000)
         return AdminLoginResult(success=False, error="Invalid credentials")
 
@@ -123,15 +124,19 @@ def login(db: Any, username: str, password: str, ip: str = "unknown") -> AdminLo
             new_hash = encryption.hash_password(password)
             db.execute("UPDATE admin_users SET password_hash = ? WHERE id = ?", (new_hash, admin_id))
     else:
-        if encryption.verify_password(password, password_hash): authenticated = True
+        if encryption.verify_password(password, password_hash):
+            authenticated = True
 
     if not authenticated:
-        if ip not in _login_attempts: _login_attempts[ip] = []
+        if ip not in _login_attempts:
+            _login_attempts[ip] = []
         _login_attempts[ip].append(time.time() * 1000)
         return AdminLoginResult(success=False, error="Invalid credentials")
 
-    if ip in _login_attempts: del _login_attempts[ip]
-    if ip in _lockouts: del _lockouts[ip]
+    if ip in _login_attempts:
+        del _login_attempts[ip]
+    if ip in _lockouts:
+        del _lockouts[ip]
 
     otp_required = admin_config.get("require_otp", True)
     if not otp_required:
@@ -157,9 +162,11 @@ def login(db: Any, username: str, password: str, ip: str = "unknown") -> AdminLo
 def verify_otp_setup(db: Any, admin_id: int, code: str) -> AdminLoginResult:
     """Verify OTP code during setup."""
     row = db.fetch_one("SELECT totp_secret FROM admin_users WHERE id = ?", (admin_id,))
-    if not row: return AdminLoginResult(success=False, error="Admin user not found")
+    if not row:
+        return AdminLoginResult(success=False, error="Admin user not found")
     secret = row["totp_secret"] if isinstance(row, dict) else row[0]
-    if not secret: return AdminLoginResult(success=False, error="OTP not configured")
+    if not secret:
+        return AdminLoginResult(success=False, error="OTP not configured")
     import pyotp
     if not pyotp.TOTP(secret).verify(code, valid_window=1):
         return AdminLoginResult(success=False, error="Invalid OTP code")
@@ -171,10 +178,14 @@ def verify_otp_setup(db: Any, admin_id: int, code: str) -> AdminLoginResult:
 def verify_otp(db: Any, admin_id: int, code: str) -> AdminLoginResult:
     """Verify OTP code for login."""
     row = db.fetch_one("SELECT totp_secret, backup_codes FROM admin_users WHERE id = ?", (admin_id,))
-    if not row: return AdminLoginResult(success=False, error="Admin user not found")
-    if isinstance(row, dict): secret, backup_codes = row["totp_secret"], row["backup_codes"]
-    else: secret, backup_codes = row[0], row[1]
-    if not secret: return AdminLoginResult(success=False, error="OTP not configured")
+    if not row:
+        return AdminLoginResult(success=False, error="Admin user not found")
+    if isinstance(row, dict):
+        secret, backup_codes = row["totp_secret"], row["backup_codes"]
+    else:
+        secret, backup_codes = row[0], row[1]
+    if not secret:
+        return AdminLoginResult(success=False, error="OTP not configured")
     import pyotp
     if pyotp.TOTP(secret).verify(code, valid_window=1):
         db.execute("UPDATE admin_users SET last_login = ? WHERE id = ?", (int(time.time() * 1000), admin_id))
@@ -201,7 +212,8 @@ def validate_session(db: Any, token: str) -> Optional[int]:
     """Validate admin session token."""
     now = int(time.time() * 1000)
     row = db.fetch_one("SELECT admin_id FROM admin_sessions WHERE token = ? AND expires_at > ?", (token, now))
-    if row: return row["admin_id"] if isinstance(row, dict) else row[0]
+    if row:
+        return row["admin_id"] if isinstance(row, dict) else row[0]
     return None
 
 def logout(db: Any, token: str) -> bool:
@@ -212,9 +224,11 @@ def logout(db: Any, token: str) -> bool:
 def change_password(db: Any, admin_id: int, current_password: str, new_password: str) -> Tuple[bool, str]:
     """Change admin password."""
     row = db.fetch_one("SELECT password_hash FROM admin_users WHERE id = ?", (admin_id,))
-    if not row: return False, "Admin user not found"
+    if not row:
+        return False, "Admin user not found"
     password_hash = row["password_hash"] if isinstance(row, dict) else row[0]
     import src.utils.encryption as encryption
-    if not encryption.verify_password(current_password, password_hash): return False, "Incorrect current password"
+    if not encryption.verify_password(current_password, password_hash):
+        return False, "Incorrect current password"
     db.execute("UPDATE admin_users SET password_hash = ? WHERE id = ?", (encryption.hash_password(new_password), admin_id))
     return True, "Password updated successfully"

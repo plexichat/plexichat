@@ -3,7 +3,6 @@ Tests for the database migration system.
 """
 
 import pytest
-import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -32,7 +31,7 @@ def test_calculate_checksum():
     content = b"test content"
     checksum = calculate_checksum(content)
     assert len(checksum) == 64
-    assert checksum == calculate_checksum("test content")
+    assert checksum == calculate_checksum(b"test content")
 
 def test_migration_manager_init(mock_db):
     """Test MigrationManager initialization."""
@@ -49,12 +48,10 @@ def test_get_pending_migrations(mock_db, temp_migrations_dir, mocker):
     
     # Create mock migration files
     file1 = temp_migrations_dir / "001_initial.py"
-    file1.write_text("def up(db): pass
-def down(db): pass")
+    file1.write_text("def up(db): pass\n\ndef down(db): pass\n")
     
     file2 = temp_migrations_dir / "002_update.py"
-    file2.write_text("def up(db): pass
-def down(db): pass")
+    file2.write_text("def up(db): pass\n\ndef down(db): pass\n")
     
     # Mock tracker to return only 001 as applied
     mocker.patch.object(manager.tracker, 'get_applied_migrations', return_value=['001'])
@@ -100,7 +97,6 @@ def test_validate_integrity_mismatch(mock_db, temp_migrations_dir, mocker):
     # Create migration file
     file1 = temp_migrations_dir / "001_test.py"
     file1.write_text("test")
-    actual_hash = calculate_checksum(b"test")
     
     # Mock records with a DIFFERENT checksum
     mock_records = [

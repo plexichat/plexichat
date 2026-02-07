@@ -5,6 +5,7 @@ Presence routes - User status and presence endpoints.
 from fastapi import APIRouter, HTTPException, Depends
 
 import src.api as api
+from src.core.database import cached
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.presence import PresenceUpdate, PresenceResponse
 from src.api.schemas.common import SnowflakeID, ErrorResponse
@@ -53,50 +54,39 @@ async def _dispatch_presence_event(
         logger.debug(f"Failed to dispatch presence event for user {user_id}: {e}")
 
 
-from src.core.database import cached
-
-@cached(ttl=60, prefix="presence_targets")
+@cached(ttl=15, prefix="presence_targets")
 def _get_presence_targets(user_id: int) -> list:
-    """Get all user IDs who should receive presence updates for a user."""
+    """Get all user IDs who should receive presence updates for a user (Optimized)."""
     target_user_ids = set()
 
-    # Add friends
+    # 1. Add friends
     relationships = api.get_relationships()
     if relationships:
         try:
             friend_ids = relationships.get_friend_ids(user_id)
             if friend_ids:
-                target_user_ids.update(friend_ids)
+                target_user_ids.update([int(fid) for rid in friend_ids for fid in ([rid] if not isinstance(rid, list) else rid)])
         except Exception as e:
-            logger.debug(
-                f"Error fetching friend IDs for presence targets (user {user_id}): {e}"
-            )
+            logger.debug(f"Error fetching friend IDs: {e}")
 
-    # Add server members (users in shared servers)
+    # 2. Add ALL server members in one query (shared servers)
     servers = api.get_servers()
     if servers:
         try:
-            user_servers = servers.get_servers(user_id)
-            if user_servers:
-                for server in user_servers:
-                    # Optimized: Get only user IDs to avoid N+1 queries fetching full member objects
-                    # member_ids = servers.get_member_user_ids(server.id, exclude_user_id=user_id)
-                    # We check if the method exists (it should in the optimized manager)
-                    if hasattr(servers, "get_member_user_ids"):
+            if hasattr(servers, "get_all_shared_member_ids"):
+                shared_ids = servers.get_all_shared_member_ids(user_id)
+                if shared_ids:
+                    target_user_ids.update([int(sid) for rid in shared_ids for sid in ([rid] if not isinstance(rid, list) else rid)])
+            else:
+                # Fallback to slower server-by-server fetch if method missing
+                user_servers = servers.get_servers(user_id)
+                if user_servers:
+                    for server in user_servers:
                         member_ids = servers.get_member_user_ids(server.id, exclude_user_id=user_id)
                         if member_ids:
-                            target_user_ids.update(member_ids)
-                    else:
-                        # Fallback for older managers
-                        members = servers.get_members(user_id, server.id)
-                        if members:
-                            for member in members:
-                                if member.user_id != user_id:
-                                    target_user_ids.add(member.user_id)
+                            target_user_ids.update([int(mid) for rid in member_ids for mid in ([rid] if not isinstance(rid, list) else rid)])
         except Exception as e:
-            logger.debug(
-                f"Error fetching shared server members for presence targets (user {user_id}): {e}"
-            )
+            logger.debug(f"Error fetching shared members: {e}")
 
     return list(target_user_ids)
 

@@ -1,16 +1,16 @@
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 import sys
 import os
 
 # Add src to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")))
 
-# Setup config
-import utils.config as config
-config.setup(config_path="non_existent.yaml", default_config={})
-
 from src.utils.email import SMTPEmailSender
+import src.utils.config as config
+
+# Setup config
+config.setup(config_path="non_existent.yaml", default_config={})
 
 class TestEmailSender(unittest.TestCase):
     @patch("smtplib.SMTP")

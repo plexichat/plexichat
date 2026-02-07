@@ -4,7 +4,6 @@ Modularized implementation delegating to sub-modules.
 """
 
 from typing import Optional, List, Dict, Any, Tuple
-import utils.logger as logger
 
 # Import types and classes for public API
 from .auth import AdminLoginResult
@@ -15,6 +14,8 @@ from .system import get_system_metrics
 
 # Re-export modules
 from . import auth, tickets, moderation, users, system, logs
+
+__all__ = ["auth", "tickets", "moderation", "users", "system", "logs"]
 
 _db: Any = None
 _auth_mod: Any = None
@@ -75,7 +76,8 @@ def get_ticket_counts() -> Dict[str, int]:
     return tickets.get_ticket_counts(_get_db())
 
 def check_host_restriction(client_ip: str, allowed_hosts: List[str]) -> bool:
-    if not allowed_hosts: return True
+    if not allowed_hosts:
+        return True
     localhost_variants = ["127.0.0.1", "localhost", "::1"]
     for allowed in allowed_hosts:
         if (allowed in localhost_variants and client_ip in localhost_variants) or client_ip == allowed:

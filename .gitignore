@@ -99,6 +99,5 @@ node_modules/
 # Type check reports
 type_check_reports/
 
-# Deployment Note:
-# To update the server, you must use git push locally and git pull on the server.
-# Current feature branch is: dev
+# Pyright
+pyrightconfig.json

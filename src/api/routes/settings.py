@@ -5,6 +5,7 @@ User Settings routes - Cloud-synced key-value store for user preferences.
 from fastapi import APIRouter, HTTPException, Depends
 
 import src.api as api
+from src.core.database import cached
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.settings import SettingValue, SettingResponse, SettingsResponse
 from src.api.schemas.common import ErrorResponse, SuccessResponse
@@ -13,8 +14,6 @@ import utils.logger as logger
 
 router = APIRouter(tags=["User Settings"])
 
-
-from src.core.database import cached
 
 @router.get(
     "",

@@ -63,21 +63,43 @@ class BaseService:
         return snowflake
 
     def _cache_get(self, key: Any, default: Optional[Any] = None) -> Optional[Any]:
-        """Get value from cache if not expired."""
+        """Get value from cache (Local memory first, then Redis)."""
+        # 1. Try local memory
         if key in self._cache:
             value, expires = self._cache[key]
             if (self._get_timestamp() / 1000.0) < expires:
                 return value
             del self._cache[key]
+
+        # 2. Try Redis
+        from src.core.database import cache_get, redis_available
+        if redis_available():
+            cache_key = f"msg_cache:{self.__class__.__name__}:{key}"
+            redis_val = cache_get(cache_key)
+            if redis_val is not None:
+                # Store back in local memory for even faster subsequent access
+                self._cache_set(key, redis_val)
+                return redis_val
+
         return default
 
     def _cache_set(self, key: Any, value: Any) -> None:
-        """Set value in cache with TTL."""
+        """Set value in cache (Local memory and Redis)."""
         self._cache[key] = (value, (self._get_timestamp() / 1000.0) + self._cache_ttl)
+        
+        from src.core.database import cache_set, redis_available
+        if redis_available():
+            cache_key = f"msg_cache:{self.__class__.__name__}:{key}"
+            cache_set(cache_key, value, ttl=int(self._cache_ttl))
 
     def _cache_invalidate(self, key: Any) -> None:
-        """Invalidate a cache entry."""
+        """Invalidate a cache entry (Local memory and Redis)."""
         self._cache.pop(key, None)
+        
+        from src.core.database import cache_delete, redis_available
+        if redis_available():
+            cache_key = f"msg_cache:{self.__class__.__name__}:{key}"
+            cache_delete(cache_key)
 
     def _get_config(self, key: str, default: Any = None) -> Any:
         """Get config value with default."""

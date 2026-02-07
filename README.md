@@ -182,14 +182,11 @@ See root README.md for full configuration options.
 ### Quick Start
 
 ```bash
-# Install test dependencies
-pip install -r requirements-test.txt
+# Install dependencies (includes test dependencies)
+pip install -r requirements.txt
 
 # Run all tests (recommended)
 pytest -n auto -m "not slow"
-
-# Or use make
-make test
 ```
 
 ### Test Suite Overview

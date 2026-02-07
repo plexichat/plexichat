@@ -60,9 +60,14 @@ class CategoryManager:
         """Update server counts for all categories."""
         self._ensure_cache()
 
+        rows = self._db.fetch_all(
+            """SELECT category, COUNT(*) as count
+               FROM search_server_listings
+               GROUP BY category"""
+        )
+        counts = {row["category"]: row["count"] for row in rows}
         for category_id in self._cache:
-            count = self.get_category_server_count(category_id)
-            self._cache[category_id].server_count = count
+            self._cache[category_id].server_count = counts.get(category_id, 0)
 
     def _ensure_cache(self):
         """Ensure category cache is loaded."""

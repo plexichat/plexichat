@@ -2,7 +2,7 @@
 Admin UI routes serving HTML templates.
 """
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from .utils import check_host_restriction, load_admin_template
 from src.utils.security import generate_csp_nonce, build_admin_csp_header

@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 # Try to import hypothesis, skip tests if not available
 try:
-    from hypothesis import given, strategies as st, assume, settings
+    from hypothesis import given, strategies as st, settings
 
     HAS_HYPOTHESIS = True
 except ImportError:

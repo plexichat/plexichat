@@ -2,8 +2,8 @@
 Shared utilities for Admin API routes.
 """
 
-from fastapi import HTTPException, Request, status
-from typing import Optional, Any
+from fastapi import HTTPException, Request
+from typing import Optional
 from pathlib import Path
 import utils.config as config
 import utils.logger as logger

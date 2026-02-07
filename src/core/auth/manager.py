@@ -716,6 +716,9 @@ class AuthManager(BaseManager):
             invalidate_pattern("user_data:*")
             invalidate_pattern(f"user_data:{user_id}")
             invalidate_pattern(f"user_data:*{user_id}*")
+            # Clear granular profile cache
+            from src.core.database import cache_delete
+            cache_delete(f"user_profile:{user_id}")
 
         user = self.get_user(user_id)
         if not user:
@@ -1192,7 +1195,7 @@ class AuthManager(BaseManager):
         
         ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
         self._db.execute("DELETE FROM auth_ip_blacklist WHERE ip_index = ?", (ip_index,))
-        logger.info(f"IP unblocked")
+        logger.info("IP unblocked")
         return True
 
     @cached(ttl=300, prefix="ip_blocked")
@@ -1324,31 +1327,54 @@ class AuthManager(BaseManager):
             return None
         return self.get_user(row["id"])
 
-    @cached(ttl=60, prefix="users_bulk")
-    @cached(ttl=300, prefix="user_profile_bulk")
     def get_user_profiles_bulk(self, user_ids: List[int]) -> Dict[str, Any]:
-        """Get public profile information for multiple users (bulk-cached)."""
+        """Get public profile information for multiple users (granular Redis caching)."""
         if not user_ids:
             return {}
             
-        placeholders = ",".join("?" for _ in user_ids)
-        rows = self._db.fetch_all(
-            f"SELECT id, username, permissions, account_type FROM auth_users WHERE id IN ({placeholders})", 
-            tuple(user_ids)
-        )
-        
         result = {}
-        for row in rows:
-            user_id = row["id"]
-            # Only include safe, non-PII fields
-            result[str(user_id)] = {
-                "id": user_id,
-                "username": row["username"],
-                "permissions": self._json_loads(row["permissions"]) if isinstance(row["permissions"], str) else row["permissions"],
-                "account_type": row["account_type"],
-                "avatar_url": f"/api/v1/avatars/users/{user_id}"
-            }
+        missing_ids = []
+        
+        # 1. Try to fetch each user from Redis
+        from src.core.database import cache_get, cache_set, redis_available
+        
+        for uid in user_ids:
+            cache_key = f"user_profile:{uid}"
+            cached_profile = cache_get(cache_key) if redis_available() else None
+            
+            if cached_profile:
+                if isinstance(cached_profile, str):
+                    try:
+                        cached_profile = json.loads(cached_profile)
+                    except Exception:
+                        pass
+                result[str(uid)] = cached_profile
+            else:
+                missing_ids.append(uid)
                 
+        # 2. Fetch missing from DB
+        if missing_ids:
+            placeholders = ",".join("?" for _ in missing_ids)
+            rows = self._db.fetch_all(
+                f"SELECT id, username, permissions, account_type FROM auth_users WHERE id IN ({placeholders})", 
+                tuple(missing_ids)
+            )
+            
+            for row in rows:
+                user_id = row["id"]
+                profile = {
+                    "id": user_id,
+                    "username": row["username"],
+                    "permissions": self._json_loads(row["permissions"]) if isinstance(row["permissions"], str) else row["permissions"],
+                    "account_type": row["account_type"],
+                    "avatar_url": f"/api/v1/avatars/users/{user_id}"
+                }
+                result[str(user_id)] = profile
+                
+                # Cache for next time
+                if redis_available():
+                    cache_set(f"user_profile:{user_id}", profile, ttl=300)
+                    
         return result
 
     def get_users_bulk(self, user_ids: List[int]) -> Dict[str, User]:

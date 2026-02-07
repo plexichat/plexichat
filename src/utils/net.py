@@ -1,6 +1,5 @@
 
 from fastapi import Request
-import utils.config as config
 
 def get_client_ip(request: Request) -> str:
     """

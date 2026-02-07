@@ -2,7 +2,7 @@
 Admin security routes.
 """
 
-from fastapi import APIRouter, Request, HTTPException, status
+from fastapi import APIRouter, Request, HTTPException
 from typing import List
 from src.api.schemas.admin import (
     BlockedIPResponse, IPBlockRequest, BannedUsernameResponse, BannedUsernameCreate,
@@ -10,7 +10,6 @@ from src.api.schemas.admin import (
 )
 from src.api.schemas.common import SuccessResponse
 from .utils import check_host_restriction, get_admin_from_token
-import utils.logger as logger
 
 router = APIRouter()
 
@@ -76,7 +75,8 @@ async def force_logout(request: Request, body: ForceLogoutRequest):
             if ws_is_setup():
                 event = Event(event_type=EventType.SECURITY_LOGOUT, data={"user_id": str(uid), "message": "Security logout"})
                 await get_dispatcher().dispatch_event(event, [uid])
-        except Exception: pass
+        except Exception:
+            pass
         return SuccessResponse(success=True)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid user ID"}})
@@ -84,7 +84,7 @@ async def force_logout(request: Request, body: ForceLogoutRequest):
 @router.post("/security/lock-user", response_model=SuccessResponse)
 async def admin_lock_user(request: Request, body: UserLockRequest):
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    get_admin_from_token(request)
     try:
         uid = int(body.user_id)
         from src.core import admin
@@ -97,7 +97,8 @@ async def admin_lock_user(request: Request, body: UserLockRequest):
             if ws_is_setup():
                 event = Event(event_type=EventType.SECURITY_LOGOUT, data={"user_id": str(uid), "message": "Account suspended"})
                 await get_dispatcher().dispatch_event(event, [uid])
-        except Exception: pass
+        except Exception:
+            pass
         return SuccessResponse(success=True)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid user ID"}})
@@ -124,5 +125,6 @@ async def logout_all_users(request: Request):
         from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
         if ws_is_setup():
             await get_dispatcher().close_all_connections(close_code=4004, reason="Security reset")
-    except Exception: pass
+    except Exception:
+        pass
     return SuccessResponse(success=True)

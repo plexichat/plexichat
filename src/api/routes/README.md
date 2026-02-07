@@ -12,10 +12,10 @@ Each file contains routes for a specific resource domain:
 | `users.py` | `/users` | User profile management |
 | `servers.py` | `/servers` | Server/guild management |
 | `channels.py` | `/channels` | Channel management |
-| `messages.py` | `/channels/{id}/messages` | Messaging |
-| `reactions.py` | `/channels/{id}/messages/{id}/reactions` | Message reactions |
+| `messages.py` | (various) | Messaging (/channels/{id}/messages) |
+| `reactions.py` | (various) | Message reactions (/channels/{id}/messages/{id}/reactions) |
 | `relationships.py` | `/relationships` | Friends and blocks |
-| `presence.py` | `/users/@me/presence`, `/users/{id}/presence` | User presence/status |
+| `presence.py` | (various) | User presence/status (/users/@me/presence, /users/{id}/presence) |
 | `webhooks.py` | `/webhooks` | Webhook management |
 | `avatars.py` | `/avatars` | Avatar and icon management |
 | `emojis.py` | `/servers/{id}/emojis` | Custom emoji |

@@ -748,20 +748,14 @@ class TestPostgresFailedTransactionRecovery:
             pytest.skip("PostgreSQL configuration not available")
         
         # Check if we can import psycopg2
-        try:
-            import psycopg2
-        except ImportError:
-            pytest.skip("psycopg2-binary not installed")
+        pytest.importorskip("psycopg2")
         
         return pg_config
 
     @pytest.fixture
     def postgres_db_with_table(self, postgres_config):
         """Create a PostgreSQL test database with a sample table."""
-        try:
-            import psycopg2
-        except ImportError:
-            pytest.skip("psycopg2-binary not installed")
+        pytest.importorskip("psycopg2")
         
         # Use test database configuration
         config_path = "temp_test/postgres_config.yaml"
@@ -823,11 +817,7 @@ class TestPostgresFailedTransactionRecovery:
 
     def test_infailedsqltransaction_detection(self, postgres_db_with_table):
         """Test detection of InFailedSqlTransaction error by exception type."""
-        try:
-            import psycopg2
-            import psycopg2.errors
-        except ImportError:
-            pytest.skip("psycopg2-binary not installed")
+        pytest.importorskip("psycopg2")
         
         db = Database()
         db.connect()
@@ -868,10 +858,7 @@ class TestPostgresFailedTransactionRecovery:
 
     def test_infailedsqltransaction_recovery_resets_state(self, postgres_db_with_table):
         """Test that recovery properly resets transaction_depth and in_transaction."""
-        try:
-            import psycopg2
-        except ImportError:
-            pytest.skip("psycopg2-binary not installed")
+        pytest.importorskip("psycopg2")
         
         db = Database()
         db.connect()
@@ -913,10 +900,7 @@ class TestPostgresFailedTransactionRecovery:
         self, postgres_db_with_table
     ):
         """Test that _recover_from_failed_transaction properly rolls back."""
-        try:
-            import psycopg2
-        except ImportError:
-            pytest.skip("psycopg2-binary not installed")
+        pytest.importorskip("psycopg2")
         
         db = Database()
         db.connect()
@@ -956,10 +940,7 @@ class TestPostgresFailedTransactionRecovery:
         self, postgres_db_with_table
     ):
         """Test detection of failed transaction by message fragments."""
-        try:
-            import psycopg2
-        except ImportError:
-            pytest.skip("psycopg2-binary not installed")
+        pytest.importorskip("psycopg2")
         
         db = Database()
         db.connect()
@@ -1007,10 +988,7 @@ class TestPostgresFailedTransactionRecovery:
         self, postgres_db_with_table
     ):
         """Test that after recovery, we can start a new transaction."""
-        try:
-            import psycopg2
-        except ImportError:
-            pytest.skip("psycopg2-binary not installed")
+        pytest.importorskip("psycopg2")
         
         db = Database()
         db.connect()
@@ -1057,10 +1035,7 @@ class TestPostgresFailedTransactionRecovery:
 
     def test_infailedsqltransaction_pgcode_detection(self, postgres_db_with_table):
         """Test detection of failed transaction by pgcode (PostgreSQL error code 25P02)."""
-        try:
-            import psycopg2
-        except ImportError:
-            pytest.skip("psycopg2-binary not installed")
+        pytest.importorskip("psycopg2")
         
         db = Database()
         db.connect()
@@ -1098,10 +1073,7 @@ class TestPostgresFailedTransactionRecovery:
 
     def test_infailedsqltransaction_nested_recovery(self, postgres_db_with_table):
         """Test recovery in nested transactions."""
-        try:
-            import psycopg2
-        except ImportError:
-            pytest.skip("psycopg2-binary not installed")
+        pytest.importorskip("psycopg2")
         
         db = Database()
         db.connect()
@@ -1177,10 +1149,7 @@ class TestPostgresErrorRecoveryReal:
     @pytest.fixture
     def postgres_recovery_db_with_constraints(self, postgres_recovery_config):
         """Create PostgreSQL test database with various constraints."""
-        try:
-            import psycopg2
-        except ImportError:
-            pytest.skip("psycopg2-binary not installed")
+        pytest.importorskip("psycopg2")
         
         db = Database()
         try:
@@ -1228,10 +1197,7 @@ class TestPostgresErrorRecoveryReal:
     
     def test_recovery_from_not_null_constraint_violation(self, postgres_recovery_db_with_constraints):
         """Test recovery from NOT NULL constraint violation."""
-        try:
-            import psycopg2
-        except ImportError:
-            pytest.skip("psycopg2-binary not installed")
+        psycopg2 = pytest.importorskip("psycopg2")
         
         db = Database()
         db.connect()
@@ -1268,10 +1234,7 @@ class TestPostgresErrorRecoveryReal:
     
     def test_recovery_from_unique_constraint_violation(self, postgres_recovery_db_with_constraints):
         """Test recovery from UNIQUE constraint violation."""
-        try:
-            import psycopg2
-        except ImportError:
-            pytest.skip("psycopg2-binary not installed")
+        psycopg2 = pytest.importorskip("psycopg2")
         
         db = Database()
         db.connect()
@@ -1309,10 +1272,7 @@ class TestPostgresErrorRecoveryReal:
     
     def test_recovery_from_check_constraint_violation(self, postgres_recovery_db_with_constraints):
         """Test recovery from CHECK constraint violation."""
-        try:
-            import psycopg2
-        except ImportError:
-            pytest.skip("psycopg2-binary not installed")
+        psycopg2 = pytest.importorskip("psycopg2")
         
         db = Database()
         db.connect()
@@ -1345,10 +1305,7 @@ class TestPostgresErrorRecoveryReal:
     
     def test_recovery_preserves_ability_to_retry(self, postgres_recovery_db_with_constraints):
         """Test that recovery allows retrying transaction after error."""
-        try:
-            import psycopg2
-        except ImportError:
-            pytest.skip("psycopg2-binary not installed")
+        psycopg2 = pytest.importorskip("psycopg2")
         
         db = Database()
         db.connect()
@@ -1388,10 +1345,7 @@ class TestPostgresErrorRecoveryReal:
     
     def test_recovery_in_nested_transaction_context(self, postgres_recovery_db_with_constraints):
         """Test error recovery in nested transaction scenarios."""
-        try:
-            import psycopg2
-        except ImportError:
-            pytest.skip("psycopg2-binary not installed")
+        psycopg2 = pytest.importorskip("psycopg2")
         
         db = Database()
         db.connect()
@@ -1433,10 +1387,7 @@ class TestPostgresErrorRecoveryReal:
     
     def test_recovery_resets_connection_state(self, postgres_recovery_db_with_constraints):
         """Test that recovery properly resets connection state."""
-        try:
-            import psycopg2
-        except ImportError:
-            pytest.skip("psycopg2-binary not installed")
+        psycopg2 = pytest.importorskip("psycopg2")
         
         db = Database()
         db.connect()
@@ -1500,10 +1451,7 @@ class TestPostgresMultipleConstraintViolations:
     @pytest.fixture
     def constraint_test_table(self, multi_constraint_config):
         """Create test table with multiple constraints."""
-        try:
-            import psycopg2
-        except ImportError:
-            pytest.skip("psycopg2-binary not installed")
+        pytest.importorskip("psycopg2")
         
         db = Database()
         try:
@@ -1539,11 +1487,8 @@ class TestPostgresMultipleConstraintViolations:
             pass
     
     def test_recovery_sequence_not_null_then_unique(self, constraint_test_table):
-        """Test recovery from sequence of constraint violations."""
-        try:
-            import psycopg2
-        except ImportError:
-            pytest.skip("psycopg2-binary not installed")
+        psycopg2 = """Test recovery from sequence of constraint violations."""
+        pytest.importorskip("psycopg2")
         
         db = Database()
         db.connect()
@@ -1594,10 +1539,7 @@ class TestPostgresMultipleConstraintViolations:
     
     def test_recovery_with_check_constraint_and_retry(self, constraint_test_table):
         """Test recovery from CHECK constraint with successful retry."""
-        try:
-            import psycopg2
-        except ImportError:
-            pytest.skip("psycopg2-binary not installed")
+        psycopg2 = pytest.importorskip("psycopg2")
         
         db = Database()
         db.connect()
@@ -1634,10 +1576,7 @@ class TestPostgresConnectionPoolFailureRecovery:
     
     def test_pool_connection_after_transaction_error(self):
         """Test that pool connection is properly managed after transaction error."""
-        try:
-            import psycopg2
-        except ImportError:
-            pytest.skip("psycopg2-binary not installed")
+        pytest.importorskip("psycopg2")
         
         
         pg_config = {
@@ -1664,10 +1603,7 @@ class TestPostgresConnectionPoolFailureRecovery:
     
     def test_pool_size_after_error_recovery(self):
         """Test that pool maintains correct size after errors."""
-        try:
-            import psycopg2
-        except ImportError:
-            pytest.skip("psycopg2-binary not installed")
+        pytest.importorskip("psycopg2")
         
         pg_config = {
             "type": "postgres",

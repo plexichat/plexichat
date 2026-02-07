@@ -4,22 +4,17 @@ Member, ban, and invite handler for server operations.
 
 import string
 import secrets
-from typing import Optional, List
+from typing import Optional
 from src.core.base import SnowflakeID
 from ..models import Member, Ban, Invite, ChannelType, AuditLogAction
 from ..exceptions import (
     ServerNotFoundError,
-    ServerAccessDeniedError,
     MemberNotFoundError,
     MemberExistsError,
     UserBannedError,
     CannotModifyOwnerError,
     RoleHierarchyError,
     BanExistsError,
-    BanNotFoundError,
-    InviteNotFoundError,
-    InviteExpiredError,
-    InviteMaxUsesError,
     ChannelNotFoundError,
 )
 from ..permissions import can_manage_member
@@ -41,35 +36,63 @@ class MemberHandler:
                 return code
 
     def is_member(self, server_id: SnowflakeID, user_id: SnowflakeID) -> bool:
-        """Check if user is a member of server (cached)."""
+        """Check if user is a member of server (cached in Redis)."""
         try:
             sid = int(server_id)
             uid = int(user_id)
         except (ValueError, TypeError):
             return False
 
-        cache_key = (sid, uid)
-        cached = self.manager._cache_get(self.manager._member_cache, cache_key)
-        if cached is True:
-            return True
+        cache_key = f"is_member:{sid}:{uid}"
+        
+        # 1. Try internal memory first
+        mem_cached = self.manager._cache_get(self.manager._member_cache, cache_key)
+        if mem_cached is not None:
+            return mem_cached
 
+        # 2. Try Redis
+        from src.core.database import cache_get, cache_set, redis_available
+        if redis_available():
+            redis_cached = cache_get(cache_key)
+            if redis_cached is not None:
+                is_member = bool(int(redis_cached))
+                self.manager._cache_set(self.manager._member_cache, cache_key, is_member)
+                return is_member
+
+        # 3. Check if user is the owner
         owner_id = self.manager._cache_get(self.manager._server_owner_cache, sid)
         if owner_id is None:
-            row = self.db.fetch_one("SELECT owner_id FROM srv_servers WHERE id = ? AND deleted = 0", (sid,))
-            if row:
-                owner_id = int(row["owner_id"])
-                self.manager._cache_set(self.manager._server_owner_cache, sid, owner_id)
+            # Check Redis for owner
+            owner_cache_key = f"server_owner:{sid}"
+            if redis_available():
+                owner_id_cached = cache_get(owner_cache_key)
+                if owner_id_cached:
+                    owner_id = int(owner_id_cached)
+                    self.manager._cache_set(self.manager._server_owner_cache, sid, owner_id)
+
+            if owner_id is None:
+                row = self.db.fetch_one("SELECT owner_id FROM srv_servers WHERE id = ? AND deleted = 0", (sid,))
+                if row:
+                    owner_id = int(row["owner_id"])
+                    self.manager._cache_set(self.manager._server_owner_cache, sid, owner_id)
+                    if redis_available():
+                        cache_set(owner_cache_key, str(owner_id), ttl=3600)
         
         if owner_id == uid:
             self.manager._cache_set(self.manager._member_cache, cache_key, True)
+            if redis_available():
+                cache_set(cache_key, "1", ttl=300)
             return True
 
-        if cached is False:
-            return False
-
+        # 4. Final DB check
         row = self.db.fetch_one("SELECT 1 FROM srv_members WHERE server_id = ? AND user_id = ?", (sid, uid))
         is_member = row is not None
+        
+        # Cache result
         self.manager._cache_set(self.manager._member_cache, cache_key, is_member)
+        if redis_available():
+            cache_set(cache_key, "1" if is_member else "0", ttl=300)
+            
         return is_member
 
     def add_member(
@@ -119,11 +142,18 @@ class MemberHandler:
                 
                 if conv_ids:
                     from src.core.messaging.models import ParticipantRole
-                    self.manager._messaging.add_participant_to_conversations(user_id, conv_ids, ParticipantRole.USER)
+                    self.manager._messaging.add_participant_to_conversations(user_id, conv_ids, ParticipantRole.MEMBER)
             except Exception as e:
                 logger.error(f"Error adding member {user_id} to server conversations: {e}")
 
         self.manager._cache_invalidate(self.manager._member_cache, (server_id, user_id))
+        
+        # Invalidate Redis
+        from src.core.database import cache_delete, invalidate_pattern, invalidate_cached
+        cache_delete(f"is_member:{server_id}:{user_id}")
+        invalidate_pattern(f"perms:{user_id}:{server_id}:*")
+        invalidate_cached(self.manager.get_servers, user_id)
+        
         result = self.get_member(server_id, user_id)
         assert result is not None
         return result
@@ -200,6 +230,12 @@ class MemberHandler:
 
         self.manager._cache_invalidate(self.manager._member_cache, (server_id, member_user_id))
         self.manager._cache_invalidate(self.manager._permission_cache, (member_user_id, server_id, None))
+        
+        # Invalidate Redis
+        from src.core.database import cache_delete, invalidate_pattern
+        cache_delete(f"is_member:{server_id}:{member_user_id}")
+        invalidate_pattern(f"perms:{member_user_id}:{server_id}:*")
+
         self.manager._log_audit(server_id, user_id, AuditLogAction.MEMBER_KICK, "member", member_user_id, reason=reason)
         return True
 
@@ -222,6 +258,11 @@ class MemberHandler:
             self.db.execute("DELETE FROM srv_member_roles WHERE member_id = ?", (member.id,))
             self.db.execute("DELETE FROM srv_members WHERE server_id = ? AND user_id = ?", (server_id, member_user_id))
             self.manager._cache_invalidate(self.manager._member_cache, (server_id, member_user_id))
+            
+            # Invalidate Redis
+            from src.core.database import cache_delete, invalidate_pattern
+            cache_delete(f"is_member:{server_id}:{member_user_id}")
+            invalidate_pattern(f"perms:{member_user_id}:{server_id}:*")
 
         now = self.manager._get_timestamp()
         ban_id = self.manager._generate_id()

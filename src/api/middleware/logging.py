@@ -8,7 +8,6 @@ Also collects server-side telemetry for comparison with client-reported latency.
 """
 
 import time
-import asyncio
 from fastapi.concurrency import run_in_threadpool
 from starlette.types import ASGIApp, Receive, Send, Scope, Message
 

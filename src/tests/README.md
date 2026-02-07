@@ -117,39 +117,39 @@ class ModuleRegistry:
 
 ```
 src/tests/
-Ôö£ÔöÇÔöÇ api/                    # API route tests
-Ôöé   Ôö£ÔöÇÔöÇ security/          # API security tests
-Ôöé   Ôöé   Ôö£ÔöÇÔöÇ test_authentication_failures.py
-Ôöé   Ôöé   Ôö£ÔöÇÔöÇ test_injection_attacks.py
-Ôöé   Ôöé   ÔööÔöÇÔöÇ test_rate_limit_enforcement.py
-Ôöé   Ôö£ÔöÇÔöÇ test_auth_routes.py
-Ôöé   Ôö£ÔöÇÔöÇ test_message_routes.py
-Ôöé   ÔööÔöÇÔöÇ conftest.py        # API-specific fixtures
-Ôö£ÔöÇÔöÇ auth/                   # Authentication module tests
-Ôöé   Ôö£ÔöÇÔöÇ test_login.py
-Ôöé   Ôö£ÔöÇÔöÇ test_registration.py
-Ôöé   Ôö£ÔöÇÔöÇ test_2fa.py
-Ôöé   ÔööÔöÇÔöÇ test_sessions.py
-Ôö£ÔöÇÔöÇ messaging/              # Messaging module tests
-Ôö£ÔöÇÔöÇ servers/                # Server management tests
-Ôö£ÔöÇÔöÇ security/               # Core security tests
-Ôöé   Ôö£ÔöÇÔöÇ test_xss_prevention.py
-Ôöé   Ôö£ÔöÇÔöÇ test_sql_injection.py
-Ôöé   Ôö£ÔöÇÔöÇ test_csrf_protection.py
-Ôöé   ÔööÔöÇÔöÇ test_comprehensive_security.py
-Ôö£ÔöÇÔöÇ unit/                   # Fast unit tests
-Ôöé   Ôö£ÔöÇÔöÇ test_validators.py
-Ôöé   Ôö£ÔöÇÔöÇ test_property_based_validation.py
-Ôöé   ÔööÔöÇÔöÇ test_real_hashing.py
-Ôö£ÔöÇÔöÇ fixtures/               # Shared test fixtures
-Ôöé   Ôö£ÔöÇÔöÇ database.py        # Database management
-Ôöé   Ôö£ÔöÇÔöÇ modules.py         # Module registry
-Ôöé   Ôö£ÔöÇÔöÇ security.py        # Security test utilities
-Ôöé   Ôö£ÔöÇÔöÇ factories.py       # Entity factories
-Ôöé   ÔööÔöÇÔöÇ config.py          # Test configuration
-Ôö£ÔöÇÔöÇ conftest.py            # Root fixtures (session-scoped)
-Ôö£ÔöÇÔöÇ pytest.ini             # Pytest configuration
-ÔööÔöÇÔöÇ README.md              # This file
+├── api/                    # API route tests
+│   ├── security/          # API security tests
+│   │   ├── test_authentication_failures.py
+│   │   ├── test_injection_attacks.py
+│   │   └── test_rate_limit_enforcement.py
+│   ├── test_auth_routes.py
+│   ├── test_message_routes.py
+│   └── conftest.py        # API-specific fixtures
+├── auth/                   # Authentication module tests
+│   ├── test_login.py
+│   ├── test_registration.py
+│   ├── test_2fa.py
+│   └── test_sessions.py
+├── messaging/              # Messaging module tests
+├── servers/                # Server management tests
+├── security/               # Core security tests
+│   ├── test_xss_prevention.py
+│   ├── test_sql_injection.py
+│   ├── test_csrf_protection.py
+│   └── test_comprehensive_security.py
+├── unit/                   # Fast unit tests
+│   ├── test_validators.py
+│   ├── test_property_based_validation.py
+│   └── test_real_hashing.py
+├── fixtures/               # Shared test fixtures
+│   ├── database.py        # Database management
+│   ├── modules.py         # Module registry
+│   ├── security.py        # Security test utilities
+│   ├── factories.py       # Entity factories
+│   └── config.py          # Test configuration
+├── conftest.py            # Root fixtures (session-scoped)
+├── pytest.ini             # Pytest configuration
+└── README.md              # This file
 ```
 
 ### Test Categories (Markers)
@@ -898,7 +898,7 @@ class TestIntegration:
 
 1. **Use descriptive test names**: `test_user_cannot_delete_other_users_messages`
 2. **One assertion concept per test**: Focus on testing one thing
-3. **Arrange-Act-Assert pattern**: Setup ÔåÆ Execute ÔåÆ Verify
+3. **Arrange-Act-Assert pattern**: Setup -> Execute -> Verify
 4. **Clean up is automatic**: Session-scoped fixtures handle cleanup
 5. **Avoid sleeps**: Use deterministic waits or mocks
 6. **Test data isolation**: Use unique IDs (`uuid.uuid4().hex[:8]`)

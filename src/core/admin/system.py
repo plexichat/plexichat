@@ -5,7 +5,7 @@ System metrics for PlexiChat Admin.
 import time
 import os
 import threading
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 import psutil
 
 # Store process start time for uptime calculation

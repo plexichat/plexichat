@@ -2,8 +2,8 @@
 Admin telemetry routes.
 """
 
-from fastapi import APIRouter, Request, HTTPException, Response, status, Query
-from typing import List, Optional, Union
+from fastapi import APIRouter, Request, HTTPException, Response, Query
+from typing import Optional
 import time
 import urllib.parse
 import csv
@@ -23,7 +23,8 @@ async def get_telemetry_stats(request: Request, hours: int = 24, endpoint: Optio
     get_admin_from_token(request)
     try:
         from src.core import telemetry
-        if not telemetry.is_setup(): return TelemetryStatsResponse(stats=[], source=source or "all")
+        if not telemetry.is_setup():
+            return TelemetryStatsResponse(stats=[], source=source or "all")
         cid = "server" if source == "server" else None
         stats = telemetry.get_endpoint_stats(hours=hours, endpoint_filter=endpoint, client_id_filter=cid)
         return TelemetryStatsResponse(
@@ -46,7 +47,8 @@ async def get_telemetry_history(request: Request, endpoint: str, method: str = "
     get_admin_from_token(request)
     try:
         from src.core import telemetry
-        if not telemetry.is_setup(): return TelemetryHistoryResponse(history=[])
+        if not telemetry.is_setup():
+            return TelemetryHistoryResponse(history=[])
         history = telemetry.get_response_time_history(endpoint=endpoint, method=method.upper(), hours=hours, bucket_minutes=bucket_minutes)
         return TelemetryHistoryResponse(history=[TelemetryHistoryBucket(**h) for h in history])
     except Exception as e:
@@ -59,7 +61,8 @@ async def reset_telemetry_stats(request: Request):
     get_admin_from_token(request)
     try:
         from src.core import telemetry
-        if not telemetry.is_setup(): return TelemetryResetResponse(success=False, deleted_count=0)
+        if not telemetry.is_setup():
+            return TelemetryResetResponse(success=False, deleted_count=0)
         telemetry.reset_all_stats()
         return TelemetryResetResponse(success=True, deleted_count=0)
     except Exception as e:
@@ -87,7 +90,8 @@ async def export_telemetry_stats(
 
     try:
         from src.core import telemetry
-        if not telemetry.is_setup(): raise HTTPException(status_code=500, detail="Telemetry not setup")
+        if not telemetry.is_setup():
+            raise HTTPException(status_code=500, detail="Telemetry not setup")
         stats = telemetry.get_endpoint_stats(hours=hours)
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
         
@@ -130,6 +134,7 @@ async def export_telemetry_stats(
 
         raise HTTPException(status_code=400, detail=f"Unsupported format: {format}")
     except Exception as e:
-        if isinstance(e, HTTPException): raise
+        if isinstance(e, HTTPException):
+            raise
         logger.error(f"Telemetry export error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")

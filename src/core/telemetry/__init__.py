@@ -98,7 +98,8 @@ def submit_response_times(entries: List[Dict[str, Any]], client_id: Optional[str
         from src.utils.encryption import generate_snowflake_id
         gen_id = generate_snowflake_id
     except ImportError:
-        gen_id = lambda: int(time.time() * 1000000)
+        def gen_id():
+            return int(time.time() * 1000000)
 
     for entry in entries:
         try:
@@ -113,9 +114,11 @@ def submit_response_times(entries: List[Dict[str, Any]], client_id: Optional[str
                 int(entry.get("db_queries", 0)),
                 float(entry.get("db_time_ms", 0.0))
             ))
-        except Exception: continue
+        except Exception:
+            continue
 
-    if not batch_data: return 0
+    if not batch_data:
+        return 0
     db.execute_many(
         """INSERT INTO telemetry_response_times 
            (id, endpoint, method, response_time_ms, status_code, timestamp, client_id, db_queries, db_time_ms)
@@ -140,7 +143,7 @@ def get_endpoint_stats(hours: int = 24, endpoint_filter: Optional[str] = None, c
         FROM telemetry_response_times 
         WHERE timestamp > ?
     """
-    params = [cutoff]
+    params: List[Any] = [cutoff]
     if endpoint_filter:
         query += " AND endpoint LIKE ?"
         params.append(f"%{endpoint_filter}%")
@@ -176,11 +179,13 @@ def get_response_time_history(endpoint: str, method: str = "GET", hours: int = 2
         "SELECT timestamp, response_time_ms FROM telemetry_response_times WHERE endpoint = ? AND method = ? AND timestamp > ? ORDER BY timestamp",
         (endpoint, method, cutoff)
     )
-    if not rows: return []
+    if not rows:
+        return []
     buckets = {}
     for r in rows:
         bk = (r["timestamp"] // bucket_ms) * bucket_ms
-        if bk not in buckets: buckets[bk] = []
+        if bk not in buckets:
+            buckets[bk] = []
         buckets[bk].append(r["response_time_ms"])
     
     return [{"timestamp": k, "avg_response_time_ms": sum(v)/len(v), "count": len(v)} for k, v in sorted(buckets.items())]

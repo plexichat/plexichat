@@ -10,6 +10,8 @@ Uses fakeredis for unit tests (no real Redis required).
 import pytest
 import os
 import sys
+import importlib
+import importlib.util
 
 # Setup paths before any imports
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
@@ -33,12 +35,7 @@ except ImportError:
     FAKEREDIS_AVAILABLE = False
 
 # Check if real redis is available
-try:
-    import redis as real_redis
-
-    REDIS_AVAILABLE = True
-except ImportError:
-    REDIS_AVAILABLE = False
+REDIS_AVAILABLE = importlib.util.find_spec("redis") is not None
 
 
 @pytest.fixture(scope="module")

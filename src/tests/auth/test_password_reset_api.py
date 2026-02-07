@@ -8,8 +8,11 @@ import os
 # Add src to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")))
 
-# Setup config before importing anything that uses it
+from src.api.routes.auth import router
+from src.core.auth.exceptions import TokenInvalidError, WeakPasswordError
 import utils.config as config
+
+# Setup config before importing anything that uses it
 # Use a non-existent path to trigger default config logic
 config.setup(config_path="non_existent.yaml", default_config={
     "rate_limiting": {
@@ -28,9 +31,6 @@ config.setup(config_path="non_existent.yaml", default_config={
         }
     }
 })
-
-from src.api.routes.auth import router
-from src.core.auth.exceptions import TokenInvalidError, WeakPasswordError
 
 class TestPasswordResetAPI(unittest.TestCase):
     def setUp(self):

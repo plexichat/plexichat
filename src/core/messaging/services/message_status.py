@@ -103,13 +103,22 @@ class MessageStatusService(BaseService):
             self._participant_repo.update_last_read(
                 conversation_id, user_id, last_msg_id, now
             )
+            
+            # Invalidate unread counts cache
+            try:
+                from src.core.database import invalidate_cached
+                invalidate_cached(self.get_unread_count, user_id, conversation_id)
+                invalidate_cached(self.get_unread_count, user_id, None)
+            except Exception:
+                pass
 
         return count
 
+    @cached(ttl=10, prefix="unread_counts")
     def get_unread_count(
         self, user_id: SnowflakeID, conversation_id: Optional[SnowflakeID] = None
     ) -> Dict[SnowflakeID, int]:
-        """Get unread message counts."""
+        """Get unread message counts (cached)."""
         if conversation_id:
             if not self._participant_svc.is_participant(conversation_id, user_id):
                 return {}

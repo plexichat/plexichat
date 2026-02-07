@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Body
 
 import src.api as api
 import src.core.events as events_mod
+from src.core.database import cached
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.servers import (
     ChannelResponse,
@@ -107,8 +108,6 @@ def _channel_to_response(channel, current_user_id: Optional[int] = None) -> Chan
         logger.error(f"Error converting channel object to response: {e}", exc_info=True)
         raise e
 
-
-from src.core.database import cached
 
 @router.get(
     "/{channel_id}",

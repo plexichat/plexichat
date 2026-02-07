@@ -2,7 +2,7 @@
 Admin moderation and content review routes.
 """
 
-from fastapi import APIRouter, Request, HTTPException, status
+from fastapi import APIRouter, Request, HTTPException
 from typing import List, Optional
 from src.api.schemas.admin import (
     HashReportResponse, HashReportCountsResponse, HashReportReviewRequest, HashReportReviewResponse,

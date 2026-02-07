@@ -4,13 +4,10 @@ Log management for PlexiChat Admin.
 
 import os
 import zipfile
-import logging
 from pathlib import Path
 from typing import List, Optional, Dict, Any
-from datetime import datetime
 import re
 
-import utils.logger as logger
 import utils.config as config
 
 def get_log_dir() -> Path:
@@ -61,9 +58,7 @@ def read_log_lines(
     
     if not log_path.exists():
         raise FileNotFoundError(f"Log file {filename} not found")
-        
-    lines = []
-    
+
     # Handle zipped logs
     if filename.endswith(".zip"):
         with zipfile.ZipFile(log_path, 'r') as zf:

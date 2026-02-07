@@ -4,7 +4,6 @@ Admin dashboard and system metrics routes.
 
 from fastapi import APIRouter, Request, HTTPException
 import time
-from typing import List
 from src.api.schemas.admin import AdminDashboardResponse, TelemetryEndpointStat, SystemMetrics
 from .utils import check_host_restriction, get_admin_from_token
 import src.api as api
@@ -15,7 +14,7 @@ router = APIRouter()
 @router.get("/dashboard", response_model=AdminDashboardResponse)
 async def get_dashboard(request: Request):
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    get_admin_from_token(request)
     from src.core import admin
     
     try:

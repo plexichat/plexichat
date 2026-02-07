@@ -35,6 +35,11 @@ from .exceptions import (
 from .schema import create_tables
 
 
+from src.core.database import (
+    cached,
+)
+
+
 class RelationshipManager(BaseManager):
     """Core relationship manager handling all operations."""
 
@@ -67,11 +72,8 @@ class RelationshipManager(BaseManager):
 
     def _is_blocked(self, blocker_id: SnowflakeID, blocked_id: SnowflakeID) -> bool:
         """Check if blocker has blocked blocked_id."""
-        row = self._db.fetch_one(
-            "SELECT 1 FROM rel_blocked WHERE blocker_id = ? AND blocked_id = ?",
-            (blocker_id, blocked_id),
-        )
-        return row is not None
+        blocked_ids = self.get_blocked_user_ids(blocker_id)
+        return int(blocked_id) in [int(bid) for rid in blocked_ids for bid in ([rid] if not isinstance(rid, list) else rid)] if blocked_ids else False
 
     def _is_blocked_by(self, user_id: SnowflakeID, other_id: SnowflakeID) -> bool:
         """Check if user is blocked by other."""
@@ -79,11 +81,8 @@ class RelationshipManager(BaseManager):
 
     def _are_friends(self, user_id: SnowflakeID, other_id: SnowflakeID) -> bool:
         """Check if two users are friends."""
-        row = self._db.fetch_one(
-            "SELECT 1 FROM rel_friends WHERE user_id = ? AND friend_id = ?",
-            (user_id, other_id),
-        )
-        return row is not None
+        friend_ids = self.get_friend_ids(user_id)
+        return int(other_id) in [int(fid) for rid in friend_ids for fid in ([rid] if not isinstance(rid, list) else rid)] if friend_ids else False
 
     def _get_pending_request(
         self, sender_id: SnowflakeID, recipient_id: SnowflakeID
@@ -224,6 +223,11 @@ class RelationshipManager(BaseManager):
             ["id", "user_id", "friend_id", "created_at"],
             (friend_id_2, row["recipient_id"], row["sender_id"], now),
         )
+
+        # Invalidate friends cache for both users
+        from src.core.database import invalidate_cached
+        invalidate_cached(self.get_friend_ids, row["sender_id"])
+        invalidate_cached(self.get_friend_ids, row["recipient_id"])
 
         logger.debug(f"Friend request {request_id} accepted")
 
@@ -372,6 +376,7 @@ class RelationshipManager(BaseManager):
         )
         return [self._row_to_friend(row) for row in rows]
 
+    @cached(ttl=300, prefix="user_friends")
     def get_friend_ids(self, user_id: SnowflakeID) -> List[SnowflakeID]:
         """Get list of friend user IDs."""
         rows = self._db.fetch_all(
@@ -403,6 +408,11 @@ class RelationshipManager(BaseManager):
             "DELETE FROM rel_friends WHERE user_id = ? AND friend_id = ?",
             (friend_id, user_id),
         )
+
+        # Invalidate friends cache for both users
+        from src.core.database import invalidate_cached
+        invalidate_cached(self.get_friend_ids, user_id)
+        invalidate_cached(self.get_friend_ids, friend_id)
 
         logger.debug(f"Friendship removed between {user_id} and {friend_id}")
 
@@ -466,6 +476,13 @@ class RelationshipManager(BaseManager):
             (now, blocker_id, blocked_id, blocked_id, blocker_id),
         )
 
+        # Invalidate caches
+        from src.core.database import invalidate_cached
+        invalidate_cached(self.get_blocked_user_ids, blocker_id)
+        # Also invalidate friends in case they were friends
+        invalidate_cached(self.get_friend_ids, blocker_id)
+        invalidate_cached(self.get_friend_ids, blocked_id)
+
         logger.debug(f"User {blocker_id} blocked user {blocked_id}")
 
         result = self.get_block(block_id)
@@ -493,6 +510,10 @@ class RelationshipManager(BaseManager):
             "DELETE FROM rel_blocked WHERE blocker_id = ? AND blocked_id = ?",
             (blocker_id, blocked_id),
         )
+
+        # Invalidate cache
+        from src.core.database import invalidate_cached
+        invalidate_cached(self.get_blocked_user_ids, blocker_id)
 
         logger.debug(f"User {blocker_id} unblocked user {blocked_id}")
 
@@ -556,6 +577,7 @@ class RelationshipManager(BaseManager):
         )
         return [self._row_to_blocked_user(row) for row in rows]
 
+    @cached(ttl=300, prefix="user_blocked")
     def get_blocked_user_ids(self, user_id: SnowflakeID) -> List[SnowflakeID]:
         """Get list of blocked user IDs."""
         rows = self._db.fetch_all(

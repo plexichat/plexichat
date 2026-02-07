@@ -441,10 +441,7 @@ def test_config_logger_database_integration(db_config):
 # PostgreSQL Tests
 def test_postgres_connection_real(db_config):
     """Test PostgreSQL connection with real driver."""
-    try:
-        import psycopg2
-    except ImportError:
-        pytest.skip("psycopg2 not installed")
+    pytest.importorskip("psycopg2")
 
     pg_config = {
         "type": "postgres",

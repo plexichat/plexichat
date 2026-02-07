@@ -6,9 +6,10 @@
     "src/utils/common-utils",
     "src/utils"
   ],
+  "pythonPath": "C:\\Users\\dboyn\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe",
   "pythonVersion": "3.13",
   "typeCheckingMode": "standard",
-  "reportMissingImports": "error",
+  "reportMissingImports": "none",
   "reportOptionalMemberAccess": "error",
   "reportOptionalSubscript": "error",
   "reportArgumentType": "error",

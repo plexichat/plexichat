@@ -96,7 +96,7 @@ class GatewayDispatcher:
         )
 
         if not connections:
-            log_level(f"No connections found for users: {user_ids[:5]}...")
+            logger.debug(f"No connections found for users: {user_ids[:5]}...")
             return 0
 
         sent_count = 0

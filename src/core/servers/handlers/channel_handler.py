@@ -7,9 +7,7 @@ from typing import Optional, List, Union
 from src.core.base import SnowflakeID
 from ..models import Channel, ChannelCategory, ChannelType, AuditLogAction
 from ..exceptions import (
-    ServerNotFoundError,
     ChannelNotFoundError,
-    ChannelTypeError,
     CategoryNotFoundError,
     InvalidChannelNameError,
 )
@@ -193,7 +191,7 @@ class ChannelHandler:
     ) -> List[Channel]:
         """Get all channels in a server."""
         query = "SELECT * FROM srv_channels WHERE server_id = ? AND deleted = 0"
-        params = [server_id]
+        params: List[Any] = [server_id]
 
         if channel_type:
             query += " AND channel_type = ?"

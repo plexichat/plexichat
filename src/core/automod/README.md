@@ -256,13 +256,14 @@ except AIBackendError as e:
 
 ## Database Schema
 
-Tables (prefixed with `automod_`):
+Tables (prefixed with `automod_` and `srv_`):
 - `automod_rules` - Rule definitions
 - `automod_violations` - Violation records
 - `automod_audit` - Audit log entries
 - `automod_reputation` - User reputation scores
 - `automod_exemptions` - Role/channel exemptions
 - `automod_rate_tracking` - Rate limit tracking
+- `srv_servers` - (Reference) Community servers
 
 ## Testing
 

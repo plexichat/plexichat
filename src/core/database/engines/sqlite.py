@@ -2,7 +2,6 @@ import sqlite3
 import os
 from typing import Any, Optional, Dict, List, Tuple
 from .base import BaseEngine
-import utils.logger as logger
 
 class SqliteEngine(BaseEngine):
     """SQLite database engine implementation."""

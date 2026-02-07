@@ -2,7 +2,7 @@
 Admin feedback ticket routes.
 """
 
-from fastapi import APIRouter, Request, HTTPException, status
+from fastapi import APIRouter, Request, HTTPException
 from typing import List, Optional
 from src.api.schemas.admin import TicketResponse, TicketStatusUpdate, NoteResponse, InternalNoteCreate
 from src.api.schemas.common import SuccessResponse
@@ -37,7 +37,8 @@ async def get_ticket(ticket_id: int, request: Request):
     get_admin_from_token(request)
     from src.core import admin
     ticket = admin.get_ticket(ticket_id)
-    if not ticket: raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Ticket not found"}})
+    if not ticket:
+        raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Ticket not found"}})
     return TicketResponse(
         id=str(ticket.id), user_id=str(ticket.user_id), username=ticket.username,
         content=ticket.content, category=ticket.category, rating=ticket.rating,
@@ -50,7 +51,8 @@ async def update_ticket_status(ticket_id: int, update: TicketStatusUpdate, reque
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
     from src.core import admin
-    if not admin.get_ticket(ticket_id): raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Ticket not found"}})
+    if not admin.get_ticket(ticket_id):
+        raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Ticket not found"}})
     admin.update_ticket_status(ticket_id, update.status, admin_id)
     return SuccessResponse(success=True)
 
@@ -59,7 +61,8 @@ async def get_ticket_notes(ticket_id: int, request: Request):
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import admin
-    if not admin.get_ticket(ticket_id): raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Ticket not found"}})
+    if not admin.get_ticket(ticket_id):
+        raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Ticket not found"}})
     notes = admin.get_ticket_notes(ticket_id)
     return [NoteResponse(id=str(n.id), ticket_id=str(n.ticket_id), admin_id=str(n.admin_id), admin_username=n.admin_username, content=n.content, created_at=n.created_at) for n in notes]
 
@@ -68,7 +71,9 @@ async def add_ticket_note(ticket_id: int, note: InternalNoteCreate, request: Req
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
     from src.core import admin
-    if not admin.get_ticket(ticket_id): raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Ticket not found"}})
+    if not admin.get_ticket(ticket_id):
+        raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Ticket not found"}})
     new_note = admin.add_internal_note(ticket_id, admin_id, note.content)
-    if not new_note: raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Failed to create note"}})
+    if not new_note:
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Failed to create note"}})
     return NoteResponse(id=str(new_note.id), ticket_id=str(new_note.ticket_id), admin_id=str(new_note.admin_id), admin_username=new_note.admin_username, content=new_note.content, created_at=new_note.created_at)

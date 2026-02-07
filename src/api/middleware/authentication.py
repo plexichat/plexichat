@@ -166,7 +166,6 @@ async def get_current_user(request: Request) -> TokenInfo:
 
     # Enforce account status (Locked or Forced Username Change)
     path = request.url.path
-    method = request.method
     
     # Account Lock check (Total block)
     if user.account_locked:

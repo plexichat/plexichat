@@ -40,6 +40,7 @@ from .query import QueryParser, FilterProcessor, RankingEngine
 from .indexer import SQLiteFTS5Indexer, ElasticsearchIndexer, MeilisearchIndexer
 from .indexer.base import IndexerConfig
 from .discovery import DiscoveryManager
+from src.core.database import cache_get, cache_set, redis_available
 
 
 class SearchManager(BaseManager):
@@ -614,7 +615,6 @@ class SearchManager(BaseManager):
         server_id: Optional[int] = None,
         channel_id: Optional[int] = None,
     ) -> List[int]:
-        """Get list of conversation IDs the user can access."""
         if conversation_id:
             if self._can_access_conversation(user_id, conversation_id):
                 return [conversation_id]
@@ -638,28 +638,20 @@ class SearchManager(BaseManager):
         conversations.extend(row["conversation_id"] for row in dm_convs)
 
         if server_id:
-            channels = self._db.fetch_all(
-                """SELECT id, conversation_id FROM srv_channels 
-                   WHERE server_id = ?""",
+            rows = self._db.fetch_all(
+                "SELECT conversation_id FROM srv_channels WHERE server_id = ? AND conversation_id IS NOT NULL",
                 (server_id,),
             )
-            for ch in channels:
-                if ch["conversation_id"] and self._can_access_channel(
-                    user_id, ch["id"]
-                ):
-                    conversations.append(ch["conversation_id"])
+            conversations.extend(row["conversation_id"] for row in rows)
         else:
-            user_servers = self._db.fetch_all(
-                "SELECT server_id FROM srv_members WHERE user_id = ?", (user_id,)
+            rows = self._db.fetch_all(
+                """SELECT c.conversation_id 
+                   FROM srv_channels c 
+                   JOIN srv_members m ON c.server_id = m.server_id 
+                   WHERE m.user_id = ? AND c.conversation_id IS NOT NULL""",
+                (user_id,),
             )
-            for srv in user_servers:
-                channels = self._db.fetch_all(
-                    "SELECT id, conversation_id FROM srv_channels WHERE server_id = ?",
-                    (srv["server_id"],),
-                )
-                for ch in channels:
-                    if ch["conversation_id"]:
-                        conversations.append(ch["conversation_id"])
+            conversations.extend(row["conversation_id"] for row in rows)
 
         return list(set(conversations))
 
@@ -700,34 +692,38 @@ class SearchManager(BaseManager):
         results: List[MessageSearchResult],
         user_id: int,
     ) -> List[MessageSearchResult]:
-        """Enrich message results with additional data."""
+        author_ids = {r.author_id for r in results if r.author_id}
+        conversation_ids = {r.conversation_id for r in results if r.conversation_id}
+        server_ids = {r.server_id for r in results if r.server_id}
+        channel_ids = {r.channel_id for r in results if r.channel_id}
+
+        authors = self._get_names(
+            author_ids, "user:username", "auth_users", "id", "username", ttl=60
+        )
+        conversations = self._get_names(
+            conversation_ids,
+            "conversation:name",
+            "msg_conversations",
+            "id",
+            "name",
+            ttl=300,
+        )
+        servers = self._get_names(
+            server_ids, "server:name", "srv_servers", "id", "name", ttl=300
+        )
+        channels = self._get_names(
+            channel_ids, "channel:name", "srv_channels", "id", "name", ttl=300
+        )
+
         for result in results:
-            author = self._db.fetch_one(
-                "SELECT username FROM auth_users WHERE id = ?", (result.author_id,)
-            )
-            if author:
-                result.author_username = author["username"]
-
-            conv = self._db.fetch_one(
-                "SELECT name, conversation_type FROM msg_conversations WHERE id = ?",
-                (result.conversation_id,),
-            )
-            if conv:
-                result.conversation_name = conv["name"]
-
-            if result.server_id:
-                server = self._db.fetch_one(
-                    "SELECT name FROM srv_servers WHERE id = ?", (result.server_id,)
-                )
-                if server:
-                    result.server_name = server["name"]
-
-            if result.channel_id:
-                channel = self._db.fetch_one(
-                    "SELECT name FROM srv_channels WHERE id = ?", (result.channel_id,)
-                )
-                if channel:
-                    result.channel_name = channel["name"]
+            if result.author_id and result.author_id in authors:
+                result.author_username = authors[result.author_id]
+            if result.conversation_id and result.conversation_id in conversations:
+                result.conversation_name = conversations[result.conversation_id]
+            if result.server_id and result.server_id in servers:
+                result.server_name = servers[result.server_id]
+            if result.channel_id and result.channel_id in channels:
+                result.channel_name = channels[result.channel_id]
 
         return results
 
@@ -736,13 +732,13 @@ class SearchManager(BaseManager):
         results: List[UserSearchResult],
         user_id: int,
     ) -> List[UserSearchResult]:
-        """Enrich user results with mutual servers/friends."""
-        user_servers = self._get_user_server_ids(user_id)
-
-        for result in results:
-            target_servers = self._get_user_server_ids(result.user_id)
-            result.mutual_servers = len(user_servers & target_servers)
-
+        current_user_servers = self._get_user_server_ids(user_id)
+        target_ids = [r.user_id for r in results]
+        targets_map = self._get_user_servers_map(target_ids)
+        for r in results:
+            r.mutual_servers = len(
+                current_user_servers & targets_map.get(r.user_id, set())
+            )
         return results
 
     def _enrich_server_results(
@@ -760,7 +756,82 @@ class SearchManager(BaseManager):
 
     def _get_user_server_ids(self, user_id: int) -> set:
         """Get set of server IDs the user is a member of."""
+        cache_key = f"user:servers:{int(user_id)}"
+        if redis_available():
+            cached = cache_get(cache_key)
+            if isinstance(cached, list):
+                return {int(x) for x in cached}
         rows = self._db.fetch_all(
             "SELECT server_id FROM srv_members WHERE user_id = ?", (user_id,)
         )
-        return {row["server_id"] for row in rows}
+        server_ids = [int(row["server_id"]) for row in rows]
+        if redis_available():
+            cache_set(cache_key, server_ids, ttl=300)
+        return set(server_ids)
+
+    def _get_user_servers_map(self, user_ids: List[int]) -> Dict[int, set]:
+        uniq = sorted({int(uid) for uid in user_ids if uid})
+        result: Dict[int, set] = {}
+        missing: List[int] = []
+        if redis_available():
+            for uid in uniq:
+                cached = cache_get(f"user:servers:{uid}")
+                if isinstance(cached, list):
+                    result[uid] = {int(x) for x in cached}
+                else:
+                    missing.append(uid)
+        else:
+            missing = uniq
+        if missing:
+            placeholders = ",".join("?" for _ in missing)
+            rows = self._db.fetch_all(
+                f"SELECT user_id, server_id FROM srv_members WHERE user_id IN ({placeholders})",
+                tuple(missing),
+            )
+            for row in rows:
+                uid = int(row["user_id"])
+                sid = int(row["server_id"])
+                if uid not in result:
+                    result[uid] = set()
+                result[uid].add(sid)
+            if redis_available():
+                for uid in missing:
+                    cache_set(f"user:servers:{uid}", list(result.get(uid, set())), ttl=300)
+        return result
+
+    def _get_names(
+        self,
+        ids: set,
+        cache_prefix: str,
+        table: str,
+        id_col: str,
+        name_col: str,
+        ttl: int = 300,
+    ) -> Dict[int, str]:
+        uniq = sorted({int(i) for i in ids if i})
+        if not uniq:
+            return {}
+        cached: Dict[int, str] = {}
+        missing: List[int] = []
+        if redis_available():
+            for i in uniq:
+                v = cache_get(f"{cache_prefix}:{i}")
+                if isinstance(v, str):
+                    cached[i] = v
+                else:
+                    missing.append(i)
+        else:
+            missing = uniq
+        if missing:
+            placeholders = ",".join("?" for _ in missing)
+            rows = self._db.fetch_all(
+                f"SELECT {id_col} as id, {name_col} as name FROM {table} WHERE {id_col} IN ({placeholders})",
+                tuple(missing),
+            )
+            for row in rows:
+                i = int(row["id"])
+                n = row["name"]
+                cached[i] = n
+                if redis_available():
+                    cache_set(f"{cache_prefix}:{i}", n, ttl=ttl)
+        return cached
