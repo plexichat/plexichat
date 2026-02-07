@@ -96,7 +96,8 @@ async def export_telemetry_stats(
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
         
         if format == "json":
-            return TelemetryExportResponse(
+            import json
+            data = TelemetryExportResponse(
                 export_time=ts, hours=hours, 
                 stats=[TelemetryEndpointStat(
                     endpoint=s.endpoint, method=s.method, count=s.count, 
@@ -105,6 +106,12 @@ async def export_telemetry_stats(
                     avg_queries=round(s.avg_queries, 1), 
                     avg_query_time_ms=round(s.avg_query_time_ms, 2)
                 ) for s in stats]
+            ).model_dump()
+            
+            return Response(
+                content=json.dumps(data, indent=2),
+                media_type="application/json",
+                headers={"Content-Disposition": f"attachment; filename=telemetry_{ts.replace(' ', '_').replace(':', '-')}.json"}
             )
         
         elif format == "csv":
