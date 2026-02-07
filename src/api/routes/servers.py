@@ -221,6 +221,7 @@ async def create_server(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@cached(ttl=60)
 async def get_server(
     server_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> ServerResponse:
@@ -1024,6 +1025,7 @@ async def get_server_invites(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@cached(ttl=300)
 async def get_server_roles(
     server_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> List[RoleResponse]:
@@ -1927,3 +1929,4 @@ async def upload_server_icon(
         raise HTTPException(
             status_code=500, detail={"error": {"code": 500, "message": "Upload failed"}}
         )
+

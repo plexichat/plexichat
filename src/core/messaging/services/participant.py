@@ -13,6 +13,7 @@ from ..exceptions import (
 )
 from .base import BaseService
 from src.core.base import SnowflakeID
+from src.core.database.cache import cached, invalidate_pattern
 
 
 class ParticipantService(BaseService):
@@ -42,6 +43,7 @@ class ParticipantService(BaseService):
 
         # Invalidate cache
         self._cache_invalidate((conversation_id, user_id))
+        invalidate_pattern(f"participant_ids:*{conversation_id}*")
 
         row = self._repo.get_by_conversation_and_user(conversation_id, user_id)
         if row is None:
@@ -79,6 +81,7 @@ class ParticipantService(BaseService):
         # Invalidate caches
         for cid in conversation_ids:
             self._cache_invalidate((cid, user_id))
+            invalidate_pattern(f"participant_ids:*{cid}*")
 
     def remove_participant(
         self,
@@ -89,6 +92,7 @@ class ParticipantService(BaseService):
         """Remove a participant from a conversation."""
         self._repo.delete(conversation_id, user_id, auto_commit=auto_commit)
         self._cache_invalidate((conversation_id, user_id))
+        invalidate_pattern(f"participant_ids:*{conversation_id}*")
 
     def get_participant(
         self, conversation_id: SnowflakeID, user_id: SnowflakeID
@@ -104,6 +108,7 @@ class ParticipantService(BaseService):
         rows = self._repo.get_all_by_conversation(conversation_id)
         return [self._repo.row_to_model(row) for row in rows]
 
+    @cached(ttl=15, prefix="participant_ids")
     def get_participant_ids(
         self, conversation_id: SnowflakeID
     ) -> List[SnowflakeID]:

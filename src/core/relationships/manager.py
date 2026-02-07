@@ -37,6 +37,7 @@ from .schema import create_tables
 
 from src.core.database import (
     cached,
+    invalidate_pattern,
 )
 
 
@@ -164,6 +165,9 @@ class RelationshipManager(BaseManager):
             (request_id, sender_id, recipient_id, message, now, now),
         )
 
+        invalidate_pattern(f"all_relationships:*{sender_id}*")
+        invalidate_pattern(f"all_relationships:*{recipient_id}*")
+
         logger.debug(
             f"Friend request {request_id} sent from {sender_id} to {recipient_id}"
         )
@@ -228,6 +232,8 @@ class RelationshipManager(BaseManager):
         # from src.core.database import invalidate_cached
         self.get_friend_ids.invalidate(row["sender_id"])  # type: ignore
         self.get_friend_ids.invalidate(row["recipient_id"])  # type: ignore
+        invalidate_pattern(f"all_relationships:*{row['sender_id']}*")
+        invalidate_pattern(f"all_relationships:*{row['recipient_id']}*")
 
         logger.debug(f"Friend request {request_id} accepted")
 
@@ -413,6 +419,8 @@ class RelationshipManager(BaseManager):
         # from src.core.database import invalidate_cached
         self.get_friend_ids.invalidate(user_id)  # type: ignore
         self.get_friend_ids.invalidate(friend_id)  # type: ignore
+        invalidate_pattern(f"all_relationships:*{user_id}*")
+        invalidate_pattern(f"all_relationships:*{friend_id}*")
 
         logger.debug(f"Friendship removed between {user_id} and {friend_id}")
 
@@ -482,6 +490,8 @@ class RelationshipManager(BaseManager):
         # Also invalidate friends in case they were friends
         self.get_friend_ids.invalidate(blocker_id)  # type: ignore
         self.get_friend_ids.invalidate(blocked_id)  # type: ignore
+        invalidate_pattern(f"all_relationships:*{blocker_id}*")
+        invalidate_pattern(f"all_relationships:*{blocked_id}*")
 
         logger.debug(f"User {blocker_id} blocked user {blocked_id}")
 
@@ -513,11 +523,14 @@ class RelationshipManager(BaseManager):
 
         # Invalidate cache
         self.get_blocked_user_ids.invalidate(blocker_id)  # type: ignore
+        invalidate_pattern(f"all_relationships:*{blocker_id}*")
+        invalidate_pattern(f"all_relationships:*{blocked_id}*")
 
         logger.debug(f"User {blocker_id} unblocked user {blocked_id}")
 
         return True
 
+    @cached(ttl=60, prefix="all_relationships")
     def get_all_relationships(self, user_id: SnowflakeID) -> Dict[str, List]:
         """
         Get all relationships (friends, pending, blocked) in fewer database passes.

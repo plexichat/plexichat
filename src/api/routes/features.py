@@ -26,7 +26,6 @@ from src.api.schemas.features import (
     TiersResponse,
     BadgesResponse,
     TierLimitsResponse,
-    ServerFeaturesResponse,
 )
 from src.api.schemas.common import ErrorResponse
 

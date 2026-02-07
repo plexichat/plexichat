@@ -18,6 +18,8 @@ from ..exceptions import (
     ChannelNotFoundError,
 )
 from ..permissions import can_manage_member
+from src.core.database import cache_delete
+from src.core.database.cache import cached, invalidate_pattern
 import utils.logger as logger
 
 class MemberHandler:
@@ -158,6 +160,7 @@ class MemberHandler:
         assert result is not None
         return result
 
+    @cached(ttl=30, prefix="member_data")
     def get_member(self, server_id: SnowflakeID, user_id: SnowflakeID) -> Optional[Member]:
         """Get a member by user ID."""
         row = self.db.fetch_one("SELECT * FROM srv_members WHERE server_id = ? AND user_id = ?", (server_id, user_id))
@@ -206,6 +209,7 @@ class MemberHandler:
             if user_id != member_user_id:
                 self.manager._log_audit(server_id, user_id, AuditLogAction.MEMBER_UPDATE, "member", member_user_id, changes)
 
+        invalidate_pattern(f"member_data:*{member_user_id}*")
         result = self.get_member(server_id, member_user_id)
         assert result is not None
         return result
@@ -236,6 +240,7 @@ class MemberHandler:
         cache_delete(f"is_member:{server_id}:{member_user_id}")
         invalidate_pattern(f"perms:{member_user_id}:{server_id}:*")
 
+        invalidate_pattern(f"member_data:*{member_user_id}*")
         self.manager._log_audit(server_id, user_id, AuditLogAction.MEMBER_KICK, "member", member_user_id, reason=reason)
         return True
 
@@ -301,10 +306,10 @@ class MemberHandler:
             self.db.execute("DELETE FROM srv_members WHERE server_id = ? AND user_id = ?", (server_id, member_user_id))
             self.manager._cache_invalidate(self.manager._member_cache, (server_id, member_user_id))
             
-            # Invalidate Redis
-            from src.core.database import cache_delete, invalidate_pattern
             cache_delete(f"is_member:{server_id}:{member_user_id}")
             invalidate_pattern(f"perms:{member_user_id}:{server_id}:*")
+
+        invalidate_pattern(f"member_data:*{member_user_id}*")
 
         now = self.manager._get_timestamp()
         ban_id = self.manager._generate_id()

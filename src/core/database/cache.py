@@ -20,8 +20,16 @@ import inspect
 import dataclasses
 import fnmatch
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, cast
+from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Protocol, Tuple, Union, cast
 from functools import wraps
+import os
+
+try:
+    import diskcache
+    _DISKCACHE_AVAILABLE = True
+except ImportError:
+    diskcache = None
+    _DISKCACHE_AVAILABLE = False
 
 import utils.logger as logger
 
@@ -32,8 +40,12 @@ from .redis_client import (
     JsonSerializable,
 )
 
-# Type variable for generic return types
-T = TypeVar("T", bound=JsonSerializable)
+class _DiskCacheLike(Protocol):
+    def get(self, key: str) -> Any: ...
+    def set(self, key: str, value: Any, expire: Optional[int] = None) -> Any: ...
+    def pop(self, key: str, default: Any = None) -> Any: ...
+    def keys(self) -> Iterable[str]: ...
+    def iterkeys(self) -> Iterable[str]: ...
 
 # Cache statistics
 _cache_stats = {
@@ -42,25 +54,45 @@ _cache_stats = {
     "errors": 0,
 }
 
-# Simple in-memory fallback cache
-_mem_cache: Dict[str, Tuple[float, Any]] = {}
+# Simple in-memory fallback cache (or diskcache if available)
+if _DISKCACHE_AVAILABLE and diskcache is not None:
+    # Use persistent disk cache (Process-safe, persistent across restarts)
+    cache_dir = os.path.join(os.path.expanduser("~"), ".plexichat", "cache", "local_cache")
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir, exist_ok=True)
+    _mem_cache: Union[_DiskCacheLike, Dict[str, Tuple[float, Any]]] = diskcache.Cache(cache_dir)
+    logger.info(f"Initialized DiskCache at {cache_dir}")
+else:
+    # Fallback to process-local dict (Warning: Not shared across workers)
+    _mem_cache = {}
 _MEM_CACHE_MAX_SIZE = 1000
 
 def _mem_cache_get(key: str) -> Optional[Any]:
-    if key in _mem_cache:
-        expiry, value = _mem_cache[key]
-        if expiry > time.time():
-            return value
-        del _mem_cache[key]
-    return None
+    if _DISKCACHE_AVAILABLE:
+        # DiskCache handles expiry automatically
+        # It returns None if key is missing or expired
+        return cast(_DiskCacheLike, _mem_cache).get(key)
+    else:
+        mem_cache = cast(Dict[str, Tuple[float, Any]], _mem_cache)
+        if key in mem_cache:
+            expiry, value = mem_cache[key]
+            if expiry > time.time():
+                return value
+            del mem_cache[key]
+        return None
 
 def _mem_cache_set(key: str, value: Any, ttl: int):
-    if len(_mem_cache) >= _MEM_CACHE_MAX_SIZE:
-        # Very simple eviction: clear half the cache if it gets too big
-        keys = list(_mem_cache.keys())
-        for k in keys[:_MEM_CACHE_MAX_SIZE // 2]:
-            del _mem_cache[k]
-    _mem_cache[key] = (time.time() + ttl, value)
+    if _DISKCACHE_AVAILABLE:
+        # DiskCache handles expiry (ttl in seconds)
+        cast(_DiskCacheLike, _mem_cache).set(key, value, expire=ttl)
+    else:
+        mem_cache = cast(Dict[str, Tuple[float, Any]], _mem_cache)
+        if len(mem_cache) >= _MEM_CACHE_MAX_SIZE:
+            # Very simple eviction: clear half the cache if it gets too big
+            keys = list(mem_cache.keys())
+            for k in keys[:_MEM_CACHE_MAX_SIZE // 2]:
+                del mem_cache[k]
+        mem_cache[key] = (time.time() + ttl, value)
 
 class CacheError(Exception):
     """Base exception for cache operations."""
@@ -136,13 +168,15 @@ def _ensure_serializable(obj: Any) -> Any:
         return {str(k): _ensure_serializable(v) for k, v in obj.items()}
     
     # Handle Pydantic models (common in API responses)
-    if hasattr(obj, "model_dump") and callable(obj.model_dump):
-        data = _ensure_serializable(obj.model_dump())  # type: ignore
+    model_dump = getattr(obj, "model_dump", None)
+    if callable(model_dump):
+        data = _ensure_serializable(model_dump())
         if isinstance(data, dict):
             data["__type__"] = f"{obj.__class__.__module__}.{obj.__class__.__name__}"  # type: ignore
         return data
-    if hasattr(obj, "dict") and callable(obj.dict):
-        data = _ensure_serializable(obj.dict())  # type: ignore
+    dict_method = getattr(obj, "dict", None)
+    if callable(dict_method):
+        data = _ensure_serializable(dict_method())
         if isinstance(data, dict):
             data["__type__"] = f"{obj.__class__.__module__}.{obj.__class__.__name__}"  # type: ignore
         return data
@@ -208,7 +242,7 @@ def cached(
     prefix: Optional[str] = None,
     key_builder: Optional[Callable[..., str]] = None,
     skip_cache_if: Optional[Callable[..., bool]] = None,
-) -> Callable[[Callable[..., T]], Callable[..., T]]:
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """
     Decorator to cache function results in Redis.
 
@@ -219,20 +253,21 @@ def cached(
         skip_cache_if: Function that returns True to skip caching for this call.
     """
 
-    def decorator(func: Callable[..., T]) -> Callable[..., T]:
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         is_async = inspect.iscoroutinefunction(func)
 
         @wraps(func)
-        async def async_wrapper(*args, **kwargs) -> T:
+        async def async_wrapper(*args, **kwargs) -> Any:
             global _cache_stats
 
             # Check if we should skip caching
             if skip_cache_if and skip_cache_if(*args, **kwargs):
-                return await func(*args, **kwargs)  # type: ignore
+                async_func = cast(Callable[..., Awaitable[Any]], func)
+                return await async_func(*args, **kwargs)
 
             # Check if Redis is available
             client = get_client()
-            redis_ready = client and is_available()
+            redis_ready = client is not None and is_available()
 
             # Generate cache key
             key_prefix = prefix or f"cache:{func.__module__}.{func.__name__}"
@@ -243,6 +278,7 @@ def cached(
 
             # Try to get from cache (Redis then Memory)
             if redis_ready:
+                assert client is not None
                 try:
                     cached_value = client.get_json(cache_key)
                     if cached_value is not None:
@@ -250,7 +286,7 @@ def cached(
                         logger.debug(
                             f"CACHE HIT (Redis): {cache_key} (total hits: {_cache_stats['hits']})"
                         )
-                        return cast(T, _reconstruct_object(cached_value))
+                        return _reconstruct_object(cached_value)
                 except RedisOperationError:
                     _cache_stats["errors"] += 1
             else:
@@ -260,7 +296,7 @@ def cached(
                     logger.debug(
                         f"CACHE HIT (Memory): {cache_key} (total hits: {_cache_stats['hits']})"
                     )
-                    return cast(T, _reconstruct_object(cached_value))
+                    return _reconstruct_object(cached_value)
 
             # Cache miss - execute function
             _cache_stats["misses"] += 1
@@ -268,11 +304,14 @@ def cached(
                 f"CACHE MISS: {cache_key} (total misses: {_cache_stats['misses']})"
             )
 
-            result = await func(*args, **kwargs)
+            async_func = cast(Callable[..., Awaitable[Any]], func)
+            result = await async_func(*args, **kwargs)
             serializable_result = _ensure_serializable(result)
 
             # Store in cache (Redis and/or Memory)
-            cache_ttl = ttl if ttl is not None else (client.ttl_cache if redis_ready and client else 300)
+            cache_ttl = ttl if ttl is not None else 300
+            if redis_ready and client is not None:
+                cache_ttl = ttl if ttl is not None else client.ttl_cache
             
             if redis_ready:
                 assert client is not None
@@ -290,7 +329,7 @@ def cached(
             return result
 
         @wraps(func)
-        def wrapper(*args, **kwargs) -> T:
+        def wrapper(*args, **kwargs) -> Any:
             global _cache_stats
 
             # Check if we should skip caching
@@ -299,7 +338,7 @@ def cached(
 
             # Check if Redis is available
             client = get_client()
-            redis_ready = client and is_available()
+            redis_ready = client is not None and is_available()
 
             # Generate cache key
             key_prefix = prefix or f"cache:{func.__module__}.{func.__name__}"
@@ -310,6 +349,7 @@ def cached(
 
             # Try to get from cache (Redis then Memory)
             if redis_ready:
+                assert client is not None
                 try:
                     cached_value = client.get_json(cache_key)
                     if cached_value is not None:
@@ -317,7 +357,7 @@ def cached(
                         logger.debug(
                             f"CACHE HIT (Redis): {cache_key} (total hits: {_cache_stats['hits']})"
                         )
-                        return cast(T, _reconstruct_object(cached_value))
+                        return _reconstruct_object(cached_value)
                 except RedisOperationError:
                     _cache_stats["errors"] += 1
             else:
@@ -327,7 +367,7 @@ def cached(
                     logger.debug(
                         f"CACHE HIT (Memory): {cache_key} (total hits: {_cache_stats['hits']})"
                     )
-                    return cast(T, _reconstruct_object(cached_value))
+                    return _reconstruct_object(cached_value)
 
             # Cache miss - execute function
             _cache_stats["misses"] += 1
@@ -339,9 +379,12 @@ def cached(
             serializable_result = _ensure_serializable(result)
 
             # Store in cache (Redis and/or Memory)
-            cache_ttl = ttl if ttl is not None else (client.ttl_cache if redis_ready else 300)
+            cache_ttl = ttl if ttl is not None else 300
+            if redis_ready and client is not None:
+                cache_ttl = ttl if ttl is not None else client.ttl_cache
             
             if redis_ready:
+                assert client is not None
                 try:
                     client.set_json(
                         cache_key, cast(JsonSerializable, serializable_result), ttl=cache_ttl
@@ -479,8 +522,24 @@ def invalidate_pattern(pattern: str) -> int:
         Number of keys invalidated.
     """
     # Always clear in-memory cache entries that match the pattern
-    mem_keys = [k for k in _mem_cache.keys() if fnmatch.fnmatch(k, pattern)]
+    # Wrap keys() in list() to handle both dict and DiskCache (which returns iterator)
+    if _DISKCACHE_AVAILABLE:
+        # Limit the number of keys we check to avoid performance hit on huge caches
+        # For diskcache, iterating all keys can be slow, but for local cache usage it is acceptable
+        mem_keys = [
+            k
+            for k in list(cast(_DiskCacheLike, _mem_cache).iterkeys())
+            if fnmatch.fnmatch(k, pattern)
+        ]
+    else:
+        mem_keys = [
+            k
+            for k in list(cast(Dict[str, Tuple[float, Any]], _mem_cache).keys())
+            if fnmatch.fnmatch(k, pattern)
+        ]
+        
     for k in mem_keys:
+        # pop works for both dict and DiskCache
         _mem_cache.pop(k, None)
 
     client = get_client()

@@ -6,6 +6,7 @@ from typing import List
 from fastapi import APIRouter, HTTPException, Depends, status
 
 import utils.logger as logger
+from src.core.database.cache import cached
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.voice import (
     ICEServerConfig,
@@ -26,6 +27,7 @@ router = APIRouter(prefix="/voice", tags=["Voice"])
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@cached(ttl=3600, prefix="ice_servers")
 async def get_ice_servers(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> ICEServersResponse:

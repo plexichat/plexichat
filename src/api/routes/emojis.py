@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
 import src.api as api
 import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.core.database.cache import cached
 from src.api.schemas.emojis import (
     EmojiResponse,
     EmojiCountsResponse,
@@ -42,6 +43,7 @@ def _emoji_to_response(emoji) -> EmojiResponse:
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@cached(ttl=300)
 async def get_server_emojis(
     server_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> List[EmojiResponse]:
@@ -241,6 +243,7 @@ async def get_emoji_counts(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@cached(ttl=3600)
 async def get_emoji(
     server_id: str, emoji_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> EmojiResponse:
