@@ -9,7 +9,7 @@ Admin-only endpoints for:
 Public endpoint for users to view their own features.
 """
 
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Request
 
 import utils.logger as logger
 
