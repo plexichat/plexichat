@@ -164,6 +164,33 @@ async def get_current_user(request: Request) -> TokenInfo:
             detail={"error": {"code": 401, "message": error}},
         )
 
+    # Enforce account status (Locked or Forced Username Change)
+    path = request.url.path
+    method = request.method
+    
+    # Account Lock check (Total block)
+    if user.account_locked:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Account suspended", "reason": "Your account has been suspended by an administrator."}},
+        )
+        
+    # Forced Username Change check
+    if user.force_username_change:
+        # Allow GET @me (to see current status) and PATCH @me (to fix the username)
+        # Also allow logout
+        allowed = (
+            path == "/api/v1/users/@me" or 
+            path == "/api/v1/auth/logout" or
+            path.startswith("/api/v1/avatars/")
+        )
+        
+        if not allowed:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Username change required", "reason": "You must change your username before you can continue using PlexiChat."}},
+            )
+
     return user
 
 

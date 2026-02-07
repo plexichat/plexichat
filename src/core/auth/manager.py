@@ -501,7 +501,7 @@ class AuthManager(BaseManager):
         self, parsed: Dict, ip_address: Optional[str]
     ) -> TokenInfo:
         row = self._db.fetch_one(
-            "SELECT s.*, u.username, u.permissions, u.account_type FROM auth_sessions s JOIN auth_users u ON s.user_id = u.id WHERE s.id = ?",
+            "SELECT s.*, u.username, u.permissions, u.account_type, u.account_locked, u.force_username_change FROM auth_sessions s JOIN auth_users u ON s.user_id = u.id WHERE s.id = ?",
             (parsed["id"],),
         )
         if (
@@ -561,6 +561,8 @@ class AuthManager(BaseManager):
             account_type=AccountType(row["account_type"]),
             rate_limit_tier=rate_limit_tier,
             expires_at=row["expires_at"],
+            account_locked=bool(row.get("account_locked", 0)),
+            force_username_change=bool(row.get("force_username_change", 0)),
         )
 
     def _verify_bot_token(self, parsed: Dict, ip_address: Optional[str]) -> TokenInfo:

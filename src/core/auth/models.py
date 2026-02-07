@@ -177,6 +177,8 @@ class TokenInfo:
     username: str
     account_type: AccountType
     avatar_url: Optional[str] = None
+    account_locked: bool = False
+    force_username_change: bool = False
 
 
 @dataclass
