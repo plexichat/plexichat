@@ -113,34 +113,30 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
 
         in_clause, params = self._build_in_clause(message_ids)
 
-        # Update existing non-read statuses
-        self._execute(
-            f"""UPDATE msg_message_status 
-                SET status = ?, timestamp = ?
-                WHERE user_id = ? AND status NOT IN ('delivered', 'read')
-                AND message_id IN {in_clause}""",
-            (MessageStatusType.DELIVERED.value, timestamp, user_id) + params,
-            auto_commit=auto_commit,
-        )
+        # Use UPSERT to avoid unique constraint violations
+        # Note: We use status_id + index for new rows to ensure uniqueness of the ID column
+        # In Postgres, we use ON CONFLICT (message_id, user_id)
+        for i, mid in enumerate(message_ids):
+            new_status_id = status_id + (i % 1000000)
+            self._execute(
+                """INSERT INTO msg_message_status (id, message_id, user_id, status, timestamp)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT (message_id, user_id) 
+                   DO UPDATE SET 
+                       status = CASE 
+                           WHEN msg_message_status.status != 'read' THEN EXCLUDED.status 
+                           ELSE msg_message_status.status 
+                       END,
+                       timestamp = CASE 
+                           WHEN msg_message_status.status != 'read' THEN EXCLUDED.timestamp 
+                           ELSE msg_message_status.status 
+                       END""",
+                (new_status_id, mid, user_id, MessageStatusType.DELIVERED.value, timestamp),
+                auto_commit=False,
+            )
 
-        # Insert for messages without status (using INSERT OR IGNORE for SQLite)
-        self._execute(
-            f"""INSERT OR IGNORE INTO msg_message_status (id, message_id, user_id, status, timestamp)
-                SELECT 
-                    ? + m.id % 1000000,
-                    m.id,
-                    ?,
-                    ?,
-                    ?
-                FROM msg_messages m
-                WHERE m.id IN {in_clause}
-                AND NOT EXISTS (
-                    SELECT 1 FROM msg_message_status s 
-                    WHERE s.message_id = m.id AND s.user_id = ?
-                )""",
-            (status_id, user_id, MessageStatusType.DELIVERED.value, timestamp) + params + (user_id,),
-            auto_commit=auto_commit,
-        )
+        if auto_commit:
+            self.commit()
 
         return len(message_ids)
 
@@ -167,39 +163,19 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
             return 0
             
         message_ids = [row["id"] for row in msg_rows]
-        in_clause, in_params = self._build_in_clause(message_ids)
         
-        # 2. Update existing statuses to 'read'
-        self._execute(
-            f"""UPDATE msg_message_status 
-                SET status = ?, timestamp = ?
-                WHERE user_id = ? AND status != ?
-                AND message_id IN {in_clause}""",
-            (MessageStatusType.READ.value, timestamp, user_id, MessageStatusType.READ.value) + in_params,
-            auto_commit=False
-        )
-        
-        # 3. Insert new 'read' statuses for messages that don't have ANY status yet
-        # We find which IDs already have a status for this user
-        existing_rows = self._fetch_all(
-            f"SELECT message_id FROM msg_message_status WHERE user_id = ? AND message_id IN {in_clause}",
-            (user_id,) + in_params
-        )
-        existing_ids = {row["message_id"] for row in existing_rows}
-        missing_ids = [mid for mid in message_ids if mid not in existing_ids]
-        
-        if missing_ids:
-            # We insert missing ones individually or in a small batch if possible
-            # msg_message_status.id is likely a primary key, we need unique values
-            for i, mid in enumerate(missing_ids):
-                # Use i to ensure unique status IDs if multiple inserts happen in same millisecond
-                new_status_id = status_id + (i % 1000000)
-                self._execute(
-                    """INSERT INTO msg_message_status (id, message_id, user_id, status, timestamp)
-                       VALUES (?, ?, ?, ?, ?)""",
-                    (new_status_id, mid, user_id, MessageStatusType.READ.value, timestamp),
-                    auto_commit=False
-                )
+        # 2. Use UPSERT for each message to ensure it's marked as read
+        for i, mid in enumerate(message_ids):
+            new_status_id = status_id + (i % 1000000)
+            self._execute(
+                """INSERT INTO msg_message_status (id, message_id, user_id, status, timestamp)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT (message_id, user_id) 
+                   DO UPDATE SET status = EXCLUDED.status, timestamp = EXCLUDED.timestamp
+                   WHERE msg_message_status.status != 'read'""",
+                (new_status_id, mid, user_id, MessageStatusType.READ.value, timestamp),
+                auto_commit=False
+            )
         
         if auto_commit:
             self.commit()
