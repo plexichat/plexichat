@@ -108,8 +108,9 @@ class MemberHandler:
         if ban:
             raise UserBannedError("User is banned from this server")
 
-        if self.is_member(server_id, user_id):
-            raise MemberExistsError("User is already a member of this server")
+        existing_member = self.get_member(server_id, user_id)
+        if existing_member:
+            return existing_member
 
         server = self.db.fetch_one("SELECT * FROM srv_servers WHERE id = ? AND deleted = 0", (server_id,))
         if not server:
@@ -118,11 +119,19 @@ class MemberHandler:
         now = self.manager._get_timestamp()
         member_id = self.manager._generate_id()
 
-        self.db.execute(
-            """INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at, inviter_id)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (member_id, server_id, user_id, now, now, inviter_id),
-        )
+        try:
+            self.db.execute(
+                """INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at, inviter_id)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (member_id, server_id, user_id, now, now, inviter_id),
+            )
+        except Exception as e:
+            if "UniqueViolation" in type(e).__name__ or "duplicate key" in str(e):
+                # Race condition: member was added between check and insert
+                result = self.get_member(server_id, user_id)
+                if result:
+                    return result
+            raise
 
         default_role = self.db.fetch_one("SELECT id FROM srv_roles WHERE server_id = ? AND is_default = 1", (server_id,))
         if default_role:
@@ -265,12 +274,13 @@ class MemberHandler:
         
         invite = self.manager._row_to_invite(row)
         
-        # Add member
+        # Add member (returns existing if already joined)
         member = self.add_member(invite.server_id, user_id, invite.inviter_id)
         
         self.db.execute("UPDATE srv_invites SET uses = uses + 1 WHERE code = ?", (code,))
         
-        self.manager._log_audit(invite.server_id, user_id, AuditLogAction.INVITE_USE, "invite", invite.code)
+        # Use invite.id (bigint) instead of invite.code (string) for target_id
+        self.manager._log_audit(invite.server_id, user_id, AuditLogAction.INVITE_USE, "invite", invite.id)
         
         return member
 
@@ -281,9 +291,10 @@ class MemberHandler:
             return False
             
         server_id = row["server_id"]
+        invite_id = row["id"]
         self.db.execute("DELETE FROM srv_invites WHERE code = ?", (code,))
         
-        self.manager._log_audit(server_id, user_id, AuditLogAction.INVITE_DELETE, "invite", code)
+        self.manager._log_audit(server_id, user_id, AuditLogAction.INVITE_DELETE, "invite", invite_id)
         return True
 
     def ban_member(self, user_id: SnowflakeID, server_id: SnowflakeID, member_user_id: SnowflakeID, reason: Optional[str] = None) -> Ban:
