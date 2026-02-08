@@ -6,12 +6,49 @@ Handles user notifications.
 
 import utils.logger as logger
 from fastapi import APIRouter, Depends, HTTPException
+from typing import List, Optional
 
+import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
-from src.api.schemas.notifications import NotificationsResponse
+from src.api.schemas.notifications import NotificationsResponse, NotificationInfo
 from src.api.schemas.common import ErrorResponse, SuccessResponse
 
 router = APIRouter(tags=["Notifications"])
+
+
+def _notif_to_response(notif) -> NotificationInfo:
+    """Convert core notification model to API response schema."""
+    # Determine type and title
+    notif_type = "mention"  # Default
+    title = "New Notification"
+    
+    m_type = getattr(notif.mention_type, "value", str(notif.mention_type))
+    
+    if m_type == "user":
+        title = "You were mentioned"
+    elif m_type == "role":
+        title = "Your role was mentioned"
+    elif m_type == "everyone" or m_type == "here":
+        title = f"@{m_type} mention"
+    
+    # Construct link
+    link = None
+    if notif.server_id:
+        link = f"/channels/{notif.server_id}/{notif.channel_id}/{notif.message_id}"
+    elif notif.conversation_id:
+        link = f"/channels/@me/{notif.conversation_id}/{notif.message_id}"
+
+    return NotificationInfo(
+        id=str(notif.id),
+        type=notif_type,
+        title=title,
+        content=notif.content_preview or "",
+        content_preview=notif.content_preview or "",
+        read=bool(notif.read),
+        created_at=notif.created_at,
+        link=link,
+        sender_id=str(notif.author_id)
+    )
 
 
 @router.get(
@@ -24,19 +61,30 @@ router = APIRouter(tags=["Notifications"])
     },
 )
 async def get_notifications(
-    limit: int = 20, current_user: TokenInfo = Depends(get_current_user)
+    limit: int = 20, 
+    unread_only: bool = False,
+    current_user: TokenInfo = Depends(get_current_user)
 ) -> NotificationsResponse:
     """
     Get user notifications.
-
-    Returns an empty list for now (placeholder).
     """
+    notif_mod = api.get_notifications()
+    if not notif_mod:
+        raise HTTPException(status_code=500, detail="Notification module not available")
+
     try:
-        logger.debug(
-            f"User {current_user.user_id} requested notifications (limit={limit})"
+        notifications = notif_mod.get_notifications(
+            current_user.user_id, 
+            limit=limit, 
+            unread_only=unread_only
         )
-        # Return empty notifications list for now
-        return NotificationsResponse(notifications=[], unread_count=0)
+        
+        unread_count = notif_mod.get_mention_count(current_user.user_id)
+        
+        return NotificationsResponse(
+            notifications=[_notif_to_response(n) for n in notifications],
+            unread_count=unread_count
+        )
     except Exception as e:
         logger.error(
             f"Failed to get notifications for user {current_user.user_id}: {e}",
@@ -44,7 +92,7 @@ async def get_notifications(
         )
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Internal server error"}},
+            detail={"error": {"code": 500, "message": str(e)}},
         )
 
 
@@ -56,8 +104,17 @@ async def get_notifications(
 async def mark_all_read(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
-    """Mark all user notifications as read (placeholder)."""
-    return SuccessResponse(success=True)
+    """Mark all user notifications as read."""
+    notif_mod = api.get_notifications()
+    if not notif_mod:
+        raise HTTPException(status_code=500, detail="Notification module not available")
+        
+    try:
+        notif_mod.mark_all_read(current_user.user_id)
+        return SuccessResponse(success=True)
+    except Exception as e:
+        logger.error(f"Failed to mark all notifications read: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.put(
@@ -69,5 +126,21 @@ async def mark_read(
     notification_id: str,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
-    """Mark a specific notification as read (placeholder)."""
-    return SuccessResponse(success=True)
+    """Mark a specific notification as read."""
+    notif_mod = api.get_notifications()
+    if not notif_mod:
+        raise HTTPException(status_code=500, detail="Notification module not available")
+        
+    try:
+        try:
+            nid = int(notification_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid notification ID")
+            
+        notif_mod.mark_notification_read(current_user.user_id, nid)
+        return SuccessResponse(success=True)
+    except Exception as e:
+        if "not found" in str(e).lower():
+            raise HTTPException(status_code=404, detail="Notification not found")
+        logger.error(f"Failed to mark notification {notification_id} read: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -5,11 +5,13 @@ Handles mention parsing, notification creation, settings management,
 and unread tracking with proper validation and permission checks.
 """
 
+import asyncio
 from typing import Optional, List, Dict, Any
 
 import utils.config as config
 import utils.logger as logger
 from src.core.base import BaseManager, SnowflakeID
+from src.core.events.types import EventType
 
 from .models import (
     Mention,
@@ -75,6 +77,31 @@ class NotificationManager(BaseManager):
 
         notif_config = config.get("notifications", {})
         return {**defaults, **notif_config}
+
+    def _dispatch_notification_event(
+        self, user_id: SnowflakeID, event_type: EventType, data: Dict[str, Any]
+    ):
+        """Dispatch a notification event via WebSocket."""
+        try:
+            from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+            from src.core.events.models import Event
+
+            if ws_is_setup():
+                dispatcher = get_dispatcher()
+
+                async def dispatch():
+                    try:
+                        event = Event(
+                            event_type=event_type,
+                            data=data,
+                        )
+                        await dispatcher.dispatch_event(event, [user_id])
+                    except Exception as e:
+                        logger.debug(f"Failed to dispatch {event_type.name}: {e}")
+
+                asyncio.create_task(dispatch())
+        except Exception as e:
+            logger.debug(f"Error preparing dispatch: {e}")
 
     def _get_message(self, message_id: SnowflakeID) -> Optional[Dict]:
         """Get message from database."""
@@ -536,7 +563,18 @@ class NotificationManager(BaseManager):
             ),
         )
 
-        return self.get_notification(notif_id)
+        notification = self.get_notification(notif_id)
+        if notification:
+            # Import here to avoid circular imports in some environments
+            from src.api.routes.notifications import _notif_to_response
+            
+            self._dispatch_notification_event(
+                user_id,
+                EventType.NOTIFICATION_CREATE,
+                _notif_to_response(notification).model_dump()
+            )
+
+        return notification
 
     # === Notification Operations ===
 
@@ -592,6 +630,12 @@ class NotificationManager(BaseManager):
 
         self._decrement_mention_count(user_id, notif.conversation_id)
 
+        self._dispatch_notification_event(
+            user_id,
+            EventType.NOTIFICATION_UPDATE,
+            {"id": str(notification_id), "read": True}
+        )
+
         return True
 
     def mark_all_read(self, user_id: SnowflakeID) -> int:
@@ -610,6 +654,14 @@ class NotificationManager(BaseManager):
         self._db.execute(
             "UPDATE notif_unread SET mention_count = 0 WHERE user_id = ?", (user_id,)
         )
+
+        self._dispatch_notification_event(
+            user_id,
+            EventType.NOTIFICATION_UPDATE,
+            {"all_read": True}
+        )
+
+        return count
 
         return count
 

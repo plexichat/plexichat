@@ -15,11 +15,13 @@ class NotificationInfo(BaseModel):
     type: str = Field(..., description="Notification type")
     title: str = Field(..., description="Notification title")
     content: str = Field(..., description="Notification content")
+    content_preview: Optional[str] = Field(None, description="Short preview of content")
     read: bool = Field(False, description="Whether notification has been read")
     created_at: int = Field(..., description="Creation timestamp (Unix)")
     link: Optional[str] = Field(
         None, description="Optional link associated with notification"
     )
+    sender_id: Optional[str] = Field(None, description="ID of user who triggered notification")
 
 
 class NotificationsResponse(BaseModel):
