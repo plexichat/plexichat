@@ -115,6 +115,9 @@ class RedisClient:
         self.ttl_session = ttl_config.get("session", 1800)
         self.ttl_presence = ttl_config.get("presence", 300)
         self.ttl_cache = ttl_config.get("cache", 60)
+        
+        # Worker identity (set by main.py)
+        self.worker_id = "unknown"
 
         if self.enabled:
             logger.info(
@@ -195,6 +198,11 @@ class RedisClient:
             logger.error(f"Redis connection error: {e}")
             self._connected = False
             raise RedisConnectionError(f"Redis connection error: {e}")
+
+    def set_worker_id(self, worker_id: str) -> None:
+        """Set the worker ID for this client instance."""
+        self.worker_id = worker_id
+        logger.debug(f"Redis client worker ID set to: {worker_id}")
 
     def _ensure_connected(self):
         """Ensure Redis is connected before operations."""

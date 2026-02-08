@@ -100,6 +100,24 @@ class PresenceManager(BaseManager):
 
     # === Status Operations ===
 
+    def _update_redis_presence(self, user_id: int, status: str) -> None:
+        """Update online users set in Redis for high-speed lookups."""
+        if not redis_available():
+            return
+            
+        client = get_redis_client()
+        if not client:
+            return
+            
+        try:
+            key = "presence:online_users"
+            if status in ("online", "idle", "dnd"):
+                client.sadd(key, str(user_id))
+            else:
+                client.srem(key, str(user_id))
+        except Exception as e:
+            logger.debug(f"Failed to update online users set: {e}")
+
     def set_status(
         self, user_id: SnowflakeID, status: Union[UserStatus, str]
     ) -> Presence:
@@ -145,6 +163,8 @@ class PresenceManager(BaseManager):
                 self._presence_to_dict(presence),
                 ttl=self._presence_timeout_ms // 1000,
             )
+            # Update global online users set
+            self._update_redis_presence(user_id, status.value)
 
         logger.debug(f"User {user_id} status set to {status.value}")
         return presence
@@ -632,22 +652,31 @@ class PresenceManager(BaseManager):
     ) -> TypingIndicator:
         """
         Start typing indicator in a channel.
-
-        Args:
-            user_id: ID of the user typing
-            channel_id: ID of the channel
-
-        Returns:
-            TypingIndicator
+        Optimized to use Redis for transient state.
         """
         self._validate_user(user_id)
-        self._cleanup_expired_typing()
-
+        
         now = self._get_timestamp()
         expires_at = now + self._typing_timeout_ms
+        
+        # Redis path: use a SET for each channel containing user_ids
+        if redis_available():
+            client = get_redis_client()
+            if client:
+                try:
+                    key = f"typing:channel:{channel_id}"
+                    client.sadd(key, str(user_id))
+                    client.expire(key, self._typing_timeout_ms // 1000)
+                    
+                    # Also track which channels a user is typing in for easy cleanup
+                    client.sadd(f"typing:user:{user_id}", str(channel_id))
+                    client.expire(f"typing:user:{user_id}", 60) # 1m safety
+                except Exception as e:
+                    logger.debug(f"Redis start_typing failed: {e}")
 
+        # Always keep DB as backup for now (low frequency)
+        self._cleanup_expired_typing()
         indicator_id = self._generate_id()
-
         self._db.upsert(
             "pres_typing",
             ["id", "user_id", "channel_id", "started_at", "expires_at"],
@@ -668,14 +697,16 @@ class PresenceManager(BaseManager):
     def stop_typing(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> bool:
         """
         Stop typing indicator in a channel.
-
-        Args:
-            user_id: ID of the user
-            channel_id: ID of the channel
-
-        Returns:
-            True if indicator was removed
         """
+        if redis_available():
+            client = get_redis_client()
+            if client:
+                try:
+                    client.srem(f"typing:channel:{channel_id}", str(user_id))
+                    client.srem(f"typing:user:{user_id}", str(channel_id))
+                except Exception as e:
+                    logger.debug(f"Redis stop_typing failed: {e}")
+
         self._db.execute(
             "DELETE FROM pres_typing WHERE user_id = ? AND channel_id = ?",
             (user_id, channel_id),
@@ -687,8 +718,28 @@ class PresenceManager(BaseManager):
 
     def get_typing_users(self, channel_id: SnowflakeID) -> List[TypingIndicator]:
         """Get users currently typing in a channel."""
-        self._cleanup_expired_typing()
+        # High speed path: Redis
+        if redis_available():
+            client = get_redis_client()
+            if client:
+                try:
+                    user_ids = client.smembers(f"typing:channel:{channel_id}")
+                    if user_ids:
+                        now = self._get_timestamp()
+                        return [
+                            TypingIndicator(
+                                user_id=int(uid),
+                                channel_id=channel_id,
+                                started_at=now - 1000, # Approx
+                                expires_at=now + 5000, # Approx
+                            )
+                            for uid in user_ids
+                        ]
+                except Exception as e:
+                    logger.debug(f"Redis get_typing_users failed: {e}")
 
+        # Fallback to database
+        self._cleanup_expired_typing()
         rows = self._db.fetch_all(
             "SELECT * FROM pres_typing WHERE channel_id = ?", (channel_id,)
         )
@@ -724,15 +775,19 @@ class PresenceManager(BaseManager):
     def clear_all_typing(self, user_id: SnowflakeID) -> List[SnowflakeID]:
         """
         Clear all typing indicators for a user (used on disconnect).
-
-        Args:
-            user_id: ID of the user
-
-        Returns:
-            List of channel IDs where typing was cleared
         """
         # Get channels before clearing
         channels = self.get_user_typing_channels(user_id)
+        
+        if redis_available():
+            client = get_redis_client()
+            if client:
+                try:
+                    for cid in channels:
+                        client.srem(f"typing:channel:{cid}", str(user_id))
+                    client.delete(f"typing:user:{user_id}")
+                except Exception as e:
+                    logger.debug(f"Redis clear_all_typing failed: {e}")
 
         if channels:
             self._db.execute(
@@ -749,12 +804,7 @@ class PresenceManager(BaseManager):
     def get_online_friends(self, user_id: SnowflakeID) -> List[SnowflakeID]:
         """
         Get list of online friend user IDs.
-
-        Args:
-            user_id: ID of the user
-
-        Returns:
-            List of online friend user IDs
+        Optimized to use Redis set intersection when available.
         """
         if not self._relationships:
             return []
@@ -763,6 +813,21 @@ class PresenceManager(BaseManager):
         if not friend_ids:
             return []
 
+        # High speed path: Redis set intersection
+        if redis_available():
+            client = get_redis_client()
+            if client:
+                try:
+                    # Get all currently online users from Redis
+                    online_set = client.smembers("presence:online_users")
+                    # Manual intersection in Python (fast for sets)
+                    # Note: friend_ids are likely ints, Redis returns strings
+                    online_ids = {int(uid) for uid in online_set}
+                    return [fid for fid in friend_ids if fid in online_ids]
+                except Exception as e:
+                    logger.debug(f"Redis get_online_friends failed: {e}")
+
+        # Fallback to database
         online_statuses = [
             UserStatus.ONLINE.value,
             UserStatus.IDLE.value,
@@ -786,22 +851,32 @@ class PresenceManager(BaseManager):
     ) -> List[SnowflakeID]:
         """
         Get list of online member user IDs in a server.
-
-        Args:
-            user_id: ID of the requesting user
-            server_id: ID of the server
-
-        Returns:
-            List of online member user IDs
+        Optimized to use Redis set intersection when available.
         """
         if not self._servers:
             return []
 
-        members = self._servers.get_members(user_id, server_id)
-        if not members:
-            return []
+        # Try to get just user IDs (more efficient than full members)
+        if hasattr(self._servers, "get_member_user_ids"):
+            member_ids = self._servers.get_member_user_ids(server_id)
+        else:
+            members = self._servers.get_members(user_id, server_id)
+            if not members:
+                return []
+            member_ids = [m.user_id for m in members]
 
-        member_ids = [m.user_id for m in members]
+        # High speed path: Redis set intersection
+        if redis_available():
+            client = get_redis_client()
+            if client:
+                try:
+                    online_set = client.smembers("presence:online_users")
+                    online_ids = {int(uid) for uid in online_set}
+                    return [mid for mid in member_ids if mid in online_ids]
+                except Exception as e:
+                    logger.debug(f"Redis get_online_server_members failed: {e}")
+
+        # Fallback to database
         online_statuses = [
             UserStatus.ONLINE.value,
             UserStatus.IDLE.value,

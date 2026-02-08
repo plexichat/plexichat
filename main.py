@@ -46,6 +46,8 @@ class PlexiChatServer:
         self.shutdown_event = threading.Event()
         self.restart_requested = False
         self._modules = {}
+        # Generate a unique worker ID for this process instance
+        self.worker_id = secrets.token_hex(4)
 
     def get_default_config(self) -> Dict[str, Any]:
         """Get default configuration with home folder data storage."""
@@ -1229,8 +1231,10 @@ class PlexiChatServer:
             logger.info("Initializing Redis...")
             redis_client = setup_redis()
             if redis_client and redis_client.ping():
+                # Register our unique worker ID
+                redis_client.set_worker_id(self.worker_id)
                 logger.info(
-                    f"Connected to Redis at {redis_config.get('host', 'localhost')}:{redis_config.get('port', 6379)}"
+                    f"Connected to Redis at {redis_config.get('host', 'localhost')}:{redis_config.get('port', 6379)} (Worker ID: {self.worker_id})"
                 )
             else:
                 logger.warning(
@@ -1682,6 +1686,15 @@ class PlexiChatServer:
         # Notify clients if not already done (this is a backup)
         if not self.shutdown_event.is_set():
             self.shutdown_event.set()
+
+        # Clean up WebSocket global state in Redis
+        try:
+            from src.api import websocket
+            if websocket.is_setup():
+                manager = websocket.get_session_manager()
+                manager.clear_all_global_sessions()
+        except Exception as e:
+            logger.debug(f"Error cleaning up global sessions: {e}")
 
         # Close database connection
         if self.db:

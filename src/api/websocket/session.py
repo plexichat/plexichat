@@ -7,6 +7,7 @@ from typing import Optional, Dict, List, Set, Any
 import time
 import secrets
 import threading
+from src.core.database import get_redis_client, redis_available
 
 from .connection import Connection, ConnectionState
 
@@ -65,6 +66,54 @@ class SessionManager:
         self._sessions: Dict[str, Session] = {}
         self._user_connections: Dict[int, Set[str]] = {}
         self._lock = threading.Lock()
+        
+        # Redis settings
+        self._worker_id = "unknown"
+        client = get_redis_client()
+        if client:
+            self._worker_id = client.worker_id
+
+    def _redis_register_connection(self, user_id: int, connection_id: str) -> None:
+        """Register a connection in Redis for global tracking."""
+        if not redis_available():
+            return
+        
+        client = get_redis_client()
+        if not client:
+            return
+            
+        try:
+            # 1. Increment global connection count
+            client.incr("stats:total_connections")
+            
+            # 2. Add to user's global connection set
+            client.sadd(f"user:{user_id}:connections", f"{self._worker_id}:{connection_id}")
+            client.expire(f"user:{user_id}:connections", 86400) # 24h safety TTL
+            
+            # 3. Register worker location for this connection
+            client.hset(f"conn:{connection_id}:info", "worker", self._worker_id)
+            client.hset(f"conn:{connection_id}:info", "user_id", str(user_id))
+            client.expire(f"conn:{connection_id}:info", 3600) # 1h safety TTL
+        except Exception as e:
+            from utils.logger import logger
+            logger.debug(f"Redis session registration failed: {e}")
+
+    def _redis_unregister_connection(self, user_id: int, connection_id: str) -> None:
+        """Unregister a connection from Redis."""
+        if not redis_available():
+            return
+            
+        client = get_redis_client()
+        if not client:
+            return
+            
+        try:
+            client.decr("stats:total_connections")
+            client.srem(f"user:{user_id}:connections", f"{self._worker_id}:{connection_id}")
+            client.delete(f"conn:{connection_id}:info")
+        except Exception as e:
+            from utils.logger import logger
+            logger.debug(f"Redis session unregistration failed: {e}")
 
     @property
     def heartbeat_interval_ms(self) -> int:
@@ -88,6 +137,8 @@ class SessionManager:
         """
         with self._lock:
             self._connections[connection.connection_id] = connection
+            if connection.user_id:
+                self._redis_register_connection(connection.user_id, connection.connection_id)
 
     def remove_connection(self, connection_id: str) -> Optional[Connection]:
         """
@@ -106,6 +157,9 @@ class SessionManager:
                 user_conns.discard(connection_id)
                 if not user_conns:
                     self._user_connections.pop(connection.user_id, None)
+                
+                # Unregister from Redis
+                self._redis_unregister_connection(connection.user_id, connection_id)
             return connection
 
     def get_connection(self, connection_id: str) -> Optional[Connection]:
@@ -121,12 +175,26 @@ class SessionManager:
             ]
 
     def get_user_connection_count(self, user_id: int) -> int:
-        """Get the number of connections for a user."""
+        """Get the number of connections for a user (local and global)."""
+        # 1. Start with local count
         with self._lock:
-            return len(self._user_connections.get(user_id, set()))
+            local_count = len(self._user_connections.get(user_id, set()))
+            
+        # 2. Add global count if available
+        if redis_available():
+            client = get_redis_client()
+            if client:
+                try:
+                    # smembers returns a set of strings like "worker_id:connection_id"
+                    global_conns = client.smembers(f"user:{user_id}:connections")
+                    return len(global_conns)
+                except Exception:
+                    pass
+                    
+        return local_count
 
     def can_user_connect(self, user_id: int) -> bool:
-        """Check if user can create a new connection."""
+        """Check if user can create a new connection (globally)."""
         return self.get_user_connection_count(user_id) < self._max_connections_per_user
 
     def create_session(
@@ -158,6 +226,9 @@ class SessionManager:
             self._sessions[session_id] = session
             user_conns = self._user_connections.setdefault(user_id, set())
             user_conns.add(connection.connection_id)
+            
+        # Register in Redis since we now know the user_id
+        self._redis_register_connection(user_id, connection.connection_id)
 
         connection.set_identified(user_id, session_id, intents)
         return session
@@ -308,6 +379,32 @@ class SessionManager:
                 self._sessions.pop(session_id, None)
 
         return len(stale_ids)
+
+    def clear_all_global_sessions(self) -> None:
+        """Clear all connections belonging to this worker from Redis (on shutdown)."""
+        if not redis_available():
+            return
+            
+        client = get_redis_client()
+        if not client:
+            return
+            
+        try:
+            # 1. Get all identified users for this worker
+            with self._lock:
+                users = list(self._user_connections.keys())
+                
+            # 2. Remove each connection from Redis
+            for user_id in users:
+                conn_ids = self._user_connections.get(user_id, set())
+                for cid in list(conn_ids):
+                    self._redis_unregister_connection(user_id, cid)
+                    
+            from utils.logger import logger
+            logger.info(f"Cleared all Redis sessions for worker {self._worker_id}")
+        except Exception as e:
+            from utils.logger import logger
+            logger.debug(f"Redis global session cleanup failed: {e}")
 
     def get_stats(self) -> Dict[str, int]:
         """Get session manager statistics."""
