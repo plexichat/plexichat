@@ -406,7 +406,7 @@ class PlexiChatServer:
             "rate_limiting": {
                 "enabled": True,
                 # Global rate limit (per user, across all requests)
-                "global": {"requests": 50, "window_seconds": 1.0, "burst": 10},
+                "global": {"requests": 100, "window_seconds": 60.0, "burst": 50},
                 # Per-user general limit
                 "user": {
                     "requests": 120,
