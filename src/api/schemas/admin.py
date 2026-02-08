@@ -158,6 +158,7 @@ class AdminDashboardResponse(BaseModel):
     total_users: int = Field(0, description="Total registered users")
     db_status: str = Field("healthy", description="Database connection health")
     system: Optional[SystemMetrics] = Field(None, description="System health metrics")
+    server_version: str = Field(..., description="Current server version string")
 
 
 class TelemetryStatsResponse(BaseModel):

@@ -694,8 +694,15 @@
         async function refreshMetrics() {
             try {
                 const hrs = document.getElementById('metric-hours').value;
-                const [dash, stats] = await Promise.all([api('/api/v1/admin/dashboard'), api(`/api/v1/admin/telemetry/stats?hours=${hrs}`)]);
+                const [dash, stats, ver] = await Promise.all([
+                    api('/api/v1/admin/dashboard'), 
+                    api(`/api/v1/admin/telemetry/stats?hours=${hrs}`),
+                    api('/api/v1/version')
+                ]);
                 metricData = stats.stats;
+                if (ver && ver.version) {
+                    document.getElementById('server-version').textContent = ver.version.string;
+                }
                 updateOverview(dash, stats.stats);
                 updateCharts(dash, stats.stats);
                 renderEndpointTable();
@@ -706,6 +713,10 @@
         function updateOverview(d, s) {
             document.getElementById('stat-active-users').textContent = d.active_users.toLocaleString();
             document.getElementById('stat-total-users').textContent = d.total_users.toLocaleString();
+            
+            if (d.server_version) {
+                document.getElementById('server-version').textContent = d.server_version;
+            }
             
             const total = s.reduce((a, b) => a + b.count, 0);
             const errors = s.reduce((a, b) => a + b.error_count, 0);

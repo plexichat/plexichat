@@ -59,13 +59,17 @@ async def get_dashboard(request: Request):
         except Exception as se:
             logger.warning(f"System metrics dashboard error: {se}")
 
+        import utils.version as version_util
+        current_version = version_util.current_string()
+
         return AdminDashboardResponse(
             tickets=ticket_counts, 
             telemetry=telemetry_stats,
             total_users=total_users,
             active_users=active_users,
             db_status=db_status,
-            system=system_data
+            system=system_data,
+            server_version=current_version
         )
     except Exception as e:
         logger.error(f"Dashboard data error: {e}", exc_info=True)
