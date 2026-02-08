@@ -1733,7 +1733,6 @@ class PlexiChatServer:
             port=port,
             log_level="info",
             loop="asyncio",
-            install_signal_handlers=False,
             **ssl_config,
         )
 
