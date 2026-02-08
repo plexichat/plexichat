@@ -24,7 +24,7 @@ from .exceptions import (
     InvalidActivityError,
 )
 from .schema import create_tables
-from src.core.database import cache_set, redis_available, get_cached_presence
+from src.core.database import cache_set, redis_available, get_cached_presence, get_redis_client
 
 
 class PresenceManager(BaseManager):

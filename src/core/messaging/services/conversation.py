@@ -218,13 +218,14 @@ class ConversationService(BaseService):
         now = self._get_timestamp()
         conv_id = self._generate_id()
         encrypted = self._get_config("encrypt_messages", False)
+        metadata = {"server_id": server_id, "channel_id": channel_id}
 
         self._repo.create(
             conv_id,
             ConversationType.GROUP,
             now,
             encrypted=encrypted,
-            metadata={"server_id": server_id, "channel_id": channel_id},
+            metadata=metadata,
         )
 
         logger.debug(f"Created server channel conversation {conv_id} for channel {channel_id}")
@@ -235,6 +236,7 @@ class ConversationService(BaseService):
             created_at=now,
             updated_at=now,
             encrypted=encrypted,
+            metadata=metadata,
         )
 
     def create_thread_conversation(
@@ -244,6 +246,7 @@ class ConversationService(BaseService):
         now = self._get_timestamp()
         conv_id = self._generate_id()
         encrypted = self._get_config("encrypt_messages", False)
+        metadata = {"server_id": server_id, "channel_id": channel_id}
 
         self._repo.create(
             conv_id,
@@ -251,7 +254,7 @@ class ConversationService(BaseService):
             now,
             name=name,
             encrypted=encrypted,
-            metadata={"server_id": server_id, "channel_id": channel_id},
+            metadata=metadata,
         )
 
         logger.debug(f"Created thread conversation {conv_id} for thread '{name}'")
@@ -263,6 +266,7 @@ class ConversationService(BaseService):
             created_at=now,
             updated_at=now,
             encrypted=encrypted,
+            metadata=metadata,
         )
 
     def get_conversation(

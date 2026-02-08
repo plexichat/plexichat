@@ -136,23 +136,31 @@ class ParticipantService(BaseService):
 
         # Check server membership for server channels
         metadata = self._repo.get_conversation_metadata(conversation_id)
-        if metadata:
-            server_id = metadata.get("server_id")
-            if server_id:
-                try:
-                    is_member = self._repo.check_server_membership(int(server_id), user_id)
-                    if is_member:
-                        logger.debug(f"User {user_id} is a participant in conversation {conversation_id} via membership in server {server_id}")
-                        self._cache_set(cache_key, True)
-                        return True
-                    else:
-                        logger.warning(f"User {user_id} is NOT a member of server {server_id} associated with conversation {conversation_id}")
-                except (TypeError, ValueError) as e:
-                    logger.error(f"Error checking server membership for conversation {conversation_id}: {e}")
-            else:
-                logger.debug(f"Conversation {conversation_id} has metadata but no server_id")
+        server_id = metadata.get("server_id") if metadata else None
+        
+        # Fallback: check srv_channels if metadata is missing/incomplete
+        if not server_id:
+            try:
+                # Query srv_channels directly to see if this conversation belongs to a server
+                row = self._repo._fetch_one("SELECT server_id FROM srv_channels WHERE conversation_id = ?", (conversation_id,))
+                if row:
+                    server_id = row["server_id"]
+            except Exception as e:
+                logger.debug(f"Fallback server check failed for conversation {conversation_id}: {e}")
+
+        if server_id:
+            try:
+                is_member = self._repo.check_server_membership(int(server_id), user_id)
+                if is_member:
+                    logger.debug(f"User {user_id} is a participant in conversation {conversation_id} via membership in server {server_id}")
+                    self._cache_set(cache_key, True)
+                    return True
+                else:
+                    logger.warning(f"User {user_id} is NOT a member of server {server_id} associated with conversation {conversation_id}")
+            except (TypeError, ValueError) as e:
+                logger.error(f"Error checking server membership for conversation {conversation_id}: {e}")
         else:
-            logger.debug(f"Conversation {conversation_id} has no metadata")
+            logger.debug(f"Conversation {conversation_id} has no associated server_id in metadata or srv_channels")
 
         logger.warning(f"User {user_id} is NOT a participant in conversation {conversation_id} (direct or server-wide)")
         self._cache_set(cache_key, False)
