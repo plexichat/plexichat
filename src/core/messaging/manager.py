@@ -511,6 +511,8 @@ class MessagingManager(BaseManager):
                 msg.status = stats.get("status", MessageStatusType.SENT)
                 msg.delivery_count = stats.get("delivery_count", 0)
                 msg.read_count = stats.get("read_count", 0)
+                # Ensure we handle user_id comparison robustly
+                msg.read = (msg.status == MessageStatusType.READ or str(msg.author_id) == str(user_id))
 
         return messages
 
@@ -540,6 +542,8 @@ class MessagingManager(BaseManager):
                 msg.status = stats.get("status", MessageStatusType.SENT)
                 msg.delivery_count = stats.get("delivery_count", 0)
                 msg.read_count = stats.get("read_count", 0)
+                # Ensure we handle user_id comparison robustly
+                msg.read = (msg.status == MessageStatusType.READ or str(msg.author_id) == str(user_id))
 
         return messages
 

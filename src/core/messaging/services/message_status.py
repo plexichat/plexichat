@@ -91,6 +91,9 @@ class MessageStatusService(BaseService):
                 # Key format: msg_reader_ids:* and msg_status_batch:*
                 invalidate_pattern("msg_reader_ids:*")
                 invalidate_pattern("msg_status_batch:*")
+                
+                # ALSO invalidate the message list caches since they now contain read counts
+                self._message_repo.invalidate_conversation_cache(conversation_id)
             except Exception:
                 pass
 

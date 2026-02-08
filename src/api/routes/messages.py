@@ -912,7 +912,7 @@ async def acknowledge_messages(
             except Exception as e:
                 logger.error(f"Failed to broadcast MESSAGE_ACK: {e}", exc_info=True)
 
-        if up_to_id is not None or count > 0:
+        if count > 0:
             asyncio.create_task(dispatch_ack())
 
         return AckResponse(success=True, messages_marked=count)

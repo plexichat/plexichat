@@ -30,7 +30,12 @@ async def get_telemetry_stats(request: Request, hours: int = 24, endpoint: Optio
         return TelemetryStatsResponse(
             stats=[TelemetryEndpointStat(
                 endpoint=urllib.parse.unquote(s.endpoint), method=s.method, count=s.count,
-                avg_ms=round(s.avg_response_time_ms, 2), p95_ms=round(s.p95_response_time_ms, 2),
+                avg_ms=round(s.avg_response_time_ms, 2),
+                min_ms=round(s.min_response_time_ms, 2) if s.min_response_time_ms is not None else None,
+                max_ms=round(s.max_response_time_ms, 2) if s.max_response_time_ms is not None else None,
+                p50_ms=round(s.p50_response_time_ms, 2) if s.p50_response_time_ms is not None else None,
+                p95_ms=round(s.p95_response_time_ms, 2),
+                p99_ms=round(s.p99_response_time_ms, 2) if s.p99_response_time_ms is not None else None,
                 error_rate=round(s.error_rate, 2), error_count=s.error_count,
                 avg_queries=round(s.avg_queries, 1),
                 avg_query_time_ms=round(s.avg_query_time_ms, 2)
@@ -101,7 +106,12 @@ async def export_telemetry_stats(
                 export_time=ts, hours=hours, 
                 stats=[TelemetryEndpointStat(
                     endpoint=s.endpoint, method=s.method, count=s.count, 
-                    avg_ms=round(s.avg_response_time_ms, 2), p95_ms=round(s.p95_response_time_ms, 2), 
+                    avg_ms=round(s.avg_response_time_ms, 2),
+                    min_ms=round(s.min_response_time_ms, 2) if s.min_response_time_ms is not None else None,
+                    max_ms=round(s.max_response_time_ms, 2) if s.max_response_time_ms is not None else None,
+                    p50_ms=round(s.p50_response_time_ms, 2) if s.p50_response_time_ms is not None else None,
+                    p95_ms=round(s.p95_response_time_ms, 2),
+                    p99_ms=round(s.p99_response_time_ms, 2) if s.p99_response_time_ms is not None else None,
                     error_rate=round(s.error_rate, 2), error_count=s.error_count,
                     avg_queries=round(s.avg_queries, 1), 
                     avg_query_time_ms=round(s.avg_query_time_ms, 2)

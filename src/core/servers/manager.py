@@ -1117,13 +1117,15 @@ class ServerManager(BaseManager):
         if not channel.conversation_id:
             return []
 
-        return self._messaging.get_messages(
+        messages = self._messaging.get_messages(
             user_id=user_id,
             conversation_id=channel.conversation_id,
             limit=limit,
             before_id=before_id,
             after_id=after_id,
         )
+        
+        return messages
 
     # === Audit Log ===
 

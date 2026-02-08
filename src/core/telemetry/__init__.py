@@ -6,6 +6,7 @@ from typing import Optional, List, Dict, Any, Callable
 from dataclasses import dataclass
 import time
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,52 @@ def _get_db():
     return _db
 
 
+_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+_TOKEN_RE = re.compile(r"^[A-Za-z0-9_\-]{16,}$")
+_SEGMENT_PLACEHOLDERS = {
+    "channels": "channel_id",
+    "messages": "message_id",
+    "users": "user_id",
+    "servers": "server_id",
+    "webhooks": "webhook_id",
+    "relationships": "relationship_id",
+    "roles": "role_id",
+    "emojis": "emoji_id",
+    "members": "user_id",
+    "avatars": "avatar_id",
+}
+
+
+def _normalize_endpoint(endpoint: str) -> str:
+    if not endpoint:
+        return endpoint
+    endpoint = endpoint.split("?", 1)[0].rstrip("/") or "/"
+    if "{" in endpoint and "}" in endpoint:
+        return endpoint
+    parts = endpoint.split("/")
+    normalized = []
+    for i, part in enumerate(parts):
+        if i == 0:
+            normalized.append("")
+            continue
+        if not part:
+            continue
+        if part.startswith("{") and part.endswith("}"):
+            normalized.append(part)
+            continue
+        prev_part = parts[i - 1] if i > 0 else ""
+        replacement = None
+        if _UUID_RE.match(part):
+            replacement = "{id}"
+        elif part.isdigit() and len(part) >= 6:
+            placeholder = _SEGMENT_PLACEHOLDERS.get(prev_part)
+            replacement = f"{{{placeholder}}}" if placeholder else "{id}"
+        elif _TOKEN_RE.match(part) and i >= 2 and parts[i - 2] == "webhooks":
+            replacement = "{token}"
+        normalized.append(replacement or part)
+    return "/".join(normalized)
+
+
 def submit_response_times(entries: List[Dict[str, Any]], client_id: Optional[str] = None) -> int:
     db = _get_db()
     now = int(time.time() * 1000)
@@ -103,11 +150,18 @@ def submit_response_times(entries: List[Dict[str, Any]], client_id: Optional[str
 
     for entry in entries:
         try:
+            endpoint = str(entry.get("endpoint", "")).strip()
+            if not endpoint:
+                continue
+            response_time_ms = float(entry.get("response_time_ms", 0))
+            if response_time_ms < 0:
+                continue
+            method = str(entry.get("method", "GET")).strip().upper()[:10]
             batch_data.append((
                 gen_id(),
-                str(entry.get("endpoint", ""))[:255],
-                str(entry.get("method", "GET"))[:10].upper(),
-                float(entry.get("response_time_ms", 0)),
+                _normalize_endpoint(endpoint)[:255],
+                method or "GET",
+                response_time_ms,
                 int(entry.get("status_code", 0)),
                 int(entry.get("timestamp", now)),
                 client_id,
@@ -154,17 +208,72 @@ def get_endpoint_stats(hours: int = 24, endpoint_filter: Optional[str] = None, c
     query += " GROUP BY endpoint, method ORDER BY count DESC"
     
     rows = db.fetch_all(query, tuple(params))
-    stats = []
+    if not rows:
+        return []
+    aggregated: Dict[tuple, Dict[str, Any]] = {}
     now = int(time.time() * 1000)
-    
+
     for r in rows:
+        endpoint = _normalize_endpoint(r["endpoint"])
+        key = (endpoint, r["method"])
+        count = int(r["count"] or 0)
+        if count <= 0:
+            continue
+        avg_ms = float(r["avg_ms"] or 0.0)
+        avg_q = float(r["avg_q"] or 0.0)
+        avg_dt = float(r["avg_dt"] or 0.0)
+        err_count = int(r["err_count"] or 0)
+        min_ms = r["min_ms"]
+        max_ms = r["max_ms"]
+        agg = aggregated.get(key)
+        if not agg:
+            agg = {
+                "count": 0,
+                "avg_ms_sum": 0.0,
+                "avg_q_sum": 0.0,
+                "avg_dt_sum": 0.0,
+                "min_ms": None,
+                "max_ms": None,
+                "err_count": 0,
+            }
+            aggregated[key] = agg
+        agg["count"] += count
+        agg["avg_ms_sum"] += avg_ms * count
+        agg["avg_q_sum"] += avg_q * count
+        agg["avg_dt_sum"] += avg_dt * count
+        if min_ms is not None:
+            agg["min_ms"] = min(min_ms, agg["min_ms"]) if agg["min_ms"] is not None else min_ms
+        if max_ms is not None:
+            agg["max_ms"] = max(max_ms, agg["max_ms"]) if agg["max_ms"] is not None else max_ms
+        agg["err_count"] += err_count
+    stats = []
+    for (endpoint, method), agg in sorted(aggregated.items(), key=lambda item: item[1]["count"], reverse=True):
+        count = agg["count"]
+        avg_ms = (agg["avg_ms_sum"] / count) if count else 0.0
+        avg_q = (agg["avg_q_sum"] / count) if count else 0.0
+        avg_dt = (agg["avg_dt_sum"] / count) if count else 0.0
+        min_ms = agg["min_ms"] if agg["min_ms"] is not None else avg_ms
+        max_ms = agg["max_ms"] if agg["max_ms"] is not None else avg_ms
+        p50 = avg_ms
+        p95 = avg_ms * 1.2
+        p99 = max_ms
+        err_count = agg["err_count"]
+        err_rate = (err_count * 100.0 / count) if count else 0.0
         stats.append(EndpointStats(
-            endpoint=r["endpoint"], method=r["method"], count=r["count"],
-            avg_response_time_ms=r["avg_ms"], min_response_time_ms=r["min_ms"], max_response_time_ms=r["max_ms"],
-            p50_response_time_ms=r["avg_ms"], p95_response_time_ms=r["avg_ms"] * 1.2, p99_response_time_ms=r["max_ms"], # Approximations for speed
-            error_rate=r["err_rate"], last_updated=now,
-            avg_queries=r["avg_q"], avg_query_time_ms=r["avg_dt"],
-            error_count=int(r["err_count"])
+            endpoint=endpoint,
+            method=method,
+            count=count,
+            avg_response_time_ms=avg_ms,
+            min_response_time_ms=min_ms,
+            max_response_time_ms=max_ms,
+            p50_response_time_ms=p50,
+            p95_response_time_ms=p95,
+            p99_response_time_ms=p99,
+            error_rate=err_rate,
+            last_updated=now,
+            avg_queries=avg_q,
+            avg_query_time_ms=avg_dt,
+            error_count=err_count,
         ))
     return stats
 
@@ -173,12 +282,19 @@ def get_response_time_history(endpoint: str, method: str = "GET", hours: int = 2
     db = _get_db()
     cutoff = int((time.time() - hours * 3600) * 1000)
     bucket_ms = bucket_minutes * 60 * 1000
-    
-    # Bucket by timestamp using floor division in SQL if possible, or post-process
-    rows = db.fetch_all(
-        "SELECT timestamp, response_time_ms, status_code FROM telemetry_response_times WHERE endpoint = ? AND method = ? AND timestamp > ? ORDER BY timestamp",
-        (endpoint, method, cutoff)
-    )
+
+    normalized_endpoint = _normalize_endpoint(endpoint)
+    if "{" in normalized_endpoint and "}" in normalized_endpoint:
+        like_pattern = re.sub(r"\{[^/]+\}", "%", normalized_endpoint)
+        rows = db.fetch_all(
+            "SELECT timestamp, response_time_ms, status_code FROM telemetry_response_times WHERE endpoint LIKE ? AND method = ? AND timestamp > ? ORDER BY timestamp",
+            (like_pattern, method, cutoff)
+        )
+    else:
+        rows = db.fetch_all(
+            "SELECT timestamp, response_time_ms, status_code FROM telemetry_response_times WHERE endpoint = ? AND method = ? AND timestamp > ? ORDER BY timestamp",
+            (normalized_endpoint, method, cutoff)
+        )
     if not rows:
         return []
     buckets = {}
@@ -206,4 +322,11 @@ def reset_all_stats() -> int:
     db.execute("DELETE FROM telemetry_response_times")
     return 0
 
-__all__ = ["setup", "is_setup", "submit_response_times", "get_endpoint_stats", "get_response_time_history", "reset_all_stats", "EndpointStats"]
+
+def cleanup_old_data(days: int = 30) -> int:
+    db = _get_db()
+    cutoff = int((time.time() - days * 86400) * 1000)
+    cursor = db.execute("DELETE FROM telemetry_response_times WHERE timestamp < ?", (cutoff,))
+    return getattr(cursor, "rowcount", 0) or 0
+
+__all__ = ["setup", "is_setup", "submit_response_times", "get_endpoint_stats", "get_response_time_history", "reset_all_stats", "cleanup_old_data", "EndpointStats"]

@@ -121,26 +121,31 @@ class TestTelemetryModule:
 
     def test_get_endpoint_stats_with_data(self, telemetry_module, mock_db):
         """Test getting stats with data."""
-        # Mock endpoint list
-        mock_db.fetch_all.side_effect = [
-            [{"endpoint": "/api/v1/test", "method": "GET"}],
-            [
-                {"response_time_ms": 10, "status_code": 200},
-                {"response_time_ms": 20, "status_code": 200},
-                {"response_time_ms": 30, "status_code": 500},
-            ],
+        mock_db.fetch_all.return_value = [
+            {
+                "endpoint": "/api/v1/channels/123456/messages",
+                "method": "GET",
+                "count": 3,
+                "avg_ms": 20.0,
+                "min_ms": 10.0,
+                "max_ms": 30.0,
+                "avg_q": 1.0,
+                "avg_dt": 5.0,
+                "err_count": 1,
+                "err_rate": 33.33,
+            }
         ]
 
         stats = telemetry_module.get_endpoint_stats(hours=24)
 
         assert len(stats) == 1
-        assert stats[0].endpoint == "/api/v1/test"
+        assert stats[0].endpoint == "/api/v1/channels/{channel_id}/messages"
         assert stats[0].method == "GET"
         assert stats[0].count == 3
         assert stats[0].avg_response_time_ms == 20.0
         assert stats[0].min_response_time_ms == 10
         assert stats[0].max_response_time_ms == 30
-        assert stats[0].error_rate == pytest.approx(1 / 3)
+        assert stats[0].error_rate == pytest.approx(33.3333)
 
     def test_get_response_time_history_empty(self, telemetry_module, mock_db):
         """Test getting history when no data exists."""
