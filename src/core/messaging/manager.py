@@ -315,6 +315,16 @@ class MessagingManager(BaseManager):
             user_id, conversation_ids, role
         )
 
+    def remove_participant_from_conversations(
+        self,
+        user_id: SnowflakeID,
+        conversation_ids: List[SnowflakeID],
+    ) -> None:
+        """Remove a participant from multiple conversations (for server leaves/kicks)."""
+        self._participant_svc.remove_user_from_multiple_conversations(
+            user_id, conversation_ids
+        )
+
     def remove_participant(
         self,
         user_id: SnowflakeID,

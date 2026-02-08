@@ -248,7 +248,23 @@ class MemberHandler:
         self.db.execute("DELETE FROM srv_member_roles WHERE member_id = ?", (member.id,))
         self.db.execute("DELETE FROM srv_members WHERE server_id = ? AND user_id = ?", (server_id, member_user_id))
 
+        # Remove from messaging conversations if messaging module available
+        if self.manager._messaging:
+            try:
+                channels = self.db.fetch_all(
+                    "SELECT conversation_id FROM srv_channels WHERE server_id = ? AND deleted = 0",
+                    (server_id,)
+                )
+                conv_ids = [ch["conversation_id"] for ch in channels if ch["conversation_id"]]
+                
+                if conv_ids:
+                    if hasattr(self.manager._messaging, "remove_participant_from_conversations"):
+                        self.manager._messaging.remove_participant_from_conversations(member_user_id, conv_ids)
+            except Exception as e:
+                logger.error(f"Error removing kicked member {member_user_id} from server conversations: {e}")
+
         self.manager._cache_invalidate(self.manager._member_cache, (server_id, member_user_id))
+        self.manager._cache_invalidate(self.manager._member_cache, f"is_member:{server_id}:{member_user_id}")
         self.manager._cache_invalidate(self.manager._permission_cache, (member_user_id, server_id, None))
         
         # Invalidate Redis

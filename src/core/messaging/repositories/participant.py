@@ -110,6 +110,25 @@ class ParticipantRepository(BaseRepository[Participant]):
             auto_commit=auto_commit,
         )
 
+    def delete_bulk(
+        self,
+        user_id: SnowflakeID,
+        conversation_ids: List[SnowflakeID],
+        auto_commit: bool = True,
+    ) -> None:
+        """Remove a participant from multiple conversations in batch."""
+        if not conversation_ids:
+            return
+
+        placeholders = ",".join("?" for _ in conversation_ids)
+        params = [user_id] + list(conversation_ids)
+        
+        self._execute(
+            f"DELETE FROM msg_participants WHERE user_id = ? AND conversation_id IN ({placeholders})",
+            tuple(params),
+            auto_commit=auto_commit,
+        )
+
     def update_role(
         self,
         conversation_id: SnowflakeID,

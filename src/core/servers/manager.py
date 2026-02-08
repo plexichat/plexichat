@@ -808,8 +808,24 @@ class ServerManager(BaseManager):
             (server_id, user_id),
         )
 
+        # Remove from messaging conversations if messaging module available
+        if self._messaging:
+            try:
+                channels = self._db.fetch_all(
+                    "SELECT conversation_id FROM srv_channels WHERE server_id = ? AND deleted = 0",
+                    (server_id,)
+                )
+                conv_ids = [ch["conversation_id"] for ch in channels if ch["conversation_id"]]
+                
+                if conv_ids:
+                    if hasattr(self._messaging, "remove_participant_from_conversations"):
+                        self._messaging.remove_participant_from_conversations(user_id, conv_ids)
+            except Exception as e:
+                logger.error(f"Error removing member {user_id} from server conversations: {e}")
+
         # Invalidate caches for the user leaving
         self._cache_invalidate(self._member_cache, (server_id, user_id))
+        self._cache_invalidate(self._member_cache, f"is_member:{server_id}:{user_id}")
         self._cache_invalidate(self._member_roles_cache, (server_id, user_id))
         self._cache_invalidate(self._permission_cache, (user_id, server_id, None))
 
@@ -817,6 +833,7 @@ class ServerManager(BaseManager):
         from src.core.database import cache_delete, invalidate_pattern
         cache_delete(f"is_member:{server_id}:{user_id}")
         invalidate_pattern(f"perms:{user_id}:{server_id}:*")
+        invalidate_pattern(f"member_data:*{user_id}*")
         self.get_servers.invalidate(user_id)  # type: ignore
 
         # Also invalidate any channel-specific permission caches

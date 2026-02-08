@@ -83,6 +83,22 @@ class ParticipantService(BaseService):
             self._cache_invalidate((cid, user_id))
             invalidate_pattern(f"participant_ids:*{cid}*")
 
+    def remove_user_from_multiple_conversations(
+        self,
+        user_id: SnowflakeID,
+        conversation_ids: List[SnowflakeID],
+    ) -> None:
+        """Remove a user from multiple conversations in batch."""
+        if not conversation_ids:
+            return
+
+        self._repo.delete_bulk(user_id, conversation_ids)
+        
+        # Invalidate caches
+        for cid in conversation_ids:
+            self._cache_invalidate((cid, user_id))
+            invalidate_pattern(f"participant_ids:*{cid}*")
+
     def remove_participant(
         self,
         conversation_id: SnowflakeID,
