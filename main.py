@@ -33,7 +33,7 @@ import utils.validator as validator  # noqa: E402
 import utils.version as version  # noqa: E402
 
 # Global Version Definition
-VERSION = "a.1.0-38"
+VERSION = "a.1.0-39"
 
 
 class PlexiChatServer:

@@ -866,19 +866,19 @@ async def acknowledge_messages(
                     user_ids = []
                     
                     if is_server_channel:
-                        # For server channels, we notify all members in the channel
-                        # This ensures their unread indicators/counts update live
+                        # For server channels, we MUST use the servers module
                         try:
-                            # In a real high-scale system, we might throttle this or use a different event
-                            # for general "someone read" vs "you specifically got an ack", but for PlexiChat
-                            # we broadcast it to all channel members to sync state.
-                            user_ids = messaging.get_participant_ids(conv_id)
-                        except Exception:
-                            pass
+                            servers = api.get_servers()
+                            if servers and server_id:
+                                sid = int(server_id)
+                                # Fetch all members of the server
+                                user_ids = servers.get_member_user_ids(sid)
+                        except Exception as e:
+                            logger.debug(f"Failed to get server member IDs for ACK: {e}")
                     else:
-                        # For DMs/Groups, notify only other participants
+                        # For DMs/Groups, messaging module is correct
                         try:
-                            user_ids = messaging.get_participant_ids(conv_id)
+                            user_ids = messaging.get_participant_ids(cid)
                         except Exception:
                             pass
                     
@@ -897,6 +897,8 @@ async def acknowledge_messages(
                         )
                         await dispatcher.dispatch_event(event, user_ids)
                         logger.info(f"Successfully broadcast MESSAGE_ACK for channel {cid} to {len(user_ids)} users")
+                    else:
+                        logger.info(f"No targets found for MESSAGE_ACK in channel {cid} (is_server={is_server_channel})")
             except Exception as e:
                 logger.error(f"Failed to broadcast MESSAGE_ACK: {e}", exc_info=True)
 
