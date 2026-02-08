@@ -1679,26 +1679,9 @@ class PlexiChatServer:
         """Clean up resources on shutdown."""
         logger.info("Cleaning up resources...")
 
-        # Close all WebSocket connections gracefully
-        try:
-            from src.api import websocket
-
-            if websocket.is_setup():
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    closed = loop.run_until_complete(
-                        websocket.close_all_connections(
-                            reason="Server shutting down",
-                            notify_first=False,  # Already notified in signal handler
-                            grace_period_seconds=0.5,
-                        )
-                    )
-                    logger.info(f"Closed {closed} WebSocket connections")
-                finally:
-                    loop.close()
-        except Exception as e:
-            logger.debug(f"Error closing WebSocket connections: {e}")
+        # Notify clients if not already done (this is a backup)
+        if not self.shutdown_event.is_set():
+            self.shutdown_event.set()
 
         # Close database connection
         if self.db:
@@ -1750,6 +1733,7 @@ class PlexiChatServer:
             port=port,
             log_level="info",
             loop="asyncio",
+            install_signal_handlers=False,
             **ssl_config,
         )
 
@@ -1758,7 +1742,20 @@ class PlexiChatServer:
 
         # Setup signal handlers for graceful shutdown
         def signal_handler(signum, frame):
-            signal_name = "SIGINT" if signum == signal.SIGINT else f"signal {signum}"
+            # Map signal numbers to names
+            signal_map = {
+                signal.SIGINT: "SIGINT",
+            }
+            if hasattr(signal, "SIGTERM"):
+                signal_map[signal.SIGTERM] = "SIGTERM"
+                
+            signal_name = signal_map.get(signum, f"signal {signum}")
+            
+            # If we're already shutting down, force exit on second signal
+            if self.shutdown_event.is_set():
+                logger.warning(f"Received second {signal_name}, forcing immediate exit...")
+                os._exit(1)
+                
             logger.info(f"Received {signal_name}, initiating graceful shutdown...")
             self.shutdown_event.set()
 
@@ -1773,7 +1770,10 @@ class PlexiChatServer:
                 asyncio.run_coroutine_threadsafe(self.notify_clients_shutdown(), loop)
 
             if self.server:
+                # Tell uvicorn to exit
                 self.server.should_exit = True
+                # Also set force_exit to False to allow graceful shutdown first
+                # self.server.force_exit = False 
 
         # Register signal handlers
         signal.signal(signal.SIGINT, signal_handler)
@@ -2089,10 +2089,6 @@ def _check_security_keys() -> None:
             "Please update these values in your config file for production use."
         )
         logger.warning("=" * 60)
-
-
-if __name__ == "__main__":
-    main()
 
 
 if __name__ == "__main__":
