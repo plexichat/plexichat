@@ -437,6 +437,7 @@ def cache_get(key: str) -> Optional[Any]:
         if value is not None:
             _cache_stats["hits"] += 1
             logger.debug(f"Cache GET HIT: {key}")
+            return _reconstruct_object(value)
         else:
             _cache_stats["misses"] += 1
             logger.debug(f"Cache GET MISS: {key}")
@@ -453,7 +454,7 @@ def cache_set(key: str, value: Any, ttl: Optional[int] = None) -> bool:
 
     Args:
         key: Cache key.
-        value: Value to cache (must be JSON-serializable).
+        value: Value to cache (must be JSON-serializable or a supported complex type).
         ttl: Time-to-live in seconds.
 
     Returns:
@@ -465,7 +466,8 @@ def cache_set(key: str, value: Any, ttl: Optional[int] = None) -> bool:
 
     try:
         cache_ttl = ttl if ttl is not None else client.ttl_cache
-        client.set_json(key, value, ttl=cache_ttl)
+        serializable_value = _ensure_serializable(value)
+        client.set_json(key, serializable_value, ttl=cache_ttl)
         logger.debug(f"Cache SET: {key} (ttl={cache_ttl})")
         return True
     except RedisOperationError as e:

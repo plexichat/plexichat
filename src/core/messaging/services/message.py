@@ -371,8 +371,7 @@ class MessageService(BaseService):
                         for mid in cached_ids:
                             m_obj = cache_get(f"msg:obj:{mid}")
                             if m_obj:
-                                from src.core.database.cache import _reconstruct_object
-                                messages.append(_reconstruct_object(m_obj))
+                                messages.append(m_obj)
                             else:
                                 missing_ids.append(mid)
                         
