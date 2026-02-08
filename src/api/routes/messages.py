@@ -865,15 +865,26 @@ async def acknowledge_messages(
                     dispatcher = get_dispatcher()
                     user_ids = []
                     
-                    # For DMs/Groups, notify only if it's NOT a server channel to save resources
-                    if not is_server_channel:
-                        # Fetch IDs of other participants only
+                    if is_server_channel:
+                        # For server channels, we notify all members in the channel
+                        # This ensures their unread indicators/counts update live
                         try:
+                            # In a real high-scale system, we might throttle this or use a different event
+                            # for general "someone read" vs "you specifically got an ack", but for PlexiChat
+                            # we broadcast it to all channel members to sync state.
                             user_ids = messaging.get_participant_ids(conv_id)
-                            # Remove current user
-                            user_ids = [uid for uid in user_ids if uid != current_user.user_id]
                         except Exception:
                             pass
+                    else:
+                        # For DMs/Groups, notify only other participants
+                        try:
+                            user_ids = messaging.get_participant_ids(conv_id)
+                        except Exception:
+                            pass
+                    
+                    # Always remove current user to avoid echoing back to sender
+                    if user_ids:
+                        user_ids = [uid for uid in user_ids if uid != current_user.user_id]
                     
                     if user_ids:
                         event = Event(
