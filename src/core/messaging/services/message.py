@@ -400,15 +400,16 @@ class MessageService(BaseService):
         attachments_map = self._attachment_repo.get_batch_by_messages(message_ids)
 
         messages = []
-                for row in rows:
-                    pin_info = pins_map.get(row["id"])
-                    msg = self._repo.row_to_model(row, pin_info)
-                    msg.attachments = attachments_map.get(row["id"], [])
-                    messages.append(msg)
-                    
-                    # Seed the object cache
-                    cache_set(f"msg:obj:{msg.id}", msg, ttl=3600)
-                # Populate "recent messages" list cache if it's the newest messages
+        for row in rows:
+            pin_info = pins_map.get(row["id"])
+            msg = self._repo.row_to_model(row, pin_info)
+            msg.attachments = attachments_map.get(row["id"], [])
+            messages.append(msg)
+
+            # Seed the object cache
+            cache_set(f"msg:obj:{msg.id}", msg, ttl=3600)
+
+        # Populate "recent messages" list cache if it's the newest messages
         if not before_id and not after_id:
             try:
                 from src.core.database import get_redis_client as get_client, redis_available
