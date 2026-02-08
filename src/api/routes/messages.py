@@ -768,10 +768,10 @@ async def acknowledge_messages(
     If message_id is provided, marks all messages up to and including that message as read.
     If not provided, marks all messages in the channel as read.
     """
-    messaging = api.get_messaging()
+    msg_manager = api.get_messaging()
     servers_mod = api.get_servers()
 
-    if not messaging:
+    if not msg_manager:
         raise HTTPException(
             status_code=500,
             detail={
@@ -826,6 +826,8 @@ async def acknowledge_messages(
                 import src.api as api
                 db = api.get_db()
                 try:
+                    # Use the module-level helper or the manager directly
+                    from src.core import messaging
                     return messaging.mark_read(uid, cid, mid)
                 finally:
                     if db:
@@ -882,10 +884,9 @@ async def acknowledge_messages(
                         # For DMs/Groups, messaging module is correct
                         try:
                             # We must call get_participant_ids on the manager instance, not the module
-                            msg_manager = api.get_messaging()
-                            if msg_manager:
-                                user_ids = msg_manager.get_participant_ids(cid)
-                                logger.info(f"ACK: DM/Group channel {cid} has {len(user_ids)} participants")
+                            # Since we renamed the local variable to msg_manager, this is now safe
+                            user_ids = msg_manager.get_participant_ids(cid)
+                            logger.info(f"ACK: DM/Group channel {cid} has {len(user_ids)} participants")
                         except Exception as e:
                             logger.error(f"Failed to get messaging participant IDs for ACK: {e}", exc_info=True)
                     
