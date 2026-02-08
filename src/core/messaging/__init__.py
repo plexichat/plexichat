@@ -273,6 +273,11 @@ def get_participants(user_id: int, conversation_id: int) -> List[Participant]:
     return _get_manager().get_participants(user_id, conversation_id)
 
 
+def get_participant_ids(conversation_id: int) -> List[int]:
+    """Get all participant user IDs in a conversation."""
+    return _get_manager().get_participant_ids(conversation_id)
+
+
 def mute_conversation(
     user_id: int, conversation_id: int, muted: bool = True, until: Optional[int] = None
 ) -> bool:
