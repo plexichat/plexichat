@@ -35,25 +35,47 @@ def _message_to_response(
     media_mod=None,
 ) -> MessageResponse:
     """Convert message object to response model."""
+    # Handle dict vs object for msg
+    def get_attr(obj, name, default=None):
+        if isinstance(obj, dict):
+            return obj.get(name, default)
+        return getattr(obj, name, default)
+
+    msg_id = get_attr(msg, "id")
+    author_id = get_attr(msg, "author_id")
+    content = get_attr(msg, "content", "")
+    created_at = get_attr(msg, "created_at")
+    
     attachments = []
-    if hasattr(msg, "attachments") and msg.attachments:
-        for att in msg.attachments:
+    msg_attachments = get_attr(msg, "attachments")
+    if msg_attachments:
+        for att in msg_attachments:
+            # att might also be a dict
+            att_id = get_attr(att, "id")
+            att_filename = get_attr(att, "filename", "attachment")
+            att_url = get_attr(att, "url")
+            att_content_type = get_attr(att, "content_type", "application/octet-stream")
+            att_size = get_attr(att, "size", 0)
+            att_hash = get_attr(att, "checksum") or get_attr(att, "hash")
+
             # Handle URL signing for absolute security and cross-origin access
-            url = att.url
+            url = att_url
             if media_mod and url and url.startswith("/api/v1/media/attachments/"):
                 try:
                     # Parse file_id from metadata if available, or try to lookup
-                    file_id = getattr(att, "file_id", None)
-                    if not file_id and hasattr(att, "metadata") and att.metadata:
-                        if isinstance(att.metadata, dict):
-                            file_id = att.metadata.get("file_id")
-                        elif isinstance(att.metadata, str):
-                            import json
-                            try:
-                                meta = json.loads(att.metadata)
-                                file_id = meta.get("file_id")
-                            except Exception:
-                                pass
+                    file_id = get_attr(att, "file_id")
+                    if not file_id:
+                        metadata = get_attr(att, "metadata")
+                        if metadata:
+                            if isinstance(metadata, dict):
+                                file_id = metadata.get("file_id")
+                            elif isinstance(metadata, str):
+                                import json
+                                try:
+                                    meta = json.loads(metadata)
+                                    file_id = meta.get("file_id")
+                                except Exception:
+                                    pass
                     
                     if file_id:
                         signed = media_mod.sign_url(int(file_id))
@@ -63,55 +85,54 @@ def _message_to_response(
 
             attachments.append(
                 AttachmentResponse(
-                    id=SnowflakeID(att.id),
-                    filename=att.filename,
-                    content_type=getattr(
-                        att, "content_type", "application/octet-stream"
-                    ),
-                    size=getattr(att, "size", 0),
+                    id=SnowflakeID(att_id),
+                    filename=att_filename,
+                    content_type=att_content_type,
+                    size=att_size,
                     url=url,
-                    hash=getattr(att, "checksum", None) or getattr(att, "hash", None),
+                    hash=att_hash,
                 )
             )
 
     # Get edited_at from updated_at if message was edited
     edited_at = None
-    if getattr(msg, "edited", False) or getattr(msg, "edited_at", None):
-        edited_at = getattr(msg, "edited_at", None) or getattr(msg, "updated_at", None)
+    if get_attr(msg, "edited", False) or get_attr(msg, "edited_at"):
+        edited_at = get_attr(msg, "edited_at") or get_attr(msg, "updated_at")
 
     # Use explicit channel_id if provided, otherwise fall back to message attributes
     effective_channel_id = (
         channel_id
-        or getattr(msg, "channel_id", 0)
-        or getattr(msg, "conversation_id", 0)
+        or get_attr(msg, "channel_id")
+        or get_attr(msg, "conversation_id")
+        or 0
     )
 
     # Use provided reader usernames (must be bulk-fetched by caller for performance)
     read_by = read_by_usernames or []
-    read_count = len(read_by) if read_by_usernames is not None else getattr(msg, "read_count", 0)
+    read_count = len(read_by) if read_by_usernames is not None else get_attr(msg, "read_count", 0)
 
     return MessageResponse(
-        id=SnowflakeID(msg.id),
+        id=SnowflakeID(msg_id),
         channel_id=SnowflakeID(effective_channel_id),
-        author_id=SnowflakeID(msg.author_id),
-        content=msg.content,
-        created_at=msg.created_at,
+        author_id=SnowflakeID(author_id),
+        content=content,
+        created_at=created_at,
         edited_at=edited_at,
-        reply_to_id=SnowflakeID(msg.reply_to_id)
-        if getattr(msg, "reply_to_id", None)
+        reply_to_id=SnowflakeID(get_attr(msg, "reply_to_id"))
+        if get_attr(msg, "reply_to_id")
         else None,
         attachments=attachments,
-        embeds=getattr(msg, "embeds", []) or [],
-        pinned=getattr(msg, "pinned", False),
-        status=getattr(getattr(msg, "status", None), "value", None),
-        delivery_count=getattr(msg, "delivery_count", 0),
+        embeds=get_attr(msg, "embeds", []) or [],
+        pinned=get_attr(msg, "pinned", False),
+        status=getattr(get_attr(msg, "status"), "value", get_attr(msg, "status")) if get_attr(msg, "status") else None,
+        delivery_count=get_attr(msg, "delivery_count", 0),
         read_count=read_count,
         read_by=read_by,
         author_username=author_username
-        or getattr(msg, "author_username", None)
-        or f"User {msg.author_id}",
-        author_avatar_url=author_avatar_url or getattr(msg, "author_avatar_url", None),
-        author_badges=author_badges or getattr(msg, "author_badges", []) or [],
+        or get_attr(msg, "author_username")
+        or f"User {author_id}",
+        author_avatar_url=author_avatar_url or get_attr(msg, "author_avatar_url"),
+        author_badges=author_badges or get_attr(msg, "author_badges") or [],
         reactions=reactions_data or [],
     )
 
@@ -237,7 +258,13 @@ def get_channel_messages(
         if messaging and auth and messages:
             try:
                 # Only check messages authored by current user
-                own_message_ids = [m.id for m in messages if m.author_id == current_user.user_id]
+                own_message_ids = []
+                for m in messages:
+                    mid = getattr(m, "id", None) or m.get("id")
+                    author_id = getattr(m, "author_id", None) or m.get("author_id")
+                    if int(author_id) == int(current_user.user_id):
+                        own_message_ids.append(mid)
+
                 if own_message_ids:
                     reader_ids_map = messaging.get_batch_reader_ids(current_user.user_id, own_message_ids)
                     
@@ -261,7 +288,8 @@ def get_channel_messages(
         result = []
         for m in messages:
             # Robust lookup: check both string and int keys
-            author_id = m.author_id
+            author_id = getattr(m, "author_id", None) or m.get("author_id")
+            mid = getattr(m, "id", None) or m.get("id")
             author_info = author_cache.get(author_id) or author_cache.get(str(author_id)) or {}
             
             result.append(
@@ -270,8 +298,8 @@ def get_channel_messages(
                     author_username=author_info.get("username"),
                     author_avatar_url=author_info.get("avatar_url"),
                     author_badges=author_info.get("badges"),
-                    reactions_data=reactions_cache.get(m.id, []),
-                    read_by_usernames=readers_cache.get(m.id),
+                    reactions_data=reactions_cache.get(mid, []),
+                    read_by_usernames=readers_cache.get(mid),
                     media_mod=media_mod,
                 )
             )
