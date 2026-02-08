@@ -791,12 +791,14 @@ async def acknowledge_messages(
         # Check if this is a voice channel - voice channels don't have messages to ack
         conv_id = cid # Default to channel ID (for DMs)
         is_server_channel = False
+        current_server_id = None
         if servers_mod:
             try:
                 # Use a fast check first
                 channel = servers_mod.get_channel(cid, current_user.user_id)
                 if channel:
                     is_server_channel = True
+                    current_server_id = getattr(channel, "server_id", None)
                     # For server channels, use the linked conversation_id
                     if hasattr(channel, "conversation_id") and channel.conversation_id:
                         conv_id = channel.conversation_id
@@ -869,22 +871,25 @@ async def acknowledge_messages(
                         # For server channels, we MUST use the servers module
                         try:
                             servers = api.get_servers()
-                            if servers and server_id:
-                                sid = int(server_id)
+                            if servers and current_server_id:
+                                sid = int(current_server_id)
                                 # Fetch all members of the server
                                 user_ids = servers.get_member_user_ids(sid)
+                                logger.info(f"ACK: Server channel {cid} in server {sid} has {len(user_ids)} members")
                         except Exception as e:
-                            logger.debug(f"Failed to get server member IDs for ACK: {e}")
+                            logger.error(f"Failed to get server member IDs for ACK: {e}", exc_info=True)
                     else:
                         # For DMs/Groups, messaging module is correct
                         try:
                             user_ids = messaging.get_participant_ids(cid)
-                        except Exception:
-                            pass
+                            logger.info(f"ACK: DM/Group channel {cid} has {len(user_ids)} participants: {user_ids}")
+                        except Exception as e:
+                            logger.error(f"Failed to get messaging participant IDs for ACK: {e}", exc_info=True)
                     
                     # Always remove current user to avoid echoing back to sender
+                    raw_count = len(user_ids)
                     if user_ids:
-                        user_ids = [uid for uid in user_ids if uid != current_user.user_id]
+                        user_ids = [uid for uid in user_ids if int(uid) != int(current_user.user_id)]
                     
                     if user_ids:
                         event = Event(
@@ -896,9 +901,9 @@ async def acknowledge_messages(
                             },
                         )
                         await dispatcher.dispatch_event(event, user_ids)
-                        logger.info(f"Successfully broadcast MESSAGE_ACK for channel {cid} to {len(user_ids)} users")
+                        logger.info(f"Successfully broadcast MESSAGE_ACK for channel {cid} to {len(user_ids)} users (excluded self from {raw_count})")
                     else:
-                        logger.info(f"No targets found for MESSAGE_ACK in channel {cid} (is_server={is_server_channel})")
+                        logger.info(f"No targets found for MESSAGE_ACK in channel {cid} (is_server={is_server_channel}, raw_count={raw_count}, my_id={current_user.user_id})")
             except Exception as e:
                 logger.error(f"Failed to broadcast MESSAGE_ACK: {e}", exc_info=True)
 
