@@ -881,8 +881,11 @@ async def acknowledge_messages(
                     else:
                         # For DMs/Groups, messaging module is correct
                         try:
-                            user_ids = messaging.get_participant_ids(cid)
-                            logger.info(f"ACK: DM/Group channel {cid} has {len(user_ids)} participants: {user_ids}")
+                            # We must call get_participant_ids on the manager instance, not the module
+                            msg_manager = api.get_messaging()
+                            if msg_manager:
+                                user_ids = msg_manager.get_participant_ids(cid)
+                                logger.info(f"ACK: DM/Group channel {cid} has {len(user_ids)} participants")
                         except Exception as e:
                             logger.error(f"Failed to get messaging participant IDs for ACK: {e}", exc_info=True)
                     
