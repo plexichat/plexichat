@@ -315,6 +315,9 @@ class MessageService(BaseService):
             if isinstance(msg, Message):
                 # Check access (conversation_id is in the message object)
                 if self._participant_svc.is_participant(msg.conversation_id, user_id):
+                    # Ensure read status is updated even for cached objects
+                    status_row = self._status_repo.get_by_message_and_user(msg.id, user_id)
+                    msg.read = status_row is not None and status_row["status"] == MessageStatusType.READ.value
                     return msg
 
         msg_row = self._repo.get_by_id(message_id)
@@ -331,6 +334,10 @@ class MessageService(BaseService):
         pin_info = self._pin_repo.get_by_message(message_id)
 
         msg = self._repo.row_to_model(msg_row, pin_info)
+
+        # Populate read status
+        status_row = self._status_repo.get_by_message_and_user(msg.id, user_id)
+        msg.read = status_row is not None and status_row["status"] == MessageStatusType.READ.value
 
         # Get attachments
         att_rows = self._attachment_repo.get_by_message(message_id)
@@ -377,6 +384,10 @@ class MessageService(BaseService):
                         
                         # If we found all requested messages in cache, return them
                         if not missing_ids and len(messages) == limit:
+                            # Populate read status for cached objects
+                            for m in messages:
+                                status_row = self._status_repo.get_by_message_and_user(m.id, user_id)
+                                m.read = status_row is not None and status_row["status"] == MessageStatusType.READ.value
                             return messages
                         
                         # If we have fewer than limit, only return if we're sure it's all there is in the cache
@@ -384,8 +395,10 @@ class MessageService(BaseService):
                         # We use a simple heuristic: ifllen < limit, it might be the whole conversation.
                         # For now, let's be conservative to ensure correctness.
                         if not missing_ids and len(messages) > 0 and len(messages) == client.llen(list_key) and len(messages) < limit:
-                            # To be 100% sure, we'd need to know if there are more in DB.
-                            # For snappiness, we'll return this, but the UI might not show "load more".
+                            # Populate read status for cached objects
+                            for m in messages:
+                                status_row = self._status_repo.get_by_message_and_user(m.id, user_id)
+                                m.read = status_row is not None and status_row["status"] == MessageStatusType.READ.value
                             return messages
             except Exception as e:
                 logger.debug(f"Recent messages cache check failed: {e}")
@@ -406,6 +419,14 @@ class MessageService(BaseService):
             pin_info = pins_map.get(row["id"])
             msg = self._repo.row_to_model(row, pin_info)
             msg.attachments = attachments_map.get(row["id"], [])
+            
+            # Populate read status for the current user
+            status_row = self._status_repo.get_by_message_and_user(msg.id, user_id)
+            if status_row and status_row["status"] == MessageStatusType.READ.value:
+                msg.read = True
+            else:
+                msg.read = False
+                
             messages.append(msg)
             
             # Seed the object cache

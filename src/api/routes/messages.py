@@ -127,6 +127,7 @@ def _message_to_response(
         status=getattr(get_attr(msg, "status"), "value", get_attr(msg, "status")) if get_attr(msg, "status") else None,
         delivery_count=get_attr(msg, "delivery_count", 0),
         read_count=read_count,
+        read=bool(get_attr(msg, "read", False)),
         read_by=read_by,
         author_username=author_username
         or get_attr(msg, "author_username")

@@ -114,6 +114,7 @@ class Message:
     status: MessageStatusType = MessageStatusType.SENT
     delivery_count: int = 0
     read_count: int = 0
+    read: bool = False
     deleted: bool = False
     deleted_at: Optional[int] = None
     metadata: Optional[Dict[str, Any]] = None
