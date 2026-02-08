@@ -386,6 +386,7 @@
                         <input type="text" id="endpoint-filter" placeholder="Filter endpoints...">
                         <select id="metric-hours"><option value="1">1 Hour</option><option value="24" selected>24 Hours</option><option value="168">7 Days</option></select>
                         <button class="btn btn-secondary" data-click="openExport">Export</button>
+                        <button class="btn btn-danger btn-sm" data-click="resetTelemetry">Reset</button>
                     </div>
                 </div>
                 <table>
@@ -397,11 +398,56 @@
                     <tbody id="endpoints-tbody"></tbody>
                 </table>
             </div>
+
+            <div class="card" style="margin-top: 1.25rem;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;gap:0.75rem;flex-wrap:wrap;">
+                    <h3>Telemetry History</h3>
+                    <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+                        <select id="telemetry-history-endpoint" style="min-width:220px;"></select>
+                        <select id="telemetry-history-method" style="min-width:110px;">
+                            <option value="GET">GET</option>
+                            <option value="POST">POST</option>
+                            <option value="PUT">PUT</option>
+                            <option value="PATCH">PATCH</option>
+                            <option value="DELETE">DELETE</option>
+                        </select>
+                        <select id="telemetry-history-hours" style="min-width:110px;">
+                            <option value="1">1 Hour</option>
+                            <option value="6">6 Hours</option>
+                            <option value="24" selected>24 Hours</option>
+                            <option value="168">7 Days</option>
+                        </select>
+                        <select id="telemetry-history-bucket" style="min-width:120px;">
+                            <option value="1">1 Min</option>
+                            <option value="5" selected>5 Min</option>
+                            <option value="15">15 Min</option>
+                            <option value="60">60 Min</option>
+                        </select>
+                        <button class="btn btn-secondary btn-sm" data-click="refreshTelemetryHistory">Refresh</button>
+                    </div>
+                </div>
+                <div style="height:320px;">
+                    <canvas id="chart-telemetry-history"></canvas>
+                </div>
+                <div id="telemetry-history-empty" style="margin-top:0.75rem;color:#666;font-size:0.8rem;"></div>
+            </div>
         </div>
 
         <div id="tab-tickets" class="tab-content hidden">
             <div class="card">
-                <h3>Support Queue</h3>
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:0.75rem;">
+                    <h3>Support Queue</h3>
+                    <div style="display:flex;gap:0.5rem;align-items:center;">
+                        <select id="ticket-status-filter" style="min-width:160px;">
+                            <option value="">All Statuses</option>
+                            <option value="open">Open</option>
+                            <option value="in_progress">In Progress</option>
+                            <option value="resolved">Resolved</option>
+                            <option value="closed">Closed</option>
+                        </select>
+                        <button class="btn btn-secondary btn-sm" data-click="refreshTickets">Refresh</button>
+                    </div>
+                </div>
                 <table>
                     <thead>
                         <tr><th>ID</th><th>User</th><th>Category</th><th>Status</th><th>Created</th><th>Actions</th></tr>
@@ -413,6 +459,22 @@
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <h2 id="view-ticket-title"></h2>
                     <button class="btn btn-outline" data-click="closeTicketDetail">Close</button>
+                </div>
+                <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:center;margin:0.75rem 0;">
+                    <span class="badge" id="ticket-status-badge" style="background:#222;"></span>
+                    <div style="color:#666;font-size:0.8rem;">Created: <span id="ticket-created-at"></span></div>
+                    <div style="color:#666;font-size:0.8rem;">Resolved: <span id="ticket-resolved-at"></span></div>
+                    <div style="color:#666;font-size:0.8rem;">Resolved By: <span id="ticket-resolved-by"></span></div>
+                </div>
+                <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem;">
+                    <label style="font-size:0.7rem; font-weight:800; color:#555;">STATUS</label>
+                    <select id="ticket-status-select" style="min-width:180px;">
+                        <option value="open">Open</option>
+                        <option value="in_progress">In Progress</option>
+                        <option value="resolved">Resolved</option>
+                        <option value="closed">Closed</option>
+                    </select>
+                    <button class="btn btn-primary btn-sm" data-click="updateTicketStatus">Update Status</button>
                 </div>
                 <div id="view-ticket-content" style="background:#000; padding:1rem; margin:1rem 0; border-radius:4px;"></div>
                 <div id="ticket-notes-section">
@@ -428,6 +490,20 @@
                 <h3>User Search</h3>
                 <div style="display:flex;gap:1rem;margin:1rem 0;"><input type="text" id="user-search-input" placeholder="Search by username..." style="flex:1;"><button class="btn btn-primary" data-click="searchUsers">Execute Search</button></div>
                 <div id="user-results"></div>
+            </div>
+            <div class="card">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;gap:0.75rem;">
+                    <h3>Tier Catalog</h3>
+                    <button class="btn btn-secondary btn-sm" data-click="refreshTierCatalog">Refresh</button>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Tier</th><th>Multiplier</th><th>Voice/Day</th><th>Video/Day</th><th>Uploads/Day</th><th>Max File MB</th><th>Servers</th><th>Msg Len</th><th>Reactions</th><th>Pins</th><th>Emoji Slots</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tiers-catalog-tbody"></tbody>
+                </table>
             </div>
             <div id="user-manage" class="card hidden">
                 <div style="display:flex;gap:2rem;">
@@ -507,6 +583,19 @@
                     </table>
                 </div>
                 <div class="card" style="grid-column: span 2;">
+                    <h3>Blocked Users</h3>
+                    <div style="display:flex;gap:0.5rem;margin:1rem 0;flex-wrap:wrap;">
+                        <input type="text" id="block-user-id" placeholder="User ID" style="flex:1;min-width:160px;">
+                        <input type="text" id="block-user-reason" placeholder="Reason" style="flex:2;min-width:200px;">
+                        <input type="number" id="block-user-duration" placeholder="Duration (hours)" style="flex:1;min-width:160px;">
+                        <button class="btn btn-danger" data-click="blockUser">Block User</button>
+                    </div>
+                    <table>
+                        <thead><tr><th>User ID</th><th>Username</th><th>Reason</th><th>Blocked</th><th>Expires</th><th>Action</th></tr></thead>
+                        <tbody id="blocked-users-tbody"></tbody>
+                    </table>
+                </div>
+                <div class="card" style="grid-column: span 2;">
                     <h3>System Actions</h3>
                     <p style="color:#888;font-size:0.8rem;margin:0.5rem 0;">Dangerous system-wide operations.</p>
                     <button class="btn btn-danger" data-click="globalSessionPurge">PURGE ALL SESSIONS</button>
@@ -582,7 +671,7 @@
             yellow: '#ffcd56'
         };
 
-        let currentTab = 'metrics', charts = {}, metricData = [], historicalData = {}, selectedUserId = null, selectedTicketId = null;
+        let currentTab = 'metrics', charts = {}, metricData = [], historicalData = {}, selectedUserId = null, selectedTicketId = null, selectedTicketStatus = null;
 
         const api = async (p, o = {}) => {
             const r = await fetch(p, { ...o, headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...o.headers } });
@@ -610,6 +699,7 @@
                 updateOverview(dash, stats.stats);
                 updateCharts(dash, stats.stats);
                 renderEndpointTable();
+                syncTelemetryHistoryEndpoints(stats.stats);
             } catch (e) { console.error('Refresh failed:', e); }
         }
 
@@ -644,6 +734,83 @@
                     <td style="color:${s.error_rate > 1 ? 'var(--bad)' : 'inherit'};font-weight:700;">${s.error_count} (${s.error_rate.toFixed(1)}%)</td>
                 </tr>
             `).join('');
+        }
+
+        function syncTelemetryHistoryEndpoints(stats) {
+            const endpointSelect = document.getElementById('telemetry-history-endpoint');
+            if (!endpointSelect) return;
+            const current = endpointSelect.value;
+            const endpoints = Array.from(new Set((stats || []).map(s => s.endpoint))).sort();
+            if (endpoints.length === 0) {
+                endpointSelect.innerHTML = '<option value="">No endpoints</option>';
+                renderTelemetryHistory([], '');
+                return;
+            }
+            endpointSelect.innerHTML = endpoints.map(e => `<option value="${e}">${e}</option>`).join('');
+            if (current && endpoints.includes(current)) endpointSelect.value = current;
+            else endpointSelect.value = endpoints[0];
+            updateTelemetryHistoryMethods(stats);
+            loadTelemetryHistory();
+        }
+
+        function updateTelemetryHistoryMethods(stats) {
+            const endpoint = document.getElementById('telemetry-history-endpoint')?.value;
+            const methodSelect = document.getElementById('telemetry-history-method');
+            if (!methodSelect) return;
+            const methods = Array.from(new Set((stats || []).filter(s => s.endpoint === endpoint).map(s => s.method))).sort();
+            const current = methodSelect.value;
+            if (methods.length === 0) {
+                methodSelect.innerHTML = '<option value="GET">GET</option>';
+                methodSelect.value = 'GET';
+            } else {
+                methodSelect.innerHTML = methods.map(m => `<option value="${m}">${m}</option>`).join('');
+                if (current && methods.includes(current)) methodSelect.value = current;
+                else methodSelect.value = methods[0];
+            }
+        }
+
+        async function loadTelemetryHistory() {
+            const endpoint = document.getElementById('telemetry-history-endpoint')?.value;
+            const method = document.getElementById('telemetry-history-method')?.value || 'GET';
+            const hours = document.getElementById('telemetry-history-hours')?.value || '24';
+            const bucket = document.getElementById('telemetry-history-bucket')?.value || '5';
+            if (!endpoint) {
+                renderTelemetryHistory([], '');
+                return;
+            }
+            try {
+                const r = await api(`/api/v1/admin/telemetry/history?endpoint=${encodeURIComponent(endpoint)}&method=${encodeURIComponent(method)}&hours=${hours}&bucket_minutes=${bucket}`);
+                renderTelemetryHistory(r.history || [], `${method} ${endpoint}`);
+            } catch (e) {
+                renderTelemetryHistory([], '');
+            }
+        }
+
+        function renderTelemetryHistory(history, label) {
+            const empty = document.getElementById('telemetry-history-empty');
+            const points = history || [];
+            if (points.length === 0) {
+                if (empty) empty.textContent = 'No telemetry history available for this selection.';
+                renderChart('chart-telemetry-history', 'line', { labels: [], datasets: [] }, { responsive: true, maintainAspectRatio: false });
+                return;
+            }
+            if (empty) empty.textContent = '';
+            const labels = points.map(p => new Date(p.timestamp).toLocaleTimeString());
+            const data = points.map(p => p.avg_ms);
+            renderChart('chart-telemetry-history', 'line', {
+                labels,
+                datasets: [
+                    { label: label || 'Avg Latency (ms)', data, borderColor: COLORS.orange, backgroundColor: COLORS.orange, tension: 0.3, pointRadius: 2 }
+                ]
+            }, {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                scales: {
+                    x: { grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: '#aaa', font: { size: 9 } } },
+                    y: { grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: '#aaa', font: { size: 10 } } }
+                }
+            });
         }
 
         function updateCharts(dash, stats) {
@@ -728,7 +895,9 @@
 
         async function loadTickets() {
             try {
-                const tickets = await api('/api/v1/admin/tickets');
+                const statusFilter = document.getElementById('ticket-status-filter')?.value || '';
+                const url = statusFilter ? `/api/v1/admin/tickets?status_filter=${encodeURIComponent(statusFilter)}` : '/api/v1/admin/tickets';
+                const tickets = await api(url);
                 document.getElementById('tickets-tbody').innerHTML = tickets.map(t => `
                     <tr><td>${t.id}</td><td>${t.username}</td><td>${t.category}</td><td><span class="badge" style="background:#222;">${t.status}</span></td><td>${new Date(t.created_at).toLocaleString()}</td>
                     <td><button class="btn btn-secondary btn-sm" data-click="viewTicket" data-id="${t.id}">View</button></td></tr>
@@ -740,11 +909,43 @@
             try {
                 const t = await api(`/api/v1/admin/tickets/${id}`);
                 selectedTicketId = id;
+                selectedTicketStatus = t.status;
                 document.getElementById('view-ticket-title').textContent = `Ticket #${id} - ${t.username}`;
                 document.getElementById('view-ticket-content').textContent = t.content;
+                const sb = document.getElementById('ticket-status-badge');
+                if (sb) sb.textContent = t.status;
+                const sc = document.getElementById('ticket-created-at');
+                if (sc) sc.textContent = t.created_at ? new Date(t.created_at).toLocaleString() : '';
+                const sr = document.getElementById('ticket-resolved-at');
+                if (sr) sr.textContent = t.resolved_at ? new Date(t.resolved_at).toLocaleString() : '';
+                const srb = document.getElementById('ticket-resolved-by');
+                if (srb) srb.textContent = t.resolved_by || '';
+                const statusSelect = document.getElementById('ticket-status-select');
+                if (statusSelect) statusSelect.value = t.status;
                 document.getElementById('ticket-detail').classList.remove('hidden');
                 loadTicketNotes(id);
             } catch (e) { alert('Failed to load ticket'); }
+        }
+
+        async function updateTicketStatus() {
+            if (!selectedTicketId) return;
+            const select = document.getElementById('ticket-status-select');
+            if (!select) return;
+            const status = select.value;
+            if (!status) return;
+            try {
+                await api(`/api/v1/admin/tickets/${selectedTicketId}/status`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ status })
+                });
+                selectedTicketStatus = status;
+                const sb = document.getElementById('ticket-status-badge');
+                if (sb) sb.textContent = status;
+                loadTickets();
+                viewTicket(selectedTicketId);
+            } catch (e) {
+                alert('Failed to update status');
+            }
         }
 
         async function loadTicketNotes(id) {
@@ -906,20 +1107,40 @@
             `).join('');
         }
 
+        function renderBlockedUsers(items) {
+            const tbody = document.getElementById('blocked-users-tbody');
+            if (!items || items.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="color:#666;">No blocked users</td></tr>';
+                return;
+            }
+            tbody.innerHTML = items.map(u => `
+                <tr>
+                    <td>${u.user_id}</td>
+                    <td>${u.username || ''}</td>
+                    <td>${u.reason || ''}</td>
+                    <td>${formatTimestamp(u.blocked_at)}</td>
+                    <td>${formatTimestamp(u.expires_at)}</td>
+                    <td><button class="btn btn-outline btn-sm" data-click="unblockUser" data-val="${u.user_id}">Unblock</button></td>
+                </tr>
+            `).join('');
+        }
+
         async function loadSecurity() {
             try {
                 const statusFilter = document.getElementById('hash-report-status').value;
                 const hashUrl = statusFilter ? `/api/v1/admin/hash-reports?status_filter=${encodeURIComponent(statusFilter)}` : '/api/v1/admin/hash-reports';
-                const [ips, bans, reports, hashes] = await Promise.all([
+                const [ips, bans, reports, hashes, blockedUsers] = await Promise.all([
                     api('/api/v1/admin/security/blocked-ips'),
                     api('/api/v1/admin/security/banned-usernames'),
                     api(hashUrl),
                     api('/api/v1/admin/blocked-hashes'),
+                    api('/api/v1/admin/blocked-users'),
                 ]);
                 document.getElementById('blocked-ips-tbody').innerHTML = ips.map(i => `<tr><td>${i.ip_address}</td><td>${i.reason || ''}</td><td><button class="btn btn-outline btn-sm" data-click="unblockIP" data-val="${i.ip_address}">Unblock</button></td></tr>`).join('');
                 document.getElementById('banned-usernames-tbody').innerHTML = bans.map(b => `<tr><td>${b.pattern}</td><td>${b.reason || ''}</td><td><button class="btn btn-outline btn-sm" data-click="removeBan" data-id="${b.id}">Remove</button></td></tr>`).join('');
                 renderHashReports(reports);
                 renderBlockedHashes(hashes);
+                renderBlockedUsers(blockedUsers);
             } catch (e) {}
         }
 
@@ -978,6 +1199,52 @@
             } catch (e) { console.error('Failed to fetch badges'); }
         }
 
+        async function fetchAvailableTiers() {
+            try {
+                const r = await api('/api/v1/admin/tiers');
+                const select = document.getElementById('user-tier-select');
+                const current = select.value;
+                const tiers = Object.keys(r.tiers || {});
+                select.innerHTML = tiers.map(t => `<option value="${t}">${t}</option>`).join('');
+                if (current && tiers.includes(current)) select.value = current;
+                else if (r.default && tiers.includes(r.default)) select.value = r.default;
+                renderTierCatalog(r.tiers || {}, r.default);
+            } catch (e) { console.error('Failed to fetch tiers'); }
+        }
+
+        function formatTierValue(value) {
+            if (value === -1) return '∞';
+            if (value === null || value === undefined) return '';
+            return value;
+        }
+
+        function renderTierCatalog(tiers, defaultTier) {
+            const tbody = document.getElementById('tiers-catalog-tbody');
+            if (!tbody) return;
+            const entries = Object.entries(tiers || {});
+            if (entries.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="11" style="color:#666;">No tiers available</td></tr>';
+                return;
+            }
+            tbody.innerHTML = entries.map(([key, t]) => `
+                <tr>
+                    <td>
+                        ${key}${defaultTier === key ? ' <span class="badge" style="background:var(--good);color:#000;">Default</span>' : ''}
+                    </td>
+                    <td>${formatTierValue(t.multiplier)}</td>
+                    <td>${formatTierValue(t.max_voice_minutes_per_day)}</td>
+                    <td>${formatTierValue(t.max_video_minutes_per_day)}</td>
+                    <td>${formatTierValue(t.max_file_uploads_per_day)}</td>
+                    <td>${formatTierValue(t.max_file_size_mb)}</td>
+                    <td>${formatTierValue(t.max_servers)}</td>
+                    <td>${formatTierValue(t.max_message_length)}</td>
+                    <td>${formatTierValue(t.max_reactions_per_message)}</td>
+                    <td>${formatTierValue(t.max_pins_per_channel)}</td>
+                    <td>${formatTierValue(t.custom_emoji_slots)}</td>
+                </tr>
+            `).join('');
+        }
+
         // Event Delegation (Fixed CSP)
         document.addEventListener('click', (e) => {
             const el = e.target.closest('[data-click]');
@@ -990,6 +1257,8 @@
             if (a === 'logout') { localStorage.removeItem('plexichat-admin-token'); window.location.replace('/api/v1/admin/login'); }
             else if (a === 'viewTicket') viewTicket(id);
             else if (a === 'closeTicketDetail') document.getElementById('ticket-detail').classList.add('hidden');
+            else if (a === 'refreshTickets') loadTickets();
+            else if (a === 'updateTicketStatus') updateTicketStatus();
             else if (a === 'addTicketNote') {
                 const content = document.getElementById('new-note-input').value;
                 if (!content) return;
@@ -1040,10 +1309,10 @@
             else if (a === 'blockIP') {
                 const ip = document.getElementById('block-ip-val').value;
                 if (!ip) return;
-                api('/api/v1/admin/security/blocked-ips', { method: 'POST', body: JSON.stringify({ip_address: ip, reason: 'Manual block'}) }).then(() => { document.getElementById('block-ip-val').value = ''; loadSecurity(); });
+                api('/api/v1/admin/security/block-ip', { method: 'POST', body: JSON.stringify({ip_address: ip, reason: 'Manual block'}) }).then(() => { document.getElementById('block-ip-val').value = ''; loadSecurity(); });
             }
             else if (a === 'unblockIP') {
-                api('/api/v1/admin/security/blocked-ips', { method: 'DELETE', body: JSON.stringify({ip_address: val}) }).then(() => loadSecurity());
+                api(`/api/v1/admin/security/unblock-ip/${encodeURIComponent(val)}`, { method: 'DELETE' }).then(() => loadSecurity());
             }
             else if (a === 'addBannedUsername') {
                 const pattern = document.getElementById('ban-username-val').value;
@@ -1074,10 +1343,37 @@
             else if (a === 'unblockHash') {
                 api(`/api/v1/admin/blocked-hashes/${encodeURIComponent(val)}`, { method: 'DELETE' }).then(() => loadSecurity());
             }
+            else if (a === 'blockUser') {
+                const userId = document.getElementById('block-user-id').value.trim();
+                const reason = document.getElementById('block-user-reason').value.trim();
+                const durationHours = document.getElementById('block-user-duration').value;
+                if (!userId) return;
+                const body = { user_id: userId, reason: reason || 'Manual block' };
+                if (durationHours) body.duration_hours = Number(durationHours);
+                api('/api/v1/admin/blocked-users', { method: 'POST', body: JSON.stringify(body) }).then(() => {
+                    document.getElementById('block-user-id').value = '';
+                    document.getElementById('block-user-reason').value = '';
+                    document.getElementById('block-user-duration').value = '';
+                    loadSecurity();
+                });
+            }
+            else if (a === 'unblockUser') {
+                api(`/api/v1/admin/blocked-users/${encodeURIComponent(val)}`, { method: 'DELETE' }).then(() => loadSecurity());
+            }
             else if (a === 'scrollLogTop') document.getElementById('log-viewer').scrollTop = 0;
             else if (a === 'scrollLogBottom') document.getElementById('log-viewer').scrollTop = 1e9;
             else if (a === 'openExport') document.getElementById('export-modal').classList.remove('hidden');
             else if (a === 'closeExport') document.getElementById('export-modal').classList.add('hidden');
+            else if (a === 'resetTelemetry') {
+                if (!confirm('Reset telemetry stats?')) return;
+                api('/api/v1/admin/telemetry/reset', { method: 'POST' }).then(() => refreshMetrics());
+            }
+            else if (a === 'refreshTelemetryHistory') {
+                loadTelemetryHistory();
+            }
+            else if (a === 'refreshTierCatalog') {
+                fetchAvailableTiers();
+            }
             else if (a === 'triggerDownload') {
                 const fmt = document.querySelector('input[name="export_format"]:checked').value;
                 const hrs = document.getElementById('metric-hours').value;
@@ -1113,16 +1409,26 @@
                 else if (e.target.id === 'endpoint-filter') renderEndpointTable();
                 else if (e.target.id === 'log-search') loadLogFile(document.getElementById('log-file-select').value);
                 else if (e.target.id === 'new-note-input') document.querySelector('[data-click="addTicketNote"]').click();
+                else if (e.target.id === 'ticket-status-select') updateTicketStatus();
                 else if (e.target.id === 'block-ip-val') document.querySelector('[data-click="blockIP"]').click();
                 else if (e.target.id === 'ban-username-val') document.querySelector('[data-click="addBannedUsername"]').click();
                 else if (e.target.id === 'block-hash-val' || e.target.id === 'block-hash-reason') document.querySelector('[data-click="blockHash"]').click();
+                else if (e.target.id === 'block-user-id') document.querySelector('[data-click="blockUser"]').click();
             }
         });
 
         document.getElementById('log-file-select').addEventListener('change', (e) => loadLogFile(e.target.value));
         document.getElementById('metric-hours').addEventListener('change', refreshMetrics);
         document.getElementById('endpoint-filter').addEventListener('input', renderEndpointTable);
+        document.getElementById('telemetry-history-endpoint').addEventListener('change', () => {
+            updateTelemetryHistoryMethods(metricData);
+            loadTelemetryHistory();
+        });
+        document.getElementById('telemetry-history-method').addEventListener('change', loadTelemetryHistory);
+        document.getElementById('telemetry-history-hours').addEventListener('change', loadTelemetryHistory);
+        document.getElementById('telemetry-history-bucket').addEventListener('change', loadTelemetryHistory);
         document.getElementById('hash-report-status').addEventListener('change', loadSecurity);
+        document.getElementById('ticket-status-filter').addEventListener('change', loadTickets);
 
         setInterval(() => {
             if (currentTab === 'logs' && document.getElementById('log-auto-refresh').checked) {
@@ -1135,6 +1441,7 @@
             document.getElementById('server-version').textContent = v.version.string;
             showTab('metrics');
             fetchAvailableBadges();
+            fetchAvailableTiers();
             setInterval(refreshMetrics, 15000);
         });
     </script>
