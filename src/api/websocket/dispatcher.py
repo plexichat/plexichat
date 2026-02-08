@@ -90,19 +90,13 @@ class GatewayDispatcher:
 
         connections = self._session_manager.get_connections_for_users(user_ids)
         
-        # Use INFO level for critical events to ensure they appear in production logs
-        if event.event_type.value in ("MESSAGE_ACK", "MESSAGE_CREATE", "NOTIFICATION_CREATE"):
-            logger.info(
-                f"dispatch_event: {event.event_type.value} to {len(user_ids)} users, found {len(connections)} connections"
-            )
-        else:
-            logger.debug(
-                f"dispatch_event: {event.event_type.value} to {len(user_ids)} users, found {len(connections)} connections"
-            )
+        # Use DEBUG level for dispatch events to reduce log noise
+        logger.debug(
+            f"dispatch_event: {event.event_type.value} to {len(user_ids)} users, found {len(connections)} connections"
+        )
 
         if not connections:
-            if event.event_type.value in ("MESSAGE_ACK", "MESSAGE_CREATE"):
-                logger.info(f"No connections found for event {event.event_type.value} target users: {user_ids[:5]}...")
+            logger.debug(f"No connections found for users: {user_ids[:5]}...")
             return 0
 
         sent_count = 0
