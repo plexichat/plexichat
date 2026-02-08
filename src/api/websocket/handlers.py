@@ -812,29 +812,10 @@ class OpcodeHandler:
     ) -> None:
         """Dispatch presence update to friends and server members."""
         try:
-            import src.api as api
-
-            relationships = api.get_relationships()
-
-            # Collect all user IDs who should receive this presence update
-            target_user_ids = set()
-
-            # Add friends
-            if relationships:
-                friend_ids = relationships.get_friend_ids(user_id)
-                if friend_ids:
-                    target_user_ids.update(friend_ids)
-
-            # Add server members (users in shared servers) - Optimized single query
-            if self._servers:
-                try:
-                    shared_member_ids = self._servers.get_all_shared_member_ids(user_id)
-                    if shared_member_ids:
-                        target_user_ids.update(shared_member_ids)
-                except Exception as e:
-                    logger.debug(
-                        f"Failed to get shared server members for presence: {e}"
-                    )
+            from src.api.routes.presence import _get_presence_targets
+            
+            # Use the robust, cached target selection logic from the presence route
+            target_user_ids = _get_presence_targets(user_id)
 
             if not target_user_ids:
                 return

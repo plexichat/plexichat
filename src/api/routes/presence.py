@@ -65,7 +65,12 @@ def _get_presence_targets(user_id: int) -> list:
         try:
             friend_ids = relationships.get_friend_ids(user_id)
             if friend_ids:
-                target_user_ids.update([int(fid) for rid in friend_ids for fid in ([rid] if not isinstance(rid, list) else rid)])
+                # friend_ids should be a flat list of ints/SnowflakeIDs
+                for fid in friend_ids:
+                    try:
+                        target_user_ids.add(int(fid))
+                    except (ValueError, TypeError):
+                        continue
         except Exception as e:
             logger.debug(f"Error fetching friend IDs: {e}")
 
@@ -76,7 +81,11 @@ def _get_presence_targets(user_id: int) -> list:
             if hasattr(servers, "get_all_shared_member_ids"):
                 shared_ids = servers.get_all_shared_member_ids(user_id)
                 if shared_ids:
-                    target_user_ids.update([int(sid) for rid in shared_ids for sid in ([rid] if not isinstance(rid, list) else rid)])
+                    for sid in shared_ids:
+                        try:
+                            target_user_ids.add(int(sid))
+                        except (ValueError, TypeError):
+                            continue
             else:
                 # Fallback to slower server-by-server fetch if method missing
                 user_servers = servers.get_servers(user_id)
@@ -84,10 +93,16 @@ def _get_presence_targets(user_id: int) -> list:
                     for server in user_servers:
                         member_ids = servers.get_member_user_ids(server.id, exclude_user_id=user_id)
                         if member_ids:
-                            target_user_ids.update([int(mid) for rid in member_ids for mid in ([rid] if not isinstance(rid, list) else rid)])
+                            for mid in member_ids:
+                                try:
+                                    target_user_ids.add(int(mid))
+                                except (ValueError, TypeError):
+                                    continue
         except Exception as e:
             logger.debug(f"Error fetching shared members: {e}")
 
+    # Remove self just in case
+    target_user_ids.discard(user_id)
     return list(target_user_ids)
 
 
