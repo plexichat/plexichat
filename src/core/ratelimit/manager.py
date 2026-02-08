@@ -158,7 +158,7 @@ class RateLimitManager:
 
                 if rl_config.hourly_limit:
                     h_allowed, _, h_reset = self._check_hourly_limit(
-                        state, rl_config, cost
+                        state, rl_config, cost, unix_now
                     )
                     if not h_allowed:
                         allowed = False
@@ -168,7 +168,7 @@ class RateLimitManager:
 
                 if allowed and rl_config.daily_limit:
                     d_allowed, _, d_reset = self._check_daily_limit(
-                        state, rl_config, cost
+                        state, rl_config, cost, unix_now
                     )
                     if not d_allowed:
                         allowed = False
@@ -206,27 +206,31 @@ class RateLimitManager:
         # Manually apply algorithm
         if rl_config.algorithm == RateLimitAlgorithm.FIXED_WINDOW:
             allowed, remaining, reset_after = self._legacy_fixed_window(
-                state, rl_config, cost
+                state, rl_config, cost, unix_now
             )
         elif rl_config.algorithm == RateLimitAlgorithm.LEAKY_BUCKET:
             allowed, remaining, reset_after = self._legacy_leaky_bucket(
-                state, rl_config, cost
+                state, rl_config, cost, unix_now
             )
         else:
             # Default to sliding window logic if not specified
             allowed, remaining, reset_after = self._legacy_sliding_window(
-                state, rl_config, cost
+                state, rl_config, cost, unix_now
             )
 
         # Check secondary limits for legacy path too
         if allowed and (rl_config.hourly_limit or rl_config.daily_limit):
             if rl_config.hourly_limit:
-                h_allowed, _, h_reset = self._check_hourly_limit(state, rl_config, cost)
+                h_allowed, _, h_reset = self._check_hourly_limit(
+                    state, rl_config, cost, unix_now
+                )
                 if not h_allowed:
                     allowed = False
                     reset_after = h_reset
             if allowed and rl_config.daily_limit:
-                d_allowed, _, d_reset = self._check_daily_limit(state, rl_config, cost)
+                d_allowed, _, d_reset = self._check_daily_limit(
+                    state, rl_config, cost, unix_now
+                )
                 if not d_allowed:
                     allowed = False
                     reset_after = d_reset
@@ -258,13 +262,12 @@ class RateLimitManager:
             cost=cost,
         )
 
-    def _legacy_fixed_window(self, state, config, cost):
-        now = time.monotonic()
-        window_start = state.get("window_start", now)
+    def _legacy_fixed_window(self, state, config, cost, unix_now):
+        window_start = state.get("window_start", unix_now)
         request_count = state.get("request_count", 0)
 
-        if now >= window_start + config.window_seconds:
-            window_start = now
+        if unix_now >= window_start + config.window_seconds:
+            window_start = unix_now
             request_count = 0
 
         if request_count + cost <= config.effective_limit:
@@ -276,33 +279,33 @@ class RateLimitManager:
         state["window_start"] = window_start
         state["request_count"] = request_count
         remaining = max(0, config.effective_limit - request_count)
-        reset_after = (window_start + config.window_seconds) - now
+        reset_after = (window_start + config.window_seconds) - unix_now
         return allowed, remaining, reset_after
 
-    def _legacy_sliding_window(self, state, config, cost):
-        now = time.monotonic()
-        cutoff = now - config.window_seconds
+    def _legacy_sliding_window(self, state, config, cost, unix_now):
+        cutoff = unix_now - config.window_seconds
         timestamps = state.get("timestamps", [])
         timestamps = [ts for ts in timestamps if ts > cutoff]
 
         if len(timestamps) + cost <= config.effective_limit:
             for _ in range(cost):
-                timestamps.append(now)
+                timestamps.append(unix_now)
             allowed = True
         else:
             allowed = False
 
         state["timestamps"] = timestamps
         remaining = max(0, config.effective_limit - len(timestamps))
-        reset_after = timestamps[0] - cutoff if timestamps else config.window_seconds
+        reset_after = (
+            timestamps[0] - cutoff if timestamps else config.window_seconds
+        )
         return allowed, remaining, reset_after
 
-    def _legacy_leaky_bucket(self, state, config, cost):
-        now = time.monotonic()
+    def _legacy_leaky_bucket(self, state, config, cost, unix_now):
         water_level = state.get("water_level", 0.0)
-        last_leak = state.get("last_leak", now)
+        last_leak = state.get("last_leak", unix_now)
         leak_rate = config.requests / config.window_seconds
-        elapsed = now - last_leak
+        elapsed = unix_now - last_leak
 
         water_level = max(0.0, water_level - (elapsed * leak_rate))
 
@@ -313,7 +316,7 @@ class RateLimitManager:
             allowed = False
 
         state["water_level"] = water_level
-        state["last_leak"] = now
+        state["last_leak"] = unix_now
         remaining = max(0, int(config.effective_limit - water_level))
         reset_after = (
             (water_level + cost - config.effective_limit) / leak_rate
@@ -327,15 +330,15 @@ class RateLimitManager:
         state: Dict[str, Any],
         config: RateLimitConfig,
         cost: int,
+        unix_now: float,
     ) -> tuple:
         """Check hourly limit."""
         if not config.hourly_limit:
             return True, 0, 0.0
-        now = time.monotonic()
-        hourly_reset = state.get("hourly_reset", now + 3600)
+        hourly_reset = state.get("hourly_reset", unix_now + 3600)
         hourly_count = state.get("hourly_count", 0)
-        if now >= hourly_reset:
-            hourly_reset = now + 3600
+        if unix_now >= hourly_reset:
+            hourly_reset = unix_now + 3600
             hourly_count = 0
         if hourly_count + cost <= config.hourly_limit:
             hourly_count += cost
@@ -345,7 +348,7 @@ class RateLimitManager:
         state["hourly_reset"] = hourly_reset
         state["hourly_count"] = hourly_count
         remaining = max(0, config.hourly_limit - hourly_count)
-        reset_after = hourly_reset - now
+        reset_after = hourly_reset - unix_now
         return allowed, remaining, reset_after
 
     def _check_daily_limit(
@@ -353,15 +356,15 @@ class RateLimitManager:
         state: Dict[str, Any],
         config: RateLimitConfig,
         cost: int,
+        unix_now: float,
     ) -> tuple:
         """Check daily limit."""
         if not config.daily_limit:
             return True, 0, 0.0
-        now = time.monotonic()
-        daily_reset = state.get("daily_reset", now + 86400)
+        daily_reset = state.get("daily_reset", unix_now + 86400)
         daily_count = state.get("daily_count", 0)
-        if now >= daily_reset:
-            daily_reset = now + 86400
+        if unix_now >= daily_reset:
+            daily_reset = unix_now + 86400
             daily_count = 0
         if daily_count + cost <= config.daily_limit:
             daily_count += cost
@@ -371,7 +374,7 @@ class RateLimitManager:
         state["daily_reset"] = daily_reset
         state["daily_count"] = daily_count
         remaining = max(0, config.daily_limit - daily_count)
-        reset_after = daily_reset - now
+        reset_after = daily_reset - unix_now
         return allowed, remaining, reset_after
 
     def get_bucket_info(self, bucket_key: str) -> Optional[RateLimitBucket]:
