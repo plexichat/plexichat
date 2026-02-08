@@ -176,7 +176,7 @@ def get_response_time_history(endpoint: str, method: str = "GET", hours: int = 2
     
     # Bucket by timestamp using floor division in SQL if possible, or post-process
     rows = db.fetch_all(
-        "SELECT timestamp, response_time_ms FROM telemetry_response_times WHERE endpoint = ? AND method = ? AND timestamp > ? ORDER BY timestamp",
+        "SELECT timestamp, response_time_ms, status_code FROM telemetry_response_times WHERE endpoint = ? AND method = ? AND timestamp > ? ORDER BY timestamp",
         (endpoint, method, cutoff)
     )
     if not rows:
@@ -185,10 +185,20 @@ def get_response_time_history(endpoint: str, method: str = "GET", hours: int = 2
     for r in rows:
         bk = (r["timestamp"] // bucket_ms) * bucket_ms
         if bk not in buckets:
-            buckets[bk] = []
-        buckets[bk].append(r["response_time_ms"])
+            buckets[bk] = {"times": [], "errors": 0}
+        buckets[bk]["times"].append(r["response_time_ms"])
+        if r["status_code"] >= 400:
+            buckets[bk]["errors"] += 1
     
-    return [{"timestamp": k, "avg_response_time_ms": sum(v)/len(v), "count": len(v)} for k, v in sorted(buckets.items())]
+    return [
+        {
+            "timestamp": k, 
+            "avg_ms": sum(v["times"])/len(v["times"]), 
+            "count": len(v["times"]),
+            "error_count": v["errors"]
+        } 
+        for k, v in sorted(buckets.items())
+    ]
 
 
 def reset_all_stats() -> int:
