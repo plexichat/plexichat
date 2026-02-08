@@ -844,6 +844,14 @@ async def acknowledge_messages(
                 )
             raise
 
+        # Also mark notifications for this channel as read
+        notif_mod = api.get_notifications()
+        if notif_mod:
+            try:
+                notif_mod.mark_channel_read(current_user.user_id, cid)
+            except Exception as ne:
+                logger.debug(f"Failed to mark notifications read for channel {cid}: {ne}")
+
         # Broadcast read receipt event via WebSocket (fire and forget)
         import asyncio
 

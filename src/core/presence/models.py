@@ -77,3 +77,5 @@ class Presence:
     activity: Optional[Activity] = None
     last_seen: int = 0
     updated_at: int = 0
+    current_channel_id: Optional[SnowflakeID] = None
+    current_server_id: Optional[SnowflakeID] = None

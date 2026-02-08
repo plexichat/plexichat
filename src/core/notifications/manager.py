@@ -500,6 +500,18 @@ class NotificationManager(BaseManager):
         mention_type: MentionType,
     ) -> bool:
         """Check if user should receive notification based on settings."""
+        # Suppress if user is currently focused on this channel/conversation
+        if self._presence:
+            try:
+                presence = self._presence.get_presence(user_id)
+                # Check for either specific channel focus or general conversation focus
+                focused_id = presence.current_channel_id
+                if focused_id and channel_id and int(focused_id) == int(channel_id):
+                    logger.debug(f"Suppressing notification for user {user_id} - already focused on channel {channel_id}")
+                    return False
+            except Exception as e:
+                logger.debug(f"Failed to check user focus during notification logic: {e}")
+
         if channel_id:
             override = self.get_channel_override(user_id, channel_id)
             if override:

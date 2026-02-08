@@ -492,6 +492,18 @@ class PresenceManager(BaseManager):
                 updated_at=row["updated_at"],
             )
 
+        # Fetch current focus from Redis (not persisted in DB as it's transient)
+        if redis_available():
+            client = get_redis_client()
+            if client:
+                try:
+                    focus = client.hgetall(f"presence:focus:{user_id}")
+                    if focus:
+                        presence.current_channel_id = int(focus.get(b"channel_id", 0)) or None
+                        presence.current_server_id = int(focus.get(b"server_id", 0)) or None
+                except Exception:
+                    pass
+
         # Cache the result for next time
         if use_cache and redis_available() and row:
             try:
@@ -644,6 +656,44 @@ class PresenceManager(BaseManager):
 
         result = self.get_presence(user_id)
         return result
+
+    # === Focus Operations ===
+
+    def set_focused_channel(
+        self,
+        user_id: SnowflakeID,
+        channel_id: Optional[SnowflakeID] = None,
+        server_id: Optional[SnowflakeID] = None,
+    ) -> bool:
+        """
+        Set user's currently focused channel/server for notification suppression.
+        This is transient state stored ONLY in Redis.
+        """
+        if not redis_available():
+            return False
+
+        client = get_redis_client()
+        if not client:
+            return False
+
+        key = f"presence:focus:{user_id}"
+        try:
+            if channel_id is None:
+                client.delete(key)
+            else:
+                client.hset(key, mapping={
+                    "channel_id": str(channel_id),
+                    "server_id": str(server_id or 0)
+                })
+                # Auto-expire if not updated (1 hour)
+                client.expire(key, 3600)
+            
+            # Invalidate presence cache
+            cache_delete(f"presence:{user_id}")
+            return True
+        except Exception as e:
+            logger.debug(f"Failed to set focused channel in Redis: {e}")
+            return False
 
     # === Typing Indicators ===
 
@@ -1077,6 +1127,8 @@ class PresenceManager(BaseManager):
             else None,
             "last_seen": presence.last_seen,
             "updated_at": presence.updated_at,
+            "current_channel_id": presence.current_channel_id,
+            "current_server_id": presence.current_server_id,
         }
 
     def _dict_to_presence(self, data: Dict[str, Any]) -> Presence:
@@ -1112,4 +1164,6 @@ class PresenceManager(BaseManager):
             else None,
             last_seen=data.get("last_seen", 0),
             updated_at=data.get("updated_at", 0),
+            current_channel_id=data.get("current_channel_id"),
+            current_server_id=data.get("current_server_id"),
         )
