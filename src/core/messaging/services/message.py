@@ -327,19 +327,12 @@ class MessageService(BaseService):
         if not self._participant_svc.is_participant(msg_row["conversation_id"], user_id):
             return None
 
-                # Get pin info
+        # Get pin info
+        pin_info = self._pin_repo.get_by_message(message_id)
 
-                pin_info = self._pin_repo.get_by_message(message_id)
+        msg = self._repo.row_to_model(msg_row, pin_info)
 
-        
-
-                msg = self._repo.row_to_model(msg_row, pin_info)
-
-        
-
-                # Get attachments
-
-        
+        # Get attachments
         att_rows = self._attachment_repo.get_by_message(message_id)
         msg.attachments = [self._attachment_repo.row_to_model(row) for row in att_rows]
 
