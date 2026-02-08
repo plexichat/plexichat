@@ -465,6 +465,8 @@ class RateLimitManager:
             if not result.allowed:
                 return result
 
+        # Return the most specific successful result (usually the route/resource limit)
+        # to provide the most useful headers to the client.
         return checks[-1] if checks else self._create_bypass_result(route, unix_now)
 
     def increment_custom_usage(
