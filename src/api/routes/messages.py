@@ -896,8 +896,9 @@ async def acknowledge_messages(
                             },
                         )
                         await dispatcher.dispatch_event(event, user_ids)
+                        logger.info(f"Successfully broadcast MESSAGE_ACK for channel {cid} to {len(user_ids)} users")
             except Exception as e:
-                logger.debug(f"Failed to broadcast MESSAGE_ACK: {e}")
+                logger.error(f"Failed to broadcast MESSAGE_ACK: {e}", exc_info=True)
 
         if count > 0 or up_to_id:
             asyncio.create_task(dispatch_ack())
