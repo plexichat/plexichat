@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.notifications import NotificationsResponse
-from src.api.schemas.common import ErrorResponse
+from src.api.schemas.common import ErrorResponse, SuccessResponse
 
 router = APIRouter(tags=["Notifications"])
 
@@ -46,3 +46,28 @@ async def get_notifications(
             status_code=500,
             detail={"error": {"code": 500, "message": "Internal server error"}},
         )
+
+
+@router.put(
+    "/users/@me/notifications/read-all",
+    response_model=SuccessResponse,
+    summary="Mark all notifications as read",
+)
+async def mark_all_read(
+    current_user: TokenInfo = Depends(get_current_user),
+) -> SuccessResponse:
+    """Mark all user notifications as read (placeholder)."""
+    return SuccessResponse(success=True)
+
+
+@router.put(
+    "/users/@me/notifications/{notification_id}/read",
+    response_model=SuccessResponse,
+    summary="Mark notification as read",
+)
+async def mark_read(
+    notification_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> SuccessResponse:
+    """Mark a specific notification as read (placeholder)."""
+    return SuccessResponse(success=True)
