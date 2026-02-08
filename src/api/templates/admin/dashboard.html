@@ -205,6 +205,103 @@
         .log-info { color: #fff; }
         .log-warning { color: #ffaa00; }
         .log-error { color: #ff4444; font-weight: bold; }
+
+        .media-report-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+            gap: 0.75rem;
+        }
+
+        .media-report-card {
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            overflow: hidden;
+            background: #111;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .media-report-thumb {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            background: #0b0b0b;
+            overflow: hidden;
+        }
+
+        .media-report-thumb img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+            z-index: 1;
+        }
+
+        .media-report-overlay {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: flex-end;
+            padding: 0.6rem;
+            background: rgba(0, 0, 0, 0.55);
+            opacity: 0;
+            transition: opacity 0.15s ease;
+            backdrop-filter: blur(6px);
+            z-index: 2;
+        }
+
+        .media-report-thumb:hover .media-report-overlay {
+            opacity: 1;
+        }
+
+        .media-report-flag {
+            background: rgba(0, 0, 0, 0.75);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #fff;
+            font-size: 0.7rem;
+            font-weight: 900;
+            letter-spacing: 0.5px;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            text-transform: uppercase;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+        }
+
+        .media-report-thumb[data-luma="light"] .media-report-overlay {
+            background: rgba(0, 0, 0, 0.7);
+        }
+
+        .media-report-thumb[data-luma="light"] .media-report-flag {
+            background: rgba(0, 0, 0, 0.85);
+            color: #fff;
+            border-color: rgba(255, 255, 255, 0.35);
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+        }
+
+        .media-report-thumb[data-luma="dark"] .media-report-overlay {
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .media-report-thumb[data-luma="dark"] .media-report-flag {
+            background: rgba(255, 255, 255, 0.9);
+            color: #000;
+            border-color: rgba(0, 0, 0, 0.2);
+            text-shadow: none;
+        }
+
+        .media-report-meta {
+            padding: 0.6rem 0.75rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+            font-size: 0.75rem;
+        }
+
+        .media-report-actions {
+            display: flex;
+            gap: 0.35rem;
+            flex-wrap: wrap;
+        }
     </style>
 </head>
 
@@ -381,6 +478,33 @@
                     <h3>Username Blacklist</h3>
                     <div style="display:flex;gap:0.5rem;margin:1rem 0;"><input type="text" id="ban-username-val" placeholder="Pattern (e.g. admin*)" style="flex:1;"><button class="btn btn-danger" data-click="addBannedUsername">Ban Pattern</button></div>
                     <table><thead><tr><th>Pattern</th><th>Reason</th><th>Action</th></tr></thead><tbody id="banned-usernames-tbody"></tbody></table>
+                </div>
+                <div class="card" style="grid-column: span 2;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <h3>Image Reports</h3>
+                        <div style="display:flex;gap:0.5rem;align-items:center;">
+                            <select id="hash-report-status" style="min-width:160px;">
+                                <option value="pending" selected>Pending</option>
+                                <option value="blocked">Blocked</option>
+                                <option value="cleared">Cleared</option>
+                                <option value="">All</option>
+                            </select>
+                            <button class="btn btn-outline btn-sm" data-click="refreshHashReports">Refresh</button>
+                        </div>
+                    </div>
+                    <div id="hash-reports-grid" class="media-report-grid" style="margin-top:1rem;"></div>
+                </div>
+                <div class="card" style="grid-column: span 2;">
+                    <h3>Blocked Hashes</h3>
+                    <div style="display:flex;gap:0.5rem;margin:1rem 0;flex-wrap:wrap;">
+                        <input type="text" id="block-hash-val" placeholder="Hash (SHA-256 or pHash)" style="flex:2;min-width:260px;">
+                        <input type="text" id="block-hash-reason" placeholder="Reason" style="flex:2;min-width:200px;">
+                        <button class="btn btn-danger" data-click="blockHash">Block Hash</button>
+                    </div>
+                    <table>
+                        <thead><tr><th>Hash</th><th>Type</th><th>Reason</th><th>Blocked</th><th>Action</th></tr></thead>
+                        <tbody id="blocked-hashes-tbody"></tbody>
+                    </table>
                 </div>
                 <div class="card" style="grid-column: span 2;">
                     <h3>System Actions</h3>
@@ -684,11 +808,118 @@
             `).join('');
         }
 
+        const formatTimestamp = (ts) => {
+            if (!ts) return '';
+            try {
+                return new Date(ts).toLocaleString();
+            } catch {
+                return '';
+            }
+        };
+
+        const shortHash = (hash) => hash ? `${hash.slice(0, 8)}…${hash.slice(-6)}` : '';
+
+        function applyReportThumbContrast() {
+            const thumbs = document.querySelectorAll('.media-report-thumb');
+            thumbs.forEach(thumb => {
+                const img = thumb.querySelector('img');
+                if (!img) return;
+                const handle = () => {
+                    try {
+                        const canvas = document.createElement('canvas');
+                        const w = Math.min(img.naturalWidth || 0, 80);
+                        const h = Math.min(img.naturalHeight || 0, 80);
+                        if (!w || !h) return;
+                        canvas.width = w;
+                        canvas.height = h;
+                        const ctx = canvas.getContext('2d');
+                        if (!ctx) return;
+                        ctx.drawImage(img, 0, 0, w, h);
+                        const data = ctx.getImageData(0, 0, w, h).data;
+                        let total = 0;
+                        for (let i = 0; i < data.length; i += 4) {
+                            total += (0.2126 * data[i]) + (0.7152 * data[i + 1]) + (0.0722 * data[i + 2]);
+                        }
+                        const avg = total / (data.length / 4);
+                        thumb.dataset.luma = avg >= 140 ? 'light' : 'dark';
+                    } catch (e) {
+                        thumb.dataset.luma = 'dark';
+                    }
+                };
+                if (img.complete) handle();
+                else img.addEventListener('load', handle, { once: true });
+            });
+        }
+
+        function renderHashReports(reports) {
+            const grid = document.getElementById('hash-reports-grid');
+            if (!reports || reports.length === 0) {
+                grid.innerHTML = '<div style="color:#666;font-size:0.8rem;">No reports found.</div>';
+                return;
+            }
+            grid.innerHTML = reports.map(r => {
+                const preview = r.attachment_url ? `<img src="${r.attachment_url}" alt="Reported image" crossorigin="anonymous">` : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#555;font-size:0.75rem;">No preview</div>`;
+                const reporter = r.reporter_username ? `${r.reporter_username} (${r.reporter_id})` : r.reporter_id;
+                const statusBadge = `<span class="badge" style="background:${r.status === 'blocked' ? 'var(--bad)' : (r.status === 'cleared' ? 'var(--good)' : 'var(--warn)')}; color:#000;">${r.status}</span>`;
+                return `
+                    <div class="media-report-card">
+                        <div class="media-report-thumb">
+                            ${preview}
+                            <div class="media-report-overlay">
+                                <span class="media-report-flag">Flagged</span>
+                            </div>
+                        </div>
+                        <div class="media-report-meta">
+                            <div style="display:flex;justify-content:space-between;align-items:center;">
+                                <strong style="font-size:0.8rem;">${r.reason}</strong>
+                                ${statusBadge}
+                            </div>
+                            <div style="color:#777;">Reporter: ${reporter}</div>
+                            <div style="color:#777;">Hash: ${shortHash(r.hash_value)}</div>
+                            <div style="color:#777;">Reported: ${formatTimestamp(r.reported_at)}</div>
+                            <div class="media-report-actions">
+                                <button class="btn btn-danger btn-sm" data-click="reviewHashReport" data-id="${r.id}" data-action="block">Block</button>
+                                <button class="btn btn-outline btn-sm" data-click="reviewHashReport" data-id="${r.id}" data-action="clear">Clear</button>
+                                <button class="btn btn-outline btn-sm" data-click="reviewHashReport" data-id="${r.id}" data-action="dismiss">Dismiss</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            applyReportThumbContrast();
+        }
+
+        function renderBlockedHashes(items) {
+            const tbody = document.getElementById('blocked-hashes-tbody');
+            if (!items || items.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="color:#666;">No blocked hashes</td></tr>';
+                return;
+            }
+            tbody.innerHTML = items.map(h => `
+                <tr>
+                    <td style="font-family:monospace;">${shortHash(h.hash_value)}</td>
+                    <td>${h.hash_type || 'sha256'}</td>
+                    <td>${h.reason || ''}</td>
+                    <td>${formatTimestamp(h.blocked_at)}</td>
+                    <td><button class="btn btn-outline btn-sm" data-click="unblockHash" data-val="${h.hash_value}">Unblock</button></td>
+                </tr>
+            `).join('');
+        }
+
         async function loadSecurity() {
             try {
-                const [ips, bans] = await Promise.all([api('/api/v1/admin/security/blocked-ips'), api('/api/v1/admin/security/banned-usernames')]);
+                const statusFilter = document.getElementById('hash-report-status').value;
+                const hashUrl = statusFilter ? `/api/v1/admin/hash-reports?status_filter=${encodeURIComponent(statusFilter)}` : '/api/v1/admin/hash-reports';
+                const [ips, bans, reports, hashes] = await Promise.all([
+                    api('/api/v1/admin/security/blocked-ips'),
+                    api('/api/v1/admin/security/banned-usernames'),
+                    api(hashUrl),
+                    api('/api/v1/admin/blocked-hashes'),
+                ]);
                 document.getElementById('blocked-ips-tbody').innerHTML = ips.map(i => `<tr><td>${i.ip_address}</td><td>${i.reason || ''}</td><td><button class="btn btn-outline btn-sm" data-click="unblockIP" data-val="${i.ip_address}">Unblock</button></td></tr>`).join('');
                 document.getElementById('banned-usernames-tbody').innerHTML = bans.map(b => `<tr><td>${b.pattern}</td><td>${b.reason || ''}</td><td><button class="btn btn-outline btn-sm" data-click="removeBan" data-id="${b.id}">Remove</button></td></tr>`).join('');
+                renderHashReports(reports);
+                renderBlockedHashes(hashes);
             } catch (e) {}
         }
 
@@ -822,6 +1053,27 @@
             else if (a === 'removeBan') {
                 api(`/api/v1/admin/security/banned-usernames/${id}`, { method: 'DELETE' }).then(() => loadSecurity());
             }
+            else if (a === 'refreshHashReports') {
+                loadSecurity();
+            }
+            else if (a === 'reviewHashReport') {
+                const action = el.dataset.action;
+                const notes = prompt(`Add admin notes for ${action} (optional):`) || '';
+                api(`/api/v1/admin/hash-reports/${id}/review`, { method: 'POST', body: JSON.stringify({action, notes}) }).then(() => loadSecurity());
+            }
+            else if (a === 'blockHash') {
+                const hashValue = document.getElementById('block-hash-val').value.trim();
+                const reason = document.getElementById('block-hash-reason').value.trim();
+                if (!hashValue) return;
+                api('/api/v1/admin/blocked-hashes', { method: 'POST', body: JSON.stringify({hash_value: hashValue, reason: reason || 'Manual block'}) }).then(() => {
+                    document.getElementById('block-hash-val').value = '';
+                    document.getElementById('block-hash-reason').value = '';
+                    loadSecurity();
+                });
+            }
+            else if (a === 'unblockHash') {
+                api(`/api/v1/admin/blocked-hashes/${encodeURIComponent(val)}`, { method: 'DELETE' }).then(() => loadSecurity());
+            }
             else if (a === 'scrollLogTop') document.getElementById('log-viewer').scrollTop = 0;
             else if (a === 'scrollLogBottom') document.getElementById('log-viewer').scrollTop = 1e9;
             else if (a === 'openExport') document.getElementById('export-modal').classList.remove('hidden');
@@ -863,12 +1115,14 @@
                 else if (e.target.id === 'new-note-input') document.querySelector('[data-click="addTicketNote"]').click();
                 else if (e.target.id === 'block-ip-val') document.querySelector('[data-click="blockIP"]').click();
                 else if (e.target.id === 'ban-username-val') document.querySelector('[data-click="addBannedUsername"]').click();
+                else if (e.target.id === 'block-hash-val' || e.target.id === 'block-hash-reason') document.querySelector('[data-click="blockHash"]').click();
             }
         });
 
         document.getElementById('log-file-select').addEventListener('change', (e) => loadLogFile(e.target.value));
         document.getElementById('metric-hours').addEventListener('change', refreshMetrics);
         document.getElementById('endpoint-filter').addEventListener('input', renderEndpointTable);
+        document.getElementById('hash-report-status').addEventListener('change', loadSecurity);
 
         setInterval(() => {
             if (currentTab === 'logs' && document.getElementById('log-auto-refresh').checked) {
