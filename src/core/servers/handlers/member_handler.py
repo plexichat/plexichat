@@ -225,6 +225,10 @@ class MemberHandler:
 
     def kick_member(self, user_id: SnowflakeID, server_id: SnowflakeID, member_user_id: SnowflakeID, reason: Optional[str] = None) -> bool:
         """Kick a member from a server."""
+        # Allow self-kick (leaving)
+        if user_id == member_user_id:
+            return self.manager.remove_member(user_id, server_id)
+
         server = self.manager.get_server(server_id, user_id)
         if server.owner_id == member_user_id:
             raise CannotModifyOwnerError("Cannot kick the server owner")
@@ -232,6 +236,9 @@ class MemberHandler:
         member = self.get_member(server_id, member_user_id)
         if not member:
             raise MemberNotFoundError("Member not found")
+
+        # Require kick permission for non-self kicks
+        self.manager.require_permission(user_id, server_id, "members.kick")
 
         user_roles = self.manager._get_member_role_rows(server_id, user_id)
         target_roles = self.manager._get_member_role_rows(server_id, member_user_id)
@@ -302,6 +309,9 @@ class MemberHandler:
         server = self.manager.get_server(server_id, user_id)
         if server.owner_id == member_user_id:
             raise CannotModifyOwnerError("Cannot ban the server owner")
+
+        # Require ban permission
+        self.manager.require_permission(user_id, server_id, "members.ban")
 
         existing = self.db.fetch_one("SELECT 1 FROM srv_bans WHERE server_id = ? AND user_id = ?", (server_id, member_user_id))
         if existing:
