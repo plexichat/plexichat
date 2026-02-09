@@ -550,10 +550,13 @@ def invalidate_pattern(pattern: str) -> int:
         return len(mem_keys)
 
     try:
+        # get_client() returns a RedisClient instance from redis_client.py
+        # RedisClient.keys(pattern) returns keys WITHOUT the prefix.
         keys = client.keys(pattern)
         if keys:
+            # RedisClient.delete(*keys) expects keys WITHOUT prefix (it adds it itself)
             count = client.delete(*keys)
-            logger.debug(f"Cache INVALIDATE pattern '{pattern}': {count} keys")
+            logger.debug(f"Cache INVALIDATE pattern '{pattern}': {count} keys from Redis, {len(mem_keys)} from Memory")
             return count + len(mem_keys)
         return len(mem_keys)
     except RedisOperationError as e:
