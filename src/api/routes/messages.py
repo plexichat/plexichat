@@ -222,12 +222,13 @@ def get_channel_messages(
 
         # Bulk fetch all author usernames and avatars in single query (avoids N+1)
         author_ids = list(set(m.author_id for m in messages))
-        author_cache = {}  # {user_id: {"username": str, "avatar_url": str, "badges": list}}
+        author_cache = {}  # {str(user_id): {"username": str, "avatar_url": str, "badges": list}}
         if auth and author_ids:
             try:
                 users = auth.get_user_profiles_bulk(author_ids)
+                # Ensure all keys in author_cache are strings for consistent lookup
                 author_cache = {
-                    uid: {
+                    str(uid): {
                         "username": u["username"],
                         "avatar_url": u.get("avatar_url"),
                         "badges": u.get("badges", []),
@@ -255,7 +256,7 @@ def get_channel_messages(
 
         # Bulk fetch reader information for messages authored by current user (sender only)
         # This eliminates the N+1 problem in _message_to_response
-        readers_cache = {} # {message_id: [username, ...]}
+        readers_cache = {} # {str(message_id): [username, ...]}
         if messaging and auth and messages:
             try:
                 # Only check messages authored by current user
@@ -276,22 +277,24 @@ def get_channel_messages(
                     
                     if all_reader_ids:
                         reader_users = auth.get_user_profiles_bulk(list(all_reader_ids))
+                        # Use string keys for robust lookup
+                        reader_users_str = {str(uid): u for uid, u in reader_users.items()}
                         
                         # Build the readers cache with usernames
                         for mid, r_ids in reader_ids_map.items():
-                            readers_cache[mid] = [
-                                reader_users[rid]["username"] 
-                                for rid in r_ids if rid in reader_users
+                            readers_cache[str(mid)] = [
+                                reader_users_str[str(rid)]["username"] 
+                                for rid in r_ids if str(rid) in reader_users_str
                             ]
             except Exception as e:
                 logger.warning(f"Failed to bulk fetch reader info: {e}")
 
         result = []
         for m in messages:
-            # Robust lookup: check both string and int keys
+            # Robust lookup using string keys
             author_id = getattr(m, "author_id", None) or m.get("author_id")
             mid = getattr(m, "id", None) or m.get("id")
-            author_info = author_cache.get(author_id) or author_cache.get(str(author_id)) or {}
+            author_info = author_cache.get(str(author_id)) or {}
             
             result.append(
                 _message_to_response(
@@ -300,7 +303,7 @@ def get_channel_messages(
                     author_avatar_url=author_info.get("avatar_url"),
                     author_badges=author_info.get("badges"),
                     reactions_data=reactions_cache.get(mid, []),
-                    read_by_usernames=readers_cache.get(mid),
+                    read_by_usernames=readers_cache.get(str(mid)),
                     media_mod=media_mod,
                 )
             )
