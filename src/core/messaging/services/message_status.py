@@ -92,6 +92,11 @@ class MessageStatusService(BaseService):
                 invalidate_pattern("msg_reader_ids:*")
                 invalidate_pattern("msg_status_batch:*")
                 
+                # ALSO invalidate the individual message object caches since they contain read counts
+                invalidate_pattern("msg:obj:*")
+                # And the recent messages list cache
+                invalidate_pattern(f"msg:recent:{conversation_id}")
+                
                 # ALSO invalidate the message list caches since they now contain read counts
                 self._message_repo.invalidate_conversation_cache(conversation_id)
             except Exception:

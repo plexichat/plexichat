@@ -29,10 +29,15 @@ class BaseRepository(ABC, Generic[T]):
     ) -> None:
         """Execute a query without returning results."""
         if hasattr(self._db, "execute"):
-            if auto_commit:
-                self._db.execute(query, params or ())
-            else:
-                self._db.execute(query, params or (), auto_commit=False)
+            cursor = None
+            try:
+                if auto_commit:
+                    cursor = self._db.execute(query, params or ())
+                else:
+                    cursor = self._db.execute(query, params or (), auto_commit=False)
+            finally:
+                if cursor:
+                    cursor.close()
         else:
             raise RuntimeError("Database does not support execute")
 

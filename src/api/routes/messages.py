@@ -829,7 +829,16 @@ async def acknowledge_messages(
                 try:
                     # Use the module-level helper or the manager directly
                     from src.core import messaging
-                    return messaging.mark_read(uid, cid, mid)
+                    # Log settings for debugging
+                    try:
+                        settings = messaging.get_user_message_settings(uid)
+                        logger.info(f"ACK: User {uid} in channel {cid} (conv {conv_id}), read_receipts={settings.read_receipts_enabled}")
+                    except Exception as se:
+                        logger.debug(f"ACK: Failed to fetch settings for user {uid}: {se}")
+                    
+                    count = messaging.mark_read(uid, cid, mid)
+                    logger.info(f"ACK: Marked {count} messages as read for user {uid}")
+                    return count
                 finally:
                     if db:
                         db.close()
