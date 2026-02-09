@@ -528,16 +528,17 @@ def invalidate_pattern(pattern: str) -> int:
     if _DISKCACHE_AVAILABLE:
         # Limit the number of keys we check to avoid performance hit on huge caches
         # For diskcache, iterating all keys can be slow, but for local cache usage it is acceptable
-        mem_keys = [
-            k
-            for k in list(cast(_DiskCacheLike, _mem_cache).iterkeys())
-            if fnmatch.fnmatch(k, pattern)
-        ]
+        mem_keys = []
+        for k in list(cast(_DiskCacheLike, _mem_cache).iterkeys()):
+            # Handle potential bytes keys from diskcache
+            k_str = k.decode('utf-8') if isinstance(k, bytes) else str(k)
+            if fnmatch.fnmatch(k_str, pattern):
+                mem_keys.append(k)
     else:
         mem_keys = [
             k
             for k in list(cast(Dict[str, Tuple[float, Any]], _mem_cache).keys())
-            if fnmatch.fnmatch(k, pattern)
+            if fnmatch.fnmatch(str(k), pattern)
         ]
         
     for k in mem_keys:
