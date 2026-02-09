@@ -111,12 +111,10 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
         if not message_ids:
             return 0
 
-        in_clause, params = self._build_in_clause(message_ids)
-
         # Use UPSERT to avoid unique constraint violations
-        # Note: We use status_id + index for new rows to ensure uniqueness of the ID column
         # In Postgres, we use ON CONFLICT (message_id, user_id)
         for i, mid in enumerate(message_ids):
+            # Ensure unique status IDs even in batch
             new_status_id = status_id + (i % 1000000)
             self._execute(
                 """INSERT INTO msg_message_status (id, message_id, user_id, status, timestamp)
@@ -129,7 +127,7 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
                        END,
                        timestamp = CASE 
                            WHEN msg_message_status.status != 'read' THEN EXCLUDED.timestamp 
-                           ELSE msg_message_status.status 
+                           ELSE msg_message_status.timestamp 
                        END""",
                 (new_status_id, mid, user_id, MessageStatusType.DELIVERED.value, timestamp),
                 auto_commit=False,

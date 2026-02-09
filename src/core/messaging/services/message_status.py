@@ -193,6 +193,7 @@ class MessageStatusService(BaseService):
         if not message_ids:
             return {}
 
+        import utils.logger as logger
         status_map = self._repo.get_batch_for_user(user_id, message_ids)
         counts_map = self._repo.get_batch_counts(message_ids)
 
@@ -215,6 +216,9 @@ class MessageStatusService(BaseService):
                 "delivery_count": stats["delivery_count"],
                 "read_count": stats["read_count"],
             }
+            
+            if stats["read_count"] > 0:
+                logger.debug(f"Status Info: Message {mid} for user {user_id} has read_count {stats['read_count']}, overall={overall_status}")
 
         return result
 
