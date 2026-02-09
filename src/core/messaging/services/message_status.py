@@ -85,19 +85,19 @@ class MessageStatusService(BaseService):
                 user_id, conversation_id, up_to_message_id, now, status_id
             )
             
-            # Invalidate reader IDs and status batch cache for this conversation
+            # Invalidate reader IDs and status batch cache for ALL users
             try:
                 from src.core.database import invalidate_pattern
                 # Key format: msg_reader_ids:* and msg_status_batch:*
                 invalidate_pattern("msg_reader_ids:*")
                 invalidate_pattern("msg_status_batch:*")
                 
-                # ALSO invalidate the individual message object caches since they contain read counts
+                # ALSO invalidate the individual message object caches since they contain read counts and status
                 invalidate_pattern("msg:obj:*")
                 # And the recent messages list cache
                 invalidate_pattern(f"msg:recent:{conversation_id}")
                 
-                # ALSO invalidate the message list caches since they now contain read counts
+                # ALSO invalidate the message list caches for the API and internal repo
                 self._message_repo.invalidate_conversation_cache(conversation_id)
             except Exception:
                 pass
@@ -199,8 +199,19 @@ class MessageStatusService(BaseService):
         result: Dict[SnowflakeID, Dict[str, Any]] = {}
         for mid in message_ids:
             stats = counts_map.get(mid, {"delivery_count": 0, "read_count": 0})
+            
+            # Determine overall status: if read_count > 0, it's READ. 
+            # If delivery_count > 0, it's DELIVERED. Otherwise it's the user's own status.
+            overall_status = status_map.get(mid, MessageStatusType.SENT)
+            if stats["read_count"] > 0:
+                overall_status = MessageStatusType.READ
+            elif stats["delivery_count"] > 0:
+                # Only upgrade to DELIVERED if it was just SENT
+                if overall_status == MessageStatusType.SENT:
+                    overall_status = MessageStatusType.DELIVERED
+
             result[mid] = {
-                "status": status_map.get(mid, MessageStatusType.SENT),
+                "status": overall_status,
                 "delivery_count": stats["delivery_count"],
                 "read_count": stats["read_count"],
             }
