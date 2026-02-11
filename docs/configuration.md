@@ -10,6 +10,17 @@ Configuration is loaded from (in priority order):
 
 If no config file exists, defaults are used and a config file is created.
 
+## API Base URL
+
+The API base URL is dynamically determined based on your deployment:
+
+| Environment | Base URL |
+|-------------|----------|
+| Production | `https://plexichat-app.tail79f345.ts.net/api/v1` |
+| Development | `http://localhost:8000/api/v1` |
+
+All API endpoints are relative to this base URL. For example, `GET /api/v1/users/@me` becomes `https://plexichat-app.tail79f345.ts.net/api/v1/users/@me` in production.
+
 ## Configuration Sections
 
 ### Server
@@ -76,7 +87,7 @@ To use PostgreSQL instead of SQLite:
 
 4. Or use the `DATABASE_URL` environment variable:
    ```bash
-   export DATABASE_URL="postgres://user:password@host:5432/plexichat?sslmode=prefer"
+   export DATABASE_URL="postgres://user:password@host:port/dbname"
    ```
 
 The database module automatically handles differences between SQLite and PostgreSQL, including placeholder syntax conversion (`?` to `%s`).
@@ -539,20 +550,20 @@ Before deploying to production:
      debug: false
    ```
 
-3. **Set environment**
+2. **Set environment**
    ```yaml
    application:
      environment: production
    ```
 
-4. **Configure CORS**
+3. **Configure CORS**
    ```yaml
    api:
      cors_origins:
        - https://your-domain.com
    ```
 
-5. **Use PostgreSQL for production**
+4. **Use PostgreSQL for production**
    ```yaml
    database:
      type: postgres
@@ -566,24 +577,24 @@ Before deploying to production:
    
    Install the driver: `pip install psycopg2-binary`
 
-6. **Set appropriate log level**
+5. **Set appropriate log level**
    ```yaml
    logging:
      level: WARNING
    ```
 
-7. **Back up encryption keyring**
+6. **Back up encryption keyring**
    
    The encryption keyring is stored at `~/.plexichat/data/keyring.json`. 
    Back this up securely - if lost, encrypted data cannot be recovered.
 
-8. **Set media signing key**
+7. **Set media signing key**
    ```yaml
    media:
      signing_key: <generate-secure-random-key>
    ```
 
-9. **Configure TURN secret (for voice)**
+8. **Configure TURN secret (for voice)**
    ```yaml
    voice:
      turn_secret: <your-turn-server-secret>

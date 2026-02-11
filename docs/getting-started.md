@@ -41,12 +41,18 @@ Without ffmpeg, video uploads work but metadata won't be extracted.
 
 See [Configuration Guide](configuration.md) for detailed setup options.
 
+## API Base URL
+
+**Current API Base URL**: `{{BASE_URL}}`
+
+All API endpoints are relative to this base URL.
+
 ## Authentication
 
 ### Register a New Account
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/auth/register \
+curl -X POST {{BASE_URL}}/auth/register \
   -H "Content-Type: application/json" \
   -d '{
     "username": "myusername",
@@ -76,7 +82,7 @@ curl -X POST http://localhost:8000/api/v1/auth/register \
 ### Login
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/auth/login \
+curl -X POST {{BASE_URL}}/auth/login \
   -H "Content-Type: application/json" \
   -d '{
     "username": "myusername",
@@ -89,8 +95,8 @@ curl -X POST http://localhost:8000/api/v1/auth/login \
 Include the token in all authenticated requests:
 
 ```bash
-curl http://localhost:8000/api/v1/users/@me \
-  -H "Authorization: Bearer your_session_token_here"
+curl {{BASE_URL}}/users/@me \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
 ### Bot Authentication
@@ -98,8 +104,8 @@ curl http://localhost:8000/api/v1/users/@me \
 Bot tokens use the `Bot` prefix:
 
 ```bash
-curl http://localhost:8000/api/v1/users/@me \
-  -H "Authorization: Bot your_bot_token_here"
+curl {{BASE_URL}}/users/@me \
+  -H "Authorization: Bot YOUR_BOT_TOKEN"
 ```
 
 ## Two-Factor Authentication
@@ -122,7 +128,7 @@ If 2FA is enabled, login returns a challenge:
 ### Complete 2FA
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/auth/2fa \
+curl -X POST {{BASE_URL}}/auth/2fa \
   -H "Content-Type: application/json" \
   -d '{
     "challenge_token": "challenge_token_here",
@@ -135,8 +141,8 @@ curl -X POST http://localhost:8000/api/v1/auth/2fa \
 **Step 1:** Request 2FA setup
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/auth/2fa/enable \
-  -H "Authorization: Bearer your_token" \
+curl -X POST {{BASE_URL}}/auth/2fa/enable \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"password": "your_password"}'
 ```
@@ -149,8 +155,8 @@ Response includes:
 **Step 2:** Confirm with authenticator code
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/auth/2fa/confirm \
-  -H "Authorization: Bearer your_token" \
+curl -X POST {{BASE_URL}}/auth/2fa/confirm \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"code": "123456"}'
 ```
@@ -160,9 +166,9 @@ curl -X POST http://localhost:8000/api/v1/auth/2fa/confirm \
 Check client/server compatibility before making API calls:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/version/negotiate \
+curl -X POST {{BASE_URL}}/version/negotiate \
   -H "Content-Type: application/json" \
-  -d '{"client_version": "a.1.0-1"}'
+  -d '{"client_version": "{{VERSION}}"}'
 ```
 
 ## First API Calls
@@ -170,15 +176,15 @@ curl -X POST http://localhost:8000/api/v1/version/negotiate \
 ### Get Your Profile
 
 ```bash
-curl http://localhost:8000/api/v1/users/@me \
-  -H "Authorization: Bearer your_token"
+curl {{BASE_URL}}/users/@me \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
 ### Create a Server
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/servers \
-  -H "Authorization: Bearer your_token" \
+curl -X POST {{BASE_URL}}/servers \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "My Server",
@@ -189,8 +195,8 @@ curl -X POST http://localhost:8000/api/v1/servers \
 ### Send a Message
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/channels/CHANNEL_ID/messages \
-  -H "Authorization: Bearer your_token" \
+curl -X POST {{BASE_URL}}/channels/CHANNEL_ID/messages \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"content": "Hello, world!"}'
 ```
@@ -198,8 +204,8 @@ curl -X POST http://localhost:8000/api/v1/channels/CHANNEL_ID/messages \
 ### Add a Reaction
 
 ```bash
-curl -X PUT "http://localhost:8000/api/v1/channels/CHANNEL_ID/messages/MESSAGE_ID/reactions/%F0%9F%91%8D" \
-  -H "Authorization: Bearer your_token"
+curl -X PUT "{{BASE_URL}}/channels/CHANNEL_ID/messages/MESSAGE_ID/reactions/%F0%9F%91%8D" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
 Note: Emoji must be URL-encoded (thumbs up emoji = `%F0%9F%91%8D`)
@@ -207,8 +213,8 @@ Note: Emoji must be URL-encoded (thumbs up emoji = `%F0%9F%91%8D`)
 ### Update Your Presence
 
 ```bash
-curl -X PUT http://localhost:8000/api/v1/users/@me/presence \
-  -H "Authorization: Bearer your_token" \
+curl -X PUT {{BASE_URL}}/users/@me/presence \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "status": "online",
@@ -231,7 +237,7 @@ Default password policy:
 Check current requirements:
 
 ```bash
-curl http://localhost:8000/api/v1/auth/password-requirements
+curl {{BASE_URL}}/auth/password-requirements
 ```
 
 ## Next Steps

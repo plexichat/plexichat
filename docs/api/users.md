@@ -2,14 +2,17 @@
 
 Endpoints for user profile management.
 
+**Base URL**: `{{BASE_URL}}`
+
 ## GET /users/@me
 
 Get the current authenticated user's profile.
 
-### Headers
+### Example Request
 
-```
-Authorization: Bearer <token>
+```bash
+curl -X GET {{BASE_URL}}/users/@me \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
 ### Response (200 OK)
@@ -19,7 +22,7 @@ Authorization: Bearer <token>
   "id": "123456789012345678",
   "username": "johndoe",
   "email": "john@example.com",
-  "avatar_url": "https://cdn.example.com/avatars/123.png",
+  "avatar_url": "{{BASE_URL}}/avatars/user/123456789012345678",
   "created_at": 1704067200,
   "email_verified": true,
   "totp_enabled": false,
@@ -44,12 +47,6 @@ Authorization: Bearer <token>
 
 Update the current user's profile.
 
-### Headers
-
-```
-Authorization: Bearer <token>
-```
-
 ### Request Body
 
 | Field | Type | Required | Constraints | Description |
@@ -61,10 +58,13 @@ Authorization: Bearer <token>
 
 ### Example Request
 
-```json
-{
-  "username": "newusername"
-}
+```bash
+curl -X PATCH {{BASE_URL}}/users/@me \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "newusername"
+  }'
 ```
 
 ### Response (200 OK)
@@ -84,25 +84,20 @@ Returns the updated user object.
 
 Upload a new avatar for the current user.
 
-### Headers
+### Example Request
 
+```bash
+curl -X POST {{BASE_URL}}/users/@me/avatar \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+  -F "file=@/path/to/avatar.png"
 ```
-Authorization: Bearer <token>
-Content-Type: multipart/form-data
-```
-
-### Request Body
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| file | file | Yes | Image file (JPEG, PNG, GIF, WebP) |
 
 ### Response (200 OK)
 
 ```json
 {
   "success": true,
-  "avatar_url": "/api/v1/avatars/user/123456789012345678",
+  "avatar_url": "{{BASE_URL}}/avatars/user/123456789012345678",
   "width": 256,
   "height": 256,
   "size": 12345,
@@ -229,12 +224,6 @@ Authorization: Bearer <token>
 
 Search for a user by username.
 
-### Headers
-
-```
-Authorization: Bearer <token>
-```
-
 ### Query Parameters
 
 | Parameter | Type | Required | Description |
@@ -243,8 +232,9 @@ Authorization: Bearer <token>
 
 ### Example Request
 
-```
-GET /users/search?username=johndoe
+```bash
+curl -X GET "{{BASE_URL}}/users/search?username=johndoe" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
 ### Response (200 OK)
@@ -253,7 +243,7 @@ GET /users/search?username=johndoe
 {
   "id": "123456789012345678",
   "username": "johndoe",
-  "avatar_url": "https://cdn.example.com/avatars/123.png",
+  "avatar_url": "{{BASE_URL}}/avatars/user/123456789012345678",
   "created_at": 1704067200
 }
 ```

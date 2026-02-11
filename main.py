@@ -437,8 +437,8 @@ class PlexiChatServer:
                 "path": "/docs/api",
                 "title": "PlexiChat API Documentation",
                 "description": "Complete API documentation for PlexiChat messaging platform",
-                "base_url": "http://localhost:8000",
-                "websocket_url": "ws://localhost:8000/gateway",
+                "base_url": "https://plexichat-app.tail79f345.ts.net/api/v1",
+                "websocket_url": "wss://plexichat-app.tail79f345.ts.net/gateway",
                 "theme": {
                     "style": "dark",
                     "primary_color": "#e94560",

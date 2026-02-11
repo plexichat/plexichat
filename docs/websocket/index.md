@@ -2,11 +2,40 @@
 
 The PlexiChat WebSocket Gateway provides real-time event delivery for connected clients.
 
+**WebSocket URL**: `{{WEBSOCKET_URL}}`
+
 ## Connection URL
 
+Connect to the WebSocket gateway at:
+
 ```
-ws://localhost:8000/gateway
-wss://gateway.example.com/gateway  (production)
+{{WEBSOCKET_URL}}
+```
+
+## Connection Example
+
+```javascript
+const ws = new WebSocket('{{WEBSOCKET_URL}}');
+
+ws.onopen = () => {
+  console.log('Connected to PlexiChat Gateway');
+};
+
+ws.onmessage = (event) => {
+  const payload = JSON.parse(event.data);
+  console.log('Received:', payload);
+  
+  // Handle HELLO opcode
+  if (payload.op === 10) {
+    // Send IDENTIFY
+    ws.send(JSON.stringify({
+      op: 2,
+      d: {
+        token: 'YOUR_SESSION_TOKEN'
+      }
+    }));
+  }
+};
 ```
 
 ## Connection Flow

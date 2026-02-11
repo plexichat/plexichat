@@ -2,21 +2,18 @@
 
 Endpoints for channel management.
 
+**Base URL**: `{{BASE_URL}}`
+
 ## GET /channels/{channel_id}
 
 Get channel details. Requires access to the channel.
 
-### Headers
+### Example Request
 
+```bash
+curl -X GET {{BASE_URL}}/channels/123456789012345678 \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
-Authorization: Bearer <token>
-```
-
-### Path Parameters
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| channel_id | string | Channel's snowflake ID |
 
 ### Response (200 OK)
 
@@ -47,12 +44,6 @@ Authorization: Bearer <token>
 
 Update channel settings. Requires manage channels permission.
 
-### Headers
-
-```
-Authorization: Bearer <token>
-```
-
 ### Request Body
 
 | Field | Type | Required | Constraints | Description |
@@ -65,12 +56,15 @@ Authorization: Bearer <token>
 
 ### Example Request
 
-```json
-{
-  "name": "updated-channel",
-  "topic": "New topic",
-  "slowmode_seconds": 5
-}
+```bash
+curl -X PATCH {{BASE_URL}}/channels/123456789012345678 \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "updated-channel",
+    "topic": "New topic",
+    "slowmode_seconds": 5
+  }'
 ```
 
 ### Response (200 OK)
@@ -154,12 +148,6 @@ Authorization: Bearer <token>
 
 Create an invite for a channel. Requires create invite permission.
 
-### Headers
-
-```
-Authorization: Bearer <token>
-```
-
 ### Request Body
 
 | Field | Type | Required | Default | Description |
@@ -170,11 +158,14 @@ Authorization: Bearer <token>
 
 ### Example Request
 
-```json
-{
-  "max_age": 3600,
-  "max_uses": 10
-}
+```bash
+curl -X POST {{BASE_URL}}/channels/123456789012345678/invites \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "max_age": 3600,
+    "max_uses": 10
+  }'
 ```
 
 ### Response (200 OK)

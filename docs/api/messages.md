@@ -2,15 +2,11 @@
 
 Endpoints for message management.
 
+**Base URL**: `{{BASE_URL}}`
+
 ## GET /channels/{channel_id}/messages
 
 Get messages in a channel with pagination.
-
-### Headers
-
-```
-Authorization: Bearer <token>
-```
 
 ### Query Parameters
 
@@ -22,8 +18,9 @@ Authorization: Bearer <token>
 
 ### Example Request
 
-```
-GET /channels/123456789012345678/messages?limit=25&before=234567890123456789
+```bash
+curl -X GET "{{BASE_URL}}/channels/123456789012345678/messages?limit=25&before=234567890123456789" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
 ### Response (200 OK)
@@ -35,7 +32,7 @@ GET /channels/123456789012345678/messages?limit=25&before=234567890123456789
     "channel_id": "123456789012345678",
     "author_id": "123456789012345678",
     "author_username": "johndoe",
-    "author_avatar_url": "https://cdn.example.com/avatars/123.png",
+    "author_avatar_url": "{{BASE_URL}}/avatars/user/123456789012345678",
     "content": "Hello, world!",
     "created_at": 1704067200,
     "edited_at": null,
@@ -86,12 +83,6 @@ Returns array of matching messages.
 
 Send a message to a channel.
 
-### Headers
-
-```
-Authorization: Bearer <token>
-```
-
 ### Request Body
 
 | Field | Type | Required | Constraints | Description |
@@ -103,22 +94,16 @@ Authorization: Bearer <token>
 
 At least one of `content`, `attachments`, or `embeds` is required.
 
-### Attachment Object
-
-| Field | Type | Description |
-|-------|------|-------------|
-| filename | string | File name |
-| content_type | string | MIME type |
-| size | int | File size in bytes |
-| url | string | File URL |
-
 ### Example Request
 
-```json
-{
-  "content": "Hello, world!",
-  "reply_to_id": "123456789012345678"
-}
+```bash
+curl -X POST {{BASE_URL}}/channels/123456789012345678/messages \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "Hello, world!",
+    "reply_to_id": "123456789012345678"
+  }'
 ```
 
 ### Response (200 OK)
@@ -160,12 +145,6 @@ Returns the message object.
 
 Edit a message. Only the author can edit their messages.
 
-### Headers
-
-```
-Authorization: Bearer <token>
-```
-
 ### Request Body
 
 | Field | Type | Required | Constraints | Description |
@@ -174,10 +153,13 @@ Authorization: Bearer <token>
 
 ### Example Request
 
-```json
-{
-  "content": "Updated message content"
-}
+```bash
+curl -X PATCH {{BASE_URL}}/channels/123456789012345678/messages/234567890123456789 \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "Updated message content"
+  }'
 ```
 
 ### Response (200 OK)
@@ -196,10 +178,11 @@ Returns the updated message object with `edited_at` timestamp set.
 
 Delete a message. Author or users with manage messages permission can delete.
 
-### Headers
+### Example Request
 
-```
-Authorization: Bearer <token>
+```bash
+curl -X DELETE {{BASE_URL}}/channels/123456789012345678/messages/234567890123456789 \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
 ### Response (200 OK)

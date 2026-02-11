@@ -2,14 +2,17 @@
 
 Endpoints for server (guild) management.
 
+**Base URL**: `{{BASE_URL}}`
+
 ## GET /servers
 
 Get all servers the authenticated user is a member of.
 
-### Headers
+### Example Request
 
-```
-Authorization: Bearer <token>
+```bash
+curl -X GET {{BASE_URL}}/servers \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
 ### Response (200 OK)
@@ -20,7 +23,7 @@ Authorization: Bearer <token>
     "id": "123456789012345678",
     "name": "My Server",
     "description": "A cool server",
-    "icon_url": "https://cdn.example.com/icons/123.png",
+    "icon_url": "{{BASE_URL}}/avatars/server/123456789012345678",
     "owner_id": "123456789012345678",
     "member_count": 150,
     "default_channel_id": "234567890123456789",
@@ -33,12 +36,6 @@ Authorization: Bearer <token>
 
 Create a new server. The authenticated user becomes the owner.
 
-### Headers
-
-```
-Authorization: Bearer <token>
-```
-
 ### Request Body
 
 | Field | Type | Required | Constraints | Description |
@@ -48,11 +45,14 @@ Authorization: Bearer <token>
 
 ### Example Request
 
-```json
-{
-  "name": "My New Server",
-  "description": "A place for friends"
-}
+```bash
+curl -X POST {{BASE_URL}}/servers \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "My New Server",
+    "description": "A place for friends"
+  }'
 ```
 
 ### Response (200 OK)

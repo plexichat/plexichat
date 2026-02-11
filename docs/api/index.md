@@ -2,19 +2,26 @@
 
 The PlexiChat REST API provides endpoints for managing users, servers, channels, messages, and more.
 
+**API Version**: `{{VERSION}}`
+
 ## Base URL
 
-```
-http://localhost:8000/api/v1
-```
+**Current API Base URL**: `{{BASE_URL}}`
+
+All API endpoints are relative to this base URL.
 
 ## Authentication
 
 Most endpoints require authentication via the `Authorization` header:
 
-```http
-Authorization: Bearer <session_token>
-Authorization: Bot <bot_token>
+```bash
+# User session token
+curl {{BASE_URL}}/users/@me \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+
+# Bot token
+curl {{BASE_URL}}/users/@me \
+  -H "Authorization: Bot YOUR_BOT_TOKEN"
 ```
 
 ## Endpoint Categories

@@ -102,3 +102,22 @@ When enabled in config, API docs are served at:
 - Interactive docs: `/docs`
 - Alternative docs: `/redoc`
 - Static docs: `/docs/api` (if configured)
+
+## API Base URL Configuration
+
+The API base URL is dynamically determined based on your deployment:
+
+| Environment | Base URL |
+|-------------|----------|
+| Production | `https://plexichat-app.tail79f345.ts.net/api/v1` |
+| Development | `http://localhost:8000/api/v1` |
+
+All API endpoints are relative to this base URL. For example, `GET /api/v1/users/@me` becomes `https://plexichat-app.tail79f345.ts.net/api/v1/users/@me` in production.
+
+## Database Deployment
+
+See [Database Deployment Guide](database-deployment.md) for detailed database migration procedures.
+
+## Database Monitoring
+
+See [Database Monitoring Guide](database-monitoring.md) for connection pool monitoring and health checks.

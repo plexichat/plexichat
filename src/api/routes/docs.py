@@ -390,6 +390,23 @@ def _build_footer_html(conf: DocsConfig) -> str:
     return f'<footer class="footer">{" | ".join(parts)}</footer>' if parts else ""
 
 
+def _replace_dynamic_placeholders(text: str, conf: DocsConfig) -> str:
+    """Replace dynamic placeholders in documentation content."""
+    # Replace API base URL placeholders
+    text = text.replace("{{BASE_URL}}", conf.base_url)
+    text = text.replace("{{API_BASE_URL}}", conf.base_url)
+    
+    # Replace WebSocket URL placeholders
+    text = text.replace("{{WEBSOCKET_URL}}", conf.websocket_url)
+    text = text.replace("{{WS_URL}}", conf.websocket_url)
+    
+    # Replace version placeholders
+    app_config = get_app_config()
+    text = text.replace("{{VERSION}}", app_config["version"])
+    
+    return text
+
+
 def _convert_markdown_links(text: str, conf: DocsConfig, current_path: str = "") -> str:
     """Convert markdown links to proper HTML links."""
     link_pattern = r"\[([^\]]+)\]\(([^)]+)\)"
@@ -438,6 +455,9 @@ def _markdown_to_html(
     """Convert markdown to HTML with modern styling."""
     import html as html_module
 
+    # Replace dynamic placeholders first (before escaping)
+    markdown_content = _replace_dynamic_placeholders(markdown_content, conf)
+    
     content = html_module.escape(markdown_content)
     content = _convert_markdown_links(content, conf, current_path)
 

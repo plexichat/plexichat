@@ -2,6 +2,8 @@
 
 Endpoints for user registration, login, session management, and two-factor authentication.
 
+**Base URL**: `{{BASE_URL}}`
+
 ## POST /auth/register
 
 Register a new user account.
@@ -29,12 +31,14 @@ Check current requirements via `GET /auth/password-requirements`.
 
 ### Example Request
 
-```json
-{
-  "username": "johndoe",
-  "email": "john@example.com",
-  "password": "SecurePass123!"
-}
+```bash
+curl -X POST {{BASE_URL}}/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "johndoe",
+    "email": "john@example.com",
+    "password": "SecurePass123!"
+  }'
 ```
 
 ### Response (201 Created)
@@ -77,11 +81,13 @@ Authenticate a user and obtain a session token.
 
 ### Example Request
 
-```json
-{
-  "username": "johndoe",
-  "password": "SecurePass123!"
-}
+```bash
+curl -X POST {{BASE_URL}}/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "johndoe",
+    "password": "SecurePass123!"
+  }'
 ```
 
 ### Response (200 OK) - Success
@@ -168,10 +174,11 @@ Complete two-factor authentication challenge.
 
 Logout and revoke the current session.
 
-### Headers
+### Example Request
 
-```http
-Authorization: Bearer <session_token>
+```bash
+curl -X POST {{BASE_URL}}/auth/logout \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
 ### Response (200 OK)
@@ -186,10 +193,11 @@ Authorization: Bearer <session_token>
 
 Get all active sessions for the current user.
 
-### Headers
+### Example Request
 
-```http
-Authorization: Bearer <token>
+```bash
+curl -X GET {{BASE_URL}}/auth/sessions \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
 ### Response (200 OK)
