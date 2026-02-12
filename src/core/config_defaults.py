@@ -1,0 +1,642 @@
+"""
+Default configuration for the PlexiChat Server.
+This file provides the baseline settings used when no configuration file is found.
+"""
+
+import secrets
+from pathlib import Path
+from typing import Dict, Any
+
+# Version should be updated in main.py, this is a fallback
+DEFAULT_VERSION = "a.1.0-43"
+
+def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
+    """
+    Returns the default configuration dictionary for PlexiChat.
+    
+    Args:
+        version: The current application version string.
+        
+    Returns:
+        A dictionary containing all default configuration keys and values.
+    """
+    home_dir = Path.home() / ".plexichat"
+
+    return {
+        "application": {
+            "name": "PlexiChat",
+            "version": version,
+            "environment": "development",
+        },
+        
+        "server": {
+            "host": "0.0.0.0",
+            "port": 8000,
+            "workers": 1,
+            "reload": False
+        },
+
+        "logging": {
+            "level": "DEBUG",
+            "max_bytes": 10485760,  # 10MB
+            "backup_count": 5,
+            "zip_logs": True,
+            "rotate": True,
+            # SECURITY WARNING: Set to False in production to avoid leaking sensitive info
+            "include_exception_details": False,
+        },
+
+        "database": {
+            "type": "sqlite",
+            "path": str(home_dir / "data" / "plexichat.db"),
+            "postgres": {
+                "host": "localhost",
+                "port": 5432,
+                "user": "postgres",
+                "password": "",
+                "dbname": "plexichat",
+                "sslmode": "prefer",
+            },
+            "connection_pool": {
+                "min_connections": 20,
+                "max_connections": 100,
+                "connect_timeout": 10,
+                "max_idle_time": 3600,
+                "validation_interval": 60,
+                "enable_validation": True,
+                "validation_query": "SELECT 1",
+            },
+        },
+
+        "redis": {
+            "enabled": False,
+            "host": "localhost",
+            "port": 6379,
+            "password": "",
+            "db": 0,
+            "ssl": False,
+            "key_prefix": "plexichat:",
+            "connection_pool": {"max_connections": 50, "timeout": 5},
+            "ttl": {"session": 1800, "presence": 300, "cache": 60},
+            "cache_max_items": 1000,
+        },
+
+        "authentication": {
+            "encryption": {
+                # SECURITY: Enforce TPM or Environment Variable key source for production
+                "require_secure_source": True,
+            },
+            "accounts": {
+                "allow_registration": True,
+                "require_email_verification": False,
+                "max_bots_per_user": 5,
+                "username_min_length": 3,
+                "username_max_length": 32,
+                "age_gate_enabled": False,
+                "minimum_age": 13,
+                "age_verification_type": "boolean",  # "boolean" or "dob"
+            },
+            "email_validation": {
+                "strict": True,
+                "allow_custom_tlds": False,
+                "valid_tlds": [],
+            },
+            "sessions": {
+                "token_bytes": 32,
+                "expire_hours": 168,
+                "max_per_user": 10,
+                "extend_on_activity": True,
+                "extend_threshold_hours": 24,
+            },
+            "security": {
+                "max_failed_attempts": 5,
+                "lockout_duration_minutes": 15,
+                "token_cache_ttl": 30,
+                "token_verify_rate_limit": 100,
+                "token_binding": False,
+            },
+            "totp": {
+                "issuer": "PlexiChat",
+                "digits": 6,
+                "interval": 30,
+                "backup_code_count": 10,
+            },
+            "password": {
+                "min_length": 12,
+                "max_length": 128,
+                "require_uppercase": True,
+                "require_lowercase": True,
+                "require_digit": True,
+                "require_special": True,
+            },
+            "bots": {"token_bytes": 48, "require_owner_2fa": False},
+        },
+
+        "api": {
+            "title": "PlexiChat API",
+            "description": "REST API for Plexichat messaging platform",
+            "version": version,
+            "api_prefix": "/api/v1",
+            "debug": True,
+            "cors_origins": [
+                "http://localhost:5000",
+                "http://127.0.0.1:5000",
+                "http://localhost:8000",
+                "http://127.0.0.1:8000",
+                "https://plexichat-app.tail79f345.ts.net:8443",
+                "https://plexichat-app.tail79f345.ts.net",
+                "http://localhost:8443",
+                "https://linuxofuser.pythonanywhere.com",
+                "http://linuxofuser.pythonanywhere.com",
+            ],
+            "cors_allow_credentials": True,
+            "cors_allow_methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+            "cors_allow_headers": [
+                "Authorization",
+                "Content-Type",
+                "X-Requested-With",
+                "Accept",
+                "Origin",
+            ],
+            "trusted_proxies": [],
+            "trust_x_forwarded_for": False,
+            "docs_url": "/docs",
+            "redoc_url": "/redoc",
+            "openapi_url": "/openapi.json",
+        },
+
+        "websocket": {
+            "heartbeat_interval_ms": 45000,
+            "session_timeout_ms": 60000,
+            "max_connections_per_user": 5,
+            "rate_limit_per_minute": 120,
+            "max_message_size": 65536,  # 64KB
+            "max_decompressed_size": 262144,  # 256KB
+            "compression_enabled": True,
+            "allowed_origins": [],
+        },
+
+        "messaging": {
+            "encrypt_messages": True,
+            "encrypt_attachments": True,
+            "max_message_length": 4000,
+            "max_group_participants": 100,
+            "max_attachment_size": 10485760,  # 10MB
+            "max_attachments_per_message": 10,
+            "dm_auto_create": True,
+            "message_preview_length": 100,
+        },
+
+        "media": {
+            "data_dir": str(home_dir / "data"),
+            "logs_dir": str(home_dir / "logs"),
+            "media_dir": str(home_dir / "media"),
+            "temp_dir": str(home_dir / "temp"),
+            "storage_backend": "local",  # "local", "s3", or "database"
+            "encrypt_at_rest": True,
+            "local_path": str(home_dir / "media"),
+            "local_url": "/media",
+            "s3_bucket": "",
+            "s3_access_key": "",
+            "s3_secret_key": "",
+            "s3_region": "us-east-1",
+            "s3_endpoint": "",
+            "s3_public_url": "",
+            "database_url": "/api/v1/media/blob",
+            "database_max_size": 524288,  # 512KB
+            "auto_route_to_database": {
+                "enabled": True,
+                "max_size": 524288,
+                "content_types": ["text/plain", "application/json", "text/markdown", "text/csv"],
+            },
+            "size_limits": {
+                "image": 10485760,
+                "video": 104857600,
+                "audio": 52428800,
+                "document": 26214400,
+                "icon": 2097152,
+                "avatar": 5242880,
+                "other": 10485760,
+            },
+            "allowed_types": {
+                "image": ["image/jpeg", "image/png", "image/gif", "image/webp"],
+                "video": ["video/mp4", "video/webm", "video/quicktime"],
+                "audio": ["audio/mpeg", "audio/ogg", "audio/wav", "audio/webm"],
+                "document": ["application/pdf", "text/plain", "application/zip", "text/markdown", "application/json"],
+            },
+            "thumbnail_sizes": [64, 128, 256, 512],
+            "image_quality": 85,
+            "image_optimize": True,
+            "image_processing": {
+                "max_dimension": 16384,
+                "max_pixels": 178956970,
+                "max_thumbnail_requests_per_minute": 60,
+            },
+            "video_processing": {
+                "ffprobe_timeout": 30,
+                "max_size_for_metadata": 524288000,
+            },
+            "signing_key": "CHANGE_THIS_SIGNING_KEY",
+            "signing_expiry": 3600,
+            "scanner_enabled": False,
+            "scanner_host": "localhost",
+            "scanner_port": 3310,
+            "proxy_enabled": True,
+            "proxy_cache_ttl": 86400,
+            "proxy_max_size": 10485760,
+            "proxy_buffer_size": 65536,
+            "rate_limit": {
+                "enabled": True,
+                "uploads_per_minute": 10,
+                "uploads_per_hour": 100,
+                "max_total_size_per_day": 536870912,  # 512MB
+            },
+            "phash": {
+                "enabled": True,
+                "algorithm": "phash",
+                "hash_size": 8,
+                "similarity_threshold": 10,
+                "highfreq_factor": 4,
+            },
+            "deduplication": {
+                "enabled": True,
+                "hash_algorithm": "sha256",
+                "min_size": 10240,
+                "auto_block_threshold": 5,
+            },
+        },
+
+        "rate_limiting": {
+            "enabled": True,
+            "global": {"requests": 100, "window_seconds": 60.0, "burst": 50},
+            "user": {
+                "requests": 120,
+                "window_seconds": 60.0,
+                "burst": 20,
+                "hourly_limit": 3600,
+                "daily_limit": 50000,
+            },
+            "ip": {
+                "requests": 60,
+                "window_seconds": 60.0,
+                "burst": 10,
+                "hourly_limit": 1800,
+                "daily_limit": 10000,
+            },
+            "bot_multiplier": 1.5,
+            "webhook_multiplier": 1.0,
+            "admin_bypass": True,
+            "internal_bypass": True,
+            "bypass_secret": secrets.token_hex(32),
+        },
+
+        "servers": {
+            "server_name_min_length": 2,
+            "server_name_max_length": 100,
+            "channel_name_max_length": 100,
+            "role_name_max_length": 100,
+            "invite_code_length": 12,
+            "events": {
+                "max_event_duration_hours": 168,
+                "max_recurring_instances": 50,
+            },
+            "onboarding": {
+                "max_onboarding_steps": 10,
+                "max_welcome_channels": 5,
+                "max_step_options": 25,
+            },
+            "templates": {
+                "template_code_length": 8,
+                "max_channels_in_template": 100,
+                "max_roles_in_template": 50,
+                "max_templates_per_user": 25,
+            }
+        },
+
+        "user_features": {
+            "alpha_registration_enabled": True,
+            "default_tier": "standard",
+            "badge_display_limit": 5,
+            "available_badges": [
+                "alpha_tester", "early_supporter", "staff", "verified",
+                "bug_hunter", "contributor", "moderator", "partner",
+            ],
+            "rate_limit_tiers": {
+                "standard": {
+                    "multiplier": 1.0,
+                    "max_voice_minutes_per_day": 120,
+                    "max_video_minutes_per_day": 60,
+                    "max_file_uploads_per_day": 50,
+                    "max_file_size_mb": 50,
+                    "max_servers": 100,
+                    "max_message_length": 2000,
+                    "max_reactions_per_message": 20,
+                    "max_pins_per_channel": 50,
+                    "custom_emoji_slots": 50,
+                },
+                "alpha": {
+                    "multiplier": 2.0,
+                    "max_voice_minutes_per_day": 480,
+                    "max_video_minutes_per_day": 240,
+                    "max_file_uploads_per_day": 200,
+                    "max_file_size_mb": 25,
+                    "max_servers": 200,
+                    "max_message_length": 4000,
+                    "max_reactions_per_message": 50,
+                    "max_pins_per_channel": 100,
+                    "custom_emoji_slots": 100,
+                },
+                "premium": {
+                    "multiplier": 3.0,
+                    "max_voice_minutes_per_day": -1,
+                    "max_video_minutes_per_day": -1,
+                    "max_file_uploads_per_day": 500,
+                    "max_file_size_mb": 100,
+                    "max_servers": 500,
+                    "max_message_length": 4000,
+                    "max_reactions_per_message": 100,
+                    "max_pins_per_channel": 200,
+                    "custom_emoji_slots": 250,
+                },
+                "staff": {
+                    "multiplier": 10.0,
+                    "max_voice_minutes_per_day": -1,
+                    "max_video_minutes_per_day": -1,
+                    "max_file_uploads_per_day": -1,
+                    "max_file_size_mb": 500,
+                    "max_servers": -1,
+                    "max_message_length": 8000,
+                    "max_reactions_per_message": -1,
+                    "max_pins_per_channel": -1,
+                    "custom_emoji_slots": -1,
+                },
+            },
+            "admin_rate_limit": {"max_per_minute": 30, "max_per_hour": 200},
+        },
+
+        "voice": {
+            "enabled": True,
+            "sfu_backend": "mediasoup",
+            "mediasoup_url": "https://localhost:4443",
+            "janus_url": "http://localhost:8088/janus",
+            "stun_urls": [
+                "stun:stun.l.google.com:19302",
+                "stun:stun1.l.google.com:19302",
+                "stun:stun2.l.google.com:19302",
+                "stun:stun3.l.google.com:19302",
+            ],
+            "turn_urls": [],
+            "turn_username": "",
+            "turn_credential": "",
+            "turn_secret": "",
+            "turn_ttl": 86400,
+            "log_connections": False,
+        },
+
+        "search": {
+            "enabled": True,
+            "backend": "sqlite_fts5",
+            "result_limit": 100,
+            "batch_size": 100,
+            "write_time_indexing": True,
+            "discovery": {
+                "enabled": True,
+                "min_members_for_listing": 10,
+                "max_tags": 10,
+                "bump_cooldown_hours": 4,
+            }
+        },
+
+        "oauth": {
+            "state_ttl_seconds": 600,
+            "state_token_bytes": 32,
+            "nonce_token_bytes": 32,
+            "cleanup_on_verify": True,
+            "max_states_per_ip": 10,
+            "pkce_enabled": True,
+            "pkce": {
+                "verifier_length": 64,
+                "min_verifier_length": 43,
+                "max_verifier_length": 128,
+            },
+            "google": {"client_id": "", "client_secret": ""},
+            "github": {"client_id": "", "client_secret": ""},
+            "microsoft": {"client_id": "", "client_secret": ""},
+        },
+
+        "encryption": {
+            "argon2": {
+                "time_cost": 2,
+                "memory_cost": 65536,
+                "parallelism": 2,
+                "hash_length": 32,
+                "salt_length": 16,
+            },
+            "aes_gcm": {"key_length": 32, "nonce_length": 12, "tag_length": 16},
+            "snowflake": {
+                "epoch": "2024-01-01T00:00:00Z",
+                "worker_id": None,
+                "datacenter_id": None,
+            },
+            "key_rotation_days": 90,
+        },
+
+        "monitoring": {
+            "enabled": True,
+            "log_interval": 300,
+            "metrics_enabled": True,
+            "alert_thresholds": {
+                "cpu_percent": 80,
+                "memory_percent": 85,
+                "db_pool_saturation_percent": 75,
+                "query_time_ms": 5000,
+                "db_errors_per_minute": 10,
+                "api_response_time_ms": 2000,
+                "error_rate_percent": 5,
+                "active_connections": 1000,
+            },
+        },
+
+        "selftest": {
+            "enabled": False,
+            "run_on_startup": False,
+            "exit_on_failure": False,
+            "capture_stack_traces": True,
+            "retry_on_failure": True,
+            "excluded_endpoints": ["/api/v1/auth/logout", "/api/v1/admin/logout"],
+            "test_user": {
+                "username": "selftest_admin",
+                "email": "selftest@internal.local",
+                "password": "SelfTest_Password_123!",
+            },
+        },
+
+        "admin_ui": {
+            "enabled": True,
+            "path": "/admin",
+            "require_otp": True,
+            "host_restriction": {
+                "enabled": True,
+                "allowed_hosts": ["127.0.0.1", "localhost", "::1"],
+            },
+            "blocked_ips": [],
+            "allowed_origins": [],
+            "rate_limit": {
+                "max_attempts": 5,
+                "window_seconds": 300,
+                "lockout_seconds": 900,
+            },
+        },
+
+        "tls": {
+            "enabled": False,
+            "auto_generate_self_signed": False,
+            "cert_path": str(home_dir / "certs" / "server.crt"),
+            "key_path": str(home_dir / "certs" / "server.key"),
+            "cert_days": 365,
+        },
+
+        "email": {
+            "smtp_host": "localhost",
+            "smtp_port": 587,
+            "smtp_user": "",
+            "from_email": "noreply@plexichat.internal",
+            "use_tls": True,
+        },
+
+        "presence": {
+            "typing_timeout_ms": 10000,
+            "timeout_ms": 300000,
+            "update_interval_ms": 60000,
+        },
+
+        "polls": {
+            "max_options": 10,
+            "min_options": 2,
+            "max_question_length": 300,
+            "max_option_length": 100,
+            "min_duration_hours": 1,
+            "max_duration_hours": 168,
+        },
+
+        "emojis": {
+            "max_emojis_per_server": 50,
+            "max_animated_emojis_per_server": 50,
+            "max_emoji_size": 262144,
+            "emoji_min_name_length": 2,
+            "emoji_max_name_length": 32,
+            "allowed_formats": ["image/png", "image/jpeg", "image/gif", "image/webp"],
+        },
+
+        "stickers": {
+            "max_packs_per_server": 50,
+            "max_stickers_per_pack": 100,
+            "max_sticker_size": 524288,
+            "max_sticker_name_length": 32,
+            "max_pack_name_length": 64,
+            "max_pack_description_length": 256,
+            "allowed_formats": ["image/png", "image/webp", "image/gif"],
+            "max_suggestions": 10,
+        },
+
+        "soundboard": {
+            "max_sounds_per_server": 50,
+            "max_sound_size": 2097152,
+            "max_sound_duration_seconds": 10,
+            "max_sound_name_length": 64,
+            "allowed_formats": ["audio/mpeg", "audio/ogg", "audio/wav", "audio/webm"],
+            "default_cooldown_seconds": 3.0,
+            "max_cooldown_seconds": 30.0,
+        },
+
+        "webhooks": {
+            "max_webhooks_per_channel": 10,
+            "max_webhooks_per_server": 50,
+            "max_message_length": 2000,
+            "max_embeds_per_message": 10,
+        },
+
+        "automod": {
+            "enabled": True,
+            "rules": {
+                "caps": {
+                    "enabled": True,
+                    "max_percentage": 70.0,
+                    "min_length": 10,
+                    "ignore_commands": True,
+                }
+            },
+        },
+
+        "applications": {
+            "max_applications_per_user": 25,
+            "max_commands_per_app": 100,
+            "interaction_timeout": 900,
+            "webhook_signature_secret": secrets.token_hex(32),
+            "oauth": {
+                "code_expiry_seconds": 600,
+                "token_expiry_seconds": 604800,
+                "refresh_enabled": True,
+            },
+            "rate_limits": {
+                "requests_per_minute": 60,
+            }
+        },
+
+        "versioning": {"min_supported_version": version, "update_url": None},
+
+        "docs": {
+            "enabled": True,
+            "path": "/docs/api",
+            "title": "PlexiChat API Documentation",
+            "description": "Complete API documentation for PlexiChat messaging platform",
+            "base_url": "https://plexichat-app.tail79f345.ts.net/api/v1",
+            "websocket_url": "wss://plexichat-app.tail79f345.ts.net/gateway",
+            "theme": {
+                "style": "dark",
+                "primary_color": "#e94560",
+                "background_color": "#1a1a2e",
+                "text_color": "#eaeaea",
+                "code_background": "#16213e",
+                "border_color": "#0f3460",
+            },
+            "rate_limit": {"enabled": True, "requests": 60, "window_seconds": 60},
+            "cache": {"enabled": True, "ttl_seconds": 300},
+            "security": {"require_auth": False},
+        },
+
+        "feedback": {
+            "enabled": True,
+            "rate_limit": {"max_per_hour": 5, "max_per_day": 20},
+        },
+
+        "avatars": {
+            "max_size": 512,
+            "max_file_size": 5242880,
+            "allowed_types": ["image/jpeg", "image/png", "image/gif", "image/webp"],
+        },
+
+        "embeds": {
+            "max_embeds_per_message": 10,
+            "max_fields_per_embed": 25,
+            "total_char_limit": 6000,
+            "url_preview": {
+                "enabled": True,
+                "timeout_seconds": 8,
+                "max_html_bytes": 524288,
+                "max_redirects": 5,
+                "max_image_size": 5242880,
+                "cache_ttl_seconds": 3600,
+                "rate_limit_requests": 10,
+                "rate_limit_window_seconds": 60,
+                "proxy_images": True,
+                "allowed_schemes": ["http", "https"],
+            },
+        },
+
+        "telemetry": {
+            "enabled": True,
+            "rate_limit": {"max_per_minute": 10},
+            "retention_days": 30,
+        },
+    }
