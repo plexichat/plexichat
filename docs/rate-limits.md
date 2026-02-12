@@ -110,7 +110,7 @@ When rate limited, you receive HTTP 429:
 
 ## Bot Rate Limits
 
-Bots receive a 1.2x multiplier on high-traffic routes:
+Bots receive a 1.5x multiplier on high-traffic routes:
 
 - POST /channels/{id}/messages
 - GET /channels/{id}/messages

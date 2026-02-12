@@ -47,17 +47,19 @@ curl -X POST {{BASE_URL}}/auth/register \
 {
   "status": "success",
   "token": "session_token_here",
-  "user": {
-    "id": "123456789012345678",
-    "username": "johndoe",
-    "email": "john@example.com",
-    "avatar_url": null,
-    "created_at": 1704067200,
-    "email_verified": false,
-    "totp_enabled": false,
-    "age_verified": false
+      "user": {
+        "id": "123456789012345678",
+        "username": "johndoe",
+        "email": "john@example.com",
+        "avatar_url": null,
+        "created_at": 1704067200,
+        "email_verified": false,
+        "totp_enabled": false,
+        "age_verified": false,
+        "badges": []
+      }
   }
-}
+  
 ```
 
 ### Error Responses
@@ -96,17 +98,19 @@ curl -X POST {{BASE_URL}}/auth/login \
 {
   "status": "success",
   "token": "session_token_here",
-  "user": {
-    "id": "123456789012345678",
-    "username": "johndoe",
-    "email": "john@example.com",
-    "avatar_url": null,
-    "created_at": 1704067200,
-    "email_verified": true,
-    "totp_enabled": false,
-    "age_verified": true
+      "user": {
+        "id": "123456789012345678",
+        "username": "johndoe",
+        "email": "john@example.com",
+        "avatar_url": null,
+        "created_at": 1704067200,
+        "email_verified": true,
+        "totp_enabled": false,
+        "age_verified": true,
+        "badges": []
+      }
   }
-}
+  
 ```
 
 ### Response (200 OK) - 2FA Required
@@ -189,6 +193,58 @@ curl -X POST {{BASE_URL}}/auth/logout \
 }
 ```
 
+## POST /auth/refresh
+
+Refresh the current session token. Extends session lifetime if near expiration.
+
+### Example Request
+
+```bash
+curl -X POST {{BASE_URL}}/auth/refresh \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+```
+
+### Response (200 OK)
+
+Returns standard `LoginResponse`.
+
+## POST /auth/password-reset/request
+
+Request a password reset email. Always returns success to prevent email enumeration.
+
+### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| email | string | Yes | Account email address |
+
+### Response (200 OK)
+
+```json
+{
+  "success": true
+}
+```
+
+## POST /auth/password-reset/confirm
+
+Complete password reset using token from email.
+
+### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| token | string | Yes | Reset token from email |
+| new_password | string | Yes | New password |
+
+### Response (200 OK)
+
+```json
+{
+  "success": true
+}
+```
+
 ## GET /auth/sessions
 
 Get all active sessions for the current user.
@@ -206,9 +262,11 @@ curl -X GET {{BASE_URL}}/auth/sessions \
 [
   {
     "id": "123456789012345678",
+    "device_id": null,
     "ip_address": "192.168.1.1",
     "user_agent": "Mozilla/5.0...",
     "created_at": 1704067200,
+    "expires_at": 1704672000,
     "last_activity": 1704153600,
     "current": true
   }
@@ -454,7 +512,8 @@ Initiate an OAuth login flow.
 ```json
 {
   "url": "https://accounts.google.com/o/oauth2/v2/auth?...",
-  "state": "random_state_string"
+  "state": "random_state_string",
+  "code_verifier": "pkce_code_verifier_if_enabled"
 }
 ```
 

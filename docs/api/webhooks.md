@@ -157,8 +157,12 @@ At least one of `content` or `embeds` is required.
 
 ### Response (200 OK with wait=false)
 
-```
-null
+Returns a standard success response.
+
+```json
+{
+  "success": true
+}
 ```
 
 ### Response (200 OK with wait=true)

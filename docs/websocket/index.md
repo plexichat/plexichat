@@ -86,6 +86,8 @@ All messages use JSON format:
 | 11 | HEARTBEAT_ACK | Server -> Client | Heartbeat acknowledged |
 | 12 | SERVER_STATUS | Server -> Client | Server status update |
 | 13 | VERSION_CHECK | Bidirectional | Version check |
+| 40 | TYPING_START | Client -> Server | Start typing |
+| 41 | TYPING_STOP | Client -> Server | Stop typing |
 
 ### Voice Opcodes
 

@@ -22,7 +22,7 @@ curl -X GET {{BASE_URL}}/users/@me \
   "id": "123456789012345678",
   "username": "johndoe",
   "email": "john@example.com",
-  "avatar_url": "{{BASE_URL}}/avatars/user/123456789012345678",
+  "avatar_url": "{{BASE_URL}}/avatars/users/123456789012345678",
   "created_at": 1704067200,
   "email_verified": true,
   "totp_enabled": false,
@@ -42,6 +42,56 @@ curl -X GET {{BASE_URL}}/users/@me \
 | email_verified | bool | Email verification status |
 | totp_enabled | bool | 2FA enabled status |
 | age_verified | bool | Age verification status |
+| badges | array | Array of user badge identifiers |
+
+## GET /users/@me/messaging-settings
+
+Get current authenticated user's messaging preferences.
+
+### Response (200 OK)
+
+```json
+{
+  "user_id": "123456789012345678",
+  "read_receipts_enabled": true,
+  "typing_indicators_enabled": true,
+  "compact_messages_enabled": true,
+  "allow_dms_from": "everyone",
+  "auto_create_dms": true,
+  "max_message_length": null,
+  "max_attachment_size": null,
+  "max_attachments_per_message": null
+}
+```
+
+## PATCH /users/@me/messaging-settings
+
+Update current authenticated user's messaging preferences.
+
+### Request Body
+
+All fields optional.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| read_receipts_enabled | bool | Send read receipts to others |
+| typing_indicators_enabled | bool | Show your typing status |
+| compact_messages_enabled | bool | Enable message grouping |
+| allow_dms_from | string | "everyone", "friends", or "none" |
+| auto_create_dms | bool | Automatically create conversations |
+
+### Example Request
+
+```json
+{
+  "read_receipts_enabled": false,
+  "allow_dms_from": "friends"
+}
+```
+
+### Response (200 OK)
+
+Returns updated messaging settings object.
 
 ## PATCH /users/@me
 
@@ -97,7 +147,7 @@ curl -X POST {{BASE_URL}}/users/@me/avatar \
 ```json
 {
   "success": true,
-  "avatar_url": "{{BASE_URL}}/avatars/user/123456789012345678",
+  "avatar_url": "{{BASE_URL}}/avatars/users/123456789012345678",
   "width": 256,
   "height": 256,
   "size": 12345,
@@ -243,7 +293,7 @@ curl -X GET "{{BASE_URL}}/users/search?username=johndoe" \
 {
   "id": "123456789012345678",
   "username": "johndoe",
-  "avatar_url": "{{BASE_URL}}/avatars/user/123456789012345678",
+  "avatar_url": "{{BASE_URL}}/avatars/users/123456789012345678",
   "created_at": 1704067200
 }
 ```
@@ -308,7 +358,8 @@ Returned for the authenticated user (`/users/@me`).
   "created_at": 1704067200,
   "email_verified": true,
   "totp_enabled": false,
-  "age_verified": false
+  "age_verified": false,
+  "badges": ["early_supporter"]
 }
 ```
 
@@ -321,7 +372,8 @@ Returned for other users (`/users/{user_id}`).
   "id": "123456789012345678",
   "username": "johndoe",
   "avatar_url": "https://cdn.example.com/avatars/123.png",
-  "created_at": 1704067200
+  "created_at": 1704067200,
+  "badges": []
 }
 ```
 

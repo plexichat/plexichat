@@ -20,11 +20,11 @@ The client maintains an in-memory cache with configurable TTLs for different dat
 '/users/@me': 300000,           // 5 minutes - user data rarely changes
 '/users/@me/features': 600000,  // 10 minutes - tier/badges very stable
 '/users/@me/settings': 300000,  // 5 minutes - settings rarely change
-'/servers': 120000,             // 2 minutes - server list
-'/servers/': 180000,            // 3 minutes - individual server data
+'/servers': 300000,             // 5 minutes - server list
+'/servers/': 300000,            // 5 minutes - individual server data
 '/relationships/@me': 300000,   // 5 minutes - friends rarely change
 '/users/': 300000,              // 5 minutes - user profiles
-'/channels/': 120000,           // 2 minutes - channel data
+'/channels/': 300000,           // 5 minutes - channel data
 '/health': 30000,               // 30 seconds - health checks
 '/version': 600000,             // 10 minutes - version rarely changes
 '/status': 10000,               // 10 seconds - status can change

@@ -4,7 +4,7 @@ Cloud-synced key-value store for user preferences.
 
 Settings are stored server-side and sync across all devices. Use this for storing user preferences like theme, notification settings, and UI customizations.
 
-## GET /settings
+## GET /users/@me/settings
 
 Get all settings for the current user.
 
@@ -36,7 +36,7 @@ Authorization: Bearer <token>
 | count | int | Number of settings stored |
 | limit | int | Maximum settings allowed |
 
-## GET /settings/{key}
+## GET /users/@me/settings/{key}
 
 Get a specific setting by key.
 
@@ -69,7 +69,7 @@ Authorization: Bearer <token>
 |--------|------|-------------|
 | 404 | Setting not found | Setting with key doesn't exist |
 
-## PUT /settings/{key}
+## PUT /users/@me/settings/{key}
 
 Set a setting value. Creates or updates the setting.
 
@@ -119,7 +119,7 @@ Authorization: Bearer <token>
 | 400 | Value too long | Value exceeds 10000 characters |
 | 400 | Key reserved | Key is reserved for system use |
 
-## DELETE /settings/{key}
+## DELETE /users/@me/settings/{key}
 
 Delete a setting.
 

@@ -90,7 +90,7 @@ server {
 1. **Use TLS**: Always serve API and Client over HTTPS
 2. **Environment Secrets**: Never commit secrets to version control
 3. **Firewall**: Only expose ports 80 and 443
-4. **Regular Backups**: Back up `~/.plexichat/data/keyring.json` - encrypted data is unrecoverable without it
+4. **Regular Backups**: Back up `~/.plexichat/data/system_keyring.json` - encrypted data is unrecoverable without it
 
 ## Monitoring
 

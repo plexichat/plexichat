@@ -54,8 +54,13 @@ database:
     sslmode: prefer      # disable, allow, prefer, require, verify-ca, verify-full
   
   connection_pool:
-    min_connections: 1
-    max_connections: 10
+    min_connections: 20
+    max_connections: 100
+    connect_timeout: 10
+    max_idle_time: 120
+    validation_interval: 60
+    enable_validation: true
+    validation_query: "SELECT 1"
 ```
 
 #### PostgreSQL Setup
@@ -310,7 +315,7 @@ encryption:
 api:
   title: PlexiChat API
   description: REST API for PlexiChat messaging platform
-  version: a.1.0-32
+  version: a.1.0-43
   api_prefix: /api/v1
   debug: false           # Enable debug mode
   cors_origins:
@@ -355,7 +360,7 @@ storage:
 ```yaml
 application:
   name: PlexiChat
-  version: a.1.0-32
+  version: a.1.0-43
   environment: development  # development, staging, production
 ```
 
@@ -363,7 +368,7 @@ application:
 
 ```yaml
 versioning:
-  min_supported_version: a.1.0-32  # Minimum client version
+  min_supported_version: a.1.0-43  # Minimum client version
   update_url: null                 # URL for client updates
 ```
 
@@ -428,15 +433,17 @@ messaging:
 When `encrypt_messages` is enabled, message content is encrypted using AES-256-GCM before being stored in the database. This provides **Zero-friction At-Rest Encryption** (server-side encryption), protecting data from database compromises.
 
 **Security Keys:**
-- General Data Key: `~/.plexichat/data/.encryption_key`
-- Message Key: `~/.plexichat/data/.message_encryption_key`
+- System Keyring: `~/.plexichat/data/system_system_keyring.json`
+- Message Keyring: `~/.plexichat/data/message_system_keyring.json`
+- Machine Key: `~/.plexichat/data/.machine_key`
 
 **Environment Overrides:**
 For production deployments, you can provide these keys via environment variables (Base64 encoded 32-byte strings):
 - `PLEXICHAT_ENCRYPTION_KEY`
 - `PLEXICHAT_MESSAGE_KEY`
+- `PLEXICHAT_SYSTEM_KEY` (Master key override)
 
-**Important:** Back up your encryption key files! If lost, encrypted data cannot be recovered.
+**Important:** Back up your encryption keyring files! If lost, encrypted data cannot be recovered.
 
 #### Key Rotation
 
@@ -585,7 +592,7 @@ Before deploying to production:
 
 6. **Back up encryption keyring**
    
-   The encryption keyring is stored at `~/.plexichat/data/keyring.json`. 
+   The encryption keyring is stored at `~/.plexichat/data/system_keyring.json`. 
    Back this up securely - if lost, encrypted data cannot be recovered.
 
 7. **Set media signing key**

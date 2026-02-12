@@ -2,7 +2,7 @@
 
 The PlexiChat REST API provides endpoints for managing users, servers, channels, messages, and more.
 
-**API Version**: `{{VERSION}}`
+**API Version**: `a.1.0-43`
 
 ## Base URL
 
@@ -73,10 +73,10 @@ curl {{BASE_URL}}/users/@me \
 
 | Method | Endpoint | Description | Auth |
 |--------|----------|-------------|------|
-| GET | `/settings` | Get all settings | Yes |
-| GET | `/settings/{key}` | Get specific setting | Yes |
-| PUT | `/settings/{key}` | Set setting value | Yes |
-| DELETE | `/settings/{key}` | Delete setting | Yes |
+| GET | `/users/@me/settings` | Get all settings | Yes |
+| GET | `/users/@me/settings/{key}` | Get specific setting | Yes |
+| PUT | `/users/@me/settings/{key}` | Set setting value | Yes |
+| DELETE | `/users/@me/settings/{key}` | Delete setting | Yes |
 
 ### Servers
 

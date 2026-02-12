@@ -32,7 +32,7 @@ curl -X GET "{{BASE_URL}}/channels/123456789012345678/messages?limit=25&before=2
     "channel_id": "123456789012345678",
     "author_id": "123456789012345678",
     "author_username": "johndoe",
-    "author_avatar_url": "{{BASE_URL}}/avatars/user/123456789012345678",
+    "author_avatar_url": "{{BASE_URL}}/avatars/users/123456789012345678",
     "content": "Hello, world!",
     "created_at": 1704067200,
     "edited_at": null,
@@ -368,6 +368,7 @@ Authorization: Bearer <token>
   "author_id": "123456789012345678",
   "author_username": "johndoe",
   "author_avatar_url": "https://cdn.example.com/avatars/123.png",
+  "author_badges": ["staff"],
   "content": "Hello, world!",
   "created_at": 1704067200,
   "edited_at": null,
@@ -375,6 +376,11 @@ Authorization: Bearer <token>
   "attachments": [],
   "embeds": [],
   "pinned": false,
+  "status": "read",
+  "delivery_count": 15,
+  "read_count": 5,
+  "read": true,
+  "read_by": ["janedoe", "bobsmith"],
   "reactions": []
 }
 ```
@@ -386,6 +392,7 @@ Authorization: Bearer <token>
 | author_id | string | Author's user ID |
 | author_username | string | Author's username |
 | author_avatar_url | string? | Author's avatar URL |
+| author_badges | array | Author's profile badges |
 | content | string? | Message text content |
 | created_at | int | Unix timestamp of creation |
 | edited_at | int? | Unix timestamp of last edit |
@@ -393,6 +400,11 @@ Authorization: Bearer <token>
 | attachments | array | File attachments |
 | embeds | array | Rich embeds |
 | pinned | bool | Whether message is pinned |
+| status | string? | User status: "sent", "delivered", or "read" |
+| delivery_count | int | Number of users who received the message |
+| read_count | int | Number of users who read the message |
+| read | bool | Whether current user has read it |
+| read_by | array | List of usernames who read it (sender only) |
 | reactions | array | Reaction data |
 
 ## Attachment Object

@@ -4,7 +4,7 @@ Endpoints for managing user features, badges, and rate limit tiers.
 
 ## Public Endpoints
 
-### GET /features/users/@me/features
+### GET /users/@me/features
 
 Get current user's features and badges.
 
@@ -51,7 +51,7 @@ Authorization: Bearer <token>
 
 These endpoints require administrator permission.
 
-### GET /features/admin/users/{user_id}/features
+### GET /admin/users/{user_id}/features
 
 Get features for a specific user.
 
@@ -78,7 +78,7 @@ Authorization: Bearer <token>
 }
 ```
 
-### PUT /features/admin/users/{user_id}/features
+### PUT /admin/users/{user_id}/features
 
 Update features for a specific user.
 
@@ -108,7 +108,7 @@ Authorization: Bearer <token>
 
 Returns the updated user features object.
 
-### PUT /features/admin/users/{user_id}/tier
+### PUT /admin/users/{user_id}/tier
 
 Set rate limit tier for a user.
 
@@ -138,7 +138,7 @@ Authorization: Bearer <token>
 
 Returns the updated user features object.
 
-### POST /features/admin/users/{user_id}/badges/{badge}
+### POST /admin/users/{user_id}/badges/{badge}
 
 Add a badge to a user.
 
@@ -164,7 +164,7 @@ Authorization: Bearer <token>
 | 400 | Invalid badge | Badge name not recognized |
 | 404 | User not found | User doesn't exist |
 
-### DELETE /features/admin/users/{user_id}/badges/{badge}
+### DELETE /admin/users/{user_id}/badges/{badge}
 
 Remove a badge from a user.
 
@@ -183,7 +183,7 @@ Authorization: Bearer <token>
 }
 ```
 
-### GET /features/admin/tiers
+### GET /admin/tiers
 
 Get all available rate limit tiers.
 
@@ -221,7 +221,7 @@ Authorization: Bearer <token>
 }
 ```
 
-### GET /features/admin/badges
+### GET /admin/badges
 
 Get all available badges.
 
@@ -267,6 +267,7 @@ Authorization: Bearer <token>
   ]
 }
 ```
+
 
 ---
 

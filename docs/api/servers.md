@@ -23,7 +23,7 @@ curl -X GET {{BASE_URL}}/servers \
     "id": "123456789012345678",
     "name": "My Server",
     "description": "A cool server",
-    "icon_url": "{{BASE_URL}}/avatars/server/123456789012345678",
+    "icon_url": "{{BASE_URL}}/avatars/servers/123456789012345678",
     "owner_id": "123456789012345678",
     "member_count": 150,
     "default_channel_id": "234567890123456789",
@@ -606,6 +606,55 @@ Authorization: Bearer <token>
 
 ---
 
+## POST /servers/{server_id}/leave
+
+Leave a server. Owners cannot leave their own server.
+
+### Headers
+
+```
+Authorization: Bearer <token>
+```
+
+### Response (200 OK)
+
+```json
+{
+  "success": true
+}
+```
+
+### Error Responses
+
+| Status | Code | Description |
+|--------|------|-------------|
+| 403 | Owners cannot leave | You must transfer ownership first |
+| 404 | Server not found | Server doesn't exist |
+
+## GET /servers/{server_id}/permissions
+
+Get your current permissions in the server.
+
+### Headers
+
+```
+Authorization: Bearer <token>
+```
+
+### Response (200 OK)
+
+```json
+{
+  "server.view": true,
+  "channel.create": false,
+  "message.send": true,
+  "message.manage": false,
+  "server.manage": false
+}
+```
+
+---
+
 ## Audit Log
 
 ## GET /servers/{server_id}/audit-logs
@@ -698,6 +747,8 @@ Authorization: Bearer <token>
 | owner_id | string | Owner's user ID |
 | member_count | int | Number of members |
 | default_channel_id | string? | Default channel ID |
+| verification_level | int | Verification level required to join |
+| default_message_notifications | int | Default notification level (0=all, 1=mentions) |
 | created_at | int | Unix timestamp of creation |
 
 ---
