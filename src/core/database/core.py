@@ -232,10 +232,14 @@ class Database:
                 self.monitor.update_connection_last_used(conn_id)
                 return conn
             else:
-                logger.warning("Thread-local connection invalid, reconnecting")
-                self.engine.close_connection(conn, self._pool, {"close": True})
+                logger.warning(f"Thread-local connection {conn_id} invalid, reconnecting")
+                try:
+                    self.engine.close_connection(conn, self._pool, {"close": True})
+                except Exception:
+                    pass
                 self._local.connection = None
                 self._local.last_valid_check = 0
+                self._local.last_validation = 0
 
         if not auto_connect:
             raise ConnectionError("Database not connected. Call connect() first.")
@@ -248,17 +252,20 @@ class Database:
         with self._lock:
             # Close existing if any
             if hasattr(self._local, "connection") and self._local.connection:
-                self.engine.close_connection(self._local.connection, self._pool)
+                try:
+                    self.engine.close_connection(self._local.connection, self._pool, {"close": True})
+                except Exception:
+                    pass
                 self._local.connection = None
             
             start_time = time.time()
             if self.type == "postgres" and isinstance(self.engine, PostgresEngine):
                 if not self._pool:
                     pool_config = self.config.get("connection_pool", {})
-                    min_conn = pool_config.get("min_connections", 1)
+                    min_conn = pool_config.get("min_connections", 20)
                     self._pool = self.engine.create_pool(
                         min_conn,
-                        pool_config.get("max_connections", 50)
+                        pool_config.get("max_connections", 100)
                     )
                 conn = self.engine.connect(self._pool)
             else:
@@ -268,6 +275,7 @@ class Database:
             self.monitor.record_acquisition(duration)
             
             self._local.connection = conn
+            self._local.last_valid_check = time.time()
             self.transaction_depth = 0
             self.in_transaction = False
             
@@ -283,7 +291,7 @@ class Database:
             return conn
 
     def execute(self, query: str, params: Optional[Tuple] = None, auto_commit: bool = True) -> DbCursor:
-        """Execute a query and return a cursor with one-time retry on connection failure."""
+        """Execute a query and return a cursor with multi-retry on connection failure."""
         if self.transaction_depth > 0:
             self._validate_transaction_state()
             
@@ -294,8 +302,8 @@ class Database:
             
         query_conv = dialect.convert_placeholders(query, self.type)
         
-        # Max 2 attempts (initial + 1 retry)
-        for attempt in range(2):
+        # Max 3 attempts (initial + 2 retries)
+        for attempt in range(3):
             try:
                 conn = self._get_conn()
                 cursor = conn.cursor()
@@ -324,13 +332,12 @@ class Database:
                 # Check for connection-related errors that warrant a retry
                 is_conn_error = "OperationalError" in type(e).__name__ or "closed" in str(e).lower()
                 
-                if attempt == 0 and is_conn_error and not self.in_transaction:
-                    logger.warning(f"Database connection error during query, retrying: {e}")
+                if attempt < 2 and is_conn_error and not self.in_transaction:
+                    logger.warning(f"Database connection error (attempt {attempt+1}), retrying: {e}")
                     # Force a new connection on next attempt
-                    if hasattr(self._local, "connection"):
+                    if hasattr(self._local, "connection") and self._local.connection:
                         try:
-                            if self.engine:
-                                self.engine.close_connection(self._local.connection, self._pool, {"close": True})
+                            self.engine.close_connection(self._local.connection, self._pool, {"close": True})
                         except Exception:
                             pass
                         self._local.connection = None
@@ -338,20 +345,19 @@ class Database:
                 
                 # If retry failed or not a retryable error, handle and re-raise
                 self.monitor.record_error(type(e).__name__)
-                # We need a conn and cursor for the handler, but they might be None if _get_conn failed
                 temp_conn = getattr(self._local, "connection", None)
                 self._handle_execution_error(temp_conn, locals().get("cursor"), e, query)
                 raise
 
     def execute_many(self, query: str, params_list: List[Tuple], auto_commit: bool = True) -> DbCursor:
-        """Execute a batch query with one-time retry on connection failure."""
+        """Execute a batch query with multi-retry on connection failure."""
         if self.transaction_depth > 0:
             self._validate_transaction_state()
             
         query_conv = dialect.convert_placeholders(query, self.type)
         
-        # Max 2 attempts
-        for attempt in range(2):
+        # Max 3 attempts
+        for attempt in range(3):
             try:
                 conn = self._get_conn()
                 cursor = conn.cursor()
@@ -371,9 +377,9 @@ class Database:
             except Exception as e:
                 is_conn_error = "OperationalError" in type(e).__name__ or "closed" in str(e).lower()
                 
-                if attempt == 0 and is_conn_error and not self.in_transaction:
-                    logger.warning(f"Database connection error during execute_many, retrying: {e}")
-                    if hasattr(self._local, "connection"):
+                if attempt < 2 and is_conn_error and not self.in_transaction:
+                    logger.warning(f"Database connection error during execute_many (attempt {attempt+1}), retrying: {e}")
+                    if hasattr(self._local, "connection") and self._local.connection:
                         try:
                             self.engine.close_connection(self._local.connection, self._pool, {"close": True})
                         except Exception:
