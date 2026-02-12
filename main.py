@@ -31,7 +31,6 @@ import utils.logger as logger  # noqa: E402
 import utils.config as config  # noqa: E402
 import utils.validator as validator  # noqa: E402
 import utils.version as version  # noqa: E402
-from src.core.config_defaults import get_default_config as fetch_default_config
 
 # Global Version Definition
 VERSION = "a.1.0-43"
@@ -52,6 +51,7 @@ class PlexiChatServer:
 
     def get_default_config(self) -> Dict[str, Any]:
         """Get default configuration from external defaults module."""
+        from src.core.config_defaults import get_default_config as fetch_default_config
         return fetch_default_config(version=VERSION)
 
     def setup_directories(self) -> None:
