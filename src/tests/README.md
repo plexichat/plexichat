@@ -1,4 +1,4 @@
-﻿# PlexiChat Test Documentation
+# PlexiChat Test Documentation
 
 Comprehensive testing guide for the PlexiChat messaging platform. This document covers test architecture, patterns, fixtures, execution strategies, and contribution guidelines.
 
@@ -117,39 +117,39 @@ class ModuleRegistry:
 
 ```
 src/tests/
-├── api/                    # API route tests
-│   ├── security/          # API security tests
-│   │   ├── test_authentication_failures.py
-│   │   ├── test_injection_attacks.py
-│   │   └── test_rate_limit_enforcement.py
-│   ├── test_auth_routes.py
-│   ├── test_message_routes.py
-│   └── conftest.py        # API-specific fixtures
-├── auth/                   # Authentication module tests
-│   ├── test_login.py
-│   ├── test_registration.py
-│   ├── test_2fa.py
-│   └── test_sessions.py
-├── messaging/              # Messaging module tests
-├── servers/                # Server management tests
-├── security/               # Core security tests
-│   ├── test_xss_prevention.py
-│   ├── test_sql_injection.py
-│   ├── test_csrf_protection.py
-│   └── test_comprehensive_security.py
-├── unit/                   # Fast unit tests
-│   ├── test_validators.py
-│   ├── test_property_based_validation.py
-│   └── test_real_hashing.py
-├── fixtures/               # Shared test fixtures
-│   ├── database.py        # Database management
-│   ├── modules.py         # Module registry
-│   ├── security.py        # Security test utilities
-│   ├── factories.py       # Entity factories
-│   └── config.py          # Test configuration
-├── conftest.py            # Root fixtures (session-scoped)
-├── pytest.ini             # Pytest configuration
-└── README.md              # This file
++-- api/                    # API route tests
+�   +-- security/          # API security tests
+�   �   +-- test_authentication_failures.py
+�   �   +-- test_injection_attacks.py
+�   �   +-- test_rate_limit_enforcement.py
+�   +-- test_auth_routes.py
+�   +-- test_message_routes.py
+�   +-- conftest.py        # API-specific fixtures
++-- auth/                   # Authentication module tests
+�   +-- test_login.py
+�   +-- test_registration.py
+�   +-- test_2fa.py
+�   +-- test_sessions.py
++-- messaging/              # Messaging module tests
++-- servers/                # Server management tests
++-- security/               # Core security tests
+�   +-- test_xss_prevention.py
+�   +-- test_sql_injection.py
+�   +-- test_csrf_protection.py
+�   +-- test_comprehensive_security.py
++-- unit/                   # Fast unit tests
+�   +-- test_validators.py
+�   +-- test_property_based_validation.py
+�   +-- test_real_hashing.py
++-- fixtures/               # Shared test fixtures
+�   +-- database.py        # Database management
+�   +-- modules.py         # Module registry
+�   +-- security.py        # Security test utilities
+�   +-- factories.py       # Entity factories
+�   +-- config.py          # Test configuration
++-- conftest.py            # Root fixtures (session-scoped)
++-- pytest.ini             # Pytest configuration
++-- README.md              # This file
 ```
 
 ### Test Categories (Markers)
