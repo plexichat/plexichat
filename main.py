@@ -51,7 +51,7 @@ class PlexiChatServer:
 
     def get_default_config(self) -> Dict[str, Any]:
         """Get default configuration from external defaults module."""
-        from src.core.config_defaults import get_default_config as fetch_default_config
+        from src.config_defaults import get_default_config as fetch_default_config
         return fetch_default_config(version=VERSION)
 
     def setup_directories(self) -> None:
