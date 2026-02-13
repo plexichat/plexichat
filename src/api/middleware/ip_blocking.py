@@ -20,24 +20,32 @@ class IPBlockingMiddleware:
             return
 
         import src.api as api
-        # Extract IP without consuming 'receive' stream
         from src.utils.net import get_client_ip
         
-        # We can create a Request object with a dummy receive to avoid consuming the stream
-        # Or just use the scope directly if get_client_ip supports it
-        request = Request(scope)
-        client_ip = get_client_ip(request)
+        # Use scope directly or handle per type
+        client_ip = get_client_ip(scope)
 
         # Check if IP is blacklisted
         auth = api.get_auth()
         if auth and auth.is_ip_blocked(client_ip):
-            logger.warning(f"Blocked request from blacklisted IP: {client_ip}")
+            logger.warning(f"Blocked {scope['type']} request from blacklisted IP: {client_ip}")
             
-            # Send 403 Forbidden response
-            await self._send_forbidden(send)
+            if scope["type"] == "websocket":
+                await self._send_websocket_forbidden(send)
+            else:
+                await self._send_forbidden(send)
             return
 
         await self.app(scope, receive, send)
+
+    async def _send_websocket_forbidden(self, send: Send) -> None:
+        """Close WebSocket with forbidden code."""
+        # 4003 is often used for forbidden/unauthorized in WS
+        await send({
+            "type": "websocket.close",
+            "code": 4003,
+            "reason": "IP Blocked"
+        })
 
     async def _send_forbidden(self, send: Send) -> None:
         """Send a 403 Forbidden response."""

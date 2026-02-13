@@ -43,6 +43,8 @@ from .exceptions import (
     WeakPasswordError,
     InvalidUsernameError,
     InvalidEmailError,
+    PermissionDeniedError,
+    BotLimitExceededError,
 )
 from .permissions import (
     DEFAULT_USER_PERMISSIONS,
@@ -68,6 +70,27 @@ from . import totp as totp_module
 
 
 class AuthManager(BaseManager):
+    # Exposed for convenience and test compatibility
+    Status = AuthStatus
+    AuthStatus = AuthStatus
+    AuditEventType = AuditEventType
+    AccountType = AccountType
+    
+    # Exceptions
+    AuthError = AuthError
+    InvalidCredentialsError = InvalidCredentialsError
+    AccountLockedError = AccountLockedError
+    TokenExpiredError = TokenExpiredError
+    TokenInvalidError = TokenInvalidError
+    TwoFactorInvalidError = TwoFactorInvalidError
+    UserExistsError = UserExistsError
+    UserNotFoundError = UserNotFoundError
+    WeakPasswordError = WeakPasswordError
+    InvalidUsernameError = InvalidUsernameError
+    InvalidEmailError = InvalidEmailError
+    PermissionDeniedError = PermissionDeniedError
+    BotLimitExceededError = BotLimitExceededError
+
     def __init__(self, db, email_sender=None):
         super().__init__(db)
         self.email_sender = email_sender
@@ -438,8 +461,14 @@ class AuthManager(BaseManager):
         row = self._db.fetch_one(
             "SELECT failed_login_attempts FROM auth_users WHERE id = ?", (user_id,)
         )
-        if row and row["failed_login_attempts"] >= 5:
-            lock_until = self._get_timestamp() + 900000
+        
+        # Get threshold from config or default to 5
+        threshold = self._config.get("security.max_failed_attempts", 5)
+        
+        if row and row["failed_login_attempts"] >= threshold:
+            # Default lock time 15 mins (60000ms * 15)
+            lock_duration_min = self._config.get("security.lockout_duration_minutes", 15)
+            lock_until = self._get_timestamp() + (lock_duration_min * 60 * 1000)
             self._db.execute(
                 "UPDATE auth_users SET account_locked = 1, locked_until = ? WHERE id = ?",
                 (lock_until, user_id),
@@ -466,6 +495,20 @@ class AuthManager(BaseManager):
             ip_index = self.crypto.fast_blind_index(ip, "ip_address")
             ip_encrypted = self.crypto.encrypt_data(ip, context=str(sid))
             
+        # Enforce session limit
+        max_sessions = self._config.get("sessions.max_per_user", 10)
+        sessions = self.get_sessions(user_id)
+        if len(sessions) >= max_sessions:
+            # Sort by last activity to find oldest
+            sessions.sort(key=lambda x: x.last_activity)
+            # Revoke until we are under limit (usually just 1)
+            to_revoke = len(sessions) - max_sessions + 1
+            for i in range(to_revoke):
+                self._db.execute(
+                    "UPDATE auth_sessions SET revoked = 1 WHERE id = ?",
+                    (sessions[i].id,),
+                )
+
         self._db.execute(
             "INSERT INTO auth_sessions (id, user_id, token_hash, device_id, ip_index, ip_encrypted, user_agent, created_at, expires_at, last_activity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (sid, user_id, token_hash, device_id, ip_index, ip_encrypted, ua, now, expires, now),
@@ -617,12 +660,16 @@ class AuthManager(BaseManager):
     def logout(self, token: str) -> bool:
         parsed = parse_token(token)
         if parsed and parsed["token_type"] == "session":
-            # Clear token verification cache for immediate effect
-            invalidate_pattern("token_verify:*")
-            self._db.execute(
-                "UPDATE auth_sessions SET revoked = 1 WHERE id = ?", (parsed["id"],)
-            )
-            return True
+            # Get user_id before revoking for audit
+            row = self._db.fetch_one("SELECT user_id FROM auth_sessions WHERE id = ?", (parsed["id"],))
+            if row:
+                # Clear token verification cache for immediate effect
+                invalidate_pattern("token_verify:*")
+                self._db.execute(
+                    "UPDATE auth_sessions SET revoked = 1 WHERE id = ?", (parsed["id"],)
+                )
+                self._log_audit(AuditEventType.LOGOUT, row["user_id"], True)
+                return True
         return False
 
     def logout_all(self, user_id: int, except_token: Optional[str] = None) -> int:
@@ -682,7 +729,10 @@ class AuthManager(BaseManager):
             "UPDATE auth_sessions SET revoked = 1 WHERE id = ? AND user_id = ?",
             (session_id, user_id),
         )
-        return True
+        if self._db.last_row_count > 0:
+            self._log_audit(AuditEventType.SESSION_REVOKED, user_id, True)
+            return True
+        return False
 
     # === User Profile ===
 
@@ -1486,6 +1536,15 @@ class AuthManager(BaseManager):
         return True
 
     # === OAuth ===
+
+    def has_capability(self, token_info: TokenInfo, capability: str) -> bool:
+        """Check if token has a specific capability/permission."""
+        return has_permission(token_info.permissions, capability)
+
+    def require_capability(self, token_info: TokenInfo, capability: str) -> None:
+        """Require a capability, raising PermissionDeniedError if missing."""
+        if not self.has_capability(token_info, capability):
+            raise PermissionDeniedError(f"Missing required permission: {capability}")
 
     def oauth_login(
         self,
