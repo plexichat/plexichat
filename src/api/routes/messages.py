@@ -2,7 +2,7 @@
 Message routes - Message CRUD endpoints.
 """
 
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends, Query
 
 import src.api as api
