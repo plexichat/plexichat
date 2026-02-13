@@ -23,6 +23,9 @@ class ChannelCreateRequest(BaseModel):
     slowmode_seconds: int = Field(
         0, ge=0, le=21600, description="Slowmode delay in seconds"
     )
+    read_receipts_enabled: bool = Field(
+        True, description="Whether to track read receipts in this channel"
+    )
 
 
 class RecipientResponse(BaseModel):

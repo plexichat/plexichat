@@ -835,26 +835,32 @@ async def create_server_channel(
             detail={"error": {"code": 400, "message": "Invalid server ID"}},
         )
 
-    try:
         # Build kwargs, only including supported parameters
         kwargs = {
             "user_id": current_user.user_id,
             "server_id": sid,
             "name": body.name,
         }
-        if body.type:
+        # Handle both 'type' and 'channel_type' for backward compatibility
+        type_val = getattr(body, "channel_type", None) or getattr(body, "type", None)
+        if type_val:
             # Convert string to ChannelType enum
-            type_str = body.type.lower()
+            type_str = type_val.lower()
             try:
                 kwargs["channel_type"] = ChannelType(type_str)
             except ValueError:
                 kwargs["channel_type"] = ChannelType.TEXT
+        
         if body.topic:
             kwargs["topic"] = body.topic
         if body.category_id:
             kwargs["category_id"] = int(body.category_id)
-        if body.nsfw:
+        if body.nsfw is not None:
             kwargs["nsfw"] = body.nsfw
+        if body.slowmode_seconds is not None:
+            kwargs["slowmode_seconds"] = body.slowmode_seconds
+        if body.read_receipts_enabled is not None:
+            kwargs["read_receipts_enabled"] = body.read_receipts_enabled
 
         channel = servers_mod.create_channel(**kwargs)
         # Invalidate server's channel list cache

@@ -369,6 +369,7 @@ def create_channel(
     topic: Optional[str] = None,
     nsfw: bool = False,
     slowmode_seconds: int = 0,
+    read_receipts_enabled: bool = True,
 ) -> Channel:
     """Create a new channel in a server."""
     return _get_manager().create_channel(
@@ -380,6 +381,7 @@ def create_channel(
         topic,
         nsfw,
         slowmode_seconds,
+        read_receipts_enabled,
     )
 
 
@@ -413,11 +415,19 @@ def update_channel(
     topic: Optional[str] = None,
     nsfw: Optional[bool] = None,
     slowmode_seconds: Optional[int] = None,
+    read_receipts_enabled: Optional[bool] = None,
     category_id: Optional[int] = None,
 ) -> Channel:
     """Update channel settings."""
     return _get_manager().update_channel(
-        user_id, channel_id, name, topic, nsfw, slowmode_seconds, category_id
+        user_id,
+        channel_id,
+        name,
+        topic,
+        nsfw,
+        slowmode_seconds,
+        read_receipts_enabled,
+        category_id,
     )
 
 

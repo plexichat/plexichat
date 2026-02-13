@@ -1368,6 +1368,7 @@ class ServerManager(BaseManager):
             topic=row["topic"],
             nsfw=bool(row["nsfw"]),
             slowmode_seconds=row.get("slowmode_seconds", 0),
+            read_receipts_enabled=bool(row.get("read_receipts_enabled", True)),
             conversation_id=row.get("conversation_id"),
             created_at=row["created_at"],
             updated_at=row["updated_at"],

@@ -60,6 +60,7 @@ class ChannelHandler:
         topic: Optional[str] = None,
         nsfw: bool = False,
         slowmode_seconds: int = 0,
+        read_receipts_enabled: bool = True,
     ) -> Channel:
         """Create a new channel in a server."""
         if isinstance(channel_type, str):
@@ -89,8 +90,8 @@ class ChannelHandler:
 
         self.db.execute(
             """INSERT INTO srv_channels 
-               (id, server_id, name, channel_type, category_id, position, topic, nsfw, slowmode_seconds, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (id, server_id, name, channel_type, category_id, position, topic, nsfw, slowmode_seconds, read_receipts_enabled, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 channel_id,
                 server_id,
@@ -101,6 +102,7 @@ class ChannelHandler:
                 topic,
                 1 if nsfw else 0,
                 slowmode_seconds,
+                1 if read_receipts_enabled else 0,
                 now,
                 now,
             ),
@@ -229,6 +231,7 @@ class ChannelHandler:
         topic: Optional[str] = None,
         nsfw: Optional[bool] = None,
         slowmode_seconds: Optional[int] = None,
+        read_receipts_enabled: Optional[bool] = None,
         category_id: Optional[SnowflakeID] = None,
     ) -> Channel:
         """Update channel settings."""
@@ -262,6 +265,14 @@ class ChannelHandler:
             changes["slowmode_seconds"] = {
                 "old": channel.slowmode_seconds,
                 "new": slowmode_seconds,
+            }
+
+        if read_receipts_enabled is not None:
+            updates.append("read_receipts_enabled = ?")
+            params.append(1 if read_receipts_enabled else 0)
+            changes["read_receipts_enabled"] = {
+                "old": channel.read_receipts_enabled,
+                "new": read_receipts_enabled,
             }
 
         if category_id is not None:

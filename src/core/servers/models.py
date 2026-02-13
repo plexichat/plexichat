@@ -179,6 +179,7 @@ class Channel:
     bitrate: int = 64000
     rtc_region: Optional[str] = None
     slowmode_seconds: int = 0
+    read_receipts_enabled: bool = True
     conversation_id: Optional[SnowflakeID] = None
     deleted: bool = False
     deleted_at: Optional[int] = None

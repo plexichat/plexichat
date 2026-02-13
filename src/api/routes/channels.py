@@ -100,6 +100,7 @@ def _channel_to_response(channel, current_user_id: Optional[int] = None) -> Chan
             else None,
             nsfw=getattr(channel, "nsfw", False),
             slowmode_seconds=getattr(channel, "slowmode_seconds", 0),
+            read_receipts_enabled=bool(getattr(channel, "read_receipts_enabled", True)),
             created_at=channel.created_at,
             recipient_id=SnowflakeID(recipient_id) if recipient_id else None,
             recipient=recipient

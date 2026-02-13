@@ -91,11 +91,26 @@ class MessageStatusService(BaseService):
 
         now = self._get_timestamp()
 
-        # Only update public read statuses if user has read receipts enabled
+        # Only update public read statuses if user has read receipts enabled AND channel has them enabled
         user_settings = self._user_settings_svc.get_message_settings(user_id)
         
+        # Check if channel has read receipts enabled
+        channel_receipts_enabled = True
+        try:
+            # We need to find if this is a server channel and check its setting
+            import src.api as api
+            servers_mod = api.get_servers()
+            if servers_mod:
+                # messaging conversation_id might be different from server channel_id
+                # but servers_mod.get_channel usually handles the lookup
+                channel = servers_mod.get_channel(conversation_id, user_id)
+                if channel:
+                    channel_receipts_enabled = getattr(channel, "read_receipts_enabled", True)
+        except Exception:
+            pass
+        
         count = 0
-        if user_settings.read_receipts_enabled:
+        if user_settings.read_receipts_enabled and channel_receipts_enabled:
             status_id = self._generate_id()
             # Pass last_read_id to avoid redundant updates
             count = self._repo.batch_mark_read(
@@ -210,11 +225,35 @@ class MessageStatusService(BaseService):
         import utils.logger as logger
         status_map = self._repo.get_batch_for_user(user_id, message_ids)
         counts_map = self._repo.get_batch_counts(message_ids)
+        
+        # Batch fetch message rows to check channel settings
+        msg_rows = self._message_repo.get_batch_by_ids(message_ids)
+        msg_conv_map = {row["id"]: row["conversation_id"] for row in msg_rows}
+        
+        # Cache for channel settings
+        channel_settings_cache = {} # {conv_id: bool}
+        import src.api as api
+        servers_mod = api.get_servers()
 
         result: Dict[SnowflakeID, Dict[str, Any]] = {}
         for mid in message_ids:
+            conv_id = msg_conv_map.get(mid)
+            receipts_enabled = True
+            if conv_id and servers_mod:
+                if conv_id not in channel_settings_cache:
+                    try:
+                        channel = servers_mod.get_channel(conv_id, user_id)
+                        channel_settings_cache[conv_id] = getattr(channel, "read_receipts_enabled", True)
+                    except Exception:
+                        channel_settings_cache[conv_id] = True
+                receipts_enabled = channel_settings_cache[conv_id]
+
             stats = counts_map.get(mid, {"delivery_count": 0, "read_count": 0})
             
+            # If receipts disabled for channel, treat as 0
+            if not receipts_enabled:
+                stats = {"delivery_count": 0, "read_count": 0}
+
             # Determine overall status: if read_count > 0, it's READ. 
             # If delivery_count > 0, it's DELIVERED. Otherwise it's the user's own status.
             overall_status = status_map.get(mid, MessageStatusType.SENT)

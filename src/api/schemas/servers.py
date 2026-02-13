@@ -85,6 +85,7 @@ class ChannelResponse(BaseModel):
     category_id: Optional[SnowflakeID] = Field(None, description="Parent category ID")
     nsfw: bool = Field(False, description="NSFW flag")
     slowmode_seconds: int = Field(0, description="Slowmode delay in seconds")
+    read_receipts_enabled: bool = Field(True, description="Whether read receipts are enabled")
     created_at: int = Field(..., description="Creation timestamp")
     
     # Optional fields for DM support
@@ -105,6 +106,9 @@ class ChannelUpdateRequest(BaseModel):
     nsfw: Optional[bool] = Field(None, description="NSFW flag")
     slowmode_seconds: Optional[int] = Field(
         None, ge=0, le=21600, description="Slowmode delay"
+    )
+    read_receipts_enabled: Optional[bool] = Field(
+        None, description="Whether to track read receipts"
     )
 
 
