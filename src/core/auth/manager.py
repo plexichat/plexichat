@@ -308,6 +308,8 @@ class AuthManager(BaseManager):
         )
         if not rec or rec["used"] or rec["expires_at"] < self._get_timestamp():
             return False
+        if rec["token_type"] != "verify_email":
+            return False
         if not verify_token_hash(parsed["secret"], rec["token_hash"]):
             return False
 
@@ -480,7 +482,7 @@ class AuthManager(BaseManager):
             token=token,
         )
 
-    @cached(ttl=120, prefix="token_verify")
+    @cached(ttl=30, prefix="token_verify")
     def verify_token(
         self,
         token: str,
@@ -598,6 +600,18 @@ class AuthManager(BaseManager):
         )
         if not row or row["revoked"]:
             return None
+        if row["expires_at"] < self._get_timestamp():
+            return None
+        # Actually extend the session expiry
+        now = self._get_timestamp()
+        expire_hours = self._config.get("sessions.expire_hours", 720)
+        new_expires = now + (expire_hours * 3600 * 1000)
+        self._db.execute(
+            "UPDATE auth_sessions SET expires_at = ?, last_activity = ? WHERE id = ?",
+            (new_expires, now, parsed["id"]),
+        )
+        # Invalidate token cache so the new expiry is picked up
+        invalidate_pattern("token_verify:*")
         return token
 
     def logout(self, token: str) -> bool:
@@ -618,15 +632,23 @@ class AuthManager(BaseManager):
         if except_token:
             parsed = parse_token(except_token)
             if parsed and parsed["token_type"] == "session":
+                count_row = self._db.fetch_one(
+                    "SELECT COUNT(*) as cnt FROM auth_sessions WHERE user_id = ? AND id != ? AND revoked = 0",
+                    (user_id, parsed["id"]),
+                )
                 self._db.execute(
                     "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ? AND id != ?",
                     (user_id, parsed["id"]),
                 )
-                return 1
+                return count_row["cnt"] if count_row else 0
+        count_row = self._db.fetch_one(
+            "SELECT COUNT(*) as cnt FROM auth_sessions WHERE user_id = ? AND revoked = 0",
+            (user_id,),
+        )
         self._db.execute(
             "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ?", (user_id,)
         )
-        return 1
+        return count_row["cnt"] if count_row else 0
 
     def logout_all_users(self) -> int:
         """Invalidate ALL active sessions for ALL users."""
@@ -691,7 +713,7 @@ class AuthManager(BaseManager):
             
             # Reset forced change flag
             updates.append("force_username_change = ?")
-            params.append(False)
+            params.append(0)
 
         if email:
             email_index = self.crypto.blind_index(email, "user_email")
@@ -714,8 +736,6 @@ class AuthManager(BaseManager):
             invalidate_pattern("token_verify:*")
             # Clear user data cache so subsequent calls get fresh data
             invalidate_pattern("user_data:*")
-            invalidate_pattern(f"user_data:{user_id}")
-            invalidate_pattern(f"user_data:*{user_id}*")
             # Clear granular profile cache
             from src.core.database import cache_delete
             cache_delete(f"user_profile:{user_id}")
@@ -1276,11 +1296,28 @@ class AuthManager(BaseManager):
         data = self._get_user_data_cached(user_id)
         if not data:
             return None
-        return self._dict_to_user(data)
+        # Decrypt sensitive fields AFTER retrieval from cache (never store plaintext PII in cache)
+        user_dict = dict(data)
+        if user_dict.get("email_encrypted"):
+            try:
+                user_dict["email"] = self.crypto.decrypt_data(user_dict["email_encrypted"], context=str(user_id))
+            except Exception:
+                user_dict["email"] = None
+        if user_dict.get("date_of_birth"):
+            try:
+                user_dict["dob_decrypted"] = self.crypto.decrypt_data(user_dict["date_of_birth"], context=str(user_id))
+            except Exception:
+                user_dict["dob_decrypted"] = None
+        return self._dict_to_user(user_dict)
 
     @cached(ttl=60, prefix="user_data")
     def _get_user_data_cached(self, user_id: int) -> Optional[Dict[str, Any]]:
-        """Internal helper to fetch raw user data from DB for caching (including badges)."""
+        """Internal helper to fetch raw user data from DB for caching (including badges).
+        
+        SECURITY: This method must NOT decrypt sensitive fields (email, DOB) because
+        the result is stored in Redis/DiskCache. Decryption happens in get_user() after
+        retrieval from cache.
+        """
         query = """
             SELECT u.*, f.badges
             FROM auth_users u
@@ -1293,7 +1330,7 @@ class AuthManager(BaseManager):
             
         user_dict = dict(row)
         
-        # Parse badges
+        # Parse badges (safe to cache — not PII)
         if user_dict.get("badges"):
             try:
                 user_dict["badges_list"] = json.loads(user_dict["badges"]) if isinstance(user_dict["badges"], str) else user_dict["badges"]
@@ -1301,19 +1338,6 @@ class AuthManager(BaseManager):
                 user_dict["badges_list"] = []
         else:
             user_dict["badges_list"] = []
-
-        # Decrypt sensitive fields for the cached dictionary
-        if user_dict.get("email_encrypted"):
-            try:
-                user_dict["email"] = self.crypto.decrypt_data(user_dict["email_encrypted"], context=str(user_id))
-            except Exception:
-                user_dict["email"] = None
-        
-        if user_dict.get("date_of_birth"):
-            try:
-                user_dict["dob_decrypted"] = self.crypto.decrypt_data(user_dict["date_of_birth"], context=str(user_id))
-            except Exception:
-                user_dict["dob_decrypted"] = None
                 
         return user_dict
 

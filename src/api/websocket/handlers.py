@@ -728,7 +728,7 @@ class OpcodeHandler:
 
         try:
             token_info: TokenInfo = self._auth.verify_token(
-                token, ip_address, user_agent
+                token, ip_address, user_agent, is_selftest=is_selftest
             )
             return token_info.user_id
         except Exception:

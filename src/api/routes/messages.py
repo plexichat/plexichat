@@ -330,7 +330,7 @@ def get_channel_messages(
             f"Failed to get messages for channel {channel_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
         )
 
 
@@ -371,10 +371,12 @@ async def search_messages(
         # Try server channel first
         if servers_mod:
             try:
+                # TODO: Implement server-side SQL LIKE/FTS search in the messaging module
+                # to avoid loading messages into memory and to search all messages, not just recent ones.
                 all_messages = servers_mod.get_channel_messages(
                     user_id=current_user.user_id,
                     channel_id=cid,
-                    limit=500,  # Get more messages to search through
+                    limit=200,
                 )
                 if all_messages:
                     search_lower = content.lower()
@@ -390,7 +392,7 @@ async def search_messages(
         if not messages and messaging:
             try:
                 all_messages = messaging.get_messages(
-                    user_id=current_user.user_id, conversation_id=cid, limit=500
+                    user_id=current_user.user_id, conversation_id=cid, limit=200
                 )
                 if all_messages:
                     search_lower = content.lower()
@@ -409,7 +411,7 @@ async def search_messages(
             try:
                 users = auth.get_user_profiles_bulk(author_ids)
                 author_cache = {
-                    uid: {
+                    str(uid): {
                         "username": u["username"],
                         "avatar_url": u.get("avatar_url"),
                         "badges": u.get("badges", []),
@@ -424,7 +426,7 @@ async def search_messages(
         result = []
         for m in messages:
             author_id = m.author_id
-            author_info = author_cache.get(author_id) or author_cache.get(str(author_id)) or {}
+            author_info = author_cache.get(str(author_id)) or {}
             result.append(
                 _message_to_response(
                     m, 
@@ -443,7 +445,7 @@ async def search_messages(
             f"Failed to search messages in channel {channel_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
         )
 
 
@@ -701,7 +703,7 @@ async def send_channel_message(
             f"Failed to send message to channel {channel_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
         )
 
 
@@ -755,7 +757,7 @@ async def get_unread_count(
             f"Error getting unread count for channel {channel_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
         )
 
 
@@ -955,7 +957,7 @@ async def acknowledge_messages(
             f"Error acknowledging messages in channel {channel_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
         )
 
 
@@ -1045,7 +1047,7 @@ async def get_message(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
         )
 
 
@@ -1214,7 +1216,7 @@ async def edit_message(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
         )
 
 
@@ -1343,7 +1345,7 @@ async def delete_message(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
         )
 
 
@@ -1433,7 +1435,7 @@ async def get_pinned_messages(
     except Exception as e:
         logger.error(f"Failed to get pinned messages for channel {channel_id}: {e}")
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
         )
 
 
@@ -1553,7 +1555,7 @@ async def pin_message(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
         )
 
 
@@ -1673,7 +1675,7 @@ async def unpin_message(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
         )
 
 
@@ -1714,7 +1716,7 @@ def get_all_unread_counts(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
         )
 
 
@@ -1849,6 +1851,6 @@ async def trigger_typing(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
         )
 

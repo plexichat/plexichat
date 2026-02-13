@@ -1,10 +1,12 @@
 import re
+import threading
 
 # Regex pattern to match ? placeholders (not inside single or double quotes)
 _PLACEHOLDER_PATTERN = re.compile(r'''('(?:''|[^'])*'|"(?:""|[^"])*")|(\?)''')
 
 # Global cache for converted queries to avoid redundant regex processing
 _QUERY_CONVERSION_CACHE = {}
+_CACHE_LOCK = threading.Lock()
 
 def convert_placeholders(query: str, db_type: str) -> str:
     """
@@ -16,8 +18,9 @@ def convert_placeholders(query: str, db_type: str) -> str:
 
     # Check cache first
     cache_key = f"{db_type}:{query}"
-    if cache_key in _QUERY_CONVERSION_CACHE:
-        return _QUERY_CONVERSION_CACHE[cache_key]
+    with _CACHE_LOCK:
+        if cache_key in _QUERY_CONVERSION_CACHE:
+            return _QUERY_CONVERSION_CACHE[cache_key]
 
     # 1. Convert abs(random()) to floor(random() * ...) for PostgreSQL
     if "abs(random())" in query.lower():
@@ -26,7 +29,8 @@ def convert_placeholders(query: str, db_type: str) -> str:
     # 2. Convert INSERT OR IGNORE to INSERT ... ON CONFLICT DO NOTHING
     if "INSERT OR IGNORE" in query.upper():
         query = re.sub(r"INSERT OR IGNORE INTO", "INSERT INTO", query, flags=re.IGNORECASE)
-        if "ON CONFLICT DO NOTHING" not in query.upper():
+        # Only append if not already present and it's a simple INSERT statement
+        if "ON CONFLICT" not in query.upper() and "RETURNING" not in query.upper():
             query = query.strip()
             if query.endswith(";"):
                 query = query[:-1] + " ON CONFLICT DO NOTHING;"
@@ -48,8 +52,9 @@ def convert_placeholders(query: str, db_type: str) -> str:
     converted_query = pattern.sub(replace, query)
     
     # Store in cache (limit size to prevent memory growth)
-    if len(_QUERY_CONVERSION_CACHE) < 1000:
-        _QUERY_CONVERSION_CACHE[cache_key] = converted_query
+    with _CACHE_LOCK:
+        if len(_QUERY_CONVERSION_CACHE) < 1000:
+            _QUERY_CONVERSION_CACHE[cache_key] = converted_query
         
     return converted_query
 

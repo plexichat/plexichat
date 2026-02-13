@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS msg_messages (
     author_id INTEGER NOT NULL,
     content TEXT NOT NULL,
     content_encrypted TEXT,
+    content_index TEXT,
     message_type TEXT NOT NULL DEFAULT 'text',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
@@ -165,6 +166,7 @@ CREATE INDEX IF NOT EXISTS idx_msg_dm_lookup_users ON msg_dm_lookup(user1_id, us
 -- Additional performance indexes for read receipts and unread counts
 CREATE INDEX IF NOT EXISTS idx_msg_messages_conv_author ON msg_messages(conversation_id, author_id);
 CREATE INDEX IF NOT EXISTS idx_msg_messages_conv_id_deleted ON msg_messages(conversation_id, id, deleted);
+CREATE INDEX IF NOT EXISTS idx_msg_messages_content_index ON msg_messages(content_index);
 CREATE INDEX IF NOT EXISTS idx_msg_participants_last_read ON msg_participants(conversation_id, user_id, last_read_message_id);
 """
 

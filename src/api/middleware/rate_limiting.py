@@ -52,16 +52,14 @@ def get_user_info_from_request(request: Request) -> Dict[str, Any]:
                 or permissions.get("admin", False)
             )
 
-    # Secure bypass check
+    # Secure bypass check — bypass_secret MUST be configured and match
     bypass_secret = config.get("rate_limiting.bypass_secret")
     bypass_header = request.headers.get("X-RateLimit-Bypass")
-    internal_header = request.headers.get("X-Internal-Request")
 
-    if bypass_header and (not bypass_secret or bypass_header == bypass_secret):
-        user_info["is_internal"] = True
-    elif internal_header and internal_header.lower() == "true":
+    if bypass_secret and bypass_header and bypass_header == bypass_secret:
         user_info["is_internal"] = True
     elif getattr(request.state, "is_internal", False):
+        # Only trust is_internal when set server-side (not from client headers)
         user_info["is_internal"] = True
 
     return user_info

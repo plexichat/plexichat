@@ -9,6 +9,7 @@ import sys
 import time
 import re
 import unicodedata
+import threading
 from typing import Optional
 
 import utils.config as global_config
@@ -18,7 +19,37 @@ from .routes import create_api_router, create_docs_router, is_docs_enabled
 from .routes.docs import get_docs_config
 
 # Local in-memory cache for media file metadata to avoid redundant DB lookups
-_media_metadata_cache = {} # {filename: metadata_row}
+from collections import OrderedDict
+
+
+class _LRUCache:
+    """Simple thread-safe bounded LRU cache that behaves like a dict for get/setitem/contains."""
+    def __init__(self, maxsize: int = 1024):
+        self._cache: OrderedDict = OrderedDict()
+        self._maxsize = maxsize
+        self._lock = threading.Lock()
+
+    def get(self, key, default=None):
+        with self._lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)
+                return self._cache[key]
+            return default
+
+    def __setitem__(self, key, value):
+        with self._lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)
+            self._cache[key] = value
+            if len(self._cache) > self._maxsize:
+                self._cache.popitem(last=False)
+
+    def __contains__(self, key):
+        with self._lock:
+            return key in self._cache
+
+
+_media_metadata_cache = _LRUCache(maxsize=1024)
 
 def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> FastAPI:
     """
@@ -347,30 +378,32 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 }
                 
                 # Add CORS headers specifically for media to avoid policy blocks
-                # We must use the specific Origin if credentials (cookies/auth) are used
                 origin = request.headers.get("Origin")
                 allowed_origins = config.cors_origins
+                allow_credentials = config.cors_allow_credentials
                 
-                # If no Origin header (direct browser access), we don't need CORS
-                if not origin:
-                    headers["Access-Control-Allow-Origin"] = "*"
-                else:
-                    # Determine if this specific origin is allowed
+                if origin:
                     is_allowed = False
-                    if isinstance(allowed_origins, list):
-                        if "*" in allowed_origins or origin in allowed_origins:
-                            is_allowed = True
-                    elif isinstance(allowed_origins, str):
-                        if allowed_origins == "*" or allowed_origins == origin:
-                            is_allowed = True
+                    if "*" in allowed_origins:
+                        is_allowed = True
+                    elif origin in allowed_origins:
+                        is_allowed = True
                     
                     if is_allowed:
-                        # CRITICAL: If credentials are true, Origin MUST NOT be '*'
                         headers["Access-Control-Allow-Origin"] = origin
-                        headers["Access-Control-Allow-Credentials"] = "true"
+                        if allow_credentials:
+                            headers["Access-Control-Allow-Credentials"] = "true"
                     else:
-                        # Fallback for unauthorized origins
-                        headers["Access-Control-Allow-Origin"] = "null"
+                        # If not explicitly allowed, we still need to be careful
+                        # If we have '*' in allowed_origins but credentials are required, 
+                        # we must echo the origin
+                        if "*" in allowed_origins and allow_credentials:
+                            headers["Access-Control-Allow-Origin"] = origin
+                            headers["Access-Control-Allow-Credentials"] = "true"
+                        else:
+                            headers["Access-Control-Allow-Origin"] = "null"
+                elif "*" in allowed_origins and not allow_credentials:
+                    headers["Access-Control-Allow-Origin"] = "*"
                 
                 headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
                 headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, X-Requested-With, Accept, Origin"

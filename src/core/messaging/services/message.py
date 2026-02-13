@@ -24,7 +24,7 @@ from .participant import ParticipantService
 from .user_settings import UserSettingsService
 from .content_filter import ContentFilterService
 from src.core.base import SnowflakeID
-from src.utils.encryption import encrypt_message
+from src.utils.encryption import encrypt_message, blind_index
 import utils.logger as logger
 
 
@@ -104,6 +104,8 @@ class MessageService(BaseService):
 
         # Encrypt content if enabled
         final_content = content_result.sanitized_content
+        content_idx = blind_index(final_content, "message_content")
+        
         if self._get_config("encrypt_messages", True):
             final_content = encrypt_message(final_content, msg_id)
 
@@ -130,6 +132,7 @@ class MessageService(BaseService):
                 message_type,
                 now,
                 reply_to_id=reply_to_id,
+                content_index=content_idx,
                 metadata=metadata if metadata else None,
                 webhook_id=webhook_id,
                 auto_commit=False,
@@ -251,12 +254,13 @@ class MessageService(BaseService):
 
         now = self._get_timestamp()
         final_content = content_result.sanitized_content
+        content_idx = blind_index(final_content, "message_content")
 
         # Encrypt content if enabled
         if self._get_config("encrypt_messages", True):
             final_content = encrypt_message(final_content, message_id)
 
-        self._repo.update_content(message_id, final_content, now)
+        self._repo.update_content(message_id, final_content, now, content_index=content_idx)
         
         # Invalidate old cache
         cache_delete(f"msg:obj:{message_id}")

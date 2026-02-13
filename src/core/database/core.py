@@ -152,6 +152,8 @@ class Database:
         """Context manager exit."""
         if exc_type:
             self.rollback()
+        else:
+            self.commit()
         return False
 
     def get_pool_stats(self) -> Dict[str, Any]:

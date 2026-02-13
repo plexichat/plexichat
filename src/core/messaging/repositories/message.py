@@ -24,6 +24,7 @@ class MessageRepository(BaseRepository[Message]):
         created_at: int,
         reply_to_id: Optional[SnowflakeID] = None,
         content_encrypted: Optional[str] = None,
+        content_index: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         webhook_id: Optional[SnowflakeID] = None,
         auto_commit: bool = True,
@@ -31,15 +32,16 @@ class MessageRepository(BaseRepository[Message]):
         """Create a new message."""
         self._execute(
             """INSERT INTO msg_messages 
-               (id, conversation_id, author_id, content, content_encrypted, message_type, 
+               (id, conversation_id, author_id, content, content_encrypted, content_index, message_type, 
                 created_at, updated_at, reply_to_id, metadata, webhook_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 msg_id,
                 conversation_id,
                 author_id,
                 content,
                 content_encrypted,
+                content_index,
                 message_type.value,
                 created_at,
                 created_at,
@@ -110,8 +112,17 @@ class MessageRepository(BaseRepository[Message]):
         after_id: Optional[SnowflakeID] = None,
     ) -> List[Dict[str, Any]]:
         """Search messages in a conversation."""
-        query = "SELECT * FROM msg_messages WHERE conversation_id = ? AND deleted = 0 AND content LIKE ?"
-        params: List[Any] = [conversation_id, f"%{search_query}%"]
+        # If it looks like an exact match search for a single word, try blind index
+        use_blind_index = " " not in search_query.strip()
+        
+        if use_blind_index:
+            from src.utils.encryption import blind_index
+            query_index = blind_index(search_query, "message_content")
+            query = "SELECT * FROM msg_messages WHERE conversation_id = ? AND deleted = 0 AND (content_index = ? OR content LIKE ?)"
+            params: List[Any] = [conversation_id, query_index, f"%{search_query}%"]
+        else:
+            query = "SELECT * FROM msg_messages WHERE conversation_id = ? AND deleted = 0 AND content LIKE ?"
+            params: List[Any] = [conversation_id, f"%{search_query}%"]
 
         if before_id:
             query += " AND id < ?"
@@ -134,15 +145,16 @@ class MessageRepository(BaseRepository[Message]):
         msg_id: SnowflakeID,
         content: str,
         updated_at: int,
+        content_index: Optional[str] = None,
         auto_commit: bool = True,
     ) -> None:
         """Update message content (edit)."""
         cid = self._get_conv_id(msg_id)
         self._execute(
             """UPDATE msg_messages 
-               SET content = ?, content_encrypted = NULL, updated_at = ?, edited = 1
+               SET content = ?, content_encrypted = NULL, content_index = ?, updated_at = ?, edited = 1
                WHERE id = ?""",
-            (content, updated_at, msg_id),
+            (content, content_index, updated_at, msg_id),
             auto_commit=auto_commit,
         )
         if cid:

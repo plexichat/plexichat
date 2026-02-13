@@ -16,6 +16,8 @@ try:
     qrcode = importlib.import_module("qrcode")
 except Exception:
     qrcode = None
+    import logging as _logging
+    _logging.getLogger(__name__).info("qrcode module not available — QR code generation will be disabled")
 
 import utils.config as config
 

@@ -96,8 +96,9 @@ class HardwareVault:
 
         # Generate new machine-local key
         logger.warning(
-            "Generating machine-local encryption key. "
-            "For distributed deployments, set PLEXICHAT_SYSTEM_KEY environment variable."
+            "CRITICAL SECURITY WARNING: Generating machine-local encryption key. "
+            "This key is NOT hardware-bound and is less secure than TPM or Environment Variable. "
+            "For production deployments, set PLEXICHAT_SYSTEM_KEY environment variable or ensure TPM is available."
         )
         self._master_key = os.urandom(32)
         self._source = "local"
