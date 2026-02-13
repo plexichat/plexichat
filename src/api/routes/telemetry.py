@@ -113,3 +113,40 @@ async def submit_response_times(
         )
         # Return success to client even if recording fails (don't break client app)
         return TelemetryResponse(accepted=0, message="Telemetry processing failed")
+
+
+@router.post(
+    "/csp-report",
+    summary="Submit CSP violation report",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def submit_csp_report(
+    request: Request,
+):
+    """
+    Submit a Content-Security-Policy violation report.
+    
+    The browser sends this data when a CSP violation occurs.
+    """
+    try:
+        # CSP reports use application/csp-report or application/json
+        body = await request.body()
+        import json
+        try:
+            report = json.loads(body)
+        except:
+            report = {"raw": body.decode(errors='ignore')}
+            
+        client_ip = request.client.host if request.client else "unknown"
+        logger.warning(f"CSP Violation reported from {client_ip}: {json.dumps(report)}")
+        
+        # Optionally record this in telemetry
+        from src.api import get_telemetry
+        telemetry = get_telemetry()
+        if telemetry and hasattr(telemetry, 'record_csp_violation'):
+            telemetry.record_csp_violation(report, client_ip)
+            
+    except Exception as e:
+        logger.error(f"Error processing CSP report: {e}")
+        
+    return None
