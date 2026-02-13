@@ -146,6 +146,7 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
         timestamp: int,
         status_id: SnowflakeID,
         auto_commit: bool = True,
+        start_from_id: Optional[SnowflakeID] = None,
     ) -> int:
         """Mark messages as read in batch."""
         # 1. Find all messages in the conversation that need marking (not by user, not deleted)
@@ -155,6 +156,10 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
         if up_to_message_id:
             query += " AND id <= ?"
             params.append(up_to_message_id)
+            
+        if start_from_id:
+            query += " AND id > ?"
+            params.append(start_from_id)
             
         msg_rows = self._fetch_all(query, tuple(params))
         if not msg_rows:

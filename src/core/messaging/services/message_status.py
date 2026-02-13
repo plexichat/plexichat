@@ -70,8 +70,24 @@ class MessageStatusService(BaseService):
         up_to_message_id: Optional[SnowflakeID] = None,
     ) -> int:
         """Mark messages as read (batch operation)."""
-        if not self._participant_svc.is_participant(conversation_id, user_id):
-            raise ConversationAccessDeniedError("Not a participant in this conversation")
+        # Get participant to check current last_read_message_id
+        participant = self._participant_svc.get_participant(conversation_id, user_id)
+        if not participant:
+            # Fallback to is_participant check if get_participant fails (though it shouldn't for a member)
+            if not self._participant_svc.is_participant(conversation_id, user_id):
+                raise ConversationAccessDeniedError("Not a participant in this conversation")
+            last_read_id = 0
+        else:
+            last_read_id = participant.last_read_message_id or 0
+
+        # Determine target message ID
+        target_msg_id = up_to_message_id
+        if not target_msg_id:
+            target_msg_id = self._message_repo.get_max_id_in_conversation(conversation_id)
+
+        # Skip if no new messages to mark
+        if not target_msg_id or target_msg_id <= last_read_id:
+            return 0
 
         now = self._get_timestamp()
 
@@ -81,44 +97,41 @@ class MessageStatusService(BaseService):
         count = 0
         if user_settings.read_receipts_enabled:
             status_id = self._generate_id()
+            # Pass last_read_id to avoid redundant updates
             count = self._repo.batch_mark_read(
-                user_id, conversation_id, up_to_message_id, now, status_id
+                user_id, conversation_id, target_msg_id, now, status_id, start_from_id=last_read_id
             )
             
-            # Invalidate reader IDs and status batch cache for ALL users
-            try:
-                from src.core.database import invalidate_pattern
-                # Key format: msg_reader_ids:* and msg_status_batch:*
-                invalidate_pattern("msg_reader_ids:*")
-                invalidate_pattern("msg_status_batch:*")
-                
-                # ALSO invalidate the individual message object caches since they contain read counts and status
-                invalidate_pattern("msg:obj:*")
-                # And the recent messages list cache
-                invalidate_pattern(f"msg:recent:{conversation_id}")
-                
-                # ALSO invalidate the message list caches for the API and internal repo
-                self._message_repo.invalidate_conversation_cache(conversation_id)
-            except Exception:
-                pass
+            if count > 0:
+                # Invalidate reader IDs and status batch cache for ALL users
+                try:
+                    from src.core.database import invalidate_pattern
+                    # Key format: msg_reader_ids:* and msg_status_batch:*
+                    invalidate_pattern("msg_reader_ids:*")
+                    invalidate_pattern("msg_status_batch:*")
+                    
+                    # ALSO invalidate the individual message object caches since they contain read counts and status
+                    invalidate_pattern("msg:obj:*")
+                    # And the recent messages list cache
+                    invalidate_pattern(f"msg:recent:{conversation_id}")
+                    
+                    # ALSO invalidate the message list caches for the API and internal repo
+                    self._message_repo.invalidate_conversation_cache(conversation_id)
+                except Exception:
+                    pass
 
         # Update participant's last read position (always, for unread counts)
-        last_msg_id = up_to_message_id
-        if not last_msg_id:
-            last_msg_id = self._message_repo.get_max_id_in_conversation(conversation_id)
-
-        if last_msg_id:
-            self._participant_repo.update_last_read(
-                conversation_id, user_id, last_msg_id, now
-            )
-            
-            # Invalidate unread counts cache
-            try:
-                # from src.core.database import invalidate_cached
-                self.get_unread_count.invalidate(user_id, conversation_id)  # type: ignore
-                self.get_unread_count.invalidate(user_id, None)  # type: ignore
-            except Exception:
-                pass
+        self._participant_repo.update_last_read(
+            conversation_id, user_id, target_msg_id, now
+        )
+        
+        # Invalidate unread counts cache
+        try:
+            # from src.core.database import invalidate_cached
+            self.get_unread_count.invalidate(user_id, conversation_id)  # type: ignore
+            self.get_unread_count.invalidate(user_id, None)  # type: ignore
+        except Exception:
+            pass
 
         return count
 
@@ -138,47 +151,55 @@ class MessageStatusService(BaseService):
     def get_message_status(
         self, user_id: SnowflakeID, message_id: SnowflakeID
     ) -> List[MessageStatus]:
-        """Get delivery/read status for a message (sender only)."""
+        """Get delivery/read status for a message (participants only)."""
         msg_row = self._message_repo.get_by_id(message_id)
         if not msg_row:
             raise MessageNotFoundError("Message not found")
 
-        if msg_row["author_id"] != user_id:
-            raise MessageAccessDeniedError("Only sender can view message status")
+        # Security: any participant in the conversation can view message status
+        if not self._participant_svc.is_participant(msg_row["conversation_id"], user_id):
+            raise MessageAccessDeniedError("Only participants can view message status")
 
         rows = self._repo.get_all_by_message(message_id)
         return [self._repo.row_to_model(row) for row in rows]
 
     def get_reader_ids(self, user_id: SnowflakeID, message_id: SnowflakeID) -> List[SnowflakeID]:
-        """Get IDs of users who have read a message (sender only)."""
+        """Get IDs of users who have read a message (participants only)."""
         msg_row = self._message_repo.get_by_id(message_id)
         if not msg_row:
             return []
             
-        # Security: only the author can see who read their message
-        if msg_row["author_id"] != user_id:
+        # Security: any participant in the conversation can see who read the message
+        if not self._participant_svc.is_participant(msg_row["conversation_id"], user_id):
             return []
             
         return self._repo.get_reader_ids(message_id)
 
     @cached(ttl=30, prefix="msg_reader_ids")
     def get_batch_reader_ids(self, user_id: SnowflakeID, message_ids: List[SnowflakeID]) -> Dict[SnowflakeID, List[SnowflakeID]]:
-        """Get IDs of users who have read messages (batch, sender only)."""
+        """Get IDs of users who have read messages (batch, participants only)."""
         if not message_ids:
             return {}
             
-        # Get message rows to verify ownership
+        # Get message rows to verify participant access
         msg_rows = self._message_repo.get_batch_by_ids(message_ids)
         
-        # Filter for messages where user is the author
-        owned_message_ids = [
-            row["id"] for row in msg_rows if row["author_id"] == user_id
-        ]
+        # Filter for messages where user is a participant
+        valid_message_ids = []
+        conv_cache = {}
         
-        if not owned_message_ids:
+        for row in msg_rows:
+            conv_id = row["conversation_id"]
+            if conv_id not in conv_cache:
+                conv_cache[conv_id] = self._participant_svc.is_participant(conv_id, user_id)
+            
+            if conv_cache[conv_id]:
+                valid_message_ids.append(row["id"])
+        
+        if not valid_message_ids:
             return {mid: [] for mid in message_ids}
             
-        reader_map = self._repo.get_batch_reader_ids(owned_message_ids)
+        reader_map = self._repo.get_batch_reader_ids(valid_message_ids)
         
         # Ensure all requested IDs are in the result
         result: Dict[SnowflakeID, List[SnowflakeID]] = {mid: [] for mid in message_ids}

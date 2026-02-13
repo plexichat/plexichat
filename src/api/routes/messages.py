@@ -254,21 +254,17 @@ def get_channel_messages(
                 # Fallback to empty reactions if batch fails
                 reactions_cache = {m.id: [] for m in messages}
 
-        # Bulk fetch reader information for messages authored by current user (sender only)
+        # Bulk fetch reader information for all messages (participants only)
         # This eliminates the N+1 problem in _message_to_response
         readers_cache = {} # {str(message_id): [username, ...]}
         if messaging and auth and messages:
             try:
-                # Only check messages authored by current user
-                own_message_ids = []
-                for m in messages:
-                    mid = getattr(m, "id", None) or m.get("id")
-                    author_id = getattr(m, "author_id", None) or m.get("author_id")
-                    if int(author_id) == int(current_user.user_id):
-                        own_message_ids.append(mid)
+                # Collect all message IDs in the batch
+                batch_message_ids = [getattr(m, "id", None) or m.get("id") for m in messages]
 
-                if own_message_ids:
-                    reader_ids_map = messaging.get_batch_reader_ids(current_user.user_id, own_message_ids)
+                if batch_message_ids:
+                    # The messaging service now handles participant checks for us
+                    reader_ids_map = messaging.get_batch_reader_ids(current_user.user_id, batch_message_ids)
                     
                     # Collect all unique reader IDs to fetch usernames in bulk
                     all_reader_ids = set()
