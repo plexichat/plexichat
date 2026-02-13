@@ -31,7 +31,7 @@ def _message_to_response(
     author_badges: Optional[List[str]] = None,
     channel_id: Optional[int] = None,
     reactions_data=None,
-    read_by_usernames: Optional[List[str]] = None,
+    read_by_data: Optional[List[Dict[str, Any]]] = None,
     media_mod=None,
 ) -> MessageResponse:
     """Convert message object to response model."""
@@ -107,9 +107,19 @@ def _message_to_response(
         or 0
     )
 
-    # Use provided reader usernames (must be bulk-fetched by caller for performance)
-    read_by = read_by_usernames or []
-    read_count = len(read_by) if read_by_usernames is not None else get_attr(msg, "read_count", 0)
+    # Use provided reader data (must be bulk-fetched by caller for performance)
+    from src.api.schemas.messages import ReaderInfo
+    read_by = []
+    if read_by_data:
+        read_by = [
+            ReaderInfo(
+                id=SnowflakeID(r["id"]), 
+                username=r["username"], 
+                avatar_url=r.get("avatar_url")
+            ) for r in read_by_data
+        ]
+    
+    read_count = len(read_by) if read_by_data is not None else get_attr(msg, "read_count", 0)
 
     return MessageResponse(
         id=SnowflakeID(msg_id),
@@ -280,10 +290,14 @@ def get_channel_messages(
                         # Use string keys for robust lookup
                         reader_users_str = {str(uid): u for uid, u in reader_users.items()}
                         
-                        # Build the readers cache with usernames
+                        # Build the readers cache with ReaderInfo objects
                         for mid, r_ids in reader_ids_map.items():
                             readers_cache[str(mid)] = [
-                                reader_users_str[str(rid)]["username"] 
+                                {
+                                    "id": str(rid),
+                                    "username": reader_users_str[str(rid)]["username"],
+                                    "avatar_url": reader_users_str[str(rid)].get("avatar_url")
+                                }
                                 for rid in r_ids if str(rid) in reader_users_str
                             ]
             except Exception as e:
@@ -303,7 +317,7 @@ def get_channel_messages(
                     author_avatar_url=author_info.get("avatar_url"),
                     author_badges=author_info.get("badges"),
                     reactions_data=reactions_cache.get(mid, []),
-                    read_by_usernames=readers_cache.get(str(mid)),
+                    read_by_data=readers_cache.get(str(mid)),
                     media_mod=media_mod,
                 )
             )

@@ -57,6 +57,16 @@ class AttachmentResponse(BaseModel):
     hash: Optional[str] = Field(None, description="SHA-256 hash for content reporting")
 
 
+class ReaderInfo(BaseModel):
+    """Information about a user who read a message."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: SnowflakeID = Field(..., description="User ID")
+    username: str = Field(..., description="Username")
+    avatar_url: Optional[str] = Field(None, description="Avatar URL")
+
+
 class MessageResponse(BaseModel):
     """Message response."""
 
@@ -86,8 +96,8 @@ class MessageResponse(BaseModel):
     )
     read_count: int = Field(0, description="Number of users who read the message")
     read: bool = Field(False, description="Whether the current user has read this message")
-    read_by: List[str] = Field(
-        default_factory=list, description="List of usernames who have read the message"
+    read_by: List[ReaderInfo] = Field(
+        default_factory=list, description="List of users who have read the message"
     )
     author_username: Optional[str] = Field(None, description="Author's username")
     author_avatar_url: Optional[str] = Field(None, description="Author's avatar URL")
