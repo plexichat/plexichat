@@ -14,7 +14,7 @@ from src.api.schemas.admin import (
 from src.api.schemas.common import SuccessResponse
 from .utils import check_host_restriction, get_admin_from_token
 import utils.logger as logger
-from src.core import config
+import utils.config as config
 
 router = APIRouter()
 
