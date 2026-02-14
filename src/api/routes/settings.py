@@ -223,14 +223,15 @@ async def set_setting(
     },
 )
 async def bulk_update_settings(
-    body: Dict[str, str], current_user: TokenInfo = Depends(get_current_user)
+    body: Dict[str, Any], current_user: TokenInfo = Depends(get_current_user)
 ) -> SuccessResponse:
     """
     Update multiple settings at once.
     
     Accepts a dictionary of key-value pairs to update.
     """
-    logger.debug(f"Bulk settings update request from user {current_user.user_id}: {body}")
+    logger.info(f"Bulk settings update request from user {current_user.user_id}: {list(body.keys())}")
+    
     settings_module = api.get_settings()
     presence_module = api.get_presence()
     
@@ -242,12 +243,15 @@ async def bulk_update_settings(
         )
 
     try:
-        for key, value in body.items():
+        for key, raw_value in body.items():
+            # Convert value to string for storage
+            value = str(raw_value) if not isinstance(raw_value, str) else raw_value
+            
             # Special case for focused channel
             if key == "_focused_channel" and presence_module:
                 try:
                     import json
-                    data = json.loads(str(value))
+                    data = json.loads(value)
                     cid = data.get("channel_id")
                     sid = data.get("server_id")
                     
@@ -262,7 +266,7 @@ async def bulk_update_settings(
 
             # Standard settings
             try:
-                settings_module.set_setting(current_user.user_id, key, str(value))
+                settings_module.set_setting(current_user.user_id, key, value)
             except Exception as e:
                 logger.warning(f"Bulk: Failed to set setting '{key}': {e}")
 

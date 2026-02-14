@@ -137,6 +137,14 @@ class RegexRule(BaseRule):
                         issues.append(f"pattern {i} contains repeated alternation groups")
                     elif re.search(r'\.\*.*\.\*', pattern_str) or re.search(r'\.\+.*\.\+', pattern_str):
                         issues.append(f"pattern {i} contains multiple wildcard repeats")
+                    elif re.search(r'\([^()]*\)\s*(?:\+|\*|\{\d+,?\d*\})\s*(?:\+|\*|\{\d+,?\d*\})', pattern_str):
+                        issues.append(f"pattern {i} contains stacked quantifiers")
+                    elif re.search(r'\([^()]*[+*][^()]*\)\s*\{\d+,?\d*\}', pattern_str):
+                        issues.append(f"pattern {i} contains repeated quantified group ranges")
+                    elif re.search(r'(?:\w+\*){3,}', pattern_str) or re.search(r'(?:\w+\+){3,}', pattern_str):
+                        issues.append(f"pattern {i} contains repeated token quantifiers")
+                    elif re.search(r'\{\d{4,}(?:,\d*)?\}', pattern_str):
+                        issues.append(f"pattern {i} contains excessive repetition range")
                     elif re.search(r'\\[1-9]\d?', pattern_str):
                         issues.append(f"pattern {i} contains backreferences")
                     elif re.search(r'[a-zA-Z]*\*[a-zA-Z]*\*', pattern_str):

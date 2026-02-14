@@ -463,11 +463,12 @@ class AuthManager(BaseManager):
         )
         
         # Get threshold from config or default to 5
-        threshold = self._config.get("security.max_failed_attempts", 5)
+        security_config = self._config.get("security", {})
+        threshold = security_config.get("max_failed_attempts", 5)
         
         if row and row["failed_login_attempts"] >= threshold:
             # Default lock time 15 mins (60000ms * 15)
-            lock_duration_min = self._config.get("security.lockout_duration_minutes", 15)
+            lock_duration_min = security_config.get("lockout_duration_minutes", 15)
             lock_until = self._get_timestamp() + (lock_duration_min * 60 * 1000)
             self._db.execute(
                 "UPDATE auth_users SET account_locked = 1, locked_until = ? WHERE id = ?",
@@ -485,7 +486,8 @@ class AuthManager(BaseManager):
         sid = self._generate_id()
         now = self._get_timestamp()
         # Get session lifetime from config (default 30 days)
-        expire_hours = self._config.get("sessions.expire_hours", 720)
+        sessions_config = self._config.get("sessions", {})
+        expire_hours = sessions_config.get("expire_hours", 720)
         expires = now + (expire_hours * 3600 * 1000)
         token, token_hash = create_session_token(sid)
         
@@ -496,7 +498,7 @@ class AuthManager(BaseManager):
             ip_encrypted = self.crypto.encrypt_data(ip, context=str(sid))
             
         # Enforce session limit
-        max_sessions = self._config.get("sessions.max_per_user", 10)
+        max_sessions = sessions_config.get("max_per_user", 10)
         sessions = self.get_sessions(user_id)
         if len(sessions) >= max_sessions:
             # Sort by last activity to find oldest
@@ -559,7 +561,7 @@ class AuthManager(BaseManager):
             raise TokenExpiredError("Expired")
             
         if (
-            self._get_config("security.token_binding", False)
+            self._config.get("security", {}).get("token_binding", False)
             and ip_address
         ):
             current_ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
@@ -578,10 +580,11 @@ class AuthManager(BaseManager):
             params = [now]
 
             # Extend session if enabled
-            if self._config.get("sessions.extend_on_activity", True):
-                extend_threshold = self._config.get("sessions.extend_threshold_hours", 24) * 3600 * 1000
+            sessions_config = self._config.get("sessions", {})
+            if sessions_config.get("extend_on_activity", True):
+                extend_threshold = sessions_config.get("extend_threshold_hours", 24) * 3600 * 1000
                 if (row["expires_at"] - now) < extend_threshold:
-                    expire_hours = self._config.get("sessions.expire_hours", 720)
+                    expire_hours = sessions_config.get("expire_hours", 720)
                     new_expires = now + (expire_hours * 3600 * 1000)
                     updates.append("expires_at = ?")
                     params.append(new_expires)
@@ -647,7 +650,7 @@ class AuthManager(BaseManager):
             return None
         # Actually extend the session expiry
         now = self._get_timestamp()
-        expire_hours = self._config.get("sessions.expire_hours", 720)
+        expire_hours = self._config.get("sessions", {}).get("expire_hours", 720)
         new_expires = now + (expire_hours * 3600 * 1000)
         self._db.execute(
             "UPDATE auth_sessions SET expires_at = ?, last_activity = ? WHERE id = ?",
@@ -725,11 +728,11 @@ class AuthManager(BaseManager):
 
     def revoke_session(self, user_id: int, session_id: int) -> bool:
         invalidate_pattern("token_verify:*")
-        self._db.execute(
+        cursor = self._db.execute(
             "UPDATE auth_sessions SET revoked = 1 WHERE id = ? AND user_id = ?",
             (session_id, user_id),
         )
-        if self._db.last_row_count > 0:
+        if cursor.rowcount > 0:
             self._log_audit(AuditEventType.SESSION_REVOKED, user_id, True)
             return True
         return False
@@ -1064,9 +1067,22 @@ class AuthManager(BaseManager):
         display_name: str,
         permissions: Optional[Dict[str, bool]] = None,
     ) -> Bot:
+        # Enforce bot limit
+        bot_config = self._config.get("accounts", {})
+        max_bots = bot_config.get("max_bots_per_user", 5)
+        current_bots = self.get_user_bots(owner_id)
+        if len(current_bots) >= max_bots:
+            raise BotLimitExceededError(f"User has reached the bot limit of {max_bots}")
+
+        # Validate permissions
+        requested_perms = permissions if permissions is not None else DEFAULT_BOT_PERMISSIONS
+        # Bot should not have 'bots.create' permission
+        if requested_perms.get("bots.create"):
+            raise PermissionDeniedError("Bots cannot have the 'bots.create' permission")
+
         bot_id = self._generate_id()
         token, token_hash = create_bot_token(bot_id)
-        perms = permissions if permissions is not None else DEFAULT_BOT_PERMISSIONS
+        perms = requested_perms
         self._db.execute(
             "INSERT INTO auth_bots (id, owner_id, username, display_name, token_hash, permissions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (

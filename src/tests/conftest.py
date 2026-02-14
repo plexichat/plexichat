@@ -233,7 +233,10 @@ def db_manager():
         argon2_parallelism=1,
     )
     manager = DatabaseManager(test_dir="temp/test_session")
-    manager.setup()
+    db = manager.setup()
+    from src.core.features.schema import create_tables as create_features_tables
+
+    create_features_tables(db)
 
     yield manager
 
@@ -508,6 +511,7 @@ def test_db():
         create_tables as create_notification_tables,
     )
     from src.core.polls.schema import create_tables as create_polls_tables
+    from src.core.features.schema import create_tables as create_features_tables
 
     # Save current config to restore later
     old_db_conf = config.get("database", None)
@@ -543,6 +547,7 @@ def test_db():
     create_thread_tables(db)
     create_notification_tables(db)
     create_polls_tables(db)
+    create_features_tables(db)
 
     # Insert system user (ID 0) for system messages
     db.execute(

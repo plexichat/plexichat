@@ -599,6 +599,33 @@ async def send_channel_message(
                 detail={"error": {"code": 404, "message": "Channel not found"}},
             )
 
+        if server_id:
+            try:
+                from src.core import automod
+
+                content = getattr(msg, "content", None) or body.content or ""
+                result = automod.check_message(
+                    server_id=server_id,
+                    channel_id=cid,
+                    user_id=current_user.user_id,
+                    content=content,
+                    message_id=getattr(msg, "id", None),
+                    context={"source": "message_create"},
+                )
+                if not result.passed:
+                    for match in result.violations:
+                        automod.process_violation(
+                            server_id=server_id,
+                            channel_id=cid,
+                            user_id=current_user.user_id,
+                            message_id=getattr(msg, "id", None),
+                            match=match,
+                            actions=result.actions_to_take,
+                            context={"source": "message_create"},
+                        )
+            except Exception as e:
+                logger.warning(f"Automod check failed for message create: {e}")
+
         # Use username and avatar from token/auth - no need for extra DB lookup!
         author_username = current_user.username
         author_avatar_url = getattr(current_user, "avatar_url", None)
@@ -939,6 +966,48 @@ async def acknowledge_messages(
         )
 
 
+@router.post(
+    "/channels/ack/bulk",
+    response_model=SuccessResponse,
+    summary="Bulk acknowledge messages",
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def acknowledge_messages_bulk(
+    body: Dict[str, Optional[str]],
+    current_user: TokenInfo = Depends(get_current_user),
+) -> SuccessResponse:
+    """
+    Mark messages as read in multiple channels at once.
+    
+    Accepts a dictionary mapping channel_id to optional message_id.
+    """
+    msg_manager = api.get_messaging()
+    if not msg_manager:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Messaging module not available"}},
+        )
+
+    try:
+        for channel_id, message_id in body.items():
+            try:
+                cid = int(channel_id)
+                mid = int(message_id) if message_id else None
+                msg_manager.mark_read(current_user.user_id, cid, mid)
+            except Exception as e:
+                logger.warning(f"Bulk ACK: Failed for channel {channel_id}: {e}")
+        
+        return SuccessResponse(success=True)
+    except Exception as e:
+        logger.error(f"Bulk ACK failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
+        )
+
+
 @router.get(
     "/channels/{channel_id}/messages/{message_id}",
     response_model=MessageResponse,
@@ -1080,6 +1149,42 @@ async def edit_message(
             )
 
         msg = messaging.edit_message(current_user.user_id, mid, body.content)
+
+        server_id = None
+        if servers_mod:
+            try:
+                channel = servers_mod.get_channel(cid, current_user.user_id)
+                if channel:
+                    server_id = getattr(channel, "server_id", None)
+            except Exception:
+                server_id = None
+
+        if server_id:
+            try:
+                from src.core import automod
+
+                content = getattr(msg, "content", None) or body.content or ""
+                result = automod.check_message(
+                    server_id=server_id,
+                    channel_id=cid,
+                    user_id=current_user.user_id,
+                    content=content,
+                    message_id=getattr(msg, "id", None),
+                    context={"source": "message_edit"},
+                )
+                if not result.passed:
+                    for match in result.violations:
+                        automod.process_violation(
+                            server_id=server_id,
+                            channel_id=cid,
+                            user_id=current_user.user_id,
+                            message_id=getattr(msg, "id", None),
+                            match=match,
+                            actions=result.actions_to_take,
+                            context={"source": "message_edit"},
+                        )
+            except Exception as e:
+                logger.warning(f"Automod check failed for message edit: {e}")
 
         # Get author username and avatar
         author_username = current_user.username
