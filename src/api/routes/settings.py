@@ -3,8 +3,8 @@ User Settings routes - Cloud-synced key-value store for user preferences.
 """
 
 import time
-from typing import Dict, Any
-from fastapi import APIRouter, HTTPException, Depends, Request, Body
+from typing import Dict, Any, Optional
+from fastapi import APIRouter, HTTPException, Depends, Request
 
 import src.api as api
 from src.core.database import cached
@@ -81,8 +81,6 @@ async def bulk_update_settings(
     
     Accepts a dictionary of key-value pairs.
     """
-    logger.info(f"Bulk settings update request from user {current_user.user_id} (type={type(body)}): {body}")
-    
     settings_module = api.get_settings()
     presence_module = api.get_presence()
     
