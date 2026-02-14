@@ -58,13 +58,13 @@ DEFAULT_TEST_CONFIG = {
         "sessions": {
             "token_bytes": 32,
             "expire_hours": 168,
-            "max_per_user": 20,
+            "max_per_user": 10,
             "extend_on_activity": True,
             "extend_threshold_hours": 24,
         },
         "totp": {"backup_code_count": 10, "issuer": "TestApp"},
         "security": {
-            "max_failed_attempts": 100,
+            "max_failed_attempts": 3,
             "lockout_duration_minutes": 1,
         },
         "password": {
@@ -551,19 +551,18 @@ def test_db():
 
     # Insert system user (ID 0) for system messages
     db.execute(
-        "INSERT INTO auth_users (id, account_type, username, email, password_hash, permissions, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (0, "system", "system", "system@localhost", "!", "{}", 0, 0),
+        "INSERT INTO auth_users (id, account_type, username, password_hash, permissions, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (0, "system", "system", "!", "{}", 0, 0),
     )
 
     # Insert default users for tests that assume fixed IDs (like manager tests)
     for i in range(1, 11):
         db.execute(
-            "INSERT INTO auth_users (id, account_type, username, email, password_hash, permissions, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO auth_users (id, account_type, username, password_hash, permissions, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 i,
                 "user",
                 f"testuser{i}",
-                f"fixture_user{i}@example.com",
                 "fake_hash",
                 "{}",
                 0,

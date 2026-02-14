@@ -27,3 +27,9 @@ class SettingsResponse(BaseModel):
     settings: Dict[str, str] = Field(..., description="Key-value pairs of settings")
     count: int = Field(..., description="Number of settings")
     limit: int = Field(..., description="Max number of settings allowed")
+
+
+class BulkSettingsRequest(BaseModel):
+    """Request body for bulk setting updates."""
+
+    settings: Dict[str, Any] = Field(..., description="Key-value pairs to update")

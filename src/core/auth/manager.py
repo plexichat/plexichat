@@ -454,17 +454,20 @@ class AuthManager(BaseManager):
         )
 
     def _handle_failed_login(self, user_id: int, ip_address: Optional[str]):
+        # Increment failed login attempts
         self._db.execute(
             "UPDATE auth_users SET failed_login_attempts = failed_login_attempts + 1 WHERE id = ?",
             (user_id,),
-        )
-        row = self._db.fetch_one(
-            "SELECT failed_login_attempts FROM auth_users WHERE id = ?", (user_id,)
         )
         
         # Get threshold from config or default to 5
         security_config = self._config.get("security", {})
         threshold = security_config.get("max_failed_attempts", 5)
+        
+        # Check current attempts
+        row = self._db.fetch_one(
+            "SELECT failed_login_attempts FROM auth_users WHERE id = ?", (user_id,)
+        )
         
         if row and row["failed_login_attempts"] >= threshold:
             # Default lock time 15 mins (60000ms * 15)
@@ -475,6 +478,9 @@ class AuthManager(BaseManager):
                 (lock_until, user_id),
             )
             self._log_audit(AuditEventType.ACCOUNT_LOCKED, user_id, True, ip_address)
+        
+        # Invalidate cache so that subsequent get_user calls see the updated failed_login_attempts
+        invalidate_pattern("user_data:*")
 
     def _create_session(
         self,
@@ -933,6 +939,7 @@ class AuthManager(BaseManager):
             self._db.execute(
                 "UPDATE auth_users SET totp_enabled = 1 WHERE id = ?", (user_id,)
             )
+            invalidate_pattern("user_data:*")
             return True
         return False
 
@@ -956,6 +963,7 @@ class AuthManager(BaseManager):
             "UPDATE auth_users SET totp_enabled = 0, totp_secret_encrypted = NULL, backup_codes_hash = NULL WHERE id = ?",
             (user_id,),
         )
+        invalidate_pattern("user_data:*")
         return True
 
     def regenerate_backup_codes(self, user_id: int, password: str) -> List[str]:
@@ -1002,6 +1010,7 @@ class AuthManager(BaseManager):
             "UPDATE auth_users SET password_hash = ? WHERE id = ?",
             (self.crypto.hash_password(new), user_id),
         )
+        invalidate_pattern("user_data:*")
         return True
 
     def request_password_reset(self, email: str) -> bool:
@@ -1053,6 +1062,7 @@ class AuthManager(BaseManager):
         self._db.execute(
             "UPDATE auth_email_tokens SET used = 1 WHERE id = ?", (rec["id"],)
         )
+        invalidate_pattern("user_data:*")
         return True
 
     def validate_password(self, password: str) -> PasswordValidation:

@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Depends, Request
 import src.api as api
 from src.core.database import cached
 from src.api.middleware.authentication import get_current_user, TokenInfo
-from src.api.schemas.settings import SettingValue, SettingResponse, SettingsResponse
+from src.api.schemas.settings import SettingValue, SettingResponse, SettingsResponse, BulkSettingsRequest
 from src.api.schemas.common import ErrorResponse, SuccessResponse
 
 import utils.logger as logger
@@ -223,19 +223,14 @@ async def set_setting(
     },
 )
 async def bulk_update_settings(
-    request: Request, current_user: TokenInfo = Depends(get_current_user)
+    body: BulkSettingsRequest, current_user: TokenInfo = Depends(get_current_user)
 ) -> SuccessResponse:
     """
     Update multiple settings at once.
     
-    Accepts a dictionary of key-value pairs to update.
+    Accepts a dictionary of key-value pairs inside a 'settings' field.
     """
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid JSON"}})
-
-    logger.info(f"Bulk settings update request from user {current_user.user_id}: {list(body.keys()) if isinstance(body, dict) else type(body)}")
+    logger.info(f"Bulk settings update request from user {current_user.user_id}: {list(body.settings.keys())}")
     
     settings_module = api.get_settings()
     presence_module = api.get_presence()
@@ -247,11 +242,8 @@ async def bulk_update_settings(
             detail={"error": {"code": 500, "message": "Settings module not available"}},
         )
 
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Body must be a dictionary"}})
-
     try:
-        for key, raw_value in body.items():
+        for key, raw_value in body.settings.items():
             # Convert value to string for storage
             value = str(raw_value) if not isinstance(raw_value, str) else raw_value
             
