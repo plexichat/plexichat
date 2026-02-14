@@ -87,6 +87,7 @@ __all__ = [
     "PermissionDeniedError",
     # Setup
     "setup",
+    "reload_config",
     # Core operations
     "check_message",
     "check_user",
@@ -146,6 +147,10 @@ def _get_manager():
             "AutoMod module not initialized. Call automod.setup(db) first."
         )
     return _manager
+
+
+def reload_config() -> None:
+    _get_manager().reload_config()
 
 
 def check_message(

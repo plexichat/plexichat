@@ -2,6 +2,8 @@
 User Settings routes - Cloud-synced key-value store for user preferences.
 """
 
+import time
+from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, Depends
 
 import src.api as api
@@ -208,6 +210,66 @@ async def set_setting(
         )
         raise HTTPException(
             status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
+
+@router.put(
+    "/bulk",
+    response_model=SuccessResponse,
+    summary="Bulk update settings",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def bulk_update_settings(
+    body: Dict[str, Any], current_user: TokenInfo = Depends(get_current_user)
+) -> SuccessResponse:
+    """
+    Update multiple settings at once.
+    
+    Accepts a dictionary of key-value pairs to update.
+    """
+    settings_module = api.get_settings()
+    presence_module = api.get_presence()
+    
+    if not settings_module:
+        logger.error("Settings module not available")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Settings module not available"}},
+        )
+
+    try:
+        for key, value in body.items():
+            # Special case for focused channel
+            if key == "_focused_channel" and presence_module:
+                try:
+                    import json
+                    data = json.loads(str(value))
+                    cid = data.get("channel_id")
+                    sid = data.get("server_id")
+                    
+                    presence_module.set_focused_channel(
+                        current_user.user_id,
+                        channel_id=int(cid) if cid and str(cid) != "0" else None,
+                        server_id=int(sid) if sid and str(sid) != "0" else None
+                    )
+                except Exception as e:
+                    logger.debug(f"Bulk: Failed to update focused channel: {e}")
+                continue
+
+            # Standard settings
+            try:
+                settings_module.set_setting(current_user.user_id, key, str(value))
+            except Exception as e:
+                logger.warning(f"Bulk: Failed to set setting '{key}': {e}")
+
+        return SuccessResponse(success=True)
+    except Exception as e:
+        logger.error(f"Bulk update failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
         )
 
 

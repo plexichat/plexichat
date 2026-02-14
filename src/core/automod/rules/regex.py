@@ -124,16 +124,24 @@ class RegexRule(BaseRule):
 
                 try:
                     re.compile(pattern_str)
-                    
-                    # ReDoS vulnerability detection - check for potentially malicious patterns
-                    # Look for nested quantifiers that can cause exponential backtracking
-                    if re.search(r'\((?:[^()]*\([^()]*\))*[^()]*\)\*', pattern_str):
+
+                    if len(pattern_str) > 500:
+                        issues.append(f"pattern {i} exceeds maximum length")
+                    elif re.search(r'\((?:[^()]*\([^()]*\))*[^()]*\)\*', pattern_str):
                         issues.append(f"pattern {i} contains potentially malicious nested quantifiers")
                     elif re.search(r'\([^()]*\)\{0,', pattern_str):
                         issues.append(f"pattern {i} contains potentially malicious quantifier combinations")
+                    elif re.search(r'\((?:[^()]*[+*][^()]*)+\)\s*(?:[+*]|\{\d+,?\d*\})', pattern_str):
+                        issues.append(f"pattern {i} contains nested quantifier groups")
+                    elif re.search(r'\((?:[^()]*\|)+[^()]*\)\s*(?:[+*]|\{\d+,?\d*\})', pattern_str):
+                        issues.append(f"pattern {i} contains repeated alternation groups")
+                    elif re.search(r'\.\*.*\.\*', pattern_str) or re.search(r'\.\+.*\.\+', pattern_str):
+                        issues.append(f"pattern {i} contains multiple wildcard repeats")
+                    elif re.search(r'\\[1-9]\d?', pattern_str):
+                        issues.append(f"pattern {i} contains backreferences")
                     elif re.search(r'[a-zA-Z]*\*[a-zA-Z]*\*', pattern_str):
                         issues.append(f"pattern {i} contains potentially malicious repeated quantifiers")
-                        
+
                 except re.error as e:
                     issues.append(f"pattern {i} invalid regex: {e}")
 

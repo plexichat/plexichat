@@ -368,42 +368,20 @@ async def search_messages(
 
         messages = []
 
-        # Try server channel first
-        if servers_mod:
+        # Use messaging module's search (handles encryption via blind index)
+        if messaging:
             try:
-                # TODO: Implement server-side SQL LIKE/FTS search in the messaging module
-                # to avoid loading messages into memory and to search all messages, not just recent ones.
-                all_messages = servers_mod.get_channel_messages(
+                # messaging.search_messages handles both DMs and server channels 
+                # as they are all backed by the same conversation system
+                messages = messaging.search_messages(
                     user_id=current_user.user_id,
-                    channel_id=cid,
-                    limit=200,
+                    conversation_id=cid,
+                    query=content,
+                    limit=limit
                 )
-                if all_messages:
-                    search_lower = content.lower()
-                    messages = [
-                        m
-                        for m in all_messages
-                        if search_lower in (m.content or "").lower()
-                    ][:limit]
-            except Exception:
-                pass
-
-        # If not found in server channels, try DM conversations
-        if not messages and messaging:
-            try:
-                all_messages = messaging.get_messages(
-                    user_id=current_user.user_id, conversation_id=cid, limit=200
-                )
-                if all_messages:
-                    search_lower = content.lower()
-                    messages = [
-                        m
-                        for m in all_messages
-                        if search_lower in (m.content or "").lower()
-                    ][:limit]
-            except Exception:
-                pass
-
+            except Exception as e:
+                logger.debug(f"Messaging search failed: {e}")
+                
         # Bulk fetch all author info
         author_ids = list(set(m.author_id for m in messages))
         author_cache = {}

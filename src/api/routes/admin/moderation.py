@@ -3,15 +3,18 @@ Admin moderation and content review routes.
 """
 
 from fastapi import APIRouter, Request, HTTPException
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from src.api.schemas.admin import (
     HashReportResponse, HashReportCountsResponse, HashReportReviewRequest, HashReportReviewResponse,
     BlockedHashResponse, ManualBlockHashRequest, BlockHashResponse,
-    BlockedUserResponse, BlockUserRequest, BlockUserResponse
+    BlockedUserResponse, BlockUserRequest, BlockUserResponse,
+    AutomodRuleResponse, AutomodRuleCreateRequest, AutomodRuleUpdateRequest,
+    AutomodRuleAction, AutomodConfigResponse, AutomodConfigUpdateRequest
 )
 from src.api.schemas.common import SuccessResponse
 from .utils import check_host_restriction, get_admin_from_token
 import utils.logger as logger
+from src.core import config
 
 router = APIRouter()
 
@@ -111,3 +114,161 @@ async def unblock_user(user_id: int, request: Request):
     if not admin.unblock_user(user_id):
         raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Failed to unblock user"}})
     return SuccessResponse(success=True)
+
+
+def _rule_to_response(rule) -> AutomodRuleResponse:
+    return AutomodRuleResponse(
+        id=str(rule.id),
+        server_id=str(rule.server_id),
+        name=rule.name,
+        rule_type=rule.rule_type.value if hasattr(rule.rule_type, "value") else str(rule.rule_type),
+        enabled=bool(rule.enabled),
+        config=rule.config,
+        actions=[
+            AutomodRuleAction(
+                action_type=a.action_type.value if hasattr(a.action_type, "value") else str(a.action_type),
+                duration_seconds=a.duration_seconds,
+                reason=a.reason,
+                notify_user=a.notify_user,
+                metadata=a.metadata or {},
+            )
+            for a in (rule.actions or [])
+        ],
+        exempt_roles=[str(r) for r in (rule.exempt_roles or [])],
+        exempt_channels=[str(c) for c in (rule.exempt_channels or [])],
+        priority=rule.priority,
+        check_all=bool(rule.check_all),
+        created_at=rule.created_at,
+        updated_at=rule.updated_at,
+        created_by=str(rule.created_by),
+    )
+
+
+@router.get("/automod/rules", response_model=List[AutomodRuleResponse])
+async def get_automod_rules(request: Request, server_id: int):
+    check_host_restriction(request)
+    get_admin_from_token(request)
+    from src.core import automod
+    try:
+        rules = automod.get_server_rules(server_id)
+        return [_rule_to_response(r) for r in rules]
+    except Exception as e:
+        logger.error(f"Automod rules error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+@router.post("/automod/rules", response_model=AutomodRuleResponse)
+async def create_automod_rule(body: AutomodRuleCreateRequest, request: Request):
+    check_host_restriction(request)
+    admin_id = get_admin_from_token(request)
+    from src.core import automod
+    from src.core.automod.models import RuleType
+    try:
+        rule_type = RuleType(body.rule_type)
+    except Exception:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid rule type"}})
+    try:
+        rule = automod.create_rule(
+            user_id=int(admin_id),
+            server_id=int(body.server_id),
+            name=body.name,
+            rule_type=rule_type,
+            rule_config=body.config,
+            actions=[a.model_dump() for a in body.actions],
+            exempt_roles=body.exempt_roles,
+            exempt_channels=body.exempt_channels,
+            priority=body.priority or 0,
+            check_all=bool(body.check_all),
+        )
+        if body.enabled is False:
+            automod.set_rule_enabled(rule.id, False)
+            rule = automod.get_rule(rule.id)
+        return _rule_to_response(rule)
+    except Exception as e:
+        logger.error(f"Create automod rule error: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": str(e)}})
+
+
+@router.patch("/automod/rules/{rule_id}", response_model=AutomodRuleResponse)
+async def update_automod_rule(rule_id: int, body: AutomodRuleUpdateRequest, request: Request):
+    check_host_restriction(request)
+    admin_id = get_admin_from_token(request)
+    from src.core import automod
+    try:
+        update_kwargs: Dict[str, Any] = {}
+        if body.name is not None:
+            update_kwargs["name"] = body.name
+        if body.config is not None:
+            update_kwargs["rule_config"] = body.config
+        if body.actions is not None:
+            update_kwargs["actions"] = [a.model_dump() for a in body.actions]
+        if body.exempt_roles is not None:
+            update_kwargs["exempt_roles"] = body.exempt_roles
+        if body.exempt_channels is not None:
+            update_kwargs["exempt_channels"] = body.exempt_channels
+        if body.priority is not None:
+            update_kwargs["priority"] = body.priority
+        if body.check_all is not None:
+            update_kwargs["check_all"] = body.check_all
+        if update_kwargs:
+            automod.update_rule(user_id=int(admin_id), rule_id=rule_id, **update_kwargs)
+        if body.enabled is not None:
+            automod.set_rule_enabled(rule_id, body.enabled)
+        rule = automod.get_rule(rule_id)
+        if not rule:
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Rule not found"}})
+        return _rule_to_response(rule)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update automod rule error: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": str(e)}})
+
+
+@router.delete("/automod/rules/{rule_id}", response_model=SuccessResponse)
+async def delete_automod_rule(rule_id: int, request: Request):
+    check_host_restriction(request)
+    admin_id = get_admin_from_token(request)
+    from src.core import automod
+    try:
+        if not automod.delete_rule(user_id=int(admin_id), rule_id=rule_id):
+            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Rule not found"}})
+        return SuccessResponse(success=True)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete automod rule error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+
+
+@router.get("/automod/config", response_model=AutomodConfigResponse)
+async def get_automod_config(request: Request):
+    check_host_restriction(request)
+    get_admin_from_token(request)
+    automod_config = config.get("automod", {}) or {}
+    return AutomodConfigResponse(
+        enabled=automod_config.get("enabled", True),
+        ai=automod_config.get("ai", {}),
+    )
+
+
+@router.put("/automod/config", response_model=AutomodConfigResponse)
+async def update_automod_config(body: AutomodConfigUpdateRequest, request: Request):
+    check_host_restriction(request)
+    get_admin_from_token(request)
+    current = config.get("automod", {}) or {}
+    if body.enabled is not None:
+        current["enabled"] = body.enabled
+    if body.ai is not None:
+        merged = {**(current.get("ai", {}) or {}), **body.ai}
+        current["ai"] = merged
+    config.set("automod", current)
+    try:
+        from src.core import automod
+        automod.reload_config()
+    except Exception:
+        pass
+    return AutomodConfigResponse(
+        enabled=current.get("enabled", True),
+        ai=current.get("ai", {}),
+    )

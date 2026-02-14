@@ -130,6 +130,11 @@ class AutoModManager(BaseManager):
         if ai_config.get("custom", {}).get("endpoint_url"):
             self._ai_adapters["custom"] = CustomAdapter(ai_config["custom"])
 
+    def reload_config(self) -> None:
+        self._config = self._load_config()
+        self._ai_adapters = {}
+        self._init_ai_adapters()
+
     def check_message(
         self,
         server_id: SnowflakeID,
