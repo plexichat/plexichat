@@ -4,7 +4,7 @@ User Settings routes - Cloud-synced key-value store for user preferences.
 
 import time
 from typing import Dict, Any
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request, Body
 
 import src.api as api
 from src.core.database import cached
@@ -223,7 +223,7 @@ async def set_setting(
     },
 )
 async def bulk_update_settings(
-    body: BulkSettingsRequest, current_user: TokenInfo = Depends(get_current_user)
+    body: BulkSettingsRequest = Body(...), current_user: TokenInfo = Depends(get_current_user)
 ) -> SuccessResponse:
     """
     Update multiple settings at once.
