@@ -11,6 +11,7 @@ from starlette.types import ASGIApp, Receive, Send, Scope
 
 import traceback
 import utils.config as config
+import utils.logger as logger
 try:
     from utils.logger import sanitize_log_message
 except ImportError:
