@@ -206,6 +206,15 @@ def setup_exception_handlers(app: FastAPI):
         errors = exc.errors()
         headers = _get_cors_headers(request)
 
+        # Log validation errors for debugging
+        logger.warning(f"Validation error on {request.method} {request.url.path}: {errors}")
+        try:
+            body = await request.body()
+            if body:
+                logger.warning(f"Request body: {body.decode('utf-8', errors='replace')[:1000]}")
+        except Exception as e:
+            logger.debug(f"Could not log request body: {e}")
+
         if errors:
             first_error = errors[0]
             loc = first_error.get("loc", [])
