@@ -223,14 +223,14 @@ async def set_setting(
     },
 )
 async def bulk_update_settings(
-    body: BulkSettingsRequest = Body(...), current_user: TokenInfo = Depends(get_current_user)
+    body: Dict[str, Any] = Body(...), current_user: TokenInfo = Depends(get_current_user)
 ) -> SuccessResponse:
     """
     Update multiple settings at once.
     
     Accepts a dictionary of key-value pairs.
     """
-    logger.info(f"Bulk settings update request from user {current_user.user_id}: {list(body.root.keys())}")
+    logger.info(f"Bulk settings update request from user {current_user.user_id}: {list(body.keys())}")
     
     settings_module = api.get_settings()
     presence_module = api.get_presence()
@@ -243,7 +243,7 @@ async def bulk_update_settings(
         )
 
     try:
-        for key, raw_value in body.root.items():
+        for key, raw_value in body.items():
             # Convert value to string for storage
             value = str(raw_value) if not isinstance(raw_value, str) else raw_value
             
