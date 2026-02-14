@@ -6,6 +6,7 @@ Handles client-submitted response time telemetry data.
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from typing import Optional
+import json
 
 import utils.logger as logger
 from src.api.dependencies import get_optional_user
@@ -131,10 +132,9 @@ async def submit_csp_report(
     try:
         # CSP reports use application/csp-report or application/json
         body = await request.body()
-        import json
         try:
             report = json.loads(body)
-        except:
+        except Exception:
             report = {"raw": body.decode(errors='ignore')}
             
         client_ip = request.client.host if request.client else "unknown"

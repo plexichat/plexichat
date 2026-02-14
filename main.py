@@ -581,8 +581,10 @@ class PlexiChatServer:
                 self._modules["settings"] = settings
             threads.append(threading.Thread(target=init_settings, name="InitSettings"))
 
-            for t in threads: t.start()
-            for t in threads: t.join()
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
 
         # Initialize email sender if configured
         email_config = config.get("email", {})
@@ -649,8 +651,10 @@ class PlexiChatServer:
                     logger.warning(f"Failed to initialize notifications module: {e}")
             threads.append(threading.Thread(target=init_notifications, name="InitNotifications"))
 
-            for t in threads: t.start()
-            for t in threads: t.join()
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
 
         init_dependent()
 

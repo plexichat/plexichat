@@ -126,9 +126,11 @@ class TestQueryParameterization:
         db.execute("UPDATE accounts SET balance = ? WHERE id = ?", (malicious_value, 1))
 
         result = db.fetch_one("SELECT balance FROM accounts WHERE id = 1")
+        assert result is not None
         assert result["balance"] == "50 WHERE 1=1; --"
 
         result2 = db.fetch_one("SELECT balance FROM accounts WHERE id = 2")
+        assert result2 is not None
         assert result2["balance"] == 200
         db.close()
 
@@ -144,6 +146,7 @@ class TestQueryParameterization:
         db.execute("DELETE FROM messages WHERE id = ?", (malicious_id,))
 
         count = db.fetch_one("SELECT COUNT(*) as count FROM messages")
+        assert count is not None
         assert count["count"] == 3
         db.close()
 

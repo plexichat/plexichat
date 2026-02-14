@@ -169,9 +169,21 @@ print(f"Violations: {result.violations_found}")
 print(f"Flagged messages: {result.messages_flagged}")
 ```
 
+## Admin Management
+
+AutoMod is administered from the system admin dashboard and API. AI credentials are stored in the global AutoMod config, not in per-server settings.
+
+### Admin API
+
+- `GET /api/v1/admin/automod/config` and `PUT /api/v1/admin/automod/config`
+- `GET /api/v1/admin/automod/rules?server_id=...`
+- `POST /api/v1/admin/automod/rules`
+- `PATCH /api/v1/admin/automod/rules/{rule_id}`
+- `DELETE /api/v1/admin/automod/rules/{rule_id}`
+
 ## Configuration
 
-Add to `config/config.yaml`:
+Add to `config/config.yaml` or set values via the admin API:
 
 ```yaml
 automod:

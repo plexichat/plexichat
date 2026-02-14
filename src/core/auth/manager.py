@@ -51,6 +51,7 @@ from .permissions import (
     DEFAULT_BOT_PERMISSIONS,
     permissions_to_json,
     permissions_from_json,
+    has_permission,
 )
 from .schema import create_tables
 from .tokens import (
@@ -444,7 +445,15 @@ class AuthManager(BaseManager):
             permissions=permissions_from_json(row["permissions"]),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            email_verified=bool(row.get("email_verified", 0)),
+            account_locked=bool(row.get("account_locked", 0)),
             force_username_change=bool(row.get("force_username_change", 0)),
+            failed_login_attempts=row.get("failed_login_attempts", 0),
+            locked_until=row.get("locked_until"),
+            last_login_at=row.get("last_login_at"),
+            totp_enabled=bool(row.get("totp_enabled", 0)),
+            age_verified=bool(row.get("age_verified", 0)),
+            date_of_birth=row.get("date_of_birth"),
         )
         self._log_audit(
             AuditEventType.LOGIN_SUCCESS, user_id, True, ip_address, device_id
@@ -1077,6 +1086,12 @@ class AuthManager(BaseManager):
         display_name: str,
         permissions: Optional[Dict[str, bool]] = None,
     ) -> Bot:
+        # Check if user/bot with this username already exists
+        if self._db.fetch_one("SELECT 1 FROM auth_users WHERE username = ?", (username,)):
+            raise UserExistsError(f"Username '{username}' already taken")
+        if self._db.fetch_one("SELECT 1 FROM auth_bots WHERE username = ?", (username,)):
+            raise UserExistsError(f"Bot name '{username}' already taken")
+
         # Enforce bot limit
         bot_config = self._config.get("accounts", {})
         max_bots = bot_config.get("max_bots_per_user", 5)
@@ -1085,9 +1100,14 @@ class AuthManager(BaseManager):
             raise BotLimitExceededError(f"User has reached the bot limit of {max_bots}")
 
         # Validate permissions
-        requested_perms = permissions if permissions is not None else DEFAULT_BOT_PERMISSIONS
+        requested_perms = permissions if permissions is not None else DEFAULT_BOT_PERMISSIONS.copy()
+        
+        # DEBUG
+        logger.debug(f"DEBUG_AUTH: create_bot requested_perms={requested_perms}")
+
         # Bot should not have 'bots.create' permission
         if requested_perms.get("bots.create"):
+            logger.debug("DEBUG_AUTH: Raising PermissionDeniedError for bots.create")
             raise PermissionDeniedError("Bots cannot have the 'bots.create' permission")
 
         bot_id = self._generate_id()
@@ -1148,29 +1168,32 @@ class AuthManager(BaseManager):
 
     def regenerate_bot_token(self, owner_id: int, bot_id: int) -> str:
         token, token_hash = create_bot_token(bot_id)
-        self._db.execute(
+        cursor = self._db.execute(
             "UPDATE auth_bots SET token_hash = ? WHERE id = ? AND owner_id = ?",
             (token_hash, bot_id, owner_id),
         )
+        if cursor.rowcount == 0:
+            raise PermissionDeniedError("Bot not found or not owned by you")
         return token
 
     def update_bot_permissions(
         self, owner_id: int, bot_id: int, permissions: Dict[str, bool]
     ) -> Bot:
-        self._db.execute(
+        cursor = self._db.execute(
             "UPDATE auth_bots SET permissions = ? WHERE id = ? AND owner_id = ?",
             (permissions_to_json(permissions), bot_id, owner_id),
         )
-        bot = self.get_bot(bot_id)
-        if not bot:
-            raise AuthError("Bot not found")
-        return bot
+        if cursor.rowcount == 0:
+            raise PermissionDeniedError("Bot not found or not owned by you")
+        return self.get_bot(bot_id)
 
     def disable_bot(self, owner_id: int, bot_id: int) -> bool:
-        self._db.execute(
+        cursor = self._db.execute(
             "UPDATE auth_bots SET disabled = 1 WHERE id = ? AND owner_id = ?",
             (bot_id, owner_id),
         )
+        if cursor.rowcount == 0:
+            raise PermissionDeniedError("Bot not found or not owned by you")
         return True
 
     def enable_bot(self, owner_id: int, bot_id: int) -> bool:
@@ -1181,9 +1204,11 @@ class AuthManager(BaseManager):
         return True
 
     def delete_bot(self, owner_id: int, bot_id: int) -> bool:
-        self._db.execute(
+        cursor = self._db.execute(
             "DELETE FROM auth_bots WHERE id = ? AND owner_id = ?", (bot_id, owner_id)
         )
+        if cursor.rowcount == 0:
+            raise PermissionDeniedError("Bot not found or not owned by you")
         return True
 
     # === Device Management ===
@@ -1427,13 +1452,17 @@ class AuthManager(BaseManager):
             permissions=permissions_from_json(row["permissions"]),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
-            email_verified=bool(row["email_verified"]),
-            account_locked=bool(row["account_locked"]),
-            totp_enabled=bool(row["totp_enabled"]),
-            age_verified=bool(row["age_verified"]),
+            email_verified=bool(row.get("email_verified", 0)),
+            account_locked=bool(row.get("account_locked", 0)),
+            failed_login_attempts=row.get("failed_login_attempts", 0),
+            locked_until=row.get("locked_until"),
+            last_login_at=row.get("last_login_at"),
+            totp_enabled=bool(row.get("totp_enabled", 0)),
+            age_verified=bool(row.get("age_verified", 0)),
             date_of_birth=row.get("dob_decrypted") or row.get("date_of_birth"),
             force_username_change=bool(row.get("force_username_change", 0)),
             badges=row.get("badges_list", []),
+            public_key=row.get("public_key")
         )
 
     def get_user_by_username(self, username: str) -> Optional[User]:

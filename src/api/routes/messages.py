@@ -354,7 +354,6 @@ async def search_messages(
 ) -> List[MessageResponse]:
     """Search messages in a channel by content."""
     messaging = api.get_messaging()
-    servers_mod = api.get_servers()
     auth = api.get_auth()
 
     try:

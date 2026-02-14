@@ -526,10 +526,19 @@ class ServerManager(BaseManager):
         topic: Optional[str] = None,
         nsfw: bool = False,
         slowmode_seconds: int = 0,
+        read_receipts_enabled: bool = True,
     ) -> Channel:
         """Create a new channel in a server."""
         return self.channel_handler.create_channel(
-            user_id, server_id, name, channel_type, category_id, topic, nsfw, slowmode_seconds
+            user_id,
+            server_id,
+            name,
+            channel_type,
+            category_id,
+            topic,
+            nsfw,
+            slowmode_seconds,
+            read_receipts_enabled,
         )
 
     def create_category(
@@ -598,11 +607,19 @@ class ServerManager(BaseManager):
         topic: Optional[str] = None,
         nsfw: Optional[bool] = None,
         slowmode_seconds: Optional[int] = None,
+        read_receipts_enabled: Optional[bool] = None,
         category_id: Optional[SnowflakeID] = None,
     ) -> Channel:
         """Update channel settings."""
         return self.channel_handler.update_channel(
-            user_id, channel_id, name, topic, nsfw, slowmode_seconds, category_id
+            user_id,
+            channel_id,
+            name,
+            topic,
+            nsfw,
+            slowmode_seconds,
+            read_receipts_enabled,
+            category_id,
         )
 
     def delete_channel(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> bool:

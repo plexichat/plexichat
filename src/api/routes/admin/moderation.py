@@ -181,7 +181,7 @@ async def create_automod_rule(body: AutomodRuleCreateRequest, request: Request):
             check_all=bool(body.check_all),
         )
         if body.enabled is False:
-            automod.set_rule_enabled(rule.id, False)
+            automod.set_rule_enabled(int(admin_id), rule.id, False)
             rule = automod.get_rule(rule.id)
         return _rule_to_response(rule)
     except Exception as e:
@@ -213,7 +213,7 @@ async def update_automod_rule(rule_id: int, body: AutomodRuleUpdateRequest, requ
         if update_kwargs:
             automod.update_rule(user_id=int(admin_id), rule_id=rule_id, **update_kwargs)
         if body.enabled is not None:
-            automod.set_rule_enabled(rule_id, body.enabled)
+            automod.set_rule_enabled(int(admin_id), rule_id, body.enabled)
         rule = automod.get_rule(rule_id)
         if not rule:
             raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Rule not found"}})

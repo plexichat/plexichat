@@ -10,7 +10,6 @@ from ..models import Member, Ban, Invite, ChannelType, AuditLogAction
 from ..exceptions import (
     ServerNotFoundError,
     MemberNotFoundError,
-    MemberExistsError,
     UserBannedError,
     CannotModifyOwnerError,
     RoleHierarchyError,

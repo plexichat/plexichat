@@ -11,7 +11,7 @@ def get_client_ip(request: Union[Request, Dict[str, Any]]) -> Optional[str]:
     Hardened to prevent X-Forwarded-For spoofing.
     """
     if isinstance(request, Request):
-        scope = request.scope
+        scope = request.scope  # type: ignore
     else:
         scope = request
 

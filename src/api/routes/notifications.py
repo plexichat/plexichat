@@ -6,7 +6,6 @@ Handles user notifications.
 
 import utils.logger as logger
 from fastapi import APIRouter, Depends, HTTPException
-from typing import List, Optional
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo

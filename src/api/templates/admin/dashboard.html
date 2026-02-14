@@ -321,6 +321,7 @@
             <button class="tab" data-tab="tickets">Tickets</button>
             <button class="tab" data-tab="users">Users</button>
             <button class="tab" data-tab="security">Security</button>
+            <button class="tab" data-tab="automod">AutoMod</button>
             <button class="tab" data-tab="logs">Logs</button>
         </div>
 
@@ -603,6 +604,133 @@
             </div>
         </div>
 
+        <div id="tab-automod" class="tab-content hidden">
+            <div class="grid grid-2">
+                <div class="card">
+                    <h3>AutoMod Configuration</h3>
+                    <div style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;margin:0.75rem 0;">
+                        <label style="font-size:0.7rem; font-weight:800; color:#555;">ENABLED</label>
+                        <input type="checkbox" id="automod-enabled">
+                        <button class="btn btn-primary btn-sm" data-click="saveAutomodConfig">Save Config</button>
+                    </div>
+                    <div class="grid grid-2" style="gap:0.75rem;">
+                        <div>
+                            <h4 style="font-size:0.8rem; color:#999; margin-bottom:0.5rem;">OpenAI</h4>
+                            <div style="display:flex;flex-direction:column;gap:0.5rem;">
+                                <input type="text" id="automod-openai-key" placeholder="API Key">
+                                <input type="text" id="automod-openai-model" placeholder="Model">
+                                <input type="text" id="automod-openai-url" placeholder="API URL">
+                                <input type="number" step="0.01" min="0" max="1" id="automod-openai-threshold" placeholder="Threshold">
+                            </div>
+                        </div>
+                        <div>
+                            <h4 style="font-size:0.8rem; color:#999; margin-bottom:0.5rem;">Perspective</h4>
+                            <div style="display:flex;flex-direction:column;gap:0.5rem;">
+                                <input type="text" id="automod-perspective-key" placeholder="API Key">
+                                <input type="number" step="0.01" min="0" max="1" id="automod-perspective-threshold" placeholder="Threshold">
+                                <input type="text" id="automod-perspective-attributes" placeholder="Attributes (comma separated)">
+                            </div>
+                        </div>
+                        <div style="grid-column: span 2;">
+                            <h4 style="font-size:0.8rem; color:#999; margin-bottom:0.5rem;">Custom</h4>
+                            <div class="grid grid-2" style="gap:0.5rem;">
+                                <input type="text" id="automod-custom-endpoint" placeholder="Endpoint URL">
+                                <input type="text" id="automod-custom-key" placeholder="API Key">
+                                <input type="text" id="automod-custom-auth-header" placeholder="Auth Header">
+                                <input type="text" id="automod-custom-auth-prefix" placeholder="Auth Prefix">
+                                <input type="number" step="1" min="1" id="automod-custom-timeout" placeholder="Timeout Seconds">
+                                <input type="number" step="0.01" min="0" max="1" id="automod-custom-threshold" placeholder="Threshold">
+                                <input type="text" id="automod-custom-headers" placeholder="Headers JSON">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:0.75rem;flex-wrap:wrap;">
+                        <h3>AutoMod Rules</h3>
+                        <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+                            <input type="number" id="automod-server-id" placeholder="Server ID" style="min-width:180px;">
+                            <button class="btn btn-secondary btn-sm" data-click="loadAutomodRules">Load Rules</button>
+                        </div>
+                    </div>
+                    <table style="margin-top:0.75rem;">
+                        <thead>
+                            <tr><th>Name</th><th>Type</th><th>Enabled</th><th>Priority</th><th>Actions</th><th>Controls</th></tr>
+                        </thead>
+                        <tbody id="automod-rules-tbody"></tbody>
+                    </table>
+                </div>
+                <div class="card" style="grid-column: span 2;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:0.75rem;flex-wrap:wrap;">
+                        <h3>Rule Editor</h3>
+                        <span id="automod-editing" style="font-size:0.75rem;color:#777;font-family:monospace;"></span>
+                    </div>
+                    <div class="grid grid-2" style="gap:0.75rem;margin-top:0.75rem;">
+                        <input type="number" id="automod-rule-server-id" placeholder="Server ID">
+                        <input type="text" id="automod-rule-name" placeholder="Rule Name">
+                        <select id="automod-rule-type">
+                            <option value="keyword">Keyword</option>
+                            <option value="regex">Regex</option>
+                            <option value="message_spam">Message Spam</option>
+                            <option value="mention_spam">Mention Spam</option>
+                            <option value="invite_links">Invite Links</option>
+                            <option value="external_links">External Links</option>
+                            <option value="caps_percentage">Caps Percentage</option>
+                            <option value="mass_emoji">Mass Emoji</option>
+                            <option value="repeated_chars">Repeated Chars</option>
+                        </select>
+                        <div style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;">
+                            <label style="font-size:0.7rem; font-weight:800; color:#555;">ENABLED</label>
+                            <input type="checkbox" id="automod-rule-enabled" checked>
+                            <label style="font-size:0.7rem; font-weight:800; color:#555;">CHECK ALL</label>
+                            <input type="checkbox" id="automod-rule-check-all">
+                        </div>
+                        <input type="number" id="automod-rule-priority" placeholder="Priority">
+                        <input type="text" id="automod-exempt-roles" placeholder="Exempt Roles (comma IDs)">
+                        <input type="text" id="automod-exempt-channels" placeholder="Exempt Channels (comma IDs)">
+                    </div>
+                    <div class="grid grid-2" style="gap:0.75rem;margin-top:1rem;">
+                        <div>
+                            <h4 style="font-size:0.8rem; color:#999; margin-bottom:0.5rem;">Keyword Helper</h4>
+                            <div style="display:flex;flex-direction:column;gap:0.5rem;">
+                                <input type="text" id="automod-keywords" placeholder="Keywords (comma separated)">
+                                <div style="display:flex;gap:0.75rem;align-items:center;">
+                                    <label style="font-size:0.7rem; font-weight:800; color:#555;">CASE</label>
+                                    <input type="checkbox" id="automod-keyword-case">
+                                    <label style="font-size:0.7rem; font-weight:800; color:#555;">WHOLE</label>
+                                    <input type="checkbox" id="automod-keyword-whole" checked>
+                                </div>
+                            </div>
+                        </div>
+                        <div>
+                            <h4 style="font-size:0.8rem; color:#999; margin-bottom:0.5rem;">Regex Helper</h4>
+                            <div style="display:flex;flex-direction:column;gap:0.5rem;">
+                                <textarea id="automod-regex-patterns" rows="4" placeholder="One pattern per line"></textarea>
+                                <div style="display:flex;gap:0.75rem;align-items:center;">
+                                    <label style="font-size:0.7rem; font-weight:800; color:#555;">CASE</label>
+                                    <input type="checkbox" id="automod-regex-case">
+                                    <label style="font-size:0.7rem; font-weight:800; color:#555;">MULTILINE</label>
+                                    <input type="checkbox" id="automod-regex-multiline">
+                                </div>
+                            </div>
+                        </div>
+                        <div style="grid-column: span 2;">
+                            <h4 style="font-size:0.8rem; color:#999; margin-bottom:0.5rem;">Config JSON</h4>
+                            <textarea id="automod-config-json" rows="4" placeholder='{"keywords":["spam"],"case_sensitive":false,"whole_word":true}'></textarea>
+                        </div>
+                        <div style="grid-column: span 2;">
+                            <h4 style="font-size:0.8rem; color:#999; margin-bottom:0.5rem;">Actions JSON</h4>
+                            <textarea id="automod-actions-json" rows="4" placeholder='[{"action_type":"delete_message"},{"action_type":"alert_moderators"}]'></textarea>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:0.75rem;align-items:center;margin-top:1rem;flex-wrap:wrap;">
+                        <button class="btn btn-primary" data-click="saveAutomodRule">Save Rule</button>
+                        <button class="btn btn-outline" data-click="resetAutomodRule">Reset</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div id="tab-logs" class="tab-content hidden">
             <div class="card">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
@@ -688,6 +816,11 @@
             if (n === 'metrics') refreshMetrics();
             else if (n === 'tickets') loadTickets();
             else if (n === 'security') loadSecurity();
+            else if (n === 'automod') {
+                loadAutomodConfig();
+                const serverId = document.getElementById('automod-server-id')?.value;
+                if (serverId) loadAutomodRules();
+            }
             else if (n === 'logs') loadLogs();
         };
 
@@ -1164,6 +1297,238 @@
             } catch (e) {}
         }
 
+        const defaultAutomodActions = [
+            { action_type: 'delete_message' },
+            { action_type: 'alert_moderators' }
+        ];
+
+        let automodRules = [];
+        let automodEditRuleId = null;
+
+        const parseIdList = (value) => (value || '')
+            .split(',')
+            .map(v => v.trim())
+            .filter(Boolean)
+            .map(v => Number(v))
+            .filter(v => !Number.isNaN(v));
+
+        const parseJsonInput = (value, fallback) => {
+            if (!value || !value.trim()) return fallback;
+            return JSON.parse(value);
+        };
+
+        async function loadAutomodConfig() {
+            try {
+                const cfg = await api('/api/v1/admin/automod/config');
+                document.getElementById('automod-enabled').checked = cfg.enabled !== false;
+                const openai = cfg.ai?.openai || {};
+                const perspective = cfg.ai?.perspective || {};
+                const custom = cfg.ai?.custom || {};
+                document.getElementById('automod-openai-key').value = openai.api_key || '';
+                document.getElementById('automod-openai-model').value = openai.model || '';
+                document.getElementById('automod-openai-url').value = openai.api_url || '';
+                document.getElementById('automod-openai-threshold').value = openai.threshold ?? '';
+                document.getElementById('automod-perspective-key').value = perspective.api_key || '';
+                document.getElementById('automod-perspective-threshold').value = perspective.threshold ?? '';
+                document.getElementById('automod-perspective-attributes').value = (perspective.attributes || []).join(', ');
+                document.getElementById('automod-custom-endpoint').value = custom.endpoint_url || '';
+                document.getElementById('automod-custom-key').value = custom.api_key || '';
+                document.getElementById('automod-custom-auth-header').value = custom.auth_header || '';
+                document.getElementById('automod-custom-auth-prefix').value = custom.auth_prefix || '';
+                document.getElementById('automod-custom-timeout').value = custom.timeout_seconds ?? '';
+                document.getElementById('automod-custom-threshold').value = custom.threshold ?? '';
+                document.getElementById('automod-custom-headers').value = custom.headers ? JSON.stringify(custom.headers) : '';
+            } catch (e) {}
+        }
+
+        async function saveAutomodConfig() {
+            try {
+                const ai = {
+                    openai: {
+                        api_key: document.getElementById('automod-openai-key').value.trim(),
+                        model: document.getElementById('automod-openai-model').value.trim(),
+                        api_url: document.getElementById('automod-openai-url').value.trim(),
+                        threshold: document.getElementById('automod-openai-threshold').value ? Number(document.getElementById('automod-openai-threshold').value) : undefined
+                    },
+                    perspective: {
+                        api_key: document.getElementById('automod-perspective-key').value.trim(),
+                        threshold: document.getElementById('automod-perspective-threshold').value ? Number(document.getElementById('automod-perspective-threshold').value) : undefined,
+                        attributes: document.getElementById('automod-perspective-attributes').value
+                            .split(',')
+                            .map(v => v.trim())
+                            .filter(Boolean)
+                    },
+                    custom: {
+                        endpoint_url: document.getElementById('automod-custom-endpoint').value.trim(),
+                        api_key: document.getElementById('automod-custom-key').value.trim(),
+                        auth_header: document.getElementById('automod-custom-auth-header').value.trim(),
+                        auth_prefix: document.getElementById('automod-custom-auth-prefix').value.trim(),
+                        timeout_seconds: document.getElementById('automod-custom-timeout').value ? Number(document.getElementById('automod-custom-timeout').value) : undefined,
+                        threshold: document.getElementById('automod-custom-threshold').value ? Number(document.getElementById('automod-custom-threshold').value) : undefined,
+                        headers: parseJsonInput(document.getElementById('automod-custom-headers').value, undefined)
+                    }
+                };
+                await api('/api/v1/admin/automod/config', {
+                    method: 'PUT',
+                    body: JSON.stringify({
+                        enabled: document.getElementById('automod-enabled').checked,
+                        ai
+                    })
+                });
+                loadAutomodConfig();
+            } catch (e) { alert('Failed to save automod config: ' + e.message); }
+        }
+
+        async function loadAutomodRules() {
+            const serverId = document.getElementById('automod-server-id').value.trim();
+            if (!serverId) return;
+            try {
+                automodRules = await api(`/api/v1/admin/automod/rules?server_id=${encodeURIComponent(serverId)}`);
+                renderAutomodRules();
+            } catch (e) { alert('Failed to load automod rules: ' + e.message); }
+        }
+
+        function renderAutomodRules() {
+            const tbody = document.getElementById('automod-rules-tbody');
+            if (!tbody) return;
+            if (!automodRules || automodRules.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="color:#666;">No rules found</td></tr>';
+                return;
+            }
+            tbody.innerHTML = automodRules.map(r => `
+                <tr>
+                    <td>${r.name}</td>
+                    <td>${r.rule_type}</td>
+                    <td>${r.enabled ? '<span class="badge" style="background:var(--good);color:#000;">On</span>' : '<span class="badge" style="background:var(--bad);color:#000;">Off</span>'}</td>
+                    <td>${r.priority}</td>
+                    <td>${(r.actions || []).map(a => a.action_type).join(', ')}</td>
+                    <td style="display:flex;gap:0.35rem;flex-wrap:wrap;">
+                        <button class="btn btn-secondary btn-sm" data-click="editAutomodRule" data-id="${r.id}">Edit</button>
+                        <button class="btn btn-outline btn-sm" data-click="toggleAutomodRule" data-id="${r.id}" data-enabled="${r.enabled ? 'false' : 'true'}">${r.enabled ? 'Disable' : 'Enable'}</button>
+                        <button class="btn btn-danger btn-sm" data-click="deleteAutomodRule" data-id="${r.id}">Delete</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function resetAutomodRule() {
+            automodEditRuleId = null;
+            document.getElementById('automod-editing').textContent = '';
+            document.getElementById('automod-rule-name').value = '';
+            document.getElementById('automod-rule-type').value = 'keyword';
+            document.getElementById('automod-rule-enabled').checked = true;
+            document.getElementById('automod-rule-check-all').checked = false;
+            document.getElementById('automod-rule-priority').value = '';
+            document.getElementById('automod-exempt-roles').value = '';
+            document.getElementById('automod-exempt-channels').value = '';
+            document.getElementById('automod-keywords').value = '';
+            document.getElementById('automod-keyword-case').checked = false;
+            document.getElementById('automod-keyword-whole').checked = true;
+            document.getElementById('automod-regex-patterns').value = '';
+            document.getElementById('automod-regex-case').checked = false;
+            document.getElementById('automod-regex-multiline').checked = false;
+            document.getElementById('automod-config-json').value = '';
+            document.getElementById('automod-actions-json').value = '';
+        }
+
+        function loadAutomodRuleIntoEditor(ruleId) {
+            const rule = automodRules.find(r => String(r.id) === String(ruleId));
+            if (!rule) return;
+            automodEditRuleId = rule.id;
+            document.getElementById('automod-editing').textContent = `Editing ${rule.name} (${rule.id})`;
+            document.getElementById('automod-rule-server-id').value = rule.server_id;
+            document.getElementById('automod-rule-name').value = rule.name;
+            document.getElementById('automod-rule-type').value = rule.rule_type;
+            document.getElementById('automod-rule-enabled').checked = !!rule.enabled;
+            document.getElementById('automod-rule-check-all').checked = !!rule.check_all;
+            document.getElementById('automod-rule-priority').value = rule.priority ?? '';
+            document.getElementById('automod-exempt-roles').value = (rule.exempt_roles || []).join(', ');
+            document.getElementById('automod-exempt-channels').value = (rule.exempt_channels || []).join(', ');
+            document.getElementById('automod-config-json').value = JSON.stringify(rule.config || {}, null, 2);
+            document.getElementById('automod-actions-json').value = JSON.stringify(rule.actions || [], null, 2);
+        }
+
+        async function saveAutomodRule() {
+            const serverId = document.getElementById('automod-rule-server-id').value.trim();
+            const name = document.getElementById('automod-rule-name').value.trim();
+            const ruleType = document.getElementById('automod-rule-type').value;
+            if (!serverId || !name || !ruleType) return;
+            let config = null;
+            if (ruleType === 'keyword') {
+                const keywords = document.getElementById('automod-keywords').value
+                    .split(',')
+                    .map(v => v.trim())
+                    .filter(Boolean);
+                if (keywords.length > 0) {
+                    config = {
+                        keywords,
+                        case_sensitive: document.getElementById('automod-keyword-case').checked,
+                        whole_word: document.getElementById('automod-keyword-whole').checked
+                    };
+                }
+            }
+            if (ruleType === 'regex') {
+                const patterns = document.getElementById('automod-regex-patterns').value
+                    .split('\n')
+                    .map(v => v.trim())
+                    .filter(Boolean)
+                    .map(v => ({
+                        pattern: v,
+                        severity: 'medium',
+                        name: v.slice(0, 30),
+                        case_sensitive: document.getElementById('automod-regex-case').checked,
+                        multiline: document.getElementById('automod-regex-multiline').checked
+                    }));
+                if (patterns.length > 0) {
+                    config = { patterns };
+                }
+            }
+            if (!config) {
+                config = parseJsonInput(document.getElementById('automod-config-json').value, null);
+            }
+            if (!config) return;
+            let actions = parseJsonInput(document.getElementById('automod-actions-json').value, defaultAutomodActions);
+            if (!Array.isArray(actions) || actions.length === 0) actions = defaultAutomodActions;
+            const body = {
+                server_id: Number(serverId),
+                name,
+                rule_type: ruleType,
+                config,
+                actions,
+                exempt_roles: parseIdList(document.getElementById('automod-exempt-roles').value),
+                exempt_channels: parseIdList(document.getElementById('automod-exempt-channels').value),
+                priority: document.getElementById('automod-rule-priority').value ? Number(document.getElementById('automod-rule-priority').value) : 0,
+                check_all: document.getElementById('automod-rule-check-all').checked,
+                enabled: document.getElementById('automod-rule-enabled').checked
+            };
+            try {
+                if (automodEditRuleId) {
+                    const updateBody = {
+                        name: body.name,
+                        config: body.config,
+                        actions: body.actions,
+                        exempt_roles: body.exempt_roles,
+                        exempt_channels: body.exempt_channels,
+                        priority: body.priority,
+                        check_all: body.check_all,
+                        enabled: body.enabled
+                    };
+                    await api(`/api/v1/admin/automod/rules/${automodEditRuleId}`, {
+                        method: 'PATCH',
+                        body: JSON.stringify(updateBody)
+                    });
+                } else {
+                    await api('/api/v1/admin/automod/rules', {
+                        method: 'POST',
+                        body: JSON.stringify(body)
+                    });
+                }
+                document.getElementById('automod-server-id').value = serverId;
+                loadAutomodRules();
+                resetAutomodRule();
+            } catch (e) { alert('Failed to save automod rule: ' + e.message); }
+        }
+
         async function loadLogFile(f) {
             try {
                 const search = document.getElementById('log-search').value;
@@ -1373,6 +1738,19 @@
             }
             else if (a === 'scrollLogTop') document.getElementById('log-viewer').scrollTop = 0;
             else if (a === 'scrollLogBottom') document.getElementById('log-viewer').scrollTop = 1e9;
+            else if (a === 'saveAutomodConfig') saveAutomodConfig();
+            else if (a === 'loadAutomodRules') loadAutomodRules();
+            else if (a === 'saveAutomodRule') saveAutomodRule();
+            else if (a === 'resetAutomodRule') resetAutomodRule();
+            else if (a === 'editAutomodRule') loadAutomodRuleIntoEditor(id);
+            else if (a === 'toggleAutomodRule') {
+                const enabled = el.dataset.enabled === 'true';
+                api(`/api/v1/admin/automod/rules/${id}`, { method: 'PATCH', body: JSON.stringify({ enabled }) }).then(() => loadAutomodRules());
+            }
+            else if (a === 'deleteAutomodRule') {
+                if (!confirm('Delete this automod rule?')) return;
+                api(`/api/v1/admin/automod/rules/${id}`, { method: 'DELETE' }).then(() => loadAutomodRules());
+            }
             else if (a === 'openExport') document.getElementById('export-modal').classList.remove('hidden');
             else if (a === 'closeExport') document.getElementById('export-modal').classList.add('hidden');
             else if (a === 'resetTelemetry') {
@@ -1425,6 +1803,7 @@
                 else if (e.target.id === 'ban-username-val') document.querySelector('[data-click="addBannedUsername"]').click();
                 else if (e.target.id === 'block-hash-val' || e.target.id === 'block-hash-reason') document.querySelector('[data-click="blockHash"]').click();
                 else if (e.target.id === 'block-user-id') document.querySelector('[data-click="blockUser"]').click();
+                else if (e.target.id === 'automod-server-id') document.querySelector('[data-click="loadAutomodRules"]').click();
             }
         });
 

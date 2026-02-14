@@ -24,7 +24,7 @@ from .exceptions import (
     InvalidActivityError,
 )
 from .schema import create_tables
-from src.core.database import cache_set, redis_available, get_cached_presence, get_redis_client
+from src.core.database import cache_set, redis_available, get_cached_presence, get_redis_client, cache_delete
 
 
 class PresenceManager(BaseManager):
@@ -499,8 +499,8 @@ class PresenceManager(BaseManager):
                 try:
                     focus = client.hgetall(f"presence:focus:{user_id}")
                     if focus:
-                        presence.current_channel_id = int(focus.get(b"channel_id", 0)) or None
-                        presence.current_server_id = int(focus.get(b"server_id", 0)) or None
+                        presence.current_channel_id = int(focus.get(b"channel_id", 0)) or None  # type: ignore
+                        presence.current_server_id = int(focus.get(b"server_id", 0)) or None  # type: ignore
                 except Exception:
                     pass
 
@@ -681,7 +681,7 @@ class PresenceManager(BaseManager):
             if channel_id is None:
                 client.delete(key)
             else:
-                client.hset(key, mapping={
+                client.hset(key, mapping={  # type: ignore
                     "channel_id": str(channel_id),
                     "server_id": str(server_id or 0)
                 })
