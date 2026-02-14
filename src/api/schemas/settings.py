@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, RootModel
 from typing import Dict, Any
 
 
@@ -29,7 +29,7 @@ class SettingsResponse(BaseModel):
     limit: int = Field(..., description="Max number of settings allowed")
 
 
-class BulkSettingsRequest(BaseModel):
+class BulkSettingsRequest(RootModel):
     """Request body for bulk setting updates."""
 
-    settings: Dict[str, Any] = Field(..., description="Key-value pairs to update")
+    root: Dict[str, Any] = Field(..., description="Key-value pairs to update")
