@@ -4,7 +4,7 @@ User Settings routes - Cloud-synced key-value store for user preferences.
 
 import time
 from typing import Dict, Any
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 
 import src.api as api
 from src.core.database import cached
@@ -223,14 +223,19 @@ async def set_setting(
     },
 )
 async def bulk_update_settings(
-    body: Dict[str, Any], current_user: TokenInfo = Depends(get_current_user)
+    request: Request, current_user: TokenInfo = Depends(get_current_user)
 ) -> SuccessResponse:
     """
     Update multiple settings at once.
     
     Accepts a dictionary of key-value pairs to update.
     """
-    logger.info(f"Bulk settings update request from user {current_user.user_id}: {list(body.keys())}")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid JSON"}})
+
+    logger.info(f"Bulk settings update request from user {current_user.user_id}: {list(body.keys()) if isinstance(body, dict) else type(body)}")
     
     settings_module = api.get_settings()
     presence_module = api.get_presence()
@@ -241,6 +246,9 @@ async def bulk_update_settings(
             status_code=500,
             detail={"error": {"code": 500, "message": "Settings module not available"}},
         )
+
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Body must be a dictionary"}})
 
     try:
         for key, raw_value in body.items():
