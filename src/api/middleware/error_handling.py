@@ -106,6 +106,10 @@ class ErrorHandlingMiddleware:
         try:
             await self.app(scope, receive, send)
         except Exception as exc:
+            # Log the error details server-side
+            import utils.logger as logger
+            logger.error(f"Middleware caught exception: {type(exc).__name__}: {exc}", exc_info=True)
+
             # Determine status code and message
             status_code = get_status_code_for_exception(exc)
 

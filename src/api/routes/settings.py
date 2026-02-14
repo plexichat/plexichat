@@ -223,7 +223,7 @@ async def set_setting(
     },
 )
 async def bulk_update_settings(
-    body: Dict[str, Any] = Body(...), current_user: TokenInfo = Depends(get_current_user)
+    body: Dict[str, Any], current_user: TokenInfo = Depends(get_current_user)
 ) -> SuccessResponse:
     """
     Update multiple settings at once.
