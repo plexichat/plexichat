@@ -230,6 +230,7 @@ async def bulk_update_settings(
     
     Accepts a dictionary of key-value pairs to update.
     """
+    logger.debug(f"Bulk settings update request from user {current_user.user_id}: {body}")
     settings_module = api.get_settings()
     presence_module = api.get_presence()
     
