@@ -452,6 +452,7 @@ class PlexiChatServer:
             settings,
             media,
             events,
+            automod,
         )
         from src.core import voice, notifications, threads
         from src.core.voice import signaling
@@ -657,6 +658,25 @@ class PlexiChatServer:
                 t.join()
 
         init_dependent()
+
+        # Initialize AutoMod
+        timed_init("automod", lambda: automod.setup(
+            self.db,
+            servers_module=servers,
+            messaging_module=messaging,
+            notifications_module=self._modules.get("notifications"),
+        ))
+        self._modules["automod"] = automod
+
+        # Ensure default rules for all servers
+        try:
+            all_servers = self.db.fetch_all("SELECT id, owner_id FROM srv_servers WHERE deleted = 0")
+            for srv in all_servers:
+                automod.ensure_default_rules(srv["id"], srv["owner_id"])
+            if all_servers:
+                logger.info(f"Ensured default automod rules for {len(all_servers)} servers")
+        except Exception as e:
+            logger.warning(f"Failed to ensure default rules for servers: {e}")
 
         # Final non-critical group
         timed_init("events", lambda: events.setup(
