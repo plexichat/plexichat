@@ -1109,14 +1109,14 @@ class AutoModManager(BaseManager):
             priority=100
         )
 
-        # 2. Hate Speech / Racist Language Filter
+        # 2. Hate Speech Filter (Keyword based)
         self.create_rule(
             user_id=user_id,
             server_id=server_id,
-            name="Hate Speech Filter",
+            name="Hate Speech Filter (Keywords)",
             rule_type=RuleType.KEYWORD,
             rule_config={
-                "keywords": ["trigger_racist_filter", "racist_slur_placeholder"],
+                "keywords": ["nigger", "faggot", "kike", "chink", "retard", "paki"],
                 "whole_word": True,
                 "case_sensitive": False
             },
@@ -1125,6 +1125,29 @@ class AutoModManager(BaseManager):
                 {"type": "timeout_user", "duration_seconds": 3600, "reason": "Hate speech is not allowed"}
             ],
             priority=200
+        )
+
+        # 3. Hate Speech Filter (Regex for obfuscation)
+        self.create_rule(
+            user_id=user_id,
+            server_id=server_id,
+            name="Hate Speech Filter (Regex)",
+            rule_type=RuleType.REGEX,
+            rule_config={
+                "patterns": [
+                    {
+                        "name": "Slur Obfuscation",
+                        "pattern": r"n[i1l][gq]{2}[e3]r|f[a@][gq]{2}[o0]t|k[i1]k[e3]|ch[i1]nk",
+                        "case_sensitive": False,
+                        "severity": "critical"
+                    }
+                ]
+            },
+            actions=[
+                {"type": "delete_message"},
+                {"type": "timeout_user", "duration_seconds": 3600, "reason": "Hate speech obfuscation is not allowed"}
+            ],
+            priority=210
         )
 
     def _row_to_rule(self, row) -> Rule:
