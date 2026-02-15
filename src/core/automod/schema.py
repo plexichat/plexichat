@@ -11,8 +11,8 @@ def create_tables(db):
 
     db.execute("""
         CREATE TABLE IF NOT EXISTS automod_rules (
-            id INTEGER PRIMARY KEY,
-            server_id INTEGER NOT NULL,
+            id BIGINT PRIMARY KEY,
+            server_id BIGINT NOT NULL,
             name TEXT NOT NULL,
             rule_type TEXT NOT NULL,
             enabled INTEGER DEFAULT 1,
@@ -22,9 +22,9 @@ def create_tables(db):
             exempt_channels TEXT DEFAULT '[]',
             priority INTEGER DEFAULT 0,
             check_all INTEGER DEFAULT 0,
-            created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL,
-            created_by INTEGER NOT NULL
+            created_at BIGINT NOT NULL,
+            updated_at BIGINT NOT NULL,
+            created_by BIGINT NOT NULL
         )
     """)
 
@@ -35,18 +35,18 @@ def create_tables(db):
 
     db.execute("""
         CREATE TABLE IF NOT EXISTS automod_violations (
-            id INTEGER PRIMARY KEY,
-            server_id INTEGER NOT NULL,
-            channel_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            message_id INTEGER,
-            rule_id INTEGER NOT NULL,
+            id BIGINT PRIMARY KEY,
+            server_id BIGINT NOT NULL,
+            channel_id BIGINT NOT NULL,
+            user_id BIGINT NOT NULL,
+            message_id BIGINT,
+            rule_id BIGINT NOT NULL,
             rule_type TEXT NOT NULL,
             matched_content TEXT NOT NULL,
             actions_taken TEXT NOT NULL,
             severity TEXT NOT NULL,
             metadata TEXT DEFAULT '{}',
-            created_at INTEGER NOT NULL
+            created_at BIGINT NOT NULL
         )
     """)
 
@@ -62,15 +62,15 @@ def create_tables(db):
 
     db.execute("""
         CREATE TABLE IF NOT EXISTS automod_audit (
-            id INTEGER PRIMARY KEY,
-            server_id INTEGER NOT NULL,
+            id BIGINT PRIMARY KEY,
+            server_id BIGINT NOT NULL,
             action_type TEXT NOT NULL,
-            target_user_id INTEGER NOT NULL,
-            moderator_id INTEGER,
-            rule_id INTEGER,
+            target_user_id BIGINT NOT NULL,
+            moderator_id BIGINT,
+            rule_id BIGINT,
             reason TEXT NOT NULL,
             metadata TEXT DEFAULT '{}',
-            created_at INTEGER NOT NULL
+            created_at BIGINT NOT NULL
         )
     """)
 
@@ -81,27 +81,27 @@ def create_tables(db):
 
     db.execute("""
         CREATE TABLE IF NOT EXISTS automod_reputation (
-            user_id INTEGER NOT NULL,
-            server_id INTEGER NOT NULL,
+            user_id BIGINT NOT NULL,
+            server_id BIGINT NOT NULL,
             score REAL DEFAULT 100.0,
             violation_count INTEGER DEFAULT 0,
-            last_violation_at INTEGER,
-            last_decay_at INTEGER NOT NULL,
-            created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL,
+            last_violation_at BIGINT,
+            last_decay_at BIGINT NOT NULL,
+            created_at BIGINT NOT NULL,
+            updated_at BIGINT NOT NULL,
             PRIMARY KEY (user_id, server_id)
         )
     """)
 
     db.execute("""
         CREATE TABLE IF NOT EXISTS automod_exemptions (
-            id INTEGER PRIMARY KEY,
-            server_id INTEGER NOT NULL,
-            rule_id INTEGER,
+            id BIGINT PRIMARY KEY,
+            server_id BIGINT NOT NULL,
+            rule_id BIGINT,
             target_type TEXT NOT NULL,
-            target_id INTEGER NOT NULL,
-            created_at INTEGER NOT NULL,
-            created_by INTEGER NOT NULL
+            target_id BIGINT NOT NULL,
+            created_at BIGINT NOT NULL,
+            created_by BIGINT NOT NULL
         )
     """)
 
@@ -112,11 +112,11 @@ def create_tables(db):
 
     db.execute("""
         CREATE TABLE IF NOT EXISTS automod_rate_tracking (
-            id INTEGER PRIMARY KEY,
-            server_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
+            id BIGINT PRIMARY KEY,
+            server_id BIGINT NOT NULL,
+            user_id BIGINT NOT NULL,
             rule_type TEXT NOT NULL,
-            window_start INTEGER NOT NULL,
+            window_start BIGINT NOT NULL,
             count INTEGER DEFAULT 1,
             UNIQUE(server_id, user_id, rule_type, window_start)
         )
