@@ -110,6 +110,8 @@ __all__ = [
     "get_audit_log",
     # Actions
     "trigger_action",
+    # Defaults
+    "ensure_default_rules",
     # Bulk operations
     "scan_messages_bulk",
     # AI moderation
@@ -326,6 +328,11 @@ def trigger_action(
         duration_seconds,
         context,
     )
+
+
+def ensure_default_rules(server_id: int, user_id: int) -> None:
+    """Ensure standard moderation rules exist for a server."""
+    return _get_manager().ensure_default_rules(server_id, user_id)
 
 
 def scan_messages_bulk(

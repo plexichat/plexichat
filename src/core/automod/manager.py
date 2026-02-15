@@ -1080,6 +1080,53 @@ class AutoModManager(BaseManager):
 
         return adapter.check_content(content, context)
 
+    def ensure_default_rules(self, server_id: SnowflakeID, user_id: SnowflakeID) -> None:
+        """
+        Ensure standard moderation rules exist for a server.
+        
+        This creates baseline protection against spam and hate speech.
+        """
+        existing = self._get_server_rules(server_id)
+        if existing:
+            return
+
+        # 1. Anti-Spam Rule
+        self.create_rule(
+            user_id=user_id,
+            server_id=server_id,
+            name="Anti-Spam",
+            rule_type=RuleType.MESSAGE_SPAM,
+            rule_config={
+                "max_messages": 5,
+                "window_seconds": 10,
+                "duplicate_threshold": 3,
+                "similarity_threshold": 0.9
+            },
+            actions=[
+                {"type": "delete_message"},
+                {"type": "alert_moderators", "reason": "Automated spam detection"}
+            ],
+            priority=100
+        )
+
+        # 2. Hate Speech / Racist Language Filter
+        self.create_rule(
+            user_id=user_id,
+            server_id=server_id,
+            name="Hate Speech Filter",
+            rule_type=RuleType.KEYWORD,
+            rule_config={
+                "keywords": ["trigger_racist_filter", "racist_slur_placeholder"],
+                "whole_word": True,
+                "case_sensitive": False
+            },
+            actions=[
+                {"type": "delete_message"},
+                {"type": "timeout_user", "duration_seconds": 3600, "reason": "Hate speech is not allowed"}
+            ],
+            priority=200
+        )
+
     def _row_to_rule(self, row) -> Rule:
         """Convert database row to Rule."""
         actions_data = json.loads(row["actions"])

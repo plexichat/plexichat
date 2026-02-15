@@ -298,6 +298,13 @@ class ServerManager(BaseManager):
             (channel_id, server_id),
         )
 
+        # Initialize default automod rules
+        try:
+            import src.core.automod as automod
+            automod.ensure_default_rules(server_id, owner_id)
+        except Exception as e:
+            logger.warning(f"Failed to initialize default automod rules for server {server_id}: {e}")
+
         self._log_audit(server_id, owner_id, AuditLogAction.SERVER_CREATE)
 
         logger.debug(f"Created server {server_id} for owner {owner_id}")
