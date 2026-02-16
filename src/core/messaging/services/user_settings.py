@@ -8,6 +8,7 @@ from ..models import UserMessageSettings
 from ..repositories.user_settings import UserSettingsRepository
 from .base import BaseService
 from src.core.base import SnowflakeID
+from src.core.database import cached
 
 
 class UserSettingsService(BaseService):
@@ -89,10 +90,12 @@ class UserSettingsService(BaseService):
 
         return self.get_message_settings(user_id)
 
+    @cached(ttl=300, prefix="user_exists")
     def user_exists(self, user_id: SnowflakeID) -> bool:
         """Check if a user exists."""
         return self._repo.user_exists(user_id)
 
+    @cached(ttl=300, prefix="users_exist_batch")
     def users_exist_batch(self, user_ids: List[SnowflakeID]) -> Dict[SnowflakeID, bool]:
         """Check if multiple users exist (batch operation)."""
         return self._repo.users_exist_batch(user_ids)

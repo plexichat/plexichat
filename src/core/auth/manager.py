@@ -1468,6 +1468,7 @@ class AuthManager(BaseManager):
             public_key=row.get("public_key")
         )
 
+    @cached(ttl=300, prefix="user_by_username")
     def get_user_by_username(self, username: str) -> Optional[User]:
         row = self._db.fetch_one(
             "SELECT id FROM auth_users WHERE username = ?", (username,)

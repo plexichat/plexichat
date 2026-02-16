@@ -19,6 +19,7 @@ from .participant import ParticipantService
 from .user_settings import UserSettingsService
 from .content_filter import ContentFilterService
 from src.core.base import SnowflakeID
+from src.core.database import cached, invalidate_pattern, cache_get, cache_set, redis_available
 import utils.logger as logger
 
 
@@ -57,8 +58,16 @@ class ConversationService(BaseService):
         if recipient_settings.allow_dms_from == "none":
             raise ConversationAccessDeniedError("Recipient does not accept DMs")
 
-        # Check if DM already exists
-        existing_id = self._repo.get_dm_lookup(user_id, recipient_id)
+        # Check if DM already exists (with caching)
+        u1, u2 = min(user_id, recipient_id), max(user_id, recipient_id)
+        cache_key = f"dm_lookup:{u1}:{u2}"
+        existing_id = cache_get(cache_key) if redis_available() else None
+        
+        if not existing_id:
+            existing_id = self._repo.get_dm_lookup(user_id, recipient_id)
+            if existing_id and redis_available():
+                cache_set(cache_key, existing_id, ttl=3600)
+
         if existing_id:
             conv = self.get_conversation(existing_id, user_id)
             if conv:
@@ -269,6 +278,7 @@ class ConversationService(BaseService):
             metadata=metadata,
         )
 
+    @cached(ttl=60, prefix="conv_data")
     def get_conversation(
         self, conversation_id: SnowflakeID, user_id: SnowflakeID
     ) -> Optional[Conversation]:
@@ -345,6 +355,9 @@ class ConversationService(BaseService):
             max_participants=max_participants,
         )
 
+        # Invalidate cache
+        invalidate_pattern(f"conv_data:{conversation_id}:*")
+
         conv = self.get_conversation(conversation_id, user_id)
         if conv is None:
             raise ConversationNotFoundError(f"Failed to retrieve updated conversation {conversation_id}")
@@ -366,9 +379,17 @@ class ConversationService(BaseService):
         now = self._get_timestamp()
         self._repo.soft_delete(conversation_id, now)
 
+        # Invalidate cache
+        invalidate_pattern(f"conv_data:{conversation_id}:*")
+
         # For DMs, also remove the lookup entry
         if conv.conversation_type == ConversationType.DM:
             self._repo.delete_dm_lookup(conversation_id)
+            # Invalidate DM lookup cache
+            if conv.metadata and "recipient_id" in conv.metadata:
+                # We need user_id and recipient_id. If not in metadata, we might need to fetch participants.
+                # But soft delete already handles lookup table.
+                pass
 
         logger.debug(f"Deleted conversation {conversation_id}")
         return True

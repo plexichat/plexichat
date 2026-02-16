@@ -482,6 +482,7 @@ class RoleHandler:
             
         return result
 
+    @cached(ttl=10, prefix="has_perm")
     def has_permission(
         self,
         user_id: SnowflakeID,
