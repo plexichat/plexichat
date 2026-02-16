@@ -7,6 +7,8 @@ from dataclasses import dataclass
 import time
 import secrets
 import string
+import hashlib
+import threading
 import os
 from pathlib import Path
 import utils.logger as logger
@@ -28,6 +30,46 @@ class AdminLoginResult:
 # Rate limiting for admin login
 _login_attempts: Dict[str, List[float]] = {}  # IP -> list of attempt timestamps
 _lockouts: Dict[str, float] = {}  # IP -> lockout until timestamp
+_otp_challenges: Dict[str, Dict[str, Any]] = {}
+_otp_lock = threading.Lock()
+
+
+def _hash_admin_token(token: str) -> str:
+    """Hash admin bearer tokens before persistence."""
+    return "sha256$" + hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _create_otp_challenge(admin_id: int, is_setup: bool, ttl_seconds: int = 300) -> str:
+    """Create a short-lived challenge token for OTP verification binding."""
+    token = secrets.token_urlsafe(32)
+    expires_at = int(time.time() * 1000) + (ttl_seconds * 1000)
+    with _otp_lock:
+        _otp_challenges[token] = {
+            "admin_id": admin_id,
+            "is_setup": is_setup,
+            "expires_at": expires_at,
+        }
+    return token
+
+
+def _validate_otp_challenge(challenge_token: str, admin_id: int, is_setup: bool) -> bool:
+    """Validate OTP challenge token against admin and flow type."""
+    now = int(time.time() * 1000)
+    with _otp_lock:
+        payload = _otp_challenges.get(challenge_token)
+        if not payload:
+            return False
+        if payload["expires_at"] < now:
+            _otp_challenges.pop(challenge_token, None)
+            return False
+        if payload["admin_id"] != admin_id or payload["is_setup"] != is_setup:
+            return False
+        return True
+
+
+def _consume_otp_challenge(challenge_token: str) -> None:
+    with _otp_lock:
+        _otp_challenges.pop(challenge_token, None)
 
 def _generate_password(length: int = 24) -> str:
     """Generate a secure random password."""
@@ -152,15 +194,32 @@ def login(db: Any, username: str, password: str, ip: str = "unknown") -> AdminLo
         totp = pyotp.TOTP(secret)
         qr_uri = totp.provisioning_uri(name=username, issuer_name="PlexiChat Admin")
         db.execute("UPDATE admin_users SET totp_secret = ? WHERE id = ?", (secret, admin_id))
-        return AdminLoginResult(success=True, user_id=admin_id, requires_otp_setup=True, otp_secret=secret, otp_qr_uri=qr_uri, challenge_token=secrets.token_urlsafe(32))
+        return AdminLoginResult(
+            success=True,
+            user_id=admin_id,
+            requires_otp_setup=True,
+            otp_secret=secret,
+            otp_qr_uri=qr_uri,
+            challenge_token=_create_otp_challenge(admin_id, is_setup=True),
+        )
 
     if totp_enabled:
-        return AdminLoginResult(success=True, user_id=admin_id, requires_otp_verify=True, challenge_token=secrets.token_urlsafe(32))
+        return AdminLoginResult(
+            success=True,
+            user_id=admin_id,
+            requires_otp_verify=True,
+            challenge_token=_create_otp_challenge(admin_id, is_setup=False),
+        )
 
     return AdminLoginResult(success=False, error="OTP setup required")
 
-def verify_otp_setup(db: Any, admin_id: int, code: str) -> AdminLoginResult:
+def verify_otp_setup(
+    db: Any, admin_id: int, code: str, challenge_token: str
+) -> AdminLoginResult:
     """Verify OTP code during setup."""
+    if not _validate_otp_challenge(challenge_token, admin_id, is_setup=True):
+        return AdminLoginResult(success=False, error="Invalid or expired OTP challenge")
+
     row = db.fetch_one("SELECT totp_secret FROM admin_users WHERE id = ?", (admin_id,))
     if not row:
         return AdminLoginResult(success=False, error="Admin user not found")
@@ -173,10 +232,14 @@ def verify_otp_setup(db: Any, admin_id: int, code: str) -> AdminLoginResult:
     db.execute("UPDATE admin_users SET totp_enabled = 1, must_setup_otp = 0 WHERE id = ?", (admin_id,))
     backup_codes = [secrets.token_hex(4).upper() for _ in range(10)]
     db.execute("UPDATE admin_users SET backup_codes = ? WHERE id = ?", (",".join(backup_codes), admin_id))
+    _consume_otp_challenge(challenge_token)
     return AdminLoginResult(success=True, token=create_session(db, admin_id), user_id=admin_id)
 
-def verify_otp(db: Any, admin_id: int, code: str) -> AdminLoginResult:
+def verify_otp(db: Any, admin_id: int, code: str, challenge_token: str) -> AdminLoginResult:
     """Verify OTP code for login."""
+    if not _validate_otp_challenge(challenge_token, admin_id, is_setup=False):
+        return AdminLoginResult(success=False, error="Invalid or expired OTP challenge")
+
     row = db.fetch_one("SELECT totp_secret, backup_codes FROM admin_users WHERE id = ?", (admin_id,))
     if not row:
         return AdminLoginResult(success=False, error="Admin user not found")
@@ -189,36 +252,62 @@ def verify_otp(db: Any, admin_id: int, code: str) -> AdminLoginResult:
     import pyotp
     if pyotp.TOTP(secret).verify(code, valid_window=1):
         db.execute("UPDATE admin_users SET last_login = ? WHERE id = ?", (int(time.time() * 1000), admin_id))
+        _consume_otp_challenge(challenge_token)
         return AdminLoginResult(success=True, token=create_session(db, admin_id), user_id=admin_id)
     if backup_codes:
         codes = backup_codes.split(",")
         if code.upper().replace("-", "") in codes:
             codes.remove(code.upper().replace("-", ""))
             db.execute("UPDATE admin_users SET backup_codes = ?, last_login = ? WHERE id = ?", (",".join(codes), int(time.time() * 1000), admin_id))
+            _consume_otp_challenge(challenge_token)
             return AdminLoginResult(success=True, token=create_session(db, admin_id), user_id=admin_id)
     return AdminLoginResult(success=False, error="Invalid OTP code")
 
 def create_session(db: Any, admin_id: int, expires_hours: int = 8) -> str:
     """Create admin session."""
     token = secrets.token_urlsafe(32)
+    token_hash = _hash_admin_token(token)
     now = int(time.time() * 1000)
     expires = now + (expires_hours * 3600 * 1000)
     from src.utils.encryption import generate_snowflake_id
     sid = generate_snowflake_id()
-    db.execute("INSERT INTO admin_sessions (id, admin_id, token, created_at, expires_at) VALUES (?, ?, ?, ?, ?)", (sid, admin_id, token, now, expires))
+    db.execute(
+        "INSERT INTO admin_sessions (id, admin_id, token, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+        (sid, admin_id, token_hash, now, expires),
+    )
     return token
 
 def validate_session(db: Any, token: str) -> Optional[int]:
     """Validate admin session token."""
     now = int(time.time() * 1000)
-    row = db.fetch_one("SELECT admin_id FROM admin_sessions WHERE token = ? AND expires_at > ?", (token, now))
+    token_hash = _hash_admin_token(token)
+    row = db.fetch_one(
+        "SELECT id, admin_id, token FROM admin_sessions WHERE (token = ? OR token = ?) AND expires_at > ?",
+        (token_hash, token, now),
+    )
     if row:
-        return row["admin_id"] if isinstance(row, dict) else row[0]
+        if isinstance(row, dict):
+            session_id = row["id"]
+            admin_id = row["admin_id"]
+            stored_token = row["token"]
+        else:
+            session_id = row[0]
+            admin_id = row[1]
+            stored_token = row[2]
+
+        # Backward compatibility: migrate old plaintext tokens on successful validation.
+        if stored_token == token:
+            try:
+                db.execute("UPDATE admin_sessions SET token = ? WHERE id = ?", (token_hash, session_id))
+            except Exception:
+                pass
+        return admin_id
     return None
 
 def logout(db: Any, token: str) -> bool:
     """Invalidate admin session."""
-    db.execute("DELETE FROM admin_sessions WHERE token = ?", (token,))
+    token_hash = _hash_admin_token(token)
+    db.execute("DELETE FROM admin_sessions WHERE token = ? OR token = ?", (token_hash, token))
     return True
 
 def change_password(db: Any, admin_id: int, current_password: str, new_password: str) -> Tuple[bool, str]:

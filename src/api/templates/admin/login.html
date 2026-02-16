@@ -89,6 +89,7 @@
         document.addEventListener('DOMContentLoaded', () => {
             console.log("Admin login page loaded, attaching listeners...");
             let adminId = null;
+            let challengeToken = null;
 
             async function login(e) {
                 e.preventDefault();
@@ -131,12 +132,14 @@
                     
                     if (data.status === 'otp_setup_required') {
                         adminId = data.admin_id;
+                        challengeToken = data.challenge_token;
                         document.getElementById('login-form-container').style.display = 'none';
                         document.getElementById('otp-setup').style.display = 'block';
                         document.getElementById('qr-code').src = '/api/v1/qr?size=200x200&data=' + encodeURIComponent(data.otp_qr_uri);
                         document.getElementById('otp-secret').textContent = data.otp_secret;
                     } else if (data.status === 'otp_required') {
                         adminId = data.admin_id;
+                        challengeToken = data.challenge_token;
                         document.getElementById('login-form-container').style.display = 'none';
                         document.getElementById('otp-verify').style.display = 'block';
                     } else if (data.token) {
@@ -162,11 +165,21 @@
                 const code = document.getElementById(codeId).value;
                 const err = document.getElementById(errorId);
                 err.style.display = 'none';
+                if (!challengeToken) {
+                    err.textContent = 'Security challenge missing. Please log in again.';
+                    err.style.display = 'block';
+                    return;
+                }
                 try {
                     const res = await fetch('/api/v1/admin/verify-otp', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ admin_id: adminId, code: code, is_setup: isSetup })
+                        body: JSON.stringify({
+                            admin_id: adminId,
+                            code: code,
+                            is_setup: isSetup,
+                            challenge_token: challengeToken
+                        })
                     });
                     const data = await res.json();
                     if (!res.ok) throw new Error(data.detail || 'Verification failed');

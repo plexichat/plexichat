@@ -24,9 +24,21 @@ async def admin_login(request: Request, login_data: AdminLoginRequest):
         if result.token:
             return AdminLoginResponse(status="success", token=result.token)
         if result.requires_otp_setup:
-            return AdminLoginResponse(status="otp_setup_required", admin_id=str(result.user_id), otp_secret=result.otp_secret, otp_qr_uri=result.otp_qr_uri, message="OTP setup required")
+            return AdminLoginResponse(
+                status="otp_setup_required",
+                admin_id=str(result.user_id),
+                otp_secret=result.otp_secret,
+                otp_qr_uri=result.otp_qr_uri,
+                message="OTP setup required",
+                challenge_token=result.challenge_token,
+            )
         if result.requires_otp_verify:
-            return AdminLoginResponse(status="otp_required", admin_id=str(result.user_id), message="OTP required")
+            return AdminLoginResponse(
+                status="otp_required",
+                admin_id=str(result.user_id),
+                message="OTP required",
+                challenge_token=result.challenge_token,
+            )
         return AdminLoginResponse(status="success", token=result.token)
     except Exception as e:
         if isinstance(e, HTTPException):
@@ -40,7 +52,11 @@ async def verify_otp(request: Request, otp_data: OTPVerifyRequest):
     from src.core import admin
     try:
         admin_id = int(otp_data.admin_id)
-        result = admin.verify_otp_setup(admin_id, otp_data.code) if otp_data.is_setup else admin.verify_otp(admin_id, otp_data.code)
+        result = (
+            admin.verify_otp_setup(admin_id, otp_data.code, otp_data.challenge_token)
+            if otp_data.is_setup
+            else admin.verify_otp(admin_id, otp_data.code, otp_data.challenge_token)
+        )
         if not result.success:
             raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": result.error}})
         return AdminLoginResponse(status="success", token=result.token)

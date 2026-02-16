@@ -33,6 +33,9 @@ class AdminLoginResponse(BaseModel):
     otp_secret: Optional[str] = Field(default=None, description="OTP secret for setup")
     otp_qr_uri: Optional[str] = Field(default=None, description="OTP QR URI for setup")
     message: Optional[str] = Field(default=None, description="Instruction message")
+    challenge_token: Optional[str] = Field(
+        default=None, description="Short-lived challenge token for OTP verification"
+    )
 
 
 class OTPVerifyRequest(BaseModel):
@@ -43,6 +46,9 @@ class OTPVerifyRequest(BaseModel):
     admin_id: str = Field(..., description="Admin ID")
     code: str = Field(..., min_length=6, max_length=8, description="OTP code")
     is_setup: bool = Field(False, description="Whether this is for initial setup")
+    challenge_token: str = Field(
+        ..., min_length=10, max_length=200, description="Challenge token from login step"
+    )
 
 
 class TicketStatusUpdate(BaseModel):

@@ -45,11 +45,11 @@ def _get_db():
 def login(username: str, password: str, ip: str = "unknown") -> AdminLoginResult:
     return auth.login(_get_db(), username, password, ip)
 
-def verify_otp_setup(admin_id: int, code: str) -> AdminLoginResult:
-    return auth.verify_otp_setup(_get_db(), admin_id, code)
+def verify_otp_setup(admin_id: int, code: str, challenge_token: str) -> AdminLoginResult:
+    return auth.verify_otp_setup(_get_db(), admin_id, code, challenge_token)
 
-def verify_otp(admin_id: int, code: str) -> AdminLoginResult:
-    return auth.verify_otp(_get_db(), admin_id, code)
+def verify_otp(admin_id: int, code: str, challenge_token: str) -> AdminLoginResult:
+    return auth.verify_otp(_get_db(), admin_id, code, challenge_token)
 
 def validate_session(token: str) -> Optional[int]:
     return auth.validate_session(_get_db(), token)
