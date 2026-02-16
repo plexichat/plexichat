@@ -44,7 +44,17 @@ def _message_to_response(
     msg_id = get_attr(msg, "id")
     author_id = get_attr(msg, "author_id")
     content = get_attr(msg, "content", "")
-    created_at = get_attr(msg, "created_at")
+    created_at_value = get_attr(msg, "created_at")
+    if created_at_value is None:
+        created_at_value = get_attr(msg, "timestamp")
+    if created_at_value is None:
+        created_at_value = get_attr(msg, "created")
+    created_at = 0
+    if created_at_value is not None:
+        try:
+            created_at = int(created_at_value)
+        except Exception:
+            created_at = 0
     
     attachments = []
     msg_attachments = get_attr(msg, "attachments")
@@ -59,7 +69,7 @@ def _message_to_response(
             att_hash = get_attr(att, "checksum") or get_attr(att, "hash")
 
             # Handle URL signing for absolute security and cross-origin access
-            url = att_url
+            url = att_url if isinstance(att_url, str) else ""
             if media_mod and url and url.startswith("/api/v1/media/attachments/"):
                 try:
                     # Parse file_id from metadata if available, or try to lookup

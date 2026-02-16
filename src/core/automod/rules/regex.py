@@ -2,10 +2,20 @@
 Regex pattern rule.
 
 Checks messages against configurable regex patterns.
+Uses google-re2 for safe, ReDoS-resistant pattern matching.
 """
 
 import re
+import utils.logger as logger
 from typing import Dict, Any, Optional, List
+
+# Try to use google-re2 for ReDoS protection, fallback to standard re
+try:
+    import re2
+    HAS_RE2 = True
+except ImportError:
+    HAS_RE2 = False
+    logger.warning("google-re2 not installed, falling back to standard 're' module. BEWARE OF REDOS.")
 
 from .base import BaseRule
 from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
@@ -23,21 +33,39 @@ class RegexRule(BaseRule):
 
         for pattern_config in self._patterns:
             pattern_str = pattern_config.get("pattern", "")
-            flags = 0
-            if not pattern_config.get("case_sensitive", False):
-                flags |= re.IGNORECASE
-            if pattern_config.get("multiline", False):
-                flags |= re.MULTILINE
+            if not pattern_str:
+                continue
 
             try:
-                compiled = re.compile(pattern_str, flags)
+                if HAS_RE2:
+                    # re2 uses its own flag system or options
+                    # Default: case_sensitive=True, multiline=False
+                    case_insensitive = not pattern_config.get("case_sensitive", False)
+                    multiline = pattern_config.get("multiline", False)
+                    
+                    # re2 flags
+                    flags = 0
+                    if case_insensitive:
+                        flags |= re2.IGNORECASE
+                    if multiline:
+                        flags |= re2.MULTILINE
+                        
+                    compiled = re2.compile(pattern_str, flags)
+                else:
+                    flags = 0
+                    if not pattern_config.get("case_sensitive", False):
+                        flags |= re.IGNORECASE
+                    if pattern_config.get("multiline", False):
+                        flags |= re.MULTILINE
+                    compiled = re.compile(pattern_str, flags)
+
                 severity = self._parse_severity(
                     pattern_config.get("severity", "medium")
                 )
                 name = pattern_config.get("name", pattern_str[:30])
                 self._compiled_patterns.append((compiled, severity, name))
-            except re.error:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to compile automod regex '{pattern_str}': {e}")
 
     def check(
         self,
@@ -54,6 +82,7 @@ class RegexRule(BaseRule):
         highest_severity = ViolationSeverity.LOW
 
         for compiled, severity, name in self._compiled_patterns:
+            # Both re and re2 support search()
             match = compiled.search(content)
             if match:
                 matches.append(
@@ -89,7 +118,7 @@ class RegexRule(BaseRule):
             "high": ViolationSeverity.HIGH,
             "critical": ViolationSeverity.CRITICAL,
         }
-        return mapping.get(sev_str.lower(), ViolationSeverity.MEDIUM)
+        return mapping.get(str(sev_str).lower(), ViolationSeverity.MEDIUM)
 
     def _severity_rank(self, sev: ViolationSeverity) -> int:
         """Get numeric rank for severity comparison."""
@@ -123,39 +152,19 @@ class RegexRule(BaseRule):
                     continue
 
                 try:
-                    re.compile(pattern_str)
+                    if HAS_RE2:
+                        # re2 is naturally safe from ReDoS
+                        re2.compile(pattern_str)
+                    else:
+                        # Fallback validation if re2 is missing (legacy protection)
+                        re.compile(pattern_str)
+                        if len(pattern_str) > 500:
+                            issues.append(f"pattern {i} exceeds maximum length")
+                        # Basic check for nested quantifiers which are dangerous in 're'
+                        if re.search(r'\(.*\)[*+?]', pattern_str):
+                             issues.append(f"pattern {i} contains potential ReDoS risk (nested group quantifier). Install google-re2 for better protection.")
 
-                    if len(pattern_str) > 500:
-                        issues.append(f"pattern {i} exceeds maximum length")
-                    elif re.search(r'\((?:[^()]*\([^()]*\))*[^()]*\)\*', pattern_str):
-                        issues.append(f"pattern {i} contains potentially malicious nested quantifiers")
-                    elif re.search(r'\([^()]*\)\{0,', pattern_str):
-                        issues.append(f"pattern {i} contains potentially malicious quantifier combinations")
-                    elif re.search(r'\((?:[^()]*[+*][^()]*)+\)\s*(?:[+*]|\{\d+,?\d*\})', pattern_str):
-                        issues.append(f"pattern {i} contains nested quantifier groups")
-                    elif re.search(r'\((?:[^()]*\|)+[^()]*\)\s*(?:[+*]|\{\d+,?\d*\})', pattern_str):
-                        issues.append(f"pattern {i} contains repeated alternation groups")
-                    elif re.search(r'\.\*.*\.\*', pattern_str) or re.search(r'\.\+.*\.\+', pattern_str):
-                        issues.append(f"pattern {i} contains multiple wildcard repeats")
-                    elif re.search(r'\.(?:\*|\+\??).*\.(?:\*|\+\??)', pattern_str):
-                        issues.append(f"pattern {i} contains multiple wildcard quantifiers")
-                    elif re.search(r'\([^()]*\)\s*(?:\+|\*|\{\d+,?\d*\})\s*(?:\+|\*|\{\d+,?\d*\})', pattern_str):
-                        issues.append(f"pattern {i} contains stacked quantifiers")
-                    elif re.search(r'\((?:[^()]*\{\d+,?\d*\}[^()]*)+\)\s*(?:\+|\*|\{\d+,?\d*\})', pattern_str):
-                        issues.append(f"pattern {i} contains repeated quantified ranges")
-                    elif re.search(r'\([^()]*[+*][^()]*\)\s*\{\d+,?\d*\}', pattern_str):
-                        issues.append(f"pattern {i} contains repeated quantified group ranges")
-                    elif re.search(r'(?:\w+\*){3,}', pattern_str) or re.search(r'(?:\w+\+){3,}', pattern_str):
-                        issues.append(f"pattern {i} contains repeated token quantifiers")
-                    elif re.search(r'\{\d{4,}(?:,\d*)?\}', pattern_str):
-                        issues.append(f"pattern {i} contains excessive repetition range")
-                    elif re.search(r'\\[1-9]\d?', pattern_str):
-                        issues.append(f"pattern {i} contains backreferences")
-                    elif re.search(r'[a-zA-Z]*\*[a-zA-Z]*\*', pattern_str):
-                        issues.append(f"pattern {i} contains potentially malicious repeated quantifiers")
-
-                except re.error as e:
+                except Exception as e:
                     issues.append(f"pattern {i} invalid regex: {e}")
 
         return len(issues) == 0, issues
-

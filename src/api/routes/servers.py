@@ -78,7 +78,10 @@ def _channel_to_response(channel) -> ChannelResponse:
         else None,
         nsfw=getattr(channel, "nsfw", False),
         slowmode_seconds=getattr(channel, "slowmode_seconds", 0),
+        read_receipts_enabled=getattr(channel, "read_receipts_enabled", True),
         created_at=channel.created_at,
+        recipient_id=None,
+        recipient=None,
     )
 
 
@@ -1748,6 +1751,267 @@ async def get_audit_log(
         raise HTTPException(
             status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
+
+
+# ==================== Automod Management ====================
+
+from src.api.schemas.servers import (
+    AutomodRuleResponse,
+    AutomodRuleCreateRequest,
+    AutomodRuleUpdateRequest,
+    AutomodRuleAction,
+    AutomodViolationResponse,
+)
+
+
+def _automod_rule_to_response(rule) -> AutomodRuleResponse:
+    """Convert automod rule to response model."""
+    return AutomodRuleResponse(
+        id=SnowflakeID(rule.id),
+        server_id=SnowflakeID(rule.server_id),
+        name=rule.name,
+        rule_type=rule.rule_type.value
+        if hasattr(rule.rule_type, "value")
+        else str(rule.rule_type),
+        enabled=bool(rule.enabled),
+        config=rule.config,
+        actions=[
+            AutomodRuleAction(
+                action_type=a.action_type.value
+                if hasattr(a.action_type, "value")
+                else str(a.action_type),
+                duration_seconds=a.duration_seconds,
+                reason=a.reason,
+                notify_user=a.notify_user,
+                metadata=a.metadata or {},
+            )
+            for a in (rule.actions or [])
+        ],
+        exempt_roles=[SnowflakeID(r) for r in (rule.exempt_roles or [])],
+        exempt_channels=[SnowflakeID(c) for c in (rule.exempt_channels or [])],
+        priority=rule.priority,
+        check_all=bool(rule.check_all),
+        created_at=rule.created_at,
+        updated_at=rule.updated_at,
+        created_by=SnowflakeID(rule.created_by),
+    )
+
+
+@router.get(
+    "/{server_id}/automod/rules",
+    response_model=List[AutomodRuleResponse],
+    summary="Get server automod rules",
+)
+async def get_server_automod_rules(
+    server_id: str, current_user: TokenInfo = Depends(get_current_user)
+) -> List[AutomodRuleResponse]:
+    """Get all automod rules for a server."""
+    servers_mod = api.get_servers()
+    from src.core import automod
+
+    try:
+        sid = int(server_id)
+        servers_mod.require_permission(current_user.user_id, sid, "server.automod")
+
+        rules = automod.get_server_rules(sid)
+        return [_automod_rule_to_response(r) for r in rules]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get automod rules for server {server_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post(
+    "/{server_id}/automod/rules",
+    response_model=AutomodRuleResponse,
+    summary="Create server automod rule",
+)
+async def create_server_automod_rule(
+    server_id: str,
+    body: AutomodRuleCreateRequest,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> AutomodRuleResponse:
+    """Create a new automod rule for a server."""
+    servers_mod = api.get_servers()
+    from src.core import automod
+    from src.core.automod.models import RuleType
+
+    try:
+        sid = int(server_id)
+        servers_mod.require_permission(current_user.user_id, sid, "server.automod")
+
+        try:
+            rule_type = RuleType(body.rule_type)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid rule type")
+
+        rule = automod.create_rule(
+            user_id=current_user.user_id,
+            server_id=sid,
+            name=body.name,
+            rule_type=rule_type,
+            rule_config=body.config,
+            actions=[a.model_dump() for a in body.actions],
+            exempt_roles=body.exempt_roles,
+            exempt_channels=body.exempt_channels,
+            priority=body.priority or 0,
+            check_all=bool(body.check_all),
+        )
+
+        if body.enabled is False:
+            automod.set_rule_enabled(current_user.user_id, rule.id, False)
+            rule = automod.get_rule(rule.id)
+
+        return _automod_rule_to_response(rule)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to create automod rule for server {server_id}: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.patch(
+    "/{server_id}/automod/rules/{rule_id}",
+    response_model=AutomodRuleResponse,
+    summary="Update server automod rule",
+)
+async def update_server_automod_rule(
+    server_id: str,
+    rule_id: str,
+    body: AutomodRuleUpdateRequest,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> AutomodRuleResponse:
+    """Update an existing automod rule."""
+    servers_mod = api.get_servers()
+    from src.core import automod
+
+    try:
+        sid = int(server_id)
+        rid = int(rule_id)
+        servers_mod.require_permission(current_user.user_id, sid, "server.automod")
+
+        rule = automod.get_rule(rid)
+        if not rule or int(rule.server_id) != sid:
+            raise HTTPException(status_code=404, detail="Rule not found in this server")
+
+        update_kwargs: Dict[str, Any] = {}
+        if body.name is not None:
+            update_kwargs["name"] = body.name
+        if body.config is not None:
+            update_kwargs["rule_config"] = body.config
+        if body.actions is not None:
+            update_kwargs["actions"] = [a.model_dump() for a in body.actions]
+        if body.exempt_roles is not None:
+            update_kwargs["exempt_roles"] = body.exempt_roles
+        if body.exempt_channels is not None:
+            update_kwargs["exempt_channels"] = body.exempt_channels
+        if body.priority is not None:
+            update_kwargs["priority"] = body.priority
+        if body.check_all is not None:
+            update_kwargs["check_all"] = body.check_all
+
+        if update_kwargs:
+            automod.update_rule(user_id=current_user.user_id, rule_id=rid, **update_kwargs)
+
+        if body.enabled is not None:
+            automod.set_rule_enabled(current_user.user_id, rid, body.enabled)
+
+        rule = automod.get_rule(rid)
+        return _automod_rule_to_response(rule)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update automod rule {rule_id}: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete(
+    "/{server_id}/automod/rules/{rule_id}",
+    response_model=SuccessResponse,
+    summary="Delete server automod rule",
+)
+async def delete_server_automod_rule(
+    server_id: str, rule_id: str, current_user: TokenInfo = Depends(get_current_user)
+) -> SuccessResponse:
+    """Delete an automod rule."""
+    servers_mod = api.get_servers()
+    from src.core import automod
+
+    try:
+        sid = int(server_id)
+        rid = int(rule_id)
+        servers_mod.require_permission(current_user.user_id, sid, "server.automod")
+
+        rule = automod.get_rule(rid)
+        if not rule or int(rule.server_id) != sid:
+            raise HTTPException(status_code=404, detail="Rule not found in this server")
+
+        if not automod.delete_rule(user_id=current_user.user_id, rule_id=rid):
+            raise HTTPException(status_code=500, detail="Failed to delete rule")
+
+        return SuccessResponse(success=True)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete automod rule {rule_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get(
+    "/{server_id}/automod/violations",
+    response_model=List[AutomodViolationResponse],
+    summary="Get server automod violations",
+)
+async def get_server_automod_violations(
+    server_id: str,
+    user_id: Optional[str] = None,
+    limit: int = 50,
+    before: Optional[str] = None,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> List[AutomodViolationResponse]:
+    """Get recent automod violations for a server."""
+    servers_mod = api.get_servers()
+    from src.core import automod
+
+    try:
+        sid = int(server_id)
+        servers_mod.require_permission(current_user.user_id, sid, "server.automod")
+
+        target_user_id = int(user_id) if user_id else None
+        before_id = int(before) if before else None
+
+        violations = automod.get_violations(
+            sid, user_id=target_user_id, limit=limit, before_id=before_id
+        )
+
+        return [
+            AutomodViolationResponse(
+                id=SnowflakeID(v.id),
+                user_id=SnowflakeID(v.user_id),
+                channel_id=SnowflakeID(v.channel_id),
+                rule_id=SnowflakeID(v.rule_id),
+                rule_type=v.rule_type.value
+                if hasattr(v.rule_type, "value")
+                else str(v.rule_type),
+                matched_content=v.matched_content,
+                severity=v.severity.value
+                if hasattr(v.severity, "value")
+                else str(v.severity),
+                actions_taken=[
+                    a.value if hasattr(a, "value") else str(a)
+                    for a in v.actions_taken
+                ],
+                created_at=v.created_at,
+                metadata=v.metadata or {},
+            )
+            for v in violations
+        ]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get automod violations for server {server_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ==================== Webhook Management ====================

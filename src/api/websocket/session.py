@@ -8,6 +8,7 @@ import time
 import secrets
 import threading
 from src.core.database import get_redis_client, redis_available
+import utils.logger as logger
 
 from .connection import Connection, ConnectionState
 
@@ -95,7 +96,6 @@ class SessionManager:
             client.hset(f"conn:{connection_id}:info", "user_id", str(user_id))
             client.expire(f"conn:{connection_id}:info", 3600) # 1h safety TTL
         except Exception as e:
-            from utils.logger import logger
             logger.debug(f"Redis session registration failed: {e}")
 
     def _redis_unregister_connection(self, user_id: int, connection_id: str) -> None:
@@ -112,7 +112,6 @@ class SessionManager:
             client.srem(f"user:{user_id}:connections", f"{self._worker_id}:{connection_id}")
             client.delete(f"conn:{connection_id}:info")
         except Exception as e:
-            from utils.logger import logger
             logger.debug(f"Redis session unregistration failed: {e}")
 
     @property
@@ -400,10 +399,8 @@ class SessionManager:
                 for cid in list(conn_ids):
                     self._redis_unregister_connection(user_id, cid)
                     
-            from utils.logger import logger
             logger.info(f"Cleared all Redis sessions for worker {self._worker_id}")
         except Exception as e:
-            from utils.logger import logger
             logger.debug(f"Redis global session cleanup failed: {e}")
 
     def get_stats(self) -> Dict[str, int]:

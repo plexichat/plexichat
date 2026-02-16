@@ -1185,7 +1185,10 @@ class AuthManager(BaseManager):
         )
         if cursor.rowcount == 0:
             raise PermissionDeniedError("Bot not found or not owned by you")
-        return self.get_bot(bot_id)
+        bot = self.get_bot(bot_id)
+        if not bot:
+            raise PermissionDeniedError("Bot not found or not owned by you")
+        return bot
 
     def disable_bot(self, owner_id: int, bot_id: int) -> bool:
         cursor = self._db.execute(

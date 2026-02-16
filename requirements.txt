@@ -49,6 +49,9 @@ python-dateutil>=2.8.0     # Date/time utilities for scheduled events
 pillow>=10.2.0
 imagehash>=4.3.1           # Perceptual hashing for image similarity detection
 
+# Safe Regex (ReDoS protection)
+google-re2>=1.1            # Fast, safe regular expressions (no backtracking)
+
 # QR Code Generation
 qrcode[pil]>=7.4.2
 

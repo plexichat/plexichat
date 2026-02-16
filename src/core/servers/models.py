@@ -466,6 +466,8 @@ SERVER_PERMISSIONS = {
     "templates.manage": "Create and manage server templates",
     # Onboarding permissions
     "onboarding.manage": "Manage welcome screen and onboarding",
+    # AutoMod permissions
+    "server.automod": "Manage server auto-moderation rules",
     # Administrator (bypasses all permissions)
     "administrator": "Full administrator access",
 }

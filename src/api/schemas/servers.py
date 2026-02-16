@@ -69,6 +69,12 @@ class ChannelCreateRequest(BaseModel):
     topic: Optional[str] = Field(None, max_length=1024, description="Channel topic")
     category_id: Optional[SnowflakeID] = Field(None, description="Parent category ID")
     nsfw: bool = Field(False, description="NSFW flag")
+    slowmode_seconds: int = Field(
+        0, ge=0, le=21600, description="Slowmode delay in seconds"
+    )
+    read_receipts_enabled: bool = Field(
+        True, description="Whether to track read receipts in this channel"
+    )
 
 
 class ChannelResponse(BaseModel):
@@ -260,3 +266,87 @@ class InviteResponse(BaseModel):
     temporary: bool = Field(default=False, description="Temporary membership")
     created_at: Optional[int] = Field(default=None, description="Creation timestamp")
     expires_at: Optional[int] = Field(default=None, description="Expiration timestamp")
+
+
+# ==================== Automod Schemas ====================
+
+
+class AutomodRuleAction(BaseModel):
+    """Automod rule action schema."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    action_type: str = Field(..., description="Action type (delete_message, timeout_user, etc.)")
+    duration_seconds: Optional[int] = Field(None, description="Duration for timeout/ban")
+    reason: Optional[str] = Field(None, max_length=512, description="Reason for action")
+    notify_user: bool = Field(True, description="Whether to notify the user")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+
+
+class AutomodRuleResponse(BaseModel):
+    """Automod rule response schema."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: SnowflakeID = Field(..., description="Rule ID")
+    server_id: SnowflakeID = Field(..., description="Server ID")
+    name: str = Field(..., description="Rule name")
+    rule_type: str = Field(..., description="Rule type")
+    enabled: bool = Field(..., description="Whether rule is enabled")
+    config: Dict[str, Any] = Field(..., description="Rule configuration")
+    actions: List[AutomodRuleAction] = Field(..., description="Actions to take")
+    exempt_roles: List[SnowflakeID] = Field(default_factory=list, description="Exempt role IDs")
+    exempt_channels: List[SnowflakeID] = Field(default_factory=list, description="Exempt channel IDs")
+    priority: int = Field(0, description="Rule priority")
+    check_all: bool = Field(False, description="Whether to check all rules after match")
+    created_at: int = Field(..., description="Creation timestamp")
+    updated_at: int = Field(..., description="Update timestamp")
+    created_by: SnowflakeID = Field(..., description="User ID who created the rule")
+
+
+class AutomodRuleCreateRequest(BaseModel):
+    """Automod rule creation request."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    name: str = Field(..., min_length=1, max_length=100)
+    rule_type: str = Field(..., description="Rule type")
+    config: Dict[str, Any] = Field(..., description="Rule configuration")
+    actions: List[AutomodRuleAction] = Field(..., description="Actions to take")
+    exempt_roles: Optional[List[SnowflakeID]] = Field(None, description="Exempt role IDs")
+    exempt_channels: Optional[List[SnowflakeID]] = Field(None, description="Exempt channel IDs")
+    priority: Optional[int] = Field(0, description="Rule priority")
+    check_all: Optional[bool] = Field(False, description="Whether to check all rules")
+    enabled: Optional[bool] = Field(True, description="Whether rule is enabled")
+
+
+class AutomodRuleUpdateRequest(BaseModel):
+    """Automod rule update request."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    config: Optional[Dict[str, Any]] = None
+    actions: Optional[List[AutomodRuleAction]] = None
+    exempt_roles: Optional[List[SnowflakeID]] = None
+    exempt_channels: Optional[List[SnowflakeID]] = None
+    priority: Optional[int] = None
+    check_all: Optional[bool] = None
+    enabled: Optional[bool] = None
+
+
+class AutomodViolationResponse(BaseModel):
+    """Automod violation response schema."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: SnowflakeID = Field(..., description="Violation ID")
+    user_id: SnowflakeID = Field(..., description="User ID who violated")
+    channel_id: SnowflakeID = Field(..., description="Channel ID")
+    rule_id: SnowflakeID = Field(..., description="Rule ID triggered")
+    rule_type: str = Field(..., description="Rule type triggered")
+    matched_content: str = Field(..., description="Content that triggered the rule")
+    severity: str = Field(..., description="Violation severity")
+    actions_taken: List[str] = Field(..., description="Actions that were taken")
+    created_at: int = Field(..., description="Violation timestamp")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional details")

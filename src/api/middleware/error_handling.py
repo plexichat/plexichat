@@ -9,6 +9,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from starlette.types import ASGIApp, Receive, Send, Scope
 
+from typing import Any, Dict, cast
 import traceback
 import utils.config as config
 import utils.logger as logger
@@ -184,17 +185,18 @@ def setup_exception_handlers(app: FastAPI):
             pass
 
         if isinstance(detail, dict) and "error" in detail:
-            # Mask internal server error messages
-            if exc.status_code == 500 and not debug:
-                detail["error"]["message"] = "Internal server error"
-            else:
-                # Sanitize whatever message is there
-                msg = detail["error"].get("message")
-                if msg and isinstance(msg, str):
-                    detail["error"]["message"] = sanitize_log_message(msg)
-            
+            detail_dict = cast(Dict[str, Any], detail)
+            error = detail_dict.get("error")
+            if isinstance(error, dict):
+                if exc.status_code == 500 and not debug:
+                    error["message"] = "Internal server error"
+                else:
+                    msg = error.get("message")
+                    if msg and isinstance(msg, str):
+                        error["message"] = sanitize_log_message(msg)
+                detail_dict["error"] = error
             return JSONResponse(
-                status_code=exc.status_code, content=detail, headers=headers
+                status_code=exc.status_code, content=detail_dict, headers=headers
             )
 
         return JSONResponse(

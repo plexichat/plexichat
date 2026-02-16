@@ -221,16 +221,6 @@ def get_relationships(
         raise HTTPException(
             status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(
-            f"Unexpected error processing relationships for user {current_user.user_id}: {e}",
-            exc_info=True,
-        )
-        raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
-        )
 
 
 async def _dispatch_relationship_event(

@@ -65,6 +65,9 @@ def _user_to_response(user, include_private: bool = False) -> UserResponse:
             totp_enabled=_get_attr(user, "totp_enabled", False)
             if include_private
             else False,
+            age_verified=_get_attr(user, "age_verified", False)
+            if include_private
+            else False,
             badges=badges,
         )
     except Exception as e:
@@ -924,4 +927,3 @@ async def update_messaging_settings(
         raise HTTPException(
             status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
-

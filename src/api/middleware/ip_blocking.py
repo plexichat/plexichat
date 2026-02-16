@@ -3,6 +3,7 @@ IP Blocking Middleware - Intercepts requests from blacklisted IPs.
 """
 
 from starlette.types import ASGIApp, Receive, Send, Scope
+from typing import Any, Dict, cast
 
 import utils.logger as logger
 
@@ -22,7 +23,7 @@ class IPBlockingMiddleware:
         from src.utils.net import get_client_ip
         
         # Use scope directly or handle per type
-        client_ip = get_client_ip(scope)
+        client_ip = get_client_ip(cast(Dict[str, Any], scope))
 
         # Check if IP is blacklisted
         auth = api.get_auth()
