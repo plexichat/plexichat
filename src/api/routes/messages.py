@@ -632,6 +632,21 @@ async def send_channel_message(
                             actions=result.actions_to_take,
                             context={"source": "message_create"},
                         )
+                    
+                    if result.should_delete:
+                        # If the message was already saved, we might want to hard delete it here
+                        # but DeleteMessageAction already marks it as deleted in DB.
+                        # We should raise an exception to prevent the client from thinking it succeeded normally
+                        raise HTTPException(
+                            status_code=400,
+                            detail={
+                                "error": {
+                                    "code": "MESSAGE_BLOCKED",
+                                    "message": "Message blocked by auto-moderation",
+                                    "violations": [v.rule_type.value for v in result.violations]
+                                }
+                            }
+                        )
             except Exception as e:
                 logger.warning(f"Automod check failed for message create: {e}")
 

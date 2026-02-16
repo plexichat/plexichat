@@ -158,6 +158,7 @@ class AutoModManager(BaseManager):
         Returns:
             CheckResult with violations and actions
         """
+        logger.debug(f"AutoMod checking message from {user_id} in server {server_id}")
         if not self._config.get("enabled", True):
             return CheckResult(passed=True, violations=[], actions_to_take=[])
 
@@ -168,10 +169,13 @@ class AutoModManager(BaseManager):
             )
 
         if self._is_exempt(server_id, user_id, channel_id):
+            logger.debug(f"User {user_id} is exempt from AutoMod in server {server_id}")
             return CheckResult(passed=True, violations=[], actions_to_take=[])
 
         rules = self._get_server_rules(server_id, enabled_only=True)
         rules.sort(key=lambda r: r.priority, reverse=True)
+        
+        logger.debug(f"Checking {len(rules)} rules for server {server_id}")
 
         violations = []
         actions_to_take = []
@@ -179,11 +183,13 @@ class AutoModManager(BaseManager):
 
         for rule in rules:
             if self._is_exempt_from_rule(rule, user_id, channel_id):
+                logger.debug(f"User {user_id} is exempt from rule '{rule.name}'")
                 continue
 
             match = self._evaluate_rule(rule, content, user_id, channel_id, context)
 
             if match.matched:
+                logger.info(f"AutoMod: Rule '{rule.name}' matched content from user {user_id} in server {server_id}")
                 violations.append(match)
                 actions_to_take.extend(rule.actions)
 

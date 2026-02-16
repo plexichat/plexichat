@@ -56,16 +56,21 @@ _cache_stats = {
 
 # Simple in-memory fallback cache (or diskcache if available)
 if _DISKCACHE_AVAILABLE and diskcache is not None:
-    # Use persistent disk cache (Process-safe, persistent across restarts)
-    cache_dir = os.path.join(os.path.expanduser("~"), ".plexichat", "cache", "local_cache")
-    if not os.path.exists(cache_dir):
-        os.makedirs(cache_dir, exist_ok=True)
-    _mem_cache: Union[_DiskCacheLike, Dict[str, Tuple[float, Any]]] = cast(
-        _DiskCacheLike, diskcache.Cache(cache_dir)
+    cache_dir = os.path.join(
+        os.path.expanduser("~"), ".plexichat", "cache", "local_cache"
     )
-    logger.info(f"Initialized DiskCache at {cache_dir}")
+    try:
+        if not os.path.exists(cache_dir):
+            os.makedirs(cache_dir, exist_ok=True)
+        _mem_cache: Union[_DiskCacheLike, Dict[str, Tuple[float, Any]]] = cast(
+            _DiskCacheLike, diskcache.Cache(cache_dir)
+        )
+        logger.info(f"Initialized DiskCache at {cache_dir}")
+    except Exception as e:
+        if getattr(logger, "_setup_called", False):
+            logger.warning(f"Failed to initialize DiskCache, using memory cache: {e}")
+        _mem_cache = {}
 else:
-    # Fallback to process-local dict (Warning: Not shared across workers)
     _mem_cache = {}
 _MEM_CACHE_MAX_SIZE = 1000
 

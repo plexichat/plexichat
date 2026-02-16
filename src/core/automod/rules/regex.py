@@ -37,25 +37,24 @@ class RegexRule(BaseRule):
                 continue
 
             try:
+                # Get settings with defaults
+                case_sensitive = pattern_config.get("case_sensitive", False)
+                multiline = pattern_config.get("multiline", False)
+                
                 if HAS_RE2:
-                    # re2 uses its own flag system or options
-                    # Default: case_sensitive=True, multiline=False
-                    case_insensitive = not pattern_config.get("case_sensitive", False)
-                    multiline = pattern_config.get("multiline", False)
-                    
-                    # re2 flags
+                    # re2 flags: re2.I (IGNORECASE), re2.M (MULTILINE)
                     flags = 0
-                    if case_insensitive:
-                        flags |= re2.IGNORECASE
+                    if not case_sensitive:
+                        flags |= re2.I
                     if multiline:
-                        flags |= re2.MULTILINE
+                        flags |= re2.M
                         
                     compiled = re2.compile(pattern_str, flags)
                 else:
                     flags = 0
-                    if not pattern_config.get("case_sensitive", False):
+                    if not case_sensitive:
                         flags |= re.IGNORECASE
-                    if pattern_config.get("multiline", False):
+                    if multiline:
                         flags |= re.MULTILINE
                     compiled = re.compile(pattern_str, flags)
 
@@ -63,9 +62,10 @@ class RegexRule(BaseRule):
                     pattern_config.get("severity", "medium")
                 )
                 name = pattern_config.get("name", pattern_str[:30])
-                self._compiled_patterns.append((compiled, severity, name))
+                self._compiled_patterns.append((compiled, severity, name, pattern_str))
+                logger.debug(f"Compiled automod regex '{pattern_str}' (case_sensitive={case_sensitive}, multiline={multiline})")
             except Exception as e:
-                logger.debug(f"Failed to compile automod regex '{pattern_str}': {e}")
+                logger.error(f"Failed to compile automod regex '{pattern_str}': {e}")
 
     def check(
         self,
@@ -81,22 +81,26 @@ class RegexRule(BaseRule):
         matches = []
         highest_severity = ViolationSeverity.LOW
 
-        for compiled, severity, name in self._compiled_patterns:
+        for compiled, severity, name, pattern_str in self._compiled_patterns:
             # Both re and re2 support search()
-            match = compiled.search(content)
-            if match:
-                matches.append(
-                    {
-                        "name": name,
-                        "matched": match.group(),
-                        "start": match.start(),
-                        "end": match.end(),
-                    }
-                )
-                if self._severity_rank(severity) > self._severity_rank(
-                    highest_severity
-                ):
-                    highest_severity = severity
+            try:
+                match = compiled.search(content)
+                if match:
+                    logger.debug(f"Regex rule '{self.rule.name}' matched pattern '{pattern_str}' in content from user {user_id}")
+                    matches.append(
+                        {
+                            "name": name,
+                            "matched": match.group(),
+                            "start": match.start(),
+                            "end": match.end(),
+                        }
+                    )
+                    if self._severity_rank(severity) > self._severity_rank(
+                        highest_severity
+                    ):
+                        highest_severity = severity
+            except Exception as e:
+                logger.error(f"Error matching regex pattern '{pattern_str}': {e}")
 
         if not matches:
             return self._no_match()
