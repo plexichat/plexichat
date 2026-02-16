@@ -953,21 +953,22 @@ class PresenceManager(BaseManager):
         """
         Get presence as visible to a specific viewer.
 
-        Respects invisible mode and block relationships.
+        Respects invisible mode, block relationships, and mutual context.
         Blocked users see target as offline.
         Invisible users appear offline to others.
+        Strangers (no mutual servers/friends) see target as offline.
 
         Args:
             viewer_id: ID of the user viewing
             target_id: ID of the user being viewed
 
         Returns:
-            Presence (may show offline if invisible or blocked)
+            Presence (may show offline if invisible, blocked, or no mutual context)
         """
         presence = self.get_presence(target_id)
 
         # User viewing themselves always sees real status
-        if viewer_id == target_id:
+        if int(viewer_id) == int(target_id):
             return presence
 
         # Check if blocked
@@ -981,6 +982,31 @@ class PresenceManager(BaseManager):
                     last_seen=0,
                     updated_at=0,
                 )
+
+        # PRIVACY: Check mutual context (Zero Trust)
+        # Strangers should not be able to track presence
+        has_mutual_context = False
+        if self._relationships and self._servers:
+            # Check friends first (usually smaller set)
+            friend_ids = self._relationships.get_friend_ids(viewer_id)
+            if int(target_id) in [int(fid) for fid in friend_ids]:
+                has_mutual_context = True
+            else:
+                # Check mutual servers
+                # Note: get_mutual_server_count is more efficient than fetching all IDs
+                if self._relationships.get_mutual_server_count(viewer_id, target_id) > 0:
+                    has_mutual_context = True
+        
+        if not has_mutual_context:
+            # Fallback to showing as offline if no shared context exists
+            return Presence(
+                user_id=target_id,
+                status=UserStatus.OFFLINE,
+                custom_status=None,
+                activity=None,
+                last_seen=0,
+                updated_at=0,
+            )
 
         # Invisible users appear offline to others
         if presence.status == UserStatus.INVISIBLE:
@@ -1011,42 +1037,55 @@ class PresenceManager(BaseManager):
         presences = self.get_presences(target_ids)
         result = {}
 
-        # Pre-fetch blocked status for efficient bulk check
+        # Pre-fetch context data for efficient bulk check
         blocked_ids = set()
         blocked_by_ids = set()
+        friend_ids = set()
+        mutual_member_ids = set()
         
         if self._relationships:
             try:
-                # Use optimized set conversion if possible
-                if hasattr(self._relationships, "get_blocked_user_ids"):
-                    blocked_ids = set(self._relationships.get_blocked_user_ids(viewer_id))
-                else:
-                    blocked_ids = set(b.blocked_id for b in self._relationships.get_blocked_users(viewer_id))
-                    
-                if hasattr(self._relationships, "get_blocked_by_user_ids"):
-                    blocked_by_ids = set(self._relationships.get_blocked_by_user_ids(viewer_id))
-                else:
-                    # Fallback for older manager versions
-                    for tid in target_ids:
-                        if self._relationships.is_blocked(tid, viewer_id):
-                            blocked_by_ids.add(tid)
+                # Use IDs directly for fast set lookups
+                blocked_ids = set(int(uid) for uid in self._relationships.get_blocked_user_ids(viewer_id))
+                blocked_by_ids = set(int(uid) for uid in self._relationships.get_all_blocked_ids(viewer_id)) - blocked_ids
+                friend_ids = set(int(uid) for uid in self._relationships.get_friend_ids(viewer_id))
+            except Exception:
+                pass
+
+        if self._servers:
+            try:
+                # Optimized: fetch all users sharing servers with viewer in one pass
+                mutual_member_ids = set(int(uid) for uid in self._servers.get_all_shared_member_ids(viewer_id))
             except Exception:
                 pass
 
         for p in presences:
-            target_id = p.user_id
+            target_id_raw = p.user_id
+            target_id = int(target_id_raw)
 
             # User viewing themselves always sees real status
-            if viewer_id == target_id:
-                result[target_id] = p
+            if int(viewer_id) == target_id:
+                result[target_id_raw] = p
                 continue
 
-            # Check if blocked (either way) - all in memory now
+            # Check if blocked (either way)
             is_blocked = (target_id in blocked_ids) or (target_id in blocked_by_ids)
-
             if is_blocked:
-                result[target_id] = Presence(
-                    user_id=target_id,
+                result[target_id_raw] = Presence(
+                    user_id=target_id_raw,
+                    status=UserStatus.OFFLINE,
+                    custom_status=None,
+                    activity=None,
+                    last_seen=0,
+                    updated_at=0,
+                )
+                continue
+
+            # PRIVACY: Check mutual context
+            has_mutual = (target_id in friend_ids) or (target_id in mutual_member_ids)
+            if not has_mutual:
+                result[target_id_raw] = Presence(
+                    user_id=target_id_raw,
                     status=UserStatus.OFFLINE,
                     custom_status=None,
                     activity=None,
@@ -1057,8 +1096,8 @@ class PresenceManager(BaseManager):
 
             # Invisible users appear offline
             if p.status == UserStatus.INVISIBLE:
-                result[target_id] = Presence(
-                    user_id=target_id,
+                result[target_id_raw] = Presence(
+                    user_id=target_id_raw,
                     status=UserStatus.OFFLINE,
                     custom_status=p.custom_status,
                     activity=None,
@@ -1066,7 +1105,7 @@ class PresenceManager(BaseManager):
                     updated_at=p.updated_at,
                 )
             else:
-                result[target_id] = p
+                result[target_id_raw] = p
 
         return result
 

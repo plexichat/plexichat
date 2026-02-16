@@ -316,6 +316,28 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     except Exception:
                         raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Invalid token"}})
 
+            # --- Authorization Check ---
+            # Verify user has permission to access this specific file (uploader or participant)
+            if not is_signed and not is_internal:
+                # Admins and internal services can bypass granular checks
+                is_privileged = False
+                try:
+                    admin_mod = api_module.get_admin()
+                    if admin_mod and admin_mod.validate_session(token):
+                        is_privileged = True
+                except Exception:
+                    pass
+
+                if not is_privileged:
+                    # Resolve user_id from token info
+                    uid_raw = token_info.user_id if hasattr(token_info, "user_id") else token_info.get("user_id")
+                    if uid_raw and not media.check_file_access(filename, int(uid_raw)):
+                        logger.warning(f"Unauthorized attachment access blocked: file={filename}, user={uid_raw}")
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail={"error": {"code": 403, "message": "Access denied to this file"}}
+                        )
+
             # --- File Lookup ---
             db = api_module.get_db()
             if not db:

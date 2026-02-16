@@ -135,7 +135,12 @@ class WebhookManager(BaseManager):
         return name
 
     def _validate_avatar_url(self, url: Optional[str]) -> Optional[str]:
-        """Validate avatar URL."""
+        """
+        Validate avatar URL and prevent SSRF.
+        
+        Checks scheme and ensures the URL does not point to restricted 
+        internal resources or private IP ranges.
+        """
         if not url:
             return None
 
@@ -143,6 +148,7 @@ class WebhookManager(BaseManager):
         if not url:
             return None
 
+        # Basic scheme validation
         try:
             parsed = urlparse(url)
             if parsed.scheme not in ("http", "https"):
@@ -156,6 +162,18 @@ class WebhookManager(BaseManager):
 
         if "javascript:" in url.lower() or "data:" in url.lower():
             raise WebhookAvatarError("Invalid avatar URL scheme")
+
+        # SSRF Protection: Validate against internal network access
+        try:
+            from src.utils.security import URLValidator
+            validator = URLValidator()
+            # This will raise ValueError if URL is unsafe (local/private IP)
+            validator.validate_url_for_request(url)
+        except ImportError:
+            logger.warning("URLValidator not available for SSRF protection")
+        except ValueError as e:
+            logger.warning(f"Blocked unsafe webhook avatar URL: {url} - {e}")
+            raise WebhookAvatarError(f"Unsafe avatar URL: {str(e)}")
 
         return url
 
