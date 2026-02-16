@@ -1,6 +1,6 @@
-
 from fastapi import Request
-from typing import Optional, Union, Dict, Any
+from typing import Optional, Union, Dict, Any, List
+import utils.config as config
 
 def get_client_ip(request: Union[Request, Dict[str, Any]]) -> Optional[str]:
     """
@@ -30,10 +30,19 @@ def get_client_ip(request: Union[Request, Dict[str, Any]]) -> Optional[str]:
                 return v.decode()
         return None
 
-    forwarded = get_header("X-Forwarded-For")
-    if forwarded:
-        parts = [p.strip() for p in forwarded.split(",") if p.strip()]
-        if parts:
-            return parts[0]
+    trusted_proxies: List[str] = []
+    try:
+        api_conf = config.get("api", {})
+        trusted_proxies = api_conf.get("trusted_proxies", []) or []
+    except Exception:
+        trusted_proxies = []
+
+    # Only trust X-Forwarded-For if the direct peer is a trusted proxy.
+    if direct_ip and direct_ip in trusted_proxies:
+        forwarded = get_header("X-Forwarded-For")
+        if forwarded:
+            parts = [p.strip() for p in forwarded.split(",") if p.strip()]
+            if parts:
+                return parts[0]
 
     return direct_ip

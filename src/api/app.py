@@ -89,9 +89,6 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         openapi_url=config.openapi_url,
     )
 
-    # Middleware order matters! They run in REVERSE order of addition.
-    # Desired execution: Logging -> CORS -> Auth -> IP Blocking -> RateLimit -> app
-
     if enable_rate_limiting:
         from src.core import ratelimit
 
@@ -99,9 +96,8 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             RateLimitMiddleware = create_rate_limit_middleware()
             app.add_middleware(RateLimitMiddleware)
 
-    app.add_middleware(IPBlockingMiddleware)
-    app.add_middleware(DatabaseMiddleware)
     app.add_middleware(AuthenticationMiddleware)
+    app.add_middleware(IPBlockingMiddleware)
     app.add_middleware(ErrorHandlingMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
 
@@ -115,6 +111,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     )
 
     app.add_middleware(LoggingMiddleware)
+    app.add_middleware(DatabaseMiddleware)
 
     setup_exception_handlers(app)
 
@@ -294,9 +291,15 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module unavailable"}})
                 
                 try:
-                    # Try validating as standard user token
-                    # TODO: Implement optional binding validation in AuthManager if needed
-                    token_info = auth.verify_token(token)
+                    # Validate session token with optional IP/UA token-binding context.
+                    forwarded_for = request.headers.get("X-Forwarded-For", "")
+                    client_ip = (
+                        forwarded_for.split(",")[0].strip()
+                        if forwarded_for
+                        else (request.client.host if request.client else None)
+                    )
+                    user_agent = request.headers.get("User-Agent")
+                    token_info = auth.verify_token(token, client_ip, user_agent)
                     if not token_info:
                         raise ValueError("Invalid user token")
                 except Exception as e:

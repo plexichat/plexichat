@@ -309,7 +309,14 @@ class ExternalProxy:
                 timeout=self._timeout,
                 stream=True,
                 verify=False if parsed.scheme == "http" else True,
+                allow_redirects=False,
             )
+
+            if 300 <= response.status_code < 400:
+                raise ProxyFetchError(
+                    f"Redirects are not allowed for security reasons (status {response.status_code})",
+                    url,
+                )
 
             response.raise_for_status()
 

@@ -7,8 +7,7 @@ import threading
 import sys
 from pathlib import Path
 from typing import Optional, Tuple, Dict
-from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError, VerificationError, InvalidHash
+import importlib
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 try:
@@ -17,6 +16,19 @@ try:
 except ImportError:
     xxhash = None
     XXHASH_AVAILABLE = False
+
+try:
+    _argon2 = importlib.import_module("argon2")
+    _argon2_exceptions = importlib.import_module("argon2.exceptions")
+    PasswordHasher = _argon2.PasswordHasher
+    VerifyMismatchError = _argon2_exceptions.VerifyMismatchError
+    VerificationError = _argon2_exceptions.VerificationError
+    InvalidHash = _argon2_exceptions.InvalidHash
+except Exception:
+    PasswordHasher = None
+    VerifyMismatchError = Exception
+    VerificationError = Exception
+    InvalidHash = Exception
 
 import utils.logger as logger
 from .vault import vault
@@ -267,6 +279,8 @@ class EncryptionManager:
     def __init__(
         self, argon2_time_cost=2, argon2_memory_cost=65536, argon2_parallelism=2
     ):
+        if PasswordHasher is None:
+            raise RuntimeError("argon2 is required for password hashing")
         self.password_hasher = PasswordHasher(
             time_cost=argon2_time_cost,
             memory_cost=argon2_memory_cost,

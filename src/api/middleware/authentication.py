@@ -184,8 +184,11 @@ async def get_current_user(request: Request) -> TokenInfo:
     if user.force_username_change:
         # Allow GET @me (to see current status) and PATCH @me (to fix the username)
         # Also allow logout
+        is_me_path = path == "/api/v1/users/@me"
+        is_allowed_me_method = request.method in ("GET", "PATCH")
+        
         allowed = (
-            path == "/api/v1/users/@me" or 
+            (is_me_path and is_allowed_me_method) or 
             path == "/api/v1/auth/logout" or
             path.startswith("/api/v1/avatars/")
         )
