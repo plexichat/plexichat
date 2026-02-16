@@ -158,7 +158,11 @@ class ParticipantService(BaseService):
         if not server_id:
             try:
                 # Query srv_channels directly to see if this conversation belongs to a server
-                row = self._repo._fetch_one("SELECT server_id FROM srv_channels WHERE conversation_id = ?", (conversation_id,))
+                # IMPORTANT: In server text channels, conversation_id is often the same as channel.id
+                row = self._repo._fetch_one(
+                    "SELECT server_id FROM srv_channels WHERE conversation_id = ? OR id = ?", 
+                    (conversation_id, conversation_id)
+                )
                 if row:
                     server_id = row["server_id"]
             except Exception as e:
