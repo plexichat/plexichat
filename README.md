@@ -23,8 +23,10 @@ git submodule update --init --recursive
   - System messages for audit and automation
 - **Identity & Security**:
   - User authentication with 2FA (TOTP) support
+  - OAuth 2.0 support with PKCE and secure state verification
   - Multi-session management and device tracking
   - Hardened security with Argon2id password hashing and blind indexing
+  - SSRF protection for external media proxying
   - Zero-friction at-rest encryption for messages
   - Local QR code generation for privacy
 - **Community Management**:
