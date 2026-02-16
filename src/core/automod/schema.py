@@ -28,6 +28,24 @@ def create_tables(db):
         )
     """)
 
+    # Migrations for existing tables (PostgreSQL only)
+    if db.type == "postgres":
+        tables_to_fix = [
+            ("automod_rules", ["id", "server_id", "created_at", "updated_at", "created_by"]),
+            ("automod_violations", ["id", "server_id", "channel_id", "user_id", "message_id", "rule_id", "created_at"]),
+            ("automod_audit", ["id", "server_id", "target_user_id", "moderator_id", "rule_id", "created_at"]),
+            ("automod_reputation", ["user_id", "server_id", "last_violation_at", "last_decay_at", "created_at", "updated_at"]),
+            ("automod_exemptions", ["id", "server_id", "rule_id", "target_id", "created_at", "created_by"]),
+            ("automod_rate_tracking", ["id", "server_id", "user_id", "window_start"])
+        ]
+        
+        for table, columns in tables_to_fix:
+            for col in columns:
+                try:
+                    db.execute(f"ALTER TABLE {table} ALTER COLUMN {col} TYPE BIGINT")
+                except Exception:
+                    pass
+
     db.execute("""
         CREATE INDEX IF NOT EXISTS idx_automod_rules_server 
         ON automod_rules(server_id, enabled)

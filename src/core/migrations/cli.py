@@ -150,8 +150,9 @@ def up(db):
     Args:
         db: Database instance from plexichat.src.core.database
     """
-    # TODO: Implement forward migration
-    pass
+    raise NotImplementedError(
+        "Migration up() is not implemented yet. Add forward SQL/logic for this migration."
+    )
 
 
 def down(db):
@@ -161,8 +162,9 @@ def down(db):
     Args:
         db: Database instance
     """
-    # TODO: Implement rollback migration
-    pass
+    raise NotImplementedError(
+        "Migration down() is not implemented yet. Add rollback SQL/logic for this migration."
+    )
 '''.format(
         name=name,
         description="Add description of what this migration does"

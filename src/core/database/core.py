@@ -79,6 +79,7 @@ class Database:
         # Local cache for redundant queries within the same request context
         self._query_cache: Dict[str, Tuple[float, Any]] = {}
         self._query_cache_ttl = 1.0  # 1 second TTL for identical queries
+        self._query_cache_lock = threading.RLock()
         
         # Initialize components
         self.engine: BaseEngine
@@ -154,6 +155,7 @@ class Database:
             self.rollback()
         else:
             self.commit()
+        self.close()
         return False
 
     def get_pool_stats(self) -> Dict[str, Any]:
@@ -300,7 +302,8 @@ class Database:
         # Invalidate cache on any potentially modifying operation
         upper_query = query.strip().upper()
         if any(upper_query.startswith(word) for word in ["INSERT", "UPDATE", "DELETE", "REPLACE", "DROP", "CREATE", "ALTER"]):
-            self._query_cache.clear()
+            with self._query_cache_lock:
+                self._query_cache.clear()
             
         query_conv = dialect.convert_placeholders(query, self.type)
         
@@ -400,11 +403,12 @@ class Database:
         now = time.time()
         
         # Check local cache
-        if cache_key in self._query_cache:
-            expiry, result = self._query_cache[cache_key]
-            if now < expiry:
-                return result
-            del self._query_cache[cache_key]
+        with self._query_cache_lock:
+            if cache_key in self._query_cache:
+                expiry, result = self._query_cache[cache_key]
+                if now < expiry:
+                    return result
+                del self._query_cache[cache_key]
 
         cursor = self.execute(query, params)
         result = cursor.fetchone()
@@ -413,10 +417,10 @@ class Database:
         final_result = dict(result) if result else None
         
         # Store in local cache
-        self._query_cache[cache_key] = (now + self._query_cache_ttl, final_result)
-        # Periodic cleanup of cache to avoid memory growth
-        if len(self._query_cache) > 100:
-            self._query_cache = {k: v for k, v in self._query_cache.items() if v[0] > now}
+        with self._query_cache_lock:
+            self._query_cache[cache_key] = (now + self._query_cache_ttl, final_result)
+            if len(self._query_cache) > 100:
+                self._query_cache = {k: v for k, v in self._query_cache.items() if v[0] > now}
             
         return final_result
 
@@ -426,11 +430,12 @@ class Database:
         now = time.time()
         
         # Check local cache
-        if cache_key in self._query_cache:
-            expiry, result = self._query_cache[cache_key]
-            if now < expiry:
-                return result
-            del self._query_cache[cache_key]
+        with self._query_cache_lock:
+            if cache_key in self._query_cache:
+                expiry, result = self._query_cache[cache_key]
+                if now < expiry:
+                    return result
+                del self._query_cache[cache_key]
 
         cursor = self.execute(query, params)
         results = cursor.fetchall()
@@ -439,7 +444,8 @@ class Database:
         final_results = [dict(row) for row in results]
         
         # Store in local cache
-        self._query_cache[cache_key] = (now + self._query_cache_ttl, final_results)
+        with self._query_cache_lock:
+            self._query_cache[cache_key] = (now + self._query_cache_ttl, final_results)
         
         return final_results
 

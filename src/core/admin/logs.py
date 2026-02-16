@@ -6,6 +6,8 @@ import os
 import zipfile
 from pathlib import Path
 from typing import List, Optional, Dict, Any
+from collections import deque
+import io
 import re
 
 import utils.config as config
@@ -53,71 +55,89 @@ def read_log_lines(
     level_filter: Optional[str] = None
 ) -> Dict[str, Any]:
     """Read lines from a log file with filtering and pagination."""
-    log_dir = get_log_dir()
-    log_path = log_dir / filename
+    log_dir = get_log_dir().resolve()
+    if Path(filename).name != filename or ".." in Path(filename).parts:
+        raise FileNotFoundError(f"Log file {filename} not found")
+    if not (filename.endswith(".log") or filename.endswith(".log.zip")):
+        raise FileNotFoundError(f"Log file {filename} not found")
+    log_path = (log_dir / filename).resolve()
+    try:
+        log_path.relative_to(log_dir)
+    except ValueError:
+        raise FileNotFoundError(f"Log file {filename} not found")
     
-    if not log_path.exists():
+    if not log_path.exists() or not log_path.is_file():
         raise FileNotFoundError(f"Log file {filename} not found")
 
-    # Handle zipped logs
-    if filename.endswith(".zip"):
-        with zipfile.ZipFile(log_path, 'r') as zf:
-            # Assume first file in zip is the log
-            log_filename = zf.namelist()[0]
-            with zf.open(log_filename, 'r') as f:
-                content = f.read().decode('utf-8', errors='replace')
-                raw_lines = content.splitlines()
-    else:
-        with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
-            raw_lines = f.readlines()
-            
-    # Process lines
-    # Format: 2026-02-07 12:34:56,789 - LEVEL - Message
-    # Regex to parse line
+    if limit < 1:
+        limit = 1
+    if limit > 2000:
+        limit = 2000
+    if offset < 0:
+        offset = 0
+
     log_pattern = re.compile(r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:,\d+)?)\s*-\s*(\w+)\s*-\s*(.*)$')
     
-    processed_lines = []
-    for line in raw_lines:
+    processed_lines = deque(maxlen=10000)
+    total_count = 0
+
+    def handle_line(line: str) -> None:
+        nonlocal total_count
         line = line.strip()
         if not line:
-            continue
+            return
             
         match = log_pattern.match(line)
         if match:
             timestamp, level, message = match.groups()
         else:
-            # Handle multi-line log entries (like stack traces) by attaching to previous line or marking as info
             timestamp = ""
             level = "INFO"
             message = line
             
-        # Apply level filter
         if level_filter and level.upper() != level_filter.upper():
-            continue
+            return
             
-        # Apply search filter
         if search and search.lower() not in line.lower():
-            continue
+            return
             
+        total_count += 1
         processed_lines.append({
             "timestamp": timestamp,
             "level": level,
             "message": message,
             "raw": line
         })
-        
-    # Apply pagination (from newest to oldest usually, or just slice)
-    # The user asked for "entirety of the logs", but for large files we should paginate
-    total_count = len(processed_lines)
-    
-    # We'll return them in chronological order as they appear in the file
-    start = max(0, total_count - limit - offset) if offset == 0 else offset
-    end = min(total_count, start + limit)
-    
+
+    if filename.endswith(".zip"):
+        with zipfile.ZipFile(log_path, 'r') as zf:
+            names = [name for name in zf.namelist() if not name.endswith("/")]
+            if not names:
+                raise FileNotFoundError(f"Log file {filename} not found")
+            log_filename = names[0]
+            with zf.open(log_filename, 'r') as f:
+                text_stream = io.TextIOWrapper(f, encoding='utf-8', errors='replace')
+                for line in text_stream:
+                    handle_line(line)
+    else:
+        with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
+            for line in f:
+                handle_line(line)
+
+    processed_list = list(processed_lines)
+    base_index = max(0, total_count - len(processed_list))
+    if offset == 0:
+        start = max(0, len(processed_list) - limit)
+    else:
+        if offset < base_index:
+            offset = base_index
+        start = max(0, offset - base_index)
+    end = min(len(processed_list), start + limit)
+
     return {
         "filename": filename,
         "total_lines": total_count,
-        "lines": processed_lines[start:end],
+        "lines": processed_list[start:end],
         "limit": limit,
         "offset": offset
     }
