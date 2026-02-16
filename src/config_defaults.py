@@ -614,6 +614,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "max_size": 512,
             "max_file_size": 5242880,
             "allowed_types": ["image/jpeg", "image/png", "image/gif", "image/webp"],
+            "default_colors": ["#e94560", "#4ade80", "#fbbf24", "#60a5fa", "#a78bfa", "#f472b6"],
         },
 
         "embeds": {

@@ -35,6 +35,7 @@ from .media import router as media_router
 from .reports import router as reports_router
 from .qr import router as qr_router
 from .help import router as help_router
+from .config import router as config_router
 
 import utils.config as config
 import utils.logger as logger
@@ -79,6 +80,7 @@ def create_api_router() -> APIRouter:
 
     api_router.include_router(health_router, tags=["Health"])
     api_router.include_router(version_router, tags=["Version"])
+    api_router.include_router(config_router, tags=["System"])
     api_router.include_router(auth_router, prefix="/auth", tags=["Authentication"])
     api_router.include_router(users_router, prefix="/users", tags=["Users"])
     api_router.include_router(servers_router, prefix="/servers", tags=["Servers"])

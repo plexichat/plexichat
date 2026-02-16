@@ -6,8 +6,8 @@ import os
 import sys
 import httpx
 from urllib.parse import urlencode
-from typing import List, Optional
-from fastapi import APIRouter, Request, HTTPException, Depends, Query
+from typing import List
+from fastapi import APIRouter, Request, HTTPException, Depends
 
 import src.api as api
 import utils.logger as logger
@@ -18,6 +18,7 @@ from src.api.schemas.auth import (
     LoginRequest,
     LoginResponse,
     OAuthLoginResponse,
+    OAuthCallbackRequest,
     TwoFactorRequest,
     UserResponse,
     SessionResponse,
@@ -475,7 +476,7 @@ async def oauth_login_init(
     return response
 
 
-@router.get(
+@router.post(
     "/oauth/{provider}/callback",
     response_model=LoginResponse,
     summary="OAuth callback",
@@ -488,12 +489,7 @@ async def oauth_login_init(
 async def oauth_callback(
     request: Request,
     provider: str,
-    code: str,
-    state: str,
-    redirect_uri: str,
-    code_verifier: Optional[str] = Query(
-        None, description="PKCE code verifier (required if PKCE was used)"
-    ),
+    callback_data: OAuthCallbackRequest,
 ) -> LoginResponse:
     """
     Handle OAuth callback and complete login with secure state verification.
@@ -523,9 +519,9 @@ async def oauth_callback(
 
     # Verify state server-side (CSRF protection)
     valid, state_record, error_msg = verify_oauth_state(
-        state_token=state,
+        state_token=callback_data.state,
         provider=provider,
-        redirect_uri=redirect_uri,
+        redirect_uri=callback_data.redirect_uri,
     )
 
     if not valid:
@@ -542,7 +538,7 @@ async def oauth_callback(
 
     # Verify PKCE if it was used
     if state_record and state_record.pkce_challenge:
-        if not code_verifier:
+        if not callback_data.code_verifier:
             logger.warning(
                 f"OAuth PKCE verification failed for {provider}: missing code_verifier"
             )
@@ -556,7 +552,7 @@ async def oauth_callback(
         oauth_config = config_util.get("oauth", {}) if config_util else {}
         pkce_config = oauth_config.get("pkce", {})
         if not verify_pkce(
-            code_verifier, state_record.pkce_challenge, config=pkce_config
+            callback_data.code_verifier, state_record.pkce_challenge, config=pkce_config
         ):
             logger.warning(
                 f"OAuth PKCE verification failed for {provider}: invalid code_verifier"
@@ -590,14 +586,14 @@ async def oauth_callback(
         token_data = {
             "client_id": client_id,
             "client_secret": client_secret,
-            "code": code,
+            "code": callback_data.code,
             "grant_type": "authorization_code",
-            "redirect_uri": redirect_uri,
+            "redirect_uri": callback_data.redirect_uri,
         }
 
         # Include PKCE verifier in token exchange if used
-        if code_verifier and state_record and state_record.pkce_challenge:
-            token_data["code_verifier"] = code_verifier
+        if callback_data.code_verifier and state_record and state_record.pkce_challenge:
+            token_data["code_verifier"] = callback_data.code_verifier
 
         headers = {"Accept": "application/json"}
 

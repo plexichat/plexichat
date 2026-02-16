@@ -1674,10 +1674,10 @@ async def get_audit_log(
         
         users_map = {}
         if auth_mod:
-            users = auth_mod.get_users(list(user_ids))
-            for u in users:
+            users_dict = auth_mod.get_users_bulk(list(user_ids))
+            for uid, u in users_dict.items():
                 from .users import _user_to_public_response
-                users_map[int(u.id)] = _user_to_public_response(u)
+                users_map[int(uid)] = _user_to_public_response(u)
 
         # Cache for roles and channels to avoid repeated lookups
         role_map = {}

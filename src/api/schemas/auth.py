@@ -228,3 +228,16 @@ class PasswordResetConfirm(BaseModel):
 
     token: str = Field(..., description="Reset token from email")
     new_password: str = Field(..., description="New password")
+
+
+class OAuthCallbackRequest(BaseModel):
+    """OAuth callback completion request."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    code: str = Field(..., description="OAuth authorization code")
+    state: str = Field(..., description="CSRF state token")
+    redirect_uri: str = Field(..., description="OAuth redirect URI")
+    code_verifier: Optional[str] = Field(
+        None, description="PKCE code verifier (required if PKCE was used)"
+    )

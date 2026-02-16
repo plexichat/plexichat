@@ -1,6 +1,11 @@
 {
-  "include": ["src"],
-  "exclude": ["src/tests", "src/utils/common-utils"],
+  "include": [
+    "src",
+    "main.py"
+  ],
+  "exclude": [
+    "src/tests"
+  ],
   "extraPaths": [
     "src",
     "src/utils/common-utils",
@@ -8,7 +13,7 @@
   ],
   "pythonVersion": "3.13",
   "typeCheckingMode": "standard",
-  "reportMissingImports": "none",
+  "reportMissingImports": "error",
   "reportOptionalMemberAccess": "error",
   "reportOptionalSubscript": "error",
   "reportArgumentType": "error",

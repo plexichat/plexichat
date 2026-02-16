@@ -706,9 +706,6 @@ class PlexiChatServer:
             logger.warning(f"Failed to initialize user features module: {e}")
             failed_modules.append("features")
 
-        timed_init("media", lambda: media.setup(self.db, messaging))
-        self._modules["media"] = media
-
         # Initialize avatars module
         try:
             from src.core import avatars

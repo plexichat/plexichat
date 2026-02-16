@@ -791,7 +791,7 @@ def delete_server_icon(server_id: int) -> bool:
 def generate_default_svg(seed_id: int, initials: str) -> str:
     """Generate a colorful SVG placeholder avatar based on a seed ID (user or server)."""
     # Match frontend colors in ui.js:getAvatarColor
-    colors = ["#e94560", "#4ade80", "#fbbf24", "#60a5fa", "#a78bfa", "#f472b6"]
+    colors = _get_config("default_colors", ["#e94560", "#4ade80", "#fbbf24", "#60a5fa", "#a78bfa", "#f472b6"])
 
     # Match frontend logic: index = parseInt(String(id).slice(-2), 16) % colors.length
     id_str = str(seed_id)
