@@ -13,6 +13,7 @@ from ..exceptions import (
     MemberNotFoundError,
     InvalidRoleNameError,
 )
+from src.core.database import cached
 from ..permissions import (
     calculate_base_permissions,
     apply_channel_overrides,
