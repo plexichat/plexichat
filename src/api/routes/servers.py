@@ -2,7 +2,7 @@
 Server routes - Server/guild management endpoints.
 """
 
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends, File, UploadFile
 
 import src.api as api
@@ -23,6 +23,11 @@ from src.api.schemas.servers import (
     BanCreateRequest,
     AuditLogEntryResponse,
     WebhookResponse,
+    AutomodRuleResponse,
+    AutomodRuleCreateRequest,
+    AutomodRuleUpdateRequest,
+    AutomodRuleAction,
+    AutomodViolationResponse,
 )
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 from src.core.servers.models import ChannelType
@@ -1769,14 +1774,6 @@ async def get_audit_log(
 
 
 # ==================== Automod Management ====================
-
-from src.api.schemas.servers import (
-    AutomodRuleResponse,
-    AutomodRuleCreateRequest,
-    AutomodRuleUpdateRequest,
-    AutomodRuleAction,
-    AutomodViolationResponse,
-)
 
 
 def _automod_rule_to_response(rule) -> AutomodRuleResponse:

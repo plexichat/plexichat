@@ -160,14 +160,15 @@ class ContentFilterService(BaseService):
             )
 
         # Validate using common validator (SQL injection, XSS)
+        # validator.validate returns is_valid=False for dangerous patterns
         validation_result = validator.validate(content)
         sanitized = content
 
         if not validation_result.is_valid:
-            warnings.append("Content contained potentially unsafe patterns and was sanitized")
-        else:
-            # Only apply HTML sanitization when HTML special chars are present
-            if validation_result.sanitized_value and any(ch in content for ch in "<>&"):
+            warnings.append("Content contained potentially unsafe patterns")
+            # If the validator produced a sanitized value (not None), we use it
+            # but usually for messages we just want to warn or let AutoMod handle it
+            if validation_result.sanitized_value:
                 sanitized = validation_result.sanitized_value
 
         # Check for spoiler tags (single regex check)
