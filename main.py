@@ -30,6 +30,7 @@ for path in [project_root, src_path, common_utils_path]:
 import utils.logger as logger  # noqa: E402
 import utils.config as config  # noqa: E402
 import utils.validator as validator  # noqa: E402
+validator.setup(auto_sanitize_html=False)
 import utils.version as version  # noqa: E402
 
 # Global Version Definition
