@@ -43,6 +43,7 @@ from .rules import (
     CapsPercentageRule,
     MassEmojiRule,
     RepeatedCharsRule,
+    AIModerationRule,
 )
 from .actions import (
     DeleteMessageAction,
@@ -67,6 +68,7 @@ class AutoModManager(BaseManager):
         RuleType.CAPS_PERCENTAGE: CapsPercentageRule,
         RuleType.MASS_EMOJI: MassEmojiRule,
         RuleType.REPEATED_CHARS: RepeatedCharsRule,
+        RuleType.AI_MODERATION: AIModerationRule,
     }
 
     ACTION_CLASSES = {
@@ -179,7 +181,8 @@ class AutoModManager(BaseManager):
 
         violations = []
         actions_to_take = []
-        context = context or {}
+        context = dict(context or {})
+        context.setdefault("automod_manager", self)
 
         for rule in rules:
             if self._is_exempt_from_rule(rule, user_id, channel_id):
@@ -269,11 +272,21 @@ class AutoModManager(BaseManager):
         now = self._get_timestamp()
         violation_id = self._generate_id()
 
+        rate_count, window_start = self._increment_rate_tracking(
+            server_id, user_id, match.rule_type.value, now
+        )
+        max_violations = int(self._config.get("max_violations_before_action", 1))
+        should_execute = rate_count >= max_violations
+
         actions_taken = []
+        suppressed_actions = []
 
         for action in actions:
             if action.action_type == ActionType.LOG_ONLY:
                 actions_taken.append(ActionType.LOG_ONLY)
+                continue
+            if not should_execute:
+                suppressed_actions.append(action.action_type.value)
                 continue
 
             success = self._execute_action(
@@ -297,6 +310,16 @@ class AutoModManager(BaseManager):
             if success:
                 actions_taken.append(action.action_type)
 
+        metadata = dict(match.match_details or {})
+        metadata["rate_tracking"] = {
+            "count": rate_count,
+            "window_start": window_start,
+            "rate_limit_window": int(self._config.get("rate_limit_window", 60)),
+            "max_violations_before_action": max_violations,
+        }
+        if suppressed_actions:
+            metadata["rate_tracking"]["actions_suppressed"] = suppressed_actions
+
         self._db.execute(
             """INSERT INTO automod_violations 
                (id, server_id, channel_id, user_id, message_id, rule_id, rule_type,
@@ -313,7 +336,7 @@ class AutoModManager(BaseManager):
                 match.matched_content or "",
                 json.dumps([a.value for a in actions_taken]),
                 match.severity.value,
-                json.dumps(match.match_details),
+                json.dumps(metadata),
                 now,
             ),
         )
@@ -332,8 +355,47 @@ class AutoModManager(BaseManager):
             actions_taken=actions_taken,
             severity=match.severity,
             created_at=now,
-            metadata=match.match_details,
+            metadata=metadata,
         )
+
+    def _get_rate_window_ms(self) -> int:
+        window_seconds = int(self._config.get("rate_limit_window", 60))
+        if window_seconds <= 0:
+            return 60000
+        return window_seconds * 1000
+
+    def _increment_rate_tracking(
+        self,
+        server_id: SnowflakeID,
+        user_id: SnowflakeID,
+        rule_type: str,
+        now: int,
+    ) -> tuple:
+        window_ms = self._get_rate_window_ms()
+        window_start = now - (now % window_ms)
+
+        row = self._db.fetch_one(
+            """SELECT id, count FROM automod_rate_tracking
+               WHERE server_id = ? AND user_id = ? AND rule_type = ? AND window_start = ?""",
+            (server_id, user_id, rule_type, window_start),
+        )
+
+        if row:
+            new_count = int(row["count"]) + 1
+            self._db.execute(
+                "UPDATE automod_rate_tracking SET count = ? WHERE id = ?",
+                (new_count, row["id"]),
+            )
+            return new_count, window_start
+
+        rate_id = self._generate_id()
+        self._db.execute(
+            """INSERT INTO automod_rate_tracking
+               (id, server_id, user_id, rule_type, window_start, count)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (rate_id, server_id, user_id, rule_type, window_start, 1),
+        )
+        return 1, window_start
 
     def _execute_action(
         self,

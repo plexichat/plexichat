@@ -41,6 +41,19 @@ class DeleteMessageAction(BaseAction):
                     "UPDATE msg_messages SET deleted = 1, deleted_at = ? WHERE id = ?",
                     (violation.created_at, violation.message_id),
                 )
+                # Manual invalidation since we used raw SQL
+                from src.core.database import cache_delete, invalidate_pattern
+                cache_delete(f"msg:obj:{violation.message_id}")
+                invalidate_pattern(f"*messages_list:*{violation.channel_id}*")
+                invalidate_pattern(f"*messages_api:*{violation.channel_id}*")
+                # Clear recent messages Redis list too
+                try:
+                    from src.core.database import get_redis_client as get_client
+                    client = get_client()
+                    if client:
+                        client.delete(f"msg:recent:{violation.channel_id}")
+                except Exception:
+                    pass
             else:
                 self._messaging.delete_message(
                     user_id=bot_user_id, message_id=violation.message_id

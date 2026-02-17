@@ -208,8 +208,9 @@ class MessageRepository(BaseRepository[Message]):
         """Invalidate all message list caches for a conversation."""
         try:
             # Use wider globs to catch various argument serializations (str:ID vs int:ID)
-            pattern1 = f"messages_list:*{conversation_id}*"
-            pattern2 = f"messages_api:*{conversation_id}*"
+            # Add leading wildcards to catch keys like 'cache:src.api.routes.messages.get_channel_messages:channel_id:int:...'
+            pattern1 = f"*messages_list:*{conversation_id}*"
+            pattern2 = f"*messages_api:*{conversation_id}*"
             
             count1 = invalidate_pattern(pattern1)
             count2 = invalidate_pattern(pattern2)

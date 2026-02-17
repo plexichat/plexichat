@@ -14,6 +14,7 @@ from src.utils.encryption import generate_snowflake_id
 
 from .base import BaseAction
 from ..models import ActionType, RuleAction, Violation
+from src.core.notifications.models import MentionType
 
 
 class AlertModeratorsAction(BaseAction):
@@ -135,7 +136,68 @@ class AlertModeratorsAction(BaseAction):
         context: Optional[Dict[str, Any]],
     ):
         """Send notifications to moderators."""
-        pass
+        if not self._notifications:
+            return
+
+        try:
+            manager = self._notifications._get_manager()
+        except Exception:
+            return
+
+        now = int(time.time() * 1000)
+        message_id = violation.message_id or 0
+        conversation_id = 0
+        channel_id = violation.channel_id
+
+        if violation.message_id:
+            msg = self._db.fetch_one(
+                "SELECT id, conversation_id, channel_id FROM msg_messages WHERE id = ?",
+                (violation.message_id,),
+            )
+            if msg:
+                message_id = msg["id"]
+                conversation_id = msg.get("conversation_id") or 0
+                channel_id = msg.get("channel_id") or channel_id
+
+        if conversation_id == 0 and channel_id:
+            conv = self._db.fetch_one(
+                "SELECT conversation_id FROM srv_channels WHERE id = ?", (channel_id,)
+            )
+            if conv:
+                conversation_id = conv["conversation_id"]
+
+        content_preview = self._format_alert_message(violation)
+
+        for moderator_id in moderator_ids:
+            if not manager._should_notify_user(
+                moderator_id,
+                violation.user_id,
+                violation.server_id,
+                channel_id,
+                MentionType.USER,
+            ):
+                continue
+
+            notif = manager._create_notification(
+                user_id=moderator_id,
+                author_id=violation.user_id,
+                message_id=message_id,
+                conversation_id=conversation_id,
+                server_id=violation.server_id,
+                channel_id=channel_id,
+                thread_id=None,
+                mention_type=MentionType.USER,
+                content_preview=content_preview,
+                created_at=now,
+            )
+            if notif:
+                manager._update_unread_count(
+                    moderator_id,
+                    conversation_id,
+                    violation.server_id,
+                    channel_id,
+                    is_mention=True,
+                )
 
     def _format_alert_message(self, violation: Violation) -> str:
         """Format the alert message."""

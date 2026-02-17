@@ -1397,9 +1397,14 @@ async def delete_message(
                     # Determine server_id for intent filtering
                     server_id = None
                     user_ids = []
+                    
+                    # Use channel_id from the request URL, which should be the actual server channel ID
+                    actual_channel_id = int(channel_id)
+                    
                     if servers_mod:
                         try:
-                            channel = servers_mod.get_channel(cid, current_user.user_id)
+                            # Verify this is a server channel and get server_id
+                            channel = servers_mod.get_channel(actual_channel_id, current_user.user_id)
                             if channel:
                                 server_id = getattr(channel, "server_id", None)
                                 if server_id:
@@ -1411,6 +1416,7 @@ async def delete_message(
 
                     if not user_ids and messaging:
                         try:
+                            # Fallback for DMs using conversation_id
                             participants = messaging.get_participants(
                                 current_user.user_id, cid
                             )
@@ -1423,11 +1429,11 @@ async def delete_message(
                             event_type=EventType.MESSAGE_DELETE,
                             data={
                                 "id": str(mid),
-                                "channel_id": str(cid),
+                                "channel_id": str(actual_channel_id),
                                 "server_id": str(server_id) if server_id else None,
                             },
                             server_id=server_id,
-                            channel_id=cid,
+                            channel_id=actual_channel_id,
                         )
                         await dispatcher.dispatch_event(event, user_ids)
             except Exception as e:

@@ -13,6 +13,7 @@ from .links import InviteLinkRule, ExternalLinkRule
 from .caps import CapsPercentageRule
 from .emoji import MassEmojiRule
 from .repeated import RepeatedCharsRule
+from .ai import AIModerationRule
 
 __all__ = [
     "BaseRule",
@@ -25,4 +26,5 @@ __all__ = [
     "CapsPercentageRule",
     "MassEmojiRule",
     "RepeatedCharsRule",
+    "AIModerationRule",
 ]

@@ -303,6 +303,20 @@ class MessageService(BaseService):
             
         # Invalidate cache
         cache_delete(f"msg:obj:{message_id}")
+        
+        # Also clear recent messages list to ensure it's re-fetched correctly
+        try:
+            from src.core.database import get_redis_client as get_client
+            client = get_client()
+            if client:
+                # We can't easily LREM because we don't have conversation_id here easily without fetching
+                # but soft_delete already invalidates the conversation cache list
+                # Let's try to get conversation_id if we can to be thorough
+                if msg_row:
+                    list_key = f"msg:recent:{msg_row['conversation_id']}"
+                    client.delete(list_key)
+        except Exception as e:
+            logger.debug(f"Failed to clear recent messages list on delete: {e}")
 
         return True
 
