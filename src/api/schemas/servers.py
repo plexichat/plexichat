@@ -131,6 +131,7 @@ class MemberResponse(BaseModel):
     """Server member information response."""
 
     model_config = ConfigDict(from_attributes=True)
+    member_id: Optional[SnowflakeID] = Field(None, description="Member record ID")
     user_id: SnowflakeID = Field(..., description="User ID")
     username: str = Field(..., description="Username")
     nickname: Optional[str] = Field(None, description="Server-specific nickname")

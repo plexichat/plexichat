@@ -545,11 +545,13 @@ def get_server_members(
         for m in members:
             # Handle both objects and dicts (from cache)
             if isinstance(m, dict):
+                raw_member_id = m.get("id") or m.get("member_id")
                 raw_user_id = m.get("user_id", 0)
                 nickname = m.get("nickname")
                 joined_at = m.get("joined_at")
                 roles = m.get("roles", [])
             else:
+                raw_member_id = getattr(m, "id", None)
                 raw_user_id = getattr(m, "user_id", 0)
                 nickname = getattr(m, "nickname", None)
                 joined_at = getattr(m, "joined_at", None)
@@ -572,6 +574,7 @@ def get_server_members(
 
             result.append(
                 MemberResponse(
+                    member_id=SnowflakeID(int(raw_member_id)) if raw_member_id else None,
                     user_id=SnowflakeID(user_id),
                     username=str(user.username) if user else f"User {user_id}",
                     nickname=nickname,
@@ -645,8 +648,23 @@ async def kick_member(
                 status_code=400,
                 detail={"error": {"code": 400, "message": "Invalid ID"}},
             )
+        db = api.get_db()
+        if not db:
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Database not available"}},
+            )
+        row = db.fetch_one("SELECT user_id FROM srv_members WHERE id = ?", (mid,))
+        if not row:
+            row = db.fetch_one(
+                "SELECT user_id FROM srv_members WHERE server_id = ? AND user_id = ?",
+                (sid, mid),
+            )
+        if not row:
+            raise HTTPException(status_code=404, detail="Member not found")
 
-        servers_mod.kick_member(current_user.user_id, sid, mid)
+        target_user_id = row["user_id"]
+        servers_mod.kick_member(current_user.user_id, sid, target_user_id)
         return SuccessResponse(success=True)
     except HTTPException:
         raise
@@ -714,7 +732,18 @@ async def assign_role_to_member(
 
         # The API receives member_id but the core method expects member_user_id
         # We need to resolve member_id to user_id
-        row = api.get_db().fetch_one("SELECT user_id FROM srv_members WHERE id = ?", (mid,))
+        db = api.get_db()
+        if not db:
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Database not available"}},
+            )
+        row = db.fetch_one("SELECT user_id FROM srv_members WHERE id = ?", (mid,))
+        if not row:
+            row = db.fetch_one(
+                "SELECT user_id FROM srv_members WHERE server_id = ? AND user_id = ?",
+                (sid, mid),
+            )
         if not row:
             raise HTTPException(status_code=404, detail="Member not found")
         
@@ -789,7 +818,18 @@ async def remove_role_from_member(
             )
 
         # Resolve member_id to user_id
-        row = api.get_db().fetch_one("SELECT user_id FROM srv_members WHERE id = ?", (mid,))
+        db = api.get_db()
+        if not db:
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Database not available"}},
+            )
+        row = db.fetch_one("SELECT user_id FROM srv_members WHERE id = ?", (mid,))
+        if not row:
+            row = db.fetch_one(
+                "SELECT user_id FROM srv_members WHERE server_id = ? AND user_id = ?",
+                (sid, mid),
+            )
         if not row:
             raise HTTPException(status_code=404, detail="Member not found")
         
@@ -1146,6 +1186,7 @@ async def create_role(
                 detail={"error": {"code": 400, "message": "Invalid server ID"}},
             )
 
+        servers_mod.require_permission(current_user.user_id, sid, "roles.manage")
         role = servers_mod.create_role(
             user_id=current_user.user_id,
             server_id=sid,
@@ -1225,6 +1266,7 @@ async def update_role(
                 detail={"error": {"code": 400, "message": "Invalid ID"}},
             )
 
+        servers_mod.require_permission(current_user.user_id, sid, "roles.manage")
         # Note: manager.update_role doesn't need server_id as role_id is unique
         update_data = body.model_dump(exclude_unset=True)
         role = servers_mod.update_role(current_user.user_id, rid, **update_data)
@@ -1290,7 +1332,7 @@ async def delete_role(
 
     try:
         try:
-            int(server_id)
+            sid = int(server_id)
             rid = int(role_id)
         except ValueError:
             raise HTTPException(
@@ -1298,6 +1340,7 @@ async def delete_role(
                 detail={"error": {"code": 400, "message": "Invalid ID"}},
             )
 
+        servers_mod.require_permission(current_user.user_id, sid, "roles.manage")
         servers_mod.delete_role(current_user.user_id, rid)
         return SuccessResponse(success=True)
     except HTTPException:
@@ -1820,6 +1863,11 @@ async def get_server_automod_rules(
 ) -> List[AutomodRuleResponse]:
     """Get all automod rules for a server."""
     servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
+        )
     from src.core import automod
 
     try:
@@ -1847,6 +1895,11 @@ async def create_server_automod_rule(
 ) -> AutomodRuleResponse:
     """Create a new automod rule for a server."""
     servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
+        )
     from src.core import automod
     from src.core.automod.models import RuleType
 
@@ -1859,6 +1912,16 @@ async def create_server_automod_rule(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid rule type")
 
+        applied_roles = (
+            [int(r) for r in body.applied_roles] if body.applied_roles is not None else None
+        )
+        exempt_roles = (
+            [int(r) for r in body.exempt_roles] if body.exempt_roles is not None else None
+        )
+        exempt_channels = (
+            [int(c) for c in body.exempt_channels] if body.exempt_channels is not None else None
+        )
+
         rule = automod.create_rule(
             user_id=current_user.user_id,
             server_id=sid,
@@ -1866,9 +1929,9 @@ async def create_server_automod_rule(
             rule_type=rule_type,
             rule_config=body.config,
             actions=[a.model_dump() for a in body.actions],
-            applied_roles=body.applied_roles,
-            exempt_roles=body.exempt_roles,
-            exempt_channels=body.exempt_channels,
+            applied_roles=applied_roles,
+            exempt_roles=exempt_roles,
+            exempt_channels=exempt_channels,
             priority=body.priority or 0,
             check_all=bool(body.check_all),
         )
@@ -1898,6 +1961,11 @@ async def update_server_automod_rule(
 ) -> AutomodRuleResponse:
     """Update an existing automod rule."""
     servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
+        )
     from src.core import automod
 
     try:
@@ -1917,11 +1985,11 @@ async def update_server_automod_rule(
         if body.actions is not None:
             update_kwargs["actions"] = [a.model_dump() for a in body.actions]
         if body.exempt_roles is not None:
-            update_kwargs["exempt_roles"] = body.exempt_roles
+            update_kwargs["exempt_roles"] = [int(r) for r in body.exempt_roles]
         if body.applied_roles is not None:
-            update_kwargs["applied_roles"] = body.applied_roles
+            update_kwargs["applied_roles"] = [int(r) for r in body.applied_roles]
         if body.exempt_channels is not None:
-            update_kwargs["exempt_channels"] = body.exempt_channels
+            update_kwargs["exempt_channels"] = [int(c) for c in body.exempt_channels]
         if body.priority is not None:
             update_kwargs["priority"] = body.priority
         if body.check_all is not None:
@@ -1952,6 +2020,11 @@ async def delete_server_automod_rule(
 ) -> SuccessResponse:
     """Delete an automod rule."""
     servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
+        )
     from src.core import automod
 
     try:
@@ -1988,6 +2061,11 @@ async def get_server_automod_violations(
 ) -> List[AutomodViolationResponse]:
     """Get recent automod violations for a server."""
     servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
+        )
     from src.core import automod
 
     try:

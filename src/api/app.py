@@ -249,6 +249,8 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         import src.api as api_module
 
         try:
+            token = None
+            token_info = None
             # --- Signature Verification (Bypass Auth) ---
             media = api_module.get_media()
             if not media:
@@ -330,6 +332,11 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
                 if not is_privileged:
                     # Resolve user_id from token info
+                    if token_info is None:
+                        raise HTTPException(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail={"error": {"code": 401, "message": "Authentication required"}}
+                        )
                     uid_raw = token_info.user_id if hasattr(token_info, "user_id") else token_info.get("user_id")
                     if uid_raw and not media.check_file_access(filename, int(uid_raw)):
                         logger.warning(f"Unauthorized attachment access blocked: file={filename}, user={uid_raw}")

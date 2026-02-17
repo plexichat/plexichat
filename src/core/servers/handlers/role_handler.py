@@ -50,6 +50,7 @@ class RoleHandler:
         mentionable: bool = False,
     ) -> Role:
         """Create a new role in a server."""
+        self.manager.require_permission(user_id, server_id, "roles.manage")
         name = self.validate_role_name(name)
 
         pos_row = self.db.fetch_one(
@@ -118,6 +119,7 @@ class RoleHandler:
         role = self.get_role(role_id, user_id)
         if not role:
             raise RoleNotFoundError("Role not found")
+        self.manager.require_permission(user_id, role.server_id, "roles.manage")
 
         # Check hierarchy
         user_roles = self.manager._get_member_role_rows(role.server_id, user_id)
@@ -187,6 +189,7 @@ class RoleHandler:
         role = self.get_role(role_id, user_id)
         if not role:
             raise RoleNotFoundError("Role not found")
+        self.manager.require_permission(user_id, role.server_id, "roles.manage")
 
         if role.is_default:
             raise DefaultRoleError("Cannot delete the default role")
@@ -212,6 +215,7 @@ class RoleHandler:
         role = self.get_role(role_id, user_id)
         if not role:
             raise RoleNotFoundError("Role not found")
+        self.manager.require_permission(user_id, role.server_id, "roles.manage")
 
         if role.is_default:
             raise DefaultRoleError("Cannot move the default role")
@@ -476,7 +480,24 @@ class RoleHandler:
 
             result = apply_channel_overrides(base_perms, role_overrides, member_override)
 
-        # 4. Cache result
+        # 4. Check for timeout
+        member = self.manager.get_member(server_id, user_id)
+        if member and member.timeout_until:
+            now = self.manager._get_timestamp()
+            if member.timeout_until > now:
+                # User is timed out, revoke interaction permissions
+                restricted_perms = [
+                    "messages.send",
+                    "messages.add_reactions",
+                    "voice.speak",
+                    "voice.connect",
+                    "messages.attach_files",
+                    "messages.embed_links"
+                ]
+                for perm in restricted_perms:
+                    result[perm] = False
+
+        # 5. Cache result
         self.manager._cache_set(self.manager._permission_cache, cache_key, result)
         if redis_available():
             cache_set(cache_key, result, ttl=60)
@@ -518,6 +539,7 @@ class RoleHandler:
         role_id: SnowflakeID,
     ) -> bool:
         """Assign a role to a member."""
+        self.manager.require_permission(user_id, server_id, "members.manage_roles")
         role = self.get_role(role_id, user_id)
         if not role or role.server_id != server_id:
             raise RoleNotFoundError("Role not found")
@@ -566,6 +588,7 @@ class RoleHandler:
         role_id: SnowflakeID,
     ) -> bool:
         """Remove a role from a member."""
+        self.manager.require_permission(user_id, server_id, "members.manage_roles")
         role = self.get_role(role_id, user_id)
         if not role or role.server_id != server_id:
             raise RoleNotFoundError("Role not found")

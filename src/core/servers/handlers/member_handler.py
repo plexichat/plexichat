@@ -182,6 +182,8 @@ class MemberHandler:
         nickname: Optional[str] = None,
         muted: Optional[bool] = None,
         deafened: Optional[bool] = None,
+        timeout_until: Optional[int] = None,
+        timeout_reason: Optional[str] = None,
     ) -> Member:
         """Update member settings."""
         member = self.get_member(server_id, member_user_id)
@@ -211,6 +213,18 @@ class MemberHandler:
             params.append(1 if deafened else 0)
             changes["deafened"] = {"old": member.deafened, "new": deafened}
 
+        if timeout_until is not None:
+            # require permission check if not self? normally members.manage_roles or similar
+            # but for AutoMod we trust the system.
+            updates.append("timeout_until = ?")
+            params.append(timeout_until)
+            changes["timeout_until"] = {"old": member.timeout_until, "new": timeout_until}
+
+        if timeout_reason is not None:
+            updates.append("timeout_reason = ?")
+            params.append(timeout_reason)
+            changes["timeout_reason"] = {"old": member.timeout_reason, "new": timeout_reason}
+
         if updates:
             params.extend([server_id, member_user_id])
             self.db.execute(f"UPDATE srv_members SET {', '.join(updates)} WHERE server_id = ? AND user_id = ?", tuple(params))
@@ -218,6 +232,8 @@ class MemberHandler:
                 self.manager._log_audit(server_id, user_id, AuditLogAction.MEMBER_UPDATE, "member", member_user_id, changes)
 
         invalidate_pattern(f"member_data:*{member_user_id}*")
+        # Invalidate permissions cache
+        invalidate_pattern(f"perms:{member_user_id}:{server_id}:*")
         result = self.get_member(server_id, member_user_id)
         assert result is not None
         return result

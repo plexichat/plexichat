@@ -474,6 +474,14 @@ class MessagingManager(BaseManager):
         """Edit a message (own messages only)."""
         return self._message_svc.edit_message(user_id, message_id, content)
 
+    def update_message_metadata(
+        self,
+        message_id: SnowflakeID,
+        metadata: Optional[Dict[str, Any]],
+        merge: bool = True,
+    ) -> Message:
+        return self._message_svc.update_message_metadata(message_id, metadata, merge)
+
     def delete_message(
         self, user_id: SnowflakeID, message_id: SnowflakeID, hard_delete: bool = False
     ) -> bool:

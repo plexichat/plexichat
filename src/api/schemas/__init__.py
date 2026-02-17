@@ -41,6 +41,14 @@ from .messages import (
     MessageResponse,
     AttachmentResponse,
 )
+from .polls import (
+    PollInlineCreateRequest,
+    PollCreateRequest,
+    PollVoteRequest,
+    PollOptionResponse,
+    PollResponse,
+    PollResultsResponse,
+)
 from .relationships import (
     FriendRequestCreate,
     BlockCreate,
@@ -99,6 +107,13 @@ __all__ = [
     "MessageUpdateRequest",
     "MessageResponse",
     "AttachmentResponse",
+    # Polls
+    "PollInlineCreateRequest",
+    "PollCreateRequest",
+    "PollVoteRequest",
+    "PollOptionResponse",
+    "PollResponse",
+    "PollResultsResponse",
     # Relationships
     "FriendRequestCreate",
     "BlockCreate",

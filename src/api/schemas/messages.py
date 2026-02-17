@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, ConfigDict
 
 from .common import SnowflakeID
 from .reactions import ReactionResponse
+from .polls import PollInlineCreateRequest, PollResponse
 
 
 class AttachmentRequest(BaseModel):
@@ -34,6 +35,9 @@ class MessageCreateRequest(BaseModel):
         None, description="Message attachments"
     )
     embeds: Optional[List[Dict[str, Any]]] = Field(None, description="Rich embeds")
+    poll: Optional[PollInlineCreateRequest] = Field(
+        None, description="Poll to attach to this message"
+    )
 
 
 class MessageUpdateRequest(BaseModel):
@@ -104,6 +108,12 @@ class MessageResponse(BaseModel):
     author_badges: List[str] = Field(default_factory=list, description="Author's profile badges")
     reactions: List[ReactionResponse] = Field(
         default_factory=list, description="Message reactions"
+    )
+    metadata: Optional[Dict[str, Any]] = Field(
+        None, description="Additional message metadata"
+    )
+    poll: Optional[PollResponse] = Field(
+        None, description="Attached poll details"
     )
 
 

@@ -274,6 +274,39 @@ class MessageService(BaseService):
         
         return msg
 
+    def update_message_metadata(
+        self,
+        message_id: SnowflakeID,
+        metadata: Optional[Dict[str, Any]],
+        merge: bool = True,
+    ) -> Message:
+        msg_row = self._repo.get_by_id(message_id)
+        if not msg_row or msg_row.get("deleted"):
+            raise MessageNotFoundError("Message not found")
+
+        existing_metadata = (
+            self._repo._json_loads(msg_row["metadata"])
+            if msg_row.get("metadata")
+            else None
+        )
+        if merge and existing_metadata and metadata:
+            merged = {**existing_metadata, **metadata}
+        elif merge and existing_metadata and metadata is None:
+            merged = existing_metadata
+        else:
+            merged = metadata
+
+        now = self._get_timestamp()
+        self._repo.update_metadata(message_id, merged, now)
+
+        cache_delete(f"msg:obj:{message_id}")
+
+        msg = self.get_message(msg_row["author_id"], message_id)
+        if msg is None:
+            raise MessageNotFoundError("Failed to retrieve updated message")
+        cache_set(f"msg:obj:{message_id}", msg, ttl=3600)
+        return msg
+
     def delete_message(
         self, user_id: SnowflakeID, message_id: SnowflakeID, hard_delete: bool = False
     ) -> bool:

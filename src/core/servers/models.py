@@ -238,6 +238,8 @@ class Member:
     muted: bool = False
     deafened: bool = False
     inviter_id: Optional[SnowflakeID] = None
+    timeout_until: Optional[int] = None
+    timeout_reason: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert member to dictionary including properties."""
@@ -254,6 +256,8 @@ class Member:
             "muted": self.muted,
             "deafened": self.deafened,
             "avatar_url": self.avatar_url,
+            "timeout_until": self.timeout_until,
+            "timeout_reason": self.timeout_reason,
         }
 
 

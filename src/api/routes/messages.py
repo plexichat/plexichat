@@ -18,10 +18,54 @@ from src.api.schemas.messages import (
     AllUnreadCountsResponse,
     AckResponse,
 )
+from src.api.schemas.polls import PollResponse, PollOptionResponse
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 from src.core.messaging.exceptions import AttachmentLimitError
+from src.core.polls import (
+    PollResultsVisibility,
+    PollNotFoundError,
+    PollOptionNotFoundError,
+    PollEndedError,
+    InvalidPollQuestionError,
+    InvalidPollOptionError,
+    PollOptionLimitError,
+    InvalidPollDurationError,
+    AlreadyVotedError,
+    MultipleVoteNotAllowedError,
+    PermissionDeniedError,
+    MessageNotFoundError,
+)
 
 router = APIRouter(tags=["Messages"])
+
+
+def _poll_to_response(poll) -> PollResponse:
+    options = [
+        PollOptionResponse(
+            id=opt.id,
+            poll_id=opt.poll_id,
+            text=opt.text,
+            position=opt.position,
+            vote_count=None,
+        )
+        for opt in poll.options
+    ]
+    return PollResponse(
+        id=poll.id,
+        message_id=poll.message_id,
+        question=poll.question,
+        created_by=poll.created_by,
+        created_at=poll.created_at,
+        ends_at=poll.ends_at,
+        ended_at=poll.ended_at,
+        allow_multiple_choice=poll.allow_multiple_choice,
+        results_visibility=poll.results_visibility.value
+        if isinstance(poll.results_visibility, PollResultsVisibility)
+        else str(poll.results_visibility),
+        options=options,
+        total_votes=poll.total_votes,
+        is_ended=poll.is_ended,
+    )
 
 
 def _message_to_response(
@@ -33,6 +77,7 @@ def _message_to_response(
     reactions_data=None,
     read_by_data: Optional[List[Dict[str, Any]]] = None,
     media_mod=None,
+    viewer_user_id: Optional[int] = None,
 ) -> MessageResponse:
     """Convert message object to response model."""
     # Handle dict vs object for msg
@@ -131,6 +176,29 @@ def _message_to_response(
     
     read_count = len(read_by) if read_by_data is not None else get_attr(msg, "read_count", 0)
 
+    metadata = get_attr(msg, "metadata")
+    if metadata and isinstance(metadata, str):
+        try:
+            import json
+            metadata = json.loads(metadata)
+        except Exception:
+            metadata = None
+
+    poll_response = None
+    poll_id = None
+    if isinstance(metadata, dict):
+        poll_id = metadata.get("poll_id")
+
+    if poll_id and viewer_user_id is not None:
+        polls_module = api.get_polls()
+        if polls_module:
+            try:
+                poll = polls_module.get_poll(int(poll_id), viewer_user_id)
+                if poll:
+                    poll_response = _poll_to_response(poll)
+            except Exception:
+                poll_response = None
+
     return MessageResponse(
         id=SnowflakeID(msg_id),
         channel_id=SnowflakeID(effective_channel_id),
@@ -155,6 +223,8 @@ def _message_to_response(
         author_avatar_url=author_avatar_url or get_attr(msg, "author_avatar_url"),
         author_badges=author_badges or get_attr(msg, "author_badges") or [],
         reactions=reactions_data or [],
+        metadata=metadata,
+        poll=poll_response,
     )
 
 
@@ -329,6 +399,7 @@ def get_channel_messages(
                     reactions_data=reactions_cache.get(mid, []),
                     read_by_data=readers_cache.get(str(mid)),
                     media_mod=media_mod,
+                    viewer_user_id=current_user.user_id,
                 )
             )
 
@@ -420,7 +491,8 @@ async def search_messages(
                     author_username=author_info.get("username"), 
                     author_avatar_url=author_info.get("avatar_url"),
                     author_badges=author_info.get("badges"),
-                    media_mod=media_mod
+                    media_mod=media_mod,
+                    viewer_user_id=current_user.user_id,
                 )
             )
 
@@ -475,13 +547,13 @@ async def send_channel_message(
                 detail={"error": {"code": 400, "message": "Invalid channel ID"}},
             )
 
-        if not body.content and not body.attachments and not body.embeds:
+        if not body.content and not body.attachments and not body.embeds and not body.poll:
             raise HTTPException(
                 status_code=400,
                 detail={
                     "error": {
                         "code": 400,
-                        "message": "Message must have content, attachments, or embeds",
+                        "message": "Message must have content, attachments, embeds, or a poll",
                     }
                 },
             )
@@ -652,6 +724,92 @@ async def send_channel_message(
             except Exception as e:
                 logger.warning(f"Automod check failed for message create: {e}")
 
+        if body.poll:
+            polls_module = api.get_polls()
+            if not polls_module:
+                if messaging:
+                    try:
+                        messaging.delete_message(
+                            current_user.user_id, getattr(msg, "id", None), hard_delete=True
+                        )
+                    except Exception:
+                        pass
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        "error": {
+                            "code": 500,
+                            "message": "Polls module not available"
+                        }
+                    },
+                )
+            try:
+                poll = polls_module.create_poll(
+                    user_id=current_user.user_id,
+                    message_id=getattr(msg, "id", None),
+                    question=body.poll.question,
+                    options=list(body.poll.options),
+                    duration_hours=body.poll.duration_hours,
+                    allow_multiple_choice=body.poll.allow_multiple_choice,
+                    results_visibility=PollResultsVisibility(body.poll.results_visibility),
+                )
+                if messaging and poll:
+                    try:
+                        msg = messaging.update_message_metadata(msg.id, {"poll_id": poll.id})
+                    except Exception:
+                        pass
+            except (
+                PollNotFoundError,
+                PollOptionNotFoundError,
+                PollEndedError,
+                InvalidPollQuestionError,
+                InvalidPollOptionError,
+                PollOptionLimitError,
+                InvalidPollDurationError,
+                AlreadyVotedError,
+                MultipleVoteNotAllowedError,
+                PermissionDeniedError,
+                MessageNotFoundError,
+            ) as e:
+                if messaging:
+                    try:
+                        messaging.delete_message(
+                            current_user.user_id, getattr(msg, "id", None), hard_delete=True
+                        )
+                    except Exception:
+                        pass
+                exc_name = type(e).__name__
+                if "NotFound" in exc_name:
+                    raise HTTPException(
+                        status_code=404,
+                        detail={"error": {"code": 404, "message": str(e)}},
+                    )
+                if "Permission" in exc_name or "Access" in exc_name:
+                    raise HTTPException(
+                        status_code=403,
+                        detail={"error": {"code": 403, "message": str(e)}},
+                    )
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": {"code": 400, "message": str(e)}},
+                )
+            except Exception as e:
+                if messaging:
+                    try:
+                        messaging.delete_message(
+                            current_user.user_id, getattr(msg, "id", None), hard_delete=True
+                        )
+                    except Exception:
+                        pass
+                logger.error(
+                    f"Error creating poll for message {getattr(msg, 'id', None)}: {e}",
+                    exc_info=True,
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail={"error": {"code": 500, "message": "Internal server error"}},
+                )
+
         # Use username and avatar from token/auth - no need for extra DB lookup!
         author_username = current_user.username
         author_avatar_url = getattr(current_user, "avatar_url", None)
@@ -677,7 +835,8 @@ async def send_channel_message(
             author_avatar_url,
             author_badges=author_badges,
             channel_id=cid,
-            media_mod=api.get_media()
+            media_mod=api.get_media(),
+            viewer_user_id=current_user.user_id,
         )
 
         # Broadcast MESSAGE_CREATE event via WebSocket (fully async - doesn't block response)
@@ -1099,7 +1258,8 @@ async def get_message(
             author_avatar_url=author_info["avatar_url"],
             author_badges=author_info["badges"],
             channel_id=cid, 
-            media_mod=api.get_media()
+            media_mod=api.get_media(),
+            viewer_user_id=current_user.user_id,
         )
     except HTTPException:
         raise
@@ -1236,7 +1396,8 @@ async def edit_message(
             author_avatar_url, 
             author_badges=author_badges,
             channel_id=cid,
-            media_mod=api.get_media()
+            media_mod=api.get_media(),
+            viewer_user_id=current_user.user_id,
         )
 
         # Broadcast MESSAGE_UPDATE event via WebSocket (fire and forget)
@@ -1380,6 +1541,22 @@ async def delete_message(
         cid = msg.conversation_id
 
         messaging.delete_message(current_user.user_id, mid)
+
+        metadata = getattr(msg, "metadata", None)
+        if metadata and isinstance(metadata, str):
+            try:
+                import json
+                metadata = json.loads(metadata)
+            except Exception:
+                metadata = None
+
+        if isinstance(metadata, dict) and metadata.get("poll_id"):
+            polls_module = api.get_polls()
+            if polls_module:
+                try:
+                    polls_module.delete_poll(current_user.user_id, int(metadata["poll_id"]))
+                except Exception:
+                    pass
 
         # Broadcast MESSAGE_DELETE event via WebSocket (fire and forget)
         import asyncio
@@ -1540,7 +1717,8 @@ async def get_pinned_messages(
                     info.get("username"), 
                     info.get("avatar_url"),
                     author_badges=info.get("badges"),
-                    media_mod=api.get_media()
+                    media_mod=api.get_media(),
+                    viewer_user_id=current_user.user_id,
                 )
             )
 
@@ -1595,7 +1773,11 @@ async def pin_message(
             # Fetch updated message for broadcast
             msg = messaging.get_message(current_user.user_id, mid)
             if msg:
-                response = _message_to_response(msg, channel_id=cid)
+                response = _message_to_response(
+                    msg,
+                    channel_id=cid,
+                    viewer_user_id=current_user.user_id,
+                )
 
                 # Broadcast update (fire and forget)
                 import asyncio
@@ -1715,7 +1897,11 @@ async def unpin_message(
             # Fetch updated message for broadcast
             msg = messaging.get_message(current_user.user_id, mid)
             if msg:
-                response = _message_to_response(msg, channel_id=cid)
+                response = _message_to_response(
+                    msg,
+                    channel_id=cid,
+                    viewer_user_id=current_user.user_id,
+                )
 
                 # Broadcast update (fire and forget)
                 import asyncio

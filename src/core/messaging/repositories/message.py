@@ -160,6 +160,22 @@ class MessageRepository(BaseRepository[Message]):
         if cid:
             self.invalidate_conversation_cache(cid)
 
+    def update_metadata(
+        self,
+        msg_id: SnowflakeID,
+        metadata: Optional[Dict[str, Any]],
+        updated_at: int,
+        auto_commit: bool = True,
+    ) -> None:
+        cid = self._get_conv_id(msg_id)
+        self._execute(
+            "UPDATE msg_messages SET metadata = ?, updated_at = ? WHERE id = ?",
+            (self._json_dumps(metadata), updated_at, msg_id),
+            auto_commit=auto_commit,
+        )
+        if cid:
+            self.invalidate_conversation_cache(cid)
+
     def soft_delete(
         self, msg_id: SnowflakeID, deleted_at: int, auto_commit: bool = True
     ) -> None:

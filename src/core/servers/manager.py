@@ -799,10 +799,12 @@ class ServerManager(BaseManager):
         nickname: Optional[str] = None,
         muted: Optional[bool] = None,
         deafened: Optional[bool] = None,
+        timeout_until: Optional[int] = None,
+        timeout_reason: Optional[str] = None,
     ) -> Member:
         """Update member settings."""
         return self.member_handler.update_member(
-            user_id, server_id, member_user_id, nickname, muted, deafened
+            user_id, server_id, member_user_id, nickname, muted, deafened, timeout_until, timeout_reason
         )
 
     def remove_member(self, user_id: SnowflakeID, server_id: SnowflakeID) -> bool:
@@ -1462,6 +1464,8 @@ class ServerManager(BaseManager):
             muted=bool(row.get("muted", False)),
             deafened=bool(row.get("deafened", False)),
             inviter_id=row.get("inviter_id"),
+            timeout_until=row.get("timeout_until"),
+            timeout_reason=row.get("timeout_reason"),
             roles=role_ids,
         )
 

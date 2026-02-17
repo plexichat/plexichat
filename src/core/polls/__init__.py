@@ -83,7 +83,7 @@ def setup(db, messaging_module=None):
 
     from .manager import PollManager
 
-    _manager = PollManager(db, messaging_module)
+    _manager = PollManager(db, messaging_module=messaging_module)
     _setup_complete = True
 
 

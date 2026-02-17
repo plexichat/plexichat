@@ -47,6 +47,7 @@ _reports = None
 _feedback = None
 _admin = None
 _events = None
+_polls = None
 _telemetry = None
 _internal_secret = None
 _setup_complete = False
@@ -56,6 +57,7 @@ def setup(
     db: Any,
     auth_module: Optional[Any] = None,
     messaging_module: Optional[Any] = None,
+    polls_module: Optional[Any] = None,
     servers_module: Optional[Any] = None,
     relationships_module: Optional[Any] = None,
     presence_module: Optional[Any] = None,
@@ -99,7 +101,7 @@ def setup(
         events_module: Events module for event delivery
         telemetry_module: Telemetry module for client metrics
     """
-    global _db, _auth, _messaging, _servers, _relationships, _presence
+    global _db, _auth, _messaging, _servers, _relationships, _presence, _polls
     global \
         _reactions, \
         _embeds, \
@@ -120,6 +122,7 @@ def setup(
     _db = db
     _auth = auth_module
     _messaging = messaging_module
+    _polls = polls_module
     _servers = servers_module
     _relationships = relationships_module
     _presence = presence_module
@@ -191,6 +194,18 @@ def get_messaging() -> Optional[Any]:
         from src.core import messaging
 
         return messaging
+    except ImportError:
+        return None
+
+
+def get_polls() -> Optional[Any]:
+    """Get polls module."""
+    if _polls:
+        return _polls
+    try:
+        from src.core import polls
+
+        return polls
     except ImportError:
         return None
 

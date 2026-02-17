@@ -31,6 +31,7 @@ from .models import (
     AIBackendType,
     BulkScanResult,
 )
+from src.core.base import SnowflakeID
 from .exceptions import (
     AutoModError,
     RuleNotFoundError,
@@ -196,8 +197,9 @@ def create_rule(
     rule_type: RuleType,
     rule_config: Dict[str, Any],
     actions: List[Dict[str, Any]],
-    exempt_roles: Optional[List[int]] = None,
-    exempt_channels: Optional[List[int]] = None,
+    applied_roles: Optional[List[SnowflakeID]] = None,
+    exempt_roles: Optional[List[SnowflakeID]] = None,
+    exempt_channels: Optional[List[SnowflakeID]] = None,
     priority: int = 0,
     check_all: bool = False,
 ) -> Rule:
@@ -209,6 +211,7 @@ def create_rule(
         rule_type,
         rule_config,
         actions,
+        applied_roles,
         exempt_roles,
         exempt_channels,
         priority,
@@ -227,8 +230,9 @@ def update_rule(
     name: Optional[str] = None,
     rule_config: Optional[Dict[str, Any]] = None,
     actions: Optional[List[Dict[str, Any]]] = None,
-    exempt_roles: Optional[List[int]] = None,
-    exempt_channels: Optional[List[int]] = None,
+    applied_roles: Optional[List[SnowflakeID]] = None,
+    exempt_roles: Optional[List[SnowflakeID]] = None,
+    exempt_channels: Optional[List[SnowflakeID]] = None,
     priority: Optional[int] = None,
     check_all: Optional[bool] = None,
 ) -> Rule:
@@ -239,6 +243,7 @@ def update_rule(
         name,
         rule_config,
         actions,
+        applied_roles,
         exempt_roles,
         exempt_channels,
         priority,

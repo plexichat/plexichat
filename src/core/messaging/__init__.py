@@ -337,6 +337,14 @@ def edit_message(user_id: int, message_id: int, content: str) -> Message:
     return _get_manager().edit_message(user_id, message_id, content)
 
 
+def update_message_metadata(
+    message_id: int,
+    metadata: Optional[Dict[str, Any]],
+    merge: bool = True,
+) -> Message:
+    return _get_manager().update_message_metadata(message_id, metadata, merge)
+
+
 def delete_message(user_id: int, message_id: int, hard_delete: bool = False) -> bool:
     """
     Delete a message.

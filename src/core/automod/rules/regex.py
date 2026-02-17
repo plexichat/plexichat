@@ -5,20 +5,22 @@ Checks messages against configurable regex patterns.
 Uses google-re2 for safe, ReDoS-resistant pattern matching.
 """
 
+import importlib
 import re
 import utils.logger as logger
 from typing import Dict, Any, Optional, List
 
-# Try to use google-re2 for ReDoS protection, fallback to standard re
-try:
-    import re2
-    HAS_RE2 = True
-except ImportError:
-    HAS_RE2 = False
-    logger.warning("google-re2 not installed, falling back to standard 're' module. BEWARE OF REDOS.")
-
 from .base import BaseRule
 from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
+
+# Try to use google-re2 for ReDoS protection, fallback to standard re
+re2_module = None
+try:
+    re2_module = importlib.import_module("re2")
+    HAS_RE2 = True
+except Exception:
+    HAS_RE2 = False
+    logger.warning("google-re2 not installed, falling back to standard 're' module. BEWARE OF REDOS.")
 
 
 class RegexRule(BaseRule):
@@ -41,13 +43,13 @@ class RegexRule(BaseRule):
                 case_sensitive = pattern_config.get("case_sensitive", False)
                 multiline = pattern_config.get("multiline", False)
                 
-                if HAS_RE2:
+                if HAS_RE2 and re2_module:
                     # re2 uses an Options object for flags
-                    options = re2.Options()
+                    options = re2_module.Options()
                     options.case_sensitive = case_sensitive
                     options.one_line = not multiline
                         
-                    compiled = re2.compile(pattern_str, options=options)
+                    compiled = re2_module.compile(pattern_str, options=options)
                 else:
                     flags = 0
                     if not case_sensitive:
@@ -154,9 +156,9 @@ class RegexRule(BaseRule):
                     continue
 
                 try:
-                    if HAS_RE2:
+                    if HAS_RE2 and re2_module:
                         # re2 is naturally safe from ReDoS
-                        re2.compile(pattern_str)
+                        re2_module.compile(pattern_str)
                     else:
                         # Fallback validation if re2 is missing (legacy protection)
                         re.compile(pattern_str)

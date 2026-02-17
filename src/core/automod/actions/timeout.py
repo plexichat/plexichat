@@ -39,11 +39,12 @@ class TimeoutUserAction(BaseAction):
 
             reason = action.reason or f"Automod: {violation.rule_type.value} violation"
 
-            self._db.execute(
-                """UPDATE srv_members 
-                   SET timeout_until = ?, timeout_reason = ?
-                   WHERE server_id = ? AND user_id = ?""",
-                (timeout_until, reason, violation.server_id, violation.user_id),
+            self._servers.update_member(
+                user_id=0, # System
+                server_id=violation.server_id,
+                member_user_id=violation.user_id,
+                timeout_until=timeout_until,
+                timeout_reason=reason
             )
 
             logger.debug(
