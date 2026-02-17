@@ -65,6 +65,7 @@ __all__ = [
     "get_presence",
     "get_presences",
     "update_last_seen",
+    "set_focused_channel",
     # Typing indicators
     "start_typing",
     "stop_typing",
@@ -200,6 +201,15 @@ def get_presences(user_ids: List[int]) -> List[Presence]:
 def update_last_seen(user_id: int) -> Presence:
     """Update user's last seen timestamp."""
     return _get_manager().update_last_seen(user_id)
+
+
+def set_focused_channel(
+    user_id: int,
+    channel_id: Optional[int] = None,
+    server_id: Optional[int] = None,
+) -> bool:
+    """Set user's focused channel/server in transient presence."""
+    return _get_manager().set_focused_channel(user_id, channel_id, server_id)
 
 
 # === Typing Indicators ===
