@@ -558,6 +558,8 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
 
         "automod": {
             "enabled": True,
+            "exempt_owners": True,
+            "exempt_admins": True,
             "rules": {
                 "caps": {
                     "enabled": True,

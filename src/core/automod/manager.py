@@ -675,6 +675,7 @@ class AutoModManager(BaseManager):
             "SELECT owner_id FROM srv_servers WHERE id = ?", (server_id,)
         )
         if server and server["owner_id"] == user_id:
+            logger.debug(f"User {user_id} is exempt from AutoMod as server owner of {server_id}")
             return True
 
         user_roles = self._db.fetch_all(
@@ -693,6 +694,7 @@ class AutoModManager(BaseManager):
                 tuple(role_ids),
             )
             if admin_role:
+                logger.debug(f"User {user_id} is exempt from AutoMod as administrator in server {server_id}")
                 return True
 
         channel_exempt = self._db.fetch_one(
@@ -701,6 +703,7 @@ class AutoModManager(BaseManager):
             (server_id, channel_id),
         )
         if channel_exempt:
+            logger.debug(f"Channel {channel_id} is exempt from AutoMod in server {server_id}")
             return True
 
         if role_ids:
@@ -711,6 +714,7 @@ class AutoModManager(BaseManager):
                 (server_id, *role_ids),
             )
             if role_exempt:
+                logger.debug(f"User {user_id} has a role exempt from AutoMod in server {server_id}")
                 return True
 
         return False

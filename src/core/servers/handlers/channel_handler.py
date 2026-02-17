@@ -10,6 +10,7 @@ from ..exceptions import (
     ChannelNotFoundError,
     CategoryNotFoundError,
     InvalidChannelNameError,
+    ServerAccessDeniedError,
 )
 from ..permissions import has_permission as check_permission
 from src.core.database import cache_delete, redis_available
@@ -195,6 +196,8 @@ class ChannelHandler:
         channel_type: Optional[ChannelType] = None,
     ) -> List[Channel]:
         """Get all channels in a server."""
+        if not self.manager._is_member(server_id, user_id):
+            raise ServerAccessDeniedError("Not a member of this server")
         query = "SELECT * FROM srv_channels WHERE server_id = ? AND deleted = 0"
         params: List[Any] = [server_id]
 
@@ -364,4 +367,3 @@ class ChannelHandler:
         result = self.manager.get_channel(channel_id, user_id)
         assert result is not None
         return result
-
