@@ -45,7 +45,7 @@ class RegexRule(BaseRule):
                     # re2 uses an Options object for flags
                     options = re2.Options()
                     options.case_sensitive = case_sensitive
-                    options.multiline = multiline
+                    options.one_line = not multiline
                         
                     compiled = re2.compile(pattern_str, options=options)
                 else:
