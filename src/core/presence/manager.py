@@ -681,10 +681,8 @@ class PresenceManager(BaseManager):
             if channel_id is None:
                 client.delete(key)
             else:
-                client.hset(key, mapping={  # type: ignore
-                    "channel_id": str(channel_id),
-                    "server_id": str(server_id or 0)
-                })
+                client.hset(key, "channel_id", str(channel_id))  # type: ignore[arg-type]
+                client.hset(key, "server_id", str(server_id or 0))  # type: ignore[arg-type]
                 # Auto-expire if not updated (1 hour)
                 client.expire(key, 3600)
             
