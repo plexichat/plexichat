@@ -18,6 +18,7 @@ def create_tables(db):
             enabled INTEGER DEFAULT 1,
             config TEXT NOT NULL,
             actions TEXT NOT NULL,
+            applied_roles TEXT DEFAULT '[]',
             exempt_roles TEXT DEFAULT '[]',
             exempt_channels TEXT DEFAULT '[]',
             priority INTEGER DEFAULT 0,
@@ -27,6 +28,12 @@ def create_tables(db):
             created_by BIGINT NOT NULL
         )
     """)
+
+    # Migration for applied_roles column
+    try:
+        db.execute("ALTER TABLE automod_rules ADD COLUMN applied_roles TEXT DEFAULT '[]'")
+    except Exception:
+        pass
 
     # Migrations for existing tables (PostgreSQL only)
     if db.type == "postgres":

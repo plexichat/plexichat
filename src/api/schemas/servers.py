@@ -295,6 +295,7 @@ class AutomodRuleResponse(BaseModel):
     enabled: bool = Field(..., description="Whether rule is enabled")
     config: Dict[str, Any] = Field(..., description="Rule configuration")
     actions: List[AutomodRuleAction] = Field(..., description="Actions to take")
+    applied_roles: List[SnowflakeID] = Field(default_factory=list, description="Role IDs this rule applies to (empty = everyone)")
     exempt_roles: List[SnowflakeID] = Field(default_factory=list, description="Exempt role IDs")
     exempt_channels: List[SnowflakeID] = Field(default_factory=list, description="Exempt channel IDs")
     priority: int = Field(0, description="Rule priority")
@@ -313,6 +314,7 @@ class AutomodRuleCreateRequest(BaseModel):
     rule_type: str = Field(..., description="Rule type")
     config: Dict[str, Any] = Field(..., description="Rule configuration")
     actions: List[AutomodRuleAction] = Field(..., description="Actions to take")
+    applied_roles: Optional[List[SnowflakeID]] = Field(None, description="Role IDs this rule applies to")
     exempt_roles: Optional[List[SnowflakeID]] = Field(None, description="Exempt role IDs")
     exempt_channels: Optional[List[SnowflakeID]] = Field(None, description="Exempt channel IDs")
     priority: Optional[int] = Field(0, description="Rule priority")
@@ -328,6 +330,7 @@ class AutomodRuleUpdateRequest(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     config: Optional[Dict[str, Any]] = None
     actions: Optional[List[AutomodRuleAction]] = None
+    applied_roles: Optional[List[SnowflakeID]] = None
     exempt_roles: Optional[List[SnowflakeID]] = None
     exempt_channels: Optional[List[SnowflakeID]] = None
     priority: Optional[int] = None

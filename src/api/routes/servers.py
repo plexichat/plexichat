@@ -707,7 +707,15 @@ async def assign_role_to_member(
                 detail={"error": {"code": 400, "message": "Invalid ID"}},
             )
 
-        servers_mod.assign_role(current_user.user_id, sid, mid, rid)
+        # The API receives member_id but the core method expects member_user_id
+        # We need to resolve member_id to user_id
+        row = api.get_db().fetch_one("SELECT user_id FROM srv_members WHERE id = ?", (mid,))
+        if not row:
+            raise HTTPException(status_code=404, detail="Member not found")
+        
+        target_user_id = row["user_id"]
+
+        servers_mod.assign_role(current_user.user_id, sid, target_user_id, rid)
         return SuccessResponse(success=True)
     except HTTPException:
         raise
@@ -775,7 +783,14 @@ async def remove_role_from_member(
                 detail={"error": {"code": 400, "message": "Invalid ID"}},
             )
 
-        servers_mod.remove_role(current_user.user_id, sid, mid, rid)
+        # Resolve member_id to user_id
+        row = api.get_db().fetch_one("SELECT user_id FROM srv_members WHERE id = ?", (mid,))
+        if not row:
+            raise HTTPException(status_code=404, detail="Member not found")
+        
+        target_user_id = row["user_id"]
+
+        servers_mod.remove_role(current_user.user_id, sid, target_user_id, rid)
         return SuccessResponse(success=True)
     except HTTPException:
         raise
@@ -1788,6 +1803,7 @@ def _automod_rule_to_response(rule) -> AutomodRuleResponse:
             for a in (rule.actions or [])
         ],
         exempt_roles=[SnowflakeID(r) for r in (rule.exempt_roles or [])],
+        applied_roles=[SnowflakeID(r) for r in (getattr(rule, "applied_roles", []) or [])],
         exempt_channels=[SnowflakeID(c) for c in (rule.exempt_channels or [])],
         priority=rule.priority,
         check_all=bool(rule.check_all),
@@ -1853,6 +1869,7 @@ async def create_server_automod_rule(
             rule_type=rule_type,
             rule_config=body.config,
             actions=[a.model_dump() for a in body.actions],
+            applied_roles=body.applied_roles,
             exempt_roles=body.exempt_roles,
             exempt_channels=body.exempt_channels,
             priority=body.priority or 0,
@@ -1904,6 +1921,8 @@ async def update_server_automod_rule(
             update_kwargs["actions"] = [a.model_dump() for a in body.actions]
         if body.exempt_roles is not None:
             update_kwargs["exempt_roles"] = body.exempt_roles
+        if body.applied_roles is not None:
+            update_kwargs["applied_roles"] = body.applied_roles
         if body.exempt_channels is not None:
             update_kwargs["exempt_channels"] = body.exempt_channels
         if body.priority is not None:

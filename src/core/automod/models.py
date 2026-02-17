@@ -75,6 +75,7 @@ class Rule:
     enabled: bool
     config: Dict[str, Any]
     actions: List[RuleAction]
+    applied_roles: List[SnowflakeID]
     exempt_roles: List[SnowflakeID]
     exempt_channels: List[SnowflakeID]
     priority: int

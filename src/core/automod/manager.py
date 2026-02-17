@@ -367,6 +367,7 @@ class AutoModManager(BaseManager):
         rule_type: RuleType,
         rule_config: Dict[str, Any],
         actions: List[Dict[str, Any]],
+        applied_roles: Optional[List[SnowflakeID]] = None,
         exempt_roles: Optional[List[SnowflakeID]] = None,
         exempt_channels: Optional[List[SnowflakeID]] = None,
         priority: int = 0,
@@ -382,6 +383,7 @@ class AutoModManager(BaseManager):
             rule_type: Type of rule
             rule_config: Rule-specific configuration
             actions: List of actions to take
+            applied_roles: Roles this rule applies to (None/Empty = everyone)
             exempt_roles: Roles exempt from this rule
             exempt_channels: Channels exempt from this rule
             priority: Rule priority (higher = checked first)
@@ -433,8 +435,8 @@ class AutoModManager(BaseManager):
         self._db.execute(
             """INSERT INTO automod_rules 
                (id, server_id, name, rule_type, enabled, config, actions,
-                exempt_roles, exempt_channels, priority, check_all, created_at, updated_at, created_by)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                applied_roles, exempt_roles, exempt_channels, priority, check_all, created_at, updated_at, created_by)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 rule_id,
                 server_id,
@@ -443,6 +445,7 @@ class AutoModManager(BaseManager):
                 1,
                 json.dumps(rule_config),
                 actions_json,
+                json.dumps(applied_roles or []),
                 json.dumps(exempt_roles or []),
                 json.dumps(exempt_channels or []),
                 priority,
@@ -475,6 +478,7 @@ class AutoModManager(BaseManager):
         name: Optional[str] = None,
         rule_config: Optional[Dict[str, Any]] = None,
         actions: Optional[List[Dict[str, Any]]] = None,
+        applied_roles: Optional[List[SnowflakeID]] = None,
         exempt_roles: Optional[List[SnowflakeID]] = None,
         exempt_channels: Optional[List[SnowflakeID]] = None,
         priority: Optional[int] = None,
@@ -522,6 +526,10 @@ class AutoModManager(BaseManager):
                 )
             updates.append("actions = ?")
             params.append(json.dumps(parsed_actions))
+
+        if applied_roles is not None:
+            updates.append("applied_roles = ?")
+            params.append(json.dumps(applied_roles))
 
         if exempt_roles is not None:
             updates.append("exempt_roles = ?")
@@ -671,32 +679,7 @@ class AutoModManager(BaseManager):
         self, server_id: SnowflakeID, user_id: SnowflakeID, channel_id: SnowflakeID
     ) -> bool:
         """Check if user/channel is globally exempt."""
-        server = self._db.fetch_one(
-            "SELECT owner_id FROM srv_servers WHERE id = ?", (server_id,)
-        )
-        if server and server["owner_id"] == user_id:
-            logger.debug(f"User {user_id} is exempt from AutoMod as server owner of {server_id}")
-            return True
-
-        user_roles = self._db.fetch_all(
-            """SELECT role_id FROM srv_member_roles 
-               JOIN srv_members ON srv_member_roles.member_id = srv_members.id
-               WHERE srv_members.server_id = ? AND srv_members.user_id = ?""",
-            (server_id, user_id),
-        )
-        role_ids = [r["role_id"] for r in user_roles]
-
-        if role_ids:
-            placeholders = ",".join("?" * len(role_ids))
-            admin_role = self._db.fetch_one(
-                f"""SELECT id FROM srv_roles 
-                    WHERE id IN ({placeholders}) AND permissions LIKE '%"administrator": true%'""",
-                tuple(role_ids),
-            )
-            if admin_role:
-                logger.debug(f"User {user_id} is exempt from AutoMod as administrator in server {server_id}")
-                return True
-
+        # 1. Global Channel Exemption
         channel_exempt = self._db.fetch_one(
             """SELECT id FROM automod_exemptions 
                WHERE server_id = ? AND target_type = 'channel' AND target_id = ? AND rule_id IS NULL""",
@@ -706,6 +689,16 @@ class AutoModManager(BaseManager):
             logger.debug(f"Channel {channel_id} is exempt from AutoMod in server {server_id}")
             return True
 
+        # Fetch user roles once for multiple checks
+        user_roles = self._db.fetch_all(
+            """SELECT role_id FROM srv_member_roles 
+               JOIN srv_members ON srv_member_roles.member_id = srv_members.id
+               WHERE srv_members.server_id = ? AND srv_members.user_id = ?""",
+            (server_id, user_id),
+        )
+        role_ids = [r["role_id"] for r in user_roles]
+
+        # 2. Global Role Exemption
         if role_ids:
             placeholders = ",".join("?" * len(role_ids))
             role_exempt = self._db.fetch_one(
@@ -723,6 +716,7 @@ class AutoModManager(BaseManager):
         self, rule: Rule, user_id: SnowflakeID, channel_id: SnowflakeID
     ) -> bool:
         """Check if user/channel is exempt from a specific rule."""
+        # 1. Channel exemption
         if channel_id in rule.exempt_channels:
             return True
 
@@ -734,9 +728,17 @@ class AutoModManager(BaseManager):
         )
         user_role_ids = {r["role_id"] for r in user_roles}
 
+        # 2. Rule-specific Role Exemption
         if user_role_ids & set(rule.exempt_roles):
             return True
 
+        # 3. Rule-specific applied roles (if not empty, MUST have one of these roles)
+        if rule.applied_roles:
+            if not (user_role_ids & set(rule.applied_roles)):
+                # If the rule has a target list, and user doesn't have any of them, they are exempt
+                return True
+
+        # 4. Manual exemptions in DB
         channel_exempt = self._db.fetch_one(
             """SELECT id FROM automod_exemptions 
                WHERE server_id = ? AND target_type = 'channel' AND target_id = ? AND rule_id = ?""",
@@ -1182,6 +1184,7 @@ class AutoModManager(BaseManager):
             enabled=bool(row["enabled"]),
             config=json.loads(row["config"]),
             actions=actions,
+            applied_roles=json.loads(row["applied_roles"]) if "applied_roles" in row else [],
             exempt_roles=json.loads(row["exempt_roles"]),
             exempt_channels=json.loads(row["exempt_channels"]),
             priority=row["priority"],
