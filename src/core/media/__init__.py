@@ -101,6 +101,7 @@ __all__ = [
     "get_file_data",
     "get_file_stream",
     "delete_file",
+    "check_file_access",
     # URL signing
     "sign_url",
     "verify_signed_url",
@@ -298,6 +299,11 @@ def delete_file(user_id: int, file_id: int) -> bool:
         True if deleted
     """
     return _get_manager().delete_file(user_id, file_id)
+
+
+def check_file_access(filename: str, user_id: int) -> bool:
+    """Check if a user can access a media file."""
+    return _get_manager().check_file_access(filename, user_id)
 
 
 # === URL Signing ===
