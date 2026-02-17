@@ -548,6 +548,21 @@ class RedisClient:
             logger.error(f"Redis LLEN failed for {key}: {e}")
             raise RedisOperationError(f"LLEN failed: {e}")
 
+    def ltrim(self, key: str, start: int, end: int) -> bool:
+        """Trim a list to the specified range."""
+        self._ensure_connected()
+        client = self._client
+        assert client is not None
+        full_key = self._prefixed_key(self._sanitize_key(key))
+
+        try:
+            client.ltrim(full_key, start, end)
+            logger.debug(f"Redis LTRIM: {key} ({start}, {end})")
+            return True
+        except Exception as e:
+            logger.error(f"Redis LTRIM failed for {key}: {e}")
+            raise RedisOperationError(f"LTRIM failed: {e}")
+
     # ==================== Set Operations ====================
 
     def sadd(self, key: str, *values: RedisValue) -> int:

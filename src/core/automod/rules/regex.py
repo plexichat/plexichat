@@ -42,14 +42,12 @@ class RegexRule(BaseRule):
                 multiline = pattern_config.get("multiline", False)
                 
                 if HAS_RE2:
-                    # re2 flags: re2.IGNORECASE, re2.MULTILINE
-                    flags = 0
-                    if not case_sensitive:
-                        flags |= re2.IGNORECASE
-                    if multiline:
-                        flags |= re2.MULTILINE
+                    # re2 uses an Options object for flags
+                    options = re2.Options()
+                    options.case_sensitive = case_sensitive
+                    options.multiline = multiline
                         
-                    compiled = re2.compile(pattern_str, flags)
+                    compiled = re2.compile(pattern_str, options=options)
                 else:
                     flags = 0
                     if not case_sensitive:

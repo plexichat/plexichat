@@ -647,6 +647,8 @@ async def send_channel_message(
                                 }
                             }
                         )
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.warning(f"Automod check failed for message create: {e}")
 
