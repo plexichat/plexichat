@@ -29,12 +29,6 @@ def create_tables(db):
         )
     """)
 
-    # Migration for applied_roles column
-    try:
-        db.execute("ALTER TABLE automod_rules ADD COLUMN applied_roles TEXT DEFAULT '[]'")
-    except Exception:
-        pass
-
     # Migrations for existing tables (PostgreSQL only)
     if db.type == "postgres":
         tables_to_fix = [
