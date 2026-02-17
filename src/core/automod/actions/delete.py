@@ -49,6 +49,49 @@ class DeleteMessageAction(BaseAction):
             logger.debug(
                 f"Deleted message {violation.message_id} for violation {violation.id}"
             )
+
+            # Broadcast deletion to all clients via WebSocket
+            try:
+                from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+                from src.core.events.models import Event
+                from src.core.events.types import EventType
+                import asyncio
+
+                if ws_is_setup():
+                    dispatcher = get_dispatcher()
+                    user_ids = []
+                    if self._servers:
+                        try:
+                            user_ids = self._servers.get_member_user_ids(violation.server_id)
+                        except Exception:
+                            pass
+                    
+                    if user_ids:
+                        event = Event(
+                            event_type=EventType.MESSAGE_DELETE,
+                            data={
+                                "id": str(violation.message_id),
+                                "channel_id": str(violation.channel_id),
+                                "server_id": str(violation.server_id),
+                                "automod": True
+                            },
+                            server_id=violation.server_id,
+                            channel_id=violation.channel_id,
+                        )
+                        # We use a helper to run the async dispatch
+                        async def dispatch():
+                            await dispatcher.dispatch_event(event, user_ids)
+                        
+                        try:
+                            loop = asyncio.get_running_loop()
+                            asyncio.run_coroutine_threadsafe(dispatch(), loop)
+                        except RuntimeError:
+                            # Fallback if no loop in this thread
+                            asyncio.run(dispatch())
+
+            except Exception as we:
+                logger.debug(f"Failed to broadcast AutoMod deletion: {we}")
+
             return True
 
         except Exception as e:

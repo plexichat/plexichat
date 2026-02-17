@@ -436,7 +436,7 @@ class AutoModManager(BaseManager):
             """INSERT INTO automod_rules 
                (id, server_id, name, rule_type, enabled, config, actions,
                 applied_roles, exempt_roles, exempt_channels, priority, check_all, created_at, updated_at, created_by)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, CAST(? AS INTEGER), ?, ?, ?, ?, ?, CAST(? AS INTEGER), CAST(? AS INTEGER), ?, ?, ?)""",
             (
                 rule_id,
                 server_id,
@@ -540,15 +540,15 @@ class AutoModManager(BaseManager):
             params.append(json.dumps(exempt_channels))
 
         if priority is not None:
-            updates.append("priority = ?")
+            updates.append("priority = CAST(? AS INTEGER)")
             params.append(priority)
 
         if check_all is not None:
-            updates.append("check_all = ?")
+            updates.append("check_all = CAST(? AS INTEGER)")
             params.append(1 if check_all else 0)
 
         if updates:
-            updates.append("updated_at = ?")
+            updates.append("updated_at = CAST(? AS BIGINT)")
             params.append(self._get_timestamp())
             params.append(rule_id)
 
@@ -602,7 +602,7 @@ class AutoModManager(BaseManager):
             raise RuleNotFoundError("Rule not found")
 
         self._db.execute(
-            "UPDATE automod_rules SET enabled = ?, updated_at = ? WHERE id = ?",
+            "UPDATE automod_rules SET enabled = CAST(? AS INTEGER), updated_at = CAST(? AS BIGINT) WHERE id = ?",
             (1 if enabled else 0, self._get_timestamp(), rule_id),
         )
 
