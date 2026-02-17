@@ -180,9 +180,7 @@ def get_current_user_info(
         if hasattr(account_type, "value"):
             account_type = account_type.value  # type: ignore
 
-        lookup_id = current_user.user_id
-        if account_type != "bot":
-            lookup_id = current_user.account_id
+        lookup_id = current_user.account_id if account_type == "bot" else current_user.user_id
 
         user = _get_user_cached(lookup_id)
         if not user:

@@ -1040,11 +1040,13 @@ class PlexiChatServer:
         assert host is not None
         assert port is not None
 
+        log_level = config.get("logging", {}).get("level", "info").lower()
+
         uvi_config = uvicorn.Config(
             self.app,
             host=host,
             port=port,
-            log_level="info",
+            log_level=log_level,
             loop="asyncio",
             **ssl_config,
         )

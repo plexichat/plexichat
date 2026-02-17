@@ -228,10 +228,10 @@ DEFAULT_ROUTE_LIMITS: Dict[str, RateLimitConfig] = {
         scope=BucketType.RESOURCE,
     ),
     "PATCH /users/@me": RateLimitConfig(
-        requests=5,
+        requests=2,
         window_seconds=60.0,
-        burst=2,
-        algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
+        burst=0,
+        algorithm=RateLimitAlgorithm.FIXED_WINDOW,
         scope=BucketType.USER,
         hourly_limit=20,
     ),

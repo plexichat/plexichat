@@ -65,17 +65,20 @@ if _DISKCACHE_AVAILABLE and diskcache is not None:
         _mem_cache: Union[_DiskCacheLike, Dict[str, Tuple[float, Any]]] = cast(
             _DiskCacheLike, diskcache.Cache(cache_dir)
         )
+        _mem_cache_is_diskcache = True
         logger.info(f"Initialized DiskCache at {cache_dir}")
     except Exception as e:
         if getattr(logger, "_setup_called", False):
             logger.warning(f"Failed to initialize DiskCache, using memory cache: {e}")
         _mem_cache = {}
+        _mem_cache_is_diskcache = False
 else:
     _mem_cache = {}
+    _mem_cache_is_diskcache = False
 _MEM_CACHE_MAX_SIZE = 1000
 
 def _mem_cache_get(key: str) -> Optional[Any]:
-    if _DISKCACHE_AVAILABLE:
+    if _mem_cache_is_diskcache:
         # DiskCache handles expiry automatically
         # It returns None if key is missing or expired
         return cast(_DiskCacheLike, _mem_cache).get(key)
@@ -89,7 +92,7 @@ def _mem_cache_get(key: str) -> Optional[Any]:
         return None
 
 def _mem_cache_set(key: str, value: Any, ttl: int):
-    if _DISKCACHE_AVAILABLE:
+    if _mem_cache_is_diskcache:
         # DiskCache handles expiry (ttl in seconds)
         cast(_DiskCacheLike, _mem_cache).set(key, value, expire=ttl)
     else:
@@ -532,7 +535,7 @@ def invalidate_pattern(pattern: str) -> int:
     """
     # Always clear in-memory cache entries that match the pattern
     # Wrap keys() in list() to handle both dict and DiskCache (which returns iterator)
-    if _DISKCACHE_AVAILABLE:
+    if _mem_cache_is_diskcache:
         # Limit the number of keys we check to avoid performance hit on huge caches
         # For diskcache, iterating all keys can be slow, but for local cache usage it is acceptable
         mem_keys = []
