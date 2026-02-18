@@ -38,7 +38,6 @@ from .exceptions import (
     PermissionDeniedError,
     OwnerCannotLeaveError,
 )
-from .schema import create_tables
 from .permissions import (
     has_permission as check_permission,
 )
@@ -84,7 +83,6 @@ class ServerManager(BaseManager):
             60.0  # 60 second cache TTL for server data (longer = fewer DB queries)
         )
 
-        create_tables(db)
 
         # Initialize sub-handlers for modularity
         from .handlers.audit_handler import AuditHandler
@@ -301,9 +299,12 @@ class ServerManager(BaseManager):
         # Initialize default automod rules
         try:
             import src.core.automod as automod
+
             automod.ensure_default_rules(server_id, owner_id)
         except Exception as e:
-            logger.warning(f"Failed to initialize default automod rules for server {server_id}: {e}")
+            logger.warning(
+                f"Failed to initialize default automod rules for server {server_id}: {e}"
+            )
 
         self._log_audit(server_id, owner_id, AuditLogAction.SERVER_CREATE)
 
@@ -739,9 +740,9 @@ class ServerManager(BaseManager):
         placeholders = ",".join("?" for _ in member_ids)
         role_rows = self._db.fetch_all(
             f"SELECT member_id, role_id FROM srv_member_roles WHERE member_id IN ({placeholders})",
-            tuple(member_ids)
+            tuple(member_ids),
         )
-        
+
         # Map roles to members
         roles_map = {}
         for rr in role_rows:
@@ -750,7 +751,9 @@ class ServerManager(BaseManager):
                 roles_map[mid] = []
             roles_map[mid].append(rr["role_id"])
 
-        return [self._row_to_member(row, roles=roles_map.get(row["id"], [])) for row in rows]
+        return [
+            self._row_to_member(row, roles=roles_map.get(row["id"], [])) for row in rows
+        ]
 
     def get_member_user_ids(
         self,
@@ -796,7 +799,7 @@ class ServerManager(BaseManager):
         member = self.get_member(server_id, user_id)
         if not member or not member.timeout_until:
             return False
-        
+
         return member.timeout_until > self._get_timestamp()
 
     def update_member(
@@ -812,7 +815,14 @@ class ServerManager(BaseManager):
     ) -> Member:
         """Update member settings."""
         return self.member_handler.update_member(
-            user_id, server_id, member_user_id, nickname, muted, deafened, timeout_until, timeout_reason
+            user_id,
+            server_id,
+            member_user_id,
+            nickname,
+            muted,
+            deafened,
+            timeout_until,
+            timeout_reason,
         )
 
     def remove_member(self, user_id: SnowflakeID, server_id: SnowflakeID) -> bool:
@@ -847,15 +857,23 @@ class ServerManager(BaseManager):
             try:
                 channels = self._db.fetch_all(
                     "SELECT conversation_id FROM srv_channels WHERE server_id = ? AND deleted = 0",
-                    (server_id,)
+                    (server_id,),
                 )
-                conv_ids = [ch["conversation_id"] for ch in channels if ch["conversation_id"]]
-                
+                conv_ids = [
+                    ch["conversation_id"] for ch in channels if ch["conversation_id"]
+                ]
+
                 if conv_ids:
-                    if hasattr(self._messaging, "remove_participant_from_conversations"):
-                        self._messaging.remove_participant_from_conversations(user_id, conv_ids)
+                    if hasattr(
+                        self._messaging, "remove_participant_from_conversations"
+                    ):
+                        self._messaging.remove_participant_from_conversations(
+                            user_id, conv_ids
+                        )
             except Exception as e:
-                logger.error(f"Error removing member {user_id} from server conversations: {e}")
+                logger.error(
+                    f"Error removing member {user_id} from server conversations: {e}"
+                )
 
         # Invalidate caches for the user leaving
         self._cache_invalidate(self._member_cache, (server_id, user_id))
@@ -865,6 +883,7 @@ class ServerManager(BaseManager):
 
         # Invalidate Redis
         from src.core.database import cache_delete, invalidate_pattern
+
         cache_delete(f"is_member:{server_id}:{user_id}")
         invalidate_pattern(f"perms:{user_id}:{server_id}:*")
         invalidate_pattern(f"member_data:*{user_id}*")
@@ -889,7 +908,9 @@ class ServerManager(BaseManager):
         reason: Optional[str] = None,
     ) -> bool:
         """Kick a member from a server."""
-        return self.member_handler.kick_member(user_id, server_id, member_user_id, reason)
+        return self.member_handler.kick_member(
+            user_id, server_id, member_user_id, reason
+        )
 
     def ban_member(
         self,
@@ -900,7 +921,9 @@ class ServerManager(BaseManager):
         delete_message_days: int = 0,
     ) -> Ban:
         """Ban a user from a server."""
-        return self.member_handler.ban_member(user_id, server_id, member_user_id, reason)
+        return self.member_handler.ban_member(
+            user_id, server_id, member_user_id, reason
+        )
 
     def unban_member(
         self, user_id: SnowflakeID, server_id: SnowflakeID, banned_user_id: SnowflakeID
@@ -922,7 +945,9 @@ class ServerManager(BaseManager):
         role_id: SnowflakeID,
     ) -> bool:
         """Assign a role to a member."""
-        return self.role_handler.assign_role(user_id, server_id, member_user_id, role_id)
+        return self.role_handler.assign_role(
+            user_id, server_id, member_user_id, role_id
+        )
 
     def remove_role(
         self,
@@ -932,7 +957,9 @@ class ServerManager(BaseManager):
         role_id: SnowflakeID,
     ) -> bool:
         """Remove a role from a member."""
-        return self.role_handler.remove_role(user_id, server_id, member_user_id, role_id)
+        return self.role_handler.remove_role(
+            user_id, server_id, member_user_id, role_id
+        )
 
     def get_member_roles(
         self, server_id: SnowflakeID, member_user_id: SnowflakeID
@@ -949,7 +976,9 @@ class ServerManager(BaseManager):
         target_id: SnowflakeID,
     ) -> Optional[ChannelOverride]:
         """Get permission override for a channel."""
-        return self.role_handler.get_channel_override(channel_id, target_type, target_id)
+        return self.role_handler.get_channel_override(
+            channel_id, target_type, target_id
+        )
 
     def set_channel_override(
         self,
@@ -961,7 +990,9 @@ class ServerManager(BaseManager):
         deny: Optional[Dict[str, bool]] = None,
     ) -> ChannelOverride:
         """Set permission override for a channel."""
-        return self.role_handler.set_channel_override(user_id, channel_id, target_type, target_id, allow, deny)
+        return self.role_handler.set_channel_override(
+            user_id, channel_id, target_type, target_id, allow, deny
+        )
 
     def delete_channel_override(
         self,
@@ -971,7 +1002,9 @@ class ServerManager(BaseManager):
         target_id: SnowflakeID,
     ) -> bool:
         """Delete a permission override."""
-        return self.role_handler.delete_channel_override(user_id, channel_id, target_type, target_id)
+        return self.role_handler.delete_channel_override(
+            user_id, channel_id, target_type, target_id
+        )
 
     def has_permission(
         self,
@@ -981,7 +1014,9 @@ class ServerManager(BaseManager):
         channel_id: Optional[SnowflakeID] = None,
     ) -> bool:
         """Check if a user has a permission in a server/channel."""
-        return self.role_handler.has_permission(user_id, server_id, permission, channel_id)
+        return self.role_handler.has_permission(
+            user_id, server_id, permission, channel_id
+        )
 
     def get_permissions(
         self,
@@ -1016,7 +1051,9 @@ class ServerManager(BaseManager):
         temporary: bool = False,
     ) -> Invite:
         """Create an invite to a channel."""
-        return self.member_handler.create_invite(user_id, channel_id, max_age, max_uses, temporary)
+        return self.member_handler.create_invite(
+            user_id, channel_id, max_age, max_uses, temporary
+        )
 
     def get_invite(self, code: str) -> Optional[Invite]:
         """Get an invite by code."""
@@ -1072,21 +1109,31 @@ class ServerManager(BaseManager):
         # Check permissions
         permissions = self.get_permissions(user_id, channel.server_id, channel_id)
         if not check_permission(permissions, "messages.send"):
-            raise PermissionDeniedError("Missing messages.send permission", "messages.send")
+            raise PermissionDeniedError(
+                "Missing messages.send permission", "messages.send"
+            )
 
         # Enforce slowmode
         if channel.slowmode_seconds > 0:
             # Bypass slowmode if user has bypass permission or management perms
-            can_bypass = check_permission(permissions, "messages.bypass_slowmode") or \
-                         check_permission(permissions, "messages.manage") or \
-                         check_permission(permissions, "channels.manage") or \
-                         check_permission(permissions, "administrator")
-            
+            can_bypass = (
+                check_permission(permissions, "messages.bypass_slowmode")
+                or check_permission(permissions, "messages.manage")
+                or check_permission(permissions, "channels.manage")
+                or check_permission(permissions, "administrator")
+            )
+
             if not can_bypass:
-                retry_after = self._check_slowmode(user_id, channel_id, channel.slowmode_seconds)
+                retry_after = self._check_slowmode(
+                    user_id, channel_id, channel.slowmode_seconds
+                )
                 if retry_after:
                     from src.core.ratelimit.exceptions import RateLimitError
-                    raise RateLimitError(f"Slowmode is enabled. Try again in {retry_after:.1f}s", retry_after)
+
+                    raise RateLimitError(
+                        f"Slowmode is enabled. Try again in {retry_after:.1f}s",
+                        retry_after,
+                    )
 
         if not self._messaging:
             raise ServerError("Messaging module not available")
@@ -1103,16 +1150,19 @@ class ServerManager(BaseManager):
             attachments=attachments,
         )
 
-    def _check_slowmode(self, user_id: SnowflakeID, channel_id: SnowflakeID, slowmode_seconds: int) -> Optional[float]:
+    def _check_slowmode(
+        self, user_id: SnowflakeID, channel_id: SnowflakeID, slowmode_seconds: int
+    ) -> Optional[float]:
         """Check if user is slowmoded in channel. Returns retry_after if limited."""
         if slowmode_seconds <= 0:
             return None
-            
+
         key = f"slowmode:{channel_id}:{user_id}"
         # Use Redis if available
         if redis_available():
             try:
                 from src.core.database import cache_get, cache_set
+
                 last_msg_time = cache_get(key)
                 now = self._get_timestamp() / 1000.0
                 if last_msg_time:
@@ -1158,7 +1208,7 @@ class ServerManager(BaseManager):
             before_id=before_id,
             after_id=after_id,
         )
-        
+
         return messages
 
     # === Audit Log ===
@@ -1210,7 +1260,7 @@ class ServerManager(BaseManager):
             return False
 
         cache_key = f"is_member:{sid}:{uid}"
-        
+
         # 1. Try internal memory first (fastest)
         mem_cached = self._cache_get(self._member_cache, cache_key)
         if mem_cached is not None:
@@ -1260,12 +1310,12 @@ class ServerManager(BaseManager):
         )
 
         is_member = row is not None
-        
+
         # Cache result
         self._cache_set(self._member_cache, cache_key, is_member)
         if redis_available():
             cache_set(cache_key, "1" if is_member else "0", ttl=300)
-            
+
         return is_member
 
     def _server_exists(self, server_id: SnowflakeID) -> bool:
@@ -1540,7 +1590,7 @@ class ServerManager(BaseManager):
         if action_val:
             if isinstance(action_val, str):
                 action_val = action_val.lower().replace("-", "_")
-            
+
             try:
                 action_type = AuditLogAction(action_val)
             except (ValueError, KeyError):

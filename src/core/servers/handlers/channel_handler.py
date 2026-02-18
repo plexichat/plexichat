@@ -16,6 +16,7 @@ from ..permissions import has_permission as check_permission
 from src.core.database import cache_delete, redis_available
 from src.core.database.cache import cached, invalidate_pattern
 
+
 class ChannelHandler:
     def __init__(self, manager):
         self.manager = manager
@@ -29,15 +30,17 @@ class ChannelHandler:
             raise InvalidChannelNameError("Channel name cannot be empty")
 
         name = name.strip()
-        
+
         # Strict ASCII-only hyphenated naming for text-based channels
         if channel_type in (ChannelType.TEXT, ChannelType.ANNOUNCEMENT):
             name = name.lower()
             name = re.sub(r"[^a-z0-9]+", "-", name)
             name = name.strip("-")
-            
+
             if not name:
-                raise InvalidChannelNameError("Channel name must contain alphanumeric characters")
+                raise InvalidChannelNameError(
+                    "Channel name must contain alphanumeric characters"
+                )
         else:
             name = re.sub(r"\s+", " ", name)
             name = re.sub(r"[^\x20-\x7E]", "", name)
@@ -114,7 +117,9 @@ class ChannelHandler:
                 self.manager._messaging.create_server_channel_conversation(
                     server_id, channel_id
                 )
-                if hasattr(self.manager._messaging, "create_server_channel_conversation")
+                if hasattr(
+                    self.manager._messaging, "create_server_channel_conversation"
+                )
                 else None
             )
             if conv:
@@ -213,7 +218,9 @@ class ChannelHandler:
 
         # Optimization: Batch permission check
         channel_ids = [row["id"] for row in rows]
-        perms_map = self.manager.role_handler.get_permissions_batch(user_id, server_id, channel_ids)
+        perms_map = self.manager.role_handler.get_permissions_batch(
+            user_id, server_id, channel_ids
+        )
 
         channels = []
         for row in rows:

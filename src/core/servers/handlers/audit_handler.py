@@ -7,6 +7,7 @@ from typing import Optional, List, Dict, Any
 from src.core.base import SnowflakeID
 from ..models import AuditLogEntry, AuditLogAction
 
+
 class AuditHandler:
     def __init__(self, manager):
         self.manager = manager

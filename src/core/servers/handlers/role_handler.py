@@ -21,6 +21,7 @@ from ..permissions import (
     can_manage_role,
 )
 
+
 class RoleHandler:
     def __init__(self, manager):
         self.manager = manager
@@ -80,7 +81,9 @@ class RoleHandler:
             ),
         )
 
-        self.manager._log_audit(server_id, user_id, AuditLogAction.ROLE_CREATE, "role", role_id)
+        self.manager._log_audit(
+            server_id, user_id, AuditLogAction.ROLE_CREATE, "role", role_id
+        )
         result = self.manager.get_role(role_id, user_id)
         assert result is not None
         return result
@@ -127,7 +130,9 @@ class RoleHandler:
         is_owner = server is not None and server.owner_id == user_id
 
         if not can_manage_role(user_roles, {"position": role.position}, is_owner):
-            raise RoleHierarchyError("Cannot modify a role at or above your highest role")
+            raise RoleHierarchyError(
+                "Cannot modify a role at or above your highest role"
+            )
 
         updates = []
         params = []
@@ -200,12 +205,16 @@ class RoleHandler:
         is_owner = server is not None and server.owner_id == user_id
 
         if not can_manage_role(user_roles, {"position": role.position}, is_owner):
-            raise RoleHierarchyError("Cannot delete a role at or above your highest role")
+            raise RoleHierarchyError(
+                "Cannot delete a role at or above your highest role"
+            )
 
         self.db.execute("UPDATE srv_roles SET deleted = 1 WHERE id = ?", (role_id,))
         self.db.execute("DELETE FROM srv_member_roles WHERE role_id = ?", (role_id,))
 
-        self.manager._log_audit(role.server_id, user_id, AuditLogAction.ROLE_DELETE, "role", role_id)
+        self.manager._log_audit(
+            role.server_id, user_id, AuditLogAction.ROLE_DELETE, "role", role_id
+        )
         return True
 
     def move_role(
@@ -268,6 +277,7 @@ class RoleHandler:
         channel = self.manager.get_channel(channel_id, user_id)
         if not channel:
             from ..exceptions import ChannelNotFoundError
+
             raise ChannelNotFoundError("Channel not found")
 
         now = self.manager._get_timestamp()
@@ -292,15 +302,32 @@ class RoleHandler:
                 """INSERT INTO srv_channel_overrides 
                    (id, channel_id, target_type, target_id, allow, deny, created_at, updated_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (override_id, channel_id, target_type, target_id, json.dumps(allow or {}), json.dumps(deny or {}), now, now),
+                (
+                    override_id,
+                    channel_id,
+                    target_type,
+                    target_id,
+                    json.dumps(allow or {}),
+                    json.dumps(deny or {}),
+                    now,
+                    now,
+                ),
             )
             action = AuditLogAction.OVERRIDE_CREATE
 
-        self.manager._log_audit(channel.server_id, user_id, action, "override", override_id, {"target_type": target_type, "target_id": target_id})
-        
+        self.manager._log_audit(
+            channel.server_id,
+            user_id,
+            action,
+            "override",
+            override_id,
+            {"target_type": target_type, "target_id": target_id},
+        )
+
         # Invalidate permissions cache
         from src.core.database import invalidate_pattern
-        if target_type == 'member':
+
+        if target_type == "member":
             invalidate_pattern(f"perms:{target_id}:{channel.server_id}:*")
         else:
             # Role override affects all members with that role
@@ -322,6 +349,7 @@ class RoleHandler:
         channel = self.manager.get_channel(channel_id, user_id)
         if not channel:
             from ..exceptions import ChannelNotFoundError
+
             raise ChannelNotFoundError("Channel not found")
 
         self.db.execute(
@@ -336,12 +364,17 @@ class RoleHandler:
             AuditLogAction.OVERRIDE_DELETE,
             "override",
             None,
-            {"channel_id": channel_id, "target_type": target_type, "target_id": target_id},
+            {
+                "channel_id": channel_id,
+                "target_type": target_type,
+                "target_id": target_id,
+            },
         )
 
         # Invalidate permissions cache
         from src.core.database import invalidate_pattern
-        if target_type == 'member':
+
+        if target_type == "member":
             invalidate_pattern(f"perms:{target_id}:{channel.server_id}:*")
         else:
             invalidate_pattern(f"perms:*:{channel.server_id}:{channel_id}")
@@ -361,10 +394,10 @@ class RoleHandler:
         # 1. Base permissions
         # This uses existing cache/logic for base perms
         base_perms = self.get_permissions(user_id, server_id)
-        
+
         # If admin, return all true for all channels
         if base_perms.get("administrator"):
-             return {cid: base_perms for cid in channel_ids}
+            return {cid: base_perms for cid in channel_ids}
 
         # 2. Get user's roles
         role_rows = self.manager._get_member_role_rows(server_id, user_id)
@@ -373,25 +406,29 @@ class RoleHandler:
         # 3. Fetch overrides
         placeholders = ",".join("?" * len(channel_ids))
         query_params = list(channel_ids)
-        
+
         or_parts = ["(target_type = 'member' AND target_id = ?)"]
         query_params.append(user_id)
-        
+
         if role_ids:
             r_placeholders = ",".join("?" * len(role_ids))
-            or_parts.append(f"(target_type = 'role' AND target_id IN ({r_placeholders}))")
+            or_parts.append(
+                f"(target_type = 'role' AND target_id IN ({r_placeholders}))"
+            )
             query_params.extend(role_ids)
-            
+
         query = f"""SELECT * FROM srv_channel_overrides 
                     WHERE channel_id IN ({placeholders}) 
-                    AND ({' OR '.join(or_parts)})"""
-        
+                    AND ({" OR ".join(or_parts)})"""
+
         overrides_rows = self.db.fetch_all(query, tuple(query_params))
-        
+
         # Group overrides by channel
-        channel_overrides: Dict[SnowflakeID, List[Dict[str, Any]]] = {cid: [] for cid in channel_ids}
+        channel_overrides: Dict[SnowflakeID, List[Dict[str, Any]]] = {
+            cid: [] for cid in channel_ids
+        }
         member_overrides: Dict[SnowflakeID, Dict[str, Any]] = {}
-        
+
         for row in overrides_rows:
             cid = row["channel_id"]
             if cid in channel_overrides:
@@ -399,17 +436,19 @@ class RoleHandler:
                     member_overrides[cid] = dict(row)
                 else:
                     channel_overrides[cid].append(dict(row))
-                
+
         # 4. Calculate permissions for each channel
         result = {}
         for cid in channel_ids:
-            perms = apply_channel_overrides(base_perms, channel_overrides[cid], member_overrides.get(cid))
+            perms = apply_channel_overrides(
+                base_perms, channel_overrides[cid], member_overrides.get(cid)
+            )
             result[cid] = perms
-            
+
             # Populate cache
             cache_key = (user_id, server_id, cid)
             self.manager._cache_set(self.manager._permission_cache, cache_key, perms)
-            
+
         return result
 
     def get_permissions(
@@ -420,7 +459,7 @@ class RoleHandler:
     ) -> Dict[str, bool]:
         """Get all permissions for a user in a server/channel (cached in Redis)."""
         cache_key = f"perms:{user_id}:{server_id}:{channel_id or 0}"
-        
+
         # 1. Try internal memory first
         mem_cached = self.manager._cache_get(self.manager._permission_cache, cache_key)
         if mem_cached is not None:
@@ -428,6 +467,7 @@ class RoleHandler:
 
         # 2. Try Redis
         from src.core.database import cache_get, cache_set, redis_available
+
         if redis_available():
             redis_cached = cache_get(cache_key)
             if redis_cached is not None:
@@ -435,7 +475,9 @@ class RoleHandler:
                     perms = json.loads(redis_cached)
                 else:
                     perms = redis_cached
-                self.manager._cache_set(self.manager._permission_cache, cache_key, perms)
+                self.manager._cache_set(
+                    self.manager._permission_cache, cache_key, perms
+                )
                 return perms
 
         # 3. Calculate permissions
@@ -448,7 +490,9 @@ class RoleHandler:
             if not server_row:
                 return {}
             owner_id = int(server_row["owner_id"])
-            self.manager._cache_set(self.manager._server_owner_cache, server_id, owner_id)
+            self.manager._cache_set(
+                self.manager._server_owner_cache, server_id, owner_id
+            )
 
         is_owner = int(owner_id) == int(user_id)
         role_rows = self.manager._get_member_role_rows(server_id, user_id)
@@ -478,7 +522,9 @@ class RoleHandler:
             )
             member_override = dict(member_override_row) if member_override_row else None
 
-            result = apply_channel_overrides(base_perms, role_overrides, member_override)
+            result = apply_channel_overrides(
+                base_perms, role_overrides, member_override
+            )
 
         # 4. Check for timeout
         member = self.manager.get_member(server_id, user_id)
@@ -492,7 +538,7 @@ class RoleHandler:
                     "voice.speak",
                     "voice.connect",
                     "messages.attach_files",
-                    "messages.embed_links"
+                    "messages.embed_links",
                 ]
                 for perm in restricted_perms:
                     result[perm] = False
@@ -501,7 +547,7 @@ class RoleHandler:
         self.manager._cache_set(self.manager._permission_cache, cache_key, result)
         if redis_available():
             cache_set(cache_key, result, ttl=60)
-            
+
         return result
 
     @cached(ttl=10, prefix="has_perm")
@@ -516,7 +562,9 @@ class RoleHandler:
         permissions = self.get_permissions(user_id, server_id, channel_id)
         return check_permission(permissions, permission)
 
-    def get_member_roles(self, server_id: SnowflakeID, member_user_id: SnowflakeID) -> List[Role]:
+    def get_member_roles(
+        self, server_id: SnowflakeID, member_user_id: SnowflakeID
+    ) -> List[Role]:
         """Get all roles assigned to a member."""
         member = self.manager.get_member(server_id, member_user_id)
         if not member:
@@ -553,7 +601,9 @@ class RoleHandler:
         is_owner = server is not None and server.owner_id == user_id
 
         if not can_manage_role(user_roles, {"position": role.position}, is_owner):
-            raise RoleHierarchyError("Cannot assign a role at or above your highest role")
+            raise RoleHierarchyError(
+                "Cannot assign a role at or above your highest role"
+            )
 
         existing = self.db.fetch_one(
             "SELECT 1 FROM srv_member_roles WHERE member_id = ? AND role_id = ?",
@@ -575,9 +625,17 @@ class RoleHandler:
 
         # Invalidate Redis
         from src.core.database import invalidate_pattern
+
         invalidate_pattern(f"perms:{member_user_id}:{server_id}:*")
 
-        self.manager._log_audit(server_id, user_id, AuditLogAction.MEMBER_ROLE_ADD, "member", member_user_id, {"role_id": role_id})
+        self.manager._log_audit(
+            server_id,
+            user_id,
+            AuditLogAction.MEMBER_ROLE_ADD,
+            "member",
+            member_user_id,
+            {"role_id": role_id},
+        )
         return True
 
     def remove_role(
@@ -605,9 +663,14 @@ class RoleHandler:
         is_owner = server is not None and server.owner_id == user_id
 
         if not can_manage_role(user_roles, {"position": role.position}, is_owner):
-            raise RoleHierarchyError("Cannot remove a role at or above your highest role")
+            raise RoleHierarchyError(
+                "Cannot remove a role at or above your highest role"
+            )
 
-        self.db.execute("DELETE FROM srv_member_roles WHERE member_id = ? AND role_id = ?", (member.id, role_id))
+        self.db.execute(
+            "DELETE FROM srv_member_roles WHERE member_id = ? AND role_id = ?",
+            (member.id, role_id),
+        )
 
         for key in list(self.manager._permission_cache.keys()):
             if key[0] == member_user_id and key[1] == server_id:
@@ -615,7 +678,15 @@ class RoleHandler:
 
         # Invalidate Redis
         from src.core.database import invalidate_pattern
+
         invalidate_pattern(f"perms:{member_user_id}:{server_id}:*")
 
-        self.manager._log_audit(server_id, user_id, AuditLogAction.MEMBER_ROLE_REMOVE, "member", member_user_id, {"role_id": role_id})
+        self.manager._log_audit(
+            server_id,
+            user_id,
+            AuditLogAction.MEMBER_ROLE_REMOVE,
+            "member",
+            member_user_id,
+            {"role_id": role_id},
+        )
         return True

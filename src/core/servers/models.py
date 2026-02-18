@@ -153,7 +153,9 @@ class Server:
             "member_count": self.member_count,
             "features": self.features,
             "premium_tier": self.premium_tier,
-            "default_channel_id": str(self.default_channel_id) if self.default_channel_id else None,
+            "default_channel_id": str(self.default_channel_id)
+            if self.default_channel_id
+            else None,
         }
 
 
