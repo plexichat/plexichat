@@ -47,7 +47,10 @@ class OTPVerifyRequest(BaseModel):
     code: str = Field(..., min_length=6, max_length=8, description="OTP code")
     is_setup: bool = Field(False, description="Whether this is for initial setup")
     challenge_token: str = Field(
-        ..., min_length=10, max_length=200, description="Challenge token from login step"
+        ...,
+        min_length=10,
+        max_length=200,
+        description="Challenge token from login step",
     )
 
 
@@ -135,12 +138,17 @@ class TelemetryEndpointStat(BaseModel):
     )
     error_rate: float = Field(..., description="Error rate percentage")
     error_count: int = Field(0, description="Total error count")
-    avg_queries: Optional[float] = Field(0.0, description="Average DB queries per request")
-    avg_query_time_ms: Optional[float] = Field(0.0, description="Average DB query time in ms")
+    avg_queries: Optional[float] = Field(
+        0.0, description="Average DB queries per request"
+    )
+    avg_query_time_ms: Optional[float] = Field(
+        0.0, description="Average DB query time in ms"
+    )
 
 
 class SystemMetrics(BaseModel):
     """System health metrics."""
+
     cpu_percent: float = Field(..., description="CPU usage percentage")
     memory_percent: float = Field(..., description="Memory usage percentage")
     memory_used_mb: float = Field(..., description="Memory used in MB")
@@ -328,11 +336,14 @@ class UserDetailsResponse(BaseModel):
     last_login: Optional[int] = Field(None, description="Last login timestamp")
     account_locked: bool = Field(False, description="Whether account is locked")
     locked_until: Optional[int] = Field(None, description="Lock expiration timestamp")
-    force_username_change: bool = Field(False, description="Whether user must change name")
+    force_username_change: bool = Field(
+        False, description="Whether user must change name"
+    )
 
 
 class BannedUsernameResponse(BaseModel):
     """Banned username pattern response."""
+
     id: int
     pattern: str
     is_regex: bool
@@ -342,6 +353,7 @@ class BannedUsernameResponse(BaseModel):
 
 class BannedUsernameCreate(BaseModel):
     """Create banned username pattern."""
+
     pattern: str = Field(..., min_length=1, max_length=100)
     reason: Optional[str] = Field(None, max_length=200)
     is_regex: bool = Field(False)
@@ -349,18 +361,21 @@ class BannedUsernameCreate(BaseModel):
 
 class AdminChangePasswordRequest(BaseModel):
     """Request to change admin password."""
+
     current_password: str = Field(...)
     new_password: str = Field(..., min_length=12)
 
 
 class UserNotesResponse(BaseModel):
     """Response for user notes."""
+
     user_id: str
     notes: str
 
 
 class UserNotesUpdate(BaseModel):
     """Request to update user notes."""
+
     notes: str = Field(..., max_length=5000)
 
 
@@ -413,13 +428,17 @@ class BlockUserResponse(BaseModel):
 
 class IPBlockRequest(BaseModel):
     """Request to block an IP address."""
+
     ip_address: str = Field(..., description="IP address to block")
-    reason: Optional[str] = Field(None, max_length=500, description="Reason for blocking")
+    reason: Optional[str] = Field(
+        None, max_length=500, description="Reason for blocking"
+    )
     duration_hours: Optional[int] = Field(None, description="Duration in hours")
 
 
 class BlockedIPResponse(BaseModel):
     """Blocked IP information."""
+
     ip_address: str
     reason: Optional[str]
     blocked_at: int
@@ -429,19 +448,26 @@ class BlockedIPResponse(BaseModel):
 
 class ForceLogoutRequest(BaseModel):
     """Request to force logout a user."""
+
     user_id: str = Field(..., description="User ID to logout")
 
 
 class ForceUsernameChangeRequest(BaseModel):
     """Request to force a username change."""
-    ban_current: bool = Field(False, description="Whether to add current username to blacklist")
+
+    ban_current: bool = Field(
+        False, description="Whether to add current username to blacklist"
+    )
     reason: Optional[str] = Field("Forced change by admin", max_length=200)
 
 
 class UserLockRequest(BaseModel):
     """Request to lock/suspend a user account."""
+
     user_id: str = Field(..., description="User ID to lock")
-    duration_seconds: Optional[int] = Field(None, description="Lock duration in seconds (null for permanent)")
+    duration_seconds: Optional[int] = Field(
+        None, description="Lock duration in seconds (null for permanent)"
+    )
 
 
 class TelemetryExportResponse(BaseModel):
@@ -482,6 +508,7 @@ class AvailableBadgesResponse(BaseModel):
 
 class LogFileInfo(BaseModel):
     """Metadata for a log file."""
+
     filename: str
     size: int
     modified: int
@@ -490,6 +517,7 @@ class LogFileInfo(BaseModel):
 
 class LogLine(BaseModel):
     """A single log entry."""
+
     timestamp: str
     level: str
     message: str
@@ -498,6 +526,7 @@ class LogLine(BaseModel):
 
 class LogViewResponse(BaseModel):
     """Log file content with pagination."""
+
     filename: str
     total_lines: int
     lines: List[LogLine]

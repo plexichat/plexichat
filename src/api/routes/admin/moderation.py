@@ -5,11 +5,22 @@ Admin moderation and content review routes.
 from fastapi import APIRouter, Request, HTTPException
 from typing import List, Optional, Dict, Any
 from src.api.schemas.admin import (
-    HashReportResponse, HashReportCountsResponse, HashReportReviewRequest, HashReportReviewResponse,
-    BlockedHashResponse, ManualBlockHashRequest, BlockHashResponse,
-    BlockedUserResponse, BlockUserRequest, BlockUserResponse,
-    AutomodRuleResponse, AutomodRuleCreateRequest, AutomodRuleUpdateRequest,
-    AutomodRuleAction, AutomodConfigResponse, AutomodConfigUpdateRequest
+    HashReportResponse,
+    HashReportCountsResponse,
+    HashReportReviewRequest,
+    HashReportReviewResponse,
+    BlockedHashResponse,
+    ManualBlockHashRequest,
+    BlockHashResponse,
+    BlockedUserResponse,
+    BlockUserRequest,
+    BlockUserResponse,
+    AutomodRuleResponse,
+    AutomodRuleCreateRequest,
+    AutomodRuleUpdateRequest,
+    AutomodRuleAction,
+    AutomodConfigResponse,
+    AutomodConfigUpdateRequest,
 )
 from src.api.schemas.common import SuccessResponse
 from .utils import check_host_restriction, get_admin_from_token
@@ -18,101 +29,182 @@ import utils.config as config
 
 router = APIRouter()
 
+
 @router.get("/hash-reports", response_model=List[HashReportResponse])
-async def get_hash_reports(request: Request, status_filter: Optional[str] = None, limit: int = 50, offset: int = 0):
+async def get_hash_reports(
+    request: Request,
+    status_filter: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+):
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import admin
+
     try:
         reports = admin.get_hash_reports(status_filter, limit, offset)
         return [
             HashReportResponse(
-                id=str(r.id), hash_value=r.hash_value, phash_value=r.phash_value,
-                reporter_id=str(r.reporter_id), reporter_username=r.reporter_username,
-                reason=r.reason, details=r.details, status=r.status, reported_at=r.reported_at,
-                reviewed_at=r.reviewed_at, reviewed_by=str(r.reviewed_by) if r.reviewed_by else None,
-                admin_notes=r.admin_notes, uploader_id=str(r.uploader_id) if r.uploader_id else None,
+                id=str(r.id),
+                hash_value=r.hash_value,
+                phash_value=r.phash_value,
+                reporter_id=str(r.reporter_id),
+                reporter_username=r.reporter_username,
+                reason=r.reason,
+                details=r.details,
+                status=r.status,
+                reported_at=r.reported_at,
+                reviewed_at=r.reviewed_at,
+                reviewed_by=str(r.reviewed_by) if r.reviewed_by else None,
+                admin_notes=r.admin_notes,
+                uploader_id=str(r.uploader_id) if r.uploader_id else None,
                 message_id=str(r.message_id) if r.message_id else None,
-                attachment_url=r.attachment_url, block_uploader=r.block_uploader
-            ) for r in reports
+                attachment_url=r.attachment_url,
+                block_uploader=r.block_uploader,
+            )
+            for r in reports
         ]
     except Exception as e:
         logger.error(f"Hash reports error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
+
 
 @router.get("/hash-reports/counts", response_model=HashReportCountsResponse)
 async def get_hash_report_counts(request: Request):
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import admin
+
     return HashReportCountsResponse(**admin.get_hash_report_counts())
 
-@router.post("/hash-reports/{report_id}/review", response_model=HashReportReviewResponse)
-async def review_hash_report(report_id: int, review: HashReportReviewRequest, request: Request):
+
+@router.post(
+    "/hash-reports/{report_id}/review", response_model=HashReportReviewResponse
+)
+async def review_hash_report(
+    report_id: int, review: HashReportReviewRequest, request: Request
+):
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
     from src.core import admin
+
     if not admin.review_hash_report(report_id, admin_id, review.action, review.notes):
-        raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Report not found"}})
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Report not found"}},
+        )
     return HashReportReviewResponse(success=True, action=review.action)
+
 
 @router.get("/blocked-hashes", response_model=List[BlockedHashResponse])
 async def get_blocked_hashes(request: Request, limit: int = 100, offset: int = 0):
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import admin
-    return [BlockedHashResponse(
-        hash_value=h.hash_value, reason=h.reason, blocked_at=h.blocked_at,
-        blocked_by=h.blocked_by, auto_blocked=h.auto_blocked,
-        hash_type=h.hash_type, phash_threshold=h.phash_threshold
-    ) for h in admin.get_blocked_hashes(limit, offset)]
+
+    return [
+        BlockedHashResponse(
+            hash_value=h.hash_value,
+            reason=h.reason,
+            blocked_at=h.blocked_at,
+            blocked_by=h.blocked_by,
+            auto_blocked=h.auto_blocked,
+            hash_type=h.hash_type,
+            phash_threshold=h.phash_threshold,
+        )
+        for h in admin.get_blocked_hashes(limit, offset)
+    ]
+
 
 @router.post("/blocked-hashes", response_model=BlockHashResponse)
 async def block_hash_manually(block_request: ManualBlockHashRequest, request: Request):
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
     from src.core import admin
+
     hash_type = "phash" if len(block_request.hash_value) <= 32 else "sha256"
     phash_threshold = 10 if hash_type == "phash" else 0
-    if not admin.block_hash(block_request.hash_value, block_request.reason, admin_id, hash_type, phash_threshold):
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Failed to block hash"}})
-    return BlockHashResponse(success=True, hash_value=block_request.hash_value, hash_type=hash_type)
+    if not admin.block_hash(
+        block_request.hash_value,
+        block_request.reason,
+        admin_id,
+        hash_type,
+        phash_threshold,
+    ):
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Failed to block hash"}},
+        )
+    return BlockHashResponse(
+        success=True, hash_value=block_request.hash_value, hash_type=hash_type
+    )
+
 
 @router.delete("/blocked-hashes/{hash_value}", response_model=SuccessResponse)
 async def unblock_hash(hash_value: str, request: Request):
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import admin
+
     if not admin.unblock_hash(hash_value):
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Failed to unblock hash"}})
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Failed to unblock hash"}},
+        )
     return SuccessResponse(success=True)
+
 
 @router.get("/blocked-users", response_model=List[BlockedUserResponse])
 async def get_blocked_users(request: Request, limit: int = 100, offset: int = 0):
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import admin
-    return [BlockedUserResponse(
-        user_id=u.user_id, username=u.username, reason=u.reason,
-        blocked_at=u.blocked_at, blocked_by=u.blocked_by, expires_at=u.expires_at
-    ) for u in admin.get_blocked_users(limit, offset)]
+
+    return [
+        BlockedUserResponse(
+            user_id=u.user_id,
+            username=u.username,
+            reason=u.reason,
+            blocked_at=u.blocked_at,
+            blocked_by=u.blocked_by,
+            expires_at=u.expires_at,
+        )
+        for u in admin.get_blocked_users(limit, offset)
+    ]
+
 
 @router.post("/blocked-users", response_model=BlockUserResponse)
 async def block_user(block_request: BlockUserRequest, request: Request):
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
     from src.core import admin
-    if not admin.block_user(block_request.user_id, block_request.reason, admin_id, block_request.duration_hours):
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Failed to block user"}})
+
+    if not admin.block_user(
+        block_request.user_id,
+        block_request.reason,
+        admin_id,
+        block_request.duration_hours,
+    ):
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Failed to block user"}},
+        )
     return BlockUserResponse(success=True, user_id=block_request.user_id)
+
 
 @router.delete("/blocked-users/{user_id}", response_model=SuccessResponse)
 async def unblock_user(user_id: int, request: Request):
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import admin
+
     if not admin.unblock_user(user_id):
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Failed to unblock user"}})
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Failed to unblock user"}},
+        )
     return SuccessResponse(success=True)
 
 
@@ -121,12 +213,16 @@ def _rule_to_response(rule) -> AutomodRuleResponse:
         id=str(rule.id),
         server_id=str(rule.server_id),
         name=rule.name,
-        rule_type=rule.rule_type.value if hasattr(rule.rule_type, "value") else str(rule.rule_type),
+        rule_type=rule.rule_type.value
+        if hasattr(rule.rule_type, "value")
+        else str(rule.rule_type),
         enabled=bool(rule.enabled),
         config=rule.config,
         actions=[
             AutomodRuleAction(
-                action_type=a.action_type.value if hasattr(a.action_type, "value") else str(a.action_type),
+                action_type=a.action_type.value
+                if hasattr(a.action_type, "value")
+                else str(a.action_type),
                 duration_seconds=a.duration_seconds,
                 reason=a.reason,
                 notify_user=a.notify_user,
@@ -149,12 +245,15 @@ async def get_automod_rules(request: Request, server_id: int):
     check_host_restriction(request)
     get_admin_from_token(request)
     from src.core import automod
+
     try:
         rules = automod.get_server_rules(server_id)
         return [_rule_to_response(r) for r in rules]
     except Exception as e:
         logger.error(f"Automod rules error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
 
 
 @router.post("/automod/rules", response_model=AutomodRuleResponse)
@@ -163,10 +262,14 @@ async def create_automod_rule(body: AutomodRuleCreateRequest, request: Request):
     admin_id = get_admin_from_token(request)
     from src.core import automod
     from src.core.automod.models import RuleType
+
     try:
         rule_type = RuleType(body.rule_type)
     except Exception:
-        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": "Invalid rule type"}})
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid rule type"}},
+        )
     try:
         rule = automod.create_rule(
             user_id=int(admin_id),
@@ -186,14 +289,19 @@ async def create_automod_rule(body: AutomodRuleCreateRequest, request: Request):
         return _rule_to_response(rule)
     except Exception as e:
         logger.error(f"Create automod rule error: {e}", exc_info=True)
-        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": str(e)}})
+        raise HTTPException(
+            status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+        )
 
 
 @router.patch("/automod/rules/{rule_id}", response_model=AutomodRuleResponse)
-async def update_automod_rule(rule_id: int, body: AutomodRuleUpdateRequest, request: Request):
+async def update_automod_rule(
+    rule_id: int, body: AutomodRuleUpdateRequest, request: Request
+):
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
     from src.core import automod
+
     try:
         update_kwargs: Dict[str, Any] = {}
         if body.name is not None:
@@ -216,13 +324,18 @@ async def update_automod_rule(rule_id: int, body: AutomodRuleUpdateRequest, requ
             automod.set_rule_enabled(int(admin_id), rule_id, body.enabled)
         rule = automod.get_rule(rule_id)
         if not rule:
-            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Rule not found"}})
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "Rule not found"}},
+            )
         return _rule_to_response(rule)
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Update automod rule error: {e}", exc_info=True)
-        raise HTTPException(status_code=400, detail={"error": {"code": 400, "message": str(e)}})
+        raise HTTPException(
+            status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+        )
 
 
 @router.delete("/automod/rules/{rule_id}", response_model=SuccessResponse)
@@ -230,15 +343,21 @@ async def delete_automod_rule(rule_id: int, request: Request):
     check_host_restriction(request)
     admin_id = get_admin_from_token(request)
     from src.core import automod
+
     try:
         if not automod.delete_rule(user_id=int(admin_id), rule_id=rule_id):
-            raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "Rule not found"}})
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "Rule not found"}},
+            )
         return SuccessResponse(success=True)
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Delete automod rule error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": str(e)}})
+        raise HTTPException(
+            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+        )
 
 
 @router.get("/automod/config", response_model=AutomodConfigResponse)
@@ -265,6 +384,7 @@ async def update_automod_config(body: AutomodConfigUpdateRequest, request: Reque
     config.set("automod", current)
     try:
         from src.core import automod
+
         automod.reload_config()
     except Exception:
         pass
