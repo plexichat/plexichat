@@ -98,6 +98,7 @@ __all__ = [
     "upload_stream",
     "upload_attachment",
     "get_file",
+    "get_file_by_filename",
     "get_file_data",
     "get_file_stream",
     "delete_file",
@@ -244,6 +245,11 @@ def upload_attachment(
 def get_file(file_id: int) -> Optional[MediaFile]:
     """Get file by ID."""
     return _get_manager().get_file(file_id)
+
+
+def get_file_by_filename(filename: str) -> Optional[MediaFile]:
+    """Get file by filename."""
+    return _get_manager().get_file_by_filename(filename)
 
 
 def get_file_data(file_id: int) -> Tuple[bytes, str]:
