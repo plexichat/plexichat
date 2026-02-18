@@ -399,12 +399,16 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             # Find file in database (check cache first)
             row = _media_metadata_cache.get(filename)
             if not row:
+                logger.debug(f"Media cache miss for {filename}, querying database...")
                 row = db.fetch_one(
                     "SELECT id, storage_backend, storage_path, content_type, original_filename FROM media_files WHERE filename = ? AND deleted = 0",
                     (filename,),
                 )
                 if row:
+                    logger.debug(f"Found media file in DB: {filename} (ID: {row['id']})")
                     _media_metadata_cache[filename] = row
+                else:
+                    logger.warning(f"Media file NOT FOUND in DB: {filename}")
 
             if not row:
                 raise HTTPException(
