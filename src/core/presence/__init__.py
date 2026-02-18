@@ -69,6 +69,7 @@ __all__ = [
     # Typing indicators
     "start_typing",
     "stop_typing",
+    "clear_all_typing",
     "get_typing_users",
     # Online queries
     "get_online_friends",
@@ -223,6 +224,11 @@ def start_typing(user_id: int, channel_id: int) -> TypingIndicator:
 def stop_typing(user_id: int, channel_id: int) -> bool:
     """Stop typing indicator in a channel."""
     return _get_manager().stop_typing(user_id, channel_id)
+
+
+def clear_all_typing(user_id: int) -> List[int]:
+    """Clear all typing indicators for a user across all channels."""
+    return _get_manager().clear_all_typing(user_id)
 
 
 def get_typing_users(channel_id: int) -> List[TypingIndicator]:

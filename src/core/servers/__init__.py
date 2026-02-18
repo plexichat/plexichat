@@ -165,6 +165,8 @@ __all__ = [
     "add_member",
     "get_member",
     "get_members",
+    "get_member_user_ids",
+    "get_all_shared_member_ids",
     "update_member",
     "remove_member",
     "kick_member",
@@ -525,6 +527,11 @@ def get_member_user_ids(
 ) -> List[int]:
     """Get just the user IDs of server members (optimized for typing/presence dispatch)."""
     return _get_manager().get_member_user_ids(server_id, exclude_user_id)
+
+
+def get_all_shared_member_ids(user_id: int) -> List[int]:
+    """Get IDs of all users who share at least one server with the given user."""
+    return _get_manager().get_all_shared_member_ids(user_id)
 
 
 def update_member(
