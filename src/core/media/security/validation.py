@@ -347,7 +347,3 @@ def validate_file(
 def sanitize_filename(filename: str) -> str:
     """Convenience function to sanitize a filename."""
     return get_validator().sanitize_filename(filename)
-
-
-
-

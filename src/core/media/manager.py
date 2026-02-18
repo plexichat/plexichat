@@ -37,7 +37,6 @@ from .exceptions import (
     ImageProcessingError,
     PermissionDeniedError,
 )
-from .schema import create_tables
 from .storage import (
     LocalStorage,
     S3Storage,
@@ -141,7 +140,6 @@ class MediaManager(BaseManager):
         except ImportError:
             self._compression_manager = None
 
-        create_tables(db)
 
         logger.info("Media module initialized")
 

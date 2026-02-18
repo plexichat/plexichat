@@ -149,9 +149,10 @@ CREATE INDEX IF NOT EXISTS idx_media_blocked_hashes_type ON media_blocked_hashes
 
 def setup(db):
     """Initialize the deduplication module."""
-    _create_tables(db)
+    return None
 
-def _create_tables(db):
+
+def create_tables(db):
     """Create deduplication tables."""
     statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
     for statement in statements:
@@ -165,6 +166,12 @@ def _create_tables(db):
                 db.execute(converted)
             except Exception as e:
                 logger.error(f"Failed to create deduplication table: {e}")
+
+
+def _create_tables(db):
+    """Create deduplication tables."""
+    create_tables(db)
+
 
 class DeduplicationManager:
     """Manages file deduplication and content reporting."""
@@ -530,7 +537,7 @@ class DeduplicationManager:
             # Match by storage path suffix (filename)
             row = self._db.fetch_one(
                 "SELECT hash_value, phash_value FROM media_file_hashes WHERE storage_path LIKE ?",
-                (f"%{filename}",)
+                (f"%{filename}",),
             )
             if row:
                 hash_value = row["hash_value"] or hash_value
@@ -597,7 +604,15 @@ class DeduplicationManager:
         try:
             self._db.upsert(
                 "media_blocked_hashes",
-                ["hash_value", "hash_type", "phash_threshold", "reason", "blocked_at", "blocked_by", "auto_blocked"],
+                [
+                    "hash_value",
+                    "hash_type",
+                    "phash_threshold",
+                    "reason",
+                    "blocked_at",
+                    "blocked_by",
+                    "auto_blocked",
+                ],
                 (
                     hash_value,
                     hash_type,
@@ -607,7 +622,7 @@ class DeduplicationManager:
                     blocked_by,
                     1 if auto else 0,
                 ),
-                conflict_columns=["hash_value"]
+                conflict_columns=["hash_value"],
             )
 
             # Update all pending reports for this hash
@@ -658,7 +673,7 @@ class DeduplicationManager:
                 "media_blocked_users",
                 ["user_id", "reason", "blocked_at", "blocked_by", "expires_at"],
                 (user_id, reason, now, blocked_by, expires_at),
-                conflict_columns=["user_id"]
+                conflict_columns=["user_id"],
             )
             logger.info(f"User {user_id} blocked from uploads: {reason}")
             return True

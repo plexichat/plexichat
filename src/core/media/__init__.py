@@ -272,7 +272,9 @@ def get_file_stream(file_id: int) -> Tuple[BinaryIO, int, str]:
     return _get_manager().get_file_stream(file_id)
 
 
-def get_file_stream_optimized(path: str, content_type: str, backend: str) -> Tuple[BinaryIO, int, str]:
+def get_file_stream_optimized(
+    path: str, content_type: str, backend: str
+) -> Tuple[BinaryIO, int, str]:
     """
     Get file data as a stream directly (avoids DB lookup).
 

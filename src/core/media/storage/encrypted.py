@@ -85,9 +85,7 @@ class EncryptedStorage(StorageBackendBase):
 
             # Store with .enc suffix to indicate encryption
             enc_path = path + ".enc"
-            self._backend.store(
-                encrypted_blob, enc_path, "application/octet-stream"
-            )
+            self._backend.store(encrypted_blob, enc_path, "application/octet-stream")
 
             logger.debug(
                 f"Stored encrypted file: {path} ({len(file_data)} -> {len(encrypted_blob)} bytes)"
@@ -190,15 +188,17 @@ class EncryptedStorage(StorageBackendBase):
                 try:
                     enc_stream, _ = self._backend.retrieve_stream(enc_path)
                     aad = self._get_aad(path)
-                    
+
                     # Return the generator directly. FastAPI StreamingResponse handles iterables.
                     # Note: We return it as the 'stream' part of the tuple.
-                    generator = self._streaming_encryptor.decrypt_stream_generator(enc_stream, aad)
+                    generator = self._streaming_encryptor.decrypt_stream_generator(
+                        enc_stream, aad
+                    )
                     return generator, original_size  # type: ignore
                 except Exception as e:
                     logger.error(f"Stream decryption failed for {path}: {e}")
                     # Fallback to retrieve if streaming fails
-            
+
             data = self.retrieve(path)
             return io.BytesIO(data), len(data)
 

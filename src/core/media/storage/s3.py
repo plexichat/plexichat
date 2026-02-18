@@ -86,8 +86,10 @@ class S3Storage(StorageBackendBase):
             try:
                 self._client.head_bucket(Bucket=bucket)
             except Exception as head_err:
-                logger.warning(f"S3 HeadBucket failed (might be unsupported by provider): {head_err}")
-            
+                logger.warning(
+                    f"S3 HeadBucket failed (might be unsupported by provider): {head_err}"
+                )
+
             endpoint_info = f" (endpoint: {endpoint_url})" if endpoint_url else ""
             logger.info(f"Connected to S3 storage: bucket={bucket}{endpoint_info}")
         except Exception as e:

@@ -93,6 +93,22 @@ CREATE INDEX IF NOT EXISTS idx_upload_sessions_expires ON media_upload_sessions(
 """
 
 
+def create_tables(db) -> None:
+    """Create chunked upload tables."""
+    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    for statement in statements:
+        if statement:
+            try:
+                converted = (
+                    db.convert_schema(statement)
+                    if hasattr(db, "convert_schema")
+                    else statement
+                )
+                db.execute(converted)
+            except Exception as e:
+                logger.error(f"Failed to create chunked upload table: {e}")
+
+
 class ChunkedUploadManager:
     """Manages chunked file uploads."""
 
@@ -100,7 +116,6 @@ class ChunkedUploadManager:
         """Initialize chunked upload manager."""
         self._db = db
         self._config = self._load_config()
-        self._create_tables()
         self._temp_dir = self._ensure_temp_dir()
 
     def _load_config(self) -> dict:
@@ -120,18 +135,7 @@ class ChunkedUploadManager:
 
     def _create_tables(self):
         """Create chunked upload tables."""
-        statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
-        for statement in statements:
-            if statement:
-                try:
-                    converted = (
-                        self._db.convert_schema(statement)
-                        if hasattr(self._db, "convert_schema")
-                        else statement
-                    )
-                    self._db.execute(converted)
-                except Exception as e:
-                    logger.error(f"Failed to create chunked upload table: {e}")
+        create_tables(self._db)
 
     def _ensure_temp_dir(self) -> str:
         """Ensure temp directory exists."""
