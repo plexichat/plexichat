@@ -33,7 +33,6 @@ from .exceptions import (
     WebhookSignatureError,
     RateLimitError,
 )
-from .schema import create_tables
 from .oauth import OAuth2Flow
 from .oauth.tokens import generate_client_secret
 from .commands import CommandRegistry
@@ -58,7 +57,6 @@ class ApplicationManager(BaseManager):
         self._events = events_module
         self._config = self._load_config()
 
-        create_tables(db)
 
         oauth_config = {
             "token_expiry_seconds": self._config.get("oauth", {}).get(
