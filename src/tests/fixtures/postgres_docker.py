@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 class PostgresDockerManager:
     """Manages PostgreSQL Docker container lifecycle."""
-    
+
     def __init__(
         self,
         host: str = "localhost",
@@ -55,7 +55,7 @@ class PostgresDockerManager:
         use_docker: bool = True,
     ):
         """Initialize PostgreSQL Docker manager.
-        
+
         Args:
             host: PostgreSQL host address
             port: PostgreSQL port
@@ -75,7 +75,7 @@ class PostgresDockerManager:
         self.container_id: Optional[str] = None
         self.container = None
         self._docker_client = None
-    
+
     def get_config(self) -> Dict[str, any]:
         """Get PostgreSQL configuration dictionary."""
         return {
@@ -93,19 +93,19 @@ class PostgresDockerManager:
                 "connect_timeout": 10,
             },
         }
-    
+
     def start(self) -> bool:
         """Start PostgreSQL Docker container.
-        
+
         Attempts to use testcontainers if available, falls back to docker SDK.
-        
+
         Returns:
             True if successful, False otherwise
         """
         if not self.use_docker:
             logger.info("Docker disabled - assuming local PostgreSQL is available")
             return self._check_local_postgres()
-        
+
         try:
             # Try testcontainers first
             return self._start_with_testcontainers()
@@ -119,20 +119,22 @@ class PostgresDockerManager:
         except Exception as e:
             logger.error(f"Failed to start Docker container: {e}")
             return self._check_local_postgres()
-    
+
     def _start_with_testcontainers(self) -> bool:
         """Start container using testcontainers-python.
-        
+
         This is the preferred method as it provides better resource management.
         """
         try:
             from testcontainers.postgres import PostgresContainer
         except ImportError:
             raise ImportError("testcontainers not installed")
-        
+
         try:
-            logger.info(f"Starting PostgreSQL container using testcontainers ({self.image})")
-            
+            logger.info(
+                f"Starting PostgreSQL container using testcontainers ({self.image})"
+            )
+
             self.container = (
                 PostgresContainer(self.image)
                 .with_environment("POSTGRES_USER", self.user)
@@ -140,46 +142,48 @@ class PostgresDockerManager:
                 .with_environment("POSTGRES_DB", self.dbname)
                 .with_bind_ports(self.port, 5432)
             )
-            
+
             self.container.start()
-            
+
             # Extract actual connection details from container
             self.host = self.container.get_container_host_ip()
             self.port = self.container.get_exposed_port(5432)
-            
+
             logger.info(f"PostgreSQL container started: {self.host}:{self.port}")
-            
+
             # Wait for container to be ready
             self._wait_for_postgres(timeout=30)
-            
+
             return True
         except Exception as e:
             logger.error(f"testcontainers startup failed: {e}")
             raise
-    
+
     def _start_with_docker_sdk(self) -> bool:
         """Start container using docker SDK (docker-py).
-        
+
         Fallback method when testcontainers is not available.
         """
         try:
             import docker
         except ImportError:
             raise ImportError("docker SDK not installed")
-        
+
         try:
-            logger.info(f"Starting PostgreSQL container using docker SDK ({self.image})")
-            
+            logger.info(
+                f"Starting PostgreSQL container using docker SDK ({self.image})"
+            )
+
             client = docker.from_env()
             self._docker_client = client
-            
+
             # Pull image if not present
             try:
                 client.images.get(self.image)
             except docker.errors.ImageNotFound:
                 logger.info(f"Pulling Docker image: {self.image}")
                 client.images.pull(self.image)
-            
+
             # Start container
             self.container = client.containers.run(
                 self.image,
@@ -193,29 +197,29 @@ class PostgresDockerManager:
                 name=f"pytest-postgres-{int(time.time())}",
                 remove=True,
             )
-            
+
             self.container_id = self.container.id
             logger.info(f"PostgreSQL container started: {self.container_id}")
-            
+
             # Wait for container to be ready
             self._wait_for_postgres(timeout=30)
-            
+
             return True
         except Exception as e:
             logger.error(f"docker SDK startup failed: {e}")
             raise
-    
+
     def _check_local_postgres(self) -> bool:
         """Check if local PostgreSQL is available.
-        
+
         Returns:
             True if PostgreSQL is reachable, False otherwise
         """
         try:
             import psycopg2
-            
+
             logger.info(f"Checking local PostgreSQL at {self.host}:{self.port}")
-            
+
             conn = psycopg2.connect(
                 host=self.host,
                 port=self.port,
@@ -225,27 +229,27 @@ class PostgresDockerManager:
                 connect_timeout=5,
             )
             conn.close()
-            
+
             logger.info("Local PostgreSQL is available")
             return True
         except Exception as e:
             logger.error(f"Local PostgreSQL check failed: {e}")
             return False
-    
+
     def _wait_for_postgres(self, timeout: int = 30) -> None:
         """Wait for PostgreSQL to be ready for connections.
-        
+
         Args:
             timeout: Maximum time to wait in seconds
-            
+
         Raises:
             TimeoutError if PostgreSQL doesn't become available
         """
         import psycopg2
-        
+
         start_time = time.time()
         last_error = None
-        
+
         while time.time() - start_time < timeout:
             try:
                 conn = psycopg2.connect(
@@ -262,16 +266,14 @@ class PostgresDockerManager:
             except Exception as e:
                 last_error = e
                 time.sleep(1)
-        
-        raise TimeoutError(
-            f"PostgreSQL not ready after {timeout}s: {last_error}"
-        )
-    
+
+        raise TimeoutError(f"PostgreSQL not ready after {timeout}s: {last_error}")
+
     def stop(self) -> None:
         """Stop and remove PostgreSQL Docker container."""
         if self.container is None:
             return
-        
+
         try:
             if hasattr(self.container, "stop"):
                 # testcontainers container
@@ -295,12 +297,12 @@ _postgres_manager: Optional[PostgresDockerManager] = None
 
 def get_postgres_manager() -> PostgresDockerManager:
     """Get or create global PostgreSQL Docker manager.
-    
+
     Returns:
         PostgresDockerManager instance
     """
     global _postgres_manager
-    
+
     if _postgres_manager is None:
         # Read configuration from environment
         host = os.getenv("POSTGRES_HOST", "localhost")
@@ -310,7 +312,7 @@ def get_postgres_manager() -> PostgresDockerManager:
         dbname = os.getenv("POSTGRES_DB", "test_db")
         image = os.getenv("POSTGRES_IMAGE", "postgres:15-alpine")
         use_docker = os.getenv("USE_DOCKER", "true").lower() == "true"
-        
+
         _postgres_manager = PostgresDockerManager(
             host=host,
             port=port,
@@ -320,7 +322,7 @@ def get_postgres_manager() -> PostgresDockerManager:
             image=image,
             use_docker=use_docker,
         )
-    
+
     return _postgres_manager
 
 
@@ -328,30 +330,31 @@ def get_postgres_manager() -> PostgresDockerManager:
 # Pytest Fixtures
 # ============================================================================
 
+
 @pytest.fixture(scope="session")
 def postgres_manager() -> Generator[PostgresDockerManager, None, None]:
     """Session-scoped fixture that starts PostgreSQL for the test session.
-    
+
     Yields:
         PostgresDockerManager instance
     """
     manager = get_postgres_manager()
-    
+
     if not manager.start():
         pytest.skip("PostgreSQL not available")
-    
+
     yield manager
-    
+
     manager.stop()
 
 
 @pytest.fixture(scope="session")
 def postgres_config(postgres_manager) -> Dict[str, any]:
     """Get PostgreSQL configuration for all tests.
-    
+
     Args:
         postgres_manager: Fixture that starts PostgreSQL
-        
+
     Yields:
         PostgreSQL configuration dictionary
     """
@@ -361,31 +364,31 @@ def postgres_config(postgres_manager) -> Dict[str, any]:
 @pytest.fixture
 def postgres_db(postgres_config):
     """Get configured Database instance connected to PostgreSQL.
-    
+
     This fixture automatically sets up the configuration and provides
     a Database instance ready for use.
-    
+
     Args:
         postgres_config: PostgreSQL configuration
-        
+
     Yields:
         Database instance (automatically cleaned up)
     """
     import utils.config as config
     from src.core.database.core import Database
-    
+
     # Apply configuration
     config.set("database", postgres_config)
-    
+
     # Create and connect database
     db = Database()
     try:
         db.connect()
     except Exception as e:
         pytest.skip(f"Could not connect to PostgreSQL: {e}")
-    
+
     yield db
-    
+
     # Cleanup
     try:
         db.close()
@@ -396,10 +399,10 @@ def postgres_db(postgres_config):
 @pytest.fixture
 def postgres_db_with_table(postgres_db):
     """Database instance with a test table for transaction tests.
-    
+
     Args:
         postgres_db: Connected Database instance
-        
+
     Yields:
         Database instance with test_transactions table
     """
@@ -407,7 +410,7 @@ def postgres_db_with_table(postgres_db):
     postgres_db.execute("""
         DROP TABLE IF EXISTS test_transactions CASCADE
     """)
-    
+
     postgres_db.execute("""
         CREATE TABLE test_transactions (
             id SERIAL PRIMARY KEY,
@@ -416,9 +419,9 @@ def postgres_db_with_table(postgres_db):
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    
+
     yield postgres_db
-    
+
     # Cleanup
     try:
         postgres_db.execute("DROP TABLE IF EXISTS test_transactions CASCADE")
@@ -429,10 +432,10 @@ def postgres_db_with_table(postgres_db):
 @pytest.fixture
 def postgres_db_with_constraints(postgres_db):
     """Database instance with a constrained table for error recovery tests.
-    
+
     Args:
         postgres_db: Connected Database instance
-        
+
     Yields:
         Database instance with constrained_data table
     """
@@ -440,7 +443,7 @@ def postgres_db_with_constraints(postgres_db):
     postgres_db.execute("""
         DROP TABLE IF EXISTS constrained_data CASCADE
     """)
-    
+
     postgres_db.execute("""
         CREATE TABLE constrained_data (
             id SERIAL PRIMARY KEY,
@@ -452,9 +455,9 @@ def postgres_db_with_constraints(postgres_db):
             CONSTRAINT valid_email CHECK (email LIKE '%@%.%')
         )
     """)
-    
+
     yield postgres_db
-    
+
     # Cleanup
     try:
         postgres_db.execute("DROP TABLE IF EXISTS constrained_data CASCADE")
@@ -465,12 +468,12 @@ def postgres_db_with_constraints(postgres_db):
 @pytest.fixture
 def clean_postgres_db(postgres_db) -> "Database":
     """Database instance with automatic table cleanup between tests.
-    
+
     Removes all tables before each test to ensure clean state.
-    
+
     Args:
         postgres_db: Connected Database instance
-        
+
     Yields:
         Database instance with clean state
     """
@@ -479,7 +482,7 @@ def clean_postgres_db(postgres_db) -> "Database":
         SELECT tablename FROM pg_tables 
         WHERE schemaname = 'public'
     """)
-    
+
     # Drop all tables
     for row in result:
         table_name = row["tablename"]
@@ -487,15 +490,15 @@ def clean_postgres_db(postgres_db) -> "Database":
             postgres_db.execute(f"DROP TABLE IF EXISTS {table_name} CASCADE")
         except Exception as e:
             logger.warning(f"Could not drop table {table_name}: {e}")
-    
+
     yield postgres_db
-    
+
     # Cleanup after test
     result = postgres_db.fetch_all("""
         SELECT tablename FROM pg_tables 
         WHERE schemaname = 'public'
     """)
-    
+
     for row in result:
         table_name = row["tablename"]
         try:
@@ -507,25 +510,26 @@ def clean_postgres_db(postgres_db) -> "Database":
 @pytest.fixture
 def postgres_connection_pool_tester(postgres_db):
     """Helper for testing connection pool behavior.
-    
+
     Args:
         postgres_db: Connected Database instance
-        
+
     Yields:
         Dictionary with pool testing utilities
     """
+
     class PoolTester:
         """Helper class for testing connection pool."""
-        
+
         def __init__(self, db):
             self.db = db
             self.connections_acquired = []
             self.connections_released = []
-        
+
         def get_pool_status(self) -> Dict[str, any]:
             """Get current pool status."""
             return self.db.get_pool_stats()
-        
+
         def acquire_multiple(self, count: int) -> list:
             """Acquire multiple connections (for testing pool exhaustion)."""
             conns = []
@@ -539,7 +543,7 @@ def postgres_connection_pool_tester(postgres_db):
                     logger.warning(f"Failed to acquire connection: {e}")
                     break
             return conns
-        
+
         def release_all(self, conns: list) -> None:
             """Release all connections."""
             for conn_obj in conns:
@@ -547,5 +551,5 @@ def postgres_connection_pool_tester(postgres_db):
                     conn_obj.close()
                 except Exception as e:
                     logger.warning(f"Failed to release connection: {e}")
-    
+
     yield PoolTester(postgres_db)

@@ -234,9 +234,9 @@ def db_manager():
     )
     manager = DatabaseManager(test_dir="temp/test_session")
     db = manager.setup()
-    from src.core.features.schema import create_tables as create_features_tables
+    from src.core.migrations import run_migrations
 
-    create_features_tables(db)
+    run_migrations(db)
 
     yield manager
 
@@ -496,22 +496,7 @@ def test_db():
     """Create a fresh in-memory database for each test."""
     import utils.config as config
     from src.core.database import Database
-    from src.core.auth.schema import create_tables as create_auth_tables
-    from src.core.messaging.schema import create_tables as create_messaging_tables
-    from src.core.servers.schema import create_tables as create_server_tables
-    from src.core.relationships.schema import (
-        create_tables as create_relationship_tables,
-    )
-    from src.core.reactions.schema import create_tables as create_reaction_tables
-    from src.core.media.schema import create_tables as create_media_tables
-    from src.core.presence.schema import create_tables as create_presence_tables
-    from src.core.webhooks.schema import create_tables as create_webhook_tables
-    from src.core.threads.schema import create_tables as create_thread_tables
-    from src.core.notifications.schema import (
-        create_tables as create_notification_tables,
-    )
-    from src.core.polls.schema import create_tables as create_polls_tables
-    from src.core.features.schema import create_tables as create_features_tables
+    from src.core.migrations import run_migrations
 
     # Save current config to restore later
     old_db_conf = config.get("database", None)
@@ -536,18 +521,7 @@ def test_db():
         argon2_parallelism=1,
     )
 
-    create_auth_tables(db)
-    create_messaging_tables(db)
-    create_server_tables(db)
-    create_relationship_tables(db)
-    create_reaction_tables(db)
-    create_media_tables(db)
-    create_presence_tables(db)
-    create_webhook_tables(db)
-    create_thread_tables(db)
-    create_notification_tables(db)
-    create_polls_tables(db)
-    create_features_tables(db)
+    run_migrations(db)
 
     # Insert system user (ID 0) for system messages
     db.execute(
@@ -780,10 +754,10 @@ def multiprocess_config(postgres_config):
     """Configuration for multi-process testing with shared PostgreSQL pool settings."""
     return {
         **postgres_config,
-        'pool_size': 20,
-        'max_overflow': 10,
-        'pool_timeout': 30,
-        'pool_recycle': 3600,
+        "pool_size": 20,
+        "max_overflow": 10,
+        "pool_timeout": 30,
+        "pool_recycle": 3600,
     }
 
 
@@ -791,11 +765,9 @@ def multiprocess_config(postgres_config):
 def worker_pool(multiprocess_config):
     """Creates a pool of worker processes that share the same PostgreSQL connection pool configuration."""
     from src.tests.test_production_simulation import ProductionSimulator
-    
+
     simulator = ProductionSimulator(
-        db_config=multiprocess_config,
-        worker_count=4,
-        queries_per_worker=50
+        db_config=multiprocess_config, worker_count=4, queries_per_worker=50
     )
     yield simulator
     # Cleanup
@@ -807,13 +779,13 @@ def worker_pool(multiprocess_config):
 def redis_with_postgres(postgres_config):
     """Sets up both Redis and PostgreSQL for integrated testing."""
     import fakeredis
-    
+
     fake_redis = fakeredis.FakeRedis()
-    
+
     # Return both Redis and PostgreSQL config for integrated testing
     return {
-        'redis': fake_redis,
-        'postgres_config': postgres_config,
+        "redis": fake_redis,
+        "postgres_config": postgres_config,
     }
 
 
@@ -856,9 +828,13 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "embeds: Embeds module tests")
     config.addinivalue_line("markers", "automod: Auto-moderation module tests")
     config.addinivalue_line("markers", "performance: Performance and load tests")
-    config.addinivalue_line("markers", "production_simulation: Production environment simulation tests")
+    config.addinivalue_line(
+        "markers", "production_simulation: Production environment simulation tests"
+    )
     config.addinivalue_line("markers", "multiprocess: Tests using multiple processes")
-    config.addinivalue_line("markers", "requires_postgres: Tests requiring PostgreSQL Docker container")
+    config.addinivalue_line(
+        "markers", "requires_postgres: Tests requiring PostgreSQL Docker container"
+    )
 
 
 def pytest_collection_modifyitems(config, items):

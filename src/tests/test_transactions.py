@@ -137,7 +137,9 @@ class TestBasicTransactions:
         db.commit()
 
         # Verify data was committed
-        result = db.fetch_one("SELECT * FROM test_transactions WHERE name = ?", ("test1",))
+        result = db.fetch_one(
+            "SELECT * FROM test_transactions WHERE name = ?", ("test1",)
+        )
         assert result is not None
         assert result["value"] == 100
 
@@ -156,7 +158,9 @@ class TestBasicTransactions:
         db.rollback()
 
         # Verify data was NOT committed
-        result = db.fetch_one("SELECT * FROM test_transactions WHERE name = ?", ("test2",))
+        result = db.fetch_one(
+            "SELECT * FROM test_transactions WHERE name = ?", ("test2",)
+        )
         assert result is None
 
         db.close()
@@ -734,7 +738,7 @@ class TestContextManager:
 
 class TestPostgresFailedTransactionRecovery:
     """Test PostgreSQL InFailedSqlTransaction detection and recovery.
-    
+
     These tests are skipped if PostgreSQL is not configured, as they require
     a live PostgreSQL database connection to trigger InFailedSqlTransaction state.
     """
@@ -746,20 +750,20 @@ class TestPostgresFailedTransactionRecovery:
         pg_config = config.get("postgres")
         if not pg_config:
             pytest.skip("PostgreSQL configuration not available")
-        
+
         # Check if we can import psycopg2
         pytest.importorskip("psycopg2")
-        
+
         return pg_config
 
     @pytest.fixture
     def postgres_db_with_table(self, postgres_config):
         """Create a PostgreSQL test database with a sample table."""
         pytest.importorskip("psycopg2")
-        
+
         # Use test database configuration
         config_path = "temp_test/postgres_config.yaml"
-        
+
         # Setup config with PostgreSQL
         default_config = {
             "database": {
@@ -773,19 +777,19 @@ class TestPostgresFailedTransactionRecovery:
             }
         }
         config.setup(config_path=config_path, default_config=default_config)
-        
+
         db = Database()
         try:
             db.connect()
         except Exception as e:
             pytest.skip(f"Could not connect to PostgreSQL: {e}")
-        
+
         # Drop test table if exists (cleanup from previous runs)
         try:
             db.execute("DROP TABLE test_transactions_postgres")
         except Exception:
             pass
-        
+
         # Create test table
         create_table_query = """
             CREATE TABLE test_transactions_postgres (
@@ -796,9 +800,9 @@ class TestPostgresFailedTransactionRecovery:
         """
         db.execute(create_table_query)
         db.close()
-        
+
         yield config_path
-        
+
         # Cleanup after test
         db = Database()
         try:
@@ -807,7 +811,7 @@ class TestPostgresFailedTransactionRecovery:
             db.close()
         except Exception:
             pass
-        
+
         # Clean up config file
         if os.path.exists(config_path):
             try:
@@ -818,19 +822,19 @@ class TestPostgresFailedTransactionRecovery:
     def test_infailedsqltransaction_detection(self, postgres_db_with_table):
         """Test detection of InFailedSqlTransaction error by exception type."""
         pytest.importorskip("psycopg2")
-        
+
         db = Database()
         db.connect()
-        
+
         # Start a transaction
         db.begin_transaction()
-        
+
         # Insert a valid row
         db.execute(
             "INSERT INTO test_transactions_postgres (name, value) VALUES (?, ?)",
             ("valid_row", 100),
         )
-        
+
         # Force a constraint violation or syntax error to abort transaction
         try:
             # Try to insert NULL into a NOT NULL column (or other constraint violation)
@@ -841,13 +845,13 @@ class TestPostgresFailedTransactionRecovery:
         except Exception:
             # Expected to fail
             pass
-        
+
         # Transaction is now in failed state
         # _validate_transaction_state should detect this and trigger recovery
         try:
             # This should trigger validation and recovery
             db._validate_transaction_state()
-            
+
             # After recovery, transaction_depth should be reset
             assert db._local.transaction_depth == 0
             assert not db._local.in_transaction
@@ -859,25 +863,25 @@ class TestPostgresFailedTransactionRecovery:
     def test_infailedsqltransaction_recovery_resets_state(self, postgres_db_with_table):
         """Test that recovery properly resets transaction_depth and in_transaction."""
         pytest.importorskip("psycopg2")
-        
+
         db = Database()
         db.connect()
-        
+
         # Verify initial state
         assert db._local.transaction_depth == 0
         assert not db._local.in_transaction
-        
+
         # Start a transaction
         db.begin_transaction()
         assert db._local.transaction_depth == 1
         assert db._local.in_transaction
-        
+
         # Insert a valid row
         db.execute(
             "INSERT INTO test_transactions_postgres (name, value) VALUES (?, ?)",
             ("state_test", 50),
         )
-        
+
         # Force an error to abort transaction
         try:
             db.execute(
@@ -886,14 +890,14 @@ class TestPostgresFailedTransactionRecovery:
             )
         except Exception:
             pass
-        
+
         # Validate transaction state (should trigger recovery)
         db._validate_transaction_state()
-        
+
         # After recovery, state should be reset
         assert db._local.transaction_depth == 0
         assert not db._local.in_transaction
-        
+
         db.close()
 
     def test_infailedsqltransaction_recover_from_failed_transaction_rollback(
@@ -901,19 +905,19 @@ class TestPostgresFailedTransactionRecovery:
     ):
         """Test that _recover_from_failed_transaction properly rolls back."""
         pytest.importorskip("psycopg2")
-        
+
         db = Database()
         db.connect()
-        
+
         # Start transaction
         db.begin_transaction()
-        
+
         # Insert data
         db.execute(
             "INSERT INTO test_transactions_postgres (name, value) VALUES (?, ?)",
             ("will_rollback", 100),
         )
-        
+
         # Force error to abort transaction
         try:
             db.execute(
@@ -922,18 +926,18 @@ class TestPostgresFailedTransactionRecovery:
             )
         except Exception:
             pass
-        
+
         # Call recovery directly
         db._recover_from_failed_transaction()
-        
+
         # Verify state is reset
         assert db._local.transaction_depth == 0
         assert not db._local.in_transaction
-        
+
         # Verify data was not committed
         results = db.fetch_all("SELECT * FROM test_transactions_postgres")
         assert len(results) == 0
-        
+
         db.close()
 
     def test_infailedsqltransaction_message_fragment_detection(
@@ -941,19 +945,19 @@ class TestPostgresFailedTransactionRecovery:
     ):
         """Test detection of failed transaction by message fragments."""
         pytest.importorskip("psycopg2")
-        
+
         db = Database()
         db.connect()
-        
+
         # Start a transaction
         db.begin_transaction()
-        
+
         # Insert a valid row
         db.execute(
             "INSERT INTO test_transactions_postgres (name, value) VALUES (?, ?)",
             ("fragment_test", 200),
         )
-        
+
         # Force a constraint violation
         try:
             # This will cause "current transaction is aborted" error
@@ -973,15 +977,15 @@ class TestPostgresFailedTransactionRecovery:
                     "failed",
                 ]
             ), f"Expected constraint error, got: {e}"
-        
+
         # Now the transaction is in failed state
         # Validate should trigger recovery
         db._validate_transaction_state()
-        
+
         # State should be reset
         assert db._local.transaction_depth == 0
         assert not db._local.in_transaction
-        
+
         db.close()
 
     def test_infailedsqltransaction_recovery_allows_new_transaction(
@@ -989,17 +993,17 @@ class TestPostgresFailedTransactionRecovery:
     ):
         """Test that after recovery, we can start a new transaction."""
         pytest.importorskip("psycopg2")
-        
+
         db = Database()
         db.connect()
-        
+
         # First transaction - will fail
         db.begin_transaction()
         db.execute(
             "INSERT INTO test_transactions_postgres (name, value) VALUES (?, ?)",
             ("first_attempt", 100),
         )
-        
+
         # Force error
         try:
             db.execute(
@@ -1008,47 +1012,47 @@ class TestPostgresFailedTransactionRecovery:
             )
         except Exception:
             pass
-        
+
         # Trigger recovery
         db._validate_transaction_state()
-        
+
         # Now start a new transaction (should work)
         db.begin_transaction()
         assert db._local.transaction_depth == 1
-        
+
         # Insert valid data
         db.execute(
             "INSERT INTO test_transactions_postgres (name, value) VALUES (?, ?)",
             ("second_attempt", 200),
         )
-        
+
         db.commit()
-        
+
         # Verify only the second insertion succeeded
         results = db.fetch_all(
             "SELECT * FROM test_transactions_postgres ORDER BY value"
         )
         assert len(results) == 1
         assert results[0]["name"] == "second_attempt"
-        
+
         db.close()
 
     def test_infailedsqltransaction_pgcode_detection(self, postgres_db_with_table):
         """Test detection of failed transaction by pgcode (PostgreSQL error code 25P02)."""
         pytest.importorskip("psycopg2")
-        
+
         db = Database()
         db.connect()
-        
+
         # Start a transaction
         db.begin_transaction()
-        
+
         # Insert a valid row
         db.execute(
             "INSERT INTO test_transactions_postgres (name, value) VALUES (?, ?)",
             ("pgcode_test", 300),
         )
-        
+
         # Force a constraint violation (will set pgcode to 25P02)
         try:
             db.execute(
@@ -1058,40 +1062,38 @@ class TestPostgresFailedTransactionRecovery:
         except Exception as e:
             # Check if pgcode is available and is 25P02
             if hasattr(e, "pgcode"):
-                assert (
-                    e.pgcode == "25P02"
-                ), f"Expected pgcode 25P02, got {e.pgcode}"
-        
+                assert e.pgcode == "25P02", f"Expected pgcode 25P02, got {e.pgcode}"
+
         # Validate transaction state (should trigger recovery by pgcode)
         db._validate_transaction_state()
-        
+
         # State should be reset
         assert db._local.transaction_depth == 0
         assert not db._local.in_transaction
-        
+
         db.close()
 
     def test_infailedsqltransaction_nested_recovery(self, postgres_db_with_table):
         """Test recovery in nested transactions."""
         pytest.importorskip("psycopg2")
-        
+
         db = Database()
         db.connect()
-        
+
         # Outer transaction
         db.begin_transaction()
         db.execute(
             "INSERT INTO test_transactions_postgres (name, value) VALUES (?, ?)",
             ("outer", 100),
         )
-        
+
         # Inner transaction
         db.begin_transaction()
         db.execute(
             "INSERT INTO test_transactions_postgres (name, value) VALUES (?, ?)",
             ("inner", 200),
         )
-        
+
         # Force error in inner transaction
         try:
             db.execute(
@@ -1100,28 +1102,30 @@ class TestPostgresFailedTransactionRecovery:
             )
         except Exception:
             pass
-        
+
         # Transaction is now failed
         # Validate should trigger recovery
         db._validate_transaction_state()
-        
+
         # After recovery, all nesting should be cleared
         assert db._local.transaction_depth == 0
         assert not db._local.in_transaction
-        
+
         # Data should be rolled back
         results = db.fetch_all("SELECT * FROM test_transactions_postgres")
         assert len(results) == 0
-        
+
         db.close()
+
 
 # ============================================================================
 # Enhanced PostgreSQL Error Recovery Tests (Not Skipped)
 # ============================================================================
 
+
 class TestPostgresErrorRecoveryReal:
     """Test PostgreSQL error recovery with real PostgreSQL errors and constraints."""
-    
+
     @pytest.fixture
     def postgres_recovery_config(self):
         """Setup PostgreSQL configuration for recovery tests."""
@@ -1145,24 +1149,24 @@ class TestPostgresErrorRecoveryReal:
         config_path = "temp_test/postgres_recovery_config.yaml"
         config.setup(config_path=config_path, default_config=pg_config)
         return config_path
-    
+
     @pytest.fixture
     def postgres_recovery_db_with_constraints(self, postgres_recovery_config):
         """Create PostgreSQL test database with various constraints."""
         pytest.importorskip("psycopg2")
-        
+
         db = Database()
         try:
             db.connect()
         except Exception as e:
             pytest.skip(f"Could not connect to PostgreSQL: {e}")
-        
+
         # Drop table if exists
         try:
             db.execute("DROP TABLE test_constraints")
         except Exception:
             pass
-        
+
         # Create table with multiple constraints
         create_table_query = """
             CREATE TABLE test_constraints (
@@ -1177,9 +1181,9 @@ class TestPostgresErrorRecoveryReal:
         """
         db.execute(create_table_query)
         db.close()
-        
+
         yield postgres_recovery_config
-        
+
         # Cleanup
         db = Database()
         try:
@@ -1188,135 +1192,143 @@ class TestPostgresErrorRecoveryReal:
             db.close()
         except Exception:
             pass
-        
+
         if os.path.exists(postgres_recovery_config):
             try:
                 os.remove(postgres_recovery_config)
             except OSError:
                 pass
-    
-    def test_recovery_from_not_null_constraint_violation(self, postgres_recovery_db_with_constraints):
+
+    def test_recovery_from_not_null_constraint_violation(
+        self, postgres_recovery_db_with_constraints
+    ):
         """Test recovery from NOT NULL constraint violation."""
         psycopg2 = pytest.importorskip("psycopg2")
-        
+
         db = Database()
         db.connect()
-        
+
         # Start transaction
         db.begin_transaction()
         assert db._local.transaction_depth == 1
-        
+
         # Insert valid data
         db.execute(
             "INSERT INTO test_constraints (username, email, age) VALUES (?, ?, ?)",
             ("user1", "user1@example.com", 25),
         )
-        
+
         # Try to insert NULL in NOT NULL column
         with pytest.raises(psycopg2.errors.NotNullViolation):
             db.execute(
                 "INSERT INTO test_constraints (username, email, age) VALUES (?, ?, ?)",
                 (None, "user2@example.com", 30),
             )
-        
+
         # Transaction is now in failed state
         db._validate_transaction_state()
-        
+
         # Verify recovery occurred
         assert db._local.transaction_depth == 0
         assert not db._local.in_transaction
-        
+
         # Verify data was rolled back
         results = db.fetch_all("SELECT * FROM test_constraints")
         assert len(results) == 0
-        
+
         db.close()
-    
-    def test_recovery_from_unique_constraint_violation(self, postgres_recovery_db_with_constraints):
+
+    def test_recovery_from_unique_constraint_violation(
+        self, postgres_recovery_db_with_constraints
+    ):
         """Test recovery from UNIQUE constraint violation."""
         psycopg2 = pytest.importorskip("psycopg2")
-        
+
         db = Database()
         db.connect()
-        
+
         # Insert initial data
         db.execute(
             "INSERT INTO test_constraints (username, email, age) VALUES (?, ?, ?)",
             ("unique_user", "user@example.com", 25),
         )
-        
+
         # Start transaction
         db.begin_transaction()
         assert db._local.transaction_depth == 1
-        
+
         # Try to insert duplicate username (violates UNIQUE constraint)
         with pytest.raises(psycopg2.errors.UniqueViolation):
             db.execute(
                 "INSERT INTO test_constraints (username, email, age) VALUES (?, ?, ?)",
                 ("unique_user", "user2@example.com", 30),
             )
-        
+
         # Transaction is in failed state
         db._validate_transaction_state()
-        
+
         # Verify recovery
         assert db._local.transaction_depth == 0
         assert not db._local.in_transaction
-        
+
         # Verify only original data exists
         results = db.fetch_all("SELECT * FROM test_constraints")
         assert len(results) == 1
         assert results[0]["username"] == "unique_user"
-        
+
         db.close()
-    
-    def test_recovery_from_check_constraint_violation(self, postgres_recovery_db_with_constraints):
+
+    def test_recovery_from_check_constraint_violation(
+        self, postgres_recovery_db_with_constraints
+    ):
         """Test recovery from CHECK constraint violation."""
         psycopg2 = pytest.importorskip("psycopg2")
-        
+
         db = Database()
         db.connect()
-        
+
         # Start transaction
         db.begin_transaction()
-        
+
         # Insert valid data
         db.execute(
             "INSERT INTO test_constraints (username, email, age) VALUES (?, ?, ?)",
             ("user_age", "user@example.com", 25),
         )
-        
+
         # Try to insert invalid age (violates CHECK constraint)
         with pytest.raises(psycopg2.errors.CheckViolation):
             db.execute(
                 "INSERT INTO test_constraints (username, email, age) VALUES (?, ?, ?)",
                 ("invalid_age_user", "user@example.com", 200),  # Age > 150
             )
-        
+
         # Verify recovery
         db._validate_transaction_state()
         assert db._local.transaction_depth == 0
-        
+
         # Verify no data was committed
         results = db.fetch_all("SELECT * FROM test_constraints")
         assert len(results) == 0
-        
+
         db.close()
-    
-    def test_recovery_preserves_ability_to_retry(self, postgres_recovery_db_with_constraints):
+
+    def test_recovery_preserves_ability_to_retry(
+        self, postgres_recovery_db_with_constraints
+    ):
         """Test that recovery allows retrying transaction after error."""
         psycopg2 = pytest.importorskip("psycopg2")
-        
+
         db = Database()
         db.connect()
-        
+
         # First transaction attempt - will fail
         db.begin_transaction()
         db.execute(
             "INSERT INTO test_constraints (username, email, age) VALUES (?, ?, ?)",
             ("first_attempt", "first@example.com", 25),
         )
-        
+
         try:
             db.execute(
                 "INSERT INTO test_constraints (username, email, age) VALUES (?, ?, ?)",
@@ -1324,10 +1336,10 @@ class TestPostgresErrorRecoveryReal:
             )
         except psycopg2.errors.NotNullViolation:
             pass
-        
+
         db._validate_transaction_state()
         assert db._local.transaction_depth == 0
-        
+
         # Second transaction attempt - should succeed
         db.begin_transaction()
         db.execute(
@@ -1335,35 +1347,37 @@ class TestPostgresErrorRecoveryReal:
             ("second_attempt", "second@example.com", 35),
         )
         db.commit()
-        
+
         # Verify second insert succeeded
         results = db.fetch_all("SELECT * FROM test_constraints")
         assert len(results) == 1
         assert results[0]["username"] == "second_attempt"
-        
+
         db.close()
-    
-    def test_recovery_in_nested_transaction_context(self, postgres_recovery_db_with_constraints):
+
+    def test_recovery_in_nested_transaction_context(
+        self, postgres_recovery_db_with_constraints
+    ):
         """Test error recovery in nested transaction scenarios."""
         psycopg2 = pytest.importorskip("psycopg2")
-        
+
         db = Database()
         db.connect()
-        
+
         # Outer transaction
         db.begin_transaction()
         db.execute(
             "INSERT INTO test_constraints (username, email, age) VALUES (?, ?, ?)",
             ("outer", "outer@example.com", 40),
         )
-        
+
         # Inner nested transaction
         db.begin_transaction()
         db.execute(
             "INSERT INTO test_constraints (username, email, age) VALUES (?, ?, ?)",
             ("inner", "inner@example.com", 45),
         )
-        
+
         # Trigger error in inner transaction
         try:
             db.execute(
@@ -1372,36 +1386,38 @@ class TestPostgresErrorRecoveryReal:
             )
         except psycopg2.errors.UniqueViolation:
             pass
-        
+
         # Recovery should reset all nesting
         db._validate_transaction_state()
-        
+
         assert db._local.transaction_depth == 0
         assert not db._local.in_transaction
-        
+
         # Verify no data was committed
         results = db.fetch_all("SELECT * FROM test_constraints")
         assert len(results) == 0
-        
+
         db.close()
-    
-    def test_recovery_resets_connection_state(self, postgres_recovery_db_with_constraints):
+
+    def test_recovery_resets_connection_state(
+        self, postgres_recovery_db_with_constraints
+    ):
         """Test that recovery properly resets connection state."""
         psycopg2 = pytest.importorskip("psycopg2")
-        
+
         db = Database()
         db.connect()
-        
+
         # Get reference to connection
         original_conn = db._local.connection
-        
+
         # Start transaction
         db.begin_transaction()
         db.execute(
             "INSERT INTO test_constraints (username, email, age) VALUES (?, ?, ?)",
             ("state_test", "state@example.com", 50),
         )
-        
+
         # Trigger error
         try:
             db.execute(
@@ -1410,25 +1426,25 @@ class TestPostgresErrorRecoveryReal:
             )
         except psycopg2.errors.NotNullViolation:
             pass
-        
+
         # Trigger recovery
         db._validate_transaction_state()
-        
+
         # Verify connection is still valid (not closed)
         current_conn = db._local.connection
         assert current_conn is not None
         assert current_conn is original_conn  # Same connection object
-        
+
         # Verify we can execute after recovery
         result = db.fetch_one("SELECT COUNT(*) as cnt FROM test_constraints")
         assert result["cnt"] == 0
-        
+
         db.close()
 
 
 class TestPostgresMultipleConstraintViolations:
     """Test recovery from various constraint violations in sequence."""
-    
+
     @pytest.fixture
     def multi_constraint_config(self):
         """Setup PostgreSQL config for constraint tests."""
@@ -1447,23 +1463,23 @@ class TestPostgresMultipleConstraintViolations:
         config_path = "temp_test/multi_constraint_config.yaml"
         config.setup(config_path=config_path, default_config=pg_config)
         return config_path
-    
+
     @pytest.fixture
     def constraint_test_table(self, multi_constraint_config):
         """Create test table with multiple constraints."""
         pytest.importorskip("psycopg2")
-        
+
         db = Database()
         try:
             db.connect()
         except Exception as e:
             pytest.skip(f"Could not connect to PostgreSQL: {e}")
-        
+
         try:
             db.execute("DROP TABLE IF EXISTS constraint_tests")
         except Exception:
             pass
-        
+
         db.execute("""
             CREATE TABLE constraint_tests (
                 id SERIAL PRIMARY KEY,
@@ -1474,9 +1490,9 @@ class TestPostgresMultipleConstraintViolations:
             )
         """)
         db.close()
-        
+
         yield multi_constraint_config
-        
+
         # Cleanup
         db = Database()
         try:
@@ -1485,20 +1501,20 @@ class TestPostgresMultipleConstraintViolations:
             db.close()
         except Exception:
             pass
-    
+
     def test_recovery_sequence_not_null_then_unique(self, constraint_test_table):
         psycopg2 = """Test recovery from sequence of constraint violations."""
         pytest.importorskip("psycopg2")
-        
+
         db = Database()
         db.connect()
-        
+
         # Insert base data
         db.execute(
             "INSERT INTO constraint_tests (name, email, balance) VALUES (?, ?, ?)",
             ("User1", "user1@example.com", 100),
         )
-        
+
         # First error - NOT NULL violation
         db.begin_transaction()
         try:
@@ -1510,7 +1526,7 @@ class TestPostgresMultipleConstraintViolations:
             pass
         db._validate_transaction_state()
         assert db._local.transaction_depth == 0
-        
+
         # Second error - UNIQUE violation
         db.begin_transaction()
         try:
@@ -1522,7 +1538,7 @@ class TestPostgresMultipleConstraintViolations:
             pass
         db._validate_transaction_state()
         assert db._local.transaction_depth == 0
-        
+
         # Third attempt should succeed
         db.begin_transaction()
         db.execute(
@@ -1530,20 +1546,20 @@ class TestPostgresMultipleConstraintViolations:
             ("User2", "user2@example.com", 200),
         )
         db.commit()
-        
+
         # Verify data
         results = db.fetch_all("SELECT * FROM constraint_tests ORDER BY id")
         assert len(results) == 2
-        
+
         db.close()
-    
+
     def test_recovery_with_check_constraint_and_retry(self, constraint_test_table):
         """Test recovery from CHECK constraint with successful retry."""
         psycopg2 = pytest.importorskip("psycopg2")
-        
+
         db = Database()
         db.connect()
-        
+
         # Try with invalid balance (negative)
         db.begin_transaction()
         try:
@@ -1554,7 +1570,7 @@ class TestPostgresMultipleConstraintViolations:
         except psycopg2.errors.CheckViolation:
             pass
         db._validate_transaction_state()
-        
+
         # Retry with valid balance
         db.begin_transaction()
         db.execute(
@@ -1562,23 +1578,24 @@ class TestPostgresMultipleConstraintViolations:
             ("PositiveBalance", "positive@example.com", 100),
         )
         db.commit()
-        
+
         # Verify successful insert
-        result = db.fetch_one("SELECT * FROM constraint_tests WHERE email = ?", ("positive@example.com",))
+        result = db.fetch_one(
+            "SELECT * FROM constraint_tests WHERE email = ?", ("positive@example.com",)
+        )
         assert result is not None
         assert result["balance"] == 100
-        
+
         db.close()
 
 
 class TestPostgresConnectionPoolFailureRecovery:
     """Test recovery from connection pool-related failures."""
-    
+
     def test_pool_connection_after_transaction_error(self):
         """Test that pool connection is properly managed after transaction error."""
         pytest.importorskip("psycopg2")
-        
-        
+
         pg_config = {
             "type": "postgres",
             "postgres": {
@@ -1594,17 +1611,17 @@ class TestPostgresConnectionPoolFailureRecovery:
             },
         }
         config.set("database", pg_config)
-        
+
         db = Database()
-        
+
         # Verify config is set
         pool_config = db.config.get("connection_pool", {})
         assert pool_config.get("max_connections") == 5
-    
+
     def test_pool_size_after_error_recovery(self):
         """Test that pool maintains correct size after errors."""
         pytest.importorskip("psycopg2")
-        
+
         pg_config = {
             "type": "postgres",
             "postgres": {
@@ -1620,10 +1637,10 @@ class TestPostgresConnectionPoolFailureRecovery:
             },
         }
         config.set("database", pg_config)
-        
+
         db = Database()
         pool_config = db.config.get("connection_pool", {})
-        
+
         # Verify pool configuration is respected
         assert pool_config.get("min_connections") == 3
         assert pool_config.get("max_connections") == 15
