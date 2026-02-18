@@ -285,6 +285,15 @@ def mute_conversation(
     return _get_manager().mute_conversation(user_id, conversation_id, muted, until)
 
 
+def is_participant(conversation_id: int, user_id: int) -> bool:
+    """
+    Check if a user is a participant in a conversation.
+
+    This includes both direct participants and server members for server channels.
+    """
+    return _get_manager().is_participant(conversation_id, user_id)
+
+
 # === Messages ===
 
 
@@ -613,7 +622,9 @@ __all__ = [
     "remove_participant",
     "update_participant_role",
     "get_participants",
+    "get_participant_ids",
     "mute_conversation",
+    "is_participant",
     # Messages
     "send_message",
     "edit_message",

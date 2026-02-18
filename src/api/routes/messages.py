@@ -80,6 +80,7 @@ def _message_to_response(
     viewer_user_id: Optional[int] = None,
 ) -> MessageResponse:
     """Convert message object to response model."""
+
     # Handle dict vs object for msg
     def get_attr(obj, name, default=None):
         if isinstance(obj, dict):
@@ -100,7 +101,7 @@ def _message_to_response(
             created_at = int(created_at_value)
         except Exception:
             created_at = 0
-    
+
     attachments = []
     msg_attachments = get_attr(msg, "attachments")
     if msg_attachments:
@@ -126,12 +127,22 @@ def _message_to_response(
                                 file_id = metadata.get("file_id")
                             elif isinstance(metadata, str):
                                 import json
+
                                 try:
                                     meta = json.loads(metadata)
                                     file_id = meta.get("file_id")
                                 except Exception:
                                     pass
                     
+                    # Fallback: lookup file_id by filename if still missing
+                    if not file_id and att_url:
+                        # Extract stored filename from URL
+                        stored_name = att_url.split("/")[-1]
+                        if stored_name:
+                            media_file = media_mod.get_file_by_filename(stored_name)
+                            if media_file:
+                                file_id = media_file.id
+
                     if file_id:
                         signed = media_mod.sign_url(int(file_id))
                         url = signed.url
@@ -164,22 +175,27 @@ def _message_to_response(
 
     # Use provided reader data (must be bulk-fetched by caller for performance)
     from src.api.schemas.messages import ReaderInfo
+
     read_by = []
     if read_by_data:
         read_by = [
             ReaderInfo(
-                id=SnowflakeID(r["id"]), 
-                username=r["username"], 
-                avatar_url=r.get("avatar_url")
-            ) for r in read_by_data
+                id=SnowflakeID(r["id"]),
+                username=r["username"],
+                avatar_url=r.get("avatar_url"),
+            )
+            for r in read_by_data
         ]
-    
-    read_count = len(read_by) if read_by_data is not None else get_attr(msg, "read_count", 0)
+
+    read_count = (
+        len(read_by) if read_by_data is not None else get_attr(msg, "read_count", 0)
+    )
 
     metadata = get_attr(msg, "metadata")
     if metadata and isinstance(metadata, str):
         try:
             import json
+
             metadata = json.loads(metadata)
         except Exception:
             metadata = None
@@ -212,7 +228,9 @@ def _message_to_response(
         attachments=attachments,
         embeds=get_attr(msg, "embeds", []) or [],
         pinned=get_attr(msg, "pinned", False),
-        status=getattr(get_attr(msg, "status"), "value", get_attr(msg, "status")) if get_attr(msg, "status") else None,
+        status=getattr(get_attr(msg, "status"), "value", get_attr(msg, "status"))
+        if get_attr(msg, "status")
+        else None,
         delivery_count=get_attr(msg, "delivery_count", 0),
         read_count=read_count,
         read=bool(get_attr(msg, "read", False)),
@@ -346,7 +364,7 @@ def get_channel_messages(
 
         # Bulk fetch reader information for messages authored by current user (sender only)
         # This eliminates the N+1 problem in _message_to_response
-        readers_cache = {} # {str(message_id): [username, ...]}
+        readers_cache = {}  # {str(message_id): [username, ...]}
         if messaging and auth and messages:
             try:
                 # Only check messages authored by current user
@@ -358,27 +376,34 @@ def get_channel_messages(
                         own_message_ids.append(mid)
 
                 if own_message_ids:
-                    reader_ids_map = messaging.get_batch_reader_ids(current_user.user_id, own_message_ids)
-                    
+                    reader_ids_map = messaging.get_batch_reader_ids(
+                        current_user.user_id, own_message_ids
+                    )
+
                     # Collect all unique reader IDs to fetch usernames in bulk
                     all_reader_ids = set()
                     for r_ids in reader_ids_map.values():
                         all_reader_ids.update(r_ids)
-                    
+
                     if all_reader_ids:
                         reader_users = auth.get_user_profiles_bulk(list(all_reader_ids))
                         # Use string keys for robust lookup
-                        reader_users_str = {str(uid): u for uid, u in reader_users.items()}
-                        
+                        reader_users_str = {
+                            str(uid): u for uid, u in reader_users.items()
+                        }
+
                         # Build the readers cache with ReaderInfo objects
                         for mid, r_ids in reader_ids_map.items():
                             readers_cache[str(mid)] = [
                                 {
                                     "id": str(rid),
                                     "username": reader_users_str[str(rid)]["username"],
-                                    "avatar_url": reader_users_str[str(rid)].get("avatar_url")
+                                    "avatar_url": reader_users_str[str(rid)].get(
+                                        "avatar_url"
+                                    ),
                                 }
-                                for rid in r_ids if str(rid) in reader_users_str
+                                for rid in r_ids
+                                if str(rid) in reader_users_str
                             ]
             except Exception as e:
                 logger.warning(f"Failed to bulk fetch reader info: {e}")
@@ -389,7 +414,7 @@ def get_channel_messages(
             author_id = getattr(m, "author_id", None) or m.get("author_id")
             mid = getattr(m, "id", None) or m.get("id")
             author_info = author_cache.get(str(author_id)) or {}
-            
+
             result.append(
                 _message_to_response(
                     m,
@@ -411,7 +436,8 @@ def get_channel_messages(
             f"Failed to get messages for channel {channel_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -451,17 +477,17 @@ async def search_messages(
         # Use messaging module's search (handles encryption via blind index)
         if messaging:
             try:
-                # messaging.search_messages handles both DMs and server channels 
+                # messaging.search_messages handles both DMs and server channels
                 # as they are all backed by the same conversation system
                 messages = messaging.search_messages(
                     user_id=current_user.user_id,
                     conversation_id=cid,
                     query=content,
-                    limit=limit
+                    limit=limit,
                 )
             except Exception as e:
                 logger.debug(f"Messaging search failed: {e}")
-                
+
         # Bulk fetch all author info
         author_ids = list(set(m.author_id for m in messages))
         author_cache = {}
@@ -487,8 +513,8 @@ async def search_messages(
             author_info = author_cache.get(str(author_id)) or {}
             result.append(
                 _message_to_response(
-                    m, 
-                    author_username=author_info.get("username"), 
+                    m,
+                    author_username=author_info.get("username"),
                     author_avatar_url=author_info.get("avatar_url"),
                     author_badges=author_info.get("badges"),
                     media_mod=media_mod,
@@ -504,7 +530,8 @@ async def search_messages(
             f"Failed to search messages in channel {channel_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -547,7 +574,12 @@ async def send_channel_message(
                 detail={"error": {"code": 400, "message": "Invalid channel ID"}},
             )
 
-        if not body.content and not body.attachments and not body.embeds and not body.poll:
+        if (
+            not body.content
+            and not body.attachments
+            and not body.embeds
+            and not body.poll
+        ):
             raise HTTPException(
                 status_code=400,
                 detail={
@@ -574,7 +606,9 @@ async def send_channel_message(
             ]
 
         content_value = body.content or ""
-        if (not content_value or not content_value.strip()) and (attachments or body.poll):
+        if (not content_value or not content_value.strip()) and (
+            attachments or body.poll
+        ):
             content_value = "\u200b"
 
         msg = None
@@ -721,7 +755,7 @@ async def send_channel_message(
                             actions=result.actions_to_take,
                             context={"source": "message_create"},
                         )
-                    
+
                     if result.should_delete:
                         # If the message was already saved, we might want to hard delete it here
                         # but DeleteMessageAction already marks it as deleted in DB.
@@ -732,9 +766,11 @@ async def send_channel_message(
                                 "error": {
                                     "code": "MESSAGE_BLOCKED",
                                     "message": "Message blocked by auto-moderation",
-                                    "violations": [v.rule_type.value for v in result.violations]
+                                    "violations": [
+                                        v.rule_type.value for v in result.violations
+                                    ],
                                 }
-                            }
+                            },
                         )
             except HTTPException:
                 raise
@@ -747,17 +783,16 @@ async def send_channel_message(
                 if messaging:
                     try:
                         messaging.delete_message(
-                            current_user.user_id, getattr(msg, "id", None), hard_delete=True
+                            current_user.user_id,
+                            getattr(msg, "id", None),
+                            hard_delete=True,
                         )
                     except Exception:
                         pass
                 raise HTTPException(
                     status_code=500,
                     detail={
-                        "error": {
-                            "code": 500,
-                            "message": "Polls module not available"
-                        }
+                        "error": {"code": 500, "message": "Polls module not available"}
                     },
                 )
             try:
@@ -768,11 +803,15 @@ async def send_channel_message(
                     options=list(body.poll.options),
                     duration_hours=body.poll.duration_hours,
                     allow_multiple_choice=body.poll.allow_multiple_choice,
-                    results_visibility=PollResultsVisibility(body.poll.results_visibility),
+                    results_visibility=PollResultsVisibility(
+                        body.poll.results_visibility
+                    ),
                 )
                 if messaging and poll:
                     try:
-                        msg = messaging.update_message_metadata(msg.id, {"poll_id": poll.id})
+                        msg = messaging.update_message_metadata(
+                            msg.id, {"poll_id": poll.id}
+                        )
                     except Exception:
                         pass
             except (
@@ -791,7 +830,9 @@ async def send_channel_message(
                 if messaging:
                     try:
                         messaging.delete_message(
-                            current_user.user_id, getattr(msg, "id", None), hard_delete=True
+                            current_user.user_id,
+                            getattr(msg, "id", None),
+                            hard_delete=True,
                         )
                     except Exception:
                         pass
@@ -814,7 +855,9 @@ async def send_channel_message(
                 if messaging:
                     try:
                         messaging.delete_message(
-                            current_user.user_id, getattr(msg, "id", None), hard_delete=True
+                            current_user.user_id,
+                            getattr(msg, "id", None),
+                            hard_delete=True,
                         )
                     except Exception:
                         pass
@@ -847,8 +890,8 @@ async def send_channel_message(
                     pass
 
         response = _message_to_response(
-            msg, 
-            author_username, 
+            msg,
+            author_username,
             author_avatar_url,
             author_badges=author_badges,
             channel_id=cid,
@@ -910,7 +953,8 @@ async def send_channel_message(
             f"Failed to send message to channel {channel_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -964,7 +1008,8 @@ async def get_unread_count(
             f"Error getting unread count for channel {channel_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -1016,7 +1061,7 @@ async def acknowledge_messages(
             )
 
         # Check if this is a voice channel - voice channels don't have messages to ack
-        conv_id = cid # Default to channel ID (for DMs)
+        conv_id = cid  # Default to channel ID (for DMs)
         is_server_channel = False
         current_server_id = None
         if servers_mod:
@@ -1029,7 +1074,7 @@ async def acknowledge_messages(
                     # For server channels, use the linked conversation_id
                     if hasattr(channel, "conversation_id") and channel.conversation_id:
                         conv_id = channel.conversation_id
-                    
+
                     channel_type = getattr(channel, "channel_type", None)
                     # Handle both enum and string types
                     channel_type_str = (
@@ -1048,20 +1093,26 @@ async def acknowledge_messages(
         try:
             from starlette.concurrency import run_in_threadpool
             # messaging.mark_read already validates access internally
-            
+
             def _mark_read_with_cleanup(uid, cid, mid):
                 import src.api as api
+
                 db = api.get_db()
                 try:
                     # Use the module-level helper or the manager directly
                     from src.core import messaging
+
                     # Log settings for debugging
                     try:
                         settings = messaging.get_user_message_settings(uid)
-                        logger.info(f"ACK: User {uid} in channel {cid} (conv {conv_id}), read_receipts={settings.read_receipts_enabled}")
+                        logger.info(
+                            f"ACK: User {uid} in channel {cid} (conv {conv_id}), read_receipts={settings.read_receipts_enabled}"
+                        )
                     except Exception as se:
-                        logger.debug(f"ACK: Failed to fetch settings for user {uid}: {se}")
-                    
+                        logger.debug(
+                            f"ACK: Failed to fetch settings for user {uid}: {se}"
+                        )
+
                     count = messaging.mark_read(uid, cid, mid)
                     logger.info(f"ACK: Marked {count} messages as read for user {uid}")
                     return count
@@ -1069,9 +1120,15 @@ async def acknowledge_messages(
                     if db:
                         db.close()
 
-            count = await run_in_threadpool(_mark_read_with_cleanup, current_user.user_id, conv_id, up_to_id)
+            count = await run_in_threadpool(
+                _mark_read_with_cleanup, current_user.user_id, conv_id, up_to_id
+            )
         except Exception as e:
-            from src.core.messaging.exceptions import ConversationNotFoundError, ConversationAccessDeniedError
+            from src.core.messaging.exceptions import (
+                ConversationNotFoundError,
+                ConversationAccessDeniedError,
+            )
+
             if isinstance(e, ConversationNotFoundError):
                 raise HTTPException(
                     status_code=404,
@@ -1090,7 +1147,9 @@ async def acknowledge_messages(
             try:
                 notif_mod.mark_channel_read(current_user.user_id, cid)
             except Exception as ne:
-                logger.debug(f"Failed to mark notifications read for channel {cid}: {ne}")
+                logger.debug(
+                    f"Failed to mark notifications read for channel {cid}: {ne}"
+                )
 
         # Broadcast read receipt event via WebSocket (fire and forget)
         import asyncio
@@ -1104,7 +1163,7 @@ async def acknowledge_messages(
                 if ws_is_setup():
                     dispatcher = get_dispatcher()
                     user_ids = []
-                    
+
                     if is_server_channel:
                         # For server channels, we MUST use the servers module
                         try:
@@ -1113,24 +1172,36 @@ async def acknowledge_messages(
                                 sid = int(current_server_id)
                                 # Fetch all members of the server
                                 user_ids = servers.get_member_user_ids(sid)
-                                logger.debug(f"ACK: Server channel {cid} in server {sid} has {len(user_ids)} members")
+                                logger.debug(
+                                    f"ACK: Server channel {cid} in server {sid} has {len(user_ids)} members"
+                                )
                         except Exception as e:
-                            logger.debug(f"Failed to get server member IDs for ACK: {e}")
+                            logger.debug(
+                                f"Failed to get server member IDs for ACK: {e}"
+                            )
                     else:
                         # For DMs/Groups, messaging module is correct
                         try:
                             # Use the manager instance to get participant IDs
                             messaging_instance = msg_manager.get_manager()
                             user_ids = messaging_instance.get_participant_ids(cid)
-                            logger.debug(f"ACK: DM/Group channel {cid} has {len(user_ids)} participants")
+                            logger.debug(
+                                f"ACK: DM/Group channel {cid} has {len(user_ids)} participants"
+                            )
                         except Exception as e:
-                            logger.debug(f"Failed to get messaging participant IDs for ACK: {e}")
-                    
+                            logger.debug(
+                                f"Failed to get messaging participant IDs for ACK: {e}"
+                            )
+
                     # Always remove current user to avoid echoing back to sender
                     raw_count = len(user_ids)
                     if user_ids:
-                        user_ids = [uid for uid in user_ids if int(uid) != int(current_user.user_id)]
-                    
+                        user_ids = [
+                            uid
+                            for uid in user_ids
+                            if int(uid) != int(current_user.user_id)
+                        ]
+
                     if user_ids:
                         event = Event(
                             event_type=EventType.MESSAGE_ACK,
@@ -1141,9 +1212,13 @@ async def acknowledge_messages(
                             },
                         )
                         await dispatcher.dispatch_event(event, user_ids)
-                        logger.debug(f"Successfully broadcast MESSAGE_ACK for channel {cid} to {len(user_ids)} users (excluded self from {raw_count})")
+                        logger.debug(
+                            f"Successfully broadcast MESSAGE_ACK for channel {cid} to {len(user_ids)} users (excluded self from {raw_count})"
+                        )
                     else:
-                        logger.debug(f"No targets found for MESSAGE_ACK in channel {cid} (is_server={is_server_channel}, raw_count={raw_count}, my_id={current_user.user_id})")
+                        logger.debug(
+                            f"No targets found for MESSAGE_ACK in channel {cid} (is_server={is_server_channel}, raw_count={raw_count}, my_id={current_user.user_id})"
+                        )
             except Exception as e:
                 logger.error(f"Failed to broadcast MESSAGE_ACK: {e}", exc_info=True)
 
@@ -1164,7 +1239,8 @@ async def acknowledge_messages(
             f"Error acknowledging messages in channel {channel_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -1183,14 +1259,16 @@ async def acknowledge_messages_bulk(
 ) -> SuccessResponse:
     """
     Mark messages as read in multiple channels at once.
-    
+
     Accepts a dictionary mapping channel_id to optional message_id.
     """
     msg_manager = api.get_messaging()
     if not msg_manager:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Messaging module not available"}},
+            detail={
+                "error": {"code": 500, "message": "Messaging module not available"}
+            },
         )
 
     try:
@@ -1201,12 +1279,13 @@ async def acknowledge_messages_bulk(
                 msg_manager.mark_read(current_user.user_id, cid, mid)
             except Exception as e:
                 logger.warning(f"Bulk ACK: Failed for channel {channel_id}: {e}")
-        
+
         return SuccessResponse(success=True)
     except Exception as e:
         logger.error(f"Bulk ACK failed: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -1270,11 +1349,11 @@ async def get_message(
                 pass
 
         return _message_to_response(
-            message, 
+            message,
             author_username=author_info["username"],
             author_avatar_url=author_info["avatar_url"],
             author_badges=author_info["badges"],
-            channel_id=cid, 
+            channel_id=cid,
             media_mod=api.get_media(),
             viewer_user_id=current_user.user_id,
         )
@@ -1297,7 +1376,8 @@ async def get_message(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -1431,9 +1511,9 @@ async def edit_message(
                     pass
 
         response = _message_to_response(
-            msg, 
-            author_username, 
-            author_avatar_url, 
+            msg,
+            author_username,
+            author_avatar_url,
             author_badges=author_badges,
             channel_id=cid,
             media_mod=api.get_media(),
@@ -1441,7 +1521,7 @@ async def edit_message(
         )
 
         # Broadcast MESSAGE_UPDATE event via WebSocket (fire and forget)
-            
+
         import asyncio
 
         async def dispatch_message_update():
@@ -1526,7 +1606,8 @@ async def edit_message(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -1586,6 +1667,7 @@ async def delete_message(
         if metadata and isinstance(metadata, str):
             try:
                 import json
+
                 metadata = json.loads(metadata)
             except Exception:
                 metadata = None
@@ -1594,7 +1676,9 @@ async def delete_message(
             polls_module = api.get_polls()
             if polls_module:
                 try:
-                    polls_module.delete_poll(current_user.user_id, int(metadata["poll_id"]))
+                    polls_module.delete_poll(
+                        current_user.user_id, int(metadata["poll_id"])
+                    )
                 except Exception:
                     pass
 
@@ -1614,14 +1698,16 @@ async def delete_message(
                     # Determine server_id for intent filtering
                     server_id = None
                     user_ids = []
-                    
+
                     # Use channel_id from the request URL, which should be the actual server channel ID
                     actual_channel_id = int(channel_id)
-                    
+
                     if servers_mod:
                         try:
                             # Verify this is a server channel and get server_id
-                            channel = servers_mod.get_channel(actual_channel_id, current_user.user_id)
+                            channel = servers_mod.get_channel(
+                                actual_channel_id, current_user.user_id
+                            )
                             if channel:
                                 server_id = getattr(channel, "server_id", None)
                                 if server_id:
@@ -1677,7 +1763,8 @@ async def delete_message(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -1753,8 +1840,8 @@ async def get_pinned_messages(
             info = author_cache.get(author_id, {})
             result.append(
                 _message_to_response(
-                    m, 
-                    info.get("username"), 
+                    m,
+                    info.get("username"),
                     info.get("avatar_url"),
                     author_badges=info.get("badges"),
                     media_mod=api.get_media(),
@@ -1768,7 +1855,8 @@ async def get_pinned_messages(
     except Exception as e:
         logger.error(f"Failed to get pinned messages for channel {channel_id}: {e}")
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -1892,7 +1980,8 @@ async def pin_message(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -2016,7 +2105,8 @@ async def unpin_message(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -2057,7 +2147,8 @@ def get_all_unread_counts(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -2192,6 +2283,6 @@ async def trigger_typing(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
-

@@ -111,7 +111,7 @@ class AutoModManager(BaseManager):
             "rate_limit_window": 60,
             "reputation_decay_rate": 1.0,
             "reputation_decay_interval": 86400,
-            "max_violations_before_action": 3,
+            "max_violations_before_action": 1,
         }
 
         automod_config = config.get("automod", {})
@@ -176,7 +176,7 @@ class AutoModManager(BaseManager):
 
         rules = self._get_server_rules(server_id, enabled_only=True)
         rules.sort(key=lambda r: r.priority, reverse=True)
-        
+
         logger.debug(f"Checking {len(rules)} rules for server {server_id}")
 
         violations = []
@@ -192,7 +192,9 @@ class AutoModManager(BaseManager):
             match = self._evaluate_rule(rule, content, user_id, channel_id, context)
 
             if match.matched:
-                logger.info(f"AutoMod: Rule '{rule.name}' matched content from user {user_id} in server {server_id}")
+                logger.info(
+                    f"AutoMod: Rule '{rule.name}' matched content from user {user_id} in server {server_id}"
+                )
                 violations.append(match)
                 actions_to_take.extend(rule.actions)
 
@@ -748,7 +750,9 @@ class AutoModManager(BaseManager):
             (server_id, channel_id),
         )
         if channel_exempt:
-            logger.debug(f"Channel {channel_id} is exempt from AutoMod in server {server_id}")
+            logger.debug(
+                f"Channel {channel_id} is exempt from AutoMod in server {server_id}"
+            )
             return True
 
         # Fetch user roles once for multiple checks
@@ -769,7 +773,9 @@ class AutoModManager(BaseManager):
                 (server_id, *role_ids),
             )
             if role_exempt:
-                logger.debug(f"User {user_id} has a role exempt from AutoMod in server {server_id}")
+                logger.debug(
+                    f"User {user_id} has a role exempt from AutoMod in server {server_id}"
+                )
                 return True
 
         return False
@@ -1154,10 +1160,12 @@ class AutoModManager(BaseManager):
 
         return adapter.check_content(content, context)
 
-    def ensure_default_rules(self, server_id: SnowflakeID, user_id: SnowflakeID) -> None:
+    def ensure_default_rules(
+        self, server_id: SnowflakeID, user_id: SnowflakeID
+    ) -> None:
         """
         Ensure standard moderation rules exist for a server.
-        
+
         This creates baseline protection against spam and hate speech.
         """
         existing = self._get_server_rules(server_id)
@@ -1174,13 +1182,13 @@ class AutoModManager(BaseManager):
                 "max_messages": 5,
                 "window_seconds": 10,
                 "duplicate_threshold": 3,
-                "similarity_threshold": 0.9
+                "similarity_threshold": 0.9,
             },
             actions=[
                 {"type": "delete_message"},
-                {"type": "alert_moderators", "reason": "Automated spam detection"}
+                {"type": "alert_moderators", "reason": "Automated spam detection"},
             ],
-            priority=100
+            priority=100,
         )
 
         # 2. Hate Speech Filter (Keyword based)
@@ -1192,13 +1200,17 @@ class AutoModManager(BaseManager):
             rule_config={
                 "keywords": ["nigger", "faggot", "kike", "chink", "retard", "paki"],
                 "whole_word": True,
-                "case_sensitive": False
+                "case_sensitive": False,
             },
             actions=[
                 {"type": "delete_message"},
-                {"type": "timeout_user", "duration_seconds": 3600, "reason": "Hate speech is not allowed"}
+                {
+                    "type": "timeout_user",
+                    "duration_seconds": 3600,
+                    "reason": "Hate speech is not allowed",
+                },
             ],
-            priority=200
+            priority=200,
         )
 
         # 3. Hate Speech Filter (Regex for obfuscation)
@@ -1213,15 +1225,19 @@ class AutoModManager(BaseManager):
                         "name": "Slur Obfuscation",
                         "pattern": r"n[i1l][gq]{2}[e3]r|f[a@][gq]{2}[o0]t|k[i1]k[e3]|ch[i1]nk",
                         "case_sensitive": False,
-                        "severity": "critical"
+                        "severity": "critical",
                     }
                 ]
             },
             actions=[
                 {"type": "delete_message"},
-                {"type": "timeout_user", "duration_seconds": 3600, "reason": "Hate speech obfuscation is not allowed"}
+                {
+                    "type": "timeout_user",
+                    "duration_seconds": 3600,
+                    "reason": "Hate speech obfuscation is not allowed",
+                },
             ],
-            priority=210
+            priority=210,
         )
 
     def _row_to_rule(self, row) -> Rule:
@@ -1246,7 +1262,9 @@ class AutoModManager(BaseManager):
             enabled=bool(row["enabled"]),
             config=json.loads(row["config"]),
             actions=actions,
-            applied_roles=json.loads(row["applied_roles"]) if "applied_roles" in row else [],
+            applied_roles=json.loads(row["applied_roles"])
+            if "applied_roles" in row
+            else [],
             exempt_roles=json.loads(row["exempt_roles"]),
             exempt_channels=json.loads(row["exempt_channels"]),
             priority=row["priority"],

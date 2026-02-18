@@ -129,12 +129,14 @@ class MediaManager(BaseManager):
 
         # Initialize deduplication once
         from .deduplication import setup as dedup_setup, DeduplicationManager
+
         dedup_setup(db)
         self._dedup_manager = DeduplicationManager(db)
 
         # Initialize compression once
         try:
             from .compression import CompressionManager
+
             self._compression_manager = CompressionManager()
         except ImportError:
             self._compression_manager = None
@@ -149,7 +151,7 @@ class MediaManager(BaseManager):
         cfg = config.get("media")
         if cfg is None:
             cfg = config.get("storage", {})
-            
+
         if not isinstance(cfg, dict):
             cfg = {}
 
@@ -200,14 +202,22 @@ class MediaManager(BaseManager):
         if encrypt_at_rest:
             # Task #6: Ensure media encryption uses app's signing keys if no env var set
             signing_key = self._config.get("signing_key")
-            if signing_key and signing_key not in ["", "CHANGE_THIS_SIGNING_KEY", "change-me", "changeme"]:
+            if signing_key and signing_key not in [
+                "",
+                "CHANGE_THIS_SIGNING_KEY",
+                "change-me",
+                "changeme",
+            ]:
                 if "PLEXICHAT_MEDIA_KEY" not in os.environ:
                     # Derive a 32-byte key from the signing key for initial keyring setup
                     derived_key = hashlib.sha256(signing_key.encode()).digest()
                     import base64
-                    os.environ["PLEXICHAT_MEDIA_KEY"] = base64.b64encode(derived_key).decode()
+
+                    os.environ["PLEXICHAT_MEDIA_KEY"] = base64.b64encode(
+                        derived_key
+                    ).decode()
                     logger.debug("Derived PLEXICHAT_MEDIA_KEY from signing_key")
-            
+
             storage = wrap_storage_with_encryption(storage, enabled=True)
             logger.info(f"File encryption at rest enabled for {backend} storage")
 
@@ -226,12 +236,12 @@ class MediaManager(BaseManager):
                 base_url=self._config.get("database_url", "/api/v1/media/blob"),
                 max_size=auto_route.get("max_size", 512 * 1024),
             )
-            
+
             # Wrap with encryption if enabled (Fix: ensure auto-routed DB storage is also encrypted)
             if encrypt_at_rest:
                 storage = wrap_storage_with_encryption(storage, enabled=True)
                 logger.debug("Encrypted database storage initialized for auto-routing")
-            
+
             return storage
         return None
 
@@ -478,13 +488,13 @@ class MediaManager(BaseManager):
         type_key = media_type.value
 
         ct_lower = content_type.lower()
-        
+
         # Check against global blocked MIME types first
         if ct_lower in BLOCKED_MIME_TYPES:
             raise FileTypeError(
                 f"File type '{content_type}' is blocked for security reasons.",
                 content_type,
-                ["Contact an administrator for more information"]
+                ["Contact an administrator for more information"],
             )
 
         if type_key in allowed:
@@ -499,11 +509,15 @@ class MediaManager(BaseManager):
         elif type_key == "other":
             # For 'other' category, we only allow what's explicitly in the whitelist
             other_allowed = allowed.get("other", [])
-            if other_allowed and ct_lower not in other_allowed and "*" not in other_allowed:
+            if (
+                other_allowed
+                and ct_lower not in other_allowed
+                and "*" not in other_allowed
+            ):
                 raise FileTypeError(
                     f"File type '{content_type}' is not supported.",
                     content_type,
-                    other_allowed
+                    other_allowed,
                 )
 
     def _validate_file_size(self, size: int, media_type: MediaType):
@@ -641,7 +655,9 @@ class MediaManager(BaseManager):
         dedup_result = None
         if self._dedup_manager:
             try:
-                dedup_result = self._dedup_manager.check_duplicate(file_data, content_type)
+                dedup_result = self._dedup_manager.check_duplicate(
+                    file_data, content_type
+                )
 
                 if dedup_result.is_blocked:
                     logger.warning(
@@ -771,7 +787,7 @@ class MediaManager(BaseManager):
             try:
                 # Compute pHash for images to enable similarity detection
                 phash = self._dedup_manager.compute_phash(final_data, content_type)
-                
+
                 self._dedup_manager.register_file(
                     hash_value=checksum,
                     file_size=final_size,
@@ -903,12 +919,12 @@ class MediaManager(BaseManager):
 
         try:
             results = self._image_processor.create_thumbnails(image_data, sizes)
-            
+
             def store_thumb(size, data_tuple):
                 thumb_data, width, height = data_tuple
                 thumb_path = f"thumbnails/{file_id}/{size}.jpg"
                 self._storage.store(thumb_data, thumb_path, "image/jpeg")
-                
+
                 thumb_id = self._generate_id()
                 now = self._get_timestamp()
 
@@ -921,7 +937,10 @@ class MediaManager(BaseManager):
                 return size, self._storage.get_url(thumb_path)
 
             # Use the shared class executor for thumbnail storage
-            futures = [self._executor.submit(store_thumb, size, data) for size, data in results.items()]
+            futures = [
+                self._executor.submit(store_thumb, size, data)
+                for size, data in results.items()
+            ]
             for future in futures:
                 try:
                     size, url = future.result()
@@ -938,6 +957,18 @@ class MediaManager(BaseManager):
         """Get file by ID."""
         row = self._db.fetch_one(
             "SELECT * FROM media_files WHERE id = ? AND deleted = 0", (file_id,)
+        )
+
+        if not row:
+            return None
+
+        return self._row_to_media_file(row)
+
+    def get_file_by_filename(self, filename: str) -> Optional[MediaFile]:
+        """Get file by stored filename."""
+        row = self._db.fetch_one(
+            "SELECT * FROM media_files WHERE filename = ? AND deleted = 0",
+            (filename,)
         )
 
         if not row:
@@ -983,7 +1014,9 @@ class MediaManager(BaseManager):
         stream, size = storage.retrieve_stream(file.storage_path)
         return stream, size, file.content_type
 
-    def get_file_stream_optimized(self, path: str, content_type: str, backend: str) -> Tuple[BinaryIO, int, str]:
+    def get_file_stream_optimized(
+        self, path: str, content_type: str, backend: str
+    ) -> Tuple[BinaryIO, int, str]:
         """
         Get file data as a stream directly (avoids DB lookup).
 
@@ -1138,7 +1171,7 @@ class MediaManager(BaseManager):
 
         # Get correct storage for this file
         storage = self._get_storage_by_backend(file.storage_backend.value)
-        
+
         # Check if file is encrypted (requires server-side decryption)
         is_encrypted = storage.is_encrypted(file.storage_path)
 
@@ -1153,9 +1186,7 @@ class MediaManager(BaseManager):
             # Look for native signing capability (including through wrappers)
             if hasattr(storage, "generate_presigned_url"):
                 url = storage.generate_presigned_url(  # type: ignore
-                    file.storage_path, 
-                    expires_in or 3600,
-                    params=params
+                    file.storage_path, expires_in or 3600, params=params
                 )
                 return SignedUrl(
                     url=url,
@@ -1163,10 +1194,12 @@ class MediaManager(BaseManager):
                     signature="native",
                     file_id=file_id,
                 )
-            
+
             # If S3 but no native signing available (unlikely), we MUST proxy it
             # because direct S3 URLs will fail without a native signature
-            logger.warning(f"S3 native signing unavailable for {file.filename}, falling back to proxy")
+            logger.warning(
+                f"S3 native signing unavailable for {file.filename}, falling back to proxy"
+            )
             proxy_url = f"/api/v1/media/attachments/{file.filename}"
             return self._url_signer.sign_url(proxy_url, file_id, expires_in)
 
@@ -1392,34 +1425,36 @@ class MediaManager(BaseManager):
     def check_file_access(self, filename: str, user_id: int) -> bool:
         """
         Check if a user has permission to access a media file.
-        
+
         Access is granted if:
         1. User is the original uploader
         2. File is an attachment in a message within a conversation the user is in
         3. File is a public resource (current avatar or server icon for shared contexts)
-        
+
         Args:
             filename: The unique filename stored in media_files
             user_id: ID of the user requesting access
-            
+
         Returns:
             True if access granted, False otherwise
         """
         # 1. Check if user is the uploader (fast path)
         row = self._db.fetch_one(
             "SELECT id, uploaded_by FROM media_files WHERE filename = ? AND deleted = 0",
-            (filename,)
+            (filename,),
         )
         if not row:
+            logger.debug(f"check_file_access: file {filename} not found in media_files")
             return False
-            
+
         if int(row["uploaded_by"]) == user_id:
             return True
-            
+
         file_id = row["id"]
-        
+
         # 2. Check if it's a message attachment
         # We look for the file_id or filename in msg_attachments
+        # Also handle potential URL encoding or full paths in the URL column
         query = """
             SELECT m.conversation_id 
             FROM msg_messages m
@@ -1427,29 +1462,47 @@ class MediaManager(BaseManager):
             WHERE (a.filename = ? OR a.url LIKE '%' || ? OR a.metadata LIKE '%' || ?) AND a.deleted = 0
         """
         # We search for filename, filename in URL, and file_id in metadata JSON string
-        rows = self._db.fetch_all(query, (filename, filename, str(file_id)))
-        
+        search_filename = filename
+        if "/" in search_filename:
+            search_filename = os.path.basename(search_filename)
+
+        rows = self._db.fetch_all(query, (search_filename, search_filename, f'%{file_id}%'))
+
         if rows and self._messaging:
             for r in rows:
-                if self._messaging.is_participant(r["conversation_id"], user_id):
+                conv_id = r["conversation_id"]
+                is_p = False
+                try:
+                    # Robust check for is_participant (module or manager instance)
+                    if hasattr(self._messaging, "is_participant"):
+                        is_p = self._messaging.is_participant(conv_id, user_id)
+                    else:
+                        is_p = self._messaging.get_manager().is_participant(conv_id, user_id)
+                except Exception as e:
+                    logger.warning(f"Failed to check participation for {user_id} in {conv_id}: {e}")
+
+                if is_p:
                     return True
-                    
+
         # 3. Check if it's a current avatar or server icon
         # Avatars are generally public to people who can see the user
-        avatar_row = self._db.fetch_one("SELECT 1 FROM auth_users WHERE avatar_url LIKE '%' || ?", (filename,))
+        avatar_row = self._db.fetch_one(
+            "SELECT 1 FROM auth_users WHERE avatar_url LIKE '%' || ?", (search_filename,)
+        )
         if avatar_row:
             return True
-            
+
         # Server icons are public to members of that server
         icon_query = """
             SELECT 1 FROM srv_servers s
             JOIN srv_members m ON s.id = m.server_id
             WHERE s.icon_url LIKE '%' || ? AND m.user_id = ? AND s.deleted = 0
         """
-        icon_row = self._db.fetch_one(icon_query, (filename, user_id))
+        icon_row = self._db.fetch_one(icon_query, (search_filename, user_id))
         if icon_row:
             return True
 
+        logger.debug(f"check_file_access: Access denied for user {user_id} to file {filename}")
         return False
 
     def _get_storage_by_backend(self, backend: str) -> StorageBackendBase:

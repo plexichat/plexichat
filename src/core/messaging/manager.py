@@ -341,7 +341,9 @@ class MessagingManager(BaseManager):
 
         actor = self._participant_svc.get_participant(conversation_id, user_id)
         if not actor:
-            raise ConversationAccessDeniedError("Not a participant in this conversation")
+            raise ConversationAccessDeniedError(
+                "Not a participant in this conversation"
+            )
 
         target = self._participant_svc.get_participant(conversation_id, participant_id)
         if not target:
@@ -392,7 +394,9 @@ class MessagingManager(BaseManager):
 
         actor = self._participant_svc.get_participant(conversation_id, user_id)
         if not actor:
-            raise ConversationAccessDeniedError("Not a participant in this conversation")
+            raise ConversationAccessDeniedError(
+                "Not a participant in this conversation"
+            )
 
         target = self._participant_svc.get_participant(conversation_id, participant_id)
         if not target:
@@ -520,7 +524,9 @@ class MessagingManager(BaseManager):
                 msg.delivery_count = stats.get("delivery_count", 0)
                 msg.read_count = stats.get("read_count", 0)
                 # Ensure we handle user_id comparison robustly
-                msg.read = (msg.status == MessageStatusType.READ or str(msg.author_id) == str(user_id))
+                msg.read = msg.status == MessageStatusType.READ or str(
+                    msg.author_id
+                ) == str(user_id)
 
         return messages
 
@@ -551,7 +557,9 @@ class MessagingManager(BaseManager):
                 msg.delivery_count = stats.get("delivery_count", 0)
                 msg.read_count = stats.get("read_count", 0)
                 # Ensure we handle user_id comparison robustly
-                msg.read = (msg.status == MessageStatusType.READ or str(msg.author_id) == str(user_id))
+                msg.read = msg.status == MessageStatusType.READ or str(
+                    msg.author_id
+                ) == str(user_id)
 
         return messages
 
@@ -605,11 +613,15 @@ class MessagingManager(BaseManager):
         """Get delivery/read status for a message (sender only)."""
         return self._message_status_svc.get_message_status(user_id, message_id)
 
-    def get_reader_ids(self, user_id: SnowflakeID, message_id: SnowflakeID) -> List[SnowflakeID]:
+    def get_reader_ids(
+        self, user_id: SnowflakeID, message_id: SnowflakeID
+    ) -> List[SnowflakeID]:
         """Get IDs of users who have read a message (sender only)."""
         return self._message_status_svc.get_reader_ids(user_id, message_id)
 
-    def get_batch_reader_ids(self, user_id: SnowflakeID, message_ids: List[SnowflakeID]) -> Dict[SnowflakeID, List[SnowflakeID]]:
+    def get_batch_reader_ids(
+        self, user_id: SnowflakeID, message_ids: List[SnowflakeID]
+    ) -> Dict[SnowflakeID, List[SnowflakeID]]:
         """Get IDs of users who have read messages (batch, sender only)."""
         return self._message_status_svc.get_batch_reader_ids(user_id, message_ids)
 
@@ -712,10 +724,10 @@ class MessagingManager(BaseManager):
 
     # === Internal helpers for backward compatibility ===
 
-    def _is_participant(
+    def is_participant(
         self, conversation_id: SnowflakeID, user_id: SnowflakeID
     ) -> bool:
-        """Check if user is a participant (for backward compatibility)."""
+        """Check if user is a participant."""
         return self._participant_svc.is_participant(conversation_id, user_id)
 
     def _get_participant(
