@@ -1428,6 +1428,7 @@ class MediaManager(BaseManager):
         1. User is the original uploader
         2. File is an attachment in a message within a conversation the user is in
         3. File is a public resource (current avatar or server icon for shared contexts)
+        4. File is a thumbnail of a file the user has access to
 
         Args:
             filename: The unique filename stored in media_files
@@ -1436,6 +1437,30 @@ class MediaManager(BaseManager):
         Returns:
             True if access granted, False otherwise
         """
+        # --- Thumbnail Handling ---
+        # Thumbnails use a different naming scheme: thumbnails/{file_id}/{size}.jpg
+        # If this looks like a thumbnail path, check access to the parent file
+        if "thumbnails/" in filename:
+            try:
+                # Extract file_id from path
+                parts = filename.split("/")
+                # Handle cases like 'thumbnails/123/128.jpg' or just '128.jpg' if path was stripped
+                parent_file_id = None
+                if len(parts) >= 2:
+                    parent_file_id = parts[-2]
+                
+                if parent_file_id and parent_file_id.isdigit():
+                    # Look up original filename for this parent file_id
+                    parent_row = self._db.fetch_one(
+                        "SELECT filename FROM media_files WHERE id = ? AND deleted = 0",
+                        (int(parent_file_id),)
+                    )
+                    if parent_row:
+                        # Recursively check access to the parent file
+                        return self.check_file_access(parent_row["filename"], user_id)
+            except Exception as e:
+                logger.warning(f"Error checking thumbnail access for {filename}: {e}")
+
         # 1. Check if user is the uploader (fast path)
         row = self._db.fetch_one(
             "SELECT id, uploaded_by FROM media_files WHERE filename = ? AND deleted = 0",

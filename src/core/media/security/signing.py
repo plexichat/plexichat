@@ -138,7 +138,10 @@ class UrlSigner:
         extra_data: Optional[dict],
     ) -> str:
         """Build the data string to sign."""
-        parts = [url, str(file_id), str(expires_at)]
+        # Canonicalize path by removing leading slash to prevent mismatch 
+        # between '/path' and 'path' signatures
+        clean_url = url.lstrip('/')
+        parts = [clean_url, str(file_id), str(expires_at)]
 
         if extra_data:
             for key in sorted(extra_data.keys()):
