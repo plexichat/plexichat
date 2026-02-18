@@ -34,7 +34,6 @@ def setup(db: Any) -> None:
     global _db, _setup_complete
     _db = db
     _setup_complete = True
-    _create_tables()
     logger.info("Feedback module initialized")
 
 
@@ -52,9 +51,8 @@ def _get_db():
     return _db
 
 
-def _create_tables() -> None:
+def create_tables(db: Any) -> None:
     """Create feedback tables."""
-    db = _get_db()
     schema = """
     CREATE TABLE IF NOT EXISTS feedback (
         id INTEGER PRIMARY KEY,
@@ -77,6 +75,12 @@ def _create_tables() -> None:
         db.execute(converted)
     except Exception as e:
         logger.error(f"Failed to create feedback table: {e}")
+
+
+def _create_tables() -> None:
+    """Create feedback tables."""
+    db = _get_db()
+    create_tables(db)
 
 
 def submit_feedback(

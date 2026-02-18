@@ -46,8 +46,7 @@ def setup(db: Any) -> None:
     global _db, _setup_complete
 
     _db = db
-    _setup_complete = True  # Set before _create_tables so _get_db() works
-    _create_tables()
+    _setup_complete = True
     logger.info("Avatars module initialized")
 
 
@@ -69,9 +68,11 @@ def _get_db():
 
 # === Caching Helpers ===
 
+
 def _cache_binary(key: str, data: bytes, ttl: int = 3600) -> None:
     """Cache binary data in Redis."""
     from src.core.database import get_redis_client, redis_available
+
     if not redis_available():
         return
     try:
@@ -85,6 +86,7 @@ def _cache_binary(key: str, data: bytes, ttl: int = 3600) -> None:
 def _get_cached_binary(key: str) -> Optional[bytes]:
     """Get cached binary data from Redis."""
     from src.core.database import get_redis_client, redis_available
+
     if not redis_available():
         return None
     try:
@@ -99,6 +101,7 @@ def _get_cached_binary(key: str) -> Optional[bytes]:
 def _delete_cached_binary(key: str) -> None:
     """Delete cached binary data from Redis."""
     from src.core.database import get_redis_client, redis_available
+
     if not redis_available():
         return
     try:
@@ -117,7 +120,9 @@ def get_user_avatar_checksum(user_id: int) -> Optional[str]:
         return cached_checksum.decode()
 
     db = _get_db()
-    row = db.fetch_one("SELECT checksum FROM user_avatars WHERE user_id = ?", (user_id,))
+    row = db.fetch_one(
+        "SELECT checksum FROM user_avatars WHERE user_id = ?", (user_id,)
+    )
     if row:
         _cache_binary(cache_key, row["checksum"].encode(), ttl=3600)
         return row["checksum"]
@@ -132,7 +137,9 @@ def get_server_icon_checksum(server_id: int) -> Optional[str]:
         return cached_checksum.decode()
 
     db = _get_db()
-    row = db.fetch_one("SELECT checksum FROM server_icons WHERE server_id = ?", (server_id,))
+    row = db.fetch_one(
+        "SELECT checksum FROM server_icons WHERE server_id = ?", (server_id,)
+    )
     if row:
         _cache_binary(cache_key, row["checksum"].encode(), ttl=3600)
         return row["checksum"]
@@ -152,9 +159,8 @@ def _get_config(key: str, default: Any = None) -> Any:
     return value if value is not None else default
 
 
-def _create_tables() -> None:
+def create_tables(db: Any) -> None:
     """Create avatar tables."""
-    db = _get_db()
 
     # User avatars table
     db.execute("""
@@ -197,6 +203,12 @@ def _create_tables() -> None:
     )
 
     logger.info("Avatar tables created successfully")
+
+
+def _create_tables() -> None:
+    """Create avatar tables."""
+    db = _get_db()
+    create_tables(db)
 
 
 def _get_max_size() -> int:
@@ -523,13 +535,13 @@ def get_user_avatar_data(user_id: int) -> Optional[Tuple[bytes, str, str]]:
     # 1. Check cache
     bin_data = _get_cached_binary(f"user_avatar_bin:{user_id}")
     meta_data = _get_cached_binary(f"user_avatar_meta:{user_id}")
-    
+
     if bin_data and meta_data:
         try:
             content_type, checksum = meta_data.decode().split("|")
             return bin_data, content_type, checksum
         except Exception:
-            pass # Fall back to DB if cache format is weird
+            pass  # Fall back to DB if cache format is weird
 
     # 2. Fetch from DB
     db = _get_db()
@@ -543,7 +555,10 @@ def get_user_avatar_data(user_id: int) -> Optional[Tuple[bytes, str, str]]:
 
     # 3. Cache result
     _cache_binary(f"user_avatar_bin:{user_id}", row["avatar_data"])
-    _cache_binary(f"user_avatar_meta:{user_id}", f"{row['content_type']}|{row['checksum']}".encode())
+    _cache_binary(
+        f"user_avatar_meta:{user_id}",
+        f"{row['content_type']}|{row['checksum']}".encode(),
+    )
 
     return row["avatar_data"], row["content_type"], row["checksum"]
 
@@ -678,7 +693,9 @@ def upload_server_icon(
 
     # Cache the binary data and checksum
     _cache_binary(f"server_icon_bin:{server_id}", processed_data)
-    _cache_binary(f"server_icon_meta:{server_id}", f"{content_type}|{checksum}".encode())
+    _cache_binary(
+        f"server_icon_meta:{server_id}", f"{content_type}|{checksum}".encode()
+    )
 
     logger.info(
         f"Icon uploaded for server {server_id}: {width}x{height}, {len(processed_data)} bytes"
@@ -733,13 +750,13 @@ def get_server_icon_data(server_id: int) -> Optional[Tuple[bytes, str, str]]:
     # 1. Check cache
     bin_data = _get_cached_binary(f"server_icon_bin:{server_id}")
     meta_data = _get_cached_binary(f"server_icon_meta:{server_id}")
-    
+
     if bin_data and meta_data:
         try:
             content_type, checksum = meta_data.decode().split("|")
             return bin_data, content_type, checksum
         except Exception:
-            pass # Fall back to DB if cache format is weird
+            pass  # Fall back to DB if cache format is weird
 
     # 2. Fetch from DB
     db = _get_db()
@@ -753,7 +770,10 @@ def get_server_icon_data(server_id: int) -> Optional[Tuple[bytes, str, str]]:
 
     # 3. Cache result
     _cache_binary(f"server_icon_bin:{server_id}", row["icon_data"])
-    _cache_binary(f"server_icon_meta:{server_id}", f"{row['content_type']}|{row['checksum']}".encode())
+    _cache_binary(
+        f"server_icon_meta:{server_id}",
+        f"{row['content_type']}|{row['checksum']}".encode(),
+    )
 
     return row["icon_data"], row["content_type"], row["checksum"]
 
@@ -791,7 +811,10 @@ def delete_server_icon(server_id: int) -> bool:
 def generate_default_svg(seed_id: int, initials: str) -> str:
     """Generate a colorful SVG placeholder avatar based on a seed ID (user or server)."""
     # Match frontend colors in ui.js:getAvatarColor
-    colors = _get_config("default_colors", ["#e94560", "#4ade80", "#fbbf24", "#60a5fa", "#a78bfa", "#f472b6"])
+    colors = _get_config(
+        "default_colors",
+        ["#e94560", "#4ade80", "#fbbf24", "#60a5fa", "#a78bfa", "#f472b6"],
+    )
 
     # Match frontend logic: index = parseInt(String(id).slice(-2), 16) % colors.length
     id_str = str(seed_id)
@@ -799,7 +822,7 @@ def generate_default_svg(seed_id: int, initials: str) -> str:
         # Frontend does String(id).slice(-2) which is the last 2 characters
         # then parseInt(..., 16) which is hex.
         last_two = id_str[-2:] if len(id_str) >= 2 else id_str
-        
+
         # We need to handle cases where last characters aren't valid hex digits
         # (though Snowflake IDs usually are digits, so hex is safe)
         hex_val = int(last_two, 16)
@@ -807,7 +830,7 @@ def generate_default_svg(seed_id: int, initials: str) -> str:
     except (ValueError, IndexError):
         # Fallback to simple modulo if hex parsing fails
         index = seed_id % len(colors)
-        
+
     color = colors[index]
 
     return f"""<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">

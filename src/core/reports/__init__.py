@@ -152,7 +152,6 @@ def setup(db, messaging_module=None) -> None:
     _db = db
     _messaging = messaging_module
     _setup_complete = True
-    _create_tables()
     logger.info("Reports module initialized")
 
 
@@ -170,9 +169,8 @@ def _get_db():
     return _db
 
 
-def _create_tables() -> None:
+def create_tables(db) -> None:
     """Create report tables."""
-    db = _get_db()
     statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
     for statement in statements:
         if statement:
@@ -185,6 +183,12 @@ def _create_tables() -> None:
                 db.execute(converted)
             except Exception as e:
                 logger.error(f"Failed to create reports table: {e}")
+
+
+def _create_tables() -> None:
+    """Create report tables."""
+    db = _get_db()
+    create_tables(db)
 
 
 def _get_config(key: str, default: Any = None) -> Any:
@@ -244,7 +248,7 @@ def report_message(
             msg = _messaging.get_message(reporter_id, message_id)
             if msg and msg.attachments:
                 for att in msg.attachments:
-                    if hasattr(att, 'checksum') and att.checksum:
+                    if hasattr(att, "checksum") and att.checksum:
                         # Add to media_hash_reports table if it doesn't exist
                         try:
                             # Use generate_snowflake_id() for the media report too
@@ -262,10 +266,12 @@ def report_message(
                                     now,
                                     reported_user_id,
                                     message_id,
-                                    att.url
-                                )
+                                    att.url,
+                                ),
                             )
-                            logger.info(f"Automatically created media hash report for {att.checksum[:16]} from message {message_id}")
+                            logger.info(
+                                f"Automatically created media hash report for {att.checksum[:16]} from message {message_id}"
+                            )
                         except Exception as e:
                             logger.debug(f"Media report already exists or failed: {e}")
         except Exception as e:

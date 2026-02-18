@@ -17,6 +17,7 @@ _setup_complete = False
 @dataclass
 class ResponseTimeEntry:
     """A single response time measurement."""
+
     id: int
     endpoint: str
     method: str
@@ -31,6 +32,7 @@ class ResponseTimeEntry:
 @dataclass
 class EndpointStats:
     """Aggregated statistics for an endpoint."""
+
     endpoint: str
     method: str
     count: int
@@ -51,15 +53,11 @@ def setup(db: Any) -> None:
     """Initialize the telemetry module."""
     global _db, _setup_complete
     _db = db
-    _create_tables()
     _setup_complete = True
 
 
-def _create_tables() -> None:
+def create_tables(db: Any) -> None:
     """Create telemetry tables."""
-    if _db is None:
-        raise RuntimeError("Telemetry database not set")
-    db: Any = _db
     schema = """
     CREATE TABLE IF NOT EXISTS telemetry_response_times (
         id BIGINT PRIMARY KEY,
@@ -75,9 +73,22 @@ def _create_tables() -> None:
     """
     convert_schema: Optional[Callable[[str], str]] = getattr(db, "convert_schema", None)
     db.execute(convert_schema(schema) if convert_schema else schema)
-    db.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_endpoint ON telemetry_response_times(endpoint)")
-    db.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_timestamp ON telemetry_response_times(timestamp)")
-    db.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_method_endpoint ON telemetry_response_times(method, endpoint)")
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_telemetry_endpoint ON telemetry_response_times(endpoint)"
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_telemetry_timestamp ON telemetry_response_times(timestamp)"
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_telemetry_method_endpoint ON telemetry_response_times(method, endpoint)"
+    )
+
+
+def _create_tables() -> None:
+    """Create telemetry tables."""
+    if _db is None:
+        raise RuntimeError("Telemetry database not set")
+    create_tables(_db)
 
 
 def is_setup() -> bool:
@@ -90,7 +101,9 @@ def _get_db():
     return _db
 
 
-_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9_\-]{16,}$")
 _SEGMENT_PLACEHOLDERS = {
     "channels": "channel_id",
@@ -136,15 +149,19 @@ def _normalize_endpoint(endpoint: str) -> str:
     return "/".join(normalized)
 
 
-def submit_response_times(entries: List[Dict[str, Any]], client_id: Optional[str] = None) -> int:
+def submit_response_times(
+    entries: List[Dict[str, Any]], client_id: Optional[str] = None
+) -> int:
     db = _get_db()
     now = int(time.time() * 1000)
     batch_data = []
-    
+
     try:
         from src.utils.encryption import generate_snowflake_id
+
         gen_id = generate_snowflake_id
     except ImportError:
+
         def gen_id():
             return int(time.time() * 1000000)
 
@@ -157,17 +174,19 @@ def submit_response_times(entries: List[Dict[str, Any]], client_id: Optional[str
             if response_time_ms < 0:
                 continue
             method = str(entry.get("method", "GET")).strip().upper()[:10]
-            batch_data.append((
-                gen_id(),
-                _normalize_endpoint(endpoint)[:255],
-                method or "GET",
-                response_time_ms,
-                int(entry.get("status_code", 0)),
-                int(entry.get("timestamp", now)),
-                client_id,
-                int(entry.get("db_queries", 0)),
-                float(entry.get("db_time_ms", 0.0))
-            ))
+            batch_data.append(
+                (
+                    gen_id(),
+                    _normalize_endpoint(endpoint)[:255],
+                    method or "GET",
+                    response_time_ms,
+                    int(entry.get("status_code", 0)),
+                    int(entry.get("timestamp", now)),
+                    client_id,
+                    int(entry.get("db_queries", 0)),
+                    float(entry.get("db_time_ms", 0.0)),
+                )
+            )
         except Exception:
             continue
 
@@ -177,16 +196,20 @@ def submit_response_times(entries: List[Dict[str, Any]], client_id: Optional[str
         """INSERT INTO telemetry_response_times 
            (id, endpoint, method, response_time_ms, status_code, timestamp, client_id, db_queries, db_time_ms)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        batch_data
+        batch_data,
     )
     return len(batch_data)
 
 
-def get_endpoint_stats(hours: int = 24, endpoint_filter: Optional[str] = None, client_id_filter: Optional[str] = None) -> List[EndpointStats]:
+def get_endpoint_stats(
+    hours: int = 24,
+    endpoint_filter: Optional[str] = None,
+    client_id_filter: Optional[str] = None,
+) -> List[EndpointStats]:
     """Get aggregated statistics using optimized SQL GROUP BY."""
     db = _get_db()
     cutoff = int((time.time() - hours * 3600) * 1000)
-    
+
     query = """
         SELECT 
             endpoint, method, COUNT(*) as count,
@@ -204,9 +227,9 @@ def get_endpoint_stats(hours: int = 24, endpoint_filter: Optional[str] = None, c
     if client_id_filter:
         query += " AND client_id = ?"
         params.append(client_id_filter)
-        
+
     query += " GROUP BY endpoint, method ORDER BY count DESC"
-    
+
     rows = db.fetch_all(query, tuple(params))
     if not rows:
         return []
@@ -242,12 +265,18 @@ def get_endpoint_stats(hours: int = 24, endpoint_filter: Optional[str] = None, c
         agg["avg_q_sum"] += avg_q * count
         agg["avg_dt_sum"] += avg_dt * count
         if min_ms is not None:
-            agg["min_ms"] = min(min_ms, agg["min_ms"]) if agg["min_ms"] is not None else min_ms
+            agg["min_ms"] = (
+                min(min_ms, agg["min_ms"]) if agg["min_ms"] is not None else min_ms
+            )
         if max_ms is not None:
-            agg["max_ms"] = max(max_ms, agg["max_ms"]) if agg["max_ms"] is not None else max_ms
+            agg["max_ms"] = (
+                max(max_ms, agg["max_ms"]) if agg["max_ms"] is not None else max_ms
+            )
         agg["err_count"] += err_count
     stats = []
-    for (endpoint, method), agg in sorted(aggregated.items(), key=lambda item: item[1]["count"], reverse=True):
+    for (endpoint, method), agg in sorted(
+        aggregated.items(), key=lambda item: item[1]["count"], reverse=True
+    ):
         count = agg["count"]
         avg_ms = (agg["avg_ms_sum"] / count) if count else 0.0
         avg_q = (agg["avg_q_sum"] / count) if count else 0.0
@@ -259,26 +288,30 @@ def get_endpoint_stats(hours: int = 24, endpoint_filter: Optional[str] = None, c
         p99 = max_ms
         err_count = agg["err_count"]
         err_rate = (err_count * 100.0 / count) if count else 0.0
-        stats.append(EndpointStats(
-            endpoint=endpoint,
-            method=method,
-            count=count,
-            avg_response_time_ms=avg_ms,
-            min_response_time_ms=min_ms,
-            max_response_time_ms=max_ms,
-            p50_response_time_ms=p50,
-            p95_response_time_ms=p95,
-            p99_response_time_ms=p99,
-            error_rate=err_rate,
-            last_updated=now,
-            avg_queries=avg_q,
-            avg_query_time_ms=avg_dt,
-            error_count=err_count,
-        ))
+        stats.append(
+            EndpointStats(
+                endpoint=endpoint,
+                method=method,
+                count=count,
+                avg_response_time_ms=avg_ms,
+                min_response_time_ms=min_ms,
+                max_response_time_ms=max_ms,
+                p50_response_time_ms=p50,
+                p95_response_time_ms=p95,
+                p99_response_time_ms=p99,
+                error_rate=err_rate,
+                last_updated=now,
+                avg_queries=avg_q,
+                avg_query_time_ms=avg_dt,
+                error_count=err_count,
+            )
+        )
     return stats
 
 
-def get_response_time_history(endpoint: str, method: str = "GET", hours: int = 24, bucket_minutes: int = 5) -> List[Dict[str, Any]]:
+def get_response_time_history(
+    endpoint: str, method: str = "GET", hours: int = 24, bucket_minutes: int = 5
+) -> List[Dict[str, Any]]:
     db = _get_db()
     cutoff = int((time.time() - hours * 3600) * 1000)
     bucket_ms = bucket_minutes * 60 * 1000
@@ -288,12 +321,12 @@ def get_response_time_history(endpoint: str, method: str = "GET", hours: int = 2
         like_pattern = re.sub(r"\{[^/]+\}", "%", normalized_endpoint)
         rows = db.fetch_all(
             "SELECT timestamp, response_time_ms, status_code FROM telemetry_response_times WHERE endpoint LIKE ? AND method = ? AND timestamp > ? ORDER BY timestamp",
-            (like_pattern, method, cutoff)
+            (like_pattern, method, cutoff),
         )
     else:
         rows = db.fetch_all(
             "SELECT timestamp, response_time_ms, status_code FROM telemetry_response_times WHERE endpoint = ? AND method = ? AND timestamp > ? ORDER BY timestamp",
-            (normalized_endpoint, method, cutoff)
+            (normalized_endpoint, method, cutoff),
         )
     if not rows:
         return []
@@ -305,14 +338,14 @@ def get_response_time_history(endpoint: str, method: str = "GET", hours: int = 2
         buckets[bk]["times"].append(r["response_time_ms"])
         if r["status_code"] >= 400:
             buckets[bk]["errors"] += 1
-    
+
     return [
         {
-            "timestamp": k, 
-            "avg_ms": sum(v["times"])/len(v["times"]), 
+            "timestamp": k,
+            "avg_ms": sum(v["times"]) / len(v["times"]),
             "count": len(v["times"]),
-            "error_count": v["errors"]
-        } 
+            "error_count": v["errors"],
+        }
         for k, v in sorted(buckets.items())
     ]
 
@@ -326,7 +359,19 @@ def reset_all_stats() -> int:
 def cleanup_old_data(days: int = 30) -> int:
     db = _get_db()
     cutoff = int((time.time() - days * 86400) * 1000)
-    cursor = db.execute("DELETE FROM telemetry_response_times WHERE timestamp < ?", (cutoff,))
+    cursor = db.execute(
+        "DELETE FROM telemetry_response_times WHERE timestamp < ?", (cutoff,)
+    )
     return getattr(cursor, "rowcount", 0) or 0
 
-__all__ = ["setup", "is_setup", "submit_response_times", "get_endpoint_stats", "get_response_time_history", "reset_all_stats", "cleanup_old_data", "EndpointStats"]
+
+__all__ = [
+    "setup",
+    "is_setup",
+    "submit_response_times",
+    "get_endpoint_stats",
+    "get_response_time_history",
+    "reset_all_stats",
+    "cleanup_old_data",
+    "EndpointStats",
+]

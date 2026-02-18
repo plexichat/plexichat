@@ -20,12 +20,25 @@ import inspect
 import dataclasses
 import fnmatch
 from enum import Enum
-from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Protocol, Tuple, Union, cast
+from typing import (
+    Any,
+    Awaitable,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Protocol,
+    Tuple,
+    Union,
+    cast,
+)
 from functools import wraps
 import os
 
 try:
     import diskcache
+
     _DISKCACHE_AVAILABLE = True
 except ImportError:
     diskcache = None
@@ -40,12 +53,14 @@ from .redis_client import (
     JsonSerializable,
 )
 
+
 class _DiskCacheLike(Protocol):
     def get(self, key: str) -> Any: ...
     def set(self, key: str, value: Any, expire: Optional[int] = None) -> Any: ...
     def pop(self, key: str, default: Any = None) -> Any: ...
     def keys(self, *args, **kwargs) -> Iterable[Any]: ...
     def iterkeys(self, *args, **kwargs) -> Iterable[Any]: ...
+
 
 # Cache statistics
 _cache_stats = {
@@ -77,6 +92,7 @@ else:
     _mem_cache_is_diskcache = False
 _MEM_CACHE_MAX_SIZE = 1000
 
+
 def _mem_cache_get(key: str) -> Optional[Any]:
     if _mem_cache_is_diskcache:
         # DiskCache handles expiry automatically
@@ -91,6 +107,7 @@ def _mem_cache_get(key: str) -> Optional[Any]:
             del mem_cache[key]
         return None
 
+
 def _mem_cache_set(key: str, value: Any, ttl: int):
     if _mem_cache_is_diskcache:
         # DiskCache handles expiry (ttl in seconds)
@@ -100,9 +117,10 @@ def _mem_cache_set(key: str, value: Any, ttl: int):
         if len(mem_cache) >= _MEM_CACHE_MAX_SIZE:
             # Very simple eviction: clear half the cache if it gets too big
             keys = list(mem_cache.keys())
-            for k in keys[:_MEM_CACHE_MAX_SIZE // 2]:
+            for k in keys[: _MEM_CACHE_MAX_SIZE // 2]:
                 del mem_cache[k]
         mem_cache[key] = (time.time() + ttl, value)
+
 
 class CacheError(Exception):
     """Base exception for cache operations."""
@@ -132,18 +150,21 @@ def _generate_cache_key(prefix: str, *args, **kwargs) -> str:
                 # Only use user_id to avoid cache fragmentation by session/expiry
                 uid = getattr(val, "user_id", None) or getattr(val, "id", "unknown")
                 return f"{class_name}:{uid}"
-            
+
             # Check for core managers and repositories by looking at the module or base classes
             # This avoids including instance memory addresses in cache keys
             from src.core.base import BaseManager
+
             try:
                 # We use a broad check for anything that looks like a Repository or Manager
                 # to ensure stable keys for all core components
-                if isinstance(val, BaseManager) or class_name.endswith(("Repository", "Service", "Manager")):
+                if isinstance(val, BaseManager) or class_name.endswith(
+                    ("Repository", "Service", "Manager")
+                ):
                     return f"Core:{class_name}"
             except Exception:
                 pass
-                
+
         if isinstance(val, (dict, list)):
             return f"{type(val).__name__}:{hashlib.md5(json.dumps(val, sort_keys=True).encode()).hexdigest()[:8]}"
         return f"{type(val).__name__}:{val}"
@@ -161,22 +182,22 @@ def _ensure_serializable(obj: Any) -> Any:
     """Ensure an object is JSON serializable, recursively converting complex types."""
     if obj is None or isinstance(obj, (bool, int, float, str)):
         return obj
-    
+
     if isinstance(obj, Enum):
         return obj.value
-        
+
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         data = _ensure_serializable(dataclasses.asdict(obj))
         if isinstance(data, dict):
             data["__type__"] = f"{obj.__class__.__module__}.{obj.__class__.__name__}"
         return data
-        
+
     if isinstance(obj, (list, tuple, set)):
         return [_ensure_serializable(item) for item in obj]
-        
+
     if isinstance(obj, dict):
         return {str(k): _ensure_serializable(v) for k, v in obj.items()}
-    
+
     # Handle Pydantic models (common in API responses)
     model_dump = getattr(obj, "model_dump", None)
     if callable(model_dump):
@@ -190,30 +211,34 @@ def _ensure_serializable(obj: Any) -> Any:
         if isinstance(data, dict):
             data["__type__"] = f"{obj.__class__.__module__}.{obj.__class__.__name__}"  # type: ignore
         return data
-        
+
     # Last resort fallback for custom types that might behave like strings (e.g. SnowflakeID)
     if hasattr(obj, "__str__") and not isinstance(obj, (dict, list, tuple)):
         return str(obj)
-        
+
     return obj
+
 
 # Type registry for reconstruction
 _TYPE_REGISTRY = {}
+
 
 def _get_type_from_name(type_name: str) -> Optional[type]:
     """Dynamically load and cache types for reconstruction."""
     if type_name in _TYPE_REGISTRY:
         return _TYPE_REGISTRY[type_name]
-    
+
     try:
         module_path, class_name = type_name.rsplit(".", 1)
         import importlib
+
         module = importlib.import_module(module_path)
         cls = getattr(module, class_name)
         _TYPE_REGISTRY[type_name] = cls
         return cls
     except Exception:
         return None
+
 
 def _reconstruct_object(data: Any) -> Any:
     """Recursively reconstruct objects from dictionaries using __type__ hints."""
@@ -225,15 +250,15 @@ def _reconstruct_object(data: Any) -> Any:
             data_copy = dict(data)
             type_name = data_copy.pop("__type__")
             cls = _get_type_from_name(type_name)
-            
+
             if not cls:
                 return data_copy
-                
+
             # Reconstruct children of this object
             reconstructed_params = {
                 k: _reconstruct_object(v) for k, v in data_copy.items()
             }
-            
+
             try:
                 if issubclass(cls, Enum):
                     return cls(reconstructed_params)
@@ -244,8 +269,9 @@ def _reconstruct_object(data: Any) -> Any:
         else:
             # Plain dict, but recurse into values
             return {k: _reconstruct_object(v) for k, v in data.items()}
-            
+
     return data
+
 
 def cached(
     ttl: Optional[int] = None,
@@ -322,17 +348,19 @@ def cached(
             cache_ttl = ttl if ttl is not None else 300
             if redis_ready and client is not None:
                 cache_ttl = ttl if ttl is not None else client.ttl_cache
-            
+
             if redis_ready:
                 assert client is not None
                 try:
                     client.set_json(
-                        cache_key, cast(JsonSerializable, serializable_result), ttl=cache_ttl
+                        cache_key,
+                        cast(JsonSerializable, serializable_result),
+                        ttl=cache_ttl,
                     )
                 except RedisOperationError as e:
                     _cache_stats["errors"] += 1
                     logger.warning(f"Failed to cache result for {cache_key}: {e}")
-            
+
             # Always store in memory as well for fastest possible second-hit or as fallback
             _mem_cache_set(cache_key, serializable_result, cache_ttl)
 
@@ -392,17 +420,19 @@ def cached(
             cache_ttl = ttl if ttl is not None else 300
             if redis_ready and client is not None:
                 cache_ttl = ttl if ttl is not None else client.ttl_cache
-            
+
             if redis_ready:
                 assert client is not None
                 try:
                     client.set_json(
-                        cache_key, cast(JsonSerializable, serializable_result), ttl=cache_ttl
+                        cache_key,
+                        cast(JsonSerializable, serializable_result),
+                        ttl=cache_ttl,
                     )
                 except RedisOperationError as e:
                     _cache_stats["errors"] += 1
                     logger.warning(f"Failed to cache result for {cache_key}: {e}")
-            
+
             # Always store in memory as well for fastest possible second-hit or as fallback
             _mem_cache_set(cache_key, serializable_result, cache_ttl)
 
@@ -541,7 +571,7 @@ def invalidate_pattern(pattern: str) -> int:
         mem_keys = []
         for k in list(cast(_DiskCacheLike, _mem_cache).iterkeys()):
             # Handle potential bytes keys from diskcache
-            k_str = k.decode('utf-8') if isinstance(k, bytes) else str(k)
+            k_str = k.decode("utf-8") if isinstance(k, bytes) else str(k)
             if fnmatch.fnmatch(k_str, pattern):
                 mem_keys.append(k)
     else:
@@ -550,7 +580,7 @@ def invalidate_pattern(pattern: str) -> int:
             for k in list(cast(Dict[str, Tuple[float, Any]], _mem_cache).keys())
             if fnmatch.fnmatch(str(k), pattern)
         ]
-        
+
     for k in mem_keys:
         # pop works for both dict and DiskCache
         _mem_cache.pop(k, None)
@@ -566,7 +596,9 @@ def invalidate_pattern(pattern: str) -> int:
         if keys:
             # RedisClient.delete(*keys) expects keys WITHOUT prefix (it adds it itself)
             count = client.delete(*keys)
-            logger.debug(f"Cache INVALIDATE pattern '{pattern}': {count} keys from Redis, {len(mem_keys)} from Memory")
+            logger.debug(
+                f"Cache INVALIDATE pattern '{pattern}': {count} keys from Redis, {len(mem_keys)} from Memory"
+            )
             return count + len(mem_keys)
         return len(mem_keys)
     except RedisOperationError as e:
