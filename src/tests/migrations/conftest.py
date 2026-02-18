@@ -14,7 +14,7 @@ import pytest
 def temp_migrations_dir():
     """Create a temporary migrations directory."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        migrations_dir = Path(tmpdir) / 'migrations'
+        migrations_dir = Path(tmpdir) / "migrations"
         migrations_dir.mkdir(parents=True, exist_ok=True)
         yield migrations_dir
 
@@ -22,8 +22,8 @@ def temp_migrations_dir():
 @pytest.fixture
 def sample_migration(temp_migrations_dir):
     """Create a sample migration file for testing."""
-    migration_file = temp_migrations_dir / '001_test_migration.py'
-    
+    migration_file = temp_migrations_dir / "001_test_migration.py"
+
     content = '''
 def up(db):
     """Test migration up."""
@@ -38,7 +38,7 @@ def down(db):
     """Test migration down."""
     db.execute("DROP TABLE IF EXISTS test_table")
 '''
-    
+
     migration_file.write_text(content)
     return migration_file
 
@@ -46,8 +46,8 @@ def down(db):
 @pytest.fixture
 def migration_with_data(temp_migrations_dir):
     """Create a migration that inserts test data."""
-    migration_file = temp_migrations_dir / '002_add_data.py'
-    
+    migration_file = temp_migrations_dir / "002_add_data.py"
+
     content = '''
 def up(db):
     """Add test data."""
@@ -59,7 +59,7 @@ def down(db):
     """Remove test data."""
     db.execute("DELETE FROM test_table WHERE name = ?", ("test_value",))
 '''
-    
+
     migration_file.write_text(content)
     return migration_file
 
@@ -67,14 +67,14 @@ def down(db):
 @pytest.fixture
 def migration_without_down(temp_migrations_dir):
     """Create a migration without down() function."""
-    migration_file = temp_migrations_dir / '003_no_rollback.py'
-    
+    migration_file = temp_migrations_dir / "003_no_rollback.py"
+
     content = '''
 def up(db):
     """Migration without rollback."""
     db.execute("CREATE INDEX idx_test ON test_table(name)")
 '''
-    
+
     migration_file.write_text(content)
     return migration_file
 
@@ -82,8 +82,8 @@ def up(db):
 @pytest.fixture
 def migration_with_error(temp_migrations_dir):
     """Create a migration that will fail."""
-    migration_file = temp_migrations_dir / '004_error.py'
-    
+    migration_file = temp_migrations_dir / "004_error.py"
+
     content = '''
 def up(db):
     """This migration will fail."""
@@ -93,6 +93,6 @@ def down(db):
     """Rollback."""
     db.execute("DROP TABLE error_table")
 '''
-    
+
     migration_file.write_text(content)
     return migration_file
