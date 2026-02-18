@@ -8,7 +8,7 @@ from src.core.auth.exceptions import (
     UserExistsError,
     WeakPasswordError,
     InvalidEmailError,
-    InvalidUsernameError
+    InvalidUsernameError,
 )
 
 
