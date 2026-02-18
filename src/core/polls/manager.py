@@ -30,7 +30,6 @@ from .exceptions import (
     PermissionDeniedError,
     MessageNotFoundError,
 )
-from .schema import create_tables
 
 
 class PollManager(BaseManager):
@@ -49,7 +48,6 @@ class PollManager(BaseManager):
         self._messaging = messaging_module
         self._config = self._load_config()
 
-        create_tables(db)
 
         logger.info("Poll module initialized")
 

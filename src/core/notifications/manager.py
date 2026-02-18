@@ -28,7 +28,6 @@ from .models import (
 from .exceptions import (
     NotificationNotFoundError,
 )
-from .schema import create_tables
 from .parser import parse_mentions as _parse_mentions
 from src.core.database import cache_get, cache_set, cache_delete, redis_available
 
@@ -63,7 +62,6 @@ class NotificationManager(BaseManager):
         self._presence = presence_module
         self._config = self._load_config()
 
-        create_tables(db)
 
         logger.info("Notification module initialized")
 
@@ -507,10 +505,14 @@ class NotificationManager(BaseManager):
                 # Check for either specific channel focus or general conversation focus
                 focused_id = presence.current_channel_id
                 if focused_id and channel_id and int(focused_id) == int(channel_id):
-                    logger.debug(f"Suppressing notification for user {user_id} - already focused on channel {channel_id}")
+                    logger.debug(
+                        f"Suppressing notification for user {user_id} - already focused on channel {channel_id}"
+                    )
                     return False
             except Exception as e:
-                logger.debug(f"Failed to check user focus during notification logic: {e}")
+                logger.debug(
+                    f"Failed to check user focus during notification logic: {e}"
+                )
 
         if channel_id:
             override = self.get_channel_override(user_id, channel_id)
@@ -579,11 +581,11 @@ class NotificationManager(BaseManager):
         if notification:
             # Import here to avoid circular imports in some environments
             from src.api.routes.notifications import _notif_to_response
-            
+
             self._dispatch_notification_event(
                 user_id,
                 EventType.NOTIFICATION_CREATE,
-                _notif_to_response(notification).model_dump()
+                _notif_to_response(notification).model_dump(),
             )
 
         return notification
@@ -645,7 +647,7 @@ class NotificationManager(BaseManager):
         self._dispatch_notification_event(
             user_id,
             EventType.NOTIFICATION_UPDATE,
-            {"id": str(notification_id), "read": True}
+            {"id": str(notification_id), "read": True},
         )
 
         return True
@@ -668,9 +670,7 @@ class NotificationManager(BaseManager):
         )
 
         self._dispatch_notification_event(
-            user_id,
-            EventType.NOTIFICATION_UPDATE,
-            {"all_read": True}
+            user_id, EventType.NOTIFICATION_UPDATE, {"all_read": True}
         )
 
         return count
