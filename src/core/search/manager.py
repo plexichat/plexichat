@@ -36,7 +36,7 @@ from .exceptions import (
     SearchRateLimitError,
 )
 from .query import QueryParser, FilterProcessor, RankingEngine
-from .indexer import SQLiteFTS5Indexer, ElasticsearchIndexer, MeilisearchIndexer
+from .indexer import SQLiteFTS5Indexer, ElasticsearchIndexer, MeilisearchIndexer, PostgresIndexer
 from .indexer.base import IndexerConfig
 from .discovery import DiscoveryManager
 from src.core.database import cache_get, cache_set, redis_available
@@ -129,6 +129,13 @@ class SearchManager(BaseManager):
             write_time_indexing=self._config.get("write_time_indexing", True),
             result_limit=self._config.get("result_limit", 100),
         )
+
+        # Detect database type to avoid using SQLite-specific indexer on Postgres
+        db_type = getattr(self._db, "type", "sqlite")
+
+        if db_type == "postgres" and backend == "sqlite_fts5":
+            logger.info("Postgres database detected, using Postgres search indexer")
+            return PostgresIndexer(self._db, indexer_config)
 
         if backend == "elasticsearch":
             es_config = self._config.get("elasticsearch", {})

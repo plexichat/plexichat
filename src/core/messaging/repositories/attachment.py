@@ -56,7 +56,11 @@ class AttachmentRepository(BaseRepository[Attachment]):
         if not attachments:
             return
 
-        self.begin_transaction()
+        # Only start transaction if not already in one
+        in_trans = getattr(self._db, "in_transaction", False)
+        if not in_trans:
+            self.begin_transaction()
+
         try:
             for att in attachments:
                 self._execute(
@@ -77,10 +81,11 @@ class AttachmentRepository(BaseRepository[Attachment]):
                     ),
                     auto_commit=False,
                 )
-            if auto_commit:
+            if auto_commit and not in_trans:
                 self.commit()
         except Exception:
-            self.rollback()
+            if not in_trans:
+                self.rollback()
             raise
 
     def get_by_id(self, att_id: SnowflakeID) -> Optional[Dict[str, Any]]:
