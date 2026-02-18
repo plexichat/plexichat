@@ -164,11 +164,11 @@ def create_tables(db):
     for statement in statements:
         if statement:
             try:
-                if (
-                    db_type == "postgres"
-                    and statement.upper().startswith("CREATE VIRTUAL TABLE")
-                ):
+                # Robustly skip SQLite-specific VIRTUAL TABLE statements on Postgres
+                if db_type == "postgres" and "VIRTUAL" in statement.upper():
+                    logger.debug(f"Skipping SQLite-specific statement on Postgres: {statement[:50]}...")
                     continue
+
                 converted = (
                     db.convert_schema(statement)
                     if hasattr(db, "convert_schema")
