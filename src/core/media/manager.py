@@ -1424,10 +1424,10 @@ class MediaManager(BaseManager):
             SELECT m.conversation_id 
             FROM msg_messages m
             JOIN msg_attachments a ON m.id = a.message_id
-            WHERE (a.url LIKE '%' || ? OR a.metadata LIKE '%' || ?) AND a.deleted = 0
+            WHERE (a.filename = ? OR a.url LIKE '%' || ? OR a.metadata LIKE '%' || ?) AND a.deleted = 0
         """
-        # We search for both filename in URL and file_id in metadata JSON string
-        rows = self._db.fetch_all(query, (filename, str(file_id)))
+        # We search for filename, filename in URL, and file_id in metadata JSON string
+        rows = self._db.fetch_all(query, (filename, filename, str(file_id)))
         
         if rows and self._messaging:
             for r in rows:

@@ -573,6 +573,10 @@ async def send_channel_message(
                 for a in body.attachments
             ]
 
+        content_value = body.content or ""
+        if (not content_value or not content_value.strip()) and (attachments or body.poll):
+            content_value = "\u200b"
+
         msg = None
         server_id = None  # Track server_id for broadcast optimization
         conversation_id = None  # Track conversation_id to avoid redundant lookups
@@ -591,7 +595,7 @@ async def send_channel_message(
                         msg = messaging.send_message(
                             user_id=current_user.user_id,
                             conversation_id=conversation_id,
-                            content=body.content or "",
+                            content=content_value,
                             reply_to_id=reply_to,
                             attachments=attachments,
                             embeds=body.embeds,
@@ -607,7 +611,7 @@ async def send_channel_message(
                                 msg = messaging.send_message(
                                     user_id=current_user.user_id,
                                     conversation_id=cid,
-                                    content=body.content or "",
+                                    content=content_value,
                                     reply_to_id=reply_to,
                                     attachments=attachments,
                                     embeds=body.embeds,
@@ -647,7 +651,7 @@ async def send_channel_message(
                 msg = messaging.send_message(
                     user_id=current_user.user_id,
                     conversation_id=cid,
-                    content=body.content or "",
+                    content=content_value,
                     reply_to_id=reply_to,
                     attachments=attachments,
                     embeds=body.embeds,
