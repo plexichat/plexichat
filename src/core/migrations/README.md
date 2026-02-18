@@ -106,6 +106,9 @@ from src.core.migrations import run_migrations
 run_migrations(self.db)
 ```
 
+The baseline schema is created by migration `000_initial_schema`. Module setup no
+longer creates tables, so run migrations before using managers or tests.
+
 ### Manual
 
 ```python

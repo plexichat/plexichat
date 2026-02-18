@@ -2,6 +2,7 @@
 Add applied_roles column to automod_rules table.
 """
 
+
 def up(db):
     """Apply the migration."""
     try:
@@ -9,7 +10,9 @@ def up(db):
             rows = db.fetch_all("PRAGMA table_info(automod_rules)")
             columns = [row["name"] for row in rows]
             if "applied_roles" not in columns:
-                db.execute("ALTER TABLE automod_rules ADD COLUMN applied_roles TEXT DEFAULT '[]'")
+                db.execute(
+                    "ALTER TABLE automod_rules ADD COLUMN applied_roles TEXT DEFAULT '[]'"
+                )
         else:
             # Postgres
             row = db.fetch_one("""
@@ -18,10 +21,13 @@ def up(db):
                 WHERE table_name='automod_rules' AND column_name='applied_roles'
             """)
             if not row:
-                db.execute("ALTER TABLE automod_rules ADD COLUMN applied_roles TEXT DEFAULT '[]'")
+                db.execute(
+                    "ALTER TABLE automod_rules ADD COLUMN applied_roles TEXT DEFAULT '[]'"
+                )
     except Exception:
         # Ignore errors if column already exists or other issues
         pass
+
 
 def down(db):
     """Rollback the migration."""

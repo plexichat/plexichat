@@ -3,9 +3,10 @@ Harden admin security by ensuring admin tables exist and have correct schema.
 Transition admin schema management to the migration system.
 """
 
+
 def up(db):
     """Apply the migration."""
-    
+
     # 1. Create admin_users table
     if db.type == "sqlite":
         db.execute("""
@@ -94,8 +95,13 @@ def up(db):
         """)
 
     # 4. Create indexes
-    db.execute("CREATE INDEX IF NOT EXISTS idx_admin_notes_ticket ON admin_notes(ticket_id)")
-    db.execute("CREATE INDEX IF NOT EXISTS idx_admin_sessions_token ON admin_sessions(token)")
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_admin_notes_ticket ON admin_notes(ticket_id)"
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_admin_sessions_token ON admin_sessions(token)"
+    )
+
 
 def down(db):
     """Rollback the migration."""

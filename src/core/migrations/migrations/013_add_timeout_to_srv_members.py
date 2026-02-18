@@ -2,6 +2,7 @@
 Add timeout columns to srv_members table.
 """
 
+
 def up(db):
     """Apply the migration."""
     try:
@@ -21,7 +22,7 @@ def up(db):
             """)
             if not row:
                 db.execute("ALTER TABLE srv_members ADD COLUMN timeout_until BIGINT")
-            
+
             row = db.fetch_one("""
                 SELECT column_name 
                 FROM information_schema.columns 
@@ -31,6 +32,7 @@ def up(db):
                 db.execute("ALTER TABLE srv_members ADD COLUMN timeout_reason TEXT")
     except Exception:
         pass
+
 
 def down(db):
     """Rollback the migration."""

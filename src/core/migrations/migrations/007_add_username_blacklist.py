@@ -2,6 +2,7 @@
 Add username blacklist table and user force_change flag.
 """
 
+
 def up(db):
     """Apply the migration."""
     # 1. Add force_username_change column to users table
@@ -10,7 +11,9 @@ def up(db):
             rows = db.fetch_all("PRAGMA table_info(auth_users)")
             columns = [row["name"] for row in rows]
             if "force_username_change" not in columns:
-                db.execute("ALTER TABLE auth_users ADD COLUMN force_username_change BOOLEAN DEFAULT 0")
+                db.execute(
+                    "ALTER TABLE auth_users ADD COLUMN force_username_change BOOLEAN DEFAULT 0"
+                )
         else:
             # Postgres
             row = db.fetch_one("""
@@ -19,7 +22,9 @@ def up(db):
                 WHERE table_name='auth_users' AND column_name='force_username_change'
             """)
             if not row:
-                db.execute("ALTER TABLE auth_users ADD COLUMN force_username_change BOOLEAN DEFAULT FALSE")
+                db.execute(
+                    "ALTER TABLE auth_users ADD COLUMN force_username_change BOOLEAN DEFAULT FALSE"
+                )
     except Exception as e:
         print(f"Warning: Could not add column force_username_change: {e}")
 
@@ -67,24 +72,27 @@ def up(db):
                 ("abuse", False, "Reserved role"),
                 ("owner", False, "Reserved role"),
             ]
-            
+
             for pattern, is_regex, reason in defaults:
                 try:
                     db.execute(
                         "INSERT INTO username_blacklist (pattern, is_regex, reason) VALUES (?, ?, ?)",
-                        (pattern, is_regex, reason)
+                        (pattern, is_regex, reason),
                     )
                 except Exception:
                     pass
     except Exception as e:
         print(f"Warning: Could not seed blacklist: {e}")
 
+
 def down(db):
     """Rollback the migration."""
     db.execute("DROP TABLE IF EXISTS username_blacklist")
-    
+
     try:
         if db.type != "sqlite":
-            db.execute("ALTER TABLE auth_users DROP COLUMN IF EXISTS force_username_change")
+            db.execute(
+                "ALTER TABLE auth_users DROP COLUMN IF EXISTS force_username_change"
+            )
     except Exception:
         pass

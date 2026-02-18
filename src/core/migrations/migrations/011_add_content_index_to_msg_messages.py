@@ -2,6 +2,7 @@
 Add content_index column to msg_messages table for encrypted search.
 """
 
+
 def up(db):
     """Apply the migration."""
     # 1. Add column if it doesn't exist
@@ -22,16 +23,21 @@ def up(db):
 
     # 2. Add index
     if db.type == "sqlite":
-        db.execute("CREATE INDEX IF NOT EXISTS idx_msg_messages_content_index ON msg_messages(content_index)")
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_msg_messages_content_index ON msg_messages(content_index)"
+        )
     else:
-        # Postgres index creation is already idempotent with IF NOT EXISTS in our dialect usually, 
+        # Postgres index creation is already idempotent with IF NOT EXISTS in our dialect usually,
         # but let's be explicit
-        db.execute("CREATE INDEX IF NOT EXISTS idx_msg_messages_content_index ON msg_messages(content_index)")
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_msg_messages_content_index ON msg_messages(content_index)"
+        )
+
 
 def down(db):
     """Rollback the migration."""
     if db.type == "sqlite":
-        # SQLite doesn't support DROP COLUMN easily in older versions, 
+        # SQLite doesn't support DROP COLUMN easily in older versions,
         # and usually we don't rollback columns in production anyway
         pass
     else:

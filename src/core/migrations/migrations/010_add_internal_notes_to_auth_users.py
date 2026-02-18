@@ -2,6 +2,7 @@
 Add internal_notes column to auth_users table.
 """
 
+
 def up(db):
     """Apply the migration."""
     if db.type == "sqlite":
@@ -18,6 +19,7 @@ def up(db):
         """)
         if not row:
             db.execute("ALTER TABLE auth_users ADD COLUMN internal_notes TEXT")
+
 
 def down(db):
     """Rollback the migration."""
