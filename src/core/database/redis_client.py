@@ -29,6 +29,7 @@ JsonSerializable = Union[dict, list, str, int, float, bool, None, object]
 
 class EnhancedJSONEncoder(json.JSONEncoder):
     """JSON encoder that handles dataclasses, enums, and sets."""
+
     def default(self, o):
         if dataclasses.is_dataclass(o):
             return dataclasses.asdict(o)  # type: ignore
@@ -115,7 +116,7 @@ class RedisClient:
         self.ttl_session = ttl_config.get("session", 1800)
         self.ttl_presence = ttl_config.get("presence", 300)
         self.ttl_cache = ttl_config.get("cache", 60)
-        
+
         # Worker identity (set by main.py)
         self.worker_id = "unknown"
 

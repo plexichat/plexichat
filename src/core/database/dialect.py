@@ -2,11 +2,12 @@ import re
 import threading
 
 # Regex pattern to match ? placeholders (not inside single or double quotes)
-_PLACEHOLDER_PATTERN = re.compile(r'''('(?:''|[^'])*'|"(?:""|[^"])*")|(\?)''')
+_PLACEHOLDER_PATTERN = re.compile(r"""('(?:''|[^'])*'|"(?:""|[^"])*")|(\?)""")
 
 # Global cache for converted queries to avoid redundant regex processing
 _QUERY_CONVERSION_CACHE = {}
 _CACHE_LOCK = threading.Lock()
+
 
 def convert_placeholders(query: str, db_type: str) -> str:
     """
@@ -24,11 +25,18 @@ def convert_placeholders(query: str, db_type: str) -> str:
 
     # 1. Convert abs(random()) to floor(random() * ...) for PostgreSQL
     if "abs(random())" in query.lower():
-        query = re.sub(r"abs\(random\(\)\)", "floor(random() * 9223372036854775807)::bigint", query, flags=re.IGNORECASE)
+        query = re.sub(
+            r"abs\(random\(\)\)",
+            "floor(random() * 9223372036854775807)::bigint",
+            query,
+            flags=re.IGNORECASE,
+        )
 
     # 2. Convert INSERT OR IGNORE to INSERT ... ON CONFLICT DO NOTHING
     if "INSERT OR IGNORE" in query.upper():
-        query = re.sub(r"INSERT OR IGNORE INTO", "INSERT INTO", query, flags=re.IGNORECASE)
+        query = re.sub(
+            r"INSERT OR IGNORE INTO", "INSERT INTO", query, flags=re.IGNORECASE
+        )
         # Only append if not already present and it's a simple INSERT statement
         if "ON CONFLICT" not in query.upper() and "RETURNING" not in query.upper():
             query = query.strip()
@@ -48,15 +56,18 @@ def convert_placeholders(query: str, db_type: str) -> str:
             return "%%"
 
     # Pattern to match quoted strings, ? placeholders, OR literal %
-    pattern = re.compile(r'''('(?:''|[^'])*'|"(?:""|[^"])*")|(\?) | (%)'''.replace(" ", ""), re.VERBOSE)
+    pattern = re.compile(
+        r"""('(?:''|[^'])*'|"(?:""|[^"])*")|(\?) | (%)""".replace(" ", ""), re.VERBOSE
+    )
     converted_query = pattern.sub(replace, query)
-    
+
     # Store in cache (limit size to prevent memory growth)
     with _CACHE_LOCK:
         if len(_QUERY_CONVERSION_CACHE) < 1000:
             _QUERY_CONVERSION_CACHE[cache_key] = converted_query
-        
+
     return converted_query
+
 
 def sanitize_identifier(identifier: str, db_type: str) -> str:
     """
@@ -65,7 +76,7 @@ def sanitize_identifier(identifier: str, db_type: str) -> str:
     """
     if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", identifier):
         raise ValueError(f"Invalid database identifier: {identifier}")
-        
+
     if db_type == "postgres":
         return f'"{identifier}"'
     else:

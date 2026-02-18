@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Optional, Dict, List, Tuple
 
+
 class BaseEngine(ABC):
     """Abstract base class for database engines."""
 
@@ -18,7 +19,12 @@ class BaseEngine(ABC):
         pass
 
     @abstractmethod
-    def close_connection(self, conn: Any, pool: Optional[Any] = None, close_params: Optional[Dict[str, Any]] = None) -> None:
+    def close_connection(
+        self,
+        conn: Any,
+        pool: Optional[Any] = None,
+        close_params: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """Close or return a connection to the pool."""
         pass
 
@@ -26,13 +32,19 @@ class BaseEngine(ABC):
     def get_table_exists_query(self, table_name: str) -> Tuple[str, Tuple]:
         """Get the query to check if a table exists."""
         pass
-    
+
     @abstractmethod
     def get_insert_or_ignore_query(self, table: str, columns: List[str]) -> str:
         """Get engine-specific INSERT OR IGNORE query."""
         pass
 
     @abstractmethod
-    def get_upsert_query(self, table: str, columns: List[str], conflict_columns: List[str], update_columns: List[str]) -> str:
+    def get_upsert_query(
+        self,
+        table: str,
+        columns: List[str],
+        conflict_columns: List[str],
+        update_columns: List[str],
+    ) -> str:
         """Get engine-specific UPSERT query."""
         pass
