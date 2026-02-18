@@ -176,7 +176,9 @@ class TestTypingExpiration:
         indicator = presence.start_typing(user1.id, channel_id)
         timeout = indicator.expires_at - indicator.started_at
 
-        assert timeout == 6000  # 6 seconds in milliseconds (Timeout hierarchy: Client 3s < Server 6s < UI 7s)
+        assert (
+            timeout == 6000
+        )  # 6 seconds in milliseconds (Timeout hierarchy: Client 3s < Server 6s < UI 7s)
 
 
 class TestTypingMultipleUsers:

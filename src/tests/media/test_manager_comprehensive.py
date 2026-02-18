@@ -287,9 +287,7 @@ class TestMediaThumbnails:
             {"max_thumbnail_requests_per_minute": 1},
         )
 
-        media_manager.upload_file(
-            1, _create_minimal_png(), "test.png", "image/png"
-        )
+        media_manager.upload_file(1, _create_minimal_png(), "test.png", "image/png")
 
         media_manager._check_thumbnail_rate_limit(1)
         media_manager._update_thumbnail_rate_limit(1)
