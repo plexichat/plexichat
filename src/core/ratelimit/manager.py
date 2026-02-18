@@ -296,9 +296,7 @@ class RateLimitManager:
 
         state["timestamps"] = timestamps
         remaining = max(0, config.effective_limit - len(timestamps))
-        reset_after = (
-            timestamps[0] - cutoff if timestamps else config.window_seconds
-        )
+        reset_after = timestamps[0] - cutoff if timestamps else config.window_seconds
         return allowed, remaining, reset_after
 
     def _legacy_leaky_bucket(self, state, config, cost, unix_now):

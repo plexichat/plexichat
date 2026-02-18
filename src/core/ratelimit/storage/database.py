@@ -80,8 +80,15 @@ class DatabaseStorage(RateLimitStorage):
         self._db.upsert(
             "ratelimit_buckets",
             ["key", "bucket_type", "tokens", "last_update", "expires_at", "data"],
-            (key, bucket_type, float(tokens), float(last_update), float(expires_at), data_json),
-            conflict_columns=["key"]
+            (
+                key,
+                bucket_type,
+                float(tokens),
+                float(last_update),
+                float(expires_at),
+                data_json,
+            ),
+            conflict_columns=["key"],
         )
 
     def delete_bucket(self, key: str) -> bool:
@@ -169,7 +176,7 @@ class DatabaseStorage(RateLimitStorage):
         self._db.insert_or_ignore(
             "ratelimit_buckets",
             ["key", "tokens", "last_update", "expires_at"],
-            (key, float(capacity), float(now), float(expires_at))
+            (key, float(capacity), float(now), float(expires_at)),
         )
 
         self._db.begin_transaction()

@@ -154,7 +154,7 @@ class RateLimitMiddlewareASGI:
             return
 
         request = Request(scope, receive)
-        
+
         if self._get_user_info:
             user_info = self._get_user_info(request)
         else:
@@ -170,18 +170,19 @@ class RateLimitMiddlewareASGI:
 
             if hasattr(request.state, "user") and request.state.user:
                 user = request.state.user
-                user_info["user_id"] = getattr(user, "user_id", None) or getattr(user, "id", None)
+                user_info["user_id"] = getattr(user, "user_id", None) or getattr(
+                    user, "id", None
+                )
                 user_info["is_bot"] = getattr(user, "token_type", "") == "bot"
                 permissions = getattr(user, "permissions", {})
-                user_info["is_admin"] = (
-                    permissions.get("admin.*", False) or 
-                    permissions.get("*", False)
-                )
+                user_info["is_admin"] = permissions.get(
+                    "admin.*", False
+                ) or permissions.get("*", False)
 
             # Bypass check
             bypass_secret = config.get("rate_limiting.bypass_secret")
             bypass_header = request.headers.get("X-RateLimit-Bypass")
-            
+
             if bypass_secret and bypass_header == bypass_secret:
                 user_info["is_internal"] = True
             elif getattr(request.state, "is_selftest", False):
@@ -229,6 +230,7 @@ class RateLimitMiddlewareASGI:
             await send(message)
 
         await self.app(scope, receive, send_wrapper)
+
 
 # Alias for backward compatibility with tests
 RateLimitMiddleware = RateLimitMiddlewareASGI
