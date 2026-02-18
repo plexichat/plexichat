@@ -32,7 +32,6 @@ from .exceptions import (
     PermissionDeniedError,
     PreviewRateLimitError,
 )
-from .schema import create_tables
 from .validator import (
     validate_embed_data,
     validate_url,
@@ -84,7 +83,6 @@ class EmbedManager(BaseManager):
         self._url_validator = URLValidator()
         self._link_preview_service = LinkPreviewService(db, media_proxy)
 
-        create_tables(db)
 
         logger.info("Embed module initialized")
 

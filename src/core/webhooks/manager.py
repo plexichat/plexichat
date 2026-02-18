@@ -32,7 +32,6 @@ from .exceptions import (
     InvalidContentError,
     EmbedLimitError,
 )
-from .schema import create_tables
 
 
 WEBHOOK_NAME_MAX_LENGTH = 80
@@ -68,7 +67,6 @@ class WebhookManager(BaseManager):
         self._embeds = embeds_module
         self._config = self._load_config()
 
-        create_tables(db)
 
         logger.info("Webhook module initialized")
 
@@ -137,8 +135,8 @@ class WebhookManager(BaseManager):
     def _validate_avatar_url(self, url: Optional[str]) -> Optional[str]:
         """
         Validate avatar URL and prevent SSRF.
-        
-        Checks scheme and ensures the URL does not point to restricted 
+
+        Checks scheme and ensures the URL does not point to restricted
         internal resources or private IP ranges.
         """
         if not url:
@@ -166,6 +164,7 @@ class WebhookManager(BaseManager):
         # SSRF Protection: Validate against internal network access
         try:
             from src.utils.security import URLValidator
+
             validator = URLValidator()
             # This will raise ValueError if URL is unsafe (local/private IP)
             validator.validate_url_for_request(url)

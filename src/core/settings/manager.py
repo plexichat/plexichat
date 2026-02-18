@@ -8,7 +8,6 @@ import utils.logger as logger
 
 from src.core.base import BaseManager, SnowflakeID
 from .models import UserSetting, SettingsConfig
-from .schema import create_tables
 from .exceptions import (
     SettingsLimitExceeded,
     SettingsKeyTooLong,
@@ -33,8 +32,6 @@ class SettingsManager(BaseManager):
         super().__init__(db)
         self.config = config or SettingsConfig()
 
-        # Create tables on init
-        create_tables(db)
         logger.info(
             f"Settings manager initialized (max {self.config.max_settings_per_user} settings/user)"
         )

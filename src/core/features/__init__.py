@@ -71,7 +71,6 @@ from typing import Optional, List, Any
 import utils.logger as logger
 import utils.config as config
 
-from .schema import create_tables
 from .models import (
     UserFeatures,
     TierLimits,
@@ -94,7 +93,6 @@ def setup(db: Any) -> None:
     global _db, _setup_complete
 
     _db = db
-    create_tables(db)
     _setup_complete = True
     logger.info("User features module initialized")
 
@@ -499,6 +497,7 @@ def add_badge(user_id: int, admin_id: int, badge: str) -> List[str]:
         # Invalidate profile cache
         try:
             from src.core.database import cache_delete, redis_available
+
             if redis_available():
                 cache_delete(f"user_profile:{user_id}")
         except Exception:
@@ -539,6 +538,7 @@ def remove_badge(user_id: int, admin_id: int, badge: str) -> List[str]:
         # Invalidate profile cache
         try:
             from src.core.database import cache_delete, redis_available
+
             if redis_available():
                 cache_delete(f"user_profile:{user_id}")
         except Exception:

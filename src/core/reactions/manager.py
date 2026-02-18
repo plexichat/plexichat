@@ -33,7 +33,6 @@ from .exceptions import (
     EmojiFileSizeError,
     InvalidEmojiFileError,
 )
-from .schema import create_tables
 
 
 CUSTOM_EMOJI_PATTERN = re.compile(r"^<a?:([a-zA-Z0-9_]+):(\d+)>$")
@@ -69,7 +68,6 @@ class ReactionManager(BaseManager):
         self._media = media_module
         self._config = self._load_config()
 
-        create_tables(db)
         self._migrate_emoji_table()
 
         logger.info("Reaction module initialized")
