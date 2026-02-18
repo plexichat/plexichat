@@ -71,7 +71,9 @@ class AIModerationRule(BaseRule):
         if self._score_threshold is not None:
             details["score_threshold"] = self._score_threshold
 
-        matched_content = ", ".join(matched_categories) if matched_categories else "flagged"
+        matched_content = (
+            ", ".join(matched_categories) if matched_categories else "flagged"
+        )
 
         return self._create_match(
             matched=True,

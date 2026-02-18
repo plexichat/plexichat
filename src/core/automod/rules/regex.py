@@ -20,7 +20,9 @@ try:
     HAS_RE2 = True
 except Exception:
     HAS_RE2 = False
-    logger.warning("google-re2 not installed, falling back to standard 're' module. BEWARE OF REDOS.")
+    logger.warning(
+        "google-re2 not installed, falling back to standard 're' module. BEWARE OF REDOS."
+    )
 
 
 class RegexRule(BaseRule):
@@ -42,13 +44,13 @@ class RegexRule(BaseRule):
                 # Get settings with defaults
                 case_sensitive = pattern_config.get("case_sensitive", False)
                 multiline = pattern_config.get("multiline", False)
-                
+
                 if HAS_RE2 and re2_module:
                     # re2 uses an Options object for flags
                     options = re2_module.Options()
                     options.case_sensitive = case_sensitive
                     options.one_line = not multiline
-                        
+
                     compiled = re2_module.compile(pattern_str, options=options)
                 else:
                     flags = 0
@@ -63,7 +65,9 @@ class RegexRule(BaseRule):
                 )
                 name = pattern_config.get("name", pattern_str[:30])
                 self._compiled_patterns.append((compiled, severity, name, pattern_str))
-                logger.debug(f"Compiled automod regex '{pattern_str}' (case_sensitive={case_sensitive}, multiline={multiline})")
+                logger.debug(
+                    f"Compiled automod regex '{pattern_str}' (case_sensitive={case_sensitive}, multiline={multiline})"
+                )
             except Exception as e:
                 logger.error(f"Failed to compile automod regex '{pattern_str}': {e}")
 
@@ -86,7 +90,9 @@ class RegexRule(BaseRule):
             try:
                 match = compiled.search(content)
                 if match:
-                    logger.debug(f"Regex rule '{self.rule.name}' matched pattern '{pattern_str}' in content from user {user_id}")
+                    logger.debug(
+                        f"Regex rule '{self.rule.name}' matched pattern '{pattern_str}' in content from user {user_id}"
+                    )
                     matches.append(
                         {
                             "name": name,
@@ -165,8 +171,10 @@ class RegexRule(BaseRule):
                         if len(pattern_str) > 500:
                             issues.append(f"pattern {i} exceeds maximum length")
                         # Basic check for nested quantifiers which are dangerous in 're'
-                        if re.search(r'\(.*\)[*+?]', pattern_str):
-                             issues.append(f"pattern {i} contains potential ReDoS risk (nested group quantifier). Install google-re2 for better protection.")
+                        if re.search(r"\(.*\)[*+?]", pattern_str):
+                            issues.append(
+                                f"pattern {i} contains potential ReDoS risk (nested group quantifier). Install google-re2 for better protection."
+                            )
 
                 except Exception as e:
                     issues.append(f"pattern {i} invalid regex: {e}")

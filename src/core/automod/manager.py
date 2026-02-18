@@ -32,7 +32,6 @@ from .exceptions import (
     RuleValidationError,
     ExemptionError,
 )
-from .schema import create_tables
 from .rules import (
     KeywordRule,
     RegexRule,
@@ -98,7 +97,6 @@ class AutoModManager(BaseManager):
         self._config = self._load_config()
         self._ai_adapters = {}
 
-        create_tables(db)
         self._init_ai_adapters()
 
         logger.info("AutoMod module initialized")
