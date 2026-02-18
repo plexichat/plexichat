@@ -5,7 +5,7 @@ Handles user status, activities, typing indicators, and visibility rules
 with proper validation and database interactions.
 """
 
-from typing import Optional, List, Dict, Any, Union
+from typing import Optional, List, Dict, Any, Union, cast
 
 import utils.config as config
 import utils.logger as logger
@@ -23,8 +23,13 @@ from .exceptions import (
     UserNotFoundError,
     InvalidActivityError,
 )
-from .schema import create_tables
-from src.core.database import cache_set, redis_available, get_cached_presence, get_redis_client, cache_delete
+from src.core.database import (
+    cache_set,
+    redis_available,
+    get_cached_presence,
+    get_redis_client,
+    cache_delete,
+)
 
 
 class PresenceManager(BaseManager):
@@ -63,7 +68,6 @@ class PresenceManager(BaseManager):
         self._typing_timeout_ms = self._config.get("typing_timeout_ms", 6000)
         self._presence_timeout_ms = self._config.get("timeout_ms", 300000)
 
-        create_tables(db)
 
         logger.info("Presence module initialized")
 
@@ -104,11 +108,11 @@ class PresenceManager(BaseManager):
         """Update online users set in Redis for high-speed lookups."""
         if not redis_available():
             return
-            
+
         client = get_redis_client()
         if not client:
             return
-            
+
         try:
             key = "presence:online_users"
             if status in ("online", "idle", "dnd"):
@@ -139,14 +143,14 @@ class PresenceManager(BaseManager):
 
         # Fast path if we already have a record
         now = self._get_timestamp()
-        
+
         # Use single UPDATE if record exists, or UPSERT if not
         # This reduces 3 calls (validate, ensure, update) to 1 or 2
         result = self._db.execute(
             "UPDATE pres_presence SET status = ?, last_seen = ?, updated_at = ? WHERE user_id = ?",
             (status.value, now, now, user_id),
         )
-        
+
         if result.rowcount == 0:
             # Fallback if no record exists (new user)
             self._ensure_presence_record(user_id)
@@ -499,8 +503,17 @@ class PresenceManager(BaseManager):
                 try:
                     focus = client.hgetall(f"presence:focus:{user_id}")
                     if focus:
-                        presence.current_channel_id = int(focus.get(b"channel_id", 0)) or None  # type: ignore
-                        presence.current_server_id = int(focus.get(b"server_id", 0)) or None  # type: ignore
+                        focus_data = cast(Dict[Any, Any], focus)
+                        channel_value = focus_data.get("channel_id") or focus_data.get(
+                            b"channel_id"
+                        )
+                        server_value = focus_data.get("server_id") or focus_data.get(
+                            b"server_id"
+                        )
+                        if channel_value is not None:
+                            presence.current_channel_id = int(channel_value) or None
+                        if server_value is not None:
+                            presence.current_server_id = int(server_value) or None
                 except Exception:
                     pass
 
@@ -685,7 +698,7 @@ class PresenceManager(BaseManager):
                 client.hset(key, "server_id", str(server_id or 0))  # type: ignore[arg-type]
                 # Auto-expire if not updated (1 hour)
                 client.expire(key, 3600)
-            
+
             # Invalidate presence cache
             cache_delete(f"presence:{user_id}")
             return True
@@ -703,10 +716,10 @@ class PresenceManager(BaseManager):
         Optimized to use Redis for transient state.
         """
         self._validate_user(user_id)
-        
+
         now = self._get_timestamp()
         expires_at = now + self._typing_timeout_ms
-        
+
         # Redis path: use a SET for each channel containing user_ids
         if redis_available():
             client = get_redis_client()
@@ -715,10 +728,10 @@ class PresenceManager(BaseManager):
                     key = f"typing:channel:{channel_id}"
                     client.sadd(key, str(user_id))
                     client.expire(key, self._typing_timeout_ms // 1000)
-                    
+
                     # Also track which channels a user is typing in for easy cleanup
                     client.sadd(f"typing:user:{user_id}", str(channel_id))
-                    client.expire(f"typing:user:{user_id}", 60) # 1m safety
+                    client.expire(f"typing:user:{user_id}", 60)  # 1m safety
                 except Exception as e:
                     logger.debug(f"Redis start_typing failed: {e}")
 
@@ -778,8 +791,8 @@ class PresenceManager(BaseManager):
                             TypingIndicator(
                                 user_id=int(uid),
                                 channel_id=channel_id,
-                                started_at=now - 1000, # Approx
-                                expires_at=now + 5000, # Approx
+                                started_at=now - 1000,  # Approx
+                                expires_at=now + 5000,  # Approx
                             )
                             for uid in user_ids
                         ]
@@ -826,7 +839,7 @@ class PresenceManager(BaseManager):
         """
         # Get channels before clearing
         channels = self.get_user_typing_channels(user_id)
-        
+
         if redis_available():
             client = get_redis_client()
             if client:
@@ -838,9 +851,7 @@ class PresenceManager(BaseManager):
                     logger.debug(f"Redis clear_all_typing failed: {e}")
 
         if channels:
-            self._db.execute(
-                "DELETE FROM pres_typing WHERE user_id = ?", (user_id,)
-            )
+            self._db.execute("DELETE FROM pres_typing WHERE user_id = ?", (user_id,))
             logger.debug(
                 f"Cleared typing indicators for user {user_id} in {len(channels)} channels"
             )
@@ -992,9 +1003,12 @@ class PresenceManager(BaseManager):
             else:
                 # Check mutual servers
                 # Note: get_mutual_server_count is more efficient than fetching all IDs
-                if self._relationships.get_mutual_server_count(viewer_id, target_id) > 0:
+                if (
+                    self._relationships.get_mutual_server_count(viewer_id, target_id)
+                    > 0
+                ):
                     has_mutual_context = True
-        
+
         if not has_mutual_context:
             # Fallback to showing as offline if no shared context exists
             return Presence(
@@ -1040,20 +1054,34 @@ class PresenceManager(BaseManager):
         blocked_by_ids = set()
         friend_ids = set()
         mutual_member_ids = set()
-        
+
         if self._relationships:
             try:
                 # Use IDs directly for fast set lookups
-                blocked_ids = set(int(uid) for uid in self._relationships.get_blocked_user_ids(viewer_id))
-                blocked_by_ids = set(int(uid) for uid in self._relationships.get_all_blocked_ids(viewer_id)) - blocked_ids
-                friend_ids = set(int(uid) for uid in self._relationships.get_friend_ids(viewer_id))
+                blocked_ids = set(
+                    int(uid)
+                    for uid in self._relationships.get_blocked_user_ids(viewer_id)
+                )
+                blocked_by_ids = (
+                    set(
+                        int(uid)
+                        for uid in self._relationships.get_all_blocked_ids(viewer_id)
+                    )
+                    - blocked_ids
+                )
+                friend_ids = set(
+                    int(uid) for uid in self._relationships.get_friend_ids(viewer_id)
+                )
             except Exception:
                 pass
 
         if self._servers:
             try:
                 # Optimized: fetch all users sharing servers with viewer in one pass
-                mutual_member_ids = set(int(uid) for uid in self._servers.get_all_shared_member_ids(viewer_id))
+                mutual_member_ids = set(
+                    int(uid)
+                    for uid in self._servers.get_all_shared_member_ids(viewer_id)
+                )
             except Exception:
                 pass
 
