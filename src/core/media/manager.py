@@ -1466,7 +1466,20 @@ class MediaManager(BaseManager):
         if "/" in search_filename:
             search_filename = os.path.basename(search_filename)
 
+        # ORPHAN RECOVERY: If it's not the uploader, check if this filename exists in ANY attachment
+        # the user has access to, even if this specific media_file entry isn't linked to it.
+        # This handles cases where a file was uploaded but the attachment record creation failed or was interrupted.
         rows = self._db.fetch_all(query, (search_filename, search_filename, f'%{file_id}%'))
+        
+        # If no rows found by filename/file_id, try a broader search by filename in ANY conversation the user is in
+        if not rows and self._messaging:
+            broad_query = """
+                SELECT conversation_id FROM msg_attachments a
+                JOIN msg_messages m ON a.message_id = m.id
+                WHERE a.filename = ? AND a.deleted = 0
+            """
+            rows = self._db.fetch_all(broad_query, (search_filename,))
+
         logger.debug(f"check_file_access: found {len(rows) if rows else 0} potential attachment rows for {search_filename}")
 
         if rows and self._messaging:
