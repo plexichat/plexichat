@@ -17,7 +17,10 @@ try:
 except Exception:
     qrcode = None
     import logging as _logging
-    _logging.getLogger(__name__).info("qrcode module not available — QR code generation will be disabled")
+
+    _logging.getLogger(__name__).info(
+        "qrcode module not available — QR code generation will be disabled"
+    )
 
 import utils.config as config
 
@@ -36,14 +39,14 @@ import pyotp
 class TOTPReplayCache:
     """
     Thread-safe cache to prevent TOTP code replay attacks.
-    
+
     Tracks used codes within their validity window to prevent reuse.
     """
-    
+
     def __init__(self, ttl_seconds: int = 90):
         """
         Initialize replay cache.
-        
+
         Args:
             ttl_seconds: How long to remember used codes (should be >= TOTP interval + window)
         """
@@ -51,7 +54,7 @@ class TOTPReplayCache:
         self._ttl = ttl_seconds
         self._lock = threading.Lock()
         self._last_cleanup = 0
-    
+
     def _cleanup(self, now: int) -> None:
         """Remove expired entries. Called while holding lock."""
         if now - self._last_cleanup < 30:  # Cleanup at most every 30 seconds
@@ -60,27 +63,27 @@ class TOTPReplayCache:
         expired = [k for k, v in self._used_codes.items() if v < now]
         for k in expired:
             del self._used_codes[k]
-    
+
     def check_and_mark(self, user_id: int, code: str) -> bool:
         """
         Check if code was already used and mark it as used.
-        
+
         Args:
             user_id: User ID to scope the code
             code: The TOTP code
-            
+
         Returns:
             True if code is fresh (not previously used), False if replay detected
         """
         key = f"{user_id}:{code}"
         now = int(time.time())
-        
+
         with self._lock:
             self._cleanup(now)
-            
+
             if key in self._used_codes:
                 return False  # Replay detected
-            
+
             self._used_codes[key] = now + self._ttl
             return True
 
@@ -170,10 +173,7 @@ def generate_totp_uri(secret: str, username: str, issuer: Optional[str] = None) 
 
 
 def verify_totp_code(
-    secret: str, 
-    code: str, 
-    window: int = 1, 
-    user_id: Optional[int] = None
+    secret: str, code: str, window: int = 1, user_id: Optional[int] = None
 ) -> bool:
     """
     Verify a TOTP code with replay attack prevention.
@@ -198,12 +198,12 @@ def verify_totp_code(
     # First verify the code is cryptographically valid
     if not totp.verify(code, valid_window=window):
         return False
-    
+
     # Then check for replay attack (if user_id provided)
     if user_id is not None:
         if not _replay_cache.check_and_mark(user_id, code):
             return False  # Replay detected
-    
+
     return True
 
 
@@ -257,9 +257,7 @@ def hash_backup_codes(codes: List[str]) -> List[Tuple[str, str]]:
 
 
 def verify_backup_code(
-    code: str, 
-    hashed_codes: List[Any],
-    max_checks: Optional[int] = None
+    code: str, hashed_codes: List[Any], max_checks: Optional[int] = None
 ) -> Tuple[bool, int]:
     """
     Verify a backup code against stored hashes with DoS mitigation.
@@ -277,13 +275,13 @@ def verify_backup_code(
     totp_config = get_totp_config()
     if max_checks is None:
         max_checks = int(totp_config.get("backup_code_max_checks", 3))
-    
+
     # Normalize code (remove dash, lowercase)
     normalized = code.replace("-", "").lower()
     prefix = normalized[:4]
-    
+
     checks_performed = 0
-    
+
     for i, entry in enumerate(hashed_codes):
         # Support both old format (just hash string) and new format (prefix, hash)
         if isinstance(entry, (list, tuple)) and len(entry) == 2:
@@ -294,17 +292,17 @@ def verify_backup_code(
         else:
             # Legacy format: just the hash, no prefix optimization
             hashed = entry
-        
+
         # Rate limit expensive Argon2 operations
         if checks_performed >= max_checks:
             # Log potential DoS attempt but don't reveal to caller
             break
-        
+
         checks_performed += 1
-        
+
         # Ensure hashed is a string for verify_password
         hashed_str = str(hashed) if not isinstance(hashed, str) else hashed
-        
+
         if verify_password(normalized, hashed_str):
             return True, i
 
@@ -322,7 +320,7 @@ def generate_qr_code_data(uri: str) -> bytes:
         PNG image data as bytes
     """
     from io import BytesIO
-    
+
     if qrcode is None:
         raise RuntimeError("qrcode is required to generate QR codes")
 

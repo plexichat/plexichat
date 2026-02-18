@@ -3,8 +3,6 @@ Hardened schema for authentication module.
 Adds blind indexes for encrypted fields and improved integrity.
 """
 
-
-
 SCHEMA_SQLITE = """
 -- Users table
 CREATE TABLE IF NOT EXISTS auth_users (

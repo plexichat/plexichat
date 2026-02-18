@@ -53,7 +53,6 @@ from .permissions import (
     permissions_from_json,
     has_permission,
 )
-from .schema import create_tables
 from .tokens import (
     create_session_token,
     create_bot_token,
@@ -76,7 +75,7 @@ class AuthManager(BaseManager):
     AuthStatus = AuthStatus
     AuditEventType = AuditEventType
     AccountType = AccountType
-    
+
     # Exceptions
     AuthError = AuthError
     InvalidCredentialsError = InvalidCredentialsError
@@ -98,7 +97,6 @@ class AuthManager(BaseManager):
         self.crypto = EncryptionManager()
         self._config = config.get("authentication", {})
         logger.info("Initializing authentication module")
-        create_tables(db)
         self.blacklist = BlacklistManager(db)
         self._ensure_system_user()
 
@@ -168,7 +166,7 @@ class AuthManager(BaseManager):
             if details
             else None
         )
-        
+
         ip_index = None
         ip_encrypted = None
         if ip_address:
@@ -221,7 +219,7 @@ class AuthManager(BaseManager):
         age_gate_enabled = accounts_config.get("age_gate_enabled", False)
         min_age = accounts_config.get("minimum_age", 13)
         verification_type = accounts_config.get("age_verification_type", "boolean")
-        
+
         age_verified = 0
         stored_dob = None
 
@@ -231,11 +229,21 @@ class AuthManager(BaseManager):
                     raise AuthError("Date of birth is required", "dob")
                 try:
                     from datetime import datetime
+
                     birth_date = datetime.strptime(dob, "%Y-%m-%d")
                     today = datetime.today()
-                    calc_age = today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
+                    calc_age = (
+                        today.year
+                        - birth_date.year
+                        - (
+                            (today.month, today.day)
+                            < (birth_date.month, birth_date.day)
+                        )
+                    )
                     if calc_age < min_age:
-                        raise AuthError(f"Minimum age requirement not met ({min_age})", "age")
+                        raise AuthError(
+                            f"Minimum age requirement not met ({min_age})", "age"
+                        )
                     age_verified = 1
                     # Encrypt DOB for storage using user_id as context
                     stored_dob = self.crypto.encrypt_data(dob, context=str(user_id))
@@ -245,12 +253,14 @@ class AuthManager(BaseManager):
                 # Boolean/Age mode
                 if age is not None:
                     if age < min_age:
-                        raise AuthError(f"Minimum age requirement not met ({min_age})", "age")
+                        raise AuthError(
+                            f"Minimum age requirement not met ({min_age})", "age"
+                        )
                     age_verified = 1
                 else:
                     # If neither age nor dob is provided but gate is enabled
                     raise AuthError("Age verification required", "age")
-        
+
         valid, issues = validate_username(username)
         if not valid:
             raise InvalidUsernameError(f"Invalid: {issues}", issues)
@@ -258,7 +268,9 @@ class AuthManager(BaseManager):
         # Check blacklist
         blocked, reason = self.blacklist.is_blocked(username)
         if blocked:
-            raise InvalidUsernameError(f"Username is blocked: {reason}", [reason or "Blocked"])
+            raise InvalidUsernameError(
+                f"Username is blocked: {reason}", [reason or "Blocked"]
+            )
 
         if not validate_email(email):
             raise InvalidEmailError("Invalid email")
@@ -320,7 +332,9 @@ class AuthManager(BaseManager):
             updated_at=now,
             email_verified=not require_ver,
             age_verified=bool(age_verified),
-            date_of_birth=dob if (age_gate_enabled and verification_type == "dob") else None,
+            date_of_birth=dob
+            if (age_gate_enabled and verification_type == "dob")
+            else None,
         )
 
     def verify_email(self, token: str) -> bool:
@@ -400,7 +414,7 @@ class AuthManager(BaseManager):
             # Check if lock is permanent (no expiry) or active (expiry in future)
             if not row["locked_until"] or row["locked_until"] > self._get_timestamp():
                 raise AccountLockedError("Account locked", row["locked_until"])
-            
+
             # Auto-unlock only if lock has expired
             self._db.execute(
                 "UPDATE auth_users SET account_locked = 0, failed_login_attempts = 0 WHERE id = ?",
@@ -468,16 +482,16 @@ class AuthManager(BaseManager):
             "UPDATE auth_users SET failed_login_attempts = failed_login_attempts + 1 WHERE id = ?",
             (user_id,),
         )
-        
+
         # Get threshold from config or default to 5
         security_config = self._config.get("security", {})
         threshold = security_config.get("max_failed_attempts", 5)
-        
+
         # Check current attempts
         row = self._db.fetch_one(
             "SELECT failed_login_attempts FROM auth_users WHERE id = ?", (user_id,)
         )
-        
+
         if row and row["failed_login_attempts"] >= threshold:
             # Default lock time 15 mins (60000ms * 15)
             lock_duration_min = security_config.get("lockout_duration_minutes", 15)
@@ -487,7 +501,7 @@ class AuthManager(BaseManager):
                 (lock_until, user_id),
             )
             self._log_audit(AuditEventType.ACCOUNT_LOCKED, user_id, True, ip_address)
-        
+
         # Invalidate cache so that subsequent get_user calls see the updated failed_login_attempts
         invalidate_pattern("user_data:*")
 
@@ -505,13 +519,13 @@ class AuthManager(BaseManager):
         expire_hours = sessions_config.get("expire_hours", 720)
         expires = now + (expire_hours * 3600 * 1000)
         token, token_hash = create_session_token(sid)
-        
+
         ip_index = None
         ip_encrypted = None
         if ip:
             ip_index = self.crypto.fast_blind_index(ip, "ip_address")
             ip_encrypted = self.crypto.encrypt_data(ip, context=str(sid))
-            
+
         # Enforce session limit
         max_sessions = sessions_config.get("max_per_user", 10)
         sessions = self.get_sessions(user_id)
@@ -528,7 +542,18 @@ class AuthManager(BaseManager):
 
         self._db.execute(
             "INSERT INTO auth_sessions (id, user_id, token_hash, device_id, ip_index, ip_encrypted, user_agent, created_at, expires_at, last_activity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (sid, user_id, token_hash, device_id, ip_index, ip_encrypted, ua, now, expires, now),
+            (
+                sid,
+                user_id,
+                token_hash,
+                device_id,
+                ip_index,
+                ip_encrypted,
+                ua,
+                now,
+                expires,
+                now,
+            ),
         )
         return Session(
             id=sid,
@@ -574,22 +599,19 @@ class AuthManager(BaseManager):
             raise TokenInvalidError("Invalid/Revoked")
         if row["expires_at"] < self._get_timestamp():
             raise TokenExpiredError("Expired")
-            
-        if (
-            self._config.get("security", {}).get("token_binding", False)
-            and ip_address
-        ):
+
+        if self._config.get("security", {}).get("token_binding", False) and ip_address:
             current_ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
             if row["ip_index"] != current_ip_index:
                 raise TokenInvalidError("IP Binding Mismatch")
-                
+
         now = self._get_timestamp()
-        
+
         # Only update database if last activity was more than 60 seconds ago
         # to reduce write pressure on frequent polling/requests
         last_activity = row.get("last_activity", 0)
         should_update = (now - last_activity) > 60000
-        
+
         if should_update:
             updates = ["last_activity = ?"]
             params = [now]
@@ -597,7 +619,9 @@ class AuthManager(BaseManager):
             # Extend session if enabled
             sessions_config = self._config.get("sessions", {})
             if sessions_config.get("extend_on_activity", True):
-                extend_threshold = sessions_config.get("extend_threshold_hours", 24) * 3600 * 1000
+                extend_threshold = (
+                    sessions_config.get("extend_threshold_hours", 24) * 3600 * 1000
+                )
                 if (row["expires_at"] - now) < extend_threshold:
                     expire_hours = sessions_config.get("expire_hours", 720)
                     new_expires = now + (expire_hours * 3600 * 1000)
@@ -679,7 +703,9 @@ class AuthManager(BaseManager):
         parsed = parse_token(token)
         if parsed and parsed["token_type"] == "session":
             # Get user_id before revoking for audit
-            row = self._db.fetch_one("SELECT user_id FROM auth_sessions WHERE id = ?", (parsed["id"],))
+            row = self._db.fetch_one(
+                "SELECT user_id FROM auth_sessions WHERE id = ?", (parsed["id"],)
+            )
             if row:
                 # Clear token verification cache for immediate effect
                 invalidate_pattern("token_verify:*")
@@ -693,7 +719,7 @@ class AuthManager(BaseManager):
     def logout_all(self, user_id: int, except_token: Optional[str] = None) -> int:
         # Clear token verification cache for immediate effect
         invalidate_pattern("token_verify:*")
-        
+
         if except_token:
             parsed = parse_token(except_token)
             if parsed and parsed["token_type"] == "session":
@@ -731,7 +757,11 @@ class AuthManager(BaseManager):
                 id=r["id"],
                 user_id=r["user_id"],
                 device_id=r["device_id"],
-                ip_address=self.crypto.decrypt_data(r["ip_encrypted"], context=str(r["id"])) if r.get("ip_encrypted") else None,
+                ip_address=self.crypto.decrypt_data(
+                    r["ip_encrypted"], context=str(r["id"])
+                )
+                if r.get("ip_encrypted")
+                else None,
                 user_agent=r["user_agent"],
                 created_at=r["created_at"],
                 expires_at=r["expires_at"],
@@ -772,13 +802,17 @@ class AuthManager(BaseManager):
             if not valid:
                 raise InvalidUsernameError(f"Invalid: {issues}", issues)
 
-            blocked, reason = self.blacklist.is_blocked(username, old_username=current_user.username)
+            blocked, reason = self.blacklist.is_blocked(
+                username, old_username=current_user.username
+            )
             if blocked:
-                raise InvalidUsernameError(f"Username is blocked: {reason}", [reason or "Blocked"])
+                raise InvalidUsernameError(
+                    f"Username is blocked: {reason}", [reason or "Blocked"]
+                )
 
             updates.append("username = ?")
             params.append(username)
-            
+
             # Reset forced change flag
             updates.append("force_username_change = ?")
             params.append(0)
@@ -806,6 +840,7 @@ class AuthManager(BaseManager):
             invalidate_pattern("user_data:*")
             # Clear granular profile cache
             from src.core.database import cache_delete
+
             cache_delete(f"user_profile:{user_id}")
 
         user = self.get_user(user_id)
@@ -859,7 +894,7 @@ class AuthManager(BaseManager):
 
         user_id = user_row["id"]
         secret = totp_module.decrypt_totp_secret(user_row["totp_secret_encrypted"])
-        
+
         # Try TOTP code first (with replay prevention)
         if not totp_module.verify_totp_code(secret, code, user_id=user_id):
             # Try backup code
@@ -884,9 +919,7 @@ class AuthManager(BaseManager):
             user_id, row["device_id"], row["ip_address"], row["user_agent"]
         )
         email = (
-            self.crypto.decrypt_data(
-                user_row["email_encrypted"], context=str(user_id)
-            )
+            self.crypto.decrypt_data(user_row["email_encrypted"], context=str(user_id))
             if user_row["email_encrypted"]
             else None
         )
@@ -941,9 +974,9 @@ class AuthManager(BaseManager):
             return False
         # Use user_id for replay prevention during confirmation
         if totp_module.verify_totp_code(
-            totp_module.decrypt_totp_secret(user["totp_secret_encrypted"]), 
+            totp_module.decrypt_totp_secret(user["totp_secret_encrypted"]),
             code,
-            user_id=user_id
+            user_id=user_id,
         ):
             self._db.execute(
                 "UPDATE auth_users SET totp_enabled = 1 WHERE id = ?", (user_id,)
@@ -963,9 +996,9 @@ class AuthManager(BaseManager):
             raise InvalidCredentialsError("Invalid password")
         # Use user_id for replay prevention
         if not totp_module.verify_totp_code(
-            totp_module.decrypt_totp_secret(user["totp_secret_encrypted"]), 
+            totp_module.decrypt_totp_secret(user["totp_secret_encrypted"]),
             code,
-            user_id=user_id
+            user_id=user_id,
         ):
             raise TwoFactorInvalidError("Invalid code")
         self._db.execute(
@@ -1087,9 +1120,13 @@ class AuthManager(BaseManager):
         permissions: Optional[Dict[str, bool]] = None,
     ) -> Bot:
         # Check if user/bot with this username already exists
-        if self._db.fetch_one("SELECT 1 FROM auth_users WHERE username = ?", (username,)):
+        if self._db.fetch_one(
+            "SELECT 1 FROM auth_users WHERE username = ?", (username,)
+        ):
             raise UserExistsError(f"Username '{username}' already taken")
-        if self._db.fetch_one("SELECT 1 FROM auth_bots WHERE username = ?", (username,)):
+        if self._db.fetch_one(
+            "SELECT 1 FROM auth_bots WHERE username = ?", (username,)
+        ):
             raise UserExistsError(f"Bot name '{username}' already taken")
 
         # Enforce bot limit
@@ -1100,8 +1137,10 @@ class AuthManager(BaseManager):
             raise BotLimitExceededError(f"User has reached the bot limit of {max_bots}")
 
         # Validate permissions
-        requested_perms = permissions if permissions is not None else DEFAULT_BOT_PERMISSIONS.copy()
-        
+        requested_perms = (
+            permissions if permissions is not None else DEFAULT_BOT_PERMISSIONS.copy()
+        )
+
         # DEBUG
         logger.debug(f"DEBUG_AUTH: create_bot requested_perms={requested_perms}")
 
@@ -1276,10 +1315,17 @@ class AuthManager(BaseManager):
         record_id = self._generate_id()
         ip_index = self.crypto.fast_blind_index(ip, "ip_address")
         ip_encrypted = self.crypto.encrypt_data(ip, context=str(record_id))
-        
+
         self._db.insert_or_ignore(
             "auth_known_ips",
-            ["id", "user_id", "ip_index", "ip_encrypted", "first_seen_at", "last_seen_at"],
+            [
+                "id",
+                "user_id",
+                "ip_index",
+                "ip_encrypted",
+                "first_seen_at",
+                "last_seen_at",
+            ],
             (
                 record_id,
                 user_id,
@@ -1292,22 +1338,35 @@ class AuthManager(BaseManager):
 
     # === IP Blacklisting ===
 
-    def block_ip(self, ip_address: str, reason: Optional[str] = None, blocked_by: Optional[int] = None, duration_hours: Optional[int] = None) -> bool:
+    def block_ip(
+        self,
+        ip_address: str,
+        reason: Optional[str] = None,
+        blocked_by: Optional[int] = None,
+        duration_hours: Optional[int] = None,
+    ) -> bool:
         """Block an IP address."""
         # Invalidate cache for this IP
         invalidate_pattern("ip_blocked:*")
-        
+
         now = self._get_timestamp()
         expires_at = now + (duration_hours * 3600 * 1000) if duration_hours else None
-        
+
         ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
         ip_encrypted = self.crypto.encrypt_data(ip_address, context="ip_blacklist")
-        
+
         self._db.upsert(
             "auth_ip_blacklist",
-            ["ip_index", "ip_encrypted", "reason", "blocked_at", "blocked_by", "expires_at"],
+            [
+                "ip_index",
+                "ip_encrypted",
+                "reason",
+                "blocked_at",
+                "blocked_by",
+                "expires_at",
+            ],
             (ip_index, ip_encrypted, reason, now, blocked_by, expires_at),
-            conflict_columns=["ip_index"]
+            conflict_columns=["ip_index"],
         )
         logger.info(f"IP blocked by {blocked_by}: {reason}")
         return True
@@ -1316,9 +1375,11 @@ class AuthManager(BaseManager):
         """Unblock an IP address."""
         # Invalidate cache for this IP
         invalidate_pattern("ip_blocked:*")
-        
+
         ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
-        self._db.execute("DELETE FROM auth_ip_blacklist WHERE ip_index = ?", (ip_index,))
+        self._db.execute(
+            "DELETE FROM auth_ip_blacklist WHERE ip_index = ?", (ip_index,)
+        )
         logger.info("IP unblocked")
         return True
 
@@ -1326,24 +1387,30 @@ class AuthManager(BaseManager):
     def is_ip_blocked(self, ip_address: str) -> bool:
         """Check if an IP address is blocked."""
         ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
-        row = self._db.fetch_one("SELECT expires_at FROM auth_ip_blacklist WHERE ip_index = ?", (ip_index,))
+        row = self._db.fetch_one(
+            "SELECT expires_at FROM auth_ip_blacklist WHERE ip_index = ?", (ip_index,)
+        )
         if not row:
             return False
-        
+
         expires_at = row["expires_at"]
         if expires_at and expires_at < self._get_timestamp():
             # Block expired, cleanup
             self.unblock_ip(ip_address)
             return False
-            
+
         return True
 
     def get_blocked_ips(self) -> List[Dict[str, Any]]:
         """Get all blocked IPs."""
-        rows = self._db.fetch_all("SELECT * FROM auth_ip_blacklist ORDER BY blocked_at DESC")
+        rows = self._db.fetch_all(
+            "SELECT * FROM auth_ip_blacklist ORDER BY blocked_at DESC"
+        )
         for r in rows:
             try:
-                r["ip_address"] = self.crypto.decrypt_data(r["ip_encrypted"], context="ip_blacklist")
+                r["ip_address"] = self.crypto.decrypt_data(
+                    r["ip_encrypted"], context="ip_blacklist"
+                )
             except Exception:
                 r["ip_address"] = "UNKNOWN"
         return rows
@@ -1365,7 +1432,11 @@ class AuthManager(BaseManager):
                 id=r["id"],
                 user_id=r["user_id"],
                 event_type=AuditEventType(r["event_type"]),
-                ip_address=self.crypto.decrypt_data(r["ip_encrypted"], context=str(r["id"])) if r.get("ip_encrypted") else None,
+                ip_address=self.crypto.decrypt_data(
+                    r["ip_encrypted"], context=str(r["id"])
+                )
+                if r.get("ip_encrypted")
+                else None,
                 device_id=r["device_id"],
                 timestamp=r["timestamp"],
                 details=None,
@@ -1384,7 +1455,11 @@ class AuthManager(BaseManager):
                 id=r["id"],
                 user_id=r["user_id"],
                 event_type=AuditEventType(r["event_type"]),
-                ip_address=self.crypto.decrypt_data(r["ip_encrypted"], context=str(r["id"])) if r.get("ip_encrypted") else None,
+                ip_address=self.crypto.decrypt_data(
+                    r["ip_encrypted"], context=str(r["id"])
+                )
+                if r.get("ip_encrypted")
+                else None,
                 device_id=r["device_id"],
                 timestamp=r["timestamp"],
                 details=None,
@@ -1404,12 +1479,16 @@ class AuthManager(BaseManager):
         user_dict = dict(data)
         if user_dict.get("email_encrypted"):
             try:
-                user_dict["email"] = self.crypto.decrypt_data(user_dict["email_encrypted"], context=str(user_id))
+                user_dict["email"] = self.crypto.decrypt_data(
+                    user_dict["email_encrypted"], context=str(user_id)
+                )
             except Exception:
                 user_dict["email"] = None
         if user_dict.get("date_of_birth"):
             try:
-                user_dict["dob_decrypted"] = self.crypto.decrypt_data(user_dict["date_of_birth"], context=str(user_id))
+                user_dict["dob_decrypted"] = self.crypto.decrypt_data(
+                    user_dict["date_of_birth"], context=str(user_id)
+                )
             except Exception:
                 user_dict["dob_decrypted"] = None
         return self._dict_to_user(user_dict)
@@ -1417,7 +1496,7 @@ class AuthManager(BaseManager):
     @cached(ttl=60, prefix="user_data")
     def _get_user_data_cached(self, user_id: int) -> Optional[Dict[str, Any]]:
         """Internal helper to fetch raw user data from DB for caching (including badges).
-        
+
         SECURITY: This method must NOT decrypt sensitive fields (email, DOB) because
         the result is stored in Redis/DiskCache. Decryption happens in get_user() after
         retrieval from cache.
@@ -1431,18 +1510,22 @@ class AuthManager(BaseManager):
         row = self._db.fetch_one(query, (user_id,))
         if not row:
             return None
-            
+
         user_dict = dict(row)
-        
+
         # Parse badges (safe to cache — not PII)
         if user_dict.get("badges"):
             try:
-                user_dict["badges_list"] = json.loads(user_dict["badges"]) if isinstance(user_dict["badges"], str) else user_dict["badges"]
+                user_dict["badges_list"] = (
+                    json.loads(user_dict["badges"])
+                    if isinstance(user_dict["badges"], str)
+                    else user_dict["badges"]
+                )
             except Exception:
                 user_dict["badges_list"] = []
         else:
             user_dict["badges_list"] = []
-                
+
         return user_dict
 
     def _dict_to_user(self, row: Dict[str, Any]) -> User:
@@ -1465,7 +1548,7 @@ class AuthManager(BaseManager):
             date_of_birth=row.get("dob_decrypted") or row.get("date_of_birth"),
             force_username_change=bool(row.get("force_username_change", 0)),
             badges=row.get("badges_list", []),
-            public_key=row.get("public_key")
+            public_key=row.get("public_key"),
         )
 
     @cached(ttl=300, prefix="user_by_username")
@@ -1481,17 +1564,17 @@ class AuthManager(BaseManager):
         """Get public profile information for multiple users (including badges, with granular Redis caching)."""
         if not user_ids:
             return {}
-            
+
         result = {}
         missing_ids = []
-        
+
         # 1. Try to fetch each user from Redis
         from src.core.database import cache_get, cache_set, redis_available
-        
+
         for uid in user_ids:
             cache_key = f"user_profile:{uid}"
             cached_profile = cache_get(cache_key) if redis_available() else None
-            
+
             if cached_profile:
                 if isinstance(cached_profile, str):
                     try:
@@ -1501,7 +1584,7 @@ class AuthManager(BaseManager):
                 result[str(uid)] = cached_profile
             else:
                 missing_ids.append(uid)
-                
+
         # 2. Fetch missing from DB
         if missing_ids:
             placeholders = ",".join("?" for _ in missing_ids)
@@ -1513,37 +1596,43 @@ class AuthManager(BaseManager):
                 WHERE u.id IN ({placeholders})
             """
             rows = self._db.fetch_all(query, tuple(missing_ids))
-            
+
             for row in rows:
                 user_id = row["id"]
                 badges = []
                 if row.get("badges"):
                     try:
-                        badges = json.loads(row["badges"]) if isinstance(row["badges"], str) else row["badges"]
+                        badges = (
+                            json.loads(row["badges"])
+                            if isinstance(row["badges"], str)
+                            else row["badges"]
+                        )
                     except Exception:
                         badges = []
 
                 profile = {
                     "id": user_id,
                     "username": row["username"],
-                    "permissions": self._json_loads(row["permissions"]) if isinstance(row["permissions"], str) else row["permissions"],
+                    "permissions": self._json_loads(row["permissions"])
+                    if isinstance(row["permissions"], str)
+                    else row["permissions"],
                     "account_type": row["account_type"],
                     "avatar_url": f"/api/v1/avatars/users/{user_id}",
-                    "badges": badges
+                    "badges": badges,
                 }
                 result[str(user_id)] = profile
-                
+
                 # Cache for next time
                 if redis_available():
                     cache_set(f"user_profile:{user_id}", profile, ttl=300)
-                    
+
         return result
 
     def get_users_bulk(self, user_ids: List[int]) -> Dict[int, User]:
         """Get multiple users by ID (including badges, full data)."""
         if not user_ids:
             return {}
-            
+
         placeholders = ",".join("?" for _ in user_ids)
         # JOIN with user_features to get badges
         query = f"""
@@ -1553,16 +1642,20 @@ class AuthManager(BaseManager):
             WHERE u.id IN ({placeholders})
         """
         rows = self._db.fetch_all(query, tuple(user_ids))
-        
+
         result = {}
         for row in rows:
             user_id = row["id"]
             user_dict = dict(row)
-            
+
             # Parse badges
             if user_dict.get("badges"):
                 try:
-                    user_dict["badges_list"] = json.loads(user_dict["badges"]) if isinstance(user_dict["badges"], str) else user_dict["badges"]
+                    user_dict["badges_list"] = (
+                        json.loads(user_dict["badges"])
+                        if isinstance(user_dict["badges"], str)
+                        else user_dict["badges"]
+                    )
                 except Exception:
                     user_dict["badges_list"] = []
             else:
@@ -1571,18 +1664,22 @@ class AuthManager(BaseManager):
             # Decrypt sensitive fields for individual users
             if user_dict.get("email_encrypted"):
                 try:
-                    user_dict["email"] = self.crypto.decrypt_data(user_dict["email_encrypted"], context=str(user_id))
+                    user_dict["email"] = self.crypto.decrypt_data(
+                        user_dict["email_encrypted"], context=str(user_id)
+                    )
                 except Exception:
                     user_dict["email"] = None
-            
+
             if user_dict.get("date_of_birth"):
                 try:
-                    user_dict["dob_decrypted"] = self.crypto.decrypt_data(user_dict["date_of_birth"], context=str(user_id))
+                    user_dict["dob_decrypted"] = self.crypto.decrypt_data(
+                        user_dict["date_of_birth"], context=str(user_id)
+                    )
                 except Exception:
                     user_dict["dob_decrypted"] = None
-            
+
             result[user_id] = self._dict_to_user(user_dict)
-                
+
         return result
 
     def grant_permission(self, user_id: int, permission: str) -> bool:
@@ -1638,8 +1735,22 @@ class AuthManager(BaseManager):
                     # Link existing user to this provider
                     self._db.insert_or_ignore(
                         "auth_external_accounts",
-                        ["id", "user_id", "provider", "external_id", "email_index", "created_at"],
-                        (self._generate_id(), user_id, provider, external_id, email_index, self._get_timestamp())
+                        [
+                            "id",
+                            "user_id",
+                            "provider",
+                            "external_id",
+                            "email_index",
+                            "created_at",
+                        ],
+                        (
+                            self._generate_id(),
+                            user_id,
+                            provider,
+                            external_id,
+                            email_index,
+                            self._get_timestamp(),
+                        ),
                     )
 
         # 3. If still no user, create a new one
@@ -1649,21 +1760,27 @@ class AuthManager(BaseManager):
             if accounts_config.get("age_gate_enabled", False):
                 if age is None and dob is None:
                     # Signal to client that age/DOB is needed for new registration
-                    return AuthResult(status=AuthStatus.FAILED, message="Age verification required")
+                    return AuthResult(
+                        status=AuthStatus.FAILED, message="Age verification required"
+                    )
 
             # Use username_hint or derive from email/external_id
-            base_username = username_hint or (email.split("@")[0] if email else f"{provider}_{external_id[:8]}")
-            
+            base_username = username_hint or (
+                email.split("@")[0] if email else f"{provider}_{external_id[:8]}"
+            )
+
             # Ensure username uniqueness
             username = base_username
             attempts = 0
-            while attempts < 10 and self._db.fetch_one("SELECT id FROM auth_users WHERE username = ?", (username,)):
+            while attempts < 10 and self._db.fetch_one(
+                "SELECT id FROM auth_users WHERE username = ?", (username,)
+            ):
                 username = f"{base_username}{secrets.token_hex(2)}"
                 attempts += 1
-            
+
             # Use a random strong password for OAuth-only accounts
             random_password = secrets.token_urlsafe(32)
-            
+
             try:
                 user = self.register(
                     username=username,
@@ -1671,48 +1788,76 @@ class AuthManager(BaseManager):
                     password=random_password,
                     ip_address=ip_address,
                     age=age,
-                    dob=dob
+                    dob=dob,
                 )
                 user_id = user.id
-                
+
                 # Link the new user
-                email_index = self.crypto.blind_index(email or f"{external_id}@{provider}.internal", "user_email")
+                email_index = self.crypto.blind_index(
+                    email or f"{external_id}@{provider}.internal", "user_email"
+                )
                 self._db.insert_or_ignore(
                     "auth_external_accounts",
-                    ["id", "user_id", "provider", "external_id", "email_index", "created_at"],
-                    (self._generate_id(), user_id, provider, external_id, email_index, self._get_timestamp())
+                    [
+                        "id",
+                        "user_id",
+                        "provider",
+                        "external_id",
+                        "email_index",
+                        "created_at",
+                    ],
+                    (
+                        self._generate_id(),
+                        user_id,
+                        provider,
+                        external_id,
+                        email_index,
+                        self._get_timestamp(),
+                    ),
                 )
             except AuthError as e:
                 # If registration fails (e.g. age gate), we pass that up
-                self._log_audit(AuditEventType.LOGIN_FAILED, None, False, ip_address, details={"error": str(e), "provider": provider})
+                self._log_audit(
+                    AuditEventType.LOGIN_FAILED,
+                    None,
+                    False,
+                    ip_address,
+                    details={"error": str(e), "provider": provider},
+                )
                 return AuthResult(status=AuthStatus.FAILED, message=str(e))
 
         # 4. Success - load user and start session
         user_obj = self.get_user(user_id)
         if not user_obj:
             return AuthResult(status=AuthStatus.FAILED, message="User creation failed")
-            
+
         if user_obj.account_locked:
             return AuthResult(status=AuthStatus.FAILED, message="Account locked")
 
         session = self._create_session(user_id, None, ip_address, user_agent)
-        
+
         # Update last login
         now = self._get_timestamp()
         self._db.execute(
             "UPDATE auth_users SET last_login_at = ?, failed_login_attempts = 0 WHERE id = ?",
-            (now, user_id)
+            (now, user_id),
         )
         self._db.execute(
             "UPDATE auth_external_accounts SET last_login_at = ? WHERE user_id = ? AND provider = ?",
-            (now, user_id, provider)
+            (now, user_id, provider),
         )
 
-        self._log_audit(AuditEventType.LOGIN_SUCCESS, user_id, True, ip_address, details={"provider": provider})
-        
+        self._log_audit(
+            AuditEventType.LOGIN_SUCCESS,
+            user_id,
+            True,
+            ip_address,
+            details={"provider": provider},
+        )
+
         return AuthResult(
             status=AuthStatus.SUCCESS,
             token=session.token,
             user=user_obj,
-            session=session
+            session=session,
         )

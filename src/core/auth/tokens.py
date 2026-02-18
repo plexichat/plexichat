@@ -200,7 +200,3 @@ def _constant_time_compare(a: str, b: str) -> bool:
         result |= x ^ y
 
     return result == 0
-
-
-
-

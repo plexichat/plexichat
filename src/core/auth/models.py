@@ -75,7 +75,7 @@ class User:
     totp_enabled: bool = False
     public_key: Optional[bytes] = None
     age_verified: bool = False
-    date_of_birth: Optional[str] = None # ISO format YYYY-MM-DD
+    date_of_birth: Optional[str] = None  # ISO format YYYY-MM-DD
     badges: List[str] = field(default_factory=list)
 
     @property
