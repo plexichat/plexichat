@@ -62,18 +62,26 @@ class MessageService(BaseService):
         """Send a message to a conversation."""
         # Check access
         if not self._participant_svc.is_participant(conversation_id, user_id):
-            raise ConversationAccessDeniedError("Not a participant in this conversation")
+            raise ConversationAccessDeniedError(
+                "Not a participant in this conversation"
+            )
 
         # Get user settings for limits
         user_settings = self._user_settings_svc.get_message_settings(user_id)
-        max_length = user_settings.max_message_length or self._get_config("max_message_length", 4000)
+        max_length = user_settings.max_message_length or self._get_config(
+            "max_message_length", 4000
+        )
 
         # Validate content
         user_filter = self._content_filter_svc.get_filter_settings(user_id)
-        content_result = self._content_filter_svc.validate_content(content, user_filter, max_length)
+        content_result = self._content_filter_svc.validate_content(
+            content, user_filter, max_length
+        )
 
         if not content_result.valid:
-            if any("exceeds maximum length" in issue for issue in content_result.issues):
+            if any(
+                "exceeds maximum length" in issue for issue in content_result.issues
+            ):
                 raise ContentTooLongError(
                     f"Message exceeds maximum length of {max_length}",
                     max_length,
@@ -84,7 +92,9 @@ class MessageService(BaseService):
         # Validate reply_to if provided
         if reply_to_id:
             if not self._repo.exists_in_conversation(reply_to_id, conversation_id):
-                raise MessageNotFoundError("Reply target message not found in this conversation")
+                raise MessageNotFoundError(
+                    "Reply target message not found in this conversation"
+                )
 
         # Validate attachments
         if attachments:
@@ -105,7 +115,7 @@ class MessageService(BaseService):
         # Encrypt content if enabled
         final_content = content_result.sanitized_content
         content_idx = blind_index(final_content, "message_content")
-        
+
         if self._get_config("encrypt_messages", True):
             final_content = encrypt_message(final_content, msg_id)
 
@@ -140,17 +150,22 @@ class MessageService(BaseService):
 
             # Update conversation's last message (part of transaction)
             self._conversation_repo.update(
-                conversation_id, 
-                now, 
-                last_message_id=msg_id, 
-                last_message_at=now, 
-                auto_commit=False
+                conversation_id,
+                now,
+                last_message_id=msg_id,
+                last_message_at=now,
+                auto_commit=False,
             )
 
             # Create initial status (part of transaction)
             status_id = self._generate_id()
             self._status_repo.create(
-                status_id, msg_id, user_id, MessageStatusType.SENT, now, auto_commit=False
+                status_id,
+                msg_id,
+                user_id,
+                MessageStatusType.SENT,
+                now,
+                auto_commit=False,
             )
 
             # Add attachments
@@ -159,31 +174,38 @@ class MessageService(BaseService):
                 bulk_data = []
                 for att_data in attachments:
                     att_id = self._generate_id()
-                    bulk_data.append({
-                        "id": att_id,
-                        "message_id": msg_id,
-                        "filename": att_data.get("filename", "file"),
-                        "content_type": att_data.get("content_type", "application/octet-stream"),
-                        "size": att_data.get("size", 0),
-                        "url": att_data.get("url", ""),
-                        "url_encrypted": None,
-                        "created_at": now,
-                        "metadata": att_data.get("metadata"),
-                        "checksum": att_data.get("hash") or att_data.get("checksum"),
-                    })
+                    bulk_data.append(
+                        {
+                            "id": att_id,
+                            "message_id": msg_id,
+                            "filename": att_data.get("filename", "file"),
+                            "content_type": att_data.get(
+                                "content_type", "application/octet-stream"
+                            ),
+                            "size": att_data.get("size", 0),
+                            "url": att_data.get("url", ""),
+                            "url_encrypted": None,
+                            "created_at": now,
+                            "metadata": att_data.get("metadata"),
+                            "checksum": att_data.get("hash")
+                            or att_data.get("checksum"),
+                        }
+                    )
                     attachment_list.append(
                         Attachment(
                             id=att_id,
                             message_id=msg_id,
                             filename=att_data.get("filename", "file"),
-                            content_type=att_data.get("content_type", "application/octet-stream"),
+                            content_type=att_data.get(
+                                "content_type", "application/octet-stream"
+                            ),
                             size=att_data.get("size", 0),
                             url=att_data.get("url", ""),
                             created_at=now,
                             checksum=att_data.get("hash") or att_data.get("checksum"),
                         )
                     )
-                
+
                 self._attachment_repo.create_bulk(bulk_data, auto_commit=False)
 
             self._repo.commit()
@@ -208,13 +230,14 @@ class MessageService(BaseService):
             metadata=metadata if metadata else None,
             attachments=attachment_list,
         )
-        
+
         # Cache the message
         cache_set(f"msg:obj:{msg_id}", msg, ttl=3600)
-        
+
         # Update "recent messages" list in Redis
         try:
             from src.core.database import get_redis_client as get_client
+
             client = get_client()
             if client:
                 list_key = f"msg:recent:{conversation_id}"
@@ -237,7 +260,9 @@ class MessageService(BaseService):
         if msg_row["deleted"]:
             raise MessageNotFoundError("Message not found")
 
-        if not self._participant_svc.is_participant(msg_row["conversation_id"], user_id):
+        if not self._participant_svc.is_participant(
+            msg_row["conversation_id"], user_id
+        ):
             raise MessageNotFoundError("Message not found")
 
         if msg_row["author_id"] != user_id:
@@ -245,10 +270,14 @@ class MessageService(BaseService):
 
         # Validate content
         user_settings = self._user_settings_svc.get_message_settings(user_id)
-        max_length = user_settings.max_message_length or self._get_config("max_message_length", 4000)
+        max_length = user_settings.max_message_length or self._get_config(
+            "max_message_length", 4000
+        )
         user_filter = self._content_filter_svc.get_filter_settings(user_id)
 
-        content_result = self._content_filter_svc.validate_content(content, user_filter, max_length)
+        content_result = self._content_filter_svc.validate_content(
+            content, user_filter, max_length
+        )
         if not content_result.valid:
             raise InvalidContentError("Invalid message content", content_result.issues)
 
@@ -260,18 +289,20 @@ class MessageService(BaseService):
         if self._get_config("encrypt_messages", True):
             final_content = encrypt_message(final_content, message_id)
 
-        self._repo.update_content(message_id, final_content, now, content_index=content_idx)
-        
+        self._repo.update_content(
+            message_id, final_content, now, content_index=content_idx
+        )
+
         # Invalidate old cache
         cache_delete(f"msg:obj:{message_id}")
 
         msg = self.get_message(user_id, message_id)
         if msg is None:
             raise MessageNotFoundError("Failed to retrieve updated message")
-            
+
         # Update cache with new version
         cache_set(f"msg:obj:{message_id}", msg, ttl=3600)
-        
+
         return msg
 
     def update_message_metadata(
@@ -320,8 +351,14 @@ class MessageService(BaseService):
 
         if not can_delete:
             from ..models import ParticipantRole
-            participant = self._participant_svc.get_participant(msg_row["conversation_id"], user_id)
-            if participant and participant.role in [ParticipantRole.OWNER, ParticipantRole.ADMIN]:
+
+            participant = self._participant_svc.get_participant(
+                msg_row["conversation_id"], user_id
+            )
+            if participant and participant.role in [
+                ParticipantRole.OWNER,
+                ParticipantRole.ADMIN,
+            ]:
                 can_delete = True
 
         if not can_delete:
@@ -333,13 +370,14 @@ class MessageService(BaseService):
             self._repo.hard_delete(message_id)
         else:
             self._repo.soft_delete(message_id, now)
-            
+
         # Invalidate cache
         cache_delete(f"msg:obj:{message_id}")
-        
+
         # Also clear recent messages list to ensure it's re-fetched correctly
         try:
             from src.core.database import get_redis_client as get_client
+
             client = get_client()
             if client:
                 # We can't easily LREM because we don't have conversation_id here easily without fetching
@@ -362,6 +400,7 @@ class MessageService(BaseService):
         if cached_msg:
             # Reconstruct might be needed if it's a plain dict
             from src.core.database.cache import _reconstruct_object
+
             msg = _reconstruct_object(cached_msg)
             if isinstance(msg, Message):
                 # Check access (conversation_id is in the message object)
@@ -375,7 +414,9 @@ class MessageService(BaseService):
         if msg_row["deleted"]:
             return None
 
-        if not self._participant_svc.is_participant(msg_row["conversation_id"], user_id):
+        if not self._participant_svc.is_participant(
+            msg_row["conversation_id"], user_id
+        ):
             return None
 
         # Get pin info
@@ -402,14 +443,17 @@ class MessageService(BaseService):
     ) -> List[Message]:
         """Get messages from a conversation with cursor pagination."""
         if not self._participant_svc.is_participant(conversation_id, user_id):
-            raise ConversationAccessDeniedError("Not a participant in this conversation")
+            raise ConversationAccessDeniedError(
+                "Not a participant in this conversation"
+            )
 
         limit = min(limit, 100)
-        
+
         # Try "recent messages" cache if it's the default request (newest messages)
         if not before_id and not after_id:
             try:
                 from src.core.database import get_redis_client as get_client
+
                 client = get_client()
                 if client:
                     list_key = f"msg:recent:{conversation_id}"
@@ -425,21 +469,28 @@ class MessageService(BaseService):
                                 messages.append(m_obj)
                             else:
                                 missing_ids.append(mid)
-                        
+
                         # If we found all requested messages in cache, return them
                         if not missing_ids and len(messages) == limit:
                             return messages
-                        
+
                         # If we have fewer than limit, only return if we're sure it's all there is in the cache
                         # and that the cache list itself is the total available messages (for small conversations)
                         # We use a simple heuristic: ifllen < limit, it might be the whole conversation.
                         # For now, let's be conservative to ensure correctness.
-                        if not missing_ids and len(messages) > 0 and len(messages) == client.llen(list_key) and len(messages) < limit:
+                        if (
+                            not missing_ids
+                            and len(messages) > 0
+                            and len(messages) == client.llen(list_key)
+                            and len(messages) < limit
+                        ):
                             return messages
             except Exception as e:
                 logger.debug(f"Recent messages cache check failed: {e}")
 
-        rows = self._repo.get_by_conversation(conversation_id, limit, before_id, after_id)
+        rows = self._repo.get_by_conversation(
+            conversation_id, limit, before_id, after_id
+        )
 
         if not rows:
             return []
@@ -463,7 +514,11 @@ class MessageService(BaseService):
         # Populate "recent messages" list cache if it's the newest messages
         if not before_id and not after_id:
             try:
-                from src.core.database import get_redis_client as get_client, redis_available
+                from src.core.database import (
+                    get_redis_client as get_client,
+                    redis_available,
+                )
+
                 client = get_client()
                 if client and redis_available():
                     list_key = f"msg:recent:{conversation_id}"
@@ -494,7 +549,9 @@ class MessageService(BaseService):
     ) -> List[Message]:
         """Search for messages in a conversation."""
         if not self._participant_svc.is_participant(conversation_id, user_id):
-            raise ConversationAccessDeniedError("Not a participant in this conversation")
+            raise ConversationAccessDeniedError(
+                "Not a participant in this conversation"
+            )
 
         limit = min(limit, 100)
 

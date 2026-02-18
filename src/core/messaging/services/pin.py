@@ -43,7 +43,9 @@ class PinService(BaseService):
         conversation_id = msg_row["conversation_id"]
 
         if not self._participant_svc.is_participant(conversation_id, user_id):
-            raise ConversationAccessDeniedError("Not a participant in this conversation")
+            raise ConversationAccessDeniedError(
+                "Not a participant in this conversation"
+            )
 
         # Check if already pinned
         if self._repo.exists(message_id):
@@ -73,8 +75,12 @@ class PinService(BaseService):
         if not msg_row:
             raise MessageNotFoundError("Message not found")
 
-        if not self._participant_svc.is_participant(msg_row["conversation_id"], user_id):
-            raise ConversationAccessDeniedError("Not a participant in this conversation")
+        if not self._participant_svc.is_participant(
+            msg_row["conversation_id"], user_id
+        ):
+            raise ConversationAccessDeniedError(
+                "Not a participant in this conversation"
+            )
 
         if not self._repo.exists(message_id):
             raise MessageNotPinnedError("Message is not pinned")
@@ -87,7 +93,9 @@ class PinService(BaseService):
     ) -> List[Message]:
         """Get all pinned messages in a conversation."""
         if not self._participant_svc.is_participant(conversation_id, user_id):
-            raise ConversationAccessDeniedError("Not a participant in this conversation")
+            raise ConversationAccessDeniedError(
+                "Not a participant in this conversation"
+            )
 
         rows = self._repo.get_pinned_messages(conversation_id)
 

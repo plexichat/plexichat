@@ -19,7 +19,13 @@ from .participant import ParticipantService
 from .user_settings import UserSettingsService
 from .content_filter import ContentFilterService
 from src.core.base import SnowflakeID
-from src.core.database import cached, invalidate_pattern, cache_get, cache_set, redis_available
+from src.core.database import (
+    cached,
+    invalidate_pattern,
+    cache_get,
+    cache_set,
+    redis_available,
+)
 import utils.logger as logger
 
 
@@ -62,7 +68,7 @@ class ConversationService(BaseService):
         u1, u2 = min(user_id, recipient_id), max(user_id, recipient_id)
         cache_key = f"dm_lookup:{u1}:{u2}"
         existing_id = cache_get(cache_key) if redis_available() else None
-        
+
         if not existing_id:
             existing_id = self._repo.get_dm_lookup(user_id, recipient_id)
             if existing_id and redis_available():
@@ -100,19 +106,21 @@ class ConversationService(BaseService):
 
         # Add participants
         for uid in [user_id, recipient_id]:
-            self._participant_svc.add_participant(
-                conv_id, uid, ParticipantRole.MEMBER
-            )
+            self._participant_svc.add_participant(conv_id, uid, ParticipantRole.MEMBER)
 
         # Create DM lookup
         lookup_id = self._generate_id()
         self._repo.create_dm_lookup(lookup_id, user_id, recipient_id, conv_id)
 
-        logger.debug(f"Created DM conversation {conv_id} between {user_id} and {recipient_id}")
+        logger.debug(
+            f"Created DM conversation {conv_id} between {user_id} and {recipient_id}"
+        )
 
         conv = self.get_conversation(conv_id, user_id)
         if conv is None:
-            raise ConversationNotFoundError(f"Failed to retrieve created conversation {conv_id}")
+            raise ConversationNotFoundError(
+                f"Failed to retrieve created conversation {conv_id}"
+            )
         return conv
 
     def create_group(
@@ -180,11 +188,15 @@ class ConversationService(BaseService):
             role = ParticipantRole.OWNER if uid == owner_id else ParticipantRole.MEMBER
             self._participant_svc.add_participant(conv_id, uid, role)
 
-        logger.debug(f"Created group conversation {conv_id} with {len(participants)} participants")
+        logger.debug(
+            f"Created group conversation {conv_id} with {len(participants)} participants"
+        )
 
         conv = self.get_conversation(conv_id, owner_id)
         if conv is None:
-            raise ConversationNotFoundError(f"Failed to retrieve created conversation {conv_id}")
+            raise ConversationNotFoundError(
+                f"Failed to retrieve created conversation {conv_id}"
+            )
         return conv
 
     def get_or_create_notes(self, user_id: SnowflakeID) -> Conversation:
@@ -217,7 +229,9 @@ class ConversationService(BaseService):
 
         conv = self.get_conversation(conv_id, user_id)
         if conv is None:
-            raise ConversationNotFoundError(f"Failed to retrieve created notes conversation {conv_id}")
+            raise ConversationNotFoundError(
+                f"Failed to retrieve created notes conversation {conv_id}"
+            )
         return conv
 
     def create_server_channel_conversation(
@@ -237,7 +251,9 @@ class ConversationService(BaseService):
             metadata=metadata,
         )
 
-        logger.debug(f"Created server channel conversation {conv_id} for channel {channel_id}")
+        logger.debug(
+            f"Created server channel conversation {conv_id} for channel {channel_id}"
+        )
 
         return Conversation(
             id=conv_id,
@@ -360,7 +376,9 @@ class ConversationService(BaseService):
 
         conv = self.get_conversation(conversation_id, user_id)
         if conv is None:
-            raise ConversationNotFoundError(f"Failed to retrieve updated conversation {conversation_id}")
+            raise ConversationNotFoundError(
+                f"Failed to retrieve updated conversation {conversation_id}"
+            )
         return conv
 
     def delete_conversation(
@@ -407,7 +425,9 @@ class ConversationService(BaseService):
 
         participant = self._participant_svc.get_participant(conversation_id, user_id)
         if not participant:
-            raise ConversationAccessDeniedError("Not a participant in this conversation")
+            raise ConversationAccessDeniedError(
+                "Not a participant in this conversation"
+            )
 
         # If owner is leaving, transfer ownership or delete
         if participant.role == ParticipantRole.OWNER:

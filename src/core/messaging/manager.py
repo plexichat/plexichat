@@ -31,7 +31,6 @@ from .exceptions import (
     ConversationTypeError,
     InvalidRecipientError,
 )
-from .schema import create_tables
 from .services import (
     ConversationService,
     MessageService,
@@ -96,7 +95,6 @@ class MessagingManager(BaseManager):
         self._config = config.get("messaging", {})
 
         # Create tables
-        create_tables(db)
 
         # Initialize services
         self._participant_svc = ParticipantService(db)

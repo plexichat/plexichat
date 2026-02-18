@@ -59,7 +59,11 @@ class BaseService:
         self._last_timestamp = timestamp
 
         # Snowflake format: timestamp (42 bits) | machine_id (10 bits) | sequence (12 bits)
-        snowflake = ((timestamp - 1420070400000) << 22) | (self._machine_id << 12) | self._id_counter
+        snowflake = (
+            ((timestamp - 1420070400000) << 22)
+            | (self._machine_id << 12)
+            | self._id_counter
+        )
         return snowflake
 
     def _cache_get(self, key: Any, default: Optional[Any] = None) -> Optional[Any]:
@@ -73,6 +77,7 @@ class BaseService:
 
         # 2. Try Redis
         from src.core.database import cache_get, redis_available
+
         if redis_available():
             cache_key = f"msg_cache:{self.__class__.__name__}:{key}"
             redis_val = cache_get(cache_key)
@@ -86,8 +91,9 @@ class BaseService:
     def _cache_set(self, key: Any, value: Any) -> None:
         """Set value in cache (Local memory and Redis)."""
         self._cache[key] = (value, (self._get_timestamp() / 1000.0) + self._cache_ttl)
-        
+
         from src.core.database import cache_set, redis_available
+
         if redis_available():
             cache_key = f"msg_cache:{self.__class__.__name__}:{key}"
             cache_set(cache_key, value, ttl=int(self._cache_ttl))
@@ -95,8 +101,9 @@ class BaseService:
     def _cache_invalidate(self, key: Any) -> None:
         """Invalidate a cache entry (Local memory and Redis)."""
         self._cache.pop(key, None)
-        
+
         from src.core.database import cache_delete, redis_available
+
         if redis_available():
             cache_key = f"msg_cache:{self.__class__.__name__}:{key}"
             cache_delete(cache_key)

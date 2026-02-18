@@ -115,7 +115,9 @@ class AttachmentService(BaseService):
         if not msg_row:
             return []
 
-        if not self._participant_svc.is_participant(msg_row["conversation_id"], user_id):
+        if not self._participant_svc.is_participant(
+            msg_row["conversation_id"], user_id
+        ):
             return []
 
         rows = self._repo.get_by_message(message_id)

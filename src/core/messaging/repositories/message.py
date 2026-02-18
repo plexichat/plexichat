@@ -100,7 +100,9 @@ class MessageRepository(BaseRepository[Message]):
 
     def _get_conv_id(self, msg_id: SnowflakeID) -> Optional[SnowflakeID]:
         """Get conversation ID for a message."""
-        row = self._fetch_one("SELECT conversation_id FROM msg_messages WHERE id = ?", (msg_id,))
+        row = self._fetch_one(
+            "SELECT conversation_id FROM msg_messages WHERE id = ?", (msg_id,)
+        )
         return row["conversation_id"] if row else None
 
     def search(
@@ -114,9 +116,10 @@ class MessageRepository(BaseRepository[Message]):
         """Search messages in a conversation."""
         # If it looks like an exact match search for a single word, try blind index
         use_blind_index = " " not in search_query.strip()
-        
+
         if use_blind_index:
             from src.utils.encryption import blind_index
+
             query_index = blind_index(search_query, "message_content")
             query = "SELECT * FROM msg_messages WHERE conversation_id = ? AND deleted = 0 AND (content_index = ? OR content LIKE ?)"
             params: List[Any] = [conversation_id, query_index, f"%{search_query}%"]
@@ -227,16 +230,20 @@ class MessageRepository(BaseRepository[Message]):
             # Add leading wildcards to catch keys like 'cache:src.api.routes.messages.get_channel_messages:channel_id:int:...'
             pattern1 = f"*messages_list:*{conversation_id}*"
             pattern2 = f"*messages_api:*{conversation_id}*"
-            
+
             count1 = invalidate_pattern(pattern1)
             count2 = invalidate_pattern(pattern2)
-            
+
             total = count1 + count2
             if total > 0:
                 from utils.logger import debug
-                debug(f"Invalidated {total} message cache keys for conversation {conversation_id}")
+
+                debug(
+                    f"Invalidated {total} message cache keys for conversation {conversation_id}"
+                )
         except Exception as e:
             from utils.logger import warning
+
             warning(f"Failed to invalidate message cache for {conversation_id}: {e}")
 
     def row_to_model(

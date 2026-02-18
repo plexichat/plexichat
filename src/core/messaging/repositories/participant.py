@@ -122,7 +122,7 @@ class ParticipantRepository(BaseRepository[Participant]):
 
         placeholders = ",".join("?" for _ in conversation_ids)
         params = [user_id] + list(conversation_ids)
-        
+
         self._execute(
             f"DELETE FROM msg_participants WHERE user_id = ? AND conversation_id IN ({placeholders})",
             tuple(params),
@@ -200,9 +200,7 @@ class ParticipantRepository(BaseRepository[Participant]):
             return self._json_loads(row["metadata"])
         return None
 
-    def check_server_membership(
-        self, server_id: int, user_id: SnowflakeID
-    ) -> bool:
+    def check_server_membership(self, server_id: int, user_id: SnowflakeID) -> bool:
         """Check if user is a member of a server."""
         row = self._fetch_one(
             "SELECT 1 FROM srv_members WHERE server_id = ? AND user_id = ?",
@@ -222,6 +220,8 @@ class ParticipantRepository(BaseRepository[Participant]):
             last_read_at=row["last_read_at"],
             muted=bool(row["muted"]),
             muted_until=row["muted_until"],
-            permissions=self._json_loads(row["permissions"]) if row["permissions"] else None,
+            permissions=self._json_loads(row["permissions"])
+            if row["permissions"]
+            else None,
             nickname=row["nickname"],
         )

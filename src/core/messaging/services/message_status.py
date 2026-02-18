@@ -51,7 +51,9 @@ class MessageStatusService(BaseService):
             msg_row = self._message_repo.get_by_id(msg_id)
             if not msg_row or msg_row["author_id"] == user_id:
                 continue
-            if not self._participant_svc.is_participant(msg_row["conversation_id"], user_id):
+            if not self._participant_svc.is_participant(
+                msg_row["conversation_id"], user_id
+            ):
                 continue
             valid_ids.append(msg_id)
 
@@ -59,9 +61,7 @@ class MessageStatusService(BaseService):
             return 0
 
         status_id = self._generate_id()
-        return self._repo.batch_mark_delivered(
-            user_id, valid_ids, now, status_id
-        )
+        return self._repo.batch_mark_delivered(user_id, valid_ids, now, status_id)
 
     def mark_read(
         self,
@@ -75,7 +75,9 @@ class MessageStatusService(BaseService):
         if not participant:
             # Fallback to is_participant check if get_participant fails (though it shouldn't for a member)
             if not self._participant_svc.is_participant(conversation_id, user_id):
-                raise ConversationAccessDeniedError("Not a participant in this conversation")
+                raise ConversationAccessDeniedError(
+                    "Not a participant in this conversation"
+                )
             last_read_id = 0
         else:
             last_read_id = participant.last_read_message_id or 0
@@ -83,7 +85,9 @@ class MessageStatusService(BaseService):
         # Determine target message ID
         target_msg_id = up_to_message_id
         if not target_msg_id:
-            target_msg_id = self._message_repo.get_max_id_in_conversation(conversation_id)
+            target_msg_id = self._message_repo.get_max_id_in_conversation(
+                conversation_id
+            )
 
         # Skip if no new messages to mark
         if not target_msg_id or target_msg_id <= last_read_id:
@@ -93,43 +97,52 @@ class MessageStatusService(BaseService):
 
         # Only update public read statuses if user has read receipts enabled AND channel has them enabled
         user_settings = self._user_settings_svc.get_message_settings(user_id)
-        
+
         # Check if channel has read receipts enabled
         channel_receipts_enabled = True
         try:
             # We need to find if this is a server channel and check its setting
             import src.api as api
+
             servers_mod = api.get_servers()
             if servers_mod:
                 # messaging conversation_id might be different from server channel_id
                 # but servers_mod.get_channel usually handles the lookup
                 channel = servers_mod.get_channel(conversation_id, user_id)
                 if channel:
-                    channel_receipts_enabled = getattr(channel, "read_receipts_enabled", True)
+                    channel_receipts_enabled = getattr(
+                        channel, "read_receipts_enabled", True
+                    )
         except Exception:
             pass
-        
+
         count = 0
         if user_settings.read_receipts_enabled and channel_receipts_enabled:
             status_id = self._generate_id()
             # Pass last_read_id to avoid redundant updates
             count = self._repo.batch_mark_read(
-                user_id, conversation_id, target_msg_id, now, status_id, start_from_id=last_read_id
+                user_id,
+                conversation_id,
+                target_msg_id,
+                now,
+                status_id,
+                start_from_id=last_read_id,
             )
-            
+
             if count > 0:
                 # Invalidate reader IDs and status batch cache for ALL users
                 try:
                     from src.core.database import invalidate_pattern
+
                     # Key format: msg_reader_ids:* and msg_status_batch:*
                     invalidate_pattern("msg_reader_ids:*")
                     invalidate_pattern("msg_status_batch:*")
-                    
+
                     # ALSO invalidate the individual message object caches since they contain read counts and status
                     invalidate_pattern("msg:obj:*")
                     # And the recent messages list cache
                     invalidate_pattern(f"msg:recent:{conversation_id}")
-                    
+
                     # ALSO invalidate the message list caches for the API and internal repo
                     self._message_repo.invalidate_conversation_cache(conversation_id)
                 except Exception:
@@ -139,7 +152,7 @@ class MessageStatusService(BaseService):
         self._participant_repo.update_last_read(
             conversation_id, user_id, target_msg_id, now
         )
-        
+
         # Invalidate unread counts cache
         try:
             # from src.core.database import invalidate_cached
@@ -178,37 +191,41 @@ class MessageStatusService(BaseService):
         rows = self._repo.get_all_by_message(message_id)
         return [self._repo.row_to_model(row) for row in rows]
 
-    def get_reader_ids(self, user_id: SnowflakeID, message_id: SnowflakeID) -> List[SnowflakeID]:
+    def get_reader_ids(
+        self, user_id: SnowflakeID, message_id: SnowflakeID
+    ) -> List[SnowflakeID]:
         """Get IDs of users who have read a message (sender only)."""
         msg_row = self._message_repo.get_by_id(message_id)
         if not msg_row:
             return []
-            
+
         # Security: only the author can see who read their message
         if msg_row["author_id"] != user_id:
             return []
-            
+
         return self._repo.get_reader_ids(message_id)
 
     @cached(ttl=30, prefix="msg_reader_ids")
-    def get_batch_reader_ids(self, user_id: SnowflakeID, message_ids: List[SnowflakeID]) -> Dict[SnowflakeID, List[SnowflakeID]]:
+    def get_batch_reader_ids(
+        self, user_id: SnowflakeID, message_ids: List[SnowflakeID]
+    ) -> Dict[SnowflakeID, List[SnowflakeID]]:
         """Get IDs of users who have read messages (batch, sender only)."""
         if not message_ids:
             return {}
-            
+
         # Get message rows to verify ownership
         msg_rows = self._message_repo.get_batch_by_ids(message_ids)
-        
+
         # Filter for messages where user is the author
         owned_message_ids = [
             row["id"] for row in msg_rows if row["author_id"] == user_id
         ]
-        
+
         if not owned_message_ids:
             return {mid: [] for mid in message_ids}
-            
+
         reader_map = self._repo.get_batch_reader_ids(owned_message_ids)
-        
+
         # Ensure all requested IDs are in the result
         result: Dict[SnowflakeID, List[SnowflakeID]] = {mid: [] for mid in message_ids}
         result.update(reader_map)
@@ -223,16 +240,18 @@ class MessageStatusService(BaseService):
             return {}
 
         import utils.logger as logger
+
         status_map = self._repo.get_batch_for_user(user_id, message_ids)
         counts_map = self._repo.get_batch_counts(message_ids)
-        
+
         # Batch fetch message rows to check channel settings
         msg_rows = self._message_repo.get_batch_by_ids(message_ids)
         msg_conv_map = {row["id"]: row["conversation_id"] for row in msg_rows}
-        
+
         # Cache for channel settings
-        channel_settings_cache = {} # {conv_id: bool}
+        channel_settings_cache = {}  # {conv_id: bool}
         import src.api as api
+
         servers_mod = api.get_servers()
 
         result: Dict[SnowflakeID, Dict[str, Any]] = {}
@@ -243,18 +262,20 @@ class MessageStatusService(BaseService):
                 if conv_id not in channel_settings_cache:
                     try:
                         channel = servers_mod.get_channel(conv_id, user_id)
-                        channel_settings_cache[conv_id] = getattr(channel, "read_receipts_enabled", True)
+                        channel_settings_cache[conv_id] = getattr(
+                            channel, "read_receipts_enabled", True
+                        )
                     except Exception:
                         channel_settings_cache[conv_id] = True
                 receipts_enabled = channel_settings_cache[conv_id]
 
             stats = counts_map.get(mid, {"delivery_count": 0, "read_count": 0})
-            
+
             # If receipts disabled for channel, treat as 0
             if not receipts_enabled:
                 stats = {"delivery_count": 0, "read_count": 0}
 
-            # Determine overall status: if read_count > 0, it's READ. 
+            # Determine overall status: if read_count > 0, it's READ.
             # If delivery_count > 0, it's DELIVERED. Otherwise it's the user's own status.
             overall_status = status_map.get(mid, MessageStatusType.SENT)
             if stats["read_count"] > 0:
@@ -269,9 +290,11 @@ class MessageStatusService(BaseService):
                 "delivery_count": stats["delivery_count"],
                 "read_count": stats["read_count"],
             }
-            
+
             if stats["read_count"] > 0:
-                logger.debug(f"Status Info: Message {mid} for user {user_id} has read_count {stats['read_count']}, overall={overall_status}")
+                logger.debug(
+                    f"Status Info: Message {mid} for user {user_id} has read_count {stats['read_count']}, overall={overall_status}"
+                )
 
         return result
 

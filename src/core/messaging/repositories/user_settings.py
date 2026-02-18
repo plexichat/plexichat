@@ -14,9 +14,7 @@ class UserSettingsRepository(BaseRepository[UserMessageSettings]):
 
     # === Message Settings ===
 
-    def get_message_settings(
-        self, user_id: SnowflakeID
-    ) -> Optional[Dict[str, Any]]:
+    def get_message_settings(self, user_id: SnowflakeID) -> Optional[Dict[str, Any]]:
         """Get user's message settings."""
         return self._fetch_one(
             "SELECT * FROM msg_user_settings WHERE user_id = ?",

@@ -75,9 +75,7 @@ class PinRepository(BaseRepository[PinnedMessage]):
             auto_commit=auto_commit,
         )
 
-    def get_pinned_messages(
-        self, conversation_id: SnowflakeID
-    ) -> List[Dict[str, Any]]:
+    def get_pinned_messages(self, conversation_id: SnowflakeID) -> List[Dict[str, Any]]:
         """Get all pinned messages in a conversation with message data."""
         return self._fetch_all(
             """SELECT m.*, p.pinned_by, p.pinned_at FROM msg_messages m

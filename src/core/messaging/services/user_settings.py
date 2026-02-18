@@ -51,14 +51,42 @@ class UserSettingsService(BaseService):
         """Update user's message settings."""
         current = self.get_message_settings(user_id)
 
-        new_dms = allow_dms_from if allow_dms_from is not None else current.allow_dms_from
-        new_auto = auto_create_dms if auto_create_dms is not None else current.auto_create_dms
-        new_length = max_message_length if max_message_length is not None else current.max_message_length
-        new_att_size = max_attachment_size if max_attachment_size is not None else current.max_attachment_size
-        new_att_count = max_attachments_per_message if max_attachments_per_message is not None else current.max_attachments_per_message
-        new_read_receipts = read_receipts_enabled if read_receipts_enabled is not None else current.read_receipts_enabled
-        new_typing = typing_indicators_enabled if typing_indicators_enabled is not None else current.typing_indicators_enabled
-        new_compact = compact_messages_enabled if compact_messages_enabled is not None else current.compact_messages_enabled
+        new_dms = (
+            allow_dms_from if allow_dms_from is not None else current.allow_dms_from
+        )
+        new_auto = (
+            auto_create_dms if auto_create_dms is not None else current.auto_create_dms
+        )
+        new_length = (
+            max_message_length
+            if max_message_length is not None
+            else current.max_message_length
+        )
+        new_att_size = (
+            max_attachment_size
+            if max_attachment_size is not None
+            else current.max_attachment_size
+        )
+        new_att_count = (
+            max_attachments_per_message
+            if max_attachments_per_message is not None
+            else current.max_attachments_per_message
+        )
+        new_read_receipts = (
+            read_receipts_enabled
+            if read_receipts_enabled is not None
+            else current.read_receipts_enabled
+        )
+        new_typing = (
+            typing_indicators_enabled
+            if typing_indicators_enabled is not None
+            else current.typing_indicators_enabled
+        )
+        new_compact = (
+            compact_messages_enabled
+            if compact_messages_enabled is not None
+            else current.compact_messages_enabled
+        )
 
         if self._repo.message_settings_exists(user_id):
             self._repo.update_message_settings(

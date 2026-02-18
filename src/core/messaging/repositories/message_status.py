@@ -129,7 +129,13 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
                            WHEN msg_message_status.status != 'read' THEN EXCLUDED.timestamp 
                            ELSE msg_message_status.timestamp 
                        END""",
-                (new_status_id, mid, user_id, MessageStatusType.DELIVERED.value, timestamp),
+                (
+                    new_status_id,
+                    mid,
+                    user_id,
+                    MessageStatusType.DELIVERED.value,
+                    timestamp,
+                ),
                 auto_commit=False,
             )
 
@@ -152,21 +158,21 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
         # 1. Find all messages in the conversation that need marking (not by user, not deleted)
         query = "SELECT id FROM msg_messages WHERE conversation_id = ? AND author_id != ? AND deleted = 0"
         params: List[Any] = [conversation_id, user_id]
-        
+
         if up_to_message_id:
             query += " AND id <= ?"
             params.append(up_to_message_id)
-            
+
         if start_from_id:
             query += " AND id > ?"
             params.append(start_from_id)
-            
+
         msg_rows = self._fetch_all(query, tuple(params))
         if not msg_rows:
             return 0
-            
+
         message_ids = [row["id"] for row in msg_rows]
-        
+
         # 2. Use UPSERT for each message to ensure it's marked as read
         for i, mid in enumerate(message_ids):
             new_status_id = status_id + (i % 1000000)
@@ -177,12 +183,12 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
                    DO UPDATE SET status = EXCLUDED.status, timestamp = EXCLUDED.timestamp
                    WHERE msg_message_status.status != 'read'""",
                 (new_status_id, mid, user_id, MessageStatusType.READ.value, timestamp),
-                auto_commit=False
+                auto_commit=False,
             )
-        
+
         if auto_commit:
             self.commit()
-            
+
         return len(message_ids)
 
     def get_unread_count(
@@ -200,9 +206,7 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
         )
         return row["unread_count"] if row else 0
 
-    def get_all_unread_counts(
-        self, user_id: SnowflakeID
-    ) -> Dict[SnowflakeID, int]:
+    def get_all_unread_counts(self, user_id: SnowflakeID) -> Dict[SnowflakeID, int]:
         """Get unread counts for all user's conversations."""
         rows = self._fetch_all(
             """SELECT p.conversation_id, COUNT(m.id) as unread_count
@@ -224,17 +228,19 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
         )
         return [row["user_id"] for row in rows]
 
-    def get_batch_reader_ids(self, message_ids: List[SnowflakeID]) -> Dict[SnowflakeID, List[SnowflakeID]]:
+    def get_batch_reader_ids(
+        self, message_ids: List[SnowflakeID]
+    ) -> Dict[SnowflakeID, List[SnowflakeID]]:
         """Get IDs of users who have read messages (batch)."""
         if not message_ids:
             return {}
-            
+
         in_clause, params = self._build_in_clause(message_ids)
         rows = self._fetch_all(
             f"SELECT message_id, user_id FROM msg_message_status WHERE message_id IN {in_clause} AND status = 'read' ORDER BY timestamp ASC",
             params,
         )
-        
+
         result: Dict[SnowflakeID, List[SnowflakeID]] = {mid: [] for mid in message_ids}
         for row in rows:
             result[row["message_id"]].append(row["user_id"])

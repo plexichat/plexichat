@@ -87,11 +87,25 @@ class ContentFilterService(BaseService):
         """Update user's content filter settings."""
         current = self.get_filter_settings(user_id)
 
-        new_profanity = profanity_filter if profanity_filter is not None else current.profanity_filter
+        new_profanity = (
+            profanity_filter
+            if profanity_filter is not None
+            else current.profanity_filter
+        )
         new_nsfw = nsfw_filter if nsfw_filter is not None else current.nsfw_filter
-        new_spoiler = spoiler_click_to_reveal if spoiler_click_to_reveal is not None else current.spoiler_click_to_reveal
-        new_words = custom_blocked_words if custom_blocked_words is not None else current.custom_blocked_words
-        new_action = filter_action if filter_action is not None else current.filter_action
+        new_spoiler = (
+            spoiler_click_to_reveal
+            if spoiler_click_to_reveal is not None
+            else current.spoiler_click_to_reveal
+        )
+        new_words = (
+            custom_blocked_words
+            if custom_blocked_words is not None
+            else current.custom_blocked_words
+        )
+        new_action = (
+            filter_action if filter_action is not None else current.filter_action
+        )
 
         if self._repo.filter_settings_exists(user_id):
             self._repo.update_filter_settings(
