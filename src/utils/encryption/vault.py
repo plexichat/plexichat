@@ -19,7 +19,7 @@ class HardwareVault:
     def __init__(self):
         self._master_key: Optional[bytes] = None
         self._tpm_available = False
-        
+
         # Prioritize environment key over hardware even during initialization
         if "PLEXICHAT_SYSTEM_KEY" in os.environ:
             try:
@@ -54,7 +54,7 @@ class HardwareVault:
         """
         Get the Key Encryption Key (KEK).
         Derived from PLEXICHAT_SYSTEM_KEY env var, TPM hardware, or machine-local file.
-        
+
         Prioritizes:
         1. PLEXICHAT_SYSTEM_KEY (Explicitly provided, best for consistency)
         2. TPM 2.0 (Hardware-bound security)
@@ -123,12 +123,12 @@ class HardwareVault:
     def _get_tpm_key(self) -> Optional[bytes]:
         """
         Interact with TPM 2.0 to get/create a persistent storage key.
-        
+
         Uses TPM's key hierarchy to derive a unique key bound to this machine's TPM.
         """
         if not self._tpm_available:
             return None
-            
+
         try:
             from tpm2_pytss import ESYS_Context, TPM2B_PUBLIC, TPM2B_SENSITIVE_CREATE  # type: ignore[import-not-found]
             from tpm2_pytss.constants import (  # type: ignore[import-not-found]
@@ -136,7 +136,7 @@ class HardwareVault:
                 TPM2_ALG,
                 TPMA_OBJECT,
             )
-            
+
             with ESYS_Context() as ctx:
                 # Create a primary key under the storage hierarchy
                 in_public = TPM2B_PUBLIC.parse(
@@ -150,26 +150,25 @@ class HardwareVault:
                         | TPMA_OBJECT.SENSITIVEDATAORIGIN
                     ),
                 )
-                
+
                 primary_handle, _, _, _, _ = ctx.create_primary(
                     ESYS_TR.OWNER,
                     TPM2B_SENSITIVE_CREATE(),
                     in_public,
                 )
-                
+
                 # Derive key material from the primary key
                 # Use a fixed label for reproducibility
                 label = b"PLEXICHAT_KEK_V1"
                 derived = ctx.hash(label, TPM2_ALG.SHA256, ESYS_TR.OWNER)
-                
+
                 ctx.flush_context(primary_handle)
-                
+
                 return bytes(derived.buffer)[:32]
-                
+
         except Exception as e:
             logger.debug(f"TPM key derivation failed: {e}")
             return None
-
 
     def is_using_secure_source(self) -> bool:
         """Check if the current master key is from a secure source (Env or TPM)."""
@@ -177,5 +176,6 @@ class HardwareVault:
         if not self._master_key:
             self.get_kek()
         return self._source in ("env", "tpm")
+
 
 vault = HardwareVault()

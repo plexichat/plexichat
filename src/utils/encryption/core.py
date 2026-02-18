@@ -12,6 +12,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 try:
     import xxhash
+
     XXHASH_AVAILABLE = True
 except ImportError:
     xxhash = None
@@ -38,15 +39,23 @@ def _acquire_file_lock(lock_file, exclusive: bool = True) -> bool:
     """Cross-platform file locking."""
     if sys.platform == "win32":
         import msvcrt
+
         try:
-            msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK if not exclusive else msvcrt.LK_LOCK, 1)
+            msvcrt.locking(
+                lock_file.fileno(),
+                msvcrt.LK_NBLCK if not exclusive else msvcrt.LK_LOCK,
+                1,
+            )
             return True
         except (IOError, OSError):
             return False
     else:
         import fcntl
+
         try:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+            fcntl.flock(
+                lock_file.fileno(), fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+            )
             return True
         except (IOError, OSError):
             return False
@@ -56,12 +65,14 @@ def _release_file_lock(lock_file) -> None:
     """Cross-platform file unlock."""
     if sys.platform == "win32":
         import msvcrt
+
         try:
             msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
         except (IOError, OSError):
             pass
     else:
         import fcntl
+
         try:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
         except (IOError, OSError):
@@ -72,7 +83,7 @@ class Keyring:
     """
     Manages multiple versions of encryption keys for rotation support.
     Keys are encrypted at rest using a Master Key (KEK).
-    
+
     Thread-safe within a process and uses file locking for multi-process safety.
     """
 
@@ -92,16 +103,18 @@ class Keyring:
     def _get_env_key(self) -> Optional[bytes]:
         if not self.env_var:
             return None
-        
+
         val = os.environ.get(self.env_var)
         if not val:
             return None
-            
+
         try:
             # Expecting Base64 encoded 32-byte key
             key = base64.b64decode(val)
             if len(key) != 32:
-                logger.warning(f"Environment variable {self.env_var} must be a 32-byte key (Base64 encoded)")
+                logger.warning(
+                    f"Environment variable {self.env_var} must be a 32-byte key (Base64 encoded)"
+                )
                 return None
             return key
         except Exception as e:
@@ -121,6 +134,7 @@ class Keyring:
 
     def load(self):
         """Load encrypted keyring from disk."""
+
         def _load_impl():
             if not self.path.exists():
                 return
@@ -154,6 +168,7 @@ class Keyring:
 
     def save(self):
         """Save keyring to disk, encrypted with KEK."""
+
         def _save_impl():
             self.path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -194,6 +209,7 @@ class Keyring:
 
     def get_key(self, version: Optional[int] = None) -> Tuple[int, bytes]:
         """Get a specific key version or the current one."""
+
         def _get_key_impl():
             if not self.keys:
                 # 1. Try environment variable override
@@ -202,7 +218,9 @@ class Keyring:
                     self.current_version = 1
                     self.keys[1] = env_key
                     self.rotated_at = int(time.time())
-                    logger.info(f"Initialized keyring with key from environment variable {self.env_var}")
+                    logger.info(
+                        f"Initialized keyring with key from environment variable {self.env_var}"
+                    )
                     self._save_without_lock()
                 else:
                     # 2. Generate new random key
@@ -212,7 +230,11 @@ class Keyring:
                     self.rotated_at = int(time.time())
                     self._save_without_lock()
 
-            v = version if version is not None and version != 0 else self.current_version
+            v = (
+                version
+                if version is not None and version != 0
+                else self.current_version
+            )
             key = self.keys.get(v)
             if not key:
                 raise ValueError(f"Key version {v} not found in keyring")
@@ -246,7 +268,7 @@ class Keyring:
         temp_path = self.path.with_suffix(".tmp")
         with open(temp_path, "w") as f:
             json.dump(final_data, f)
-        
+
         # Restrict permissions (Unix only, Windows ignores)
         try:
             os.chmod(temp_path, 0o600)
@@ -257,6 +279,7 @@ class Keyring:
 
     def rotate(self) -> int:
         """Generate a new key version and make it current."""
+
         def _rotate_impl():
             new_version = self.current_version + 1
             new_key = AESGCM.generate_key(bit_length=256)
@@ -290,7 +313,7 @@ class EncryptionManager:
         )
         self.keyring = Keyring(
             Path.home() / ".plexichat" / "data" / "system_keyring.json",
-            env_var="PLEXICHAT_ENCRYPTION_KEY"
+            env_var="PLEXICHAT_ENCRYPTION_KEY",
         )
 
     def hash_password(self, password: str) -> str:
@@ -374,32 +397,36 @@ class EncryptionManager:
         """
         if not XXHASH_AVAILABLE or xxhash is None:
             return self.blind_index(data, scope)
-            
+
         kek = self.keyring._get_kek()
         # Derive a 64-bit seed from KEK + Scope
         seed_bytes = hashlib.blake2b(kek, key=scope.encode(), digest_size=8).digest()
         seed = int.from_bytes(seed_bytes, byteorder="big")
-        
+
         # Use xxhash with seed
         return xxhash.xxh64(data.lower().strip().encode(), seed=seed).hexdigest()
 
     def rotate_keys(self, force: bool = False) -> bool:
         """Rotate keys if enough time has passed."""
         import utils.config as config
-        
+
         # Get rotation interval from config (default 90 days)
         rotation_days = config.get("encryption.key_rotation_days", 90)
         rotation_seconds = rotation_days * 24 * 60 * 60
-        
+
         current_time = int(time.time())
         time_since_rotation = current_time - self.keyring.rotated_at
-        
+
         if force or time_since_rotation >= rotation_seconds:
             self.keyring.rotate()
-            logger.info(f"Encryption keys rotated after {time_since_rotation // 86400} days")
+            logger.info(
+                f"Encryption keys rotated after {time_since_rotation // 86400} days"
+            )
             return True
-        
-        logger.debug(f"Key rotation not needed - {time_since_rotation // 86400} days since last rotation")
+
+        logger.debug(
+            f"Key rotation not needed - {time_since_rotation // 86400} days since last rotation"
+        )
         return False
 
 
@@ -407,7 +434,7 @@ class SnowflakeGenerator:
     """
     Twitter-style Snowflake ID generator.
     Format: [1-bit unused][41-bit timestamp][5-bit datacenter][5-bit worker][12-bit sequence]
-    
+
     For single-machine deployments, auto-generates IDs from machine characteristics.
     For distributed deployments, set PLEXICHAT_WORKER_ID and PLEXICHAT_DATACENTER_ID.
     """
@@ -420,26 +447,28 @@ class SnowflakeGenerator:
     ):
         # Epoch: 2024-01-01 00:00:00 UTC
         self.epoch = epoch_timestamp or 1704067200000
-        
+
         # Auto-derive IDs if not provided
         if worker_id is None:
             worker_id = self._get_auto_worker_id()
         if datacenter_id is None:
             datacenter_id = self._get_auto_datacenter_id()
-        
+
         # Validate bounds
         if not (0 <= worker_id <= 31):
             raise ValueError(f"worker_id must be 0-31, got {worker_id}")
         if not (0 <= datacenter_id <= 31):
             raise ValueError(f"datacenter_id must be 0-31, got {datacenter_id}")
-        
+
         self.worker_id = worker_id & 0x1F
         self.datacenter_id = datacenter_id & 0x1F
         self.sequence = 0
         self.last_timestamp = -1
         self._lock = threading.Lock()
-        
-        logger.debug(f"SnowflakeGenerator initialized: worker={self.worker_id}, datacenter={self.datacenter_id}")
+
+        logger.debug(
+            f"SnowflakeGenerator initialized: worker={self.worker_id}, datacenter={self.datacenter_id}"
+        )
 
     def _get_auto_worker_id(self) -> int:
         """Auto-derive worker ID from environment or machine characteristics."""
@@ -450,9 +479,10 @@ class SnowflakeGenerator:
                 return int(env_id) % 32
             except ValueError:
                 pass
-        
+
         # 2. Try to derive from process ID and hostname for uniqueness
         import socket
+
         try:
             hostname = socket.gethostname()
             # Combine hostname hash with PID for multi-process on same machine
@@ -472,9 +502,10 @@ class SnowflakeGenerator:
                 return int(env_id) % 32
             except ValueError:
                 pass
-        
+
         # 2. Try to derive from machine ID or hostname
         import socket
+
         try:
             hostname = socket.gethostname()
             host_hash = hashlib.md5(hostname.encode()).digest()
@@ -524,7 +555,7 @@ class MessageEncryptor:
     def __init__(self):
         self.keyring = Keyring(
             Path.home() / ".plexichat" / "data" / "message_keyring.json",
-            env_var="PLEXICHAT_MESSAGE_KEY"
+            env_var="PLEXICHAT_MESSAGE_KEY",
         )
 
     def encrypt_message(self, content: str, message_id: Optional[int] = None) -> str:

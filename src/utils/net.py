@@ -2,11 +2,12 @@ from fastapi import Request
 from typing import Optional, Union, Dict, Any, List
 import utils.config as config
 
+
 def get_client_ip(request: Union[Request, Dict[str, Any]]) -> Optional[str]:
     """
     Extract IP address from a FastAPI Request or ASGI scope.
     Considering trusted proxies configuration.
-    
+
     Consolidated logic for consistent IP extraction across the application.
     Hardened to prevent X-Forwarded-For spoofing.
     """
@@ -21,7 +22,7 @@ def get_client_ip(request: Union[Request, Dict[str, Any]]) -> Optional[str]:
 
     # Get headers from scope
     headers = scope.get("headers", [])
-    
+
     # Function to get header value from ASGI list of tuples
     def get_header(name: str) -> Optional[str]:
         name_bytes = name.lower().encode()

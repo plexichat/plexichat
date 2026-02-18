@@ -29,10 +29,10 @@ def generate_csp_nonce() -> str:
 def build_admin_csp_header(nonce: str) -> str:
     """
     Build Content-Security-Policy header for the Admin UI.
-    
+
     Args:
         nonce: CSP nonce for inline scripts
-        
+
     Returns:
         CSP header value string
     """
@@ -51,7 +51,7 @@ def build_admin_csp_header(nonce: str) -> str:
 class URLValidator:
     """
     Centralized URL validation for SSRF protection.
-    
+
     Returns both the original hostname and resolved IP. Callers MUST use
     the resolved IP for the actual connection to prevent DNS rebinding attacks.
     """
@@ -74,7 +74,7 @@ class URLValidator:
 
         Returns:
             Tuple of (original_hostname, resolved_ip)
-            
+
         IMPORTANT: Callers MUST use the resolved_ip for the actual HTTP connection
         and set the Host header to original_hostname. This prevents DNS rebinding.
 
@@ -126,31 +126,33 @@ class URLValidator:
     def get_safe_url(self, url: str) -> Tuple[str, str, str]:
         """
         Validate URL and return a safe URL with resolved IP.
-        
+
         Returns:
             Tuple of (safe_url_with_ip, original_hostname, resolved_ip)
-            
+
         The safe_url_with_ip has the hostname replaced with the resolved IP.
         Use original_hostname in the Host header.
         """
         hostname, resolved_ip = self.validate_url_for_request(url)
-        
+
         parsed = urlparse(url)
         # Replace hostname with resolved IP in the URL
         if parsed.port:
             netloc = f"{resolved_ip}:{parsed.port}"
         else:
             netloc = resolved_ip
-            
-        safe_url = urlunparse((
-            parsed.scheme,
-            netloc,
-            parsed.path,
-            parsed.params,
-            parsed.query,
-            parsed.fragment
-        ))
-        
+
+        safe_url = urlunparse(
+            (
+                parsed.scheme,
+                netloc,
+                parsed.path,
+                parsed.params,
+                parsed.query,
+                parsed.fragment,
+            )
+        )
+
         return safe_url, hostname, resolved_ip
 
     def is_private_ip(self, ip: str) -> bool:

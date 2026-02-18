@@ -32,13 +32,13 @@ class SMTPEmailSender:
     def send(self, to: str, subject: str, body: str, html: bool = False) -> bool:
         """
         Send an email via SMTP.
-        
+
         Args:
             to: Recipient email address
             subject: Email subject
             body: Email body (text or HTML)
             html: Whether the body is HTML
-            
+
         Returns:
             True if successful, False otherwise
         """
@@ -52,17 +52,17 @@ class SMTPEmailSender:
             msg.attach(part)
 
             context = ssl.create_default_context()
-            
+
             # Using synchronous smtplib; in FastAPI this should be run in a threadpool
             with smtplib.SMTP(self.host, self.port) as server:
                 if self.use_tls:
                     server.starttls(context=context)
-                
+
                 if self.user and self.password:
                     server.login(self.user, self.password)
-                
+
                 server.send_message(msg)
-                
+
             logger.info(f"Email sent successfully to {to}: {subject}")
             return True
         except Exception as e:
