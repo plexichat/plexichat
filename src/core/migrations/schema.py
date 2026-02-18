@@ -51,19 +51,17 @@ CREATE INDEX IF NOT EXISTS idx_migrations_applied_at ON migrations_history(appli
 def create_tables(db):
     """
     Create the migrations_history table in the database.
-    
+
     Args:
         db: Database instance from plexichat.src.core.database
-        
+
     Raises:
         Exception: If table creation fails
     """
-    schema = SCHEMA_SQLITE if db.type == 'sqlite' else SCHEMA_POSTGRESQL
-    
+    schema = SCHEMA_SQLITE if db.type == "sqlite" else SCHEMA_POSTGRESQL
+
     # Split statements and execute each one
-    statements = [
-        stmt.strip() for stmt in schema.split(';') if stmt.strip()
-    ]
-    
+    statements = [stmt.strip() for stmt in schema.split(";") if stmt.strip()]
+
     for statement in statements:
         db.execute(statement)
