@@ -9,9 +9,11 @@ import json
 import utils.logger as logger
 from src.core.database import invalidate_pattern
 
+
 @dataclass
 class AdminUserDetail:
     """Detailed user information for admin view."""
+
     id: int
     username: str
     email: Optional[str]
@@ -23,9 +25,11 @@ class AdminUserDetail:
     locked_until: Optional[int] = None
     force_username_change: bool = False
 
+
 @dataclass
 class AdminBannedUsername:
     """A pattern for banned usernames."""
+
     id: int
     pattern: str
     is_regex: bool
@@ -33,7 +37,10 @@ class AdminBannedUsername:
     created_by: Optional[int]
     created_at: Any
 
-def search_users(db: Any, q: str, limit: int = 20, offset: int = 0) -> List[AdminUserDetail]:
+
+def search_users(
+    db: Any, q: str, limit: int = 20, offset: int = 0
+) -> List[AdminUserDetail]:
     """Search users by username or ID."""
     try:
         user_id = int(q)
@@ -58,7 +65,11 @@ def search_users(db: Any, q: str, limit: int = 20, offset: int = 0) -> List[Admi
         if isinstance(row, dict):
             badges_json = row.get("badges", "[]") or "[]"
             try:
-                badges = json.loads(badges_json) if isinstance(badges_json, str) else badges_json or []
+                badges = (
+                    json.loads(badges_json)
+                    if isinstance(badges_json, str)
+                    else badges_json or []
+                )
             except Exception:
                 badges = []
             email_display = "[Encrypted]" if row.get("email_index") else None
@@ -79,7 +90,11 @@ def search_users(db: Any, q: str, limit: int = 20, offset: int = 0) -> List[Admi
         else:
             badges_json = row[4] or "[]"
             try:
-                badges = json.loads(badges_json) if isinstance(badges_json, str) else badges_json or []
+                badges = (
+                    json.loads(badges_json)
+                    if isinstance(badges_json, str)
+                    else badges_json or []
+                )
             except Exception:
                 badges = []
             email_display = "[Encrypted]" if row[2] else None
@@ -99,6 +114,7 @@ def search_users(db: Any, q: str, limit: int = 20, offset: int = 0) -> List[Admi
             )
     return users
 
+
 def get_user_details(db: Any, user_id: int) -> Optional[AdminUserDetail]:
     """Get full user details by ID."""
     row = db.fetch_one(
@@ -114,7 +130,11 @@ def get_user_details(db: Any, user_id: int) -> Optional[AdminUserDetail]:
     if isinstance(row, dict):
         badges_json = row.get("badges", "[]") or "[]"
         try:
-            badges = json.loads(badges_json) if isinstance(badges_json, str) else badges_json or []
+            badges = (
+                json.loads(badges_json)
+                if isinstance(badges_json, str)
+                else badges_json or []
+            )
         except Exception:
             badges = []
         email_display = "[Encrypted]" if row.get("email_index") else None
@@ -133,7 +153,11 @@ def get_user_details(db: Any, user_id: int) -> Optional[AdminUserDetail]:
     else:
         badges_json = row[4] or "[]"
         try:
-            badges = json.loads(badges_json) if isinstance(badges_json, str) else badges_json or []
+            badges = (
+                json.loads(badges_json)
+                if isinstance(badges_json, str)
+                else badges_json or []
+            )
         except Exception:
             badges = []
         email_display = "[Encrypted]" if row[2] else None
@@ -150,14 +174,16 @@ def get_user_details(db: Any, user_id: int) -> Optional[AdminUserDetail]:
             force_username_change=bool(row[9]),
         )
 
+
 def force_username_change(db: Any, user_id: int, forced: bool = True) -> bool:
     """Force a user to change their username on next login."""
     db.execute(
         "UPDATE auth_users SET force_username_change = ? WHERE id = ?",
-        (forced, user_id)
+        (forced, user_id),
     )
     invalidate_pattern("token_verify:*")
     return True
+
 
 def get_banned_usernames(db: Any) -> List[AdminBannedUsername]:
     """Get list of banned username patterns."""
@@ -165,33 +191,46 @@ def get_banned_usernames(db: Any) -> List[AdminBannedUsername]:
     result = []
     for row in rows:
         if isinstance(row, dict):
-            row['is_regex'] = bool(row['is_regex'])
+            row["is_regex"] = bool(row["is_regex"])
             result.append(AdminBannedUsername(**row))
         else:
-            result.append(AdminBannedUsername(
-                id=row[0], pattern=row[1], is_regex=bool(row[2]),
-                reason=row[3], created_by=row[4], created_at=row[5]
-            ))
+            result.append(
+                AdminBannedUsername(
+                    id=row[0],
+                    pattern=row[1],
+                    is_regex=bool(row[2]),
+                    reason=row[3],
+                    created_by=row[4],
+                    created_at=row[5],
+                )
+            )
     return result
 
-def add_banned_username(db: Any, pattern: str, reason: str, admin_id: int, is_regex: bool = False) -> bool:
+
+def add_banned_username(
+    db: Any, pattern: str, reason: str, admin_id: int, is_regex: bool = False
+) -> bool:
     """Add a pattern to the username blacklist."""
     try:
         db.execute(
             "INSERT INTO username_blacklist (pattern, is_regex, reason, created_by) VALUES (?, ?, ?, ?)",
-            (pattern, is_regex, reason, admin_id)
+            (pattern, is_regex, reason, admin_id),
         )
         return True
     except Exception as e:
         logger.error(f"Failed to ban username pattern: {e}")
         return False
 
+
 def remove_banned_username(db: Any, pattern_id: int) -> bool:
     """Remove a pattern from the username blacklist."""
     db.execute("DELETE FROM username_blacklist WHERE id = ?", (pattern_id,))
     return True
 
-def update_user_tier(db: Any, user_id: int, tier: str, admin_id: int = 0, features_module: Any = None) -> bool:
+
+def update_user_tier(
+    db: Any, user_id: int, tier: str, admin_id: int = 0, features_module: Any = None
+) -> bool:
     """Update a user's tier."""
     if features_module:
         try:
@@ -211,16 +250,27 @@ def update_user_tier(db: Any, user_id: int, tier: str, admin_id: int = 0, featur
             """INSERT INTO user_features (user_id, rate_limit_tier, granted_by, granted_at)
                VALUES (?, ?, ?, ?)
                ON CONFLICT(user_id) DO UPDATE SET rate_limit_tier = ?, granted_by = ?, granted_at = ?""",
-            (user_id, tier, admin_id, int(time.time() * 1000), tier, admin_id, int(time.time() * 1000)),
+            (
+                user_id,
+                tier,
+                admin_id,
+                int(time.time() * 1000),
+                tier,
+                admin_id,
+                int(time.time() * 1000),
+            ),
         )
     else:
         db.execute("UPDATE auth_users SET tier = ? WHERE id = ?", (tier, user_id))
-    
+
     invalidate_pattern(f"user_data:{user_id}")
     invalidate_pattern(f"current_user_api:{user_id}")
     return True
 
-def update_user_badges(db: Any, user_id: int, badges: List[str], admin_id: int = 0) -> bool:
+
+def update_user_badges(
+    db: Any, user_id: int, badges: List[str], admin_id: int = 0
+) -> bool:
     """Update a user's badges."""
     row = db.fetch_one("SELECT id FROM auth_users WHERE id = ?", (user_id,))
     if not row:
@@ -235,10 +285,15 @@ def update_user_badges(db: Any, user_id: int, badges: List[str], admin_id: int =
             (user_id, badges_json, admin_id, now, badges_json, admin_id, now),
         )
     else:
-        db.execute("UPDATE auth_users SET badges = ? WHERE id = ?", (badges_json, user_id))
+        db.execute(
+            "UPDATE auth_users SET badges = ? WHERE id = ?", (badges_json, user_id)
+        )
     return True
 
-def add_user_badge(db: Any, user_id: int, badge: str, admin_id: int = 0, features_module: Any = None) -> Optional[List[str]]:
+
+def add_user_badge(
+    db: Any, user_id: int, badge: str, admin_id: int = 0, features_module: Any = None
+) -> Optional[List[str]]:
     """Add a badge to a user if they don't have it."""
     if features_module:
         try:
@@ -270,7 +325,10 @@ def add_user_badge(db: Any, user_id: int, badge: str, admin_id: int = 0, feature
         invalidate_pattern(f"current_user_api:{user_id}")
     return badges_list
 
-def remove_user_badge(db: Any, user_id: int, badge: str, admin_id: int = 0, features_module: Any = None) -> Optional[List[str]]:
+
+def remove_user_badge(
+    db: Any, user_id: int, badge: str, admin_id: int = 0, features_module: Any = None
+) -> Optional[List[str]]:
     """Remove a badge from a user."""
     if features_module:
         try:
@@ -297,6 +355,7 @@ def remove_user_badge(db: Any, user_id: int, badge: str, admin_id: int = 0, feat
         invalidate_pattern(f"current_user_api:{user_id}")
     return badges_list
 
+
 def is_admin(db: Any, user_id: int) -> bool:
     """Check if a user has admin privileges."""
     row = db.fetch_one("SELECT permissions FROM auth_users WHERE id = ?", (user_id,))
@@ -305,10 +364,12 @@ def is_admin(db: Any, user_id: int) -> bool:
     perms_json = row["permissions"] if isinstance(row, dict) else row[0]
     try:
         from src.core.auth.permissions import permissions_from_json, has_permission
+
         perms = permissions_from_json(perms_json)
         return has_permission(perms, "*") or has_permission(perms, "admin.*")
     except Exception:
         return False
+
 
 def set_admin(db: Any, user_id: int, admin_status: bool) -> bool:
     """Set or unset admin privileges for a user."""
@@ -318,6 +379,7 @@ def set_admin(db: Any, user_id: int, admin_status: bool) -> bool:
     perms_json = row["permissions"] if isinstance(row, dict) else row[0]
     try:
         from src.core.auth.permissions import permissions_from_json, permissions_to_json
+
         perms = permissions_from_json(perms_json)
         if admin_status:
             perms["*"] = True
@@ -335,7 +397,13 @@ def set_admin(db: Any, user_id: int, admin_status: bool) -> bool:
         logger.error(f"Failed to set admin status: {e}")
         return False
 
-def lock_user(db: Any, user_id: int, duration_seconds: Optional[int] = None, auth_module: Any = None) -> bool:
+
+def lock_user(
+    db: Any,
+    user_id: int,
+    duration_seconds: Optional[int] = None,
+    auth_module: Any = None,
+) -> bool:
     """Lock/suspend a user account."""
     locked_until = (
         int(time.time() + duration_seconds) if duration_seconds is not None else None
@@ -349,6 +417,7 @@ def lock_user(db: Any, user_id: int, duration_seconds: Optional[int] = None, aut
     invalidate_pattern("token_verify:*")
     return True
 
+
 def unlock_user(db: Any, user_id: int) -> bool:
     """Unlock/unsuspend a user account."""
     db.execute(
@@ -358,6 +427,7 @@ def unlock_user(db: Any, user_id: int) -> bool:
     invalidate_pattern("token_verify:*")
     return True
 
+
 def get_user_notes(db: Any, user_id: int) -> str:
     """Get internal admin notes for a user."""
     row = db.fetch_one("SELECT internal_notes FROM auth_users WHERE id = ?", (user_id,))
@@ -365,11 +435,11 @@ def get_user_notes(db: Any, user_id: int) -> str:
         return (row["internal_notes"] if isinstance(row, dict) else row[0]) or ""
     return ""
 
+
 def save_user_notes(db: Any, user_id: int, notes: str, admin_id: int) -> bool:
     """Save internal admin notes for a user."""
     db.execute(
-        "UPDATE auth_users SET internal_notes = ? WHERE id = ?",
-        (notes, user_id)
+        "UPDATE auth_users SET internal_notes = ? WHERE id = ?", (notes, user_id)
     )
     logger.info(f"Admin {admin_id} updated notes for user {user_id}")
     return True

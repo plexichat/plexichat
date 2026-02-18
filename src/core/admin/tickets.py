@@ -6,9 +6,11 @@ from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 import time
 
+
 @dataclass
 class FeedbackTicket:
     """A feedback/support ticket."""
+
     id: int
     user_id: int
     username: str
@@ -21,9 +23,11 @@ class FeedbackTicket:
     resolved_by: Optional[int]
     internal_notes: Optional[str]
 
+
 @dataclass
 class AdminNote:
     """An internal admin note on a ticket."""
+
     id: int
     ticket_id: int
     admin_id: int
@@ -31,7 +35,10 @@ class AdminNote:
     content: str
     created_at: int
 
-def get_feedback_tickets(db: Any, status_filter: Optional[str] = None, limit: int = 50, offset: int = 0) -> List[FeedbackTicket]:
+
+def get_feedback_tickets(
+    db: Any, status_filter: Optional[str] = None, limit: int = 50, offset: int = 0
+) -> List[FeedbackTicket]:
     """Get feedback tickets with optional status filter."""
     if status_filter:
         rows = db.fetch_all(
@@ -93,6 +100,7 @@ def get_feedback_tickets(db: Any, status_filter: Optional[str] = None, limit: in
             )
     return tickets
 
+
 def get_ticket(db: Any, ticket_id: int) -> Optional[FeedbackTicket]:
     """Get a single feedback ticket by ID."""
     row = db.fetch_one(
@@ -135,6 +143,7 @@ def get_ticket(db: Any, ticket_id: int) -> Optional[FeedbackTicket]:
         internal_notes=row[10],
     )
 
+
 def update_ticket_status(db: Any, ticket_id: int, status: str, admin_id: int) -> bool:
     """Update the status of a feedback ticket."""
     valid_statuses = ["open", "in_progress", "resolved", "closed"]
@@ -151,10 +160,14 @@ def update_ticket_status(db: Any, ticket_id: int, status: str, admin_id: int) ->
     )
     return True
 
-def add_internal_note(db: Any, ticket_id: int, admin_id: int, content: str) -> Optional[AdminNote]:
+
+def add_internal_note(
+    db: Any, ticket_id: int, admin_id: int, content: str
+) -> Optional[AdminNote]:
     """Add an internal note to a ticket."""
     try:
         from src.utils.encryption import generate_snowflake_id
+
         note_id = generate_snowflake_id()
     except ImportError:
         note_id = int(time.time() * 1000000)
@@ -181,6 +194,7 @@ def add_internal_note(db: Any, ticket_id: int, admin_id: int, content: str) -> O
         content=content,
         created_at=now,
     )
+
 
 def get_ticket_notes(db: Any, ticket_id: int) -> List[AdminNote]:
     """Get all internal notes for a ticket."""
@@ -218,6 +232,7 @@ def get_ticket_notes(db: Any, ticket_id: int) -> List[AdminNote]:
                 )
             )
     return notes
+
 
 def get_ticket_counts(db: Any) -> Dict[str, int]:
     """Get counts of tickets by status."""

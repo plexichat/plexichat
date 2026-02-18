@@ -7,9 +7,11 @@ from dataclasses import dataclass
 import time
 import utils.logger as logger
 
+
 @dataclass
 class HashReport:
     """A content hash report for moderation."""
+
     id: int
     hash_value: str
     reporter_id: int
@@ -27,9 +29,11 @@ class HashReport:
     attachment_url: Optional[str] = None
     block_uploader: bool = False
 
+
 @dataclass
 class BlockedHash:
     """A blocked content hash."""
+
     hash_value: str
     reason: str
     blocked_at: int
@@ -38,9 +42,11 @@ class BlockedHash:
     hash_type: str = "sha256"
     phash_threshold: int = 10
 
+
 @dataclass
 class BlockedUser:
     """A user blocked from uploading media."""
+
     user_id: int
     username: Optional[str]
     reason: str
@@ -48,7 +54,10 @@ class BlockedUser:
     blocked_by: Optional[int]
     expires_at: Optional[int]
 
-def get_hash_reports(db: Any, status_filter: Optional[str] = None, limit: int = 50, offset: int = 0) -> List[HashReport]:
+
+def get_hash_reports(
+    db: Any, status_filter: Optional[str] = None, limit: int = 50, offset: int = 0
+) -> List[HashReport]:
     """Get hash reports for admin review."""
     query = """SELECT r.id, r.hash_value, r.reporter_id, u.username, r.reason, 
                       r.details, r.status, r.reported_at, r.reviewed_at, 
@@ -111,6 +120,7 @@ def get_hash_reports(db: Any, status_filter: Optional[str] = None, limit: int = 
             )
     return reports
 
+
 def get_hash_report_counts(db: Any) -> Dict[str, int]:
     """Get counts of hash reports by status."""
     counts = {"pending": 0, "blocked": 0, "cleared": 0, "total": 0}
@@ -127,6 +137,7 @@ def get_hash_report_counts(db: Any) -> Dict[str, int]:
     except Exception:
         pass
     return counts
+
 
 def get_blocked_hashes(db: Any, limit: int = 100, offset: int = 0) -> List[BlockedHash]:
     """Get list of blocked hashes."""
@@ -169,6 +180,7 @@ def get_blocked_hashes(db: Any, limit: int = 100, offset: int = 0) -> List[Block
     except Exception:
         return []
 
+
 def get_blocked_hash_count(db: Any) -> int:
     """Get count of blocked hashes."""
     try:
@@ -177,7 +189,10 @@ def get_blocked_hash_count(db: Any) -> int:
     except Exception:
         return 0
 
-def review_hash_report(db: Any, report_id: int, admin_id: int, action: str, notes: Optional[str] = None) -> bool:
+
+def review_hash_report(
+    db: Any, report_id: int, admin_id: int, action: str, notes: Optional[str] = None
+) -> bool:
     """Review a hash report."""
     now = int(time.time() * 1000)
     row = db.fetch_one(
@@ -194,7 +209,7 @@ def review_hash_report(db: Any, report_id: int, admin_id: int, action: str, note
                 "media_blocked_hashes",
                 ["hash_value", "reason", "blocked_at", "blocked_by", "auto_blocked"],
                 (hash_value, notes or "Blocked by admin", now, admin_id, 0),
-                conflict_columns=["hash_value"]
+                conflict_columns=["hash_value"],
             )
         except Exception as e:
             logger.error(f"Failed to block hash: {e}")
@@ -213,6 +228,7 @@ def review_hash_report(db: Any, report_id: int, admin_id: int, action: str, note
     )
     return True
 
+
 def unblock_hash(db: Any, hash_value: str) -> bool:
     """Unblock a hash."""
     try:
@@ -224,20 +240,37 @@ def unblock_hash(db: Any, hash_value: str) -> bool:
         logger.error(f"Failed to unblock hash: {e}")
         return False
 
-def block_hash(db: Any, hash_value: str, reason: str, admin_id: int, hash_type: str = "sha256", phash_threshold: int = 10) -> bool:
+
+def block_hash(
+    db: Any,
+    hash_value: str,
+    reason: str,
+    admin_id: int,
+    hash_type: str = "sha256",
+    phash_threshold: int = 10,
+) -> bool:
     """Manually block a hash."""
     now = int(time.time() * 1000)
     try:
         db.upsert(
             "media_blocked_hashes",
-            ["hash_value", "hash_type", "phash_threshold", "reason", "blocked_at", "blocked_by", "auto_blocked"],
+            [
+                "hash_value",
+                "hash_type",
+                "phash_threshold",
+                "reason",
+                "blocked_at",
+                "blocked_by",
+                "auto_blocked",
+            ],
             (hash_value, hash_type, phash_threshold, reason, now, admin_id, 0),
-            conflict_columns=["hash_value"]
+            conflict_columns=["hash_value"],
         )
         return True
     except Exception as e:
         logger.error(f"Failed to block hash: {e}")
         return False
+
 
 def get_blocked_users(db: Any, limit: int = 100, offset: int = 0) -> List[BlockedUser]:
     """Get list of users blocked from uploading media."""
@@ -278,7 +311,14 @@ def get_blocked_users(db: Any, limit: int = 100, offset: int = 0) -> List[Blocke
     except Exception:
         return []
 
-def block_user(db: Any, user_id: int, reason: str, admin_id: int, duration_hours: Optional[int] = None) -> bool:
+
+def block_user(
+    db: Any,
+    user_id: int,
+    reason: str,
+    admin_id: int,
+    duration_hours: Optional[int] = None,
+) -> bool:
     """Block a user from uploading media."""
     now = int(time.time() * 1000)
     expires_at = None
@@ -290,13 +330,14 @@ def block_user(db: Any, user_id: int, reason: str, admin_id: int, duration_hours
             "media_blocked_users",
             ["user_id", "reason", "blocked_at", "blocked_by", "expires_at"],
             (user_id, reason, now, admin_id, expires_at),
-            conflict_columns=["user_id"]
+            conflict_columns=["user_id"],
         )
         logger.info(f"Admin {admin_id} blocked user {user_id} from uploads: {reason}")
         return True
     except Exception as e:
         logger.error(f"Failed to block user: {e}")
         return False
+
 
 def unblock_user(db: Any, user_id: int) -> bool:
     """Unblock a user from uploading media."""
