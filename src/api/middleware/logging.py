@@ -23,8 +23,12 @@ def _get_logger():
 
 
 def _submit_server_telemetry(
-    endpoint: str, method: str, response_time_ms: float, status_code: int,
-    db_queries: int = 0, db_time_ms: float = 0.0
+    endpoint: str,
+    method: str,
+    response_time_ms: float,
+    status_code: int,
+    db_queries: int = 0,
+    db_time_ms: float = 0.0,
 ):
     """Submit server-side telemetry data."""
     try:
@@ -40,7 +44,7 @@ def _submit_server_telemetry(
                         "status_code": status_code,
                         "timestamp": int(time.time() * 1000),
                         "db_queries": db_queries,
-                        "db_time_ms": db_time_ms
+                        "db_time_ms": db_time_ms,
                     }
                 ],
                 client_id="server",
@@ -138,6 +142,7 @@ class LoggingMiddleware:
         # Reset DB metrics for the new request context
         try:
             import src.api as api
+
             db = api.get_db()
             if db:
                 db.reset_request_metrics()
@@ -181,9 +186,14 @@ class LoggingMiddleware:
                         try:
                             # Get DB metrics if available
                             import src.api as api
+
                             db = api.get_db()
-                            db_metrics = db.get_request_metrics() if db else {"query_count": 0, "query_time_ms": 0.0}
-                            
+                            db_metrics = (
+                                db.get_request_metrics()
+                                if db
+                                else {"query_count": 0, "query_time_ms": 0.0}
+                            )
+
                             # Try to get normalized path (route template)
                             telemetry_path = path
                             if "route" in scope:
@@ -195,10 +205,13 @@ class LoggingMiddleware:
                                     telemetry_path = route.path
 
                             await run_in_threadpool(
-                                _submit_server_telemetry, 
-                                telemetry_path, method, duration_ms, status_code,
+                                _submit_server_telemetry,
+                                telemetry_path,
+                                method,
+                                duration_ms,
+                                status_code,
                                 db_metrics["query_count"],
-                                db_metrics["query_time_ms"]
+                                db_metrics["query_time_ms"],
                             )
                         except Exception:
                             pass

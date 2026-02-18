@@ -4,6 +4,7 @@ Database middleware - Ensures database connections are returned to the pool.
 
 from starlette.types import ASGIApp, Receive, Send, Scope
 
+
 class DatabaseMiddleware:
     """
     Middleware that ensures database connections are closed/returned to pool
@@ -25,6 +26,7 @@ class DatabaseMiddleware:
             # Import inside to avoid circular dependency
             try:
                 import src.api as api
+
                 db = api.get_db()
                 if db:
                     db.close()

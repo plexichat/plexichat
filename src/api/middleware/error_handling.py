@@ -13,6 +13,7 @@ from typing import Any, Dict, cast
 import traceback
 import utils.config as config
 import utils.logger as logger
+
 try:
     from utils.logger import sanitize_log_message
 except ImportError:
@@ -110,7 +111,11 @@ class ErrorHandlingMiddleware:
         except Exception as exc:
             # Log the error details server-side
             import utils.logger as logger
-            logger.error(f"Middleware caught exception: {type(exc).__name__}: {exc}", exc_info=True)
+
+            logger.error(
+                f"Middleware caught exception: {type(exc).__name__}: {exc}",
+                exc_info=True,
+            )
 
             # Determine status code and message
             status_code = get_status_code_for_exception(exc)
@@ -135,6 +140,7 @@ class ErrorHandlingMiddleware:
             # 2. Request is from localhost
             # 3. Secure internal secret is present and matches
             import src.api as api
+
             selftest_config = config.get("selftest", {})
             is_local = (
                 request.client.host in ("127.0.0.1", "::1") if request.client else False
@@ -176,7 +182,7 @@ def setup_exception_handlers(app: FastAPI):
         """Handle HTTP exceptions."""
         detail = exc.detail
         headers = _get_cors_headers(request)
-        
+
         # Don't leak details for 500 errors in production
         debug = False
         try:
@@ -214,11 +220,15 @@ def setup_exception_handlers(app: FastAPI):
         headers = _get_cors_headers(request)
 
         # Log validation errors for debugging
-        logger.warning(f"Validation error on {request.method} {request.url.path}: {errors}")
+        logger.warning(
+            f"Validation error on {request.method} {request.url.path}: {errors}"
+        )
         try:
             body = await request.body()
             if body:
-                logger.warning(f"Request body: {body.decode('utf-8', errors='replace')[:1000]}")
+                logger.warning(
+                    f"Request body: {body.decode('utf-8', errors='replace')[:1000]}"
+                )
         except Exception as e:
             logger.debug(f"Could not log request body: {e}")
 

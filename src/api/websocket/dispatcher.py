@@ -89,7 +89,7 @@ class GatewayDispatcher:
         user_ids = [int(uid) for uid in user_ids]
 
         connections = self._session_manager.get_connections_for_users(user_ids)
-        
+
         # Use DEBUG level for dispatch events to reduce log noise
         logger.debug(
             f"dispatch_event: {event.event_type.value} to {len(user_ids)} users, found {len(connections)} connections"

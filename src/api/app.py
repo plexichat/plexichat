@@ -24,6 +24,7 @@ from collections import OrderedDict
 
 class _LRUCache:
     """Simple thread-safe bounded LRU cache that behaves like a dict for get/setitem/contains."""
+
     def __init__(self, maxsize: int = 1024):
         self._cache: OrderedDict = OrderedDict()
         self._maxsize = maxsize
@@ -51,6 +52,7 @@ class _LRUCache:
 
 _media_metadata_cache = _LRUCache(maxsize=1024)
 
+
 def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> FastAPI:
     """
     Create and configure the FastAPI application.
@@ -73,7 +75,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         IPBlockingMiddleware,
         DatabaseMiddleware,
     )
-    
+
     config = get_api_config()
     # Debug CORS config
     if "pytest" in sys.modules:
@@ -122,13 +124,14 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     admin_config = global_config.get("admin_ui", {})
     if admin_config.get("enabled", False):
         from fastapi.responses import RedirectResponse
+
         admin_path = admin_config.get("path", "/admin")
         target_path = f"{config.api_prefix}{admin_path}/ui"
-        
+
         @app.get(admin_path, include_in_schema=False)
         async def admin_redirect():
             return RedirectResponse(url=target_path, status_code=302)
-            
+
         @app.get(f"{admin_path}/", include_in_schema=False)
         async def admin_slash_redirect():
             return RedirectResponse(url=target_path, status_code=302)
@@ -254,7 +257,12 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             # --- Signature Verification (Bypass Auth) ---
             media = api_module.get_media()
             if not media:
-                 raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Media module unavailable"}})
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        "error": {"code": 500, "message": "Media module unavailable"}
+                    },
+                )
 
             is_signed = False
             try:
@@ -268,7 +276,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
             # --- Authentication (Required if no valid signature or internal) ---
             is_internal = request.scope.get("state", {}).get("is_internal", False)
-            
+
             if not is_signed and not is_internal:
                 # Try Authorization header first (preferred for API calls)
                 auth_header: Optional[str] = request.headers.get("Authorization")
@@ -284,14 +292,21 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 if not token:
                     raise HTTPException(
                         status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail={"error": {"code": 401, "message": "Authentication required"}}
+                        detail={
+                            "error": {"code": 401, "message": "Authentication required"}
+                        },
                     )
 
                 # Verify token
                 auth = api_module.get_auth()
                 if not auth:
-                    raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Auth module unavailable"}})
-                
+                    raise HTTPException(
+                        status_code=500,
+                        detail={
+                            "error": {"code": 500, "message": "Auth module unavailable"}
+                        },
+                    )
+
                 try:
                     # Validate session token with optional IP/UA token-binding context.
                     forwarded_for = request.headers.get("X-Forwarded-For", "")
@@ -311,12 +326,22 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                         admin = api_module.get_admin()
                         if admin and admin.validate_session(token):
                             # Valid admin session - allow access
-                            pass 
+                            pass
                         else:
-                             logger.warning(f"Attachment auth failed for {filename}: {e}")
-                             raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Invalid token"}})
+                            logger.warning(
+                                f"Attachment auth failed for {filename}: {e}"
+                            )
+                            raise HTTPException(
+                                status_code=401,
+                                detail={
+                                    "error": {"code": 401, "message": "Invalid token"}
+                                },
+                            )
                     except Exception:
-                        raise HTTPException(status_code=401, detail={"error": {"code": 401, "message": "Invalid token"}})
+                        raise HTTPException(
+                            status_code=401,
+                            detail={"error": {"code": 401, "message": "Invalid token"}},
+                        )
 
             # --- Authorization Check ---
             # Verify user has permission to access this specific file (uploader or participant)
@@ -335,33 +360,57 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     if token_info is None:
                         raise HTTPException(
                             status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail={"error": {"code": 401, "message": "Authentication required"}}
+                            detail={
+                                "error": {
+                                    "code": 401,
+                                    "message": "Authentication required",
+                                }
+                            },
                         )
-                    uid_raw = token_info.user_id if hasattr(token_info, "user_id") else token_info.get("user_id")
+                    uid_raw = (
+                        token_info.user_id
+                        if hasattr(token_info, "user_id")
+                        else token_info.get("user_id")
+                    )
                     if uid_raw and not media.check_file_access(filename, int(uid_raw)):
-                        logger.warning(f"Unauthorized attachment access blocked: file={filename}, user={uid_raw}")
+                        logger.warning(
+                            f"Unauthorized attachment access blocked: file={filename}, user={uid_raw}"
+                        )
                         raise HTTPException(
                             status_code=status.HTTP_403_FORBIDDEN,
-                            detail={"error": {"code": 403, "message": "Access denied to this file"}}
+                            detail={
+                                "error": {
+                                    "code": 403,
+                                    "message": "Access denied to this file",
+                                }
+                            },
                         )
 
             # --- File Lookup ---
             db = api_module.get_db()
             if not db:
-                raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Database module unavailable"}})
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        "error": {"code": 500, "message": "Database module unavailable"}
+                    },
+                )
 
             # Find file in database (check cache first)
             row = _media_metadata_cache.get(filename)
             if not row:
                 row = db.fetch_one(
                     "SELECT id, storage_backend, storage_path, content_type, original_filename FROM media_files WHERE filename = ? AND deleted = 0",
-                    (filename,)
+                    (filename,),
                 )
                 if row:
                     _media_metadata_cache[filename] = row
-            
+
             if not row:
-                raise HTTPException(status_code=404, detail={"error": {"code": 404, "message": "File not found"}})
+                raise HTTPException(
+                    status_code=404,
+                    detail={"error": {"code": 404, "message": "File not found"}},
+                )
 
             file_id = row["id"]
             backend = row["storage_backend"]
@@ -378,56 +427,62 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 # Optimized: Use metadata we already have to skip DB lookup
                 # stream, size, ct = media.get_file_stream(file_id)
                 stream, size, ct = media.get_file_stream_optimized(
-                    row["storage_path"], 
-                    row["content_type"], 
-                    row["storage_backend"]
+                    row["storage_path"], row["content_type"], row["storage_backend"]
                 )
-                
+
                 # Sanitize original filename for Content-Disposition
                 # This ensures downloads retain their initial names while being safe for headers
                 def sanitize_header_filename(name):
                     # Normalize and remove non-ascii
-                    name = unicodedata.normalize('NFKD', name).encode('ascii', 'ignore').decode('ascii')
+                    name = (
+                        unicodedata.normalize("NFKD", name)
+                        .encode("ascii", "ignore")
+                        .decode("ascii")
+                    )
                     # Replace potentially problematic characters
-                    name = re.sub(r'[^\w\.\-]', '_', name)
+                    name = re.sub(r"[^\w\.\-]", "_", name)
                     return name or "attachment"
 
                 safe_name = sanitize_header_filename(original_filename)
-                
+
                 # Generate ETag from file_id and size (simple but effective for immutable files)
                 etag = f'"{file_id}-{size}"'
-                
+
                 # Check If-None-Match
                 if_none_match = request.headers.get("If-None-Match")
-                if if_none_match and (if_none_match == etag or if_none_match == etag.replace('"', '')):
-                     return Response(status_code=304)
+                if if_none_match and (
+                    if_none_match == etag or if_none_match == etag.replace('"', "")
+                ):
+                    return Response(status_code=304)
 
                 headers = {
                     "Content-Length": str(size),
-                    "Content-Disposition": f'attachment; filename="{safe_name}"' if download else "inline",
+                    "Content-Disposition": f'attachment; filename="{safe_name}"'
+                    if download
+                    else "inline",
                     "Cache-Control": "private, max-age=3600",
-                    "ETag": etag
+                    "ETag": etag,
                 }
-                
+
                 # Add CORS headers specifically for media to avoid policy blocks
                 origin = request.headers.get("Origin")
                 allowed_origins = config.cors_origins
                 allow_credentials = config.cors_allow_credentials
-                
+
                 if origin:
                     is_allowed = False
                     if "*" in allowed_origins:
                         is_allowed = True
                     elif origin in allowed_origins:
                         is_allowed = True
-                    
+
                     if is_allowed:
                         headers["Access-Control-Allow-Origin"] = origin
                         if allow_credentials:
                             headers["Access-Control-Allow-Credentials"] = "true"
                     else:
                         # If not explicitly allowed, we still need to be careful
-                        # If we have '*' in allowed_origins but credentials are required, 
+                        # If we have '*' in allowed_origins but credentials are required,
                         # we must echo the origin
                         if "*" in allowed_origins and allow_credentials:
                             headers["Access-Control-Allow-Origin"] = origin
@@ -436,28 +491,36 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                             headers["Access-Control-Allow-Origin"] = "null"
                 elif "*" in allowed_origins and not allow_credentials:
                     headers["Access-Control-Allow-Origin"] = "*"
-                
+
                 headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
-                headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, X-Requested-With, Accept, Origin"
-                
+                headers["Access-Control-Allow-Headers"] = (
+                    "Authorization, Content-Type, X-Requested-With, Accept, Origin"
+                )
+
                 # Log duration after the stream is acquired
                 duration = (time.perf_counter() - start_time) * 1000
                 if duration > 1000:
-                    logger.warning(f"Slow file retrieval for {filename}: {duration:.1f}ms (backend: {backend})")
-                
-                return StreamingResponse(
-                    stream,
-                    media_type=ct,
-                    headers=headers
-                )
+                    logger.warning(
+                        f"Slow file retrieval for {filename}: {duration:.1f}ms (backend: {backend})"
+                    )
+
+                return StreamingResponse(stream, media_type=ct, headers=headers)
             except Exception as e:
                 logger.error(f"Generic retrieval failed for {filename}: {e}")
-                raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Retrieval failed"}})
+                raise HTTPException(
+                    status_code=500,
+                    detail={"error": {"code": 500, "message": "Retrieval failed"}},
+                )
 
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Unexpected error serving attachment {filename}: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}})
+            logger.error(
+                f"Unexpected error serving attachment {filename}: {e}", exc_info=True
+            )
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Internal server error"}},
+            )
 
     return app

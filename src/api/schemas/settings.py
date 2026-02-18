@@ -31,4 +31,5 @@ class SettingsResponse(BaseModel):
 
 class BulkSettingsRequest(RootModel[Dict[str, Any]]):
     """Request body for bulk setting updates."""
+
     pass

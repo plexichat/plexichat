@@ -99,22 +99,24 @@ class MessageResponse(BaseModel):
         0, description="Number of users who received the message"
     )
     read_count: int = Field(0, description="Number of users who read the message")
-    read: bool = Field(False, description="Whether the current user has read this message")
+    read: bool = Field(
+        False, description="Whether the current user has read this message"
+    )
     read_by: List[ReaderInfo] = Field(
         default_factory=list, description="List of users who have read the message"
     )
     author_username: Optional[str] = Field(None, description="Author's username")
     author_avatar_url: Optional[str] = Field(None, description="Author's avatar URL")
-    author_badges: List[str] = Field(default_factory=list, description="Author's profile badges")
+    author_badges: List[str] = Field(
+        default_factory=list, description="Author's profile badges"
+    )
     reactions: List[ReactionResponse] = Field(
         default_factory=list, description="Message reactions"
     )
     metadata: Optional[Dict[str, Any]] = Field(
         None, description="Additional message metadata"
     )
-    poll: Optional[PollResponse] = Field(
-        None, description="Attached poll details"
-    )
+    poll: Optional[PollResponse] = Field(None, description="Attached poll details")
 
 
 class MessagingSettingsResponse(BaseModel):

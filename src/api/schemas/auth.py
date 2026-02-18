@@ -12,9 +12,16 @@ class RegisterRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=32, description="Username")
     email: EmailStr = Field(..., description="Email address")
     password: str = Field(..., description="Password")
-    age: Optional[int] = Field(None, description="User age (required if age gate enabled in boolean mode)")
-    age_verified: Optional[bool] = Field(None, description="Simple age verification check (alternative to age field)")
-    dob: Optional[str] = Field(None, description="User date of birth YYYY-MM-DD (required if age gate enabled in dob mode)")
+    age: Optional[int] = Field(
+        None, description="User age (required if age gate enabled in boolean mode)"
+    )
+    age_verified: Optional[bool] = Field(
+        None, description="Simple age verification check (alternative to age field)"
+    )
+    dob: Optional[str] = Field(
+        None,
+        description="User date of birth YYYY-MM-DD (required if age gate enabled in dob mode)",
+    )
 
 
 class LoginRequest(BaseModel):
@@ -186,9 +193,7 @@ class PasswordRequirementsResponse(BaseModel):
     require_special: bool = Field(
         ..., description="Whether a special character is required"
     )
-    age_gate_enabled: bool = Field(
-        False, description="Whether age gate is enabled"
-    )
+    age_gate_enabled: bool = Field(False, description="Whether age gate is enabled")
     age_verification_type: str = Field(
         "boolean", description="Type of age verification: boolean or dob"
     )

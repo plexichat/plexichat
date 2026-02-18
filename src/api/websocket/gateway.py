@@ -91,7 +91,9 @@ async def _dispatch_offline_presence(
                         )
                         # Dispatch to all potential viewers
                         if target_user_ids:
-                            await dispatcher.dispatch_event(event, list(target_user_ids))
+                            await dispatcher.dispatch_event(
+                                event, list(target_user_ids)
+                            )
                     logger.debug(
                         f"Cleared typing for user {user_id} in {len(typing_channels)} channels"
                     )

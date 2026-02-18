@@ -505,53 +505,69 @@ class OpcodeHandler:
                 return None, None, None
 
             user_ids = [m.user_id for m in members]
-            
+
             # Bulk fetch user data
             users_map = self._auth.get_users_bulk(user_ids)
-            
+
             # Bulk fetch presence data
             presence_map = {}
             try:
-                presence_map = self._presence.get_visible_presences_bulk(user_id, user_ids)
+                presence_map = self._presence.get_visible_presences_bulk(
+                    user_id, user_ids
+                )
             except Exception as e:
-                logger.warning(f"WS: Failed to get bulk presence for server {guild_id}: {e}")
+                logger.warning(
+                    f"WS: Failed to get bulk presence for server {guild_id}: {e}"
+                )
 
             member_list = []
             for m in members:
                 u_id = m.user_id
                 user = users_map.get(u_id)
-                
+
                 pres = presence_map.get(u_id)
                 status = "offline"
                 if pres:
                     status_obj = getattr(pres, "status", None)
-                    status = str(status_obj.value if hasattr(status_obj, "value") else status_obj) if status_obj else "offline"
+                    status = (
+                        str(
+                            status_obj.value
+                            if hasattr(status_obj, "value")
+                            else status_obj
+                        )
+                        if status_obj
+                        else "offline"
+                    )
 
-                member_list.append({
-                    "user_id": str(u_id),
-                    "username": user.username if user else f"User {u_id}",
-                    "nickname": m.nickname,
-                    "avatar_url": getattr(user, "avatar_url", None) or getattr(m, "avatar_url", None),
-                    "joined_at": m.joined_at,
-                    "roles": [str(r) for r in (m.roles or [])],
-                    "presence": {"status": status}
-                })
+                member_list.append(
+                    {
+                        "user_id": str(u_id),
+                        "username": user.username if user else f"User {u_id}",
+                        "nickname": m.nickname,
+                        "avatar_url": getattr(user, "avatar_url", None)
+                        or getattr(m, "avatar_url", None),
+                        "joined_at": m.joined_at,
+                        "roles": [str(r) for r in (m.roles or [])],
+                        "presence": {"status": status},
+                    }
+                )
 
             # 3. Dispatch chunk
             from src.api.websocket import get_dispatcher
+
             dispatcher = get_dispatcher()
-            
+
             event = events_mod.create_guild_members_chunk(
-                server_id=guild_id,
-                members=member_list,
-                chunk_index=0,
-                chunk_count=1
+                server_id=guild_id, members=member_list, chunk_index=0, chunk_count=1
             )
-            
+
             await dispatcher.dispatch_to_connection(connection, event)
-            
+
         except Exception as e:
-            logger.error(f"WS: Failed to process guild members request for {guild_id}: {e}", exc_info=True)
+            logger.error(
+                f"WS: Failed to process guild members request for {guild_id}: {e}",
+                exc_info=True,
+            )
 
         return None, None, None
 
@@ -813,7 +829,7 @@ class OpcodeHandler:
         """Dispatch presence update to friends and server members."""
         try:
             from src.api.routes.presence import _get_presence_targets
-            
+
             # Use the robust, cached target selection logic from the presence route
             target_user_ids = _get_presence_targets(user_id)
 

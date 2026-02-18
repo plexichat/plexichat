@@ -21,7 +21,9 @@ class NotificationInfo(BaseModel):
     link: Optional[str] = Field(
         None, description="Optional link associated with notification"
     )
-    sender_id: Optional[str] = Field(None, description="ID of user who triggered notification")
+    sender_id: Optional[str] = Field(
+        None, description="ID of user who triggered notification"
+    )
 
 
 class NotificationsResponse(BaseModel):

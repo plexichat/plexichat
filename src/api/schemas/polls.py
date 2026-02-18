@@ -13,8 +13,12 @@ class PollInlineCreateRequest(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    question: str = Field(..., min_length=1, max_length=300, description="Poll question")
-    options: List[str] = Field(..., min_length=2, max_length=10, description="Poll options")
+    question: str = Field(
+        ..., min_length=1, max_length=300, description="Poll question"
+    )
+    options: List[str] = Field(
+        ..., min_length=2, max_length=10, description="Poll options"
+    )
     duration_hours: Optional[int] = Field(
         None, ge=1, le=168, description="Poll duration in hours"
     )

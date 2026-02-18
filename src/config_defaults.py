@@ -10,13 +10,14 @@ from typing import Dict, Any
 # Version should be updated in main.py, this is a fallback
 DEFAULT_VERSION = "a.1.0-43"
 
+
 def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
     """
     Returns the default configuration dictionary for PlexiChat.
-    
+
     Args:
         version: The current application version string.
-        
+
     Returns:
         A dictionary containing all default configuration keys and values.
     """
@@ -28,14 +29,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "version": version,
             "environment": "development",
         },
-        
-        "server": {
-            "host": "0.0.0.0",
-            "port": 8000,
-            "workers": 1,
-            "reload": False
-        },
-
+        "server": {"host": "0.0.0.0", "port": 8000, "workers": 1, "reload": False},
         "logging": {
             "level": "DEBUG",
             "max_bytes": 10485760,  # 10MB
@@ -45,7 +39,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             # SECURITY WARNING: Set to False in production to avoid leaking sensitive info
             "include_exception_details": False,
         },
-
         "database": {
             "type": "sqlite",
             "path": str(home_dir / "data" / "plexichat.db"),
@@ -67,7 +60,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "validation_query": "SELECT 1",
             },
         },
-
         "redis": {
             "enabled": False,
             "host": "localhost",
@@ -80,7 +72,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "ttl": {"session": 1800, "presence": 300, "cache": 60},
             "cache_max_items": 1000,
         },
-
         "authentication": {
             "encryption": {
                 # SECURITY: Enforce TPM or Environment Variable key source for production
@@ -131,7 +122,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             },
             "bots": {"token_bytes": 48, "require_owner_2fa": False},
         },
-
         "api": {
             "title": "PlexiChat API",
             "description": "REST API for Plexichat messaging platform",
@@ -164,7 +154,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "redoc_url": "/redoc",
             "openapi_url": "/openapi.json",
         },
-
         "websocket": {
             "heartbeat_interval_ms": 45000,
             "session_timeout_ms": 60000,
@@ -175,7 +164,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "compression_enabled": True,
             "allowed_origins": [],
         },
-
         "messaging": {
             "encrypt_messages": True,
             "encrypt_attachments": True,
@@ -186,7 +174,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "dm_auto_create": True,
             "message_preview_length": 100,
         },
-
         "media": {
             "data_dir": str(home_dir / "data"),
             "logs_dir": str(home_dir / "logs"),
@@ -207,7 +194,12 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "auto_route_to_database": {
                 "enabled": True,
                 "max_size": 524288,
-                "content_types": ["text/plain", "application/json", "text/markdown", "text/csv"],
+                "content_types": [
+                    "text/plain",
+                    "application/json",
+                    "text/markdown",
+                    "text/csv",
+                ],
             },
             "size_limits": {
                 "image": 10485760,
@@ -222,7 +214,13 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "image": ["image/jpeg", "image/png", "image/gif", "image/webp"],
                 "video": ["video/mp4", "video/webm", "video/quicktime"],
                 "audio": ["audio/mpeg", "audio/ogg", "audio/wav", "audio/webm"],
-                "document": ["application/pdf", "text/plain", "application/zip", "text/markdown", "application/json"],
+                "document": [
+                    "application/pdf",
+                    "text/plain",
+                    "application/zip",
+                    "text/markdown",
+                    "application/json",
+                ],
             },
             "thumbnail_sizes": [64, 128, 256, 512],
             "image_quality": 85,
@@ -265,7 +263,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "auto_block_threshold": 5,
             },
         },
-
         "rate_limiting": {
             "enabled": True,
             "global": {"requests": 100, "window_seconds": 60.0, "burst": 50},
@@ -289,7 +286,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "internal_bypass": True,
             "bypass_secret": secrets.token_hex(32),
         },
-
         "servers": {
             "server_name_min_length": 2,
             "server_name_max_length": 100,
@@ -310,16 +306,21 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "max_channels_in_template": 100,
                 "max_roles_in_template": 50,
                 "max_templates_per_user": 25,
-            }
+            },
         },
-
         "user_features": {
             "alpha_registration_enabled": True,
             "default_tier": "standard",
             "badge_display_limit": 5,
             "available_badges": [
-                "alpha_tester", "early_supporter", "staff", "verified",
-                "bug_hunter", "contributor", "moderator", "partner",
+                "alpha_tester",
+                "early_supporter",
+                "staff",
+                "verified",
+                "bug_hunter",
+                "contributor",
+                "moderator",
+                "partner",
             ],
             "rate_limit_tiers": {
                 "standard": {
@@ -373,7 +374,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             },
             "admin_rate_limit": {"max_per_minute": 30, "max_per_hour": 200},
         },
-
         "voice": {
             "enabled": True,
             "sfu_backend": "mediasoup",
@@ -392,7 +392,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "turn_ttl": 86400,
             "log_connections": False,
         },
-
         "search": {
             "enabled": True,
             "backend": "sqlite_fts5",
@@ -404,9 +403,8 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "min_members_for_listing": 10,
                 "max_tags": 10,
                 "bump_cooldown_hours": 4,
-            }
+            },
         },
-
         "oauth": {
             "state_ttl_seconds": 600,
             "state_token_bytes": 32,
@@ -423,7 +421,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "github": {"client_id": "", "client_secret": ""},
             "microsoft": {"client_id": "", "client_secret": ""},
         },
-
         "encryption": {
             "argon2": {
                 "time_cost": 2,
@@ -440,7 +437,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             },
             "key_rotation_days": 90,
         },
-
         "monitoring": {
             "enabled": True,
             "log_interval": 300,
@@ -456,7 +452,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "active_connections": 1000,
             },
         },
-
         "selftest": {
             "enabled": False,
             "run_on_startup": False,
@@ -470,7 +465,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "password": "SelfTest_Password_123!",
             },
         },
-
         "admin_ui": {
             "enabled": True,
             "path": "/admin",
@@ -487,7 +481,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "lockout_seconds": 900,
             },
         },
-
         "tls": {
             "enabled": False,
             "auto_generate_self_signed": False,
@@ -495,7 +488,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "key_path": str(home_dir / "certs" / "server.key"),
             "cert_days": 365,
         },
-
         "email": {
             "smtp_host": "localhost",
             "smtp_port": 587,
@@ -503,13 +495,11 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "from_email": "noreply@plexichat.internal",
             "use_tls": True,
         },
-
         "presence": {
             "typing_timeout_ms": 10000,
             "timeout_ms": 300000,
             "update_interval_ms": 60000,
         },
-
         "polls": {
             "max_options": 10,
             "min_options": 2,
@@ -518,7 +508,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "min_duration_hours": 1,
             "max_duration_hours": 168,
         },
-
         "emojis": {
             "max_emojis_per_server": 50,
             "max_animated_emojis_per_server": 50,
@@ -527,7 +516,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "emoji_max_name_length": 32,
             "allowed_formats": ["image/png", "image/jpeg", "image/gif", "image/webp"],
         },
-
         "stickers": {
             "max_packs_per_server": 50,
             "max_stickers_per_pack": 100,
@@ -538,7 +526,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "allowed_formats": ["image/png", "image/webp", "image/gif"],
             "max_suggestions": 10,
         },
-
         "soundboard": {
             "max_sounds_per_server": 50,
             "max_sound_size": 2097152,
@@ -548,14 +535,12 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "default_cooldown_seconds": 3.0,
             "max_cooldown_seconds": 30.0,
         },
-
         "webhooks": {
             "max_webhooks_per_channel": 10,
             "max_webhooks_per_server": 50,
             "max_message_length": 2000,
             "max_embeds_per_message": 10,
         },
-
         "automod": {
             "enabled": True,
             "exempt_owners": True,
@@ -569,7 +554,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 }
             },
         },
-
         "applications": {
             "max_applications_per_user": 25,
             "max_commands_per_app": 100,
@@ -582,11 +566,9 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             },
             "rate_limits": {
                 "requests_per_minute": 60,
-            }
+            },
         },
-
         "versioning": {"min_supported_version": version, "update_url": None},
-
         "docs": {
             "enabled": True,
             "path": "/docs/api",
@@ -606,19 +588,23 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "cache": {"enabled": True, "ttl_seconds": 300},
             "security": {"require_auth": False},
         },
-
         "feedback": {
             "enabled": True,
             "rate_limit": {"max_per_hour": 5, "max_per_day": 20},
         },
-
         "avatars": {
             "max_size": 512,
             "max_file_size": 5242880,
             "allowed_types": ["image/jpeg", "image/png", "image/gif", "image/webp"],
-            "default_colors": ["#e94560", "#4ade80", "#fbbf24", "#60a5fa", "#a78bfa", "#f472b6"],
+            "default_colors": [
+                "#e94560",
+                "#4ade80",
+                "#fbbf24",
+                "#60a5fa",
+                "#a78bfa",
+                "#f472b6",
+            ],
         },
-
         "embeds": {
             "max_embeds_per_message": 10,
             "max_fields_per_embed": 25,
@@ -636,7 +622,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "allowed_schemes": ["http", "https"],
             },
         },
-
         "telemetry": {
             "enabled": True,
             "rate_limit": {"max_per_minute": 10},

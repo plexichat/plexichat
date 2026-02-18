@@ -52,8 +52,12 @@ class ServerResponse(BaseModel):
     default_channel_id: Optional[SnowflakeID] = Field(
         None, description="Default channel ID"
     )
-    verification_level: int = Field(0, description="Verification level required to join")
-    default_message_notifications: int = Field(0, description="Default notification level")
+    verification_level: int = Field(
+        0, description="Verification level required to join"
+    )
+    default_message_notifications: int = Field(
+        0, description="Default notification level"
+    )
     created_at: int = Field(..., description="Creation timestamp")
 
 
@@ -91,12 +95,18 @@ class ChannelResponse(BaseModel):
     category_id: Optional[SnowflakeID] = Field(None, description="Parent category ID")
     nsfw: bool = Field(False, description="NSFW flag")
     slowmode_seconds: int = Field(0, description="Slowmode delay in seconds")
-    read_receipts_enabled: bool = Field(True, description="Whether read receipts are enabled")
+    read_receipts_enabled: bool = Field(
+        True, description="Whether read receipts are enabled"
+    )
     created_at: int = Field(..., description="Creation timestamp")
-    
+
     # Optional fields for DM support
-    recipient_id: Optional[SnowflakeID] = Field(None, description="Recipient user ID (DMs only)")
-    recipient: Optional[UserPublicResponse] = Field(None, description="Recipient details (DMs only)")
+    recipient_id: Optional[SnowflakeID] = Field(
+        None, description="Recipient user ID (DMs only)"
+    )
+    recipient: Optional[UserPublicResponse] = Field(
+        None, description="Recipient details (DMs only)"
+    )
 
 
 class ChannelUpdateRequest(BaseModel):
@@ -144,7 +154,9 @@ class MemberResponse(BaseModel):
         default_factory=lambda: PresenceResponse(status="offline")
     )
     badges: List[str] = Field(default_factory=list, description="User badges")
-    timeout_until: Optional[int] = Field(None, description="Timestamp until user is timed out")
+    timeout_until: Optional[int] = Field(
+        None, description="Timestamp until user is timed out"
+    )
     timeout_reason: Optional[str] = Field(None, description="Reason for timeout")
 
 
@@ -223,7 +235,9 @@ class AuditLogEntryResponse(BaseModel):
     id: SnowflakeID = Field(..., description="Entry ID")
     server_id: SnowflakeID = Field(..., description="Server ID")
     user_id: SnowflakeID = Field(..., description="User who performed action")
-    user: Optional[UserPublicResponse] = Field(default=None, description="User information")
+    user: Optional[UserPublicResponse] = Field(
+        default=None, description="User information"
+    )
     action: str = Field(..., description="Action type")
     target_type: Optional[str] = Field(default=None, description="Target object type")
     target_id: Optional[SnowflakeID] = Field(
@@ -279,11 +293,17 @@ class AutomodRuleAction(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    action_type: str = Field(..., description="Action type (delete_message, timeout_user, etc.)")
-    duration_seconds: Optional[int] = Field(None, description="Duration for timeout/ban")
+    action_type: str = Field(
+        ..., description="Action type (delete_message, timeout_user, etc.)"
+    )
+    duration_seconds: Optional[int] = Field(
+        None, description="Duration for timeout/ban"
+    )
     reason: Optional[str] = Field(None, max_length=512, description="Reason for action")
     notify_user: bool = Field(True, description="Whether to notify the user")
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict, description="Additional metadata"
+    )
 
 
 class AutomodRuleResponse(BaseModel):
@@ -298,9 +318,16 @@ class AutomodRuleResponse(BaseModel):
     enabled: bool = Field(..., description="Whether rule is enabled")
     config: Dict[str, Any] = Field(..., description="Rule configuration")
     actions: List[AutomodRuleAction] = Field(..., description="Actions to take")
-    applied_roles: List[SnowflakeID] = Field(default_factory=list, description="Role IDs this rule applies to (empty = everyone)")
-    exempt_roles: List[SnowflakeID] = Field(default_factory=list, description="Exempt role IDs")
-    exempt_channels: List[SnowflakeID] = Field(default_factory=list, description="Exempt channel IDs")
+    applied_roles: List[SnowflakeID] = Field(
+        default_factory=list,
+        description="Role IDs this rule applies to (empty = everyone)",
+    )
+    exempt_roles: List[SnowflakeID] = Field(
+        default_factory=list, description="Exempt role IDs"
+    )
+    exempt_channels: List[SnowflakeID] = Field(
+        default_factory=list, description="Exempt channel IDs"
+    )
     priority: int = Field(0, description="Rule priority")
     check_all: bool = Field(False, description="Whether to check all rules after match")
     created_at: int = Field(..., description="Creation timestamp")
@@ -317,9 +344,15 @@ class AutomodRuleCreateRequest(BaseModel):
     rule_type: str = Field(..., description="Rule type")
     config: Dict[str, Any] = Field(..., description="Rule configuration")
     actions: List[AutomodRuleAction] = Field(..., description="Actions to take")
-    applied_roles: Optional[List[SnowflakeID]] = Field(None, description="Role IDs this rule applies to")
-    exempt_roles: Optional[List[SnowflakeID]] = Field(None, description="Exempt role IDs")
-    exempt_channels: Optional[List[SnowflakeID]] = Field(None, description="Exempt channel IDs")
+    applied_roles: Optional[List[SnowflakeID]] = Field(
+        None, description="Role IDs this rule applies to"
+    )
+    exempt_roles: Optional[List[SnowflakeID]] = Field(
+        None, description="Exempt role IDs"
+    )
+    exempt_channels: Optional[List[SnowflakeID]] = Field(
+        None, description="Exempt channel IDs"
+    )
     priority: Optional[int] = Field(0, description="Rule priority")
     check_all: Optional[bool] = Field(False, description="Whether to check all rules")
     enabled: Optional[bool] = Field(True, description="Whether rule is enabled")
@@ -355,4 +388,6 @@ class AutomodViolationResponse(BaseModel):
     severity: str = Field(..., description="Violation severity")
     actions_taken: List[str] = Field(..., description="Actions that were taken")
     created_at: int = Field(..., description="Violation timestamp")
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional details")
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict, description="Additional details"
+    )

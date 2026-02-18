@@ -42,6 +42,7 @@ class AuthenticationMiddleware:
 
             if is_internal:
                 import utils.logger as logger
+
                 logger.debug(f"Auth: Internal service authenticated for path {path}")
 
         scope["state"]["is_internal"] = is_internal
@@ -51,19 +52,21 @@ class AuthenticationMiddleware:
         if scope["type"] == "http":
             request = Request(scope)
             path = scope.get("path", "")
-            
+
             # Skip for admin routes which manage their own sessions, and public status/health routes
-            is_admin_path = path.startswith("/admin/") or path.startswith("/api/v1/admin/")
-            
+            is_admin_path = path.startswith("/admin/") or path.startswith(
+                "/api/v1/admin/"
+            )
+
             public_endpoints = [
                 "/api/v1/status",
                 "/api/v1/health",
                 "/health",
                 "/status",
-                "/"
+                "/",
             ]
             is_public_endpoint = path in public_endpoints
-            
+
             # Detect multiple Authorization headers (possible header injection)
             auth_header_count = sum(
                 1
@@ -94,13 +97,18 @@ class AuthenticationMiddleware:
                             def _verify_with_cleanup(token_str, client_ip, user_agent):
                                 db = api.get_db()
                                 try:
-                                    return auth.verify_token(token_str, client_ip, user_agent)
+                                    return auth.verify_token(
+                                        token_str, client_ip, user_agent
+                                    )
                                 finally:
                                     if db:
                                         db.close()
 
                             from fastapi.concurrency import run_in_threadpool
-                            token_info = await run_in_threadpool(_verify_with_cleanup, token, ip, ua)
+
+                            token_info = await run_in_threadpool(
+                                _verify_with_cleanup, token, ip, ua
+                            )
 
                             if token_info:
                                 scope["state"]["user"] = token_info
@@ -108,13 +116,17 @@ class AuthenticationMiddleware:
                                     f"Auth: Successfully authenticated user {token_info.user_id} for path {path}"
                                 )
                             else:
-                                logger.warning(f"Auth: verify_token returned None for path {path}")
+                                logger.warning(
+                                    f"Auth: verify_token returned None for path {path}"
+                                )
                                 scope["state"]["auth_error"] = "Invalid token"
                         except Exception as e:
                             # Distinguish between AuthError (invalid token) and other errors (DB failed)
                             if isinstance(e, AuthError):
                                 # This is a legitimate authentication failure (invalid/expired token)
-                                logger.debug(f"Authentication failed for path {path}: {e}")
+                                logger.debug(
+                                    f"Authentication failed for path {path}: {e}"
+                                )
                                 scope["state"]["auth_error"] = str(e)
                             else:
                                 # This is likely a database or system error
@@ -130,8 +142,11 @@ class AuthenticationMiddleware:
                 else:
                     import utils.logger as logger
                     from utils.logger import mask_string
+
                     masked_header = mask_string(auth_header)
-                    logger.debug(f"Auth: Failed to extract token from header '{masked_header}' for path {path}")
+                    logger.debug(
+                        f"Auth: Failed to extract token from header '{masked_header}' for path {path}"
+                    )
 
         await self.app(scope, receive, send)
 
@@ -152,18 +167,29 @@ async def get_current_user(request: Request) -> TokenInfo:
         system_error = request.scope.get("state", {}).get("system_error")
         if system_error:
             import utils.logger as logger
-            logger.error(f"get_current_user: System error blocking authentication: {system_error}")
+
+            logger.error(
+                f"get_current_user: System error blocking authentication: {system_error}"
+            )
             raise HTTPException(
-                status_code=500, 
-                detail={"error": {"code": 500, "message": "Internal server error during authentication"}}
+                status_code=500,
+                detail={
+                    "error": {
+                        "code": 500,
+                        "message": "Internal server error during authentication",
+                    }
+                },
             )
 
         error = request.scope.get("state", {}).get(
             "auth_error", "Authentication required"
         )
-        
+
         import utils.logger as logger
-        logger.debug(f"get_current_user: No user in state for path {request.url.path}. Error: {error}")
+
+        logger.debug(
+            f"get_current_user: No user in state for path {request.url.path}. Error: {error}"
+        )
 
         raise HTTPException(
             status_code=401,
@@ -172,31 +198,43 @@ async def get_current_user(request: Request) -> TokenInfo:
 
     # Enforce account status (Locked or Forced Username Change)
     path = request.url.path
-    
+
     # Account Lock check (Total block)
     if user.account_locked:
         raise HTTPException(
             status_code=403,
-            detail={"error": {"code": 403, "message": "Account suspended", "reason": "Your account has been suspended by an administrator."}},
+            detail={
+                "error": {
+                    "code": 403,
+                    "message": "Account suspended",
+                    "reason": "Your account has been suspended by an administrator.",
+                }
+            },
         )
-        
+
     # Forced Username Change check
     if user.force_username_change:
         # Allow GET @me (to see current status) and PATCH @me (to fix the username)
         # Also allow logout
         is_me_path = path == "/api/v1/users/@me"
         is_allowed_me_method = request.method in ("GET", "PATCH")
-        
+
         allowed = (
-            (is_me_path and is_allowed_me_method) or 
-            path == "/api/v1/auth/logout" or
-            path.startswith("/api/v1/avatars/")
+            (is_me_path and is_allowed_me_method)
+            or path == "/api/v1/auth/logout"
+            or path.startswith("/api/v1/avatars/")
         )
-        
+
         if not allowed:
             raise HTTPException(
                 status_code=403,
-                detail={"error": {"code": 403, "message": "Username change required", "reason": "You must change your username before you can continue using PlexiChat."}},
+                detail={
+                    "error": {
+                        "code": 403,
+                        "message": "Username change required",
+                        "reason": "You must change your username before you can continue using PlexiChat.",
+                    }
+                },
             )
 
     return user
