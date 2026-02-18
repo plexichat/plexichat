@@ -34,6 +34,12 @@ class SQLiteFTS5Indexer(BaseIndexer):
         if self._initialized:
             return True
 
+        # Safety check: Don't run FTS5 initialization on non-SQLite databases
+        db_type = getattr(self._db, "type", "sqlite")
+        if db_type != "sqlite":
+            logger.warning(f"SQLite FTS5 indexer cannot initialize on {db_type} database. Skipping.")
+            return False
+
         try:
             self._db.execute("""
                 CREATE VIRTUAL TABLE IF NOT EXISTS search_messages_fts USING fts5(
