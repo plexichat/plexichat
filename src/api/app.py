@@ -232,7 +232,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             )
 
     @app.get(
-        "/api/v1/media/attachments/{filename}",
+        "/api/v1/media/attachments/{filename:path}",
         summary="Serve attachment",
         tags=["Media"],
         responses={
