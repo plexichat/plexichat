@@ -174,13 +174,23 @@ def submit_response_times(
             if response_time_ms < 0:
                 continue
             method = str(entry.get("method", "GET")).strip().upper()[:10]
+
+            # Safely handle non-integer status codes (e.g., "MESSAGE_BLOCKED")
+            status_code_raw = entry.get("status_code", 0)
+            try:
+                status_code = int(status_code_raw)
+            except (ValueError, TypeError):
+                # If it's a string like "MESSAGE_BLOCKED", use 0 or a specific error code
+                # We'll use 0 to indicate a non-standard/blocked response
+                status_code = 0
+
             batch_data.append(
                 (
                     gen_id(),
                     _normalize_endpoint(endpoint)[:255],
                     method or "GET",
                     response_time_ms,
-                    int(entry.get("status_code", 0)),
+                    status_code,
                     int(entry.get("timestamp", now)),
                     client_id,
                     int(entry.get("db_queries", 0)),
