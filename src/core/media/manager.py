@@ -1441,13 +1441,13 @@ class MediaManager(BaseManager):
             "SELECT id, uploaded_by FROM media_files WHERE filename = ? AND deleted = 0",
             (filename,),
         )
-        if not row:
+        if row:
+            uploader_id = int(row["uploaded_by"])
+            if uploader_id == int(user_id):
+                return True
+        else:
             logger.debug(f"check_file_access: file {filename} not found in media_files")
             return False
-
-        uploader_id = int(row["uploaded_by"])
-        if uploader_id == user_id:
-            return True
 
         logger.debug(f"check_file_access: file={filename}, user={user_id}, uploader={uploader_id}")
         file_id = row["id"]

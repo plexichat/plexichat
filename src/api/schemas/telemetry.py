@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional
+from typing import List, Optional, Union
 
 
 class ResponseTimeEntry(BaseModel):
@@ -12,8 +12,8 @@ class ResponseTimeEntry(BaseModel):
     response_time_ms: float = Field(
         ..., ge=0, description="The response time in milliseconds"
     )
-    status_code: int = Field(
-        ..., ge=100, le=599, description="The HTTP status code returned"
+    status_code: Union[int, str] = Field(
+        ..., description="The HTTP status code returned"
     )
     db_queries: Optional[int] = Field(
         0, description="Number of database queries executed"
