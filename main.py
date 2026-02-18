@@ -34,7 +34,7 @@ validator.setup(auto_sanitize_html=False)
 import utils.version as version  # noqa: E402
 
 # Global Version Definition
-VERSION = "a.1.0-43"
+VERSION = "a.1.0-44"
 
 
 class PlexiChatServer:

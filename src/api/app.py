@@ -267,7 +267,12 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             is_signed = False
             try:
                 # Check if URL has valid signature
-                sig_valid, _ = media.verify_signed_url(str(request.url))
+                # Extract path and query for consistent verification with sign_url
+                url_to_verify = request.url.path
+                if request.url.query:
+                    url_to_verify += f"?{request.url.query}"
+                
+                sig_valid, _ = media.verify_signed_url(url_to_verify)
                 if sig_valid:
                     is_signed = True
                     logger.debug(f"Access granted via signed URL: {filename}")

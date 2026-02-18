@@ -2,7 +2,7 @@
 
 The PlexiChat REST API provides endpoints for managing users, servers, channels, messages, and more.
 
-**API Version**: `a.1.0-43`
+**API Version**: `a.1.0-44`
 
 ## Base URL
 

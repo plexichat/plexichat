@@ -205,4 +205,4 @@ pytest -n auto -m "not slow"
 
 ## Version
 
-Current version: `a.1.0-43` (Alpha)
+Current version: `a.1.0-44` (Alpha)

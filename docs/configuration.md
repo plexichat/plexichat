@@ -315,7 +315,7 @@ encryption:
 api:
   title: PlexiChat API
   description: REST API for PlexiChat messaging platform
-  version: a.1.0-43
+  version: a.1.0-44
   api_prefix: /api/v1
   debug: false           # Enable debug mode
   cors_origins:
@@ -360,7 +360,7 @@ storage:
 ```yaml
 application:
   name: PlexiChat
-  version: a.1.0-43
+  version: a.1.0-44
   environment: development  # development, staging, production
 ```
 
@@ -368,7 +368,7 @@ application:
 
 ```yaml
 versioning:
-  min_supported_version: a.1.0-43  # Minimum client version
+  min_supported_version: a.1.0-44  # Minimum client version
   update_url: null                 # URL for client updates
 ```
 

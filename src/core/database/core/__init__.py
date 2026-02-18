@@ -17,11 +17,11 @@ from contextvars import ContextVar
 import utils.config as config
 import utils.logger as logger
 
-from .engines.base import BaseEngine
-from .engines.sqlite import SqliteEngine
-from .engines.postgres import PostgresEngine
-from .monitoring import DatabaseMonitor
-from . import dialect
+from ..engines.base import BaseEngine
+from ..engines.sqlite import SqliteEngine
+from ..engines.postgres import PostgresEngine
+from ..monitoring import DatabaseMonitor
+from .. import dialect
 
 # Context variables for request-local database metrics
 _query_count: ContextVar[int] = ContextVar("_query_count", default=0)

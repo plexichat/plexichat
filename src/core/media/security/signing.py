@@ -104,6 +104,23 @@ class UrlSigner:
             raise SignatureExpiredError("Signed URL has expired")
 
         base_url = self._remove_signature_params(url)
+        
+        # Robust verification: Try matching against path-only signature first
+        # (Internal proxy URLs are often signed as paths but verified as full URLs)
+        parsed_base = urlparse(base_url)
+        path_only = parsed_base.path
+        
+        # Include query string if present (minus signature params)
+        if parsed_base.query:
+            path_only += f"?{parsed_base.query}"
+            
+        expected_data_path = self._build_signature_data(path_only, file_id, expires_at, None)
+        expected_signature_path = self._generate_signature(expected_data_path)
+        
+        if hmac.compare_digest(signature, expected_signature_path):
+            return True, file_id
+
+        # Fallback to full URL check (for S3 native or explicitly absolute signed URLs)
         expected_data = self._build_signature_data(base_url, file_id, expires_at, None)
         expected_signature = self._generate_signature(expected_data)
 

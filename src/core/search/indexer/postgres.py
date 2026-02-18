@@ -2,7 +2,7 @@
 PostgreSQL search indexer - Standard SQL search for Postgres.
 """
 
-from typing import Optional
+from typing import Optional, Any, List
 import json
 
 import utils.logger as logger
@@ -121,6 +121,19 @@ class PostgresIndexer(BaseIndexer):
             logger.error(f"Failed to index message {message.message_id}: {e}")
             raise SearchIndexError(f"Failed to index message: {e}", item_id=message.message_id)
 
+    def close(self):
+        self._initialized = False
+
+    def index_messages_batch(self, messages: List[IndexedMessage]) -> int:
+        indexed = 0
+        for message in messages:
+            try:
+                if self.index_message(message):
+                    indexed += 1
+            except SearchIndexError:
+                continue
+        return indexed
+
     def remove_message(self, message_id: int) -> bool:
         try:
             self._ensure_initialized()
@@ -145,7 +158,7 @@ class PostgresIndexer(BaseIndexer):
                 return []
 
             sql = "SELECT * FROM search_messages WHERE content ILIKE ?"
-            params = [f"%{query}%"]
+            params: List[Any] = [f"%{query}%"]
 
             if conversation_ids:
                 sql += f" AND conversation_id IN ({','.join(['?']*len(conversation_ids))})"
@@ -154,6 +167,14 @@ class PostgresIndexer(BaseIndexer):
             if server_ids:
                 sql += f" AND server_id IN ({','.join(['?']*len(server_ids))})"
                 params.extend(server_ids)
+
+            if channel_ids:
+                sql += f" AND channel_id IN ({','.join(['?']*len(channel_ids))})"
+                params.extend(channel_ids)
+
+            if author_ids:
+                sql += f" AND author_id IN ({','.join(['?']*len(author_ids))})"
+                params.extend(author_ids)
 
             sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
             params.extend([limit, offset])
@@ -179,6 +200,9 @@ class PostgresIndexer(BaseIndexer):
             logger.error(f"Postgres search failed: {e}")
             return []
 
+    def update_message(self, message: IndexedMessage) -> bool:
+        return self.index_message(message)
+
     def index_user(self, user: IndexedUser) -> bool:
         try:
             self._ensure_initialized()
@@ -188,6 +212,14 @@ class PostgresIndexer(BaseIndexer):
                 (user.user_id, user.username, user.display_name, user.is_bot),
                 ["user_id"]
             )
+            return True
+        except Exception:
+            return False
+
+    def remove_user(self, user_id: int) -> bool:
+        try:
+            self._ensure_initialized()
+            self._db.execute("DELETE FROM search_users WHERE user_id = ?", (user_id,))
             return True
         except Exception:
             return False
@@ -218,13 +250,23 @@ class PostgresIndexer(BaseIndexer):
         except Exception:
             return False
 
+    def remove_server(self, server_id: int) -> bool:
+        try:
+            self._ensure_initialized()
+            self._db.execute(
+                "DELETE FROM search_servers WHERE server_id = ?", (server_id,)
+            )
+            return True
+        except Exception:
+            return False
+
     def search_servers(
         self, query: str, category=None, public_only=True, limit=25, offset=0
     ):
         try:
             self._ensure_initialized()
             sql = "SELECT * FROM search_servers WHERE (name ILIKE ? OR description ILIKE ?)"
-            params = [f"%{query}%", f"%{query}%"]
+            params: list[Any] = [f"%{query}%", f"%{query}%"]
             if public_only:
                 sql += " AND is_public = TRUE"
             if category:
@@ -241,6 +283,28 @@ class PostgresIndexer(BaseIndexer):
             ) for r in rows]
         except Exception:
             return []
+
+    def get_stats(self):
+        try:
+            self._ensure_initialized()
+            msg_count = self._db.fetch_one(
+                "SELECT COUNT(*) as count FROM search_messages"
+            )
+            user_count = self._db.fetch_one(
+                "SELECT COUNT(*) as count FROM search_users"
+            )
+            server_count = self._db.fetch_one(
+                "SELECT COUNT(*) as count FROM search_servers"
+            )
+            return {
+                "backend": "postgres",
+                "message_count": msg_count["count"] if msg_count else 0,
+                "user_count": user_count["count"] if user_count else 0,
+                "server_count": server_count["count"] if server_count else 0,
+                "healthy": True,
+            }
+        except Exception as e:
+            return {"backend": "postgres", "healthy": False, "error": str(e)}
 
     def _ensure_initialized(self):
         if not self._initialized:
