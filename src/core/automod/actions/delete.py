@@ -37,18 +37,27 @@ class DeleteMessageAction(BaseAction):
         try:
             bot_user_id = context.get("bot_user_id") if context else None
             if not bot_user_id:
+                # Use hard delete for AutoMod violations
                 self._db.execute(
-                    "UPDATE msg_messages SET deleted = 1, deleted_at = ? WHERE id = ?",
-                    (violation.created_at, violation.message_id),
+                    "DELETE FROM msg_messages WHERE id = ?",
+                    (violation.message_id,),
                 )
+                # Also delete associated attachments from DB (files stay until cleanup)
+                self._db.execute(
+                    "DELETE FROM msg_attachments WHERE message_id = ?",
+                    (violation.message_id,),
+                )
+                
                 # Manual invalidation since we used raw SQL
                 from src.core.database import cache_delete, invalidate_pattern
+
                 cache_delete(f"msg:obj:{violation.message_id}")
                 invalidate_pattern(f"*messages_list:*{violation.channel_id}*")
                 invalidate_pattern(f"*messages_api:*{violation.channel_id}*")
                 # Clear recent messages Redis list too
                 try:
                     from src.core.database import get_redis_client as get_client
+
                     client = get_client()
                     if client:
                         client.delete(f"msg:recent:{violation.channel_id}")
@@ -56,7 +65,7 @@ class DeleteMessageAction(BaseAction):
                     pass
             else:
                 self._messaging.delete_message(
-                    user_id=bot_user_id, message_id=violation.message_id
+                    user_id=bot_user_id, message_id=violation.message_id, hard_delete=True
                 )
 
             logger.debug(
@@ -75,10 +84,12 @@ class DeleteMessageAction(BaseAction):
                     user_ids = []
                     if self._servers:
                         try:
-                            user_ids = self._servers.get_member_user_ids(violation.server_id)
+                            user_ids = self._servers.get_member_user_ids(
+                                violation.server_id
+                            )
                         except Exception:
                             pass
-                    
+
                     if user_ids:
                         event = Event(
                             event_type=EventType.MESSAGE_DELETE,
@@ -86,15 +97,16 @@ class DeleteMessageAction(BaseAction):
                                 "id": str(violation.message_id),
                                 "channel_id": str(violation.channel_id),
                                 "server_id": str(violation.server_id),
-                                "automod": True
+                                "automod": True,
                             },
                             server_id=violation.server_id,
                             channel_id=violation.channel_id,
                         )
+
                         # We use a helper to run the async dispatch
                         async def dispatch():
                             await dispatcher.dispatch_event(event, user_ids)
-                        
+
                         try:
                             loop = asyncio.get_running_loop()
                             asyncio.run_coroutine_threadsafe(dispatch(), loop)

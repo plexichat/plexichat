@@ -40,11 +40,11 @@ class TimeoutUserAction(BaseAction):
             reason = action.reason or f"Automod: {violation.rule_type.value} violation"
 
             self._servers.update_member(
-                user_id=0, # System
+                user_id=0,  # System
                 server_id=violation.server_id,
                 member_user_id=violation.user_id,
                 timeout_until=timeout_until,
-                timeout_reason=reason
+                timeout_reason=reason,
             )
 
             logger.debug(
@@ -79,7 +79,10 @@ class TimeoutUserAction(BaseAction):
             "SELECT owner_id FROM srv_servers WHERE id = ?", (violation.server_id,)
         )
 
-        if server and server["owner_id"] == violation.user_id:
+        # SECURITY: normally we don't allow moderating the owner,
+        # but for AutoMod (system) we allow it if it's an automated action.
+        is_system = context and context.get("source") in ["message_create", "message_edit"]
+        if not is_system and server and server["owner_id"] == violation.user_id:
             return False, "Cannot timeout server owner"
 
         return True, None

@@ -1447,9 +1447,11 @@ class MediaManager(BaseManager):
             logger.debug(f"check_file_access: file {filename} not found in media_files")
             return False
 
-        if int(row["uploaded_by"]) == user_id:
+        uploader_id = int(row["uploaded_by"])
+        if uploader_id == user_id:
             return True
 
+        logger.debug(f"check_file_access: file={filename}, user={user_id}, uploader={uploader_id}")
         file_id = row["id"]
 
         # 2. Check if it's a message attachment
@@ -1467,6 +1469,7 @@ class MediaManager(BaseManager):
             search_filename = os.path.basename(search_filename)
 
         rows = self._db.fetch_all(query, (search_filename, search_filename, f'%{file_id}%'))
+        logger.debug(f"check_file_access: found {len(rows) if rows else 0} potential attachment rows for {search_filename}")
 
         if rows and self._messaging:
             for r in rows:
@@ -1478,6 +1481,7 @@ class MediaManager(BaseManager):
                         is_p = self._messaging.is_participant(conv_id, user_id)
                     else:
                         is_p = self._messaging.get_manager().is_participant(conv_id, user_id)
+                    logger.debug(f"check_file_access: user {user_id} in conversation {conv_id} -> {is_p}")
                 except Exception as e:
                     logger.warning(f"Failed to check participation for {user_id} in {conv_id}: {e}")
 
