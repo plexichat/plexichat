@@ -89,31 +89,31 @@ def get_relationships(
         # 2. Collect all involved user IDs for bulk fetching
         all_user_ids = set()
         my_id = current_user.user_id
-        
+
         friends_ids = []
         for f in friends:
             # In a friendship row, we are either user_id or friend_id. The friend is the other one.
             f_uid = getattr(f, "user_id", 0)
             f_fid = getattr(f, "friend_id", 0)
             target_id = f_fid if f_uid == my_id else f_uid
-            
+
             friends_ids.append(target_id)
             all_user_ids.add(target_id)
-            
+
         pending_in_ids = []
         for r in pending_in:
             # Incoming: sender is the other person
             uid = getattr(r, "sender_id", 0)
             pending_in_ids.append(uid)
             all_user_ids.add(uid)
-            
+
         pending_out_ids = []
         for r in pending_out:
             # Outgoing: recipient is the other person
             uid = getattr(r, "recipient_id", 0)
             pending_out_ids.append(uid)
             all_user_ids.add(uid)
-            
+
         blocked_ids = []
         for b in blocked:
             # Blocked: blocked_id is the other person (unless we are blocked_id, but usually we list who WE blocked)
@@ -124,7 +124,7 @@ def get_relationships(
         # 3. Bulk fetch user info and presence
         user_info_map = {}
         presence_map = {}
-        
+
         if all_user_ids:
             if auth:
                 try:
@@ -132,15 +132,17 @@ def get_relationships(
                     for uid_str, u in users.items():
                         user_info_map[uid_str] = {
                             "username": u.username,
-                            "avatar_url": getattr(u, "avatar_url", None)
+                            "avatar_url": getattr(u, "avatar_url", None),
                         }
                 except Exception as e:
                     logger.debug(f"Failed bulk user fetch: {e}")
-            
+
             if presence:
                 try:
                     # Use bulk presence fetch (internal to presence module)
-                    presences = presence.get_visible_presences_bulk(my_id, list(all_user_ids))
+                    presences = presence.get_visible_presences_bulk(
+                        my_id, list(all_user_ids)
+                    )
                     for p_uid, p in presences.items():
                         p_status = getattr(p, "status", None)
                         if p_status and hasattr(p_status, "value"):
@@ -162,7 +164,9 @@ def get_relationships(
                     username=info.get("username") or f"User {uid}",
                     avatar_url=info.get("avatar_url"),
                     status="friend",
-                    presence=presence_map.get(uid) or presence_map.get(str(uid)) or PresenceInfo(status="offline"),
+                    presence=presence_map.get(uid)
+                    or presence_map.get(str(uid))
+                    or PresenceInfo(status="offline"),
                     created_at=getattr(f, "created_at", None),
                 )
             )
@@ -176,7 +180,9 @@ def get_relationships(
                     username=info.get("username") or f"User {uid}",
                     avatar_url=info.get("avatar_url"),
                     status="pending_incoming",
-                    presence=presence_map.get(uid) or presence_map.get(str(uid)) or PresenceInfo(status="offline"),
+                    presence=presence_map.get(uid)
+                    or presence_map.get(str(uid))
+                    or PresenceInfo(status="offline"),
                     message=getattr(r, "message", None),
                     created_at=getattr(r, "created_at", None),
                 )
@@ -191,7 +197,9 @@ def get_relationships(
                     username=info.get("username") or f"User {uid}",
                     avatar_url=info.get("avatar_url"),
                     status="pending_outgoing",
-                    presence=presence_map.get(uid) or presence_map.get(str(uid)) or PresenceInfo(status="offline"),
+                    presence=presence_map.get(uid)
+                    or presence_map.get(str(uid))
+                    or PresenceInfo(status="offline"),
                     created_at=getattr(r, "created_at", None),
                 )
             )
@@ -382,7 +390,15 @@ async def create_relationship(
         # Invalidate cache for both users
         try:
             get_relationships.invalidate(current_user=current_user)  # type: ignore
-            other_user = User(id=target_id, username="", email=None, account_type=AccountType.USER, permissions={}, created_at=0, updated_at=0)
+            other_user = User(
+                id=target_id,
+                username="",
+                email=None,
+                account_type=AccountType.USER,
+                permissions={},
+                created_at=0,
+                updated_at=0,
+            )
             get_relationships.invalidate(current_user=other_user)  # type: ignore
         except Exception as e:
             logger.debug(f"Failed to invalidate relationship cache in create: {e}")
@@ -450,7 +466,7 @@ async def accept_friend_request(
         try:
             pending = relationships.get_pending_requests_incoming(current_user.user_id)
             request_id = None
-            
+
             # Try to match by user_id provided (which could be the sender's user ID or the request ID itself)
             try:
                 provided_id = int(user_id)
@@ -463,7 +479,9 @@ async def accept_friend_request(
                     break
 
             if not request_id:
-                logger.warning(f"Friend request from/with ID {user_id} not found for user {current_user.user_id}. Pending IDs: {[r.id for r in pending]}, Senders: {[r.sender_id for r in pending]}")
+                logger.warning(
+                    f"Friend request from/with ID {user_id} not found for user {current_user.user_id}. Pending IDs: {[r.id for r in pending]}, Senders: {[r.sender_id for r in pending]}"
+                )
                 raise HTTPException(
                     status_code=404,
                     detail={
@@ -569,7 +587,15 @@ async def accept_friend_request(
         try:
             get_relationships.invalidate(current_user=current_user)  # type: ignore
             # Create a dummy user object for cache key generation
-            other_user = User(id=sender_id, username="", email=None, account_type=AccountType.USER, permissions={}, created_at=0, updated_at=0)
+            other_user = User(
+                id=sender_id,
+                username="",
+                email=None,
+                account_type=AccountType.USER,
+                permissions={},
+                created_at=0,
+                updated_at=0,
+            )
             get_relationships.invalidate(current_user=other_user)  # type: ignore
         except Exception as e:
             logger.debug(f"Failed to invalidate relationship cache: {e}")
@@ -758,10 +784,20 @@ async def delete_relationship(
             try:
                 get_relationships.invalidate(current_user=current_user)  # type: ignore
                 # Create a dummy user object for cache key generation
-                other_user = User(id=target_id, username="", email=None, account_type=AccountType.USER, permissions={}, created_at=0, updated_at=0)
+                other_user = User(
+                    id=target_id,
+                    username="",
+                    email=None,
+                    account_type=AccountType.USER,
+                    permissions={},
+                    created_at=0,
+                    updated_at=0,
+                )
                 get_relationships.invalidate(current_user=other_user)  # type: ignore
             except Exception as e:
-                logger.debug(f"Failed to invalidate relationship cache during delete: {e}")
+                logger.debug(
+                    f"Failed to invalidate relationship cache during delete: {e}"
+                )
 
         except HTTPException:
             raise

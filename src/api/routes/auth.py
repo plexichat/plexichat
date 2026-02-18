@@ -172,7 +172,13 @@ async def register(request: Request, body: RegisterRequest) -> LoginResponse:
             f"Unexpected error in register for '{masked_username}': {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": "Internal server error during registration"}}
+            status_code=500,
+            detail={
+                "error": {
+                    "code": 500,
+                    "message": "Internal server error during registration",
+                }
+            },
         )
 
     # Apply alpha tester features if enabled
@@ -181,18 +187,14 @@ async def register(request: Request, body: RegisterRequest) -> LoginResponse:
         try:
             features.apply_new_user_features(user.id)
         except Exception as fe:
-            logger.debug(
-                f"Failed to apply new user features for user {user.id}: {fe}"
-            )
+            logger.debug(f"Failed to apply new user features for user {user.id}: {fe}")
 
     try:
         result = auth.login(
             username=body.username, password=body.password, ip_address=ip_address
         )
     except Exception as le:
-        logger.error(
-            f"Auto-login failed after registration for user {user.id}: {le}"
-        )
+        logger.error(f"Auto-login failed after registration for user {user.id}: {le}")
         raise HTTPException(
             status_code=401,
             detail={
@@ -247,9 +249,7 @@ async def login(request: Request, body: LoginRequest) -> LoginResponse:
         )
     except InvalidCredentialsError:
         masked_username = mask_string(body.username)
-        logger.warning(
-            f"Login failed for '{masked_username}': Invalid credentials"
-        )
+        logger.warning(f"Login failed for '{masked_username}': Invalid credentials")
         raise HTTPException(
             status_code=401,
             detail={"error": {"code": 401, "message": "Invalid credentials"}},
@@ -258,13 +258,12 @@ async def login(request: Request, body: LoginRequest) -> LoginResponse:
         masked_username = mask_string(body.username)
         logger.warning(f"Login failed for '{masked_username}': Account locked")
         raise HTTPException(
-            status_code=403, detail={"error": {"code": 403, "message": "Account locked"}}
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Account locked"}},
         )
     except (EmailNotVerifiedError, AccountDisabledError) as e:
         masked_username = mask_string(body.username)
-        logger.warning(
-            f"Login failed for '{masked_username}': {type(e).__name__}"
-        )
+        logger.warning(f"Login failed for '{masked_username}': {type(e).__name__}")
         raise HTTPException(
             status_code=403, detail={"error": {"code": 403, "message": str(e)}}
         )
@@ -274,7 +273,10 @@ async def login(request: Request, body: LoginRequest) -> LoginResponse:
             f"Unexpected error in login for '{masked_username}': {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": "Internal server error during login"}}
+            status_code=500,
+            detail={
+                "error": {"code": 500, "message": "Internal server error during login"}
+            },
         )
 
     if result.status.value == "two_factor_required":
@@ -762,12 +764,14 @@ async def complete_2fa(body: TwoFactorRequest) -> LoginResponse:
     except TwoFactorInvalidError:
         logger.warning("2FA completion failed: Invalid code")
         raise HTTPException(
-            status_code=401, detail={"error": {"code": 401, "message": "Invalid 2FA code"}}
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid 2FA code"}},
         )
     except UserNotFoundError:
         logger.warning("2FA completion failed: User not found")
         raise HTTPException(
-            status_code=401, detail={"error": {"code": 401, "message": "Invalid challenge"}}
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid challenge"}},
         )
     except Exception as e:
         logger.error(f"Unexpected error in complete_2fa: {e}", exc_info=True)
@@ -1023,9 +1027,7 @@ async def revoke_session(
         logger.info(f"User {current_user.user_id} revoked session {sid}")
         return SuccessResponse(success=True)
     except UserNotFoundError:
-        logger.warning(
-            f"Session {sid} not found for user {current_user.user_id}"
-        )
+        logger.warning(f"Session {sid} not found for user {current_user.user_id}")
         raise HTTPException(
             status_code=404,
             detail={"error": {"code": 404, "message": "Session not found"}},
@@ -1384,11 +1386,11 @@ async def get_password_requirements() -> PasswordRequirementsResponse:
             auth_config = config_util.get("authentication", {})
             if not isinstance(auth_config, dict):
                 auth_config = {}
-        
+
         password_config = auth_config.get("password", {})
         if not isinstance(password_config, dict):
             password_config = {}
-            
+
         accounts_config = auth_config.get("accounts", {})
         if not isinstance(accounts_config, dict):
             accounts_config = {}
@@ -1404,7 +1406,9 @@ async def get_password_requirements() -> PasswordRequirementsResponse:
             require_digit=password_config.get("require_digit", True),
             require_special=password_config.get("require_special", True),
             age_gate_enabled=accounts_config.get("age_gate_enabled", False),
-            age_verification_type=accounts_config.get("age_verification_type", "boolean"),
+            age_verification_type=accounts_config.get(
+                "age_verification_type", "boolean"
+            ),
             minimum_age=accounts_config.get("minimum_age", 13),
             docs_enabled=is_docs_enabled(),
         )
@@ -1439,7 +1443,7 @@ async def request_password_reset(body: PasswordResetRequest) -> SuccessResponse:
     try:
         # Use run_in_threadpool if auth methods are blocking
         from fastapi.concurrency import run_in_threadpool
-        
+
         def _request_reset_with_cleanup(email_str):
             db = api.get_db()
             try:
@@ -1479,7 +1483,7 @@ async def confirm_password_reset(body: PasswordResetConfirm) -> SuccessResponse:
 
     try:
         from fastapi.concurrency import run_in_threadpool
-        
+
         def _reset_with_cleanup(token_str, new_password):
             db = api.get_db()
             try:
@@ -1488,7 +1492,9 @@ async def confirm_password_reset(body: PasswordResetConfirm) -> SuccessResponse:
                 if db:
                     db.close()
 
-        success = await run_in_threadpool(_reset_with_cleanup, body.token, body.new_password)
+        success = await run_in_threadpool(
+            _reset_with_cleanup, body.token, body.new_password
+        )
         if success:
             return SuccessResponse(success=True)
         else:

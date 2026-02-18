@@ -365,10 +365,19 @@ async def create_emoji(
         if servers_mod:
             perms = servers_mod.get_permissions(current_user.user_id, sid)
             from src.core.servers.permissions import has_permission
-            if not (has_permission(perms, "emojis.manage") or has_permission(perms, "server.manage")):
+
+            if not (
+                has_permission(perms, "emojis.manage")
+                or has_permission(perms, "server.manage")
+            ):
                 raise HTTPException(
                     status_code=403,
-                    detail={"error": {"code": 403, "message": "Missing emojis.manage permission"}}
+                    detail={
+                        "error": {
+                            "code": 403,
+                            "message": "Missing emojis.manage permission",
+                        }
+                    },
                 )
 
         # Read image data
@@ -486,7 +495,9 @@ async def update_emoji(
             sid = int(server_id)
             eid = int(emoji_id)
         except (ValueError, TypeError):
-            logger.warning(f"Invalid ID format for emoji update: {server_id}/{emoji_id}")
+            logger.warning(
+                f"Invalid ID format for emoji update: {server_id}/{emoji_id}"
+            )
             raise HTTPException(
                 status_code=400,
                 detail={"error": {"code": 400, "message": "Invalid ID"}},
@@ -496,10 +507,19 @@ async def update_emoji(
         if servers_mod:
             perms = servers_mod.get_permissions(current_user.user_id, sid)
             from src.core.servers.permissions import has_permission
-            if not (has_permission(perms, "emojis.manage") or has_permission(perms, "server.manage")):
+
+            if not (
+                has_permission(perms, "emojis.manage")
+                or has_permission(perms, "server.manage")
+            ):
                 raise HTTPException(
                     status_code=403,
-                    detail={"error": {"code": 403, "message": "Missing emojis.manage permission"}}
+                    detail={
+                        "error": {
+                            "code": 403,
+                            "message": "Missing emojis.manage permission",
+                        }
+                    },
                 )
 
         try:
@@ -585,7 +605,9 @@ async def delete_emoji(
             sid = int(server_id)
             eid = int(emoji_id)
         except (ValueError, TypeError):
-            logger.warning(f"Invalid ID format for emoji deletion: {server_id}/{emoji_id}")
+            logger.warning(
+                f"Invalid ID format for emoji deletion: {server_id}/{emoji_id}"
+            )
             raise HTTPException(
                 status_code=400,
                 detail={"error": {"code": 400, "message": "Invalid ID"}},
@@ -595,10 +617,19 @@ async def delete_emoji(
         if servers_mod:
             perms = servers_mod.get_permissions(current_user.user_id, sid)
             from src.core.servers.permissions import has_permission
-            if not (has_permission(perms, "emojis.manage") or has_permission(perms, "server.manage")):
+
+            if not (
+                has_permission(perms, "emojis.manage")
+                or has_permission(perms, "server.manage")
+            ):
                 raise HTTPException(
                     status_code=403,
-                    detail={"error": {"code": 403, "message": "Missing emojis.manage permission"}}
+                    detail={
+                        "error": {
+                            "code": 403,
+                            "message": "Missing emojis.manage permission",
+                        }
+                    },
                 )
 
         try:
@@ -623,9 +654,7 @@ async def delete_emoji(
             raise HTTPException(
                 status_code=500,
                 detail={
-                    "error": {
-                        "code": 500,
-                        "message": f"Deletion failed: {str(e)}"}
+                    "error": {"code": 500, "message": f"Deletion failed: {str(e)}"}
                 },
             )
     except HTTPException:

@@ -20,16 +20,16 @@ def _notif_to_response(notif) -> NotificationInfo:
     # Determine type and title
     notif_type = "mention"  # Default
     title = "New Notification"
-    
+
     m_type = getattr(notif.mention_type, "value", str(notif.mention_type))
-    
+
     if m_type == "user":
         title = "You were mentioned"
     elif m_type == "role":
         title = "Your role was mentioned"
     elif m_type == "everyone" or m_type == "here":
         title = f"@{m_type} mention"
-    
+
     # Construct link
     link = None
     if notif.server_id:
@@ -46,7 +46,7 @@ def _notif_to_response(notif) -> NotificationInfo:
         read=bool(notif.read),
         created_at=notif.created_at,
         link=link,
-        sender_id=str(notif.author_id)
+        sender_id=str(notif.author_id),
     )
 
 
@@ -60,9 +60,9 @@ def _notif_to_response(notif) -> NotificationInfo:
     },
 )
 async def get_notifications(
-    limit: int = 20, 
+    limit: int = 20,
     unread_only: bool = False,
-    current_user: TokenInfo = Depends(get_current_user)
+    current_user: TokenInfo = Depends(get_current_user),
 ) -> NotificationsResponse:
     """
     Get user notifications.
@@ -73,16 +73,14 @@ async def get_notifications(
 
     try:
         notifications = notif_mod.get_notifications(
-            current_user.user_id, 
-            limit=limit, 
-            unread_only=unread_only
+            current_user.user_id, limit=limit, unread_only=unread_only
         )
-        
+
         unread_count = notif_mod.get_mention_count(current_user.user_id)
-        
+
         return NotificationsResponse(
             notifications=[_notif_to_response(n) for n in notifications],
-            unread_count=unread_count
+            unread_count=unread_count,
         )
     except Exception as e:
         logger.error(
@@ -107,7 +105,7 @@ async def mark_all_read(
     notif_mod = api.get_notifications()
     if not notif_mod:
         raise HTTPException(status_code=500, detail="Notification module not available")
-        
+
     try:
         notif_mod.mark_all_read(current_user.user_id)
         return SuccessResponse(success=True)
@@ -129,13 +127,13 @@ async def mark_read(
     notif_mod = api.get_notifications()
     if not notif_mod:
         raise HTTPException(status_code=500, detail="Notification module not available")
-        
+
     try:
         try:
             nid = int(notification_id)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid notification ID")
-            
+
         notif_mod.mark_notification_read(current_user.user_id, nid)
         return SuccessResponse(success=True)
     except Exception as e:

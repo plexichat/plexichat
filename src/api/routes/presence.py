@@ -91,7 +91,9 @@ def _get_presence_targets(user_id: int) -> list:
                 user_servers = servers.get_servers(user_id)
                 if user_servers:
                     for server in user_servers:
-                        member_ids = servers.get_member_user_ids(server.id, exclude_user_id=user_id)
+                        member_ids = servers.get_member_user_ids(
+                            server.id, exclude_user_id=user_id
+                        )
                         if member_ids:
                             for mid in member_ids:
                                 try:
@@ -155,6 +157,7 @@ async def update_presence(
             def perform_presence_update():
                 """All synchronous DB/logic calls in one threadpool execution."""
                 import src.api as api
+
                 db = api.get_db()
                 try:
                     status_enum = UserStatus(body.status)
@@ -186,6 +189,7 @@ async def update_presence(
 
             if target_user_ids:
                 import asyncio
+
                 asyncio.create_task(
                     _dispatch_presence_event(
                         current_user.user_id,

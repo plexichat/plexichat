@@ -60,7 +60,9 @@ def _server_to_response(server) -> ServerResponse:
         if default_channel_id
         else None,
         verification_level=getattr(server, "verification_level", 0),
-        default_message_notifications=getattr(server, "default_message_notifications", 0),
+        default_message_notifications=getattr(
+            server, "default_message_notifications", 0
+        ),
         created_at=server.created_at,
     )
 
@@ -515,7 +517,11 @@ def get_server_members(
             )
 
         # Reconstruct TokenInfo if it's a dict from cache
-        curr_user_id = current_user.user_id if hasattr(current_user, "user_id") else getattr(current_user, "get", lambda k: None)("user_id")
+        curr_user_id = (
+            current_user.user_id
+            if hasattr(current_user, "user_id")
+            else getattr(current_user, "get", lambda k: None)("user_id")
+        )
 
         members = servers_mod.get_members(curr_user_id, sid)
         if not members:
@@ -537,7 +543,9 @@ def get_server_members(
         presence_map = {}
         if presence and user_ids:
             try:
-                presence_map = presence.get_visible_presences_bulk(curr_user_id, user_ids)
+                presence_map = presence.get_visible_presences_bulk(
+                    curr_user_id, user_ids
+                )
             except Exception as e:
                 logger.warning(f"Failed to get bulk presence for server {sid}: {e}")
 
@@ -560,11 +568,11 @@ def get_server_members(
                 roles = getattr(m, "roles", [])
                 timeout_until = getattr(m, "timeout_until", None)
                 timeout_reason = getattr(m, "timeout_reason", None)
-            
+
             # Robust lookup: check both string and int keys
             user_id = int(raw_user_id)
             user = users_map.get(user_id) or users_map.get(str(user_id))
-            
+
             # Presence info
             pres = presence_map.get(user_id) or presence_map.get(str(user_id))
             presence_data = PresenceResponse(status="offline")
@@ -578,7 +586,9 @@ def get_server_members(
 
             result.append(
                 MemberResponse(
-                    member_id=SnowflakeID(int(raw_member_id)) if raw_member_id else None,
+                    member_id=SnowflakeID(int(raw_member_id))
+                    if raw_member_id
+                    else None,
                     user_id=SnowflakeID(user_id),
                     username=str(user.username) if user else f"User {user_id}",
                     nickname=nickname,
@@ -752,7 +762,7 @@ async def assign_role_to_member(
             )
         if not row:
             raise HTTPException(status_code=404, detail="Member not found")
-        
+
         target_user_id = row["user_id"]
 
         servers_mod.assign_role(current_user.user_id, sid, target_user_id, rid)
@@ -838,7 +848,7 @@ async def remove_role_from_member(
             )
         if not row:
             raise HTTPException(status_code=404, detail="Member not found")
-        
+
         target_user_id = row["user_id"]
 
         servers_mod.remove_role(current_user.user_id, sid, target_user_id, rid)
@@ -919,7 +929,7 @@ async def create_server_channel(
             kwargs["channel_type"] = ChannelType(type_str)
         except ValueError:
             kwargs["channel_type"] = ChannelType.TEXT
-    
+
     if body.topic:
         kwargs["topic"] = body.topic
     if body.category_id:
@@ -1685,8 +1695,10 @@ async def get_my_permissions(
                 status_code=404,
                 detail={"error": {"code": 404, "message": "Server not found"}},
             )
-        
-        logger.error(f"Failed to get permissions for server {server_id}: {e}", exc_info=True)
+
+        logger.error(
+            f"Failed to get permissions for server {server_id}: {e}", exc_info=True
+        )
         raise HTTPException(
             status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
@@ -1717,7 +1729,7 @@ async def get_audit_log(
     """
     servers_mod = api.get_servers()
     auth_mod = api.get_auth()
-    
+
     if not servers_mod:
         raise HTTPException(
             status_code=500,
@@ -1743,12 +1755,13 @@ async def get_audit_log(
             user_ids.add(e.user_id)
             if e.target_type == "member" and e.target_id:
                 user_ids.add(int(e.target_id))
-        
+
         users_map = {}
         if auth_mod:
             users_dict = auth_mod.get_users_bulk(list(user_ids))
             for uid, u in users_dict.items():
                 from .users import _user_to_public_response
+
                 users_map[int(uid)] = _user_to_public_response(u)
 
         # Cache for roles and channels to avoid repeated lookups
@@ -1760,7 +1773,9 @@ async def get_audit_log(
             target_name = None
             if e.target_type == "member" and e.target_id:
                 target_user = users_map.get(int(e.target_id))
-                target_name = target_user.username if target_user else f"User {e.target_id}"
+                target_name = (
+                    target_user.username if target_user else f"User {e.target_id}"
+                )
             elif e.target_type == "role" and e.target_id:
                 rid = int(e.target_id)
                 if rid not in role_map:
@@ -1849,7 +1864,9 @@ def _automod_rule_to_response(rule) -> AutomodRuleResponse:
             for a in (rule.actions or [])
         ],
         exempt_roles=[SnowflakeID(r) for r in (rule.exempt_roles or [])],
-        applied_roles=[SnowflakeID(r) for r in (getattr(rule, "applied_roles", []) or [])],
+        applied_roles=[
+            SnowflakeID(r) for r in (getattr(rule, "applied_roles", []) or [])
+        ],
         exempt_channels=[SnowflakeID(c) for c in (rule.exempt_channels or [])],
         priority=rule.priority,
         check_all=bool(rule.check_all),
@@ -1919,13 +1936,19 @@ async def create_server_automod_rule(
             raise HTTPException(status_code=400, detail="Invalid rule type")
 
         applied_roles = (
-            [int(r) for r in body.applied_roles] if body.applied_roles is not None else None
+            [int(r) for r in body.applied_roles]
+            if body.applied_roles is not None
+            else None
         )
         exempt_roles = (
-            [int(r) for r in body.exempt_roles] if body.exempt_roles is not None else None
+            [int(r) for r in body.exempt_roles]
+            if body.exempt_roles is not None
+            else None
         )
         exempt_channels = (
-            [int(c) for c in body.exempt_channels] if body.exempt_channels is not None else None
+            [int(c) for c in body.exempt_channels]
+            if body.exempt_channels is not None
+            else None
         )
 
         rule = automod.create_rule(
@@ -2002,7 +2025,9 @@ async def update_server_automod_rule(
             update_kwargs["check_all"] = body.check_all
 
         if update_kwargs:
-            automod.update_rule(user_id=current_user.user_id, rule_id=rid, **update_kwargs)
+            automod.update_rule(
+                user_id=current_user.user_id, rule_id=rid, **update_kwargs
+            )
 
         if body.enabled is not None:
             automod.set_rule_enabled(current_user.user_id, rid, body.enabled)
@@ -2099,8 +2124,7 @@ async def get_server_automod_violations(
                 if hasattr(v.severity, "value")
                 else str(v.severity),
                 actions_taken=[
-                    a.value if hasattr(a, "value") else str(a)
-                    for a in v.actions_taken
+                    a.value if hasattr(a, "value") else str(a) for a in v.actions_taken
                 ],
                 created_at=v.created_at,
                 metadata=v.metadata or {},
@@ -2266,7 +2290,9 @@ async def upload_server_icon(
         if not avatars:
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": "Avatars module not available"}}
+                detail={
+                    "error": {"code": 500, "message": "Avatars module not available"}
+                },
             )
 
         content = await file.read()
@@ -2300,4 +2326,3 @@ async def upload_server_icon(
         raise HTTPException(
             status_code=500, detail={"error": {"code": 500, "message": "Upload failed"}}
         )
-

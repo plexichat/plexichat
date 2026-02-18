@@ -241,7 +241,7 @@ def get_server_status() -> ServerStatusResponse:
         else:
             current = version_util.current()
             ver_info = _version_to_info(current)
-            
+
         uptime = int(time.time() - _server_start_time)
 
         return ServerStatusResponse(
@@ -296,4 +296,3 @@ def get_server_state() -> ServerState:
     return _server_state
     """Get current server state."""
     return _server_state
-

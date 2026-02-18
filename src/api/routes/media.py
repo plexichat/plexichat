@@ -73,7 +73,9 @@ async def report_content_hash(
         )
 
         return HashReportResponse(
-            success=True, report_id=str(report_id), message="Report submitted successfully"
+            success=True,
+            report_id=str(report_id),
+            message="Report submitted successfully",
         )
     except Exception as e:
         logger.error(

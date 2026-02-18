@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse
 
 router = APIRouter(tags=["Help"])
 
+
 def _get_help_style():
     return """
     :root {
@@ -47,6 +48,7 @@ def _get_help_style():
     .back-link:hover { text-decoration: underline; }
     """
 
+
 @router.get("/security-logout")
 async def security_logout_help():
     """Help page explaining security logouts."""
@@ -77,6 +79,7 @@ async def security_logout_help():
     </html>
     """
     return HTMLResponse(content=html)
+
 
 @router.get("/access-blocked")
 async def access_blocked_help():

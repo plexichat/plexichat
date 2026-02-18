@@ -41,13 +41,14 @@ def _user_to_response(user, include_private: bool = False) -> UserResponse:
     """Convert user object or dict to response model."""
     try:
         user_id = int(_get_attr(user, "id") or 0)
-        
+
         # Get badges from user object or re-fetch if missing
         badges = _get_attr(user, "badges")
         if badges is None:
             badges = []
             try:
                 from src.core import features
+
                 if features._setup_complete:
                     badges = features.get_user_badges(int(user_id or 0))
             except Exception:
@@ -79,17 +80,18 @@ def _user_to_public_response(user) -> UserPublicResponse:
     """Convert user object or dict to public response model."""
     try:
         user_id = int(_get_attr(user, "id") or 0)
-        
+
         # Use badges from user object if available (already joined in AuthManager)
         # Fallback to empty list or re-fetch only if absolutely necessary
         badges = _get_attr(user, "badges")
-        
+
         # If badges is None or empty list, double check features module if setup
         # (This is a safety fallback for any migration gap)
         if badges is None:
             badges = []
             try:
                 from src.core import features
+
                 if features._setup_complete:
                     badges = features.get_user_badges(user_id)
             except Exception as e:
@@ -180,13 +182,13 @@ def get_current_user_info(
         if hasattr(account_type, "value"):
             account_type = account_type.value  # type: ignore
 
-        lookup_id = current_user.account_id if account_type == "bot" else current_user.user_id
+        lookup_id = (
+            current_user.account_id if account_type == "bot" else current_user.user_id
+        )
 
         user = _get_user_cached(lookup_id)
         if not user:
-            logger.warning(
-                f"User profile not found for account {lookup_id}"
-            )
+            logger.warning(f"User profile not found for account {lookup_id}")
             raise HTTPException(
                 status_code=404,
                 detail={"error": {"code": 404, "message": "User not found"}},
@@ -533,7 +535,7 @@ def get_dm_channels(
 
         auth = api.get_auth()
         result = []
-        
+
         # Optimize by bulk fetching users to avoid N+1 queries
         if channels and auth:
             recipient_ids = []
@@ -541,7 +543,7 @@ def get_dm_channels(
                 rid = getattr(ch, "recipient_id", None)
                 if rid:
                     recipient_ids.append(rid)
-            
+
             # Use profiles bulk which is safer for public info
             users_map = {}
             if recipient_ids:
@@ -575,16 +577,20 @@ def get_dm_channels(
                             recipient=RecipientResponse(
                                 id=SnowflakeID(rid),
                                 username=recipient_username or f"User {rid}",
-                            ) if rid else None,
+                            )
+                            if rid
+                            else None,
                             last_message_id=SnowflakeID(ch.last_message_id)
                             if hasattr(ch, "last_message_id") and ch.last_message_id
                             else None,
                         )
                     )
                 except Exception as e:
-                    logger.debug(f"Failed to process DM channel {getattr(ch, 'id', 'unknown')}: {e}")
+                    logger.debug(
+                        f"Failed to process DM channel {getattr(ch, 'id', 'unknown')}: {e}"
+                    )
                     continue
-        
+
         return result
     except Exception as e:
         logger.error(

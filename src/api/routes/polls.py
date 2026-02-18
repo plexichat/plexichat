@@ -120,9 +120,7 @@ async def create_poll(
 
         if messaging:
             try:
-                messaging.update_message_metadata(
-                    poll.message_id, {"poll_id": poll.id}
-                )
+                messaging.update_message_metadata(poll.message_id, {"poll_id": poll.id})
             except Exception:
                 logger.debug("Failed to update poll metadata on message")
 
@@ -151,7 +149,8 @@ async def create_poll(
     except Exception as e:
         logger.error(f"Failed to create poll: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -180,7 +179,8 @@ async def get_poll(
         pid = int(poll_id)
     except ValueError:
         raise HTTPException(
-            status_code=400, detail={"error": {"code": 400, "message": "Invalid poll ID"}}
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid poll ID"}},
         )
 
     try:
@@ -197,7 +197,8 @@ async def get_poll(
     except Exception as e:
         logger.error(f"Failed to get poll {poll_id}: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -226,7 +227,8 @@ async def get_poll_results(
         pid = int(poll_id)
     except ValueError:
         raise HTTPException(
-            status_code=400, detail={"error": {"code": 400, "message": "Invalid poll ID"}}
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid poll ID"}},
         )
 
     try:
@@ -241,7 +243,8 @@ async def get_poll_results(
     except Exception as e:
         logger.error(f"Failed to get poll results {poll_id}: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -271,7 +274,8 @@ async def vote_on_poll(
         pid = int(poll_id)
     except ValueError:
         raise HTTPException(
-            status_code=400, detail={"error": {"code": 400, "message": "Invalid poll ID"}}
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid poll ID"}},
         )
 
     try:
@@ -303,7 +307,8 @@ async def vote_on_poll(
     except Exception as e:
         logger.error(f"Failed to vote on poll {poll_id}: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -333,7 +338,8 @@ async def close_poll(
         pid = int(poll_id)
     except ValueError:
         raise HTTPException(
-            status_code=400, detail={"error": {"code": 400, "message": "Invalid poll ID"}}
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid poll ID"}},
         )
 
     try:
@@ -356,7 +362,8 @@ async def close_poll(
     except Exception as e:
         logger.error(f"Failed to close poll {poll_id}: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -386,7 +393,8 @@ async def delete_poll(
         pid = int(poll_id)
     except ValueError:
         raise HTTPException(
-            status_code=400, detail={"error": {"code": 400, "message": "Invalid poll ID"}}
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid poll ID"}},
         )
 
     try:
@@ -405,5 +413,6 @@ async def delete_poll(
     except Exception as e:
         logger.error(f"Failed to delete poll {poll_id}: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

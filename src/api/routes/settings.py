@@ -78,12 +78,12 @@ async def bulk_update_settings(
 ) -> SuccessResponse:
     """
     Update multiple settings at once.
-    
+
     Accepts a dictionary of key-value pairs.
     """
     settings_module = api.get_settings()
     presence_module = api.get_presence()
-    
+
     if not settings_module:
         logger.error("Settings module not available")
         raise HTTPException(
@@ -95,19 +95,20 @@ async def bulk_update_settings(
         for key, raw_value in body.items():
             # Convert value to string for storage
             value = str(raw_value) if not isinstance(raw_value, str) else raw_value
-            
+
             # Special case for focused channel
             if key == "_focused_channel" and presence_module:
                 try:
                     import json
+
                     data = json.loads(value)
                     cid = data.get("channel_id")
                     sid = data.get("server_id")
-                    
+
                     presence_module.set_focused_channel(
                         current_user.user_id,
                         channel_id=int(cid) if cid and str(cid) != "0" else None,
-                        server_id=int(sid) if sid and str(sid) != "0" else None
+                        server_id=int(sid) if sid and str(sid) != "0" else None,
                     )
                 except Exception as e:
                     logger.debug(f"Bulk: Failed to update focused channel: {e}")
@@ -123,7 +124,8 @@ async def bulk_update_settings(
     except Exception as e:
         logger.error(f"Bulk update failed: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": "Internal server error"}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -213,20 +215,21 @@ async def set_setting(
         if presence_module:
             try:
                 import json
+
                 data = json.loads(body.value)
                 cid = data.get("channel_id")
                 sid = data.get("server_id")
-                
+
                 presence_module.set_focused_channel(
                     current_user.user_id,
                     channel_id=int(cid) if cid and str(cid) != "0" else None,
-                    server_id=int(sid) if sid and str(sid) != "0" else None
+                    server_id=int(sid) if sid and str(sid) != "0" else None,
                 )
                 return SettingResponse(
                     key=key,
                     value=body.value,
                     created_at=int(time.time() * 1000),
-                    updated_at=int(time.time() * 1000)
+                    updated_at=int(time.time() * 1000),
                 )
             except Exception as e:
                 logger.debug(f"Failed to update focused channel: {e}")

@@ -2,7 +2,15 @@
 Avatar routes - Endpoints for user avatars and server icons.
 """
 
-from fastapi import APIRouter, HTTPException, Depends, File, UploadFile, Request, Response
+from fastapi import (
+    APIRouter,
+    HTTPException,
+    Depends,
+    File,
+    UploadFile,
+    Request,
+    Response,
+)
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
@@ -15,7 +23,8 @@ import hashlib
 router = APIRouter(tags=["Avatars"])
 
 # Local in-memory cache for checksums to avoid DB hits for ETags
-_avatar_checksum_cache = {} # {uid: checksum}
+_avatar_checksum_cache = {}  # {uid: checksum}
+
 
 @router.get(
     "/users/{user_id}",
@@ -62,7 +71,7 @@ async def get_user_avatar(user_id: str, request: Request):
 
         # 1. Fast check for ETag
         etag_client = request.headers.get("If-None-Match")
-        
+
         # Check local RAM cache for checksum first
         checksum = _avatar_checksum_cache.get(uid)
         if not checksum:
@@ -76,10 +85,12 @@ async def get_user_avatar(user_id: str, request: Request):
         # Flexible ETag check (handles weak tags and quotes)
         if checksum and etag_client:
             # Check for exact match, quoted match, or weak match
-            if etag_client == checksum or \
-               etag_client == f'"{checksum}"' or \
-               etag_client == f'W/"{checksum}"' or \
-               checksum in etag_client:
+            if (
+                etag_client == checksum
+                or etag_client == f'"{checksum}"'
+                or etag_client == f'W/"{checksum}"'
+                or checksum in etag_client
+            ):
                 return Response(status_code=304)
 
         # 2. Fetch full data (no threadpool - the module handles caching internally)
@@ -88,7 +99,7 @@ async def get_user_avatar(user_id: str, request: Request):
             if not result:
                 # Generate a default SVG avatar if none exists
                 from src.core.avatars import generate_default_svg
-                
+
                 # Try to get username for initials (match frontend logic)
                 initials = "UC"
                 try:
@@ -98,15 +109,19 @@ async def get_user_avatar(user_id: str, request: Request):
                         if user:
                             username = getattr(user, "username", "User").strip()
                             if username:
-                                initials = username[:min(2, len(username))].upper()
+                                initials = username[: min(2, len(username))].upper()
                 except Exception:
                     pass
 
                 svg_content = generate_default_svg(uid, initials)
                 # Ensure content is encoded before hashing
-                svg_bytes = svg_content.encode() if isinstance(svg_content, str) else svg_content
+                svg_bytes = (
+                    svg_content.encode()
+                    if isinstance(svg_content, str)
+                    else svg_content
+                )
                 svg_etag = hashlib.sha256(svg_bytes).hexdigest()
-                
+
                 if etag_client == f'"{svg_etag}"':
                     return Response(status_code=304)
 
@@ -132,7 +147,7 @@ async def get_user_avatar(user_id: str, request: Request):
             )
 
         avatar_data, content_type, checksum = result
-        
+
         # Update local checksum cache
         _avatar_checksum_cache[uid] = checksum
 
@@ -322,7 +337,8 @@ async def delete_my_avatar(
 
 
 # Local in-memory cache for icon checksums
-_icon_checksum_cache = {} # {sid: checksum}
+_icon_checksum_cache = {}  # {sid: checksum}
+
 
 @router.get(
     "/servers/{server_id}",
@@ -368,7 +384,7 @@ async def get_server_icon(server_id: str, request: Request):
 
         # 1. Fast check for ETag
         etag_client = request.headers.get("If-None-Match")
-        
+
         # Check local RAM cache for checksum first
         checksum = _icon_checksum_cache.get(sid)
         if not checksum:
@@ -388,13 +404,15 @@ async def get_server_icon(server_id: str, request: Request):
             if not result:
                 # Generate a default SVG icon if none exists
                 from src.core.avatars import generate_default_svg
-                
+
                 # Try to get server name for initials
                 initials = "S"
                 try:
                     db = api.get_db()
                     if db:
-                        row = db.fetch_one("SELECT name FROM srv_servers WHERE id = ?", (sid,))
+                        row = db.fetch_one(
+                            "SELECT name FROM srv_servers WHERE id = ?", (sid,)
+                        )
                         if row and row.get("name"):
                             name = str(row["name"]).strip()
                             if name:
@@ -403,15 +421,19 @@ async def get_server_icon(server_id: str, request: Request):
                                 if len(words) >= 2:
                                     initials = (words[0][0] + words[1][0]).upper()
                                 else:
-                                    initials = name[:min(2, len(name))].upper()
+                                    initials = name[: min(2, len(name))].upper()
                 except Exception as e:
                     logger.debug(f"Failed to get server name for initials: {e}")
 
                 try:
                     svg_content = generate_default_svg(sid, initials)
-                    svg_bytes = svg_content.encode() if isinstance(svg_content, str) else svg_content
+                    svg_bytes = (
+                        svg_content.encode()
+                        if isinstance(svg_content, str)
+                        else svg_content
+                    )
                     svg_etag = hashlib.sha256(svg_bytes).hexdigest()
-                    
+
                     if etag_client == f'"{svg_etag}"':
                         return Response(status_code=304)
 
@@ -426,7 +448,9 @@ async def get_server_icon(server_id: str, request: Request):
                         },
                     )
                 except Exception as e:
-                    logger.error(f"Failed to generate default SVG for server {sid}: {e}")
+                    logger.error(
+                        f"Failed to generate default SVG for server {sid}: {e}"
+                    )
                     raise HTTPException(status_code=404, detail="Icon not found")
         except HTTPException:
             raise
@@ -440,7 +464,7 @@ async def get_server_icon(server_id: str, request: Request):
             )
 
         icon_data, content_type, checksum = result
-        
+
         # Update local checksum cache
         _icon_checksum_cache[sid] = checksum
 

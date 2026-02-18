@@ -30,7 +30,9 @@ import utils.logger as logger
 router = APIRouter(tags=["Channels"])
 
 
-def _channel_to_response(channel, current_user_id: Optional[int] = None) -> ChannelResponse:
+def _channel_to_response(
+    channel, current_user_id: Optional[int] = None
+) -> ChannelResponse:
     """Convert channel object to response model."""
     try:
         # Handle different model types (Channel vs Conversation)
@@ -38,16 +40,16 @@ def _channel_to_response(channel, current_user_id: Optional[int] = None) -> Chan
         channel_type = getattr(channel, "channel_type", None)
         if channel_type is None:
             channel_type = getattr(channel, "conversation_type", None)
-            
+
         if channel_type is not None and hasattr(channel_type, "value"):
             channel_type = channel_type.value
-        
+
         # Default name
         name = getattr(channel, "name", None)
-        
+
         # Handle different model types for server_id
         server_id = getattr(channel, "server_id", 0)
-        
+
         # Initialize DM-specific fields
         recipient_id = None
         recipient = None
@@ -59,19 +61,27 @@ def _channel_to_response(channel, current_user_id: Optional[int] = None) -> Chan
                 try:
                     # Check if recipient_id is already on the object
                     recipient_id = getattr(channel, "recipient_id", None)
-                    
+
                     if not recipient_id:
                         # Fetch participants from manager
                         manager = messaging_mod.get_manager()
                         participants = manager.get_participant_ids(channel.id)
                         if len(participants) == 2 and current_user_id:
-                            recipient_id = next((p for p in participants if int(p) != int(current_user_id)), participants[0])
+                            recipient_id = next(
+                                (
+                                    p
+                                    for p in participants
+                                    if int(p) != int(current_user_id)
+                                ),
+                                participants[0],
+                            )
                         elif participants:
                             recipient_id = participants[0]
-                    
+
                     if recipient_id:
                         # Use the cached user fetch helper from users.py if possible
                         from .users import _get_user_cached, _user_to_public_response
+
                         user_data = _get_user_cached(int(recipient_id))
                         if user_data:
                             recipient = _user_to_public_response(user_data)
@@ -79,7 +89,9 @@ def _channel_to_response(channel, current_user_id: Optional[int] = None) -> Chan
                             if channel_type == "dm":
                                 name = recipient.username
                 except Exception as de:
-                    logger.debug(f"Failed to populate DM recipient for channel {channel.id}: {de}")
+                    logger.debug(
+                        f"Failed to populate DM recipient for channel {channel.id}: {de}"
+                    )
 
         # Final fallback for name if still None or weird
         if not name or (isinstance(name, str) and "pyc" in name):
@@ -103,7 +115,7 @@ def _channel_to_response(channel, current_user_id: Optional[int] = None) -> Chan
             read_receipts_enabled=bool(getattr(channel, "read_receipts_enabled", True)),
             created_at=channel.created_at,
             recipient_id=SnowflakeID(recipient_id) if recipient_id else None,
-            recipient=recipient
+            recipient=recipient,
         )
     except Exception as e:
         logger.error(f"Error converting channel object to response: {e}", exc_info=True)
@@ -156,7 +168,7 @@ def get_channel(
                 messaging_mod = api.get_messaging()
                 if messaging_mod:
                     channel = messaging_mod.get_conversation(cid, current_user.user_id)
-            
+
             if not channel:
                 raise HTTPException(
                     status_code=404,
@@ -727,44 +739,58 @@ async def join_server_via_invite(
             sid = getattr(result, "server_id", None) or (
                 result if isinstance(result, (int, str)) else None
             )
-            
+
             # Dispatch WebSocket events
             async def dispatch_join_events():
                 try:
-                    from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+                    from src.api.websocket import (
+                        get_dispatcher,
+                        is_setup as ws_is_setup,
+                    )
+
                     if not ws_is_setup():
                         return
-                        
+
                     dispatcher = get_dispatcher()
                     auth = api.get_auth()
-                    
+
                     # 1. Dispatch GUILD_CREATE to the joining user
                     server = servers_mod.get_server(current_user.user_id, sid)
                     if server:
                         channels = servers_mod.get_channels(current_user.user_id, sid)
                         roles = servers_mod.get_roles(sid)
-                        
+
                         event = events_mod.create_guild_create(
                             server_id=int(sid or 0),
                             name=server.name,
                             owner_id=server.owner_id,
                             member_count=getattr(server, "member_count", 0),
-                            channels=[{
-                                "id": str(c.id),
-                                "name": c.name,
-                                "type": getattr(c.channel_type, "value", c.channel_type) if hasattr(c.channel_type, "value") else c.channel_type,
-                                "position": getattr(c, "position", 0)
-                            } for c in channels],
-                            roles=[{
-                                "id": str(r.id),
-                                "name": r.name,
-                                "color": r.color,
-                                "hoist": r.hoist,
-                                "position": r.position
-                            } for r in roles]
+                            channels=[
+                                {
+                                    "id": str(c.id),
+                                    "name": c.name,
+                                    "type": getattr(
+                                        c.channel_type, "value", c.channel_type
+                                    )
+                                    if hasattr(c.channel_type, "value")
+                                    else c.channel_type,
+                                    "position": getattr(c, "position", 0),
+                                }
+                                for c in channels
+                            ],
+                            roles=[
+                                {
+                                    "id": str(r.id),
+                                    "name": r.name,
+                                    "color": r.color,
+                                    "hoist": r.hoist,
+                                    "position": r.position,
+                                }
+                                for r in roles
+                            ],
                         )
                         await dispatcher.dispatch_event(event, [current_user.user_id])
-                    
+
                     # 2. Dispatch GUILD_MEMBER_ADD to other members
                     user_data = None
                     if auth:
@@ -773,22 +799,26 @@ async def join_server_via_invite(
                             user_data = {
                                 "id": str(user.id),
                                 "username": user.username,
-                                "avatar_url": user.avatar_url
+                                "avatar_url": user.avatar_url,
                             }
-                    
+
                     member_event = events_mod.create_guild_member_add(
                         server_id=int(sid or 0),
                         user_id=current_user.user_id,
-                        user=user_data
+                        user=user_data,
                     )
-                    
+
                     # Get member IDs to notify
-                    member_ids = servers_mod.get_member_user_ids(sid, exclude_user_id=current_user.user_id)
+                    member_ids = servers_mod.get_member_user_ids(
+                        sid, exclude_user_id=current_user.user_id
+                    )
                     if member_ids:
                         await dispatcher.dispatch_event(member_event, member_ids)
-                        
+
                 except Exception as de:
-                    logger.warning(f"Failed to dispatch join events for server {sid}: {de}")
+                    logger.warning(
+                        f"Failed to dispatch join events for server {sid}: {de}"
+                    )
 
             asyncio.create_task(dispatch_join_events())
 
@@ -1014,10 +1044,12 @@ async def upload_attachment(
         # Use the media module for upload (handles size limits, security, and storage)
         try:
             from starlette.concurrency import run_in_threadpool
+
             content = await file.read()
-            
+
             def _upload_with_cleanup(**kwargs):
                 import src.api as api
+
                 db = api.get_db()
                 try:
                     return media.upload_file(**kwargs)

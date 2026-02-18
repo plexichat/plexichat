@@ -45,13 +45,17 @@ async def get_admin_access(
     # 1. Try standard user first (from middleware state)
     user = request.scope.get("state", {}).get("user")
     if user:
-        if user.permissions.get("administrator", False) or user.permissions.get("admin.*", False) or user.permissions.get("*", False):
+        if (
+            user.permissions.get("administrator", False)
+            or user.permissions.get("admin.*", False)
+            or user.permissions.get("*", False)
+        ):
             return user
-            
+
     # 2. Try dedicated admin session
     try:
         admin_id = get_admin_from_token(request)
-        
+
         # Create synthetic TokenInfo for the admin session
         return TokenInfo(
             valid=True,
@@ -63,7 +67,7 @@ async def get_admin_access(
             rate_limit_tier="staff",
             expires_at=None,
             username="admin",
-            account_type=AccountType.SYSTEM
+            account_type=AccountType.SYSTEM,
         )
     except Exception:
         # Re-raise 401 if both fail

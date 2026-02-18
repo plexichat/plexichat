@@ -86,10 +86,9 @@ async def submit_response_times(
                 }
                 for entry in submission.entries
             ]
-            
+
             accepted_count = telemetry.submit_response_times(
-                entries=core_entries,
-                client_id=str(user_id) if user_id else None
+                entries=core_entries, client_id=str(user_id) if user_id else None
             )
         except Exception as te:
             logger.error(
@@ -126,7 +125,7 @@ async def submit_csp_report(
 ):
     """
     Submit a Content-Security-Policy violation report.
-    
+
     The browser sends this data when a CSP violation occurs.
     """
     try:
@@ -135,18 +134,19 @@ async def submit_csp_report(
         try:
             report = json.loads(body)
         except Exception:
-            report = {"raw": body.decode(errors='ignore')}
-            
+            report = {"raw": body.decode(errors="ignore")}
+
         client_ip = request.client.host if request.client else "unknown"
         logger.warning(f"CSP Violation reported from {client_ip}: {json.dumps(report)}")
-        
+
         # Optionally record this in telemetry
         from src.api import get_telemetry
+
         telemetry = get_telemetry()
-        if telemetry and hasattr(telemetry, 'record_csp_violation'):
+        if telemetry and hasattr(telemetry, "record_csp_violation"):
             telemetry.record_csp_violation(report, client_ip)
-            
+
     except Exception as e:
         logger.error(f"Error processing CSP report: {e}")
-        
+
     return None

@@ -89,7 +89,10 @@ async def generate_qr(
             img_io = io.BytesIO()
             save_format = "PNG" if format.lower() == "png" else "JPEG"
             img.save(img_io, save_format)
-            return img_io.getvalue(), "image/png" if save_format == "PNG" else "image/jpeg"
+            return (
+                img_io.getvalue(),
+                "image/png" if save_format == "PNG" else "image/jpeg",
+            )
         except Exception as e:
             logger.error(f"Failed to generate QR code in thread: {e}", exc_info=True)
             raise e
@@ -97,12 +100,12 @@ async def generate_qr(
     try:
         image_bytes, content_type = await run_in_threadpool(_generate)
         return Response(
-            content=image_bytes, 
+            content=image_bytes,
             media_type=content_type,
             headers={
                 "Cache-Control": "public, max-age=86400",  # Cache for 24 hours
                 "Access-Control-Allow-Origin": "*",
-            }
+            },
         )
     except Exception as e:
         if isinstance(e, HTTPException):
