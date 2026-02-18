@@ -29,7 +29,6 @@ from .exceptions import (
     ChannelNotFoundError,
     PermissionDeniedError,
 )
-from .schema import create_tables
 
 
 class ThreadManager(BaseManager):
@@ -60,7 +59,6 @@ class ThreadManager(BaseManager):
         self._servers = servers_module
         self._notifications = notifications_module
 
-        create_tables(db)
 
         logger.info("Threads module initialized")
 

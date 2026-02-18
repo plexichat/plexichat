@@ -29,7 +29,6 @@ from .exceptions import (
     PermissionDeniedError,
     ChannelNotFoundError,
 )
-from .schema import create_tables
 
 
 class SoundboardManager(BaseManager):
@@ -49,7 +48,6 @@ class SoundboardManager(BaseManager):
         self._config = self._load_config()
         self._cooldowns = {}
 
-        create_tables(db)
 
         logger.info("Soundboard module initialized")
 

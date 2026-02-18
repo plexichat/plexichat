@@ -32,7 +32,6 @@ from .exceptions import (
     ServerNotFoundError,
     MessageNotFoundError,
 )
-from .schema import create_tables
 
 
 class StickerManager:
@@ -41,7 +40,6 @@ class StickerManager:
         self._messaging = messaging_module
         self._servers = servers_module
         self._config = self._load_config()
-        create_tables(db)
         logger.info("Sticker module initialized")
 
     def _load_config(self) -> Dict[str, Any]:

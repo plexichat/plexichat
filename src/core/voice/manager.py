@@ -36,7 +36,6 @@ from .exceptions import (
     InvalidVoiceStateError,
     UserNotFoundError,
 )
-from .schema import create_tables
 
 
 class VoiceManager(BaseManager):
@@ -65,7 +64,6 @@ class VoiceManager(BaseManager):
         self._relationships = relationships_module
         self._presence = presence_module
 
-        create_tables(db)
 
         logger.info("Voice module initialized")
 
