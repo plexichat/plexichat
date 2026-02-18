@@ -35,7 +35,6 @@ from .exceptions import (
     CategoryNotFoundError,
     SearchRateLimitError,
 )
-from .schema import create_tables
 from .query import QueryParser, FilterProcessor, RankingEngine
 from .indexer import SQLiteFTS5Indexer, ElasticsearchIndexer, MeilisearchIndexer
 from .indexer.base import IndexerConfig
@@ -79,7 +78,6 @@ class SearchManager(BaseManager):
         self._servers = servers_module
         self._config = self._load_config()
 
-        create_tables(db)
 
         self._indexer = self._create_indexer()
         self._indexer.initialize()
@@ -796,7 +794,9 @@ class SearchManager(BaseManager):
                 result[uid].add(sid)
             if redis_available():
                 for uid in missing:
-                    cache_set(f"user:servers:{uid}", list(result.get(uid, set())), ttl=300)
+                    cache_set(
+                        f"user:servers:{uid}", list(result.get(uid, set())), ttl=300
+                    )
         return result
 
     def _get_names(

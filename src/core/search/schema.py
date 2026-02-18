@@ -159,11 +159,22 @@ DEFAULT_CATEGORIES = [
 def create_tables(db):
     """Create all search tables including FTS5 virtual tables."""
     statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    db_type = getattr(db, "type", "sqlite")
 
     for statement in statements:
         if statement:
             try:
-                db.execute(statement)
+                if (
+                    db_type == "postgres"
+                    and statement.upper().startswith("CREATE VIRTUAL TABLE")
+                ):
+                    continue
+                converted = (
+                    db.convert_schema(statement)
+                    if hasattr(db, "convert_schema")
+                    else statement
+                )
+                db.execute(converted)
             except Exception as e:
                 if "already exists" not in str(e).lower():
                     logger.error(f"Failed to execute schema statement: {e}")
