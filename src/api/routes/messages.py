@@ -590,6 +590,19 @@ async def send_channel_message(
                     server_id = getattr(channel, "server_id", None)
                     conversation_id = getattr(channel, "conversation_id", None)
 
+                    # Check if user is timed out in this server
+                    if server_id and hasattr(servers_mod, "is_timed_out"):
+                        if servers_mod.is_timed_out(current_user.user_id, server_id):
+                            raise HTTPException(
+                                status_code=403,
+                                detail={
+                                    "error": {
+                                        "code": 403,
+                                        "message": "You are currently timed out in this server",
+                                    }
+                                },
+                            )
+
                     # Send directly to messaging module using cached conversation_id
                     if conversation_id and messaging:
                         msg = messaging.send_message(
@@ -1337,6 +1350,29 @@ async def edit_message(
                     "error": {"code": 400, "message": "Invalid message or channel ID"}
                 },
             )
+
+        # Check for server timeout if this is a server channel
+        if servers_mod:
+            try:
+                channel = servers_mod.get_channel(cid, current_user.user_id)
+                if channel:
+                    server_id = getattr(channel, "server_id", None)
+                    if server_id and hasattr(servers_mod, "is_timed_out"):
+                        if servers_mod.is_timed_out(current_user.user_id, server_id):
+                            raise HTTPException(
+                                status_code=403,
+                                detail={
+                                    "error": {
+                                        "code": 403,
+                                        "message": "You are currently timed out in this server",
+                                    }
+                                },
+                            )
+            except Exception as e:
+                # If we can't check server/channel permissions, let the messaging module handle it
+                # unless it was an explicit timeout check failure
+                if isinstance(e, HTTPException) and e.status_code == 403:
+                    raise
 
         msg = messaging.edit_message(current_user.user_id, mid, body.content)
 

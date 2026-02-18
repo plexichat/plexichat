@@ -550,12 +550,16 @@ def get_server_members(
                 nickname = m.get("nickname")
                 joined_at = m.get("joined_at")
                 roles = m.get("roles", [])
+                timeout_until = m.get("timeout_until")
+                timeout_reason = m.get("timeout_reason")
             else:
                 raw_member_id = getattr(m, "id", None)
                 raw_user_id = getattr(m, "user_id", 0)
                 nickname = getattr(m, "nickname", None)
                 joined_at = getattr(m, "joined_at", None)
                 roles = getattr(m, "roles", [])
+                timeout_until = getattr(m, "timeout_until", None)
+                timeout_reason = getattr(m, "timeout_reason", None)
             
             # Robust lookup: check both string and int keys
             user_id = int(raw_user_id)
@@ -583,6 +587,8 @@ def get_server_members(
                     roles=[SnowflakeID(r) for r in (roles or [])],
                     presence=presence_data,
                     badges=getattr(user, "badges", []),
+                    timeout_until=timeout_until,
+                    timeout_reason=timeout_reason,
                 )
             )
         return result

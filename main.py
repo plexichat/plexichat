@@ -573,7 +573,7 @@ class PlexiChatServer:
 
             # 3. Media
             def init_media():
-                timed_init("media", lambda: media.setup(self.db))
+                timed_init("media", lambda: media.setup(self.db, messaging))
                 self._modules["media"] = media
             threads.append(threading.Thread(target=init_media, name="InitMedia"))
 

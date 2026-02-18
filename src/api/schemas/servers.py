@@ -144,6 +144,8 @@ class MemberResponse(BaseModel):
         default_factory=lambda: PresenceResponse(status="offline")
     )
     badges: List[str] = Field(default_factory=list, description="User badges")
+    timeout_until: Optional[int] = Field(None, description="Timestamp until user is timed out")
+    timeout_reason: Optional[str] = Field(None, description="Reason for timeout")
 
 
 class RoleResponse(BaseModel):

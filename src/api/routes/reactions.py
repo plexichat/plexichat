@@ -120,6 +120,28 @@ async def add_reaction(
                 detail={"error": {"code": 400, "message": "Invalid channel ID"}},
             )
 
+        # Check for server timeout
+        servers_mod = api.get_servers()
+        if servers_mod:
+            try:
+                channel = servers_mod.get_channel(cid, current_user.user_id)
+                if channel:
+                    server_id = getattr(channel, "server_id", None)
+                    if server_id and hasattr(servers_mod, "is_timed_out"):
+                        if servers_mod.is_timed_out(current_user.user_id, server_id):
+                            raise HTTPException(
+                                status_code=403,
+                                detail={
+                                    "error": {
+                                        "code": 403,
+                                        "message": "You are currently timed out in this server",
+                                    }
+                                },
+                            )
+            except Exception as e:
+                if isinstance(e, HTTPException) and e.status_code == 403:
+                    raise
+
         try:
             # URL decode the emoji if needed (handles encoded emojis like %F0%9F%A5%BA)
             import urllib.parse

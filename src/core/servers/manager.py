@@ -791,6 +791,14 @@ class ServerManager(BaseManager):
         )
         return [row["user_id"] for row in rows]
 
+    def is_timed_out(self, user_id: SnowflakeID, server_id: SnowflakeID) -> bool:
+        """Check if a user is currently timed out in a server."""
+        member = self.get_member(server_id, user_id)
+        if not member or not member.timeout_until:
+            return False
+        
+        return member.timeout_until > self._get_timestamp()
+
     def update_member(
         self,
         user_id: SnowflakeID,
