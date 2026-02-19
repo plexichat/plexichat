@@ -493,14 +493,25 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 content_length = end - start + 1
                 status_code = 206 if is_partial else 200
                 
+                # Critical: Manual CORS for reliability (fastest path for browsers)
+                origin = request.headers.get("Origin")
+                cors_headers = {}
+                allowed_origins = config.cors_origins
+                if origin and (origin in allowed_origins or ".ts.net" in origin or "*" in allowed_origins):
+                    cors_headers["Access-Control-Allow-Origin"] = origin
+                    cors_headers["Access-Control-Allow-Credentials"] = "true"
+                elif "*" in allowed_origins:
+                    cors_headers["Access-Control-Allow-Origin"] = "*"
+                
                 headers = {
-                    "Content-Disposition": f'attachment; filename="{safe_name}"'
-                    if download
-                    else "inline",
+                    "Content-Disposition": f'attachment; filename="{safe_name}"' if download else "inline",
                     "Cache-Control": "private, max-age=3600",
                     "ETag": etag,
                     "Accept-Ranges": "bytes",
                     "Content-Length": str(content_length),
+                    "Vary": "Origin, Range",
+                    "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length, ETag",
+                    **cors_headers
                 }
 
                 if is_partial:
@@ -512,37 +523,41 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     count = 0
                     yielded = 0
                     
-                    if not inspect.isgenerator(s) and hasattr(s, "read") and hasattr(s, "seek"):
-                        # Optimized path for seekable files
-                        with s:
-                            s.seek(skip)
-                            while yielded < limit:
-                                chunk = s.read(min(65536, limit - yielded))
-                                if not chunk: break
-                                yield chunk
-                                yielded += len(chunk)
-                    else:
-                        # Generator or non-seekable: manual skip and limit
-                        for chunk in s:
-                            chunk_len = len(chunk)
-                            
-                            # If we haven't reached the start yet
-                            if count + chunk_len <= skip:
+                    try:
+                        if not inspect.isgenerator(s) and hasattr(s, "read") and hasattr(s, "seek"):
+                            # Optimized path for seekable files
+                            with s:
+                                s.seek(skip)
+                                while yielded < limit:
+                                    chunk = s.read(min(65536, limit - yielded))
+                                    if not chunk: break
+                                    yield chunk
+                                    yielded += len(chunk)
+                        else:
+                            # Generator or non-seekable: manual skip and limit
+                            for chunk in s:
+                                chunk_len = len(chunk)
+                                
+                                # If we haven't reached the start yet
+                                if count + chunk_len <= skip:
+                                    count += chunk_len
+                                    continue
+                                
+                                # Calculate part of chunk to yield
+                                chunk_start = max(0, skip - count)
+                                chunk_end = min(chunk_len, chunk_start + (limit - yielded))
+                                
+                                if chunk_start < chunk_end:
+                                    part = chunk[chunk_start:chunk_end]
+                                    yield part
+                                    yielded += len(part)
+                                
                                 count += chunk_len
-                                continue
-                            
-                            # Calculate part of chunk to yield
-                            chunk_start = max(0, skip - count)
-                            chunk_end = min(chunk_len, chunk_start + (limit - yielded))
-                            
-                            if chunk_start < chunk_end:
-                                part = chunk[chunk_start:chunk_end]
-                                yield part
-                                yielded += len(part)
-                            
-                            count += chunk_len
-                            if yielded >= limit:
-                                break
+                                if yielded >= limit:
+                                    break
+                    except Exception as e:
+                        logger.error(f"Stream error during iteration for {filename}: {e}")
+                        # Silent exit to avoid crashing ASGI state machine
 
                 response_iterator = get_response_iterator(stream, start, content_length)
                 return StreamingResponse(response_iterator, status_code=status_code, media_type=ct, headers=headers)
