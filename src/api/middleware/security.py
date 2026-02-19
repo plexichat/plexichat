@@ -35,16 +35,22 @@ class SecurityHeadersMiddleware:
                     (b"X-Permitted-Cross-Domain-Policies", b"none"),
                 ]
 
-                # Add X-Frame-Options: SAMEORIGIN only if not a media request
-                # For media, we rely on CSP frame-ancestors to be more flexible
-                if not is_media:
-                    security_headers.append((b"X-Frame-Options", b"SAMEORIGIN"))
+                # Only add if not already present (to avoid duplication)
+                final_headers = []
+                for h_name, h_value in headers:
+                    final_headers.append((h_name, h_value))
+
+                present_names = {h[0].lower() for h in final_headers}
 
                 for name, value in security_headers:
-                    if name.lower() not in present_headers:
-                        headers.append((name, value))
+                    if name.lower() not in present_names:
+                        final_headers.append((name, value))
 
-                message["headers"] = headers
+                # Add X-Frame-Options: SAMEORIGIN only if not a media request and not present
+                if not is_media and b"x-frame-options" not in present_names:
+                    final_headers.append((b"X-Frame-Options", b"SAMEORIGIN"))
+
+                message["headers"] = final_headers
 
             await send(message)
 

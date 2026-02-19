@@ -203,10 +203,20 @@ class EncryptedStorage(StorageBackendBase):
                     enc_stream.close()
                     
                     fresh_enc_stream, _ = self._backend.retrieve_stream(enc_path)
+                    
+                    def cleanup_wrapper(gen, stream_to_close):
+                        try:
+                            yield from gen
+                        finally:
+                            try:
+                                stream_to_close.close()
+                            except Exception:
+                                pass
+                                
                     generator = self._streaming_encryptor.decrypt_stream_generator(
                         fresh_enc_stream, aad
                     )
-                    return generator, original_size  # type: ignore
+                    return cleanup_wrapper(generator, fresh_enc_stream), original_size  # type: ignore
             except Exception as e:
                 logger.error(f"Failed to initialize decrypted stream for {path}: {e}")
                 if enc_stream:

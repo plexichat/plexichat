@@ -41,6 +41,15 @@ class APIConfig:
             "X-Requested-With",
             "Accept",
             "Origin",
+            "Range",
+        ]
+    )
+    cors_expose_headers: List[str] = field(
+        default_factory=lambda: [
+            "Content-Range",
+            "Accept-Ranges",
+            "Content-Length",
+            "ETag",
         ]
     )
     docs_url: Optional[str] = "/docs"
@@ -91,7 +100,7 @@ def get_api_config() -> APIConfig:
 
     cors_headers = api_conf.get(
         "cors_allow_headers",
-        ["Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin"],
+        ["Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin", "Range"],
     )
     if cors_headers == ["*"] or "*" in cors_headers:
         cors_headers = [
@@ -100,7 +109,13 @@ def get_api_config() -> APIConfig:
             "X-Requested-With",
             "Accept",
             "Origin",
+            "Range",
         ]
+
+    cors_expose_headers = api_conf.get(
+        "cors_expose_headers",
+        ["Content-Range", "Accept-Ranges", "Content-Length", "ETag"],
+    )
 
     return APIConfig(
         title=api_conf.get("title", "PlexiChat API"),
@@ -114,6 +129,7 @@ def get_api_config() -> APIConfig:
         cors_allow_credentials=api_conf.get("cors_allow_credentials", True),
         cors_allow_methods=cors_methods,
         cors_allow_headers=cors_headers,
+        cors_expose_headers=cors_expose_headers,
         docs_url=api_conf.get("docs_url", "/docs"),
         redoc_url=api_conf.get("redoc_url", "/redoc"),
         openapi_url=api_conf.get("openapi_url", "/openapi.json"),

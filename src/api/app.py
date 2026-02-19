@@ -110,6 +110,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         allow_credentials=config.cors_allow_credentials,
         allow_methods=config.cors_allow_methods,
         allow_headers=config.cors_allow_headers,
+        expose_headers=config.cors_expose_headers,
     )
 
     app.add_middleware(LoggingMiddleware)
@@ -504,23 +505,6 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
                 if is_partial:
                     headers["Content-Range"] = f"bytes {start}-{end}/{size}"
-
-                # Add CORS headers
-                origin = request.headers.get("Origin")
-                allowed_origins = config.cors_origins
-                if origin and (origin in allowed_origins or ".ts.net" in origin or "*" in allowed_origins):
-                    headers["Access-Control-Allow-Origin"] = origin
-                    headers["Access-Control-Allow-Credentials"] = "true"
-                elif "*" in allowed_origins:
-                    headers["Access-Control-Allow-Origin"] = "*"
-                else:
-                    # Robust fallback: if no Origin or mismatch, use * if not requiring credentials
-                    headers["Access-Control-Allow-Origin"] = "*"
-
-                headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
-                headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, X-Requested-With, Accept, Origin, Range"
-                headers["Access-Control-Expose-Headers"] = "Content-Range, Accept-Ranges, Content-Length, ETag"
-                headers["Vary"] = "Origin, Range"
 
                 # Helper to correctly slice any stream (file or generator)
                 def get_response_iterator(s, skip, limit):
