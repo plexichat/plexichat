@@ -477,11 +477,15 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 allowed_origins = config.cors_origins
                 allow_credentials = config.cors_allow_credentials
 
+                # Handle Access-Control-Allow-Origin
+                # If credentials are true, we MUST echo the specific origin (cannot be '*')
                 if origin:
                     is_allowed = False
                     if "*" in allowed_origins:
                         is_allowed = True
                     elif origin in allowed_origins:
+                        is_allowed = True
+                    elif ".ts.net" in origin: # Implicitly allow Tailscale origins
                         is_allowed = True
 
                     if is_allowed:
@@ -489,21 +493,24 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                         if allow_credentials:
                             headers["Access-Control-Allow-Credentials"] = "true"
                     else:
-                        # If not explicitly allowed, we still need to be careful
-                        # If we have '*' in allowed_origins but credentials are required,
-                        # we must echo the origin
-                        if "*" in allowed_origins and allow_credentials:
-                            headers["Access-Control-Allow-Origin"] = origin
-                            headers["Access-Control-Allow-Credentials"] = "true"
-                        else:
-                            headers["Access-Control-Allow-Origin"] = "null"
-                elif "*" in allowed_origins and not allow_credentials:
-                    headers["Access-Control-Allow-Origin"] = "*"
+                        headers["Access-Control-Allow-Origin"] = "null"
+                else:
+                    # No origin (direct browser access) - use wildcard if not requiring credentials
+                    if "*" in allowed_origins and not allow_credentials:
+                        headers["Access-Control-Allow-Origin"] = "*"
+                    else:
+                        # Fallback to a safe default
+                        headers["Access-Control-Allow-Origin"] = "*" if not allow_credentials else "null"
+
+                # Support for Private Network Access (required for some Tailscale setups)
+                if request.headers.get("Access-Control-Request-Private-Network") == "true":
+                    headers["Access-Control-Allow-Private-Network"] = "true"
 
                 headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
                 headers["Access-Control-Allow-Headers"] = (
-                    "Authorization, Content-Type, X-Requested-With, Accept, Origin"
+                    "Authorization, Content-Type, X-Requested-With, Accept, Origin, Range"
                 )
+                headers["Access-Control-Expose-Headers"] = "Content-Range, Accept-Ranges, Content-Length"
 
                 # Log duration after the stream is acquired
                 duration = (time.perf_counter() - start_time) * 1000
