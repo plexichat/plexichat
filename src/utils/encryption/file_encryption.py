@@ -43,6 +43,20 @@ class EncryptedFileHeader:
     is_stream: bool = False
 
 
+def read_exactly(stream: BinaryIO, n: int) -> bytes:
+    """
+    Read exactly n bytes from a stream.
+    Handles fragmentation (especially important for S3/network streams).
+    """
+    result = b""
+    while len(result) < n:
+        chunk = stream.read(n - len(result))
+        if not chunk:
+            break
+        result += chunk
+    return result
+
+
 class FileEncryptor:
     """
     Encrypts and decrypts files using AES-256-GCM.
@@ -68,7 +82,7 @@ class FileEncryptor:
         version, kek = self.keyring.get_key(kek_version)
         cipher = AESGCM(kek)
         nonce = os.urandom(NONCE_SIZE)
-        wrapped = cipher.encrypt(nonce, dek, None)
+        wrapped = cipher.encrypt(nonce, dek, b"")
         return nonce + wrapped, version
 
     def _unwrap_key(self, wrapped_key: bytes, kek_version: int) -> bytes:
@@ -76,7 +90,7 @@ class FileEncryptor:
         cipher = AESGCM(kek)
         nonce = wrapped_key[:NONCE_SIZE]
         ciphertext = wrapped_key[NONCE_SIZE:]
-        return cipher.decrypt(nonce, ciphertext, None)
+        return cipher.decrypt(nonce, ciphertext, b"")
 
     def encrypt_to_blob(self, data: bytes, aad: Optional[bytes] = None) -> bytes:
         dek = self._generate_dek()
@@ -134,7 +148,7 @@ class FileEncryptor:
             # Blob header has exactly 84 bytes after key
             remaining = len(data) - offset
             if remaining >= 12:
-                # Check for standard chunk size at expected offset
+                # Check for standard chunk size at expected offset (+8)
                 potential_chunk_size = struct.unpack(">I", data[offset+8 : offset+12])[0]
                 if potential_chunk_size in (262144, 524288, 1048576):
                     is_stream = True
@@ -160,26 +174,30 @@ class FileEncryptor:
 
     def deserialize_header_from_stream(self, stream: BinaryIO) -> Tuple[EncryptedFileHeader, int]:
         """
-        Read and deserialize header directly from a stream.
+        Read and deserialize header directly from a stream using robust reading.
         """
-        fixed = stream.read(12)
+        fixed = read_exactly(stream, 12)
         if len(fixed) < 12: raise ValueError("Truncated header prefix")
         
         magic = fixed[:5]
         wrapped_key_len = struct.unpack(">H", fixed[10:12])[0]
-        wrapped_key = stream.read(wrapped_key_len)
+        wrapped_key = read_exactly(stream, wrapped_key_len)
+        if len(wrapped_key) < wrapped_key_len: raise ValueError("Truncated wrapped key")
         
         if magic == STREAM_MAGIC:
-            rem = stream.read(12)
+            rem = read_exactly(stream, 12)
             header_data = fixed + wrapped_key + rem
         else:
             # Heuristic for PXENC
-            rem_start = stream.read(12)
+            rem_start = read_exactly(stream, 12)
+            if len(rem_start) < 12: raise ValueError("Truncated format data")
+            
             potential_chunk = struct.unpack(">I", rem_start[8:12])[0]
             if potential_chunk in (262144, 524288, 1048576):
                 header_data = fixed + wrapped_key + rem_start
             else:
-                rem_end = stream.read(72)
+                rem_end = read_exactly(stream, 72)
+                if len(rem_end) < 72: raise ValueError("Truncated blob data")
                 header_data = fixed + wrapped_key + rem_start + rem_end
                 
         return self.deserialize_header(header_data)
@@ -211,7 +229,7 @@ class StreamingFileEncryptor:
         version, kek = self.keyring.get_key()
         kek_cipher = AESGCM(kek)
         wrap_nonce = os.urandom(NONCE_SIZE)
-        wrapped_key = wrap_nonce + kek_cipher.encrypt(wrap_nonce, dek, None)
+        wrapped_key = wrap_nonce + kek_cipher.encrypt(wrap_nonce, dek, b"")
 
         output_stream.write(STREAM_MAGIC)
         output_stream.write(struct.pack(">B", FILE_VERSION))
@@ -251,14 +269,15 @@ class StreamingFileEncryptor:
             total_decrypted = 0
             
             while total_decrypted < header.original_size:
-                chunk_nonce = input_stream.read(NONCE_SIZE)
+                # Use read_exactly for robustness
+                chunk_nonce = read_exactly(input_stream, NONCE_SIZE)
                 if len(chunk_nonce) < NONCE_SIZE: break
 
-                len_bytes = input_stream.read(4)
+                len_bytes = read_exactly(input_stream, 4)
                 if len(len_bytes) < 4: break
                 encrypted_len = struct.unpack(">I", len_bytes)[0]
 
-                encrypted_chunk = input_stream.read(encrypted_len)
+                encrypted_chunk = read_exactly(input_stream, encrypted_len)
                 if len(encrypted_chunk) < encrypted_len:
                     logger.error(f"Stream truncated: expected {encrypted_len} but got {len(encrypted_chunk)}")
                     break

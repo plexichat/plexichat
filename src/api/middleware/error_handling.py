@@ -106,9 +106,29 @@ class ErrorHandlingMiddleware:
             await self.app(scope, receive, send)
             return
 
+        response_started = False
+
+        async def send_wrapper(message: Message) -> None:
+            nonlocal response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
         try:
-            await self.app(scope, receive, send)
+            await self.app(scope, receive, send_wrapper)
         except Exception as exc:
+            # If response has already started, we CANNOT send a new JSON response
+            # because http.response.start has already been sent to the client.
+            if response_started:
+                import utils.logger as logger
+                logger.error(
+                    f"Exception occurred after response started: {type(exc).__name__}: {exc}. "
+                    "Cannot send error JSON as headers were already transmitted.",
+                    exc_info=True
+                )
+                # Raising here will likely cause the server to close the connection
+                raise exc
+
             # Log the error details server-side
             import utils.logger as logger
 
