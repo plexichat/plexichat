@@ -175,32 +175,45 @@ class EncryptedStorage(StorageBackendBase):
                     "File is encrypted but encryption is disabled", "encrypted"
                 )
 
-            # Get size of original file (from header)
-            original_size = self.get_size(path)
+            # Get stream and parse header
+            enc_stream, _ = self._backend.retrieve_stream(enc_path)
+            
+            try:
+                # Read header to get original size and key info
+                # Note: This consumes the beginning of the stream
+                header, _ = self._encryptor.deserialize_header_from_stream(enc_stream)
+                original_size = header.original_size
 
-            # For small files, use regular retrieve
-            if original_size <= self._streaming_threshold:
-                data = self.retrieve(path)
-                return io.BytesIO(data), len(data)
+                # For small files, it might be better to just read the whole thing
+                if original_size <= self._streaming_threshold:
+                    # We already consumed the header from enc_stream, so we need a fresh stream
+                    enc_stream.close()
+                    data = self.retrieve(path)
+                    return io.BytesIO(data), len(data)
 
-            # For large files, use streaming decryption
-            if self._streaming_encryptor:
-                try:
-                    enc_stream, _ = self._backend.retrieve_stream(enc_path)
+                if self._streaming_encryptor:
                     aad = self._get_aad(path)
-
-                    # Return the generator directly. FastAPI StreamingResponse handles iterables.
-                    # Note: We return it as the 'stream' part of the tuple.
+                    # Use the already opened stream (which is now positioned after the header)
+                    # But decrypt_stream_generator expects to read the header itself.
+                    # Strategy: Close this stream and let the generator open a fresh one,
+                    # or better, modify the generator to accept a pre-parsed header.
+                    
+                    # Since decrypt_stream_generator is already complex, we just close this
+                    # and let the generator do its job. The header parsing is fast.
+                    enc_stream.close()
+                    
+                    fresh_enc_stream, _ = self._backend.retrieve_stream(enc_path)
                     generator = self._streaming_encryptor.decrypt_stream_generator(
-                        enc_stream, aad
+                        fresh_enc_stream, aad
                     )
                     return generator, original_size  # type: ignore
-                except Exception as e:
-                    logger.error(f"Stream decryption failed for {path}: {e}")
-                    # Fallback to retrieve if streaming fails
-
-            data = self.retrieve(path)
-            return io.BytesIO(data), len(data)
+            except Exception as e:
+                logger.error(f"Failed to initialize decrypted stream for {path}: {e}")
+                if enc_stream:
+                    enc_stream.close()
+                # Fallback to full retrieval
+                data = self.retrieve(path)
+                return io.BytesIO(data), len(data)
 
         # Fall back to unencrypted path
         return self._backend.retrieve_stream(path)
@@ -252,12 +265,20 @@ class EncryptedStorage(StorageBackendBase):
             # For encrypted files, we need to read the header to get original size
             if self._encryptor:
                 try:
-                    # Read just enough for the header
-                    encrypted_blob = self._backend.retrieve(enc_path)
-                    header, _ = self._encryptor.deserialize_header(encrypted_blob)
-                    return header.original_size
-                except Exception:
-                    pass
+                    # Optimized: Read only enough for the header using a stream
+                    stream, _ = self._backend.retrieve_stream(enc_path)
+                    with stream:
+                        header, _ = self._encryptor.deserialize_header_from_stream(stream)
+                        return header.original_size
+                except Exception as e:
+                    logger.debug(f"Failed to read header from stream for {path}: {e}")
+                    try:
+                        # Fallback to older method if stream reading fails
+                        encrypted_blob = self._backend.retrieve(enc_path)
+                        header, _ = self._encryptor.deserialize_header(encrypted_blob)
+                        return header.original_size
+                    except Exception:
+                        pass
             # Fallback: return encrypted size (not accurate but better than nothing)
             return self._backend.get_size(enc_path)
 

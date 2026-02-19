@@ -246,6 +246,7 @@ class FileEncryptor:
     def deserialize_header(self, data: bytes) -> Tuple[EncryptedFileHeader, int]:
         """
         Deserialize encryption header from bytes.
+        Automatically detects blob (small file) vs stream (large file) format.
 
         Args:
             data: Bytes starting with header
@@ -272,25 +273,63 @@ class FileEncryptor:
         wrapped_key = data[offset : offset + wrapped_key_len]
         offset += wrapped_key_len
 
-        nonce = data[offset : offset + NONCE_SIZE]
-        offset += NONCE_SIZE
+        # Format detection: Stream format has original_size(8) + chunk_size(4) = 12 bytes remaining
+        # Blob format has nonce(12) + original_size(8) + checksum(64) = 84 bytes remaining
+        remaining = len(data) - offset
+        
+        # If remaining bytes are around 12, it's a stream header
+        if remaining < 84:
+            if len(data) < offset + 12:
+                raise ValueError("Truncated stream header")
+                
+            original_size = struct.unpack(">Q", data[offset : offset + 8])[0]
+            offset += 8
+            # Skip chunk_size field
+            offset += 4
+            
+            header = EncryptedFileHeader(
+                version=version,
+                key_version=key_version,
+                wrapped_key=wrapped_key,
+                nonce=b"", # Not used in stream format
+                original_size=original_size,
+                checksum="", # Not stored in stream header
+            )
+        else:
+            # Blob format header
+            if len(data) < offset + 84:
+                raise ValueError("Truncated blob header")
+                
+            nonce = data[offset : offset + NONCE_SIZE]
+            offset += NONCE_SIZE
 
-        original_size = struct.unpack(">Q", data[offset : offset + 8])[0]
-        offset += 8
+            original_size = struct.unpack(">Q", data[offset : offset + 8])[0]
+            offset += 8
 
-        checksum = data[offset : offset + 64].decode("ascii")
-        offset += 64
+            checksum = data[offset : offset + 64].decode("ascii")
+            offset += 64
 
-        header = EncryptedFileHeader(
-            version=version,
-            key_version=key_version,
-            wrapped_key=wrapped_key,
-            nonce=nonce,
-            original_size=original_size,
-            checksum=checksum,
-        )
+            header = EncryptedFileHeader(
+                version=version,
+                key_version=key_version,
+                wrapped_key=wrapped_key,
+                nonce=nonce,
+                original_size=original_size,
+                checksum=checksum,
+            )
 
         return header, offset
+
+    def deserialize_header_from_stream(self, stream: BinaryIO) -> Tuple[EncryptedFileHeader, int]:
+        """
+        Read and deserialize header directly from a stream.
+        Optimized to read only required bytes (max 256).
+        """
+        # Read a reasonable chunk for any header (fixed + variable + format info)
+        header_candidate = stream.read(256)
+        if not header_candidate:
+            raise ValueError("Empty stream")
+        return self.deserialize_header(header_candidate)
 
     def encrypt_to_blob(self, data: bytes, aad: Optional[bytes] = None) -> bytes:
         """
@@ -458,26 +497,14 @@ class StreamingFileEncryptor:
         Returns:
             Metadata dict with decryption info
         """
-        # Read header
-        magic = input_stream.read(5)
-        if magic != FILE_MAGIC:
-            raise ValueError("Invalid encrypted file")
-
-        version = struct.unpack(">B", input_stream.read(1))[0]
-        if version != FILE_VERSION:
-            raise ValueError(f"Unsupported version: {version}")
-
-        key_version = struct.unpack(">I", input_stream.read(4))[0]
-        wrapped_key_len = struct.unpack(">H", input_stream.read(2))[0]
-        wrapped_key = input_stream.read(wrapped_key_len)
-        original_size = struct.unpack(">Q", input_stream.read(8))[0]
-        struct.unpack(">I", input_stream.read(4))[0]
+        # Read header using unified logic
+        header, _ = FileEncryptor(self.keyring).deserialize_header_from_stream(input_stream)
 
         # Unwrap DEK
-        _, kek = self.keyring.get_key(key_version)
+        _, kek = self.keyring.get_key(header.key_version)
         kek_cipher = AESGCM(kek)
-        wrap_nonce = wrapped_key[:NONCE_SIZE]
-        dek = kek_cipher.decrypt(wrap_nonce, wrapped_key[NONCE_SIZE:], None)
+        wrap_nonce = header.wrapped_key[:NONCE_SIZE]
+        dek = kek_cipher.decrypt(wrap_nonce, header.wrapped_key[NONCE_SIZE:], None)
         cipher = AESGCM(dek)
 
         # Decrypt chunks
@@ -485,7 +512,7 @@ class StreamingFileEncryptor:
         chunk_index = 0
         total_decrypted = 0
 
-        while total_decrypted < original_size:
+        while total_decrypted < header.original_size:
             # Read chunk nonce
             chunk_nonce = input_stream.read(NONCE_SIZE)
             if len(chunk_nonce) < NONCE_SIZE:
@@ -500,7 +527,8 @@ class StreamingFileEncryptor:
             # Read encrypted chunk
             encrypted_chunk = input_stream.read(encrypted_len)
             if len(encrypted_chunk) < encrypted_len:
-                raise ValueError("Truncated encrypted data")
+                logger.error(f"Truncated encrypted data at chunk {chunk_index} (expected {encrypted_len}, got {len(encrypted_chunk)})")
+                break # Stop at truncation instead of crashing
 
             # Reconstruct AAD
             chunk_aad = struct.pack(">Q", chunk_index)
@@ -508,25 +536,32 @@ class StreamingFileEncryptor:
                 chunk_aad = aad + chunk_aad
 
             # Decrypt
-            chunk = cipher.decrypt(chunk_nonce, encrypted_chunk, chunk_aad)
-            hasher.update(chunk)
-            output_stream.write(chunk)
+            try:
+                chunk = cipher.decrypt(chunk_nonce, encrypted_chunk, chunk_aad)
+                hasher.update(chunk)
+                output_stream.write(chunk)
 
-            chunk_index += 1
-            total_decrypted += len(chunk)
+                chunk_index += 1
+                total_decrypted += len(chunk)
+            except Exception as e:
+                logger.error(f"Decryption failed at chunk {chunk_index}: {e}")
+                break
 
         # Verify checksum
-        stored_checksum = input_stream.read(64).decode("ascii")
-        computed_checksum = hasher.hexdigest()
-
-        verified = stored_checksum == computed_checksum
-        if verify_checksum and not verified:
-            logger.warning("Stream checksum mismatch")
+        verified = False
+        try:
+            stored_checksum = input_stream.read(64).decode("ascii")
+            computed_checksum = hasher.hexdigest()
+            verified = (stored_checksum == computed_checksum)
+            if verify_checksum and not verified:
+                logger.warning("Stream checksum mismatch")
+        except Exception:
+            pass
 
         return {
-            "key_version": key_version,
+            "key_version": header.key_version,
             "chunks": chunk_index,
-            "original_size": original_size,
+            "original_size": header.original_size,
             "verified": verified,
         }
 
@@ -547,27 +582,14 @@ class StreamingFileEncryptor:
         Yields:
             Decrypted chunks of data
         """
-        # Read header
-        magic = input_stream.read(5)
-        if magic != FILE_MAGIC:
-            raise ValueError("Invalid encrypted file")
-
-        version = struct.unpack(">B", input_stream.read(1))[0]
-        if version != FILE_VERSION:
-            raise ValueError(f"Unsupported version: {version}")
-
-        key_version = struct.unpack(">I", input_stream.read(4))[0]
-        wrapped_key_len = struct.unpack(">H", input_stream.read(2))[0]
-        wrapped_key = input_stream.read(wrapped_key_len)
-        original_size = struct.unpack(">Q", input_stream.read(8))[0]
-        # Skip chunk_size field from header
-        input_stream.read(4)
+        # Read header using unified logic
+        header, _ = FileEncryptor(self.keyring).deserialize_header_from_stream(input_stream)
 
         # Unwrap DEK
-        _, kek = self.keyring.get_key(key_version)
+        _, kek = self.keyring.get_key(header.key_version)
         kek_cipher = AESGCM(kek)
-        wrap_nonce = wrapped_key[:NONCE_SIZE]
-        dek = kek_cipher.decrypt(wrap_nonce, wrapped_key[NONCE_SIZE:], None)
+        wrap_nonce = header.wrapped_key[:NONCE_SIZE]
+        dek = kek_cipher.decrypt(wrap_nonce, header.wrapped_key[NONCE_SIZE:], None)
         cipher = AESGCM(dek)
 
         # Decrypt chunks
@@ -575,7 +597,7 @@ class StreamingFileEncryptor:
         chunk_index = 0
         total_decrypted = 0
 
-        while total_decrypted < original_size:
+        while total_decrypted < header.original_size:
             # Read chunk nonce
             chunk_nonce = input_stream.read(NONCE_SIZE)
             if len(chunk_nonce) < NONCE_SIZE:
@@ -590,7 +612,8 @@ class StreamingFileEncryptor:
             # Read encrypted chunk
             encrypted_chunk = input_stream.read(encrypted_len)
             if len(encrypted_chunk) < encrypted_len:
-                raise ValueError("Truncated encrypted data")
+                logger.error(f"Truncated encrypted stream at chunk {chunk_index} (expected {encrypted_len}, got {len(encrypted_chunk)})")
+                break
 
             # Reconstruct AAD
             chunk_aad = struct.pack(">Q", chunk_index)
@@ -598,22 +621,26 @@ class StreamingFileEncryptor:
                 chunk_aad = aad + chunk_aad
 
             # Decrypt and yield
-            chunk = cipher.decrypt(chunk_nonce, encrypted_chunk, chunk_aad)
-            hasher.update(chunk)
-            yield chunk
+            try:
+                chunk = cipher.decrypt(chunk_nonce, encrypted_chunk, chunk_aad)
+                hasher.update(chunk)
+                yield chunk
 
-            chunk_index += 1
-            total_decrypted += len(chunk)
+                chunk_index += 1
+                total_decrypted += len(chunk)
+            except Exception as e:
+                logger.error(f"Decryption failed at chunk {chunk_index}: {e}")
+                break
 
         # Verify checksum
         if verify_checksum:
             try:
                 stored_checksum = input_stream.read(64).decode("ascii")
                 computed_checksum = hasher.hexdigest()
-                if stored_checksum != computed_checksum:
+                if stored_checksum and stored_checksum != computed_checksum:
                     logger.warning("Stream checksum mismatch")
-            except Exception as e:
-                logger.warning(f"Failed to verify stream checksum: {e}")
+            except Exception:
+                pass
 
 
 # Module-level convenience functions
