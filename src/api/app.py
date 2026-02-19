@@ -101,9 +101,11 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     app.add_middleware(AuthenticationMiddleware)
     app.add_middleware(IPBlockingMiddleware)
     app.add_middleware(ErrorHandlingMiddleware)
-    app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(LoggingMiddleware)
+    app.add_middleware(DatabaseMiddleware)
 
-    # CORS handles OPTIONS preflight
+    # CORS handles OPTIONS preflight - MUST be outermost
+    # (In ASGI, last added is outermost)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=config.cors_origins,
@@ -112,9 +114,6 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         allow_headers=config.cors_allow_headers,
         expose_headers=config.cors_expose_headers,
     )
-
-    app.add_middleware(LoggingMiddleware)
-    app.add_middleware(DatabaseMiddleware)
 
     setup_exception_handlers(app)
 

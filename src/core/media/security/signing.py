@@ -105,27 +105,24 @@ class UrlSigner:
 
         base_url = self._remove_signature_params(url)
         
-        # Robust verification: Try matching against path-only signature first
-        # (Internal proxy URLs are often signed as paths but verified as full URLs)
+        # Robust verification: Try matching against path-only signatures
         parsed_base = urlparse(base_url)
-        path_only = parsed_base.path
+        path = parsed_base.path
+        query = f"?{parsed_base.query}" if parsed_base.query else ""
         
-        # Include query string if present (minus signature params)
-        if parsed_base.query:
-            path_only += f"?{parsed_base.query}"
-            
-        expected_data_path = self._build_signature_data(path_only, file_id, expires_at, None)
-        expected_signature_path = self._generate_signature(expected_data_path)
-        
-        if hmac.compare_digest(signature, expected_signature_path):
-            return True, file_id
+        # Check permutations: with and without leading slash
+        for p in [path, path.lstrip('/'), '/' + path.lstrip('/')]:
+            check_url = f"{p}{query}"
+            expected_data = self._build_signature_data(check_url, file_id, expires_at, None)
+            expected_sig = self._generate_signature(expected_data)
+            if hmac.compare_digest(signature, expected_sig):
+                return True, file_id
 
-        # Fallback to full URL check (for S3 native or explicitly absolute signed URLs)
-        expected_data = self._build_signature_data(base_url, file_id, expires_at, None)
-        expected_signature = self._generate_signature(expected_data)
+        # Fallback to full URL check (for absolute signed URLs)
+        expected_data_full = self._build_signature_data(base_url, file_id, expires_at, None)
+        expected_sig_full = self._generate_signature(expected_data_full)
 
-        assert signature is not None  # Checked above
-        if not hmac.compare_digest(signature, expected_signature):
+        if not hmac.compare_digest(signature, expected_sig_full):
             raise SignatureInvalidError("Invalid signature")
 
         return True, file_id
@@ -138,9 +135,13 @@ class UrlSigner:
         extra_data: Optional[dict],
     ) -> str:
         """Build the data string to sign."""
-        # Canonicalize path by removing leading slash to prevent mismatch 
-        # between '/path' and 'path' signatures
-        clean_url = url.lstrip('/')
+        # Canonicalize by removing protocol/netloc if present and stripping leading slashes
+        parsed = urlparse(url)
+        path = parsed.path
+        if parsed.query:
+            path += f"?{parsed.query}"
+            
+        clean_url = path.lstrip('/')
         parts = [clean_url, str(file_id), str(expires_at)]
 
         if extra_data:
