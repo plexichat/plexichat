@@ -466,13 +466,12 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
                 # --- Range Request Handling ---
                 range_header = request.headers.get("Range")
-                is_partial = False
                 start = 0
                 end = size - 1
+                is_partial = False
                 
                 if range_header and range_header.startswith("bytes="):
                     try:
-                        is_partial = True
                         range_val = range_header.replace("bytes=", "")
                         if "-" in range_val:
                             r_start, r_end = range_val.split("-")
@@ -483,12 +482,15 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                         
                         # Constrain range
                         end = min(end, size - 1)
-                        if start > end:
+                        if start <= end:
+                            is_partial = True
+                        else:
                             start = 0
                     except Exception:
                         is_partial = False
 
                 content_length = end - start + 1
+                status_code = 206 if is_partial else 200
                 
                 headers = {
                     "Content-Disposition": f'attachment; filename="{safe_name}"'
@@ -497,15 +499,11 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     "Cache-Control": "private, max-age=3600",
                     "ETag": etag,
                     "Accept-Ranges": "bytes",
+                    "Content-Length": str(content_length),
                 }
 
                 if is_partial:
                     headers["Content-Range"] = f"bytes {start}-{end}/{size}"
-                    headers["Content-Length"] = str(content_length)
-                    status_code = 206
-                else:
-                    headers["Content-Length"] = str(size)
-                    status_code = 200
 
                 # Add CORS headers
                 origin = request.headers.get("Origin")
@@ -520,43 +518,43 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, X-Requested-With, Accept, Origin, Range"
                 headers["Access-Control-Expose-Headers"] = "Content-Range, Accept-Ranges, Content-Length, ETag"
 
-                # Fix: StreamingResponse expects an iterator/generator
-                import inspect
-                
-                # If partial, we need to skip to the start and limit to the end
-                # Note: For encrypted streams, we currently only support full playback or start-at-0
-                # because random access requires chunk alignment.
-                # However, many browsers send "bytes=0-" which we can handle perfectly.
-                
-                def get_response_iterator(s, start_byte, length):
-                    if not inspect.isgenerator(s) and hasattr(s, "read"):
-                        # File-like object
+                # Helper to correctly slice any stream (file or generator)
+                def get_response_iterator(s, skip, limit):
+                    import inspect
+                    count = 0
+                    yielded = 0
+                    
+                    if not inspect.isgenerator(s) and hasattr(s, "read") and hasattr(s, "seek"):
+                        # Optimized path for seekable files
                         with s:
-                            if start_byte > 0:
-                                s.seek(start_byte)
-                            remaining = length
-                            while remaining > 0:
-                                chunk_size = min(65536, remaining)
-                                chunk = s.read(chunk_size)
-                                if not chunk:
-                                    break
+                            s.seek(skip)
+                            while yielded < limit:
+                                chunk = s.read(min(65536, limit - yielded))
+                                if not chunk: break
                                 yield chunk
-                                remaining -= len(chunk)
+                                yielded += len(chunk)
                     else:
-                        # Generator (already handled by EncryptedStorage)
-                        # NOTE: We don't support partial encrypted streams yet unless start=0
-                        if start_byte == 0:
-                            count = 0
-                            for chunk in s:
-                                if count + len(chunk) > length:
-                                    yield chunk[:length - count]
-                                    break
-                                yield chunk
-                                count += len(chunk)
-                        else:
-                            # Fallback: return full stream (browser handles it but slower)
-                            for chunk in s:
-                                yield chunk
+                        # Generator or non-seekable: manual skip and limit
+                        for chunk in s:
+                            chunk_len = len(chunk)
+                            
+                            # If we haven't reached the start yet
+                            if count + chunk_len <= skip:
+                                count += chunk_len
+                                continue
+                            
+                            # Calculate part of chunk to yield
+                            chunk_start = max(0, skip - count)
+                            chunk_end = min(chunk_len, chunk_start + (limit - yielded))
+                            
+                            if chunk_start < chunk_end:
+                                part = chunk[chunk_start:chunk_end]
+                                yield part
+                                yielded += len(part)
+                            
+                            count += chunk_len
+                            if yielded >= limit:
+                                break
 
                 response_iterator = get_response_iterator(stream, start, content_length)
                 return StreamingResponse(response_iterator, status_code=status_code, media_type=ct, headers=headers)
