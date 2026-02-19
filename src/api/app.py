@@ -470,7 +470,12 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 end = size - 1
                 is_partial = False
                 
-                if range_header and range_header.startswith("bytes="):
+                # We only support Range for seekable file-like objects (unencrypted or small blobs)
+                # For generators, we will serve the full content via chunked encoding for robustness.
+                import inspect
+                is_generator = inspect.isgenerator(stream)
+                
+                if not is_generator and range_header and range_header.startswith("bytes="):
                     try:
                         range_val = range_header.replace("bytes=", "")
                         if "-" in range_val:
@@ -490,28 +495,45 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                         is_partial = False
 
                 content_length = end - start + 1
+                
+                # If it's a generator, we DON'T send Content-Length to force chunked encoding.
+                # This prevents the 'Response content shorter than Content-Length' crash if the 
+                # decryption stream is interrupted or truncated.
                 status_code = 206 if is_partial else 200
+                
+                # Add CORS headers manually for maximum reliability (avoids null status on early exit)
+                origin = request.headers.get("Origin")
+                cors_headers = {}
+                allowed_origins = config.cors_origins
+                if origin and (origin in allowed_origins or ".ts.net" in origin or "*" in allowed_origins):
+                    cors_headers["Access-Control-Allow-Origin"] = origin
+                    cors_headers["Access-Control-Allow-Credentials"] = "true"
+                elif "*" in allowed_origins:
+                    cors_headers["Access-Control-Allow-Origin"] = "*"
                 
                 headers = {
                     "Content-Disposition": f'attachment; filename="{safe_name}"' if download else "inline",
                     "Cache-Control": "private, max-age=3600",
                     "ETag": etag,
-                    "Accept-Ranges": "bytes",
-                    "Content-Length": str(content_length),
-                    "Vary": "Range", # Origin is added by CORSMiddleware
+                    "Accept-Ranges": "bytes" if not is_generator else "none",
+                    "Vary": "Origin, Range",
+                    "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length, ETag",
+                    **cors_headers
                 }
 
-                if is_partial:
-                    headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+                # Only include Content-Length if we are CERTAIN of the size (not a generator)
+                if not is_generator:
+                    headers["Content-Length"] = str(content_length)
+                    if is_partial:
+                        headers["Content-Range"] = f"bytes {start}-{end}/{size}"
 
                 # Helper to correctly slice any stream (file or generator)
-                def get_response_iterator(s, skip, limit):
-                    import inspect
+                def get_response_iterator(s, skip, limit, is_gen):
                     count = 0
                     yielded = 0
                     
                     try:
-                        if not inspect.isgenerator(s) and hasattr(s, "read") and hasattr(s, "seek"):
+                        if not is_gen and hasattr(s, "read") and hasattr(s, "seek"):
                             # Seekable file-like
                             with s:
                                 if skip > 0:
@@ -522,29 +544,14 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                                     yield chunk
                                     yielded += len(chunk)
                         else:
-                            # Generator (Manual skip)
+                            # Generator: Serve full content
+                            # (We ignore skip/limit for generators to ensure chunked encoding stability)
                             for chunk in s:
-                                chunk_len = len(chunk)
-                                if count + chunk_len <= skip:
-                                    count += chunk_len
-                                    continue
-                                
-                                chunk_start = max(0, skip - count)
-                                chunk_end = min(chunk_len, chunk_start + (limit - yielded))
-                                
-                                if chunk_start < chunk_end:
-                                    part = chunk[chunk_start:chunk_end]
-                                    yield part
-                                    yielded += len(part)
-                                
-                                count += chunk_len
-                                if yielded >= limit:
-                                    break
+                                yield chunk
                     except Exception as e:
-                        # Clean exit on stream error
                         logger.error(f"Media stream interrupted for {filename}: {e}")
 
-                response_iterator = get_response_iterator(stream, start, content_length)
+                response_iterator = get_response_iterator(stream, start, content_length, is_generator)
                 return StreamingResponse(response_iterator, status_code=status_code, media_type=ct, headers=headers)
             except Exception as e:
                 logger.error(f"Generic retrieval failed for {filename}: {e}")
