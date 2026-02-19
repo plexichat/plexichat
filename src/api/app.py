@@ -464,44 +464,11 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 ):
                     return Response(status_code=304)
 
-                # --- Range Request Handling ---
-                range_header = request.headers.get("Range")
-                start = 0
-                end = size - 1
-                is_partial = False
+                # We serve everything as 200 OK with a full Content-Length to stop browser retry loops.
+                # Tailscale/Browsers are very sensitive to missing lengths on media.
+                status_code = 200
                 
-                # We only support Range for seekable file-like objects (unencrypted or small blobs)
-                # For generators, we will serve the full content via chunked encoding for robustness.
-                import inspect
-                is_generator = inspect.isgenerator(stream)
-                
-                if not is_generator and range_header and range_header.startswith("bytes="):
-                    try:
-                        range_val = range_header.replace("bytes=", "")
-                        if "-" in range_val:
-                            r_start, r_end = range_val.split("-")
-                            if r_start:
-                                start = int(r_start)
-                            if r_end:
-                                end = int(r_end)
-                        
-                        # Constrain range
-                        end = min(end, size - 1)
-                        if start <= end:
-                            is_partial = True
-                        else:
-                            start = 0
-                    except Exception:
-                        is_partial = False
-
-                content_length = end - start + 1
-                
-                # If it's a generator, we DON'T send Content-Length to force chunked encoding.
-                # This prevents the 'Response content shorter than Content-Length' crash if the 
-                # decryption stream is interrupted or truncated.
-                status_code = 206 if is_partial else 200
-                
-                # Add CORS headers manually for maximum reliability (avoids null status on early exit)
+                # Add CORS headers manually for maximum reliability
                 origin = request.headers.get("Origin")
                 cors_headers = {}
                 allowed_origins = config.cors_origins
@@ -515,43 +482,30 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     "Content-Disposition": f'attachment; filename="{safe_name}"' if download else "inline",
                     "Cache-Control": "private, max-age=3600",
                     "ETag": etag,
-                    "Accept-Ranges": "bytes" if not is_generator else "none",
-                    "Vary": "Origin, Range",
-                    "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length, ETag",
+                    "Accept-Ranges": "none", # Disable Range to force full load and stop loops
+                    "Content-Length": str(size),
+                    "Vary": "Origin",
+                    "Access-Control-Expose-Headers": "Content-Length, ETag",
                     **cors_headers
                 }
 
-                # Only include Content-Length if we are CERTAIN of the size (not a generator)
-                if not is_generator:
-                    headers["Content-Length"] = str(content_length)
-                    if is_partial:
-                        headers["Content-Range"] = f"bytes {start}-{end}/{size}"
-
-                # Helper to correctly slice any stream (file or generator)
-                def get_response_iterator(s, skip, limit, is_gen):
-                    count = 0
-                    yielded = 0
-                    
+                # Helper to correctly yield any stream
+                def get_response_iterator(s):
                     try:
-                        if not is_gen and hasattr(s, "read") and hasattr(s, "seek"):
-                            # Seekable file-like
+                        # Some streams are file-like, some are generators
+                        if hasattr(s, "read"):
                             with s:
-                                if skip > 0:
-                                    s.seek(skip)
-                                while yielded < limit:
-                                    chunk = s.read(min(65536, limit - yielded))
+                                while True:
+                                    chunk = s.read(65536)
                                     if not chunk: break
                                     yield chunk
-                                    yielded += len(chunk)
                         else:
-                            # Generator: Serve full content
-                            # (We ignore skip/limit for generators to ensure chunked encoding stability)
                             for chunk in s:
                                 yield chunk
                     except Exception as e:
                         logger.error(f"Media stream interrupted for {filename}: {e}")
 
-                response_iterator = get_response_iterator(stream, start, content_length, is_generator)
+                response_iterator = get_response_iterator(stream)
                 return StreamingResponse(response_iterator, status_code=status_code, media_type=ct, headers=headers)
             except Exception as e:
                 logger.error(f"Generic retrieval failed for {filename}: {e}")
