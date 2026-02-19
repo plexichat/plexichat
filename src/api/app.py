@@ -477,9 +477,8 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 allowed_origins = config.cors_origins
                 allow_credentials = config.cors_allow_credentials
 
-                # Handle Access-Control-Allow-Origin
-                # If credentials are true, we MUST echo the specific origin (cannot be '*')
                 if origin:
+                    # Echo the origin if it's explicitly allowed or matches a pattern
                     is_allowed = False
                     if "*" in allowed_origins:
                         is_allowed = True
@@ -499,8 +498,8 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     if "*" in allowed_origins and not allow_credentials:
                         headers["Access-Control-Allow-Origin"] = "*"
                     else:
-                        # Fallback to a safe default
-                        headers["Access-Control-Allow-Origin"] = "*" if not allow_credentials else "null"
+                        # Default to null if we can't safely wildcard
+                        headers["Access-Control-Allow-Origin"] = "null"
 
                 # Support for Private Network Access (required for some Tailscale setups)
                 if request.headers.get("Access-Control-Request-Private-Network") == "true":
