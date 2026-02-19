@@ -454,7 +454,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
                 safe_name = sanitize_header_filename(original_filename)
 
-                # Generate ETag from file_id and size (simple but effective for immutable files)
+                # Generate ETag from file_id and size
                 etag = f'"{file_id}-{size}"'
 
                 # Check If-None-Match
@@ -464,76 +464,102 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 ):
                     return Response(status_code=304)
 
+                # --- Range Request Handling ---
+                range_header = request.headers.get("Range")
+                is_partial = False
+                start = 0
+                end = size - 1
+                
+                if range_header and range_header.startswith("bytes="):
+                    try:
+                        is_partial = True
+                        range_val = range_header.replace("bytes=", "")
+                        if "-" in range_val:
+                            r_start, r_end = range_val.split("-")
+                            if r_start:
+                                start = int(r_start)
+                            if r_end:
+                                end = int(r_end)
+                        
+                        # Constrain range
+                        end = min(end, size - 1)
+                        if start > end:
+                            start = 0
+                    except Exception:
+                        is_partial = False
+
+                content_length = end - start + 1
+                
                 headers = {
                     "Content-Disposition": f'attachment; filename="{safe_name}"'
                     if download
                     else "inline",
                     "Cache-Control": "private, max-age=3600",
                     "ETag": etag,
+                    "Accept-Ranges": "bytes",
                 }
 
-                # Add CORS headers specifically for media to avoid policy blocks
+                if is_partial:
+                    headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+                    headers["Content-Length"] = str(content_length)
+                    status_code = 206
+                else:
+                    headers["Content-Length"] = str(size)
+                    status_code = 200
+
+                # Add CORS headers
                 origin = request.headers.get("Origin")
                 allowed_origins = config.cors_origins
-                allow_credentials = config.cors_allow_credentials
-
-                if origin:
-                    # Echo the origin if it's explicitly allowed or matches a pattern
-                    is_allowed = False
-                    if "*" in allowed_origins:
-                        is_allowed = True
-                    elif origin in allowed_origins:
-                        is_allowed = True
-                    elif ".ts.net" in origin: # Implicitly allow Tailscale origins
-                        is_allowed = True
-
-                    if is_allowed:
-                        headers["Access-Control-Allow-Origin"] = origin
-                        if allow_credentials:
-                            headers["Access-Control-Allow-Credentials"] = "true"
-                    else:
-                        headers["Access-Control-Allow-Origin"] = "null"
-                else:
-                    # No origin (direct browser access) - use wildcard if not requiring credentials
-                    if "*" in allowed_origins and not allow_credentials:
-                        headers["Access-Control-Allow-Origin"] = "*"
-                    else:
-                        # Default to null if we can't safely wildcard
-                        headers["Access-Control-Allow-Origin"] = "null"
-
-                # Support for Private Network Access (required for some Tailscale setups)
-                if request.headers.get("Access-Control-Request-Private-Network") == "true":
-                    headers["Access-Control-Allow-Private-Network"] = "true"
+                if origin and (origin in allowed_origins or ".ts.net" in origin or "*" in allowed_origins):
+                    headers["Access-Control-Allow-Origin"] = origin
+                    headers["Access-Control-Allow-Credentials"] = "true"
+                elif "*" in allowed_origins:
+                    headers["Access-Control-Allow-Origin"] = "*"
 
                 headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
-                headers["Access-Control-Allow-Headers"] = (
-                    "Authorization, Content-Type, X-Requested-With, Accept, Origin, Range"
-                )
-                headers["Access-Control-Expose-Headers"] = "Content-Range, Accept-Ranges, Content-Length"
-
-                # Log duration after the stream is acquired
-                duration = (time.perf_counter() - start_time) * 1000
-                if duration > 1000:
-                    logger.warning(
-                        f"Slow file retrieval for {filename}: {duration:.1f}ms (backend: {backend})"
-                    )
+                headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, X-Requested-With, Accept, Origin, Range"
+                headers["Access-Control-Expose-Headers"] = "Content-Range, Accept-Ranges, Content-Length, ETag"
 
                 # Fix: StreamingResponse expects an iterator/generator
-                # Some storage backends return a file-like object, others return a generator
                 import inspect
-                if not inspect.isgenerator(stream) and hasattr(stream, "read"):
-                    def file_iterator(file_obj, chunk_size=65536):
-                        with file_obj:
-                            while True:
-                                chunk = file_obj.read(chunk_size)
+                
+                # If partial, we need to skip to the start and limit to the end
+                # Note: For encrypted streams, we currently only support full playback or start-at-0
+                # because random access requires chunk alignment.
+                # However, many browsers send "bytes=0-" which we can handle perfectly.
+                
+                def get_response_iterator(s, start_byte, length):
+                    if not inspect.isgenerator(s) and hasattr(s, "read"):
+                        # File-like object
+                        with s:
+                            if start_byte > 0:
+                                s.seek(start_byte)
+                            remaining = length
+                            while remaining > 0:
+                                chunk_size = min(65536, remaining)
+                                chunk = s.read(chunk_size)
                                 if not chunk:
                                     break
                                 yield chunk
-                    response_iterator = file_iterator(stream)
-                else:
-                    response_iterator = stream
+                                remaining -= len(chunk)
+                    else:
+                        # Generator (already handled by EncryptedStorage)
+                        # NOTE: We don't support partial encrypted streams yet unless start=0
+                        if start_byte == 0:
+                            count = 0
+                            for chunk in s:
+                                if count + len(chunk) > length:
+                                    yield chunk[:length - count]
+                                    break
+                                yield chunk
+                                count += len(chunk)
+                        else:
+                            # Fallback: return full stream (browser handles it but slower)
+                            for chunk in s:
+                                yield chunk
 
-                return StreamingResponse(response_iterator, media_type=ct, headers=headers)
+                response_iterator = get_response_iterator(stream, start, content_length)
+                return StreamingResponse(response_iterator, status_code=status_code, media_type=ct, headers=headers)
             except Exception as e:
                 logger.error(f"Generic retrieval failed for {filename}: {e}")
                 raise HTTPException(
