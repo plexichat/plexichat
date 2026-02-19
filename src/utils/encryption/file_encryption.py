@@ -254,8 +254,8 @@ class FileEncryptor:
         Returns:
             Tuple of (header, header_size)
         """
-        if len(data) < 5 or data[:5] != FILE_MAGIC:
-            raise ValueError("Invalid encrypted file: missing magic bytes")
+        if len(data) < 12 or data[:5] != FILE_MAGIC:
+            raise ValueError("Invalid encrypted file: missing or short magic bytes")
 
         offset = 5
         version = struct.unpack(">B", data[offset : offset + 1])[0]
@@ -270,16 +270,20 @@ class FileEncryptor:
         wrapped_key_len = struct.unpack(">H", data[offset : offset + 2])[0]
         offset += 2
 
+        if len(data) < offset + wrapped_key_len:
+            raise ValueError("Truncated encrypted file: missing wrapped key")
+            
         wrapped_key = data[offset : offset + wrapped_key_len]
         offset += wrapped_key_len
 
-        # Format detection: Stream format has original_size(8) + chunk_size(4) = 12 bytes remaining
-        # Blob format has nonce(12) + original_size(8) + checksum(64) = 84 bytes remaining
-        remaining = len(data) - offset
+        # Detection logic:
+        # Blob: Nonce(12) + Size(8) + Checksum(64) = 84 total after wrapped key
+        # Stream: Size(8) + ChunkSize(4) = 12 total after wrapped key
+        remaining_after_key = len(data) - offset
         
-        # If remaining bytes are around 12, it's a stream header
-        if remaining < 84:
-            if len(data) < offset + 12:
+        if remaining_after_key < 84:
+            # Likely a stream header (8+4 = 12 bytes)
+            if remaining_after_key < 12:
                 raise ValueError("Truncated stream header")
                 
             original_size = struct.unpack(">Q", data[offset : offset + 8])[0]
@@ -291,15 +295,12 @@ class FileEncryptor:
                 version=version,
                 key_version=key_version,
                 wrapped_key=wrapped_key,
-                nonce=b"", # Not used in stream format
+                nonce=b"", # Not in stream header
                 original_size=original_size,
-                checksum="", # Not stored in stream header
+                checksum="", # Not in stream header
             )
         else:
-            # Blob format header
-            if len(data) < offset + 84:
-                raise ValueError("Truncated blob header")
-                
+            # Blob format header (nonce + size + checksum)
             nonce = data[offset : offset + NONCE_SIZE]
             offset += NONCE_SIZE
 
@@ -342,85 +343,27 @@ class FileEncryptor:
         if len(wrapped_key) < wrapped_key_len:
             raise ValueError("Truncated header: wrapped key missing")
             
-        # 3. Peek at the next 8 bytes to determine format
-        # Blob: Nonce (12) + Size (8) + Checksum (64) = 84 total after wrapped key
-        # Stream: Size (8) + ChunkSize (4) = 12 total after wrapped key
+        # 3. Peek at the next 12 bytes to see if it's a stream or blob
+        # Stream header has exactly 12 bytes left (8 size + 4 chunk_size)
+        # Blob header has 12 (nonce) + 8 (size) + 64 (checksum) = 84 bytes left
         
-        # We need to distinguish them. Since we don't have peek(), we read 8 bytes.
-        size_or_nonce = stream.read(8)
-        if len(size_or_nonce) < 8:
-            raise ValueError("Truncated header: size/nonce data missing")
-            
-        # Strategy: Stream format has chunk_size(4) next. 
-        # Blob format has 4 more bytes of nonce, then original_size(8).
-        
-        # Read 4 more bytes
-        next_4 = stream.read(4)
-        if len(next_4) < 4:
+        # We read 12 bytes. If it's a stream, we are DONE.
+        # If it's a blob, we still have 8 + 64 = 72 bytes to go.
+        next_12 = stream.read(12)
+        if len(next_12) < 12:
             raise ValueError("Truncated header: format data missing")
             
-        # Current state: we've read 12 bytes after wrapped key.
-        # If it's a stream, we are DONE with the header.
-        # If it's a blob, we still need to read original_size(8) and checksum(64).
+        # To distinguish, we try to peek/heuristic or just assume based on size.
+        # However, the safest way is to check the version/format.
+        # For now, we use the fact that the next field in stream is size(8) and chunk_size(4)
+        # Whereas in blob it's nonce(12).
         
-        # To be 100% sure, we check if the next 64 bytes are ASCII hex.
-        # But we can't un-read. 
-        # Let's use the assumption from deserialize_header: 
-        # Large files use Stream format. Small blobs use Blob format.
-        # In reality, Blob format header is fixed size once wrapped_key is known.
+        # We'll look at the 12 bytes. If they look like a stream header:
+        potential_size = struct.unpack(">Q", next_12[:8])[0]
+        potential_chunk = struct.unpack(">I", next_12[8:12])[0]
         
-        # Wait, if we just read 64 more bytes and they are all 0 or not hex, it's a stream? No.
-        # Let's look at what we've read: prefix(12) + wrapped_key(N) + format_data(12).
-        
-        # Actually, the simplest way is to check the 'version' or a flag?
-        # Version 1 currently supports both.
-        
-        # Let's try to detect based on what we read in size_or_nonce.
-        # If it's a stream, it's the original_size (8 bytes).
-        # If it's a blob, it's the first 8 bytes of the 12-byte nonce.
-        
-        # We'll use a hack: read 64 more bytes. If they look like a hex checksum, it's a blob.
-        # BUT that might consume 64 bytes of encrypted data!
-        
-        # CORRECT SOLUTION: StreamingFileEncryptor and FileEncryptor should use different Magic or Versions.
-        # Since they don't, we'll try to read 64 bytes. If it fails or looks like binary, 
-        # we assume it was a stream and we just ate the first 64 bytes of ciphertext.
-        # Wait, that's bad.
-        
-        # Let's look at serialize_header:
-        # Blob: Magic(5), Ver(1), KeyVer(4), KeyLen(2), Key(N), Nonce(12), Size(8), Checksum(64)
-        # Stream: Magic(5), Ver(1), KeyVer(4), KeyLen(2), Key(N), Size(8), ChunkSize(4)
-        
-        # If we read 8 bytes after Key(N):
-        # Blob: first 8 bytes of Nonce
-        # Stream: Original Size
-        
-        # If we read 4 more:
-        # Blob: last 4 bytes of Nonce
-        # Stream: Chunk Size
-        
-        # If we read 8 more:
-        # Blob: Original Size
-        # Stream: First 8 bytes of ciphertext
-        
-        # If we read 64 more:
-        # Blob: Checksum
-        # Stream: Next 64 bytes of ciphertext
-        
-        # Actually, the Blob header has a fixed 12+12+8+64 = 96 bytes after the Key(N).
-        # The Stream header has exactly 8+4 = 12 bytes after the Key(N).
-        
-        # Since I am the one who wrote the code, I know that StreamingFileEncryptor 
-        # currently does NOT write a checksum.
-        
-        # We've read 12 bytes after Key(N). If it's a stream, we are exactly at the end of the header.
-        # Let's assume it's a stream if the 12 bytes look like a valid size and a standard chunk size (256KB).
-        
-        potential_size = struct.unpack(">Q", size_or_nonce)[0]
-        potential_chunk = struct.unpack(">I", next_4)[0]
-        
+        # If chunk size is standard (256KB or 1MB), it's a stream.
         if potential_chunk == CHUNK_SIZE or potential_chunk == 1024*1024:
-            # High confidence it's a stream header
             header = EncryptedFileHeader(
                 version=version,
                 key_version=key_version,
@@ -431,11 +374,9 @@ class FileEncryptor:
             )
             return header, 12 + wrapped_key_len + 12
         else:
-            # Assume it's a blob header. We need to read more.
-            # We already read 12 bytes after Key(N). This IS the nonce.
-            nonce = size_or_nonce + next_4
-            
-            # Now read original_size(8) and checksum(64)
+            # Assume it's a blob header. We already read the 12-byte nonce.
+            nonce = next_12
+            # Read original_size(8) and checksum(64)
             rem = stream.read(8 + 64)
             if len(rem) < 72:
                 raise ValueError("Truncated blob header: missing size/checksum")
