@@ -513,7 +513,22 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                         f"Slow file retrieval for {filename}: {duration:.1f}ms (backend: {backend})"
                     )
 
-                return StreamingResponse(stream, media_type=ct, headers=headers)
+                # Fix: StreamingResponse expects an iterator/generator
+                # Some storage backends return a file-like object, others return a generator
+                import inspect
+                if not inspect.isgenerator(stream) and hasattr(stream, "read"):
+                    def file_iterator(file_obj, chunk_size=65536):
+                        with file_obj:
+                            while True:
+                                chunk = file_obj.read(chunk_size)
+                                if not chunk:
+                                    break
+                                yield chunk
+                    response_iterator = file_iterator(stream)
+                else:
+                    response_iterator = stream
+
+                return StreamingResponse(response_iterator, media_type=ct, headers=headers)
             except Exception as e:
                 logger.error(f"Generic retrieval failed for {filename}: {e}")
                 raise HTTPException(

@@ -1501,11 +1501,22 @@ class MediaManager(BaseManager):
             broad_query = """
                 SELECT conversation_id FROM msg_attachments a
                 JOIN msg_messages m ON a.message_id = m.id
-                WHERE a.filename = ? AND a.deleted = 0
+                WHERE (a.filename = ? OR a.url LIKE '%' || ?) AND a.deleted = 0
             """
-            rows = self._db.fetch_all(broad_query, (search_filename,))
+            rows = self._db.fetch_all(broad_query, (search_filename, search_filename))
 
-        logger.debug(f"check_file_access: found {len(rows) if rows else 0} potential attachment rows for {search_filename}")
+        # FALLBACK: If still no rows, check if the requester shares ANY conversation with the uploader.
+        # This allows viewing "orphaned" uploads in a DM context where we know they are interacting.
+        if not rows and uploader_id:
+            shared_conv_query = """
+                SELECT p1.conversation_id 
+                FROM msg_participants p1
+                JOIN msg_participants p2 ON p1.conversation_id = p2.conversation_id
+                WHERE p1.user_id = ? AND p2.user_id = ?
+            """
+            rows = self._db.fetch_all(shared_conv_query, (user_id, uploader_id))
+
+        logger.debug(f"check_file_access: found {len(rows) if rows else 0} potential contexts for {search_filename}")
 
         if rows and self._messaging:
             for r in rows:
