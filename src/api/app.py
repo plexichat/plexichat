@@ -513,10 +513,14 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     headers["Access-Control-Allow-Credentials"] = "true"
                 elif "*" in allowed_origins:
                     headers["Access-Control-Allow-Origin"] = "*"
+                else:
+                    # Robust fallback: if no Origin or mismatch, use * if not requiring credentials
+                    headers["Access-Control-Allow-Origin"] = "*"
 
                 headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
                 headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, X-Requested-With, Accept, Origin, Range"
                 headers["Access-Control-Expose-Headers"] = "Content-Range, Accept-Ranges, Content-Length, ETag"
+                headers["Vary"] = "Origin, Range"
 
                 # Helper to correctly slice any stream (file or generator)
                 def get_response_iterator(s, skip, limit):
