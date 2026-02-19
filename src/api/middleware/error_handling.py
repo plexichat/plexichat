@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from starlette.types import ASGIApp, Receive, Send, Scope
+from starlette.types import ASGIApp, Receive, Send, Scope, Message
 
 from typing import Any, Dict, cast
 import traceback
