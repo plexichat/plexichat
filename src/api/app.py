@@ -464,9 +464,33 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 ):
                     return Response(status_code=304)
 
-                # We serve everything as 200 OK with a full Content-Length to stop browser retry loops.
-                # Tailscale/Browsers are very sensitive to missing lengths on media.
-                status_code = 200
+                # --- Range Request Handling ---
+                range_header = request.headers.get("Range")
+                start = 0
+                end = size - 1
+                is_partial = False
+                
+                if range_header and range_header.startswith("bytes="):
+                    try:
+                        range_val = range_header.replace("bytes=", "")
+                        if "-" in range_val:
+                            r_start, r_end = range_val.split("-")
+                            if r_start:
+                                start = int(r_start)
+                            if r_end:
+                                end = int(r_end)
+                        
+                        # Constrain range
+                        end = min(end, size - 1)
+                        if start <= end:
+                            is_partial = True
+                        else:
+                            start = 0
+                    except Exception:
+                        is_partial = False
+
+                content_length = end - start + 1
+                status_code = 206 if is_partial else 200
                 
                 # Add CORS headers manually for maximum reliability
                 origin = request.headers.get("Origin")
@@ -482,30 +506,59 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     "Content-Disposition": f'attachment; filename="{safe_name}"' if download else "inline",
                     "Cache-Control": "private, max-age=3600",
                     "ETag": etag,
-                    "Accept-Ranges": "none", # Disable Range to force full load and stop loops
-                    "Content-Length": str(size),
-                    "Vary": "Origin",
-                    "Access-Control-Expose-Headers": "Content-Length, ETag",
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": str(content_length),
+                    "Vary": "Origin, Range",
+                    "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length, ETag",
                     **cors_headers
                 }
 
-                # Helper to correctly yield any stream
-                def get_response_iterator(s):
+                if is_partial:
+                    headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+
+                # Helper to correctly slice any stream (file or generator)
+                def get_response_iterator(s, skip, limit):
+                    import inspect
+                    count = 0
+                    yielded = 0
+                    
                     try:
-                        # Some streams are file-like, some are generators
-                        if hasattr(s, "read"):
+                        if not inspect.isgenerator(s) and hasattr(s, "read") and hasattr(s, "seek"):
+                            # Seekable file-like
                             with s:
-                                while True:
-                                    chunk = s.read(65536)
+                                if skip > 0:
+                                    s.seek(skip)
+                                while yielded < limit:
+                                    chunk = s.read(min(65536, limit - yielded))
                                     if not chunk: break
                                     yield chunk
+                                    yielded += len(chunk)
                         else:
+                            # Generator or non-seekable: Manual skip and yield
                             for chunk in s:
-                                yield chunk
+                                chunk_len = len(chunk)
+                                
+                                # Skip logic
+                                if count + chunk_len <= skip:
+                                    count += chunk_len
+                                    continue
+                                
+                                # Calculate slice
+                                chunk_start = max(0, skip - count)
+                                chunk_end = min(chunk_len, chunk_start + (limit - yielded))
+                                
+                                if chunk_start < chunk_end:
+                                    part = chunk[chunk_start:chunk_end]
+                                    yield part
+                                    yielded += len(part)
+                                
+                                count += chunk_len
+                                if yielded >= limit:
+                                    break
                     except Exception as e:
                         logger.error(f"Media stream interrupted for {filename}: {e}")
 
-                response_iterator = get_response_iterator(stream)
+                response_iterator = get_response_iterator(stream, start, content_length)
                 return StreamingResponse(response_iterator, status_code=status_code, media_type=ct, headers=headers)
             except Exception as e:
                 logger.error(f"Generic retrieval failed for {filename}: {e}")

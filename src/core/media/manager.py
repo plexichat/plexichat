@@ -1423,13 +1423,88 @@ class MediaManager(BaseManager):
     def check_file_access(self, filename: str, user_id: int) -> bool:
         """
         Check if a user has permission to access a media file.
-        DEBUG MODE: Allow all authenticated users.
+
+        Access is granted if:
+        1. User is the original uploader
+        2. File is an attachment in a message within a conversation the user is in
+        3. File is a public resource (current avatar or server icon)
+        4. File is a thumbnail of a file the user has access to
+
+        Args:
+            filename: The unique filename stored in media_files
+            user_id: ID of the user requesting access
+
+        Returns:
+            True if access granted, False otherwise
         """
-        # If user_id is provided, they are authenticated.
-        # We allow access to rule out permission bugs.
-        if user_id:
+        # --- Thumbnail Handling ---
+        if "thumbnails/" in filename:
+            try:
+                parts = filename.split("/")
+                parent_file_id = parts[-2] if len(parts) >= 2 else None
+                if parent_file_id and parent_file_id.isdigit():
+                    parent_row = self._db.fetch_one(
+                        "SELECT filename FROM media_files WHERE id = ? AND deleted = 0",
+                        (int(parent_file_id),)
+                    )
+                    if parent_row:
+                        return self.check_file_access(parent_row["filename"], user_id)
+            except Exception as e:
+                logger.warning(f"Error checking thumbnail access for {filename}: {e}")
+
+        # 1. Check if user is the uploader (fast path)
+        row = self._db.fetch_one(
+            "SELECT id, uploaded_by FROM media_files WHERE filename = ? AND deleted = 0",
+            (filename,),
+        )
+        if not row:
+            return False
+
+        file_id = row["id"]
+        uploader_id = int(row["uploaded_by"])
+        if uploader_id == int(user_id):
             return True
-            
+
+        # 2. Check if it's a message attachment
+        search_filename = os.path.basename(filename)
+        query = """
+            SELECT m.conversation_id 
+            FROM msg_messages m
+            JOIN msg_attachments a ON m.id = a.message_id
+            WHERE (a.filename = ? OR a.url LIKE '%' || ?) AND a.deleted = 0
+        """
+        rows = self._db.fetch_all(query, (search_filename, search_filename))
+
+        # FALLBACK: Shared conversation check
+        if not rows and uploader_id:
+            shared_conv_query = """
+                SELECT p1.conversation_id 
+                FROM msg_participants p1
+                JOIN msg_participants p2 ON p1.conversation_id = p2.conversation_id
+                WHERE p1.user_id = ? AND p2.user_id = ?
+            """
+            rows = self._db.fetch_all(shared_conv_query, (user_id, uploader_id))
+
+        if rows and self._messaging:
+            for r in rows:
+                conv_id = r["conversation_id"]
+                try:
+                    manager = self._messaging if hasattr(self._messaging, "is_participant") else self._messaging.get_manager()
+                    if manager.is_participant(conv_id, user_id):
+                        return True
+                except Exception:
+                    pass
+
+        # 3. Public resources
+        avatar_row = self._db.fetch_one("SELECT 1 FROM auth_users WHERE avatar_url LIKE '%' || ?", (search_filename,))
+        if avatar_row: return True
+
+        icon_row = self._db.fetch_one(
+            "SELECT 1 FROM srv_servers s JOIN srv_members m ON s.id = m.server_id WHERE s.icon_url LIKE '%' || ? AND m.user_id = ? AND s.deleted = 0",
+            (search_filename, user_id)
+        )
+        if icon_row: return True
+
         return False
 
     def _get_storage_by_backend(self, backend: str) -> StorageBackendBase:
