@@ -465,7 +465,6 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     return Response(status_code=304)
 
                 headers = {
-                    "Content-Length": str(size),
                     "Content-Disposition": f'attachment; filename="{safe_name}"'
                     if download
                     else "inline",
