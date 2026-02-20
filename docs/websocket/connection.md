@@ -7,7 +7,7 @@ Detailed guide for establishing and maintaining a WebSocket connection.
 Connect to the gateway endpoint:
 
 ```
-wss://gateway.example.com/gateway
+wss://api.plexichat.com/gateway
 ```
 
 ## HELLO (Opcode 10)
@@ -69,7 +69,7 @@ After successful IDENTIFY, receive READY:
       "username": "johndoe"
     },
     "session_id": "session_id_here",
-    "resume_gateway_url": "wss://gateway.example.com/gateway"
+    "resume_gateway_url": "wss://api.plexichat.com/gateway"
   }
 }
 ```

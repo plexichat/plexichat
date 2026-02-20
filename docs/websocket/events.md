@@ -35,7 +35,7 @@ Sent after successful IDENTIFY.
       "username": "johndoe"
     },
     "session_id": "session_id_here",
-    "resume_gateway_url": "wss://gateway.example.com/gateway"
+    "resume_gateway_url": "wss://api.plexichat.com/gateway"
   }
 }
 ```

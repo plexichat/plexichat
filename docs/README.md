@@ -60,7 +60,7 @@ The API base URL is dynamically determined based on your deployment:
 
 | Environment | Base URL |
 |-------------|----------|
-| Production | `https://plexichat-app.tail79f345.ts.net/api/v1` |
+| Production | `https://api.plexichat.com/api/v1` |
 | Development | `http://localhost:8000/api/v1` |
 
 All API endpoints are relative to this base URL.
@@ -71,7 +71,7 @@ The WebSocket gateway URL is dynamically determined based on your deployment:
 
 | Environment | Base URL |
 |-------------|----------|
-| Production | `wss://plexichat-app.tail79f345.ts.net/gateway` |
+| Production | `wss://api.plexichat.com/gateway` |
 | Development | `ws://localhost:8000/gateway` |
 
 All WebSocket connections use this base URL.

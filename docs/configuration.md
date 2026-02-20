@@ -16,10 +16,10 @@ The API base URL is dynamically determined based on your deployment:
 
 | Environment | Base URL |
 |-------------|----------|
-| Production | `https://plexichat-app.tail79f345.ts.net/api/v1` |
+| Production | `https://api.plexichat.com/api/v1` |
 | Development | `http://localhost:8000/api/v1` |
 
-All API endpoints are relative to this base URL. For example, `GET /api/v1/users/@me` becomes `https://plexichat-app.tail79f345.ts.net/api/v1/users/@me` in production.
+All API endpoints are relative to this base URL. For example, `GET /api/v1/users/@me` becomes `https://api.plexichat.com/api/v1/users/@me` in production.
 
 ## Configuration Sections
 
@@ -381,8 +381,8 @@ docs:
   title: PlexiChat API Documentation
   
   # Base URLs shown in documentation
-  base_url: https://api.example.com
-  websocket_url: wss://gateway.example.com
+  base_url: https://api.plexichat.com/api/v1
+  websocket_url: wss://api.plexichat.com/gateway
   
   # Theme
   theme:

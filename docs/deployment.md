@@ -70,7 +70,7 @@ gunicorn -w 4 -k uvicorn.workers.UvicornWorker src.api.app:app --bind 0.0.0.0:80
 ```nginx
 server {
     listen 80;
-    server_name api.yourdomain.com;
+    server_name api.plexichat.com;
 
     location / {
         proxy_pass http://localhost:8000;
@@ -109,10 +109,10 @@ The API base URL is dynamically determined based on your deployment:
 
 | Environment | Base URL |
 |-------------|----------|
-| Production | `https://plexichat-app.tail79f345.ts.net/api/v1` |
+| Production | `https://api.plexichat.com/api/v1` |
 | Development | `http://localhost:8000/api/v1` |
 
-All API endpoints are relative to this base URL. For example, `GET /api/v1/users/@me` becomes `https://plexichat-app.tail79f345.ts.net/api/v1/users/@me` in production.
+All API endpoints are relative to this base URL. For example, `GET /api/v1/users/@me` becomes `https://api.plexichat.com/api/v1/users/@me` in production.
 
 ## Database Deployment
 

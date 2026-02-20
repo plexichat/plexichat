@@ -122,8 +122,8 @@ class DocsConfig:
     path: str = "/docs/api"
     title: str = "PlexiChat Documentation"
     description: str = "Complete deployment and API documentation for PlexiChat"
-    base_url: str = "https://api.example.com"
-    websocket_url: str = "wss://gateway.example.com"
+    base_url: str = "https://api.plexichat.com/api/v1"
+    websocket_url: str = "wss://api.plexichat.com/gateway"
     theme: ThemeConfig = field(default_factory=ThemeConfig)
     rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
@@ -203,8 +203,8 @@ def _load_docs_config() -> DocsConfig:
         description=docs_conf.get(
             "description", "Complete deployment and API documentation for PlexiChat"
         ),
-        base_url=docs_conf.get("base_url", "https://api.example.com"),
-        websocket_url=docs_conf.get("websocket_url", "wss://gateway.example.com"),
+        base_url=docs_conf.get("base_url", "https://api.plexichat.com/api/v1"),
+        websocket_url=docs_conf.get("websocket_url", "wss://api.plexichat.com/gateway"),
         theme=theme,
         rate_limit=rate_limit,
         cache=cache,
