@@ -3,9 +3,17 @@ Help routes - Serve user-facing help documentation.
 """
 
 from fastapi import APIRouter
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
+import os
 
 router = APIRouter(tags=["Help"])
+
+
+@router.get("/robots.txt", include_in_schema=False)
+async def robots_txt():
+    """Serve robots.txt."""
+    static_path = os.path.join(os.getcwd(), "static", "robots.txt")
+    return FileResponse(static_path)
 
 
 def _get_help_style():

@@ -1,0 +1,7 @@
+User-agent: *
+Disallow: /
+Allow: /api/v1/status
+Allow: /docs/api
+Allow: /redoc
+
+Sitemap: https://plexichat.com/sitemap.xml
