@@ -134,6 +134,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "http://localhost:8000",
                 "http://127.0.0.1:8000",
                 "https://plexichat.com",
+                "https://app.plexichat.com",
                 "https://api.plexichat.com",
                 "http://localhost:8443",
 
