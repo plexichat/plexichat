@@ -64,7 +64,7 @@ class MediasoupWSAdapter(SFUAdapter):
         self,
         ws_url: str,
         timeout: int = 10,
-        origin: str = "https://plexichat-app.tail79f345.ts.net:8443",
+        origin: str = "https://localhost:4443",
     ):
         """
         Initialize the mediasoup WebSocket adapter.

@@ -739,7 +739,7 @@ class PlexiChatServer:
                         ),
                         mediasoup_origin=voice_config.get(
                             "mediasoup_origin",
-                            "https://plexichat-app.tail79f345.ts.net:8443",
+                            "https://localhost:4443",
                         ),
                         janus_url=voice_config.get(
                             "janus_url", "http://localhost:8088/janus"
