@@ -6,7 +6,6 @@ from fastapi import FastAPI, Request, HTTPException, status, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 import sys
-import time
 import re
 import unicodedata
 import threading
@@ -70,7 +69,6 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         setup_exception_handlers,
         ErrorHandlingMiddleware,
         LoggingMiddleware,
-        SecurityHeadersMiddleware,
         create_rate_limit_middleware,
         IPBlockingMiddleware,
         DatabaseMiddleware,
@@ -165,8 +163,8 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         try:
             docs_conf = get_docs_config()
             docs_path = docs_conf.path
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to load docs config: {e}")
 
         docs_router = create_docs_router()
         app.include_router(docs_router, prefix=docs_path, tags=["Documentation"])
@@ -276,8 +274,8 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 if sig_valid:
                     is_signed = True
                     logger.debug(f"Access granted via signed URL: {filename}")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Signed URL verification failed for {filename}: {e}")
 
             # --- Authentication (Required if no valid signature or internal) ---
             is_internal = request.scope.get("state", {}).get("is_internal", False)
@@ -357,8 +355,8 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     admin_mod = api_module.get_admin()
                     if admin_mod and admin_mod.validate_session(token):
                         is_privileged = True
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Admin session validation failed for {filename}: {e}")
 
                 if not is_privileged:
                     # Resolve user_id from token info
@@ -422,7 +420,6 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 )
 
             file_id = row["id"]
-            backend = row["storage_backend"]
             original_filename = row["original_filename"]
             download = request.query_params.get("download", "0") == "1"
 
@@ -432,7 +429,6 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             # 2. Authentication works (we use our own session/cookie)
             # 3. CORS/AccessDenied issues with direct S3 redirects are avoided
             try:
-                start_time = time.perf_counter()
                 # Optimized: Use metadata we already have to skip DB lookup
                 # stream, size, ct = media.get_file_stream(file_id)
                 stream, size, ct = media.get_file_stream_optimized(
@@ -496,7 +492,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 origin = request.headers.get("Origin")
                 cors_headers = {}
                 allowed_origins = config.cors_origins
-                if origin and (origin in allowed_origins or ".ts.net" in origin or "*" in allowed_origins):
+                if origin and (origin in allowed_origins or "*" in allowed_origins):
                     cors_headers["Access-Control-Allow-Origin"] = origin
                     cors_headers["Access-Control-Allow-Credentials"] = "true"
                 elif "*" in allowed_origins:
@@ -530,7 +526,8 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                                     s.seek(skip)
                                 while yielded < limit:
                                     chunk = s.read(min(65536, limit - yielded))
-                                    if not chunk: break
+                                    if not chunk:
+                                        break
                                     yield chunk
                                     yielded += len(chunk)
                         else:

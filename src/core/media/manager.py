@@ -1475,16 +1475,6 @@ class MediaManager(BaseManager):
         """
         rows = self._db.fetch_all(query, (search_filename, search_filename))
 
-        # FALLBACK: Shared conversation check
-        if not rows and uploader_id:
-            shared_conv_query = """
-                SELECT p1.conversation_id 
-                FROM msg_participants p1
-                JOIN msg_participants p2 ON p1.conversation_id = p2.conversation_id
-                WHERE p1.user_id = ? AND p2.user_id = ?
-            """
-            rows = self._db.fetch_all(shared_conv_query, (user_id, uploader_id))
-
         if rows and self._messaging:
             for r in rows:
                 conv_id = r["conversation_id"]
@@ -1492,8 +1482,10 @@ class MediaManager(BaseManager):
                     manager = self._messaging if hasattr(self._messaging, "is_participant") else self._messaging.get_manager()
                     if manager.is_participant(conv_id, user_id):
                         return True
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(
+                        f"Participant check failed for conversation {conv_id}: {e}"
+                    )
 
         # 3. Public resources
         avatar_row = self._db.fetch_one("SELECT 1 FROM auth_users WHERE avatar_url LIKE '%' || ?", (search_filename,))
@@ -1528,8 +1520,8 @@ class MediaManager(BaseManager):
         if row["metadata"]:
             try:
                 metadata = json.loads(row["metadata"])
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to parse media metadata for {row['id']}: {e}")
 
         # Get the correct storage for this file's backend
         backend = row["storage_backend"]

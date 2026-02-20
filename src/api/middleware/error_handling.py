@@ -10,6 +10,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Receive, Send, Scope, Message
 
 from typing import Any, Dict, cast
+import re
 import traceback
 import utils.config as config
 import utils.logger as logger
@@ -55,10 +56,20 @@ def get_status_code_for_exception(exc: Exception) -> int:
     return 500
 
 
-def format_error_response(code: int, message: str) -> dict:
-    """Format error response in standard format."""
-    # Sanitize message to prevent PII leakage
+def _sanitize_error_message(code: int, message: str, debug: bool) -> str:
     safe_message = sanitize_log_message(message)
+    if debug:
+        return safe_message
+    if code >= 500:
+        return "Internal server error"
+    if re.search(r"\b(select|insert|update|delete|from|where|join)\b", safe_message, re.I):
+        return "Invalid request"
+    return safe_message
+
+
+def format_error_response(code: int, message: str, debug: bool = False) -> dict:
+    """Format error response in standard format."""
+    safe_message = _sanitize_error_message(code, message, debug)
     return {"error": {"code": code, "message": safe_message}}
 
 
@@ -140,7 +151,6 @@ class ErrorHandlingMiddleware:
             # Determine status code and message
             status_code = get_status_code_for_exception(exc)
 
-            # Don't leak details for 500 errors in production
             debug = False
             try:
                 debug = config.get("api", {}).get("debug", False)
@@ -148,8 +158,6 @@ class ErrorHandlingMiddleware:
                 pass
 
             message = str(exc)
-            if status_code == 500 and not debug:
-                message = "Internal server error"
 
             # Check for self-test debug mode
             request = Request(scope)
@@ -182,7 +190,7 @@ class ErrorHandlingMiddleware:
             headers = _get_cors_headers(request)
 
             # Create response content
-            content = format_error_response(status_code, message)
+            content = format_error_response(status_code, message, debug)
             if include_traceback:
                 content["error"]["traceback"] = "".join(traceback.format_exc())
 
@@ -203,7 +211,6 @@ def setup_exception_handlers(app: FastAPI):
         detail = exc.detail
         headers = _get_cors_headers(request)
 
-        # Don't leak details for 500 errors in production
         debug = False
         try:
             debug = config.get("api", {}).get("debug", False)
@@ -214,12 +221,11 @@ def setup_exception_handlers(app: FastAPI):
             detail_dict = cast(Dict[str, Any], detail)
             error = detail_dict.get("error")
             if isinstance(error, dict):
-                if exc.status_code == 500 and not debug:
-                    error["message"] = "Internal server error"
-                else:
-                    msg = error.get("message")
-                    if msg and isinstance(msg, str):
-                        error["message"] = sanitize_log_message(msg)
+                msg = error.get("message")
+                if msg and isinstance(msg, str):
+                    error["message"] = _sanitize_error_message(
+                        exc.status_code, msg, debug
+                    )
                 detail_dict["error"] = error
             return JSONResponse(
                 status_code=exc.status_code, content=detail_dict, headers=headers
@@ -227,7 +233,7 @@ def setup_exception_handlers(app: FastAPI):
 
         return JSONResponse(
             status_code=exc.status_code,
-            content=format_error_response(exc.status_code, str(detail)),
+            content=format_error_response(exc.status_code, str(detail), debug),
             headers=headers,
         )
 

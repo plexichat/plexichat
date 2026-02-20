@@ -437,8 +437,10 @@ def get_dm_channels(
             if recipient_ids:
                 try:
                     users_map = auth.get_user_profiles_bulk(recipient_ids)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(
+                        f"Bulk profile fetch failed for DM recipients: {e}"
+                    )
 
             for ch in channels:
                 try:
@@ -454,8 +456,10 @@ def get_dm_channels(
                                 user = auth.get_user(rid)
                                 if user:
                                     recipient_username = user.username
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                logger.debug(
+                                    f"Failed to fetch user profile for {rid}: {e}"
+                                )
 
                     result.append(
                         DMChannelResponse(
