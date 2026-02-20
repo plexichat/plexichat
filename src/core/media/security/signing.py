@@ -92,7 +92,7 @@ class UrlSigner:
         if not all([signature, expires_str, file_id_str]):
             raise SignatureInvalidError("Missing signature parameters")
 
-        assert expires_str is not None and file_id_str is not None  # Checked above
+        assert signature is not None and expires_str is not None and file_id_str is not None
 
         try:
             expires_at = int(expires_str)

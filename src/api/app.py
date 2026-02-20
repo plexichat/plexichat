@@ -460,8 +460,10 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 ):
                     return Response(status_code=304)
 
-                # --- Range Request Handling ---
-                range_header = request.headers.get("Range")
+                import inspect
+
+                is_seekable = not inspect.isgenerator(stream) and hasattr(stream, "seek") and hasattr(stream, "tell")
+                range_header = request.headers.get("Range") if is_seekable else None
                 start = 0
                 end = size - 1
                 is_partial = False
@@ -503,11 +505,12 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     "Cache-Control": "private, max-age=3600",
                     "ETag": etag,
                     "Accept-Ranges": "bytes",
-                    "Content-Length": str(content_length),
                     "Vary": "Origin, Range",
                     "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length, ETag",
                     **cors_headers
                 }
+                if is_seekable:
+                    headers["Content-Length"] = str(content_length)
 
                 if is_partial:
                     headers["Content-Range"] = f"bytes {start}-{end}/{size}"
