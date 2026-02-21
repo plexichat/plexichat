@@ -140,7 +140,6 @@ class MediaManager(BaseManager):
         except ImportError:
             self._compression_manager = None
 
-
         logger.info("Media module initialized")
 
     def _load_config(self) -> Dict[str, Any]:
@@ -965,8 +964,7 @@ class MediaManager(BaseManager):
     def get_file_by_filename(self, filename: str) -> Optional[MediaFile]:
         """Get file by stored filename."""
         row = self._db.fetch_one(
-            "SELECT * FROM media_files WHERE filename = ? AND deleted = 0",
-            (filename,)
+            "SELECT * FROM media_files WHERE filename = ? AND deleted = 0", (filename,)
         )
 
         if not row:
@@ -1445,7 +1443,7 @@ class MediaManager(BaseManager):
                 if parent_file_id and parent_file_id.isdigit():
                     parent_row = self._db.fetch_one(
                         "SELECT filename FROM media_files WHERE id = ? AND deleted = 0",
-                        (int(parent_file_id),)
+                        (int(parent_file_id),),
                     )
                     if parent_row:
                         return self.check_file_access(parent_row["filename"], user_id)
@@ -1460,7 +1458,6 @@ class MediaManager(BaseManager):
         if not row:
             return False
 
-        file_id = row["id"]
         uploader_id = int(row["uploaded_by"])
         if uploader_id == int(user_id):
             return True
@@ -1479,7 +1476,11 @@ class MediaManager(BaseManager):
             for r in rows:
                 conv_id = r["conversation_id"]
                 try:
-                    manager = self._messaging if hasattr(self._messaging, "is_participant") else self._messaging.get_manager()
+                    manager = (
+                        self._messaging
+                        if hasattr(self._messaging, "is_participant")
+                        else self._messaging.get_manager()
+                    )
                     if manager.is_participant(conv_id, user_id):
                         return True
                 except Exception as e:
@@ -1488,14 +1489,19 @@ class MediaManager(BaseManager):
                     )
 
         # 3. Public resources
-        avatar_row = self._db.fetch_one("SELECT 1 FROM auth_users WHERE avatar_url LIKE '%' || ?", (search_filename,))
-        if avatar_row: return True
+        avatar_row = self._db.fetch_one(
+            "SELECT 1 FROM auth_users WHERE avatar_url LIKE '%' || ?",
+            (search_filename,),
+        )
+        if avatar_row:
+            return True
 
         icon_row = self._db.fetch_one(
             "SELECT 1 FROM srv_servers s JOIN srv_members m ON s.id = m.server_id WHERE s.icon_url LIKE '%' || ? AND m.user_id = ? AND s.deleted = 0",
-            (search_filename, user_id)
+            (search_filename, user_id),
         )
-        if icon_row: return True
+        if icon_row:
+            return True
 
         return False
 

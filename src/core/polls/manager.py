@@ -48,7 +48,6 @@ class PollManager(BaseManager):
         self._messaging = messaging_module
         self._config = self._load_config()
 
-
         logger.info("Poll module initialized")
 
     def _load_config(self) -> Dict[str, Any]:

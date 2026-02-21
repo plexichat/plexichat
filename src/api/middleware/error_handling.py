@@ -62,7 +62,9 @@ def _sanitize_error_message(code: int, message: str, debug: bool) -> str:
         return safe_message
     if code >= 500:
         return "Internal server error"
-    if re.search(r"\b(select|insert|update|delete|from|where|join)\b", safe_message, re.I):
+    if re.search(
+        r"\b(select|insert|update|delete|from|where|join)\b", safe_message, re.I
+    ):
         return "Invalid request"
     return safe_message
 
@@ -132,10 +134,11 @@ class ErrorHandlingMiddleware:
             # because http.response.start has already been sent to the client.
             if response_started:
                 import utils.logger as logger
+
                 logger.error(
                     f"Exception occurred after response started: {type(exc).__name__}: {exc}. "
                     "Cannot send error JSON as headers were already transmitted.",
-                    exc_info=True
+                    exc_info=True,
                 )
                 # Raising here will likely cause the server to close the connection
                 raise exc

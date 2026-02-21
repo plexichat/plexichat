@@ -100,7 +100,14 @@ def get_api_config() -> APIConfig:
 
     cors_headers = api_conf.get(
         "cors_allow_headers",
-        ["Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin", "Range"],
+        [
+            "Authorization",
+            "Content-Type",
+            "X-Requested-With",
+            "Accept",
+            "Origin",
+            "Range",
+        ],
     )
     if cors_headers == ["*"] or "*" in cors_headers:
         cors_headers = [

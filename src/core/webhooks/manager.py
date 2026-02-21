@@ -67,7 +67,6 @@ class WebhookManager(BaseManager):
         self._embeds = embeds_module
         self._config = self._load_config()
 
-
         logger.info("Webhook module initialized")
 
     def _load_config(self) -> Dict[str, Any]:

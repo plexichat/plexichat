@@ -66,7 +66,9 @@ def _message_to_response(
         try:
             if isinstance(created_at_value, (int, float)):
                 created_at = int(created_at_value)
-            elif isinstance(created_at_value, str) and created_at_value.strip().isdigit():
+            elif (
+                isinstance(created_at_value, str) and created_at_value.strip().isdigit()
+            ):
                 created_at = int(created_at_value.strip())
             else:
                 created_at = int(created_at_value)

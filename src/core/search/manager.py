@@ -36,7 +36,12 @@ from .exceptions import (
     SearchRateLimitError,
 )
 from .query import QueryParser, FilterProcessor, RankingEngine
-from .indexer import SQLiteFTS5Indexer, ElasticsearchIndexer, MeilisearchIndexer, PostgresIndexer
+from .indexer import (
+    SQLiteFTS5Indexer,
+    ElasticsearchIndexer,
+    MeilisearchIndexer,
+    PostgresIndexer,
+)
 from .indexer.base import IndexerConfig
 from .discovery import DiscoveryManager
 from src.core.database import cache_get, cache_set, redis_available
@@ -77,7 +82,6 @@ class SearchManager(BaseManager):
         self._messaging = messaging_module
         self._servers = servers_module
         self._config = self._load_config()
-
 
         self._indexer = self._create_indexer()
         self._indexer.initialize()

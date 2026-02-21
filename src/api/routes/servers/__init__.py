@@ -38,17 +38,13 @@ from src.core.database import (
 )
 
 import utils.logger as logger
-
-router = APIRouter(tags=["Servers"])
-
 from .helpers import (
     _server_to_response,
     _channel_to_response,
-    _server_to_dict,
-    _channel_to_dict,
     _automod_rule_to_response,
-    _get_icon_size_limit,
 )
+
+router = APIRouter(tags=["Servers"])
 
 
 @router.get(
@@ -1771,9 +1767,6 @@ async def get_audit_log(
         raise HTTPException(
             status_code=500, detail={"error": {"code": 500, "message": str(e)}}
         )
-
-
- 
 
 
 @router.get(

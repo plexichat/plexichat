@@ -177,7 +177,7 @@ class EncryptedStorage(StorageBackendBase):
 
             # Get stream and parse header
             enc_stream, _ = self._backend.retrieve_stream(enc_path)
-            
+
             try:
                 # Read header to get original size and key info
                 # Note: This consumes the beginning of the stream
@@ -197,13 +197,13 @@ class EncryptedStorage(StorageBackendBase):
                     # But decrypt_stream_generator expects to read the header itself.
                     # Strategy: Close this stream and let the generator open a fresh one,
                     # or better, modify the generator to accept a pre-parsed header.
-                    
+
                     # Since decrypt_stream_generator is already complex, we just close this
                     # and let the generator do its job. The header parsing is fast.
                     enc_stream.close()
-                    
+
                     fresh_enc_stream, _ = self._backend.retrieve_stream(enc_path)
-                    
+
                     def cleanup_wrapper(gen, stream_to_close):
                         try:
                             yield from gen
@@ -212,7 +212,7 @@ class EncryptedStorage(StorageBackendBase):
                                 stream_to_close.close()
                             except Exception:
                                 pass
-                                
+
                     generator = self._streaming_encryptor.decrypt_stream_generator(
                         fresh_enc_stream, aad
                     )
@@ -278,7 +278,9 @@ class EncryptedStorage(StorageBackendBase):
                     # Optimized: Read only enough for the header using a stream
                     stream, _ = self._backend.retrieve_stream(enc_path)
                     with stream:
-                        header, _ = self._encryptor.deserialize_header_from_stream(stream)
+                        header, _ = self._encryptor.deserialize_header_from_stream(
+                            stream
+                        )
                         return header.original_size
                 except Exception as e:
                     logger.debug(f"Failed to read header from stream for {path}: {e}")

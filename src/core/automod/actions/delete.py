@@ -47,7 +47,7 @@ class DeleteMessageAction(BaseAction):
                     "DELETE FROM msg_attachments WHERE message_id = ?",
                     (violation.message_id,),
                 )
-                
+
                 # Manual invalidation since we used raw SQL
                 from src.core.database import cache_delete, invalidate_pattern
 
@@ -65,7 +65,9 @@ class DeleteMessageAction(BaseAction):
                     pass
             else:
                 self._messaging.delete_message(
-                    user_id=bot_user_id, message_id=violation.message_id, hard_delete=True
+                    user_id=bot_user_id,
+                    message_id=violation.message_id,
+                    hard_delete=True,
                 )
 
             logger.debug(

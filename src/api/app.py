@@ -269,7 +269,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 url_to_verify = request.url.path
                 if request.url.query:
                     url_to_verify += f"?{request.url.query}"
-                
+
                 sig_valid, _ = media.verify_signed_url(url_to_verify)
                 if sig_valid:
                     is_signed = True
@@ -408,7 +408,9 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     (filename,),
                 )
                 if row:
-                    logger.debug(f"Found media file in DB: {filename} (ID: {row['id']})")
+                    logger.debug(
+                        f"Found media file in DB: {filename} (ID: {row['id']})"
+                    )
                     _media_metadata_cache[filename] = row
                 else:
                     logger.warning(f"Media file NOT FOUND in DB: {filename}")
@@ -462,12 +464,16 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
                 import inspect
 
-                is_seekable = not inspect.isgenerator(stream) and hasattr(stream, "seek") and hasattr(stream, "tell")
+                is_seekable = (
+                    not inspect.isgenerator(stream)
+                    and hasattr(stream, "seek")
+                    and hasattr(stream, "tell")
+                )
                 range_header = request.headers.get("Range") if is_seekable else None
                 start = 0
                 end = size - 1
                 is_partial = False
-                
+
                 if range_header and range_header.startswith("bytes="):
                     try:
                         range_val = range_header.replace("bytes=", "")
@@ -477,7 +483,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                                 start = int(r_start)
                             if r_end:
                                 end = int(r_end)
-                        
+
                         # Constrain range
                         end = min(end, size - 1)
                         if start <= end:
@@ -489,7 +495,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
                 content_length = end - start + 1
                 status_code = 206 if is_partial else 200
-                
+
                 # Add CORS headers manually for maximum reliability
                 origin = request.headers.get("Origin")
                 cors_headers = {}
@@ -499,15 +505,17 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     cors_headers["Access-Control-Allow-Credentials"] = "true"
                 elif "*" in allowed_origins:
                     cors_headers["Access-Control-Allow-Origin"] = "*"
-                
+
                 headers = {
-                    "Content-Disposition": f'attachment; filename="{safe_name}"' if download else "inline",
+                    "Content-Disposition": f'attachment; filename="{safe_name}"'
+                    if download
+                    else "inline",
                     "Cache-Control": "private, max-age=3600",
                     "ETag": etag,
                     "Accept-Ranges": "bytes",
                     "Vary": "Origin, Range",
                     "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length, ETag",
-                    **cors_headers
+                    **cors_headers,
                 }
                 if is_seekable:
                     headers["Content-Length"] = str(content_length)
@@ -518,11 +526,16 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 # Helper to correctly slice any stream (file or generator)
                 def get_response_iterator(s, skip, limit):
                     import inspect
+
                     count = 0
                     yielded = 0
-                    
+
                     try:
-                        if not inspect.isgenerator(s) and hasattr(s, "read") and hasattr(s, "seek"):
+                        if (
+                            not inspect.isgenerator(s)
+                            and hasattr(s, "read")
+                            and hasattr(s, "seek")
+                        ):
                             # Seekable file-like
                             with s:
                                 if skip > 0:
@@ -537,21 +550,23 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                             # Generator or non-seekable: Manual skip and yield
                             for chunk in s:
                                 chunk_len = len(chunk)
-                                
+
                                 # Skip logic
                                 if count + chunk_len <= skip:
                                     count += chunk_len
                                     continue
-                                
+
                                 # Calculate slice
                                 chunk_start = max(0, skip - count)
-                                chunk_end = min(chunk_len, chunk_start + (limit - yielded))
-                                
+                                chunk_end = min(
+                                    chunk_len, chunk_start + (limit - yielded)
+                                )
+
                                 if chunk_start < chunk_end:
                                     part = chunk[chunk_start:chunk_end]
                                     yield part
                                     yielded += len(part)
-                                
+
                                 count += chunk_len
                                 if yielded >= limit:
                                     break
@@ -559,7 +574,12 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                         logger.error(f"Media stream interrupted for {filename}: {e}")
 
                 response_iterator = get_response_iterator(stream, start, content_length)
-                return StreamingResponse(response_iterator, status_code=status_code, media_type=ct, headers=headers)
+                return StreamingResponse(
+                    response_iterator,
+                    status_code=status_code,
+                    media_type=ct,
+                    headers=headers,
+                )
             except Exception as e:
                 logger.error(f"Generic retrieval failed for {filename}: {e}")
                 raise HTTPException(

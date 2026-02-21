@@ -37,7 +37,9 @@ class SQLiteFTS5Indexer(BaseIndexer):
         # Safety check: Don't run FTS5 initialization on non-SQLite databases
         db_type = getattr(self._db, "type", "sqlite")
         if db_type != "sqlite":
-            logger.warning(f"SQLite FTS5 indexer cannot initialize on {db_type} database. Skipping.")
+            logger.warning(
+                f"SQLite FTS5 indexer cannot initialize on {db_type} database. Skipping."
+            )
             return False
 
         try:

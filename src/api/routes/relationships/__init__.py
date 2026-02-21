@@ -22,9 +22,6 @@ from src.core.database import cached
 router = APIRouter(tags=["Relationships"])
 
 
-from .helpers import _relationship_to_response
-
-
 @router.get(
     "/@me",
     response_model=List[DetailedRelationshipInfo],

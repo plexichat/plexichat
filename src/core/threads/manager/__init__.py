@@ -59,7 +59,6 @@ class ThreadManager(BaseManager):
         self._servers = servers_module
         self._notifications = notifications_module
 
-
         logger.info("Threads module initialized")
 
     def _validate_thread_name(self, name: str) -> str:

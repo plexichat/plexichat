@@ -137,7 +137,6 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "https://app.plexichat.com",
                 "https://api.plexichat.com",
                 "http://localhost:8443",
-
             ],
             "cors_allow_credentials": True,
             "cors_allow_methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],

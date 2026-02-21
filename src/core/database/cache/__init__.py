@@ -170,7 +170,9 @@ def _generate_cache_key(prefix: str, *args, **kwargs) -> str:
                 payload = json.dumps(val, sort_keys=True, default=str)
             except Exception:
                 payload = repr(val)
-            return f"{type(val).__name__}:{hashlib.md5(payload.encode()).hexdigest()[:8]}"
+            return (
+                f"{type(val).__name__}:{hashlib.md5(payload.encode()).hexdigest()[:8]}"
+            )
         return f"{type(val).__name__}:{val}"
 
     for arg in args:

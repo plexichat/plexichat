@@ -83,7 +83,6 @@ class EmbedManager(BaseManager):
         self._url_validator = URLValidator()
         self._link_preview_service = LinkPreviewService(db, media_proxy)
 
-
         logger.info("Embed module initialized")
 
     def _load_config(self) -> Dict[str, Any]:

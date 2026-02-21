@@ -20,7 +20,6 @@ from src.api.schemas.auth import (
     OAuthLoginResponse,
     OAuthCallbackRequest,
     TwoFactorRequest,
-    UserResponse,
     SessionResponse,
     TwoFactorStatusResponse,
     TwoFactorSetupRequest,
@@ -34,6 +33,7 @@ from src.api.schemas.auth import (
     PasswordResetConfirm,
 )
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
+from .helpers import _user_to_response
 
 # Import typed auth exceptions for proper error handling
 from src.core.auth.exceptions import (
@@ -75,8 +75,6 @@ except ImportError:
     config_util = None
 
 router = APIRouter(tags=["Authentication"])
-
-from .helpers import _user_to_response
 
 
 @router.post(

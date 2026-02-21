@@ -20,9 +20,6 @@ class SecurityHeadersMiddleware:
             if message["type"] == "http.response.start":
                 headers = list(message.get("headers", []))
 
-                # Check which headers are already present
-                present_headers = {h[0].lower() for h in headers}
-
                 # Check if this is a media attachment request
                 path = scope.get("path", "")
                 is_media = path.startswith("/api/v1/media/")

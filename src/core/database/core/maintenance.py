@@ -12,23 +12,18 @@ class _DatabaseMaintenanceProtocol(Protocol):
     monitor: Any
 
     @property
-    def transaction_depth(self) -> int:
-        ...
+    def transaction_depth(self) -> int: ...
 
     @transaction_depth.setter
-    def transaction_depth(self, value: int) -> None:
-        ...
+    def transaction_depth(self, value: int) -> None: ...
 
     @property
-    def in_transaction(self) -> bool:
-        ...
+    def in_transaction(self) -> bool: ...
 
     @in_transaction.setter
-    def in_transaction(self, value: bool) -> None:
-        ...
+    def in_transaction(self, value: bool) -> None: ...
 
-    def get_correlation_id(self) -> Optional[str]:
-        ...
+    def get_correlation_id(self) -> Optional[str]: ...
 
 
 class DatabaseMaintenanceMixin:
@@ -116,9 +111,7 @@ class DatabaseMaintenanceMixin:
     ) -> str:
         return dialect.sanitize_identifier(identifier, self.type)
 
-    def _convert_placeholders(
-        self: _DatabaseMaintenanceProtocol, query: str
-    ) -> str:
+    def _convert_placeholders(self: _DatabaseMaintenanceProtocol, query: str) -> str:
         return dialect.convert_placeholders(query, self.type)
 
     def _check_connection_age(self: _DatabaseMaintenanceProtocol, conn_id: int):

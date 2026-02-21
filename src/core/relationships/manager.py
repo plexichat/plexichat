@@ -55,7 +55,6 @@ class RelationshipManager(BaseManager):
         super().__init__(db, auth_module)
         self._servers = servers_module
 
-
         logger.info("Relationship module initialized")
 
     def _validate_users(self, user_id: SnowflakeID, target_id: SnowflakeID) -> None:

@@ -3,7 +3,7 @@ Channel routes - Channel management endpoints.
 """
 
 import asyncio
-from typing import Optional, Dict, List
+from typing import Dict, List
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Body
 
 import src.api as api
@@ -25,10 +25,9 @@ from src.api.schemas.channels import (
 from src.api.schemas.common import SnowflakeID, ErrorResponse
 
 import utils.logger as logger
+from .helpers import _channel_to_response
 
 router = APIRouter(tags=["Channels"])
-
-from .helpers import _channel_to_response, _get_upload_limit, DEFAULT_UPLOAD_LIMIT
 
 
 @router.get(

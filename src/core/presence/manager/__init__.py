@@ -68,7 +68,6 @@ class PresenceManager(BaseManager):
         self._typing_timeout_ms = self._config.get("typing_timeout_ms", 6000)
         self._presence_timeout_ms = self._config.get("timeout_ms", 300000)
 
-
         logger.info("Presence module initialized")
 
     def _load_config(self) -> Dict[str, Any]:

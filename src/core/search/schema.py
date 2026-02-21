@@ -166,7 +166,9 @@ def create_tables(db):
             try:
                 # Robustly skip SQLite-specific VIRTUAL TABLE statements on Postgres
                 if db_type == "postgres" and "VIRTUAL" in statement.upper():
-                    logger.debug(f"Skipping SQLite-specific statement on Postgres: {statement[:50]}...")
+                    logger.debug(
+                        f"Skipping SQLite-specific statement on Postgres: {statement[:50]}..."
+                    )
                     continue
 
                 converted = (

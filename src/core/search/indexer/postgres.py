@@ -73,9 +73,9 @@ class PostgresIndexer(BaseIndexer):
                 )
             """)
 
-            # Add GIN indexes for tsvector if we want full text, 
+            # Add GIN indexes for tsvector if we want full text,
             # but for now let's just get it working with basic tables.
-            
+
             self._initialized = True
             logger.info("Postgres search indexer initialized")
             return True
@@ -91,14 +91,26 @@ class PostgresIndexer(BaseIndexer):
     def index_message(self, message: IndexedMessage) -> bool:
         try:
             self._ensure_initialized()
-            
+
             mentions_json = json.dumps(message.mentions) if message.mentions else "[]"
-            
+
             self._db.upsert(
                 "search_messages",
-                ["message_id", "content", "author_id", "author_username", "conversation_id",
-                 "server_id", "channel_id", "created_at", "has_attachments", "has_embeds",
-                 "has_links", "mentions", "is_pinned"],
+                [
+                    "message_id",
+                    "content",
+                    "author_id",
+                    "author_username",
+                    "conversation_id",
+                    "server_id",
+                    "channel_id",
+                    "created_at",
+                    "has_attachments",
+                    "has_embeds",
+                    "has_links",
+                    "mentions",
+                    "is_pinned",
+                ],
                 (
                     message.message_id,
                     message.content or "",
@@ -112,14 +124,16 @@ class PostgresIndexer(BaseIndexer):
                     message.has_embeds,
                     message.has_links,
                     mentions_json,
-                    message.is_pinned
+                    message.is_pinned,
                 ),
-                ["message_id"]
+                ["message_id"],
             )
             return True
         except Exception as e:
             logger.error(f"Failed to index message {message.message_id}: {e}")
-            raise SearchIndexError(f"Failed to index message: {e}", item_id=message.message_id)
+            raise SearchIndexError(
+                f"Failed to index message: {e}", item_id=message.message_id
+            )
 
     def close(self):
         self._initialized = False
@@ -137,7 +151,9 @@ class PostgresIndexer(BaseIndexer):
     def remove_message(self, message_id: int) -> bool:
         try:
             self._ensure_initialized()
-            self._db.execute("DELETE FROM search_messages WHERE message_id = ?", (message_id,))
+            self._db.execute(
+                "DELETE FROM search_messages WHERE message_id = ?", (message_id,)
+            )
             return True
         except Exception:
             return False
@@ -161,19 +177,19 @@ class PostgresIndexer(BaseIndexer):
             params: List[Any] = [f"%{query}%"]
 
             if conversation_ids:
-                sql += f" AND conversation_id IN ({','.join(['?']*len(conversation_ids))})"
+                sql += f" AND conversation_id IN ({','.join(['?'] * len(conversation_ids))})"
                 params.extend(conversation_ids)
-            
+
             if server_ids:
-                sql += f" AND server_id IN ({','.join(['?']*len(server_ids))})"
+                sql += f" AND server_id IN ({','.join(['?'] * len(server_ids))})"
                 params.extend(server_ids)
 
             if channel_ids:
-                sql += f" AND channel_id IN ({','.join(['?']*len(channel_ids))})"
+                sql += f" AND channel_id IN ({','.join(['?'] * len(channel_ids))})"
                 params.extend(channel_ids)
 
             if author_ids:
-                sql += f" AND author_id IN ({','.join(['?']*len(author_ids))})"
+                sql += f" AND author_id IN ({','.join(['?'] * len(author_ids))})"
                 params.extend(author_ids)
 
             sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
@@ -182,19 +198,21 @@ class PostgresIndexer(BaseIndexer):
             rows = self._db.fetch_all(sql, tuple(params))
             results = []
             for row in rows:
-                results.append(MessageSearchResult(
-                    id=row["message_id"],
-                    message_id=row["message_id"],
-                    content=row["content"],
-                    author_id=row["author_id"],
-                    conversation_id=row["conversation_id"],
-                    server_id=row["server_id"],
-                    channel_id=row["channel_id"],
-                    created_at=row["created_at"],
-                    has_attachments=bool(row["has_attachments"]),
-                    is_pinned=bool(row["is_pinned"]),
-                    score=1.0
-                ))
+                results.append(
+                    MessageSearchResult(
+                        id=row["message_id"],
+                        message_id=row["message_id"],
+                        content=row["content"],
+                        author_id=row["author_id"],
+                        conversation_id=row["conversation_id"],
+                        server_id=row["server_id"],
+                        channel_id=row["channel_id"],
+                        created_at=row["created_at"],
+                        has_attachments=bool(row["has_attachments"]),
+                        is_pinned=bool(row["is_pinned"]),
+                        score=1.0,
+                    )
+                )
             return results
         except Exception as e:
             logger.error(f"Postgres search failed: {e}")
@@ -210,7 +228,7 @@ class PostgresIndexer(BaseIndexer):
                 "search_users",
                 ["user_id", "username", "display_name", "is_bot"],
                 (user.user_id, user.username, user.display_name, user.is_bot),
-                ["user_id"]
+                ["user_id"],
             )
             return True
         except Exception:
@@ -229,10 +247,17 @@ class PostgresIndexer(BaseIndexer):
             self._ensure_initialized()
             sql = "SELECT * FROM search_users WHERE username ILIKE ? OR display_name ILIKE ? LIMIT ? OFFSET ?"
             rows = self._db.fetch_all(sql, (f"%{query}%", f"%{query}%", limit, offset))
-            return [UserSearchResult(
-                id=r["user_id"], user_id=r["user_id"], username=r["username"],
-                display_name=r["display_name"], is_bot=bool(r["is_bot"]), score=1.0
-            ) for r in rows]
+            return [
+                UserSearchResult(
+                    id=r["user_id"],
+                    user_id=r["user_id"],
+                    username=r["username"],
+                    display_name=r["display_name"],
+                    is_bot=bool(r["is_bot"]),
+                    score=1.0,
+                )
+                for r in rows
+            ]
         except Exception:
             return []
 
@@ -241,10 +266,25 @@ class PostgresIndexer(BaseIndexer):
             self._ensure_initialized()
             self._db.upsert(
                 "search_servers",
-                ["server_id", "name", "description", "tags", "category", "member_count", "is_public"],
-                (server.server_id, server.name, server.description, " ".join(server.tags), 
-                 server.category, server.member_count, server.is_public),
-                ["server_id"]
+                [
+                    "server_id",
+                    "name",
+                    "description",
+                    "tags",
+                    "category",
+                    "member_count",
+                    "is_public",
+                ],
+                (
+                    server.server_id,
+                    server.name,
+                    server.description,
+                    " ".join(server.tags),
+                    server.category,
+                    server.member_count,
+                    server.is_public,
+                ),
+                ["server_id"],
             )
             return True
         except Exception:
@@ -275,12 +315,19 @@ class PostgresIndexer(BaseIndexer):
             sql += " LIMIT ? OFFSET ?"
             params.extend([limit, offset])
             rows = self._db.fetch_all(sql, tuple(params))
-            return [ServerSearchResult(
-                id=r["server_id"], server_id=r["server_id"], name=r["name"],
-                description=r["description"], category=r["category"],
-                tags=r["tags"].split() if r["tags"] else [], 
-                member_count=r["member_count"], score=1.0
-            ) for r in rows]
+            return [
+                ServerSearchResult(
+                    id=r["server_id"],
+                    server_id=r["server_id"],
+                    name=r["name"],
+                    description=r["description"],
+                    category=r["category"],
+                    tags=r["tags"].split() if r["tags"] else [],
+                    member_count=r["member_count"],
+                    score=1.0,
+                )
+                for r in rows
+            ]
         except Exception:
             return []
 

@@ -48,7 +48,6 @@ class SoundboardManager(BaseManager):
         self._config = self._load_config()
         self._cooldowns = {}
 
-
         logger.info("Soundboard module initialized")
 
     def _load_config(self) -> Dict[str, Any]:

@@ -64,7 +64,6 @@ class VoiceManager(BaseManager):
         self._relationships = relationships_module
         self._presence = presence_module
 
-
         logger.info("Voice module initialized")
 
     def _validate_user(self, user_id: SnowflakeID) -> None:

@@ -26,16 +26,9 @@ from src.api.schemas.messages import (
 )
 from src.api.schemas.common import SnowflakeID, ErrorResponse
 from src.core.database import cached, invalidate_pattern
+from .helpers import _user_to_response, _user_to_public_response, _get_user_cached
 
 router = APIRouter(tags=["Users"])
-
-from .helpers import (
-    _get_attr,
-    _user_to_response,
-    _user_to_public_response,
-    _user_to_dict,
-    _get_user_cached,
-)
 
 
 @router.get(
@@ -438,9 +431,7 @@ def get_dm_channels(
                 try:
                     users_map = auth.get_user_profiles_bulk(recipient_ids)
                 except Exception as e:
-                    logger.debug(
-                        f"Bulk profile fetch failed for DM recipients: {e}"
-                    )
+                    logger.debug(f"Bulk profile fetch failed for DM recipients: {e}")
 
             for ch in channels:
                 try:

@@ -2,7 +2,7 @@
 Message routes - Message CRUD endpoints.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict
 from fastapi import APIRouter, HTTPException, Depends, Query
 
 import src.api as api
@@ -13,12 +13,10 @@ from src.api.schemas.messages import (
     MessageCreateRequest,
     MessageUpdateRequest,
     MessageResponse,
-    AttachmentResponse,
     UnreadCountResponse,
     AllUnreadCountsResponse,
     AckResponse,
 )
-from src.api.schemas.polls import PollResponse
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 from src.core.messaging.exceptions import AttachmentLimitError
 from src.core.polls import (
@@ -35,11 +33,9 @@ from src.core.polls import (
     PermissionDeniedError,
     MessageNotFoundError,
 )
+from .helpers import _message_to_response
 
 router = APIRouter(tags=["Messages"])
-
-
-from .helpers import _poll_to_response, _message_to_response
 
 
 @router.get(

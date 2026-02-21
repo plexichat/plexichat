@@ -62,7 +62,6 @@ class NotificationManager(BaseManager):
         self._presence = presence_module
         self._config = self._load_config()
 
-
         logger.info("Notification module initialized")
 
     def _load_config(self) -> Dict[str, Any]:

@@ -92,7 +92,11 @@ class UrlSigner:
         if not all([signature, expires_str, file_id_str]):
             raise SignatureInvalidError("Missing signature parameters")
 
-        assert signature is not None and expires_str is not None and file_id_str is not None
+        assert (
+            signature is not None
+            and expires_str is not None
+            and file_id_str is not None
+        )
 
         try:
             expires_at = int(expires_str)
@@ -104,22 +108,26 @@ class UrlSigner:
             raise SignatureExpiredError("Signed URL has expired")
 
         base_url = self._remove_signature_params(url)
-        
+
         # Robust verification: Try matching against path-only signatures
         parsed_base = urlparse(base_url)
         path = parsed_base.path
         query = f"?{parsed_base.query}" if parsed_base.query else ""
-        
+
         # Check permutations: with and without leading slash
-        for p in [path, path.lstrip('/'), '/' + path.lstrip('/')]:
+        for p in [path, path.lstrip("/"), "/" + path.lstrip("/")]:
             check_url = f"{p}{query}"
-            expected_data = self._build_signature_data(check_url, file_id, expires_at, None)
+            expected_data = self._build_signature_data(
+                check_url, file_id, expires_at, None
+            )
             expected_sig = self._generate_signature(expected_data)
             if hmac.compare_digest(signature, expected_sig):
                 return True, file_id
 
         # Fallback to full URL check (for absolute signed URLs)
-        expected_data_full = self._build_signature_data(base_url, file_id, expires_at, None)
+        expected_data_full = self._build_signature_data(
+            base_url, file_id, expires_at, None
+        )
         expected_sig_full = self._generate_signature(expected_data_full)
 
         if not hmac.compare_digest(signature, expected_sig_full):
@@ -140,8 +148,8 @@ class UrlSigner:
         path = parsed.path
         if parsed.query:
             path += f"?{parsed.query}"
-            
-        clean_url = path.lstrip('/')
+
+        clean_url = path.lstrip("/")
         parts = [clean_url, str(file_id), str(expires_at)]
 
         if extra_data:

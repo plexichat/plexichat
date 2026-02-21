@@ -57,7 +57,6 @@ class ApplicationManager(BaseManager):
         self._events = events_module
         self._config = self._load_config()
 
-
         oauth_config = {
             "token_expiry_seconds": self._config.get("oauth", {}).get(
                 "token_expiry_seconds", 604800
