@@ -126,6 +126,19 @@ class Bot:
 
 
 @dataclass
+class AccessToken:
+    id: SnowflakeID
+    name: Optional[str]
+    created_by: Optional[SnowflakeID]
+    created_at: int
+    last_used_at: Optional[int]
+    revoked: bool
+    revoked_at: Optional[int]
+    revoked_by: Optional[SnowflakeID]
+    token: Optional[str] = field(default=None, repr=False)
+
+
+@dataclass
 class Device:
     """Known device model."""
 

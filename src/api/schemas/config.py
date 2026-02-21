@@ -25,6 +25,9 @@ class ServerCapabilitiesResponse(BaseModel):
     """Global server capabilities and configuration."""
 
     avatars: AvatarConfigResponse
+    access_token_required: bool = Field(
+        False, description="Whether API access tokens are required"
+    )
     # Future expansion:
     # messaging: Optional[MessagingConfigResponse]
     # voice: Optional[VoiceConfigResponse]

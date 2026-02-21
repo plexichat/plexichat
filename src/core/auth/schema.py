@@ -146,6 +146,19 @@ CREATE TABLE IF NOT EXISTS auth_internal_secrets (
     created_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS auth_api_access_tokens (
+    id INTEGER PRIMARY KEY,
+    name TEXT,
+    token_index TEXT UNIQUE NOT NULL,
+    token_encrypted TEXT NOT NULL,
+    created_by INTEGER,
+    created_at INTEGER NOT NULL,
+    last_used_at INTEGER,
+    revoked INTEGER DEFAULT 0,
+    revoked_at INTEGER,
+    revoked_by INTEGER
+);
+
 -- Audit log with integrity
 CREATE TABLE IF NOT EXISTS auth_audit_log (
     id INTEGER PRIMARY KEY,
@@ -166,6 +179,8 @@ CREATE INDEX IF NOT EXISTS idx_auth_sessions_token ON auth_sessions(token_hash);
 CREATE INDEX IF NOT EXISTS idx_auth_bots_owner ON auth_bots(owner_id);
 CREATE INDEX IF NOT EXISTS idx_auth_devices_user ON auth_devices(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_audit_user ON auth_audit_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_api_access_tokens_index ON auth_api_access_tokens(token_index);
+CREATE INDEX IF NOT EXISTS idx_auth_api_access_tokens_revoked ON auth_api_access_tokens(revoked);
 
 -- Username blacklist table (used by auth blacklist checks)
 CREATE TABLE IF NOT EXISTS username_blacklist (

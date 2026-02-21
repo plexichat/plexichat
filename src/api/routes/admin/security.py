@@ -11,6 +11,9 @@ from src.api.schemas.admin import (
     BannedUsernameCreate,
     ForceLogoutRequest,
     UserLockRequest,
+    AccessTokenCreateRequest,
+    AccessTokenCreateResponse,
+    AccessTokenResponse,
 )
 from src.api.schemas.common import SuccessResponse
 from .utils import check_host_restriction, get_admin_from_token
@@ -34,6 +37,67 @@ async def block_ip(request: Request, body: IPBlockRequest):
     from src.core import auth
 
     auth.block_ip(body.ip_address, body.reason, admin_id, body.duration_hours)
+    return SuccessResponse(success=True)
+
+
+@router.get("/security/access-tokens", response_model=List[AccessTokenResponse])
+async def list_access_tokens(request: Request, include_revoked: bool = True):
+    check_host_restriction(request)
+    get_admin_from_token(request)
+    from src.core import auth
+
+    tokens = auth.list_api_access_tokens(include_revoked=include_revoked)
+    return [
+        AccessTokenResponse(
+            id=str(t.id),
+            name=t.name,
+            created_by=str(t.created_by) if t.created_by is not None else None,
+            created_at=t.created_at,
+            last_used_at=t.last_used_at,
+            revoked=t.revoked,
+            revoked_at=t.revoked_at,
+            revoked_by=str(t.revoked_by) if t.revoked_by is not None else None,
+        )
+        for t in tokens
+    ]
+
+
+@router.post("/security/access-tokens", response_model=AccessTokenCreateResponse)
+async def create_access_token(request: Request, body: AccessTokenCreateRequest):
+    check_host_restriction(request)
+    admin_id = get_admin_from_token(request)
+    from src.core import auth
+
+    token = auth.create_api_access_token(body.name, admin_id)
+    return AccessTokenCreateResponse(
+        token=token.token or "",
+        access_token=AccessTokenResponse(
+            id=str(token.id),
+            name=token.name,
+            created_by=str(token.created_by) if token.created_by is not None else None,
+            created_at=token.created_at,
+            last_used_at=token.last_used_at,
+            revoked=token.revoked,
+            revoked_at=token.revoked_at,
+            revoked_by=str(token.revoked_by) if token.revoked_by is not None else None,
+        ),
+    )
+
+
+@router.post(
+    "/security/access-tokens/{token_id}/revoke", response_model=SuccessResponse
+)
+async def revoke_access_token(request: Request, token_id: int):
+    check_host_restriction(request)
+    admin_id = get_admin_from_token(request)
+    from src.core import auth
+
+    success = auth.revoke_api_access_token(token_id, admin_id)
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Access token not found"}},
+        )
     return SuccessResponse(success=True)
 
 

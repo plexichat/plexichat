@@ -557,6 +557,18 @@
                     <table><thead><tr><th>Pattern</th><th>Reason</th><th>Action</th></tr></thead><tbody id="banned-usernames-tbody"></tbody></table>
                 </div>
                 <div class="card" style="grid-column: span 2;">
+                    <h3>API Access Tokens</h3>
+                    <div style="display:flex;gap:0.5rem;margin:1rem 0;flex-wrap:wrap;">
+                        <input type="text" id="access-token-name" placeholder="Token name (optional)" style="flex:2;min-width:200px;">
+                        <button class="btn btn-primary" data-click="createAccessToken">Create Token</button>
+                    </div>
+                    <div id="access-token-generated" style="font-size:0.8rem;color:#bbb;margin-bottom:0.5rem;"></div>
+                    <table>
+                        <thead><tr><th>Name</th><th>Created</th><th>Last Used</th><th>Status</th><th>Action</th></tr></thead>
+                        <tbody id="access-tokens-tbody"></tbody>
+                    </table>
+                </div>
+                <div class="card" style="grid-column: span 2;">
                     <div style="display:flex;justify-content:space-between;align-items:center;">
                         <h3>Image Reports</h3>
                         <div style="display:flex;gap:0.5rem;align-items:center;">
@@ -1269,22 +1281,41 @@
             `).join('');
         }
 
+        function renderAccessTokens(items) {
+            const tbody = document.getElementById('access-tokens-tbody');
+            if (!items || items.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="color:#666;">No access tokens</td></tr>';
+                return;
+            }
+            tbody.innerHTML = items.map(t => `
+                <tr>
+                    <td>${t.name || ''}</td>
+                    <td>${formatTimestamp(t.created_at)}</td>
+                    <td>${formatTimestamp(t.last_used_at)}</td>
+                    <td>${t.revoked ? 'Revoked' : 'Active'}</td>
+                    <td>${t.revoked ? '' : `<button class="btn btn-outline btn-sm" data-click="revokeAccessToken" data-id="${t.id}">Revoke</button>`}</td>
+                </tr>
+            `).join('');
+        }
+
         async function loadSecurity() {
             try {
                 const statusFilter = document.getElementById('hash-report-status').value;
                 const hashUrl = statusFilter ? `/api/v1/admin/hash-reports?status_filter=${encodeURIComponent(statusFilter)}` : '/api/v1/admin/hash-reports';
-                const [ips, bans, reports, hashes, blockedUsers] = await Promise.all([
+                const [ips, bans, reports, hashes, blockedUsers, accessTokens] = await Promise.all([
                     api('/api/v1/admin/security/blocked-ips'),
                     api('/api/v1/admin/security/banned-usernames'),
                     api(hashUrl),
                     api('/api/v1/admin/blocked-hashes'),
                     api('/api/v1/admin/blocked-users'),
+                    api('/api/v1/admin/security/access-tokens'),
                 ]);
                 document.getElementById('blocked-ips-tbody').innerHTML = ips.map(i => `<tr><td>${i.ip_address}</td><td>${i.reason || ''}</td><td><button class="btn btn-outline btn-sm" data-click="unblockIP" data-val="${i.ip_address}">Unblock</button></td></tr>`).join('');
                 document.getElementById('banned-usernames-tbody').innerHTML = bans.map(b => `<tr><td>${b.pattern}</td><td>${b.reason || ''}</td><td><button class="btn btn-outline btn-sm" data-click="removeBan" data-id="${b.id}">Remove</button></td></tr>`).join('');
                 renderHashReports(reports);
                 renderBlockedHashes(hashes);
                 renderBlockedUsers(blockedUsers);
+                renderAccessTokens(accessTokens);
             } catch (e) {}
         }
 
@@ -1690,6 +1721,17 @@
             else if (a === 'unblockIP') {
                 api(`/api/v1/admin/security/unblock-ip/${encodeURIComponent(val)}`, { method: 'DELETE' }).then(() => loadSecurity());
             }
+            else if (a === 'createAccessToken') {
+                const name = document.getElementById('access-token-name').value.trim();
+                api('/api/v1/admin/security/access-tokens', { method: 'POST', body: JSON.stringify({ name: name || null }) }).then(r => {
+                    document.getElementById('access-token-name').value = '';
+                    document.getElementById('access-token-generated').textContent = `New token: ${r.token}`;
+                    loadSecurity();
+                });
+            }
+            else if (a === 'revokeAccessToken') {
+                api(`/api/v1/admin/security/access-tokens/${id}/revoke`, { method: 'POST' }).then(() => loadSecurity());
+            }
             else if (a === 'addBannedUsername') {
                 const pattern = document.getElementById('ban-username-val').value;
                 if (!pattern) return;
@@ -1803,6 +1845,7 @@
                 else if (e.target.id === 'ban-username-val') document.querySelector('[data-click="addBannedUsername"]').click();
                 else if (e.target.id === 'block-hash-val' || e.target.id === 'block-hash-reason') document.querySelector('[data-click="blockHash"]').click();
                 else if (e.target.id === 'block-user-id') document.querySelector('[data-click="blockUser"]').click();
+                else if (e.target.id === 'access-token-name') document.querySelector('[data-click="createAccessToken"]').click();
                 else if (e.target.id === 'automod-server-id') document.querySelector('[data-click="loadAutomodRules"]').click();
             }
         });

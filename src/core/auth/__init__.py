@@ -51,6 +51,7 @@ from .models import (
     User,
     Session,
     Bot,
+    AccessToken,
     Device,
     KnownIP,
     AuditEntry,
@@ -401,6 +402,31 @@ def enable_bot(owner_id: int, bot_id: int) -> bool:
 def delete_bot(owner_id: int, bot_id: int) -> bool:
     """Permanently delete a bot."""
     return _get_manager().delete_bot(owner_id, bot_id)
+
+
+# === API Access Tokens ===
+
+
+def create_api_access_token(
+    name: Optional[str], created_by: Optional[int]
+) -> AccessToken:
+    return _get_manager().create_api_access_token(name, created_by)
+
+
+def list_api_access_tokens(include_revoked: bool = True) -> List[AccessToken]:
+    return _get_manager().list_api_access_tokens(include_revoked)
+
+
+def revoke_api_access_token(token_id: int, revoked_by: Optional[int]) -> bool:
+    return _get_manager().revoke_api_access_token(token_id, revoked_by)
+
+
+def verify_api_access_token(token: str) -> bool:
+    return _get_manager().verify_api_access_token(token)
+
+
+def is_api_access_token_required() -> bool:
+    return _get_manager().is_api_access_token_required()
 
 
 # === Device Management ===

@@ -446,6 +446,32 @@ class BlockedIPResponse(BaseModel):
     expires_at: Optional[int]
 
 
+class AccessTokenCreateRequest(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    name: Optional[str] = Field(None, max_length=100)
+
+
+class AccessTokenResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: Optional[str]
+    created_by: Optional[str]
+    created_at: int
+    last_used_at: Optional[int]
+    revoked: bool
+    revoked_at: Optional[int]
+    revoked_by: Optional[str]
+
+
+class AccessTokenCreateResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    token: str
+    access_token: AccessTokenResponse
+
+
 class ForceLogoutRequest(BaseModel):
     """Request to force logout a user."""
 

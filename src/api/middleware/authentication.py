@@ -6,6 +6,7 @@ from typing import Optional
 import re
 from fastapi import Request, HTTPException
 from fastapi.security import HTTPBearer
+from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Send, Scope
 
 import src.api as api
@@ -61,11 +62,88 @@ class AuthenticationMiddleware:
             public_endpoints = [
                 "/api/v1/status",
                 "/api/v1/health",
+                "/api/v1/capabilities",
+                "/api/v1/version",
                 "/health",
                 "/status",
+                "/docs",
+                "/redoc",
+                "/openapi.json",
                 "/",
             ]
             is_public_endpoint = path in public_endpoints
+
+            if (
+                not is_admin_path
+                and not is_public_endpoint
+                and path.startswith("/api/v1/")
+            ):
+                auth = api.get_auth()
+                if auth:
+                    auth_manager = auth
+                    from fastapi.concurrency import run_in_threadpool
+
+                    def _require_with_cleanup(auth_ref=auth_manager):
+                        db = api.get_db()
+                        try:
+                            return auth_ref.is_api_access_token_required()
+                        finally:
+                            if db:
+                                db.close()
+
+                    access_required = await run_in_threadpool(_require_with_cleanup)
+                    if access_required:
+                        access_token = request.headers.get("X-API-Access-Token")
+                        if not access_token:
+                            response = JSONResponse(
+                                status_code=401,
+                                content={
+                                    "error": {
+                                        "code": 401,
+                                        "message": "API access token required",
+                                    }
+                                },
+                            )
+                            await response(scope, receive, send)
+                            return
+
+                        def _verify_access_with_cleanup(
+                            token_str, auth_ref=auth_manager
+                        ):
+                            db = api.get_db()
+                            try:
+                                return auth_ref.verify_api_access_token(token_str)
+                            finally:
+                                if db:
+                                    db.close()
+
+                        is_valid = await run_in_threadpool(
+                            _verify_access_with_cleanup, access_token
+                        )
+                        if not is_valid:
+                            response = JSONResponse(
+                                status_code=401,
+                                content={
+                                    "error": {
+                                        "code": 401,
+                                        "message": "Invalid API access token",
+                                    }
+                                },
+                            )
+                            await response(scope, receive, send)
+                            return
+                else:
+                    response = JSONResponse(
+                        status_code=500,
+                        content={
+                            "error": {
+                                "code": 500,
+                                "message": "Auth module not available",
+                            }
+                        },
+                    )
+                    await response(scope, receive, send)
+                    return
 
             # Detect multiple Authorization headers (possible header injection)
             auth_header_count = sum(

@@ -28,6 +28,13 @@ async def get_capabilities() -> ServerCapabilitiesResponse:
     """
     try:
         avatar_cfg = config.get("avatars", {})
+        access_required = False
+        try:
+            from src.core import auth
+
+            access_required = auth.is_api_access_token_required()
+        except Exception:
+            access_required = False
 
         return ServerCapabilitiesResponse(
             avatars=AvatarConfigResponse(
@@ -41,7 +48,8 @@ async def get_capabilities() -> ServerCapabilitiesResponse:
                     "allowed_types",
                     ["image/jpeg", "image/png", "image/gif", "image/webp"],
                 ),
-            )
+            ),
+            access_token_required=access_required,
         )
     except Exception as e:
         logger.error(f"Failed to fetch server capabilities: {e}", exc_info=True)

@@ -19,6 +19,7 @@ from .models import (
     User,
     Session,
     Bot,
+    AccessToken,
     Device,
     AuditEntry,
     TokenInfo,
@@ -1252,6 +1253,90 @@ class AuthManager(BaseManager):
         if cursor.rowcount == 0:
             raise PermissionDeniedError("Bot not found or not owned by you")
         return True
+
+    def create_api_access_token(
+        self, name: Optional[str], created_by: Optional[int]
+    ) -> AccessToken:
+        token_id = self._generate_id()
+        token = secrets.token_urlsafe(24)
+        token_index = self.crypto.fast_blind_index(token, "api_access_token")
+        token_encrypted = self.crypto.encrypt_data(token, context=str(token_id))
+        now = self._get_timestamp()
+        self._db.execute(
+            "INSERT INTO auth_api_access_tokens (id, name, token_index, token_encrypted, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (token_id, name, token_index, token_encrypted, created_by, now),
+        )
+        invalidate_pattern("access_token_required*")
+        return AccessToken(
+            id=token_id,
+            name=name,
+            created_by=created_by,
+            created_at=now,
+            last_used_at=None,
+            revoked=False,
+            revoked_at=None,
+            revoked_by=None,
+            token=token,
+        )
+
+    def list_api_access_tokens(self, include_revoked: bool = True) -> List[AccessToken]:
+        if include_revoked:
+            rows = self._db.fetch_all(
+                "SELECT * FROM auth_api_access_tokens ORDER BY created_at DESC"
+            )
+        else:
+            rows = self._db.fetch_all(
+                "SELECT * FROM auth_api_access_tokens WHERE revoked = 0 ORDER BY created_at DESC"
+            )
+        return [
+            AccessToken(
+                id=row["id"],
+                name=row["name"],
+                created_by=row["created_by"],
+                created_at=row["created_at"],
+                last_used_at=row["last_used_at"],
+                revoked=bool(row["revoked"]),
+                revoked_at=row["revoked_at"],
+                revoked_by=row["revoked_by"],
+            )
+            for row in rows
+        ]
+
+    def revoke_api_access_token(self, token_id: int, revoked_by: Optional[int]) -> bool:
+        now = self._get_timestamp()
+        cursor = self._db.execute(
+            "UPDATE auth_api_access_tokens SET revoked = 1, revoked_at = ?, revoked_by = ? WHERE id = ? AND revoked = 0",
+            (now, revoked_by, token_id),
+        )
+        if cursor.rowcount > 0:
+            invalidate_pattern("access_token_required*")
+        return cursor.rowcount > 0
+
+    def verify_api_access_token(self, token: str) -> bool:
+        if not token:
+            return False
+        token_index = self.crypto.fast_blind_index(token, "api_access_token")
+        row = self._db.fetch_one(
+            "SELECT id, revoked, last_used_at FROM auth_api_access_tokens WHERE token_index = ?",
+            (token_index,),
+        )
+        if not row or row["revoked"]:
+            return False
+        now = self._get_timestamp()
+        last_used = row["last_used_at"] or 0
+        if now - last_used > 60000:
+            self._db.execute(
+                "UPDATE auth_api_access_tokens SET last_used_at = ? WHERE id = ?",
+                (now, row["id"]),
+            )
+        return True
+
+    @cached(ttl=30, prefix="access_token_required")
+    def is_api_access_token_required(self) -> bool:
+        row = self._db.fetch_one(
+            "SELECT id FROM auth_api_access_tokens WHERE revoked = 0 LIMIT 1"
+        )
+        return bool(row)
 
     # === Device Management ===
 
