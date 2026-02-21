@@ -76,6 +76,7 @@ class AuthenticationMiddleware:
             if (
                 not is_admin_path
                 and not is_public_endpoint
+                and not path.startswith("/api/v1/avatars/")
                 and path.startswith("/api/v1/")
             ):
                 auth = api.get_auth()
