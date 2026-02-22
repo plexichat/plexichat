@@ -357,7 +357,8 @@ class PollManager(BaseManager):
 
         options_with_counts = []
         for option in poll.options:
-            vote_count = vote_counts.get(option.id, 0)
+            # If results are hidden, we return None for vote_count instead of 0
+            vote_count = vote_counts.get(option.id, 0) if can_see_results else None
             options_with_counts.append(
                 PollOption(
                     id=option.id,
