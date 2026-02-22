@@ -158,7 +158,38 @@ class TestExecuteWebhook:
             json={"content": "Hello from webhook!"},
         )
 
-        assert response.status_code == 200 or response.status_code == 204
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+
+    def test_execute_webhook_wait_true_returns_message(
+        self, test_client, auth_headers, test_server
+    ):
+        """Test executing webhook with wait=true returns message payload."""
+        channel_id = str(test_server["channel"].id)
+        unique_id = uuid.uuid4().hex[:8]
+
+        create_response = test_client.post(
+            "/api/v1/webhooks",
+            headers=auth_headers,
+            json={"channel_id": channel_id, "name": f"Execute Wait Test {unique_id}"},
+        )
+        assert create_response.status_code == 200
+
+        webhook_data = create_response.json()
+        webhook_id = webhook_data["id"]
+        token_secret = webhook_data["token"].split(".")[-1]
+
+        response = test_client.post(
+            f"/api/v1/webhooks/{webhook_id}/{token_secret}?wait=true",
+            json={"content": "Webhook wait response"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["webhook_id"] == webhook_id
+        assert data["channel_id"] == channel_id
+        assert data["content"] == "Webhook wait response"
 
     def test_execute_webhook_invalid_token(
         self, test_client, auth_headers, test_server
@@ -258,3 +289,36 @@ class TestWebhookFields:
         data = response.json()
         assert "url" in data
         assert "/webhooks/" in data["url"]
+
+
+class TestWebhookTokenRegeneration:
+    """Tests for POST /webhooks/{webhook_id}/regenerate-token endpoint."""
+
+    def test_regenerate_webhook_token_success(
+        self, test_client, auth_headers, test_server
+    ):
+        """Test regenerating a webhook token."""
+        channel_id = str(test_server["channel"].id)
+        unique_id = uuid.uuid4().hex[:8]
+
+        create_response = test_client.post(
+            "/api/v1/webhooks",
+            headers=auth_headers,
+            json={"channel_id": channel_id, "name": f"Regenerate Test {unique_id}"},
+        )
+        assert create_response.status_code == 200
+        created = create_response.json()
+        webhook_id = created["id"]
+        old_token = created["token"]
+
+        regen_response = test_client.post(
+            f"/api/v1/webhooks/{webhook_id}/regenerate-token",
+            headers=auth_headers,
+        )
+        assert regen_response.status_code == 200
+        regenerated = regen_response.json()
+
+        assert regenerated["id"] == webhook_id
+        assert regenerated["token"] is not None
+        assert regenerated["token"] != old_token
+        assert "/webhooks/" in regenerated["url"]

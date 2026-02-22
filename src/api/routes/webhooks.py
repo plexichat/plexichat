@@ -2,7 +2,7 @@
 Webhook routes - Webhook management and execution endpoints.
 """
 
-from typing import Optional
+from typing import Optional, Union
 from fastapi import APIRouter, HTTPException, Depends, status
 
 import utils.logger as logger
@@ -416,7 +416,7 @@ async def delete_webhook(
 
 @router.post(
     "/{webhook_id}/{token}",
-    response_model=WebhookMessageResponse,
+    response_model=Union[WebhookMessageResponse, SuccessResponse],
     summary="Execute a webhook",
     responses={
         400: {
@@ -433,7 +433,8 @@ async def execute_webhook(
     token: str,
     body: WebhookExecuteRequest,
     thread_id: Optional[str] = None,
-) -> WebhookMessageResponse:
+    wait: bool = False,
+) -> Union[WebhookMessageResponse, SuccessResponse]:
     """
     Execute a webhook.
 
@@ -469,9 +470,22 @@ async def execute_webhook(
                 avatar_url=body.avatar_url,
                 embeds=body.embeds,
                 thread_id=tid or (int(body.thread_id) if body.thread_id else None),
+                wait=wait,
             )
 
             logger.debug(f"Executed webhook {wid}")
+            if not wait:
+                return SuccessResponse(success=True)
+
+            if message is None:
+                logger.error(
+                    f"Webhook {wid} execution returned no message with wait=true"
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail={"error": {"code": 500, "message": "Internal server error"}},
+                )
+
             return WebhookMessageResponse(
                 id=SnowflakeID(message.id),
                 webhook_id=SnowflakeID(wid),
@@ -495,7 +509,12 @@ async def execute_webhook(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail={"error": {"code": 401, "message": "Invalid webhook token"}},
                 )
-            elif "Validation" in exc_name or "Empty" in exc_name:
+            elif (
+                "Validation" in exc_name
+                or "Empty" in exc_name
+                or "Content" in exc_name
+                or "Embed" in exc_name
+            ):
                 logger.warning(
                     f"Validation error during execution of webhook {wid}: {e}"
                 )
@@ -516,6 +535,81 @@ async def execute_webhook(
     except Exception as e:
         logger.error(
             f"Unexpected top-level error in execute_webhook for {webhook_id}: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+
+@router.post(
+    "/{webhook_id}/regenerate-token",
+    response_model=WebhookResponse,
+    summary="Regenerate webhook token",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid webhook ID"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Permission denied"},
+        404: {"model": ErrorResponse, "description": "Webhook not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def regenerate_webhook_token(
+    webhook_id: str, current_user: TokenInfo = Depends(get_current_user)
+) -> WebhookResponse:
+    """Regenerate a webhook token and return the updated webhook with token/url."""
+    webhooks = api.get_webhooks()
+    if not webhooks:
+        logger.error("Webhooks module not available")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+    try:
+        try:
+            wid = int(webhook_id)
+        except ValueError:
+            logger.warning(
+                f"User {current_user.user_id} provided invalid webhook ID for token regeneration: {webhook_id}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"code": 400, "message": "Invalid webhook ID"}},
+            )
+
+        try:
+            webhook = webhooks.regenerate_token(current_user.user_id, wid)
+            logger.info(
+                f"User {current_user.user_id} regenerated token for webhook {wid}"
+            )
+            return _webhook_to_response(webhook, include_token=True)
+        except Exception as e:
+            exc_name = type(e).__name__
+            if "NotFound" in exc_name:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail={"error": {"code": 404, "message": "Webhook not found"}},
+                )
+            if "Permission" in exc_name:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={"error": {"code": 403, "message": str(e)}},
+                )
+            logger.error(
+                f"Unexpected error regenerating token for webhook {wid} by user {current_user.user_id}: {e}",
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={"error": {"code": 500, "message": "Internal server error"}},
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Unexpected top-level error in regenerate_webhook_token for user {current_user.user_id}: {e}",
             exc_info=True,
         )
         raise HTTPException(
