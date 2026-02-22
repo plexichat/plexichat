@@ -42,6 +42,7 @@ class APIConfig:
             "Accept",
             "Origin",
             "Range",
+            "X-API-Access-Token",
         ]
     )
     cors_expose_headers: List[str] = field(
@@ -107,6 +108,7 @@ def get_api_config() -> APIConfig:
             "Accept",
             "Origin",
             "Range",
+            "X-API-Access-Token",
         ],
     )
     if cors_headers == ["*"] or "*" in cors_headers:
@@ -117,6 +119,7 @@ def get_api_config() -> APIConfig:
             "Accept",
             "Origin",
             "Range",
+            "X-API-Access-Token",
         ]
 
     cors_expose_headers = api_conf.get(
