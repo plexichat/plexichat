@@ -1255,11 +1255,19 @@ class AuthManager(BaseManager):
         return True
 
     def create_api_access_token(
-        self, name: Optional[str], created_by: Optional[int]
+        self, name: Optional[str], created_by: Optional[int], token_value: Optional[str] = None
     ) -> AccessToken:
         token_id = self._generate_id()
-        token = secrets.token_urlsafe(24)
+        token = token_value.strip() if token_value else None
+        if not token:
+            token = secrets.token_urlsafe(24)
         token_index = self.crypto.fast_blind_index(token, "api_access_token")
+        existing = self._db.fetch_one(
+            "SELECT id FROM auth_api_access_tokens WHERE token_index = ?",
+            (token_index,),
+        )
+        if existing:
+            raise ValueError("API access token already exists")
         token_encrypted = self.crypto.encrypt_data(token, context=str(token_id))
         now = self._get_timestamp()
         self._db.execute(

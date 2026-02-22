@@ -408,9 +408,9 @@ def delete_bot(owner_id: int, bot_id: int) -> bool:
 
 
 def create_api_access_token(
-    name: Optional[str], created_by: Optional[int]
+    name: Optional[str], created_by: Optional[int], token_value: Optional[str] = None
 ) -> AccessToken:
-    return _get_manager().create_api_access_token(name, created_by)
+    return _get_manager().create_api_access_token(name, created_by, token_value)
 
 
 def list_api_access_tokens(include_revoked: bool = True) -> List[AccessToken]:

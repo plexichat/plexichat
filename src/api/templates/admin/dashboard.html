@@ -560,8 +560,10 @@
                     <h3>API Access Tokens</h3>
                     <div style="display:flex;gap:0.5rem;margin:1rem 0;flex-wrap:wrap;">
                         <input type="text" id="access-token-name" placeholder="Token name (optional)" style="flex:2;min-width:200px;">
+                        <input type="text" id="access-token-custom" placeholder="Custom token (optional)" minlength="32" maxlength="128" style="flex:3;min-width:260px;">
                         <button class="btn btn-primary" data-click="createAccessToken">Create Token</button>
                     </div>
+                    <div style="font-size:0.75rem;color:#888;margin-top:-0.5rem;margin-bottom:0.5rem;">Custom tokens must be 32-128 characters.</div>
                     <div id="access-token-generated" style="font-size:0.8rem;color:#bbb;margin-bottom:0.5rem;"></div>
                     <table>
                         <thead><tr><th>Name</th><th>Created</th><th>Last Used</th><th>Status</th><th>Action</th></tr></thead>
@@ -1723,8 +1725,14 @@
             }
             else if (a === 'createAccessToken') {
                 const name = document.getElementById('access-token-name').value.trim();
-                api('/api/v1/admin/security/access-tokens', { method: 'POST', body: JSON.stringify({ name: name || null }) }).then(r => {
+                const customToken = document.getElementById('access-token-custom').value.trim();
+                if (customToken && (customToken.length < 32 || customToken.length > 128)) {
+                    alert('Custom token must be 32-128 characters.');
+                    return;
+                }
+                api('/api/v1/admin/security/access-tokens', { method: 'POST', body: JSON.stringify({ name: name || null, token: customToken || null }) }).then(r => {
                     document.getElementById('access-token-name').value = '';
+                    document.getElementById('access-token-custom').value = '';
                     document.getElementById('access-token-generated').textContent = `New token: ${r.token}`;
                     loadSecurity();
                 });

@@ -450,6 +450,7 @@ class AccessTokenCreateRequest(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     name: Optional[str] = Field(None, max_length=100)
+    token: Optional[str] = Field(None, min_length=32, max_length=128)
 
 
 class AccessTokenResponse(BaseModel):

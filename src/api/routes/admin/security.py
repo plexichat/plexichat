@@ -68,7 +68,13 @@ async def create_access_token(request: Request, body: AccessTokenCreateRequest):
     admin_id = get_admin_from_token(request)
     from src.core import auth
 
-    token = auth.create_api_access_token(body.name, admin_id)
+    try:
+        token = auth.create_api_access_token(body.name, admin_id, body.token)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": {"code": 409, "message": str(exc)}},
+        )
     return AccessTokenCreateResponse(
         token=token.token or "",
         access_token=AccessTokenResponse(
