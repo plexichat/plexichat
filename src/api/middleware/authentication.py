@@ -55,8 +55,8 @@ class AuthenticationMiddleware:
             path = scope.get("path", "")
 
             # Skip for admin routes which manage their own sessions, and public status/health routes
-            is_admin_path = path.startswith("/admin/") or path.startswith(
-                "/api/v1/admin/"
+            is_admin_path = path.startswith("/admin") or path.startswith(
+                "/api/v1/admin"
             )
 
             public_endpoints = [
