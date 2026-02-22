@@ -444,6 +444,7 @@ class PlexiChatServer:
         from src.core import (
             auth,
             messaging,
+            polls,
             servers,
             relationships,
             presence,
@@ -637,7 +638,13 @@ class PlexiChatServer:
                 self._modules["embeds"] = embeds
             threads.append(threading.Thread(target=init_embeds, name="InitEmbeds"))
 
-            # 4. Notifications (Complex)
+            # 4. Polls
+            def init_polls():
+                timed_init("polls", lambda: polls.setup(self.db, messaging))
+                self._modules["polls"] = polls
+            threads.append(threading.Thread(target=init_polls, name="InitPolls"))
+
+            # 5. Notifications (Complex)
             def init_notifications():
                 try:
                     timed_init("notifications", lambda: notifications.setup(
@@ -918,6 +925,7 @@ class PlexiChatServer:
             db=self.db,
             auth_module=auth,
             messaging_module=messaging,
+            polls_module=self._modules.get("polls"),
             servers_module=servers,
             relationships_module=relationships,
             presence_module=presence,

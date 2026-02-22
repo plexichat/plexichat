@@ -569,6 +569,11 @@ async def send_channel_message(
             except Exception as e:
                 logger.warning(f"Automod check failed for message create: {e}")
 
+        # Helper to get message ID robustly
+        def get_msg_id(m):
+            if m is None: return None
+            return getattr(m, "id", None) or (m.get("id") if isinstance(m, dict) else None)
+
         if body.poll:
             polls_module = api.get_polls()
             if not polls_module:
@@ -576,7 +581,7 @@ async def send_channel_message(
                     try:
                         messaging.delete_message(
                             current_user.user_id,
-                            getattr(msg, "id", None),
+                            get_msg_id(msg),
                             hard_delete=True,
                         )
                     except Exception:
@@ -588,9 +593,10 @@ async def send_channel_message(
                     },
                 )
             try:
+                msg_id = get_msg_id(msg)
                 poll = polls_module.create_poll(
                     user_id=current_user.user_id,
-                    message_id=getattr(msg, "id", None),
+                    message_id=msg_id,
                     question=body.poll.question,
                     options=list(body.poll.options),
                     duration_hours=body.poll.duration_hours,
@@ -602,7 +608,7 @@ async def send_channel_message(
                 if messaging and poll:
                     try:
                         msg = messaging.update_message_metadata(
-                            msg.id, {"poll_id": poll.id}
+                            msg_id, {"poll_id": poll.id}
                         )
                     except Exception:
                         pass
@@ -623,7 +629,7 @@ async def send_channel_message(
                     try:
                         messaging.delete_message(
                             current_user.user_id,
-                            getattr(msg, "id", None),
+                            get_msg_id(msg),
                             hard_delete=True,
                         )
                     except Exception:
