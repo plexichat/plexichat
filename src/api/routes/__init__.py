@@ -92,7 +92,7 @@ def create_api_router() -> APIRouter:
     )
     api_router.include_router(presence_router, tags=["Presence"])
     api_router.include_router(reactions_router, tags=["Reactions"])
-    api_router.include_router(webhooks_router, prefix="/webhooks", tags=["Webhooks"])
+    api_router.include_router(webhooks_router, tags=["Webhooks"])
     api_router.include_router(
         settings_router, prefix="/users/@me/settings", tags=["Settings"]
     )
