@@ -571,7 +571,8 @@ async def send_channel_message(
 
         # Helper to get message ID robustly
         def get_msg_id(m):
-            if m is None: return None
+            if m is None:
+                return None
             return getattr(m, "id", None) or (m.get("id") if isinstance(m, dict) else None)
 
         if body.poll:

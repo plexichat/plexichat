@@ -3,6 +3,7 @@ Attachment service - Business logic for message attachments.
 """
 
 from typing import Any, Dict, List, Optional
+import urllib.parse
 
 from ..models import Attachment
 from ..repositories.attachment import AttachmentRepository
@@ -82,7 +83,8 @@ class AttachmentService(BaseService):
         now = self._get_timestamp()
         att_id = self._generate_id()
 
-        # Encrypt URL if enabled
+        url = self._normalize_url(url)
+
         encrypted_url = None
         final_url = url
         if self._get_config("encrypt_attachments"):
@@ -106,6 +108,17 @@ class AttachmentService(BaseService):
         if row is None:
             raise AttachmentNotFoundError("Failed to create attachment")
         return self._repo.row_to_model(row)
+
+    def _normalize_url(self, url: str) -> str:
+        if not url:
+            return url
+        if url.startswith("http://") or url.startswith("https://"):
+            parsed = urllib.parse.urlsplit(url)
+            path = parsed.path or ""
+            if parsed.query:
+                path = f"{path}?{parsed.query}"
+            return path or url
+        return url
 
     def get_attachments(
         self, user_id: SnowflakeID, message_id: SnowflakeID

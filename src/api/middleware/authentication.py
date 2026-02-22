@@ -55,8 +55,29 @@ class AuthenticationMiddleware:
             path = scope.get("path", "")
 
             # Skip for admin routes which manage their own sessions, and public status/health routes
-            is_admin_path = path.startswith("/admin") or path.startswith(
-                "/api/v1/admin"
+            admin_paths = ["/admin"]
+            admin_path = "/admin"
+            api_prefix = "/api/v1"
+            try:
+                from src.api.config import get_api_config
+
+                api_prefix = get_api_config().api_prefix.rstrip("/") or "/api/v1"
+            except Exception:
+                api_prefix = "/api/v1"
+            try:
+                import utils.config as config
+
+                admin_path = config.get("admin_ui", {}).get("path", "/admin")
+            except Exception:
+                admin_path = "/admin"
+            if not admin_path.startswith("/"):
+                admin_path = f"/{admin_path}"
+            admin_paths.append(admin_path)
+            if api_prefix:
+                admin_paths.append(f"{api_prefix}{admin_path}")
+            is_admin_path = any(
+                path == candidate or path.startswith(f"{candidate}/")
+                for candidate in admin_paths
             )
 
             public_endpoints = [

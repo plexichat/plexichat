@@ -3,6 +3,7 @@ Message service - Business logic for messages.
 """
 
 from typing import Any, Dict, List, Optional
+import urllib.parse
 
 from ..models import Message, MessageType, Attachment, MessageStatusType
 from ..repositories.message import MessageRepository
@@ -174,6 +175,7 @@ class MessageService(BaseService):
                 bulk_data = []
                 for att_data in attachments:
                     att_id = self._generate_id()
+                    normalized_url = self._normalize_url(att_data.get("url", ""))
                     bulk_data.append(
                         {
                             "id": att_id,
@@ -183,7 +185,7 @@ class MessageService(BaseService):
                                 "content_type", "application/octet-stream"
                             ),
                             "size": att_data.get("size", 0),
-                            "url": att_data.get("url", ""),
+                            "url": normalized_url,
                             "url_encrypted": None,
                             "created_at": now,
                             "metadata": att_data.get("metadata"),
@@ -200,7 +202,7 @@ class MessageService(BaseService):
                                 "content_type", "application/octet-stream"
                             ),
                             size=att_data.get("size", 0),
-                            url=att_data.get("url", ""),
+                            url=normalized_url,
                             created_at=now,
                             checksum=att_data.get("hash") or att_data.get("checksum"),
                         )
@@ -248,6 +250,17 @@ class MessageService(BaseService):
             logger.debug(f"Failed to update recent messages cache: {e}")
 
         return msg
+
+    def _normalize_url(self, url: str) -> str:
+        if not url:
+            return url
+        if url.startswith("http://") or url.startswith("https://"):
+            parsed = urllib.parse.urlsplit(url)
+            path = parsed.path or ""
+            if parsed.query:
+                path = f"{path}?{parsed.query}"
+            return path or url
+        return url
 
     def edit_message(
         self, user_id: SnowflakeID, message_id: SnowflakeID, content: str
