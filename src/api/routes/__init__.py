@@ -20,6 +20,7 @@ from .version import router as version_router
 from .settings import router as settings_router
 from .feedback import router as feedback_router
 from .notifications import router as notifications_router
+from .polls import router as polls_router
 from .docs import (
     router as docs_router,
     is_docs_enabled,
@@ -100,6 +101,7 @@ def create_api_router() -> APIRouter:
     api_router.include_router(notifications_router, tags=["Notifications"])
     api_router.include_router(telemetry_router, tags=["Telemetry"])
     api_router.include_router(voice_router, tags=["Voice"])
+    api_router.include_router(polls_router, tags=["Polls"])
 
     # Include admin router with configurable path
     admin_config = config.get("admin_ui", {})
