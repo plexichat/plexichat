@@ -270,15 +270,6 @@ class PollManager(BaseManager):
                 "This poll does not allow multiple choice voting"
             )
 
-        # Check if already voted
-        existing_votes = self._db.fetch_one(
-            "SELECT 1 FROM poll_votes WHERE poll_id = ? AND user_id = ? LIMIT 1",
-            (poll_id, user_id),
-        )
-
-        if existing_votes:
-            raise AlreadyVotedError("You have already voted on this poll")
-
         # Validate all options exist in this poll (optimized single query)
         placeholders = ",".join("?" * len(unique_option_ids))
         valid_options = self._db.fetch_all(
@@ -296,6 +287,14 @@ class PollManager(BaseManager):
         # Use transaction for atomic voting
         try:
             self._db.begin_transaction()
+
+            # Delete existing votes to allow changing vote (re-voting replaces previous)
+            self._db.execute(
+                "DELETE FROM poll_votes WHERE poll_id = ? AND user_id = ?",
+                (poll_id, user_id),
+                auto_commit=False,
+            )
+
             for option_id in unique_option_ids:
                 vote_id = self._generate_id()
                 self._db.execute(

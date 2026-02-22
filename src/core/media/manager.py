@@ -1452,7 +1452,7 @@ class MediaManager(BaseManager):
 
         # 1. Check if user is the uploader (fast path)
         row = self._db.fetch_one(
-            "SELECT id, uploaded_by FROM media_files WHERE filename = ? AND deleted = 0",
+            "SELECT id, uploaded_by, checksum FROM media_files WHERE filename = ? AND deleted = 0",
             (filename,),
         )
         if not row:
@@ -1463,14 +1463,26 @@ class MediaManager(BaseManager):
             return True
 
         # 2. Check if it's a message attachment
-        search_filename = os.path.basename(filename)
-        query = """
-            SELECT m.conversation_id 
-            FROM msg_messages m
-            JOIN msg_attachments a ON m.id = a.message_id
-            WHERE (a.filename = ? OR a.url LIKE '%' || ?) AND a.deleted = 0
-        """
-        rows = self._db.fetch_all(query, (search_filename, search_filename))
+        # We prefer checksum matching for robustness against encryption/URL changes
+        checksum = row.get("checksum")
+        if checksum:
+            query = """
+                SELECT m.conversation_id 
+                FROM msg_messages m
+                JOIN msg_attachments a ON m.id = a.message_id
+                WHERE a.checksum = ? AND a.deleted = 0
+            """
+            rows = self._db.fetch_all(query, (checksum,))
+        else:
+            # Fallback to filename matching if checksum is missing
+            search_filename = os.path.basename(filename)
+            query = """
+                SELECT m.conversation_id 
+                FROM msg_messages m
+                JOIN msg_attachments a ON m.id = a.message_id
+                WHERE (a.filename = ? OR a.url LIKE '%' || ?) AND a.deleted = 0
+            """
+            rows = self._db.fetch_all(query, (search_filename, search_filename))
 
         if rows and self._messaging:
             for r in rows:
