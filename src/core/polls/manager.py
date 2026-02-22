@@ -25,7 +25,6 @@ from .exceptions import (
     InvalidPollOptionError,
     PollOptionLimitError,
     InvalidPollDurationError,
-    AlreadyVotedError,
     MultipleVoteNotAllowedError,
     PermissionDeniedError,
     MessageNotFoundError,

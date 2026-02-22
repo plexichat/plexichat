@@ -25,7 +25,7 @@ from .participant import ParticipantService
 from .user_settings import UserSettingsService
 from .content_filter import ContentFilterService
 from src.core.base import SnowflakeID
-from src.utils.encryption import encrypt_message, blind_index
+from src.utils.encryption import encrypt_message, blind_index, encrypt_data
 import utils.logger as logger
 
 
@@ -176,6 +176,11 @@ class MessageService(BaseService):
                 for att_data in attachments:
                     att_id = self._generate_id()
                     normalized_url = self._normalize_url(att_data.get("url", ""))
+                    encrypted_url = None
+                    stored_url = normalized_url
+                    if self._get_config("encrypt_attachments"):
+                        encrypted_url = encrypt_data(normalized_url)
+                        stored_url = "[encrypted]"
                     bulk_data.append(
                         {
                             "id": att_id,
@@ -185,8 +190,8 @@ class MessageService(BaseService):
                                 "content_type", "application/octet-stream"
                             ),
                             "size": att_data.get("size", 0),
-                            "url": normalized_url,
-                            "url_encrypted": None,
+                            "url": stored_url,
+                            "url_encrypted": encrypted_url,
                             "created_at": now,
                             "metadata": att_data.get("metadata"),
                             "checksum": att_data.get("hash")
