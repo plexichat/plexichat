@@ -64,6 +64,7 @@ class AuthenticationMiddleware:
                 "/api/v1/health",
                 "/api/v1/capabilities",
                 "/api/v1/version",
+                "/api/v1/auth/password-requirements",
                 "/health",
                 "/status",
                 "/docs",
@@ -71,7 +72,21 @@ class AuthenticationMiddleware:
                 "/openapi.json",
                 "/",
             ]
-            is_public_endpoint = path in public_endpoints
+            is_docs_path = False
+            try:
+                from src.api.routes.docs import get_docs_config
+
+                docs_path = get_docs_config().path or "/docs/api"
+                docs_path = docs_path if docs_path.startswith("/") else f"/{docs_path}"
+                docs_path = docs_path.rstrip("/")
+                if path == docs_path or path.startswith(f"{docs_path}/"):
+                    is_docs_path = True
+            except Exception:
+                is_docs_path = False
+
+            is_public_endpoint = path in public_endpoints or is_docs_path or path.startswith(
+                "/api/v1/auth/password-requirements"
+            )
 
             if (
                 not is_admin_path
