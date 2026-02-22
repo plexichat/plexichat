@@ -1465,6 +1465,9 @@ class MediaManager(BaseManager):
         # 2. Check if it's a message attachment
         # We prefer checksum matching for robustness against encryption/URL changes
         checksum = row.get("checksum")
+        search_filename = os.path.basename(filename)
+        
+        rows = None
         if checksum:
             query = """
                 SELECT m.conversation_id 
@@ -1473,16 +1476,19 @@ class MediaManager(BaseManager):
                 WHERE a.checksum = ? AND a.deleted = 0
             """
             rows = self._db.fetch_all(query, (checksum,))
-        else:
-            # Fallback to filename matching if checksum is missing
-            search_filename = os.path.basename(filename)
+        
+        if not rows:
+            # Fallback to filename or metadata matching if checksum is missing or no matches found
+            file_id_token = str(row["id"])
             query = """
                 SELECT m.conversation_id 
                 FROM msg_messages m
                 JOIN msg_attachments a ON m.id = a.message_id
-                WHERE (a.filename = ? OR a.url LIKE '%' || ?) AND a.deleted = 0
+                WHERE (a.filename = ? OR a.url LIKE '%' || ? OR a.metadata LIKE '%' || ?) AND a.deleted = 0
             """
-            rows = self._db.fetch_all(query, (search_filename, search_filename))
+            rows = self._db.fetch_all(
+                query, (search_filename, search_filename, file_id_token)
+            )
 
         if rows and self._messaging:
             for r in rows:

@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, ConfigDict
 
 from .common import SnowflakeID
 from .reactions import ReactionResponse
-from .polls import PollInlineCreateRequest, PollResponse
+from .polls import PollInlineCreateRequest, PollResponse, PollResultsResponse
 
 
 class AttachmentRequest(BaseModel):
@@ -20,6 +20,9 @@ class AttachmentRequest(BaseModel):
     size: int = Field(..., ge=0, description="File size in bytes")
     url: str = Field(..., description="File URL")
     hash: Optional[str] = Field(None, description="SHA-256 hash for content reporting")
+    metadata: Optional[Dict[str, Any]] = Field(
+        None, description="Attachment metadata"
+    )
 
 
 class MessageCreateRequest(BaseModel):
@@ -117,6 +120,7 @@ class MessageResponse(BaseModel):
         None, description="Additional message metadata"
     )
     poll: Optional[PollResponse] = Field(None, description="Attached poll details")
+    poll_results: Optional[PollResultsResponse] = Field(None, description="Current poll results and user voting status")
 
 
 class MessagingSettingsResponse(BaseModel):

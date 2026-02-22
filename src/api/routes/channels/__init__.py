@@ -570,12 +570,22 @@ async def get_invite_info(
                     },
                 )
 
+            server_name = getattr(invite, "server_name", None)
+            if not server_name and hasattr(invite, "server_id"):
+                # Try to fetch server name if not in invite object
+                try:
+                    server = servers_mod.get_server(invite.server_id, current_user.user_id)
+                    if server:
+                        server_name = server.name
+                except Exception:
+                    pass
+
             return InviteInfoResponse(
                 code=invite.code,
                 server_id=SnowflakeID(invite.server_id)
                 if hasattr(invite, "server_id")
                 else None,
-                server_name=getattr(invite, "server_name", None),
+                server_name=server_name,
                 channel_id=SnowflakeID(invite.channel_id)
                 if hasattr(invite, "channel_id")
                 else None,
@@ -586,6 +596,8 @@ async def get_invite_info(
                 max_uses=getattr(invite, "max_uses", 0),
                 expires_at=getattr(invite, "expires_at", None),
             )
+        except HTTPException:
+            raise
         except Exception as e:
             exc_name = type(e).__name__
             if "NotFound" in exc_name or "Expired" in exc_name:

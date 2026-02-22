@@ -167,6 +167,7 @@ def _message_to_response(
             metadata = None
 
     poll_response = None
+    poll_results = None
     poll_id = None
     if isinstance(metadata, dict):
         poll_id = metadata.get("poll_id")
@@ -175,11 +176,17 @@ def _message_to_response(
         polls_module = api.get_polls()
         if polls_module:
             try:
-                poll = polls_module.get_poll(int(poll_id), viewer_user_id)
-                if poll:
-                    poll_response = _poll_to_response(poll)
-            except Exception:
-                poll_response = None
+                poll_obj = polls_module.get_poll(int(poll_id), viewer_user_id)
+                if poll_obj:
+                    poll_response = _poll_to_response(poll_obj)
+                    # Include current results and user's voting status
+                    results = polls_module.get_results(int(poll_id), viewer_user_id)
+                    if results:
+                        from src.api.routes.polls import _results_to_response
+
+                        poll_results = _results_to_response(results)
+            except Exception as e:
+                logger.debug(f"Failed to fetch poll/results for message {msg_id}: {e}")
 
     return MessageResponse(
         id=SnowflakeID(msg_id),
@@ -209,4 +216,5 @@ def _message_to_response(
         reactions=reactions_data or [],
         metadata=metadata,
         poll=poll_response,
+        poll_results=poll_results,
     )
