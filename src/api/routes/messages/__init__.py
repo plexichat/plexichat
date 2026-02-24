@@ -574,7 +574,9 @@ async def send_channel_message(
         def get_msg_id(m):
             if m is None:
                 return None
-            return getattr(m, "id", None) or (m.get("id") if isinstance(m, dict) else None)
+            return getattr(m, "id", None) or (
+                m.get("id") if isinstance(m, dict) else None
+            )
 
         if body.poll:
             polls_module = api.get_polls()
