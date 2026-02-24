@@ -1435,6 +1435,9 @@ class MediaManager(BaseManager):
         Returns:
             True if access granted, False otherwise
         """
+        # Initialize search_filename at the beginning to avoid scope issues
+        search_filename = os.path.basename(filename)
+
         # --- Thumbnail Handling ---
         if "thumbnails/" in filename:
             try:
@@ -1466,8 +1469,7 @@ class MediaManager(BaseManager):
         # We prefer checksum matching for robustness against encryption/URL changes
         checksum = row.get("checksum")
         file_id_token = str(row["id"])
-        search_filename = os.path.basename(filename)
-        
+
         rows = None
         if checksum:
             query = """
@@ -1477,7 +1479,7 @@ class MediaManager(BaseManager):
                 WHERE (a.checksum = ? OR a.metadata LIKE '%' || ?) AND a.deleted = 0
             """
             rows = self._db.fetch_all(query, (checksum, file_id_token))
-        
+
         if not rows:
             # Fallback to filename or full metadata matching if checksum is missing or no matches found
             query = """

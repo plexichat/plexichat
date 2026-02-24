@@ -574,7 +574,9 @@ async def get_invite_info(
             if not server_name and hasattr(invite, "server_id"):
                 # Try to fetch server name if not in invite object
                 try:
-                    server = servers_mod.get_server(invite.server_id, current_user.user_id)
+                    server = servers_mod.get_server(
+                        invite.server_id, current_user.user_id
+                    )
                     if server:
                         server_name = server.name
                 except Exception:
@@ -600,7 +602,11 @@ async def get_invite_info(
             raise
         except Exception as e:
             exc_name = type(e).__name__
-            if "NotFound" in exc_name or "Expired" in exc_name:
+            # Catch all not-found related exceptions and return 404
+            if any(
+                keyword in exc_name.lower()
+                for keyword in ["notfound", "expired", "invalid", "missing"]
+            ):
                 raise HTTPException(
                     status_code=404,
                     detail={

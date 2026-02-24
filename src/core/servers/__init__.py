@@ -541,10 +541,19 @@ def update_member(
     nickname: Optional[str] = None,
     muted: Optional[bool] = None,
     deafened: Optional[bool] = None,
+    timeout_until: Optional[int] = None,
+    timeout_reason: Optional[str] = None,
 ) -> Member:
     """Update member settings."""
     return _get_manager().update_member(
-        user_id, server_id, member_user_id, nickname, muted, deafened
+        user_id,
+        server_id,
+        member_user_id,
+        nickname,
+        muted,
+        deafened,
+        timeout_until,
+        timeout_reason,
     )
 
 
