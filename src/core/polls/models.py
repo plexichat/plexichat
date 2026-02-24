@@ -24,7 +24,7 @@ class PollOption:
     poll_id: SnowflakeID
     text: str
     position: int = 0
-    vote_count: int = 0
+    vote_count: Optional[int] = 0
 
 
 @dataclass

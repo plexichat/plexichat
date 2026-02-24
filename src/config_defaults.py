@@ -591,6 +591,9 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "enabled": True,
             "rate_limit": {"max_per_hour": 5, "max_per_day": 20},
         },
+        "reports": {
+            "enabled": True,
+        },
         "avatars": {
             "max_size": 512,
             "max_file_size": 5242880,
