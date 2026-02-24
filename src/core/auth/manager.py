@@ -1255,7 +1255,10 @@ class AuthManager(BaseManager):
         return True
 
     def create_api_access_token(
-        self, name: Optional[str], created_by: Optional[int], token_value: Optional[str] = None
+        self,
+        name: Optional[str],
+        created_by: Optional[int],
+        token_value: Optional[str] = None,
     ) -> AccessToken:
         token_id = self._generate_id()
         token = token_value.strip() if token_value else None

@@ -105,8 +105,10 @@ class AuthenticationMiddleware:
             except Exception:
                 is_docs_path = False
 
-            is_public_endpoint = path in public_endpoints or is_docs_path or path.startswith(
-                "/api/v1/auth/password-requirements"
+            is_public_endpoint = (
+                path in public_endpoints
+                or is_docs_path
+                or path.startswith("/api/v1/auth/password-requirements")
             )
 
             if (
