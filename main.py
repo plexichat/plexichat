@@ -34,10 +34,10 @@ validator.setup(auto_sanitize_html=False)
 import utils.version as version  # noqa: E402
 
 # Global Version Definition
-VERSION = "a.1.0-44"
+VERSION = "a.1.0-45"
 
 
-class PlexiChatServer:
+class PlexichatServer:
     """Main server class with lifecycle management."""
 
     def __init__(self):
@@ -1186,10 +1186,10 @@ Examples:
     args, _ = parser.parse_known_args()
 
     if args.version:
-        print(f"PlexiChat Server v{VERSION}")
+        print(f"Plexichat Server v{VERSION}")
         return
 
-    server = PlexiChatServer()
+    server = PlexichatServer()
 
     # Handle --create-config
     if args.create_config:

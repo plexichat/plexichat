@@ -1,4 +1,4 @@
-# PlexiChat Server
+# Plexichat Server
 
 A real-time messaging platform server with REST API and WebSocket gateway.
 
@@ -100,7 +100,7 @@ rate_limiting:
 docs:
   enabled: true  # Enable/disable API documentation serving
   path: /docs/api
-  title: PlexiChat API Documentation
+  title: Plexichat API Documentation
 ```
 
 See `gemini.md` for full configuration and deployment options.
@@ -205,4 +205,4 @@ pytest -n auto -m "not slow"
 
 ## Version
 
-Current version: `a.1.0-44` (Alpha)
+Current version: `a.1.0-45` (Alpha)
