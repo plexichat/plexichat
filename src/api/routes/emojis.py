@@ -33,6 +33,47 @@ def _emoji_to_response(emoji) -> EmojiResponse:
     )
 
 
+async def _dispatch_emoji_update(server_id: int):
+    """Helper to dispatch GUILD_EMOJIS_UPDATE via WebSocket."""
+    try:
+        from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+        from src.core.events.models import Event
+        from src.core.events.types import EventType
+
+        if not ws_is_setup():
+            return
+
+        dispatcher = get_dispatcher()
+        reactions = api.get_reactions()
+        servers = api.get_servers()
+
+        if not reactions or not servers:
+            return
+
+        # Get all server members
+        user_ids = servers.get_member_user_ids(server_id)
+        if not user_ids:
+            return
+
+        # Get current emojis for the payload
+        emojis = reactions.get_server_custom_emojis(server_id)
+        emoji_list = [_emoji_to_response(e).model_dump() for e in emojis]
+
+        # Create and dispatch the event
+        event = Event(
+            event_type=EventType.GUILD_EMOJIS_UPDATE,
+            data={
+                "guild_id": str(server_id),
+                "emojis": emoji_list,
+            },
+            server_id=server_id,
+        )
+        await dispatcher.dispatch_event(event, user_ids)
+
+    except Exception as e:
+        logger.debug(f"Failed to dispatch emoji update for server {server_id}: {e}")
+
+
 @router.get(
     "/{server_id}/emojis",
     response_model=List[EmojiResponse],
@@ -404,6 +445,10 @@ async def create_emoji(
                 image_data=image_data,
                 content_type=content_type,
             )
+            
+            # Dispatch WebSocket event
+            await _dispatch_emoji_update(sid)
+            
             return _emoji_to_response(emoji)
         except Exception as e:
             exc_name = type(e).__name__
@@ -528,6 +573,10 @@ async def update_emoji(
                 emoji_id=eid,
                 name=body.name,
             )
+            
+            # Dispatch WebSocket event
+            await _dispatch_emoji_update(sid)
+            
             return _emoji_to_response(emoji)
         except Exception as e:
             exc_name = type(e).__name__
@@ -634,6 +683,10 @@ async def delete_emoji(
 
         try:
             reactions.delete_custom_emoji(current_user.user_id, eid)
+            
+            # Dispatch WebSocket event
+            await _dispatch_emoji_update(sid)
+            
             return SuccessResponse(success=True)
         except Exception as e:
             exc_name = type(e).__name__
