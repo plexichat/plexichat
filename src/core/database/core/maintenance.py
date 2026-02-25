@@ -77,9 +77,10 @@ class DatabaseMaintenanceMixin:
                     self.in_transaction = False
                 elif self.transaction_depth > 0:
                     try:
-                        cursor.execute(
-                            f"ROLLBACK TO SAVEPOINT sp_{self.transaction_depth}"
-                        )
+                        if cursor is not None:
+                            cursor.execute(
+                                f"ROLLBACK TO SAVEPOINT sp_{self.transaction_depth}"
+                            )
                     except Exception:
                         conn.rollback()
                         self.transaction_depth = 0
@@ -92,7 +93,8 @@ class DatabaseMaintenanceMixin:
         except Exception as cleanup_e:
             logger.error(f"Error during error cleanup: {cleanup_e}")
         finally:
-            cursor.close()
+            if cursor is not None:
+                cursor.close()
 
     def convert_schema(self: _DatabaseMaintenanceProtocol, schema: str) -> str:
         if self.type != "postgres":
