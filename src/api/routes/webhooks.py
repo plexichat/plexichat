@@ -16,6 +16,7 @@ from src.api.schemas.webhooks import (
     WebhookExecuteRequest,
     WebhookMessageResponse,
 )
+from src.core.database.cache import invalidate_pattern
 
 router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
 
@@ -98,6 +99,8 @@ async def create_webhook(
             logger.info(
                 f"User {current_user.user_id} created webhook {webhook.id} in channel {cid}"
             )
+            # Invalidate webhook cache for this server
+            invalidate_pattern("webhooks:*")
             return _webhook_to_response(webhook, include_token=True)
         except Exception as e:
             exc_name = type(e).__name__
@@ -283,6 +286,8 @@ async def update_webhook(
                 channel_id=int(body.channel_id) if body.channel_id else None,
             )
             logger.info(f"User {current_user.user_id} updated webhook {wid}")
+            # Invalidate webhook cache for this server
+            invalidate_pattern("webhooks:*")
             return _webhook_to_response(webhook)
         except Exception as e:
             exc_name = type(e).__name__
@@ -373,6 +378,8 @@ async def delete_webhook(
         try:
             webhooks.delete_webhook(current_user.user_id, wid)
             logger.info(f"User {current_user.user_id} deleted webhook {wid}")
+            # Invalidate webhook cache for this server
+            invalidate_pattern("webhooks:*")
             return SuccessResponse(success=True)
         except Exception as e:
             exc_name = type(e).__name__
@@ -584,6 +591,8 @@ async def regenerate_webhook_token(
             logger.info(
                 f"User {current_user.user_id} regenerated token for webhook {wid}"
             )
+            # Invalidate webhook cache for this server
+            invalidate_pattern("webhooks:*")
             return _webhook_to_response(webhook, include_token=True)
         except Exception as e:
             exc_name = type(e).__name__

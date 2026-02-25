@@ -109,6 +109,7 @@ class AuthenticationMiddleware:
                 path in public_endpoints
                 or is_docs_path
                 or path.startswith("/api/v1/auth/password-requirements")
+                or (path.startswith("/api/v1/webhooks/") and len(path.split("/")) > 4)  # Webhook execution endpoints
             )
 
             if (
