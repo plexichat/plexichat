@@ -7,9 +7,10 @@ from fastapi.responses import HTMLResponse, FileResponse
 import os
 
 router = APIRouter(tags=["Help"])
+robots_router = APIRouter()
 
 
-@router.get("/robots.txt", include_in_schema=False)
+@robots_router.get("/robots.txt", include_in_schema=False)
 async def robots_txt():
     """Serve robots.txt."""
     static_path = os.path.join(os.getcwd(), "static", "robots.txt")

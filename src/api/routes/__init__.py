@@ -35,7 +35,7 @@ from .avatars import router as avatars_router
 from .media import router as media_router
 from .reports import router as reports_router
 from .qr import router as qr_router
-from .help import router as help_router
+from .help import router as help_router, robots_router
 from .config import router as config_router
 
 import utils.config as config
@@ -126,6 +126,7 @@ def create_api_router() -> APIRouter:
     api_router.include_router(qr_router, tags=["Utilities"])
 
     # Include help router
+    api_router.include_router(robots_router)
     api_router.include_router(help_router, prefix="/help", tags=["Help"])
 
     return api_router
