@@ -30,7 +30,7 @@ class DatabaseMonitor:
         alert_thresholds = monitoring_config.get("alert_thresholds", {})
 
         max_connection_age_hours = self.db_config.get("connection_pool", {}).get(
-            "max_connection_age_hours", 0.5
+            "max_connection_age_hours", 2.0
         )
         self._max_connection_age_seconds = max_connection_age_hours * 3600
         self._periodic_log_interval = monitoring_config.get(
