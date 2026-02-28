@@ -428,10 +428,8 @@ class ReactionManager(BaseManager):
         max_user_reactions = self._config.get("max_unique_reactions_per_user", 50)
 
         # Use transaction to prevent race conditions on limit checks
-        # Get lock on message row to serialize reactions for this message
         try:
-            # Begin transaction with serializable isolation
-            self._db.execute("BEGIN EXCLUSIVE")
+            self._db.execute("BEGIN IMMEDIATE")
             
             # Re-check existence within transaction (may have changed)
             existing = self._db.fetch_one(
@@ -991,7 +989,7 @@ class ReactionManager(BaseManager):
 
         # Check name uniqueness - use transaction to prevent race condition
         try:
-            self._db.execute("BEGIN EXCLUSIVE")
+            self._db.execute("BEGIN IMMEDIATE")
             
             existing = self._db.fetch_one(
                 "SELECT 1 FROM react_custom_emoji WHERE server_id = ? AND name = ?",
