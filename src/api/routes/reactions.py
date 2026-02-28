@@ -3,12 +3,13 @@ Reaction routes - Message reaction endpoints.
 """
 
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Request
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.reactions import ReactionResponse, ReactionUserResponse
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
+from src.core import ratelimit
 import utils.logger as logger
 
 router = APIRouter(tags=["Reactions"])
@@ -84,6 +85,7 @@ async def add_reaction(
     channel_id: str,
     message_id: str,
     emoji: str,
+    request: Request,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
     """
@@ -91,6 +93,25 @@ async def add_reaction(
 
     Adds the specified emoji reaction to the message.
     """
+    # Rate limit reactions: 10 per second per user
+    rl_result = ratelimit.check_rate_limit(
+        user_id=current_user.user_id, 
+        route="PUT /reactions",
+        limit=10,
+        window=1
+    )
+    if not rl_result.allowed:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": {
+                    "code": 429,
+                    "message": f"Rate limited. Try again in {rl_result.retry_after}s"
+                }
+            },
+            headers={"Retry-After": str(rl_result.retry_after)},
+        )
+    
     reactions = api.get_reactions()
     if not reactions:
         logger.error("Reactions module not available")
@@ -196,7 +217,7 @@ async def add_reaction(
                 detail={
                     "error": {
                         "code": 500,
-                        "message": f"Failed to add reaction: {str(e)}",
+                        "message": "Failed to add reaction",
                     }
                 },
             )
@@ -208,7 +229,8 @@ async def add_reaction(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -231,6 +253,7 @@ async def remove_reaction(
     channel_id: str,
     message_id: str,
     emoji: str,
+    request: Request,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
     """
@@ -238,6 +261,25 @@ async def remove_reaction(
 
     Removes the specified emoji reaction from the message.
     """
+    # Rate limit reactions: 10 per second per user
+    rl_result = ratelimit.check_rate_limit(
+        user_id=current_user.user_id, 
+        route="DELETE /reactions",
+        limit=10,
+        window=1
+    )
+    if not rl_result.allowed:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": {
+                    "code": 429,
+                    "message": f"Rate limited. Try again in {rl_result.retry_after}s"
+                }
+            },
+            headers={"Retry-After": str(rl_result.retry_after)},
+        )
+    
     reactions = api.get_reactions()
     if not reactions:
         logger.error("Reactions module not available")
@@ -306,7 +348,8 @@ async def remove_reaction(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -396,7 +439,7 @@ async def get_reaction_users(
                 detail={
                     "error": {
                         "code": 500,
-                        "message": f"Failed to fetch reaction users: {str(e)}",
+                        "message": "Failed to fetch reaction users",
                     }
                 },
             )
@@ -408,7 +451,8 @@ async def get_reaction_users(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -476,7 +520,7 @@ async def get_reactions(
                 detail={
                     "error": {
                         "code": 500,
-                        "message": f"Failed to fetch reactions: {str(e)}",
+                        "message": "Failed to fetch reactions",
                     }
                 },
             )
@@ -488,5 +532,6 @@ async def get_reactions(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

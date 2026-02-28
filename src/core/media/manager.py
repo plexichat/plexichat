@@ -116,6 +116,7 @@ class MediaManager(BaseManager):
         self._messaging = messaging_module
         self._config = self._load_config()
         self._lock = threading.Lock()
+        self._rl_prefix = f"media:{uuid.uuid4().hex}"
 
         self._storage = self._init_storage()
         self._db_storage = self._init_db_storage()  # For auto-routing
@@ -242,6 +243,14 @@ class MediaManager(BaseManager):
             return storage
         return None
 
+    def _ensure_ratelimit_setup(self) -> None:
+        if ratelimit.is_setup():
+            return
+
+        from src.core.ratelimit.storage import MemoryStorage
+
+        ratelimit.setup(storage_backend=MemoryStorage(), enable_global_limit=False)
+
     def _check_rate_limit(self, user_id: int, file_size: int) -> None:
         """
         Check if user is within rate limits.
@@ -253,44 +262,129 @@ class MediaManager(BaseManager):
         if not rate_config.get("enabled", False):
             return
 
-        # 1. Check frequency using core ratelimit module
-        rl_result = ratelimit.check_rate_limit(
-            user_id=user_id, route="POST /media/upload"
-        )
-        if not rl_result.allowed:
-            raise MediaError(
-                f"Upload rate limit exceeded. Please try again in {int(rl_result.retry_after or 1)}s"
-            )
+        self._ensure_ratelimit_setup()
+        manager = ratelimit.get_manager()
 
-        # 2. Check daily size limit (still uses database for now as core doesn't handle size costs yet)
         now_seconds = self._get_timestamp() // 1000
+        minute_window = now_seconds - (now_seconds % 60)
+        hour_window = now_seconds - (now_seconds % 3600)
         day_window = now_seconds - (now_seconds % 86400)
 
-        # Use existing buckets table if we migrated, or keep a simpler check
-        # For simplicity, we keep using the new ratelimit_buckets for daily size via a special key
-        manager = ratelimit.get_manager()
-        size_key = f"media:size:day:{user_id}:{day_window}"
+        minute_key = f"{self._rl_prefix}:uploads:minute:{user_id}:{minute_window}"
+        hour_key = f"{self._rl_prefix}:uploads:hour:{user_id}:{hour_window}"
+        day_size_key = f"{self._rl_prefix}:size:day:{user_id}:{day_window}"
 
-        # Atomic increment of size
-        current_size = manager.increment_custom_usage(size_key, "total_size", file_size)
+        uploads_minute = manager.increment_custom_usage(minute_key, "count", 0, ttl=120)
+        uploads_hour = manager.increment_custom_usage(hour_key, "count", 0, ttl=7200)
+        day_size = manager.increment_custom_usage(day_size_key, "total_size", 0, ttl=172800)
 
-        max_daily_size = rate_config.get("max_total_size_per_day", 512 * 1024 * 1024)
-        if current_size > max_daily_size:
-            # Rollback the increment if failed?
-            # Better to check first, then increment. But for safety:
-            manager.increment_custom_usage(size_key, "total_size", -file_size)
-            remaining = max(0, max_daily_size - (current_size - file_size))
+        max_per_minute = int(rate_config.get("uploads_per_minute", 10))
+        max_per_hour = int(rate_config.get("uploads_per_hour", 100))
+        max_daily_size = int(rate_config.get("max_total_size_per_day", 512 * 1024 * 1024))
+
+        if uploads_minute >= max_per_minute:
+            retry_after = 60 - (now_seconds % 60)
+            raise MediaError(
+                f"Upload rate limit exceeded. Please try again in {int(retry_after)}s"
+            )
+
+        if uploads_hour >= max_per_hour:
+            retry_after = 3600 - (now_seconds % 3600)
+            raise MediaError(
+                f"Upload rate limit exceeded. Please try again in {int(retry_after)}s"
+            )
+
+        if day_size + file_size > max_daily_size:
+            remaining = max(0, max_daily_size - day_size)
             raise MediaError(
                 f"Daily upload limit exceeded. Remaining: {remaining // (1024 * 1024)}MB"
             )
 
+    def _update_rate_limit(self, user_id: int, file_size: int) -> None:
+        rate_config = self._config.get("rate_limit", {})
+        if not rate_config.get("enabled", False):
+            return
+
+        self._ensure_ratelimit_setup()
+        manager = ratelimit.get_manager()
+
+        now_seconds = self._get_timestamp() // 1000
+        minute_window = now_seconds - (now_seconds % 60)
+        hour_window = now_seconds - (now_seconds % 3600)
+        day_window = now_seconds - (now_seconds % 86400)
+
+        minute_key = f"{self._rl_prefix}:uploads:minute:{user_id}:{minute_window}"
+        hour_key = f"{self._rl_prefix}:uploads:hour:{user_id}:{hour_window}"
+        day_size_key = f"{self._rl_prefix}:size:day:{user_id}:{day_window}"
+
+        manager.increment_custom_usage(minute_key, "count", 1, ttl=120)
+        manager.increment_custom_usage(hour_key, "count", 1, ttl=7200)
+        manager.increment_custom_usage(day_size_key, "total_size", file_size, ttl=172800)
+
     def _get_daily_size(self, user_id: int, day_window: int) -> int:
         """Get total upload size for day."""
+        self._ensure_ratelimit_setup()
         manager = ratelimit.get_manager()
-        size_key = f"media:size:day:{user_id}:{day_window}"
+        size_key = f"{self._rl_prefix}:size:day:{user_id}:{day_window}"
         # We need a way to read custom usage without incrementing
         # Since we don't have a public read method, we can increment by 0
         return manager.increment_custom_usage(size_key, "total_size", 0)
+
+    def _get_rate_limit_count(self, user_id: int, window_type: str, window_start: int) -> int:
+        """Get upload count for a given window (minute/hour)."""
+        self._ensure_ratelimit_setup()
+        manager = ratelimit.get_manager()
+
+        if window_type == "minute":
+            key = f"{self._rl_prefix}:uploads:minute:{user_id}:{window_start}"
+            return manager.increment_custom_usage(key, "count", 0, ttl=120)
+        if window_type == "hour":
+            key = f"{self._rl_prefix}:uploads:hour:{user_id}:{window_start}"
+            return manager.increment_custom_usage(key, "count", 0, ttl=7200)
+        return 0
+
+    def _get_rate_limit_size(self, user_id: int, window_type: str, window_start: int) -> int:
+        """Get size usage for a given window (day)."""
+        self._ensure_ratelimit_setup()
+        manager = ratelimit.get_manager()
+
+        if window_type == "day":
+            key = f"{self._rl_prefix}:size:day:{user_id}:{window_start}"
+            return manager.increment_custom_usage(key, "total_size", 0, ttl=172800)
+        return 0
+
+    def _check_thumbnail_rate_limit(self, user_id: int) -> None:
+        img_cfg = self._config.get("image_processing", {})
+        max_per_minute = int(img_cfg.get("max_thumbnail_requests_per_minute", 60))
+        if max_per_minute <= 0:
+            return
+
+        self._ensure_ratelimit_setup()
+        manager = ratelimit.get_manager()
+
+        now_seconds = self._get_timestamp() // 1000
+        minute_window = now_seconds - (now_seconds % 60)
+        key = f"{self._rl_prefix}:thumb:minute:{user_id}:{minute_window}"
+        count = manager.increment_custom_usage(key, "count", 0, ttl=120)
+        if count >= max_per_minute:
+            retry_after = 60 - (now_seconds % 60)
+            raise MediaError(
+                f"Thumbnail rate limit exceeded. Please try again in {int(retry_after)}s"
+            )
+
+    def _update_thumbnail_rate_limit(self, user_id: int) -> None:
+        img_cfg = self._config.get("image_processing", {})
+        max_per_minute = int(img_cfg.get("max_thumbnail_requests_per_minute", 60))
+        if max_per_minute <= 0:
+            return
+
+        self._ensure_ratelimit_setup()
+        manager = ratelimit.get_manager()
+
+        now_seconds = self._get_timestamp() // 1000
+        minute_window = now_seconds - (now_seconds % 60)
+        key = f"{self._rl_prefix}:thumb:minute:{user_id}:{minute_window}"
+        manager.increment_custom_usage(key, "count", 1, ttl=120)
 
     def _init_image_processor(self) -> Optional[ImageProcessor]:
         """Initialize image processor."""
@@ -1099,24 +1193,19 @@ class MediaManager(BaseManager):
         if not rate_config.get("enabled", True):
             return {"enabled": False}
 
+        self._ensure_ratelimit_setup()
+
         now_seconds = self._get_timestamp() // 1000
         from src.core.ratelimit.models import BucketType
 
-        manager = ratelimit.get_manager()
-
-        # Get usage from core module
-        bucket_key = manager._generate_bucket_key(
-            BucketType.ROUTE, user_id=user_id, route="POST /media/upload"
-        )
-        bucket_info = ratelimit.get_bucket_info(bucket_key)
-
         # Daily size usage
         day_window = now_seconds - (now_seconds % 86400)
-        day_size = self._get_daily_size(user_id, day_window)
+        day_size = self._get_rate_limit_size(user_id, "day", day_window)
 
-        # We assume TOKEN_BUCKET or SLIDING_WINDOW usage
-        used_minute = bucket_info.request_count if bucket_info else 0
-        used_hour = bucket_info.hourly_count if bucket_info else 0
+        minute_window = now_seconds - (now_seconds % 60)
+        hour_window = now_seconds - (now_seconds % 3600)
+        used_minute = self._get_rate_limit_count(user_id, "minute", minute_window)
+        used_hour = self._get_rate_limit_count(user_id, "hour", hour_window)
 
         max_per_minute = rate_config.get("uploads_per_minute", 10)
         max_per_hour = rate_config.get("uploads_per_hour", 100)
