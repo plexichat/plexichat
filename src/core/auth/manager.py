@@ -862,9 +862,15 @@ class AuthManager(BaseManager):
         now = self._get_timestamp()
         expires = now + 300000
         token, token_hash = create_2fa_challenge_token(cid)
+
+        ip_index = None
+        ip_encrypted = None
+        if ip:
+            ip_index = self.crypto.fast_blind_index(ip, "ip_address")
+            ip_encrypted = self.crypto.encrypt_data(ip, context=str(cid))
         self._db.execute(
-            "INSERT INTO auth_2fa_challenges (id, user_id, token_hash, device_id, ip_address, user_agent, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (cid, user_id, token_hash, device_id, ip, ua, now, expires),
+            "INSERT INTO auth_2fa_challenges (id, user_id, token_hash, device_id, ip_index, ip_encrypted, user_agent, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (cid, user_id, token_hash, device_id, ip_index, ip_encrypted, ua, now, expires),
         )
         return TwoFactorChallenge(
             id=cid,
@@ -916,8 +922,18 @@ class AuthManager(BaseManager):
         self._db.execute(
             "UPDATE auth_2fa_challenges SET used = 1 WHERE id = ?", (row["id"],)
         )
+
+        ip_address = None
+        try:
+            if row.get("ip_encrypted"):
+                ip_address = self.crypto.decrypt_data(
+                    row["ip_encrypted"], context=str(row["id"])
+                )
+        except Exception:
+            ip_address = None
+
         session = self._create_session(
-            user_id, row["device_id"], row["ip_address"], row["user_agent"]
+            user_id, row["device_id"], ip_address, row["user_agent"]
         )
         email = (
             self.crypto.decrypt_data(user_row["email_encrypted"], context=str(user_id))
@@ -973,18 +989,18 @@ class AuthManager(BaseManager):
         )
         if not user:
             return False
-        # Use user_id for replay prevention during confirmation
-        if totp_module.verify_totp_code(
-            totp_module.decrypt_totp_secret(user["totp_secret_encrypted"]),
-            code,
-            user_id=user_id,
-        ):
-            self._db.execute(
-                "UPDATE auth_users SET totp_enabled = 1 WHERE id = ?", (user_id,)
-            )
-            invalidate_pattern("user_data:*")
-            return True
-        return False
+        # Use a namespaced user_id for replay prevention so that codes used
+        # during setup confirmation don't block the subsequent login challenge
+        # within the same 30s window.
+        secret = totp_module.decrypt_totp_secret(user["totp_secret_encrypted"])
+        if not totp_module.verify_totp_code(secret, code, user_id=f"setup:{user_id}"):
+            raise TwoFactorInvalidError("Invalid code")
+
+        self._db.execute(
+            "UPDATE auth_users SET totp_enabled = 1 WHERE id = ?", (user_id,)
+        )
+        invalidate_pattern("user_data:*")
+        return True
 
     def disable_2fa(self, user_id: int, password: str, code: str) -> bool:
         user = self._db.fetch_one(
@@ -995,11 +1011,12 @@ class AuthManager(BaseManager):
             return False
         if not self.crypto.verify_password(password, user["password_hash"]):
             raise InvalidCredentialsError("Invalid password")
-        # Use user_id for replay prevention
+        # Use a namespaced user_id for replay prevention so disable flow
+        # doesn't conflict with login flow within the same 30s window.
         if not totp_module.verify_totp_code(
             totp_module.decrypt_totp_secret(user["totp_secret_encrypted"]),
             code,
-            user_id=user_id,
+            user_id=f"disable:{user_id}",
         ):
             raise TwoFactorInvalidError("Invalid code")
         self._db.execute(
