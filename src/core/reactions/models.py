@@ -22,6 +22,7 @@ class CustomEmoji:
     created_by: SnowflakeID = 0
     available: bool = True
     created_at: int = 0
+    uploader_username: Optional[str] = None
 
 
 @dataclass
@@ -47,6 +48,7 @@ class ReactionCount:
     is_custom: bool = False
     custom_emoji_id: Optional[SnowflakeID] = None
     me: bool = False
+    url: Optional[str] = None
 
 
 @dataclass

@@ -2,7 +2,7 @@
 Reaction schemas - Request/response models for reaction endpoints.
 """
 
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel, Field, ConfigDict
 
 from .common import SnowflakeID
@@ -16,6 +16,9 @@ class ReactionResponse(BaseModel):
     emoji: str = Field(..., description="Emoji identifier")
     count: int = Field(..., description="Number of reactions")
     me: bool = Field(False, description="Whether current user reacted")
+    url: Optional[str] = Field(None, description="Custom emoji URL")
+    is_custom: bool = Field(False, description="Whether emoji is custom")
+    custom_emoji_id: Optional[SnowflakeID] = Field(None, description="Custom emoji ID")
 
 
 class ReactionUserResponse(BaseModel):

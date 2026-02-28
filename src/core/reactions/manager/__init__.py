@@ -609,32 +609,30 @@ class ReactionManager(BaseManager):
             for row in rows:
                 blocked_users.add(row["blocker_id"])
 
-        rows = self._db.fetch_all(
-            """SELECT emoji, is_custom, custom_emoji_id, COUNT(*) as count,
-                      MAX(CASE WHEN user_id = ? THEN 1 ELSE 0 END) as me
-               FROM react_reactions 
-               WHERE message_id = ?
-               GROUP BY emoji, is_custom, custom_emoji_id
-               ORDER BY MIN(created_at)""",
-            (user_id, message_id),
-        )
+        # Build query with block filtering integrated
+        query = """SELECT r.emoji, r.is_custom, r.custom_emoji_id, e.url, COUNT(*) as count,
+                          MAX(CASE WHEN r.user_id = ? THEN 1 ELSE 0 END) as me
+                   FROM react_reactions r
+                   LEFT JOIN react_custom_emoji e ON r.custom_emoji_id = e.id
+                   WHERE r.message_id = ?"""
+        
+        params = [user_id, message_id]
+        
+        if blocked_users:
+            placeholders = ",".join("?" * len(blocked_users))
+            query += f" AND r.user_id NOT IN ({placeholders})"
+            params.extend(list(blocked_users))
+            
+        query += """ GROUP BY r.emoji, r.is_custom, r.custom_emoji_id, e.url
+                     ORDER BY MIN(r.created_at)"""
+
+        rows = self._db.fetch_all(query, tuple(params))
 
         reactions = []
         total = 0
 
         for row in rows:
-            if blocked_users:
-                actual_count = self._db.fetch_one(
-                    """SELECT COUNT(*) as count FROM react_reactions 
-                       WHERE message_id = ? AND emoji = ? AND user_id NOT IN ({})""".format(
-                        ",".join("?" * len(blocked_users))
-                    ),
-                    (message_id, row["emoji"]) + tuple(blocked_users),
-                )
-                count = actual_count["count"] if actual_count else 0
-            else:
-                count = row["count"]
-
+            count = row["count"]
             if count > 0:
                 reactions.append(
                     ReactionCount(
@@ -644,6 +642,7 @@ class ReactionManager(BaseManager):
                         is_custom=bool(row["is_custom"]),
                         custom_emoji_id=row["custom_emoji_id"],
                         me=bool(row["me"]),
+                        url=row.get("url"),
                     )
                 )
                 total += count
@@ -1025,16 +1024,19 @@ class ReactionManager(BaseManager):
         self, server_id: int, include_unavailable: bool = False
     ) -> List[CustomEmoji]:
         """Get all custom emojis for a server."""
-        if include_unavailable:
-            rows = self._db.fetch_all(
-                "SELECT * FROM react_custom_emoji WHERE server_id = ? ORDER BY name",
-                (server_id,),
-            )
-        else:
-            rows = self._db.fetch_all(
-                "SELECT * FROM react_custom_emoji WHERE server_id = ? AND available = 1 ORDER BY name",
-                (server_id,),
-            )
+        query = """
+            SELECT e.*, u.username as uploader_username 
+            FROM react_custom_emoji e
+            LEFT JOIN auth_users u ON e.created_by = u.id
+            WHERE e.server_id = ?
+        """
+        
+        if not include_unavailable:
+            query += " AND e.available = 1"
+            
+        query += " ORDER BY e.name"
+        
+        rows = self._db.fetch_all(query, (server_id,))
 
         return [self._row_to_custom_emoji(row) for row in rows]
 
@@ -1090,20 +1092,21 @@ class ReactionManager(BaseManager):
         placeholders = ",".join("?" * len(message_ids))
 
         # Base query
-        query = f"""SELECT message_id, emoji, is_custom, custom_emoji_id, 
+        query = f"""SELECT r.message_id, r.emoji, r.is_custom, r.custom_emoji_id, e.url,
                            COUNT(*) as count,
-                           MAX(CASE WHEN user_id = ? THEN 1 ELSE 0 END) as me
-                    FROM react_reactions 
-                    WHERE message_id IN ({placeholders})"""
+                           MAX(CASE WHEN r.user_id = ? THEN 1 ELSE 0 END) as me
+                    FROM react_reactions r
+                    LEFT JOIN react_custom_emoji e ON r.custom_emoji_id = e.id
+                    WHERE r.message_id IN ({placeholders})"""
         params = [user_id] + list(message_ids)
 
         # Filter out blocked users in the main query to avoid N+1
         if blocked_users:
             blocked_placeholders = ",".join("?" * len(blocked_users))
-            query += f" AND user_id NOT IN ({blocked_placeholders})"
+            query += f" AND r.user_id NOT IN ({blocked_placeholders})"
             params.extend(list(blocked_users))
 
-        query += " GROUP BY message_id, emoji, is_custom, custom_emoji_id ORDER BY message_id, MIN(created_at)"
+        query += " GROUP BY r.message_id, r.emoji, r.is_custom, r.custom_emoji_id, e.url ORDER BY r.message_id, MIN(r.created_at)"
 
         # Single query to get all filtered reactions grouped by message and emoji
         rows = self._db.fetch_all(query, tuple(params))
@@ -1117,7 +1120,14 @@ class ReactionManager(BaseManager):
 
             if count > 0:
                 result[msg_id].append(
-                    {"emoji": row["emoji"], "count": count, "me": bool(row["me"])}
+                    {
+                        "emoji": row["emoji"],
+                        "count": count,
+                        "me": bool(row["me"]),
+                        "is_custom": bool(row["is_custom"]),
+                        "custom_emoji_id": row["custom_emoji_id"],
+                        "url": row.get("url")
+                    }
                 )
 
         return result
@@ -1148,6 +1158,7 @@ class ReactionManager(BaseManager):
             created_by=row.get("created_by", 0) or 0,
             available=bool(row.get("available", 1)),
             created_at=row["created_at"],
+            uploader_username=row.get("uploader_username"),
         )
 
     def get_reaction_count(self, message_id: SnowflakeID) -> int:

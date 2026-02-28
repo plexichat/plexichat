@@ -29,6 +29,7 @@ def _emoji_to_response(emoji) -> EmojiResponse:
         url=emoji.url or "",
         available=emoji.available,
         created_by=str(emoji.created_by) if emoji.created_by else "0",
+        uploader_username=emoji.uploader_username,
         created_at=emoji.created_at,
     )
 

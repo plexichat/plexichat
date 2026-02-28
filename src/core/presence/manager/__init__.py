@@ -213,6 +213,10 @@ class PresenceManager(BaseManager):
 
         now = self._get_timestamp()
 
+        # Simple validation for emoji length to prevent abuse
+        if emoji and len(emoji) > 64:
+            emoji = emoji[:64]
+
         self._db.upsert(
             "pres_custom_status",
             ["user_id", "text", "emoji", "expires_at", "created_at"],
