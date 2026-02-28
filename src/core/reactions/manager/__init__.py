@@ -270,14 +270,95 @@ class ReactionManager(BaseManager):
         if len(emoji) > 32:
             raise InvalidEmojiError("Emoji is too long")
 
+        # Validate Unicode emoji - check for valid emoji ranges
+        # Reject zero-width chars, combining marks spam, RTL overrides
+        if not self._is_valid_unicode_emoji(emoji):
+            raise InvalidEmojiError("Invalid emoji characters")
+
         return (False, None, emoji)
+
+    def _is_valid_unicode_emoji(self, text: str) -> bool:
+        """
+        Validate that text contains valid emoji characters.
+        Rejects zero-width chars, excessive combining marks, control characters.
+        """
+        VALID_EMOJI_RANGES = [
+            (0x1F000, 0x1FAFF),  # All major emoji blocks (Symbols, Emoticons, Transport, etc.)
+            (0x1FB00, 0x1FBFF),  # Symbols for Legacy Computing
+            (0x2600, 0x26FF),    # Miscellaneous Symbols
+            (0x2700, 0x27BF),    # Dingbats
+            (0x2300, 0x23FF),    # Miscellaneous Technical
+            (0x2B50, 0x2B55),    # Stars, circles
+            (0xFE00, 0xFE0F),    # Variation Selectors
+            (0xE0020, 0xE007F),  # Tags (flag subdivisions)
+        ]
+        
+        # Reject problematic characters
+        REJECTED_CHARS = {
+            0x200B,  # Zero-width space
+            0x200C,  # Zero-width non-joiner
+            0x200D,  # Zero-width joiner (when excessive)
+            0x202E,  # Right-to-left override
+            0x202D,  # Left-to-right override
+            0xFEFF,  # Zero-width no-break space
+        }
+        
+        if not text:
+            return False
+        
+        # Check each character
+        zwj_count = 0
+        for char in text:
+            code = ord(char)
+            
+            # Reject control chars
+            if code < 0x20 and code not in (0x09, 0x0A, 0x0D):  # Allow tab, LF, CR
+                return False
+            
+            # Count zero-width joiners (max 2-3 allowed for skin tones)
+            if code == 0x200D:
+                zwj_count += 1
+                if zwj_count > 3:
+                    return False
+                continue
+            
+            # Reject override chars
+            if code in REJECTED_CHARS:
+                return False
+            
+            # Check if in valid emoji range
+            in_valid_range = False
+            for start, end in VALID_EMOJI_RANGES:
+                if start <= code <= end:
+                    in_valid_range = True
+                    break
+            
+            # Also allow basic letters/numbers for text emoji variants
+            if (0x30 <= code <= 0x39) or (0x41 <= code <= 0x5A) or (0x61 <= code <= 0x7A):
+                in_valid_range = True
+            
+            # Allow some punctuation (for :name: style)
+            if code in (0x3A, 0x2D, 0x5F):  # : - _
+                in_valid_range = True
+
+            # Allow keycap combining mark and copyright/registered symbols
+            if code in (0x20E3, 0xA9, 0xAE):
+                in_valid_range = True
+            
+            if not in_valid_range:
+                return False
+        
+        return True
 
     def _validate_custom_emoji_for_server(
         self, custom_emoji_id: SnowflakeID, server_id: SnowflakeID
     ) -> bool:
-        """Validate that custom emoji exists in the server."""
+        """
+        Validate that custom emoji exists in the server and is available.
+        Rejects soft-deleted emojis.
+        """
         row = self._db.fetch_one(
-            "SELECT 1 FROM react_custom_emoji WHERE id = ? AND server_id = ?",
+            "SELECT 1 FROM react_custom_emoji WHERE id = ? AND server_id = ? AND available = 1",
             (custom_emoji_id, server_id),
         )
         return row is not None
@@ -344,50 +425,82 @@ class ReactionManager(BaseManager):
             raise ReactionExistsError("You have already reacted with this emoji")
 
         max_reactions = self._config.get("max_reactions_per_message", 20)
-        unique_count = self._get_unique_emoji_count(message_id)
-
-        user_has_this_emoji = self._db.fetch_one(
-            "SELECT 1 FROM react_reactions WHERE message_id = ? AND emoji = ?",
-            (message_id, normalized_emoji),
-        )
-
-        if not user_has_this_emoji and unique_count >= max_reactions:
-            raise ReactionLimitError(
-                f"Message has reached maximum of {max_reactions} unique reactions",
-                max_reactions,
-                unique_count,
-            )
-
         max_user_reactions = self._config.get("max_unique_reactions_per_user", 50)
-        user_unique_count = self._db.fetch_one(
-            "SELECT count(DISTINCT emoji) as count FROM react_reactions WHERE message_id = ? AND user_id = ?",
-            (message_id, user_id),
-        )["count"]
 
-        if not user_has_this_emoji and user_unique_count >= max_user_reactions:
-            raise ReactionLimitError(
-                f"User has reached maximum of {max_user_reactions} unique reactions per message",
-                max_user_reactions,
-                user_unique_count,
+        # Use transaction to prevent race conditions on limit checks
+        # Get lock on message row to serialize reactions for this message
+        try:
+            # Begin transaction with serializable isolation
+            self._db.execute("BEGIN EXCLUSIVE")
+            
+            # Re-check existence within transaction (may have changed)
+            existing = self._db.fetch_one(
+                "SELECT 1 FROM react_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?",
+                (message_id, user_id, normalized_emoji),
+            )
+            if existing:
+                self._db.execute("ROLLBACK")
+                raise ReactionExistsError("You have already reacted with this emoji")
+
+            # Check unique count within transaction
+            unique_count = self._get_unique_emoji_count(message_id)
+            user_has_this_emoji = self._db.fetch_one(
+                "SELECT 1 FROM react_reactions WHERE message_id = ? AND emoji = ?",
+                (message_id, normalized_emoji),
             )
 
-        now = self._get_timestamp()
-        reaction_id = self._generate_id()
+            if not user_has_this_emoji and unique_count >= max_reactions:
+                self._db.execute("ROLLBACK")
+                raise ReactionLimitError(
+                    f"Message has reached maximum of {max_reactions} unique reactions",
+                    max_reactions,
+                    unique_count,
+                )
 
-        self._db.execute(
-            """INSERT INTO react_reactions 
-               (id, message_id, user_id, emoji, is_custom, custom_emoji_id, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (
-                reaction_id,
-                message_id,
-                user_id,
-                normalized_emoji,
-                1 if is_custom else 0,
-                custom_emoji_id,
-                now,
-            ),
-        )
+            # Check user limit within transaction
+            user_unique_count = self._db.fetch_one(
+                "SELECT count(DISTINCT emoji) as count FROM react_reactions WHERE message_id = ? AND user_id = ?",
+                (message_id, user_id),
+            )["count"]
+
+            if not user_has_this_emoji and user_unique_count >= max_user_reactions:
+                self._db.execute("ROLLBACK")
+                raise ReactionLimitError(
+                    f"User has reached maximum of {max_user_reactions} unique reactions per message",
+                    max_user_reactions,
+                    user_unique_count,
+                )
+
+            # All checks passed, insert within transaction
+            now = self._get_timestamp()
+            reaction_id = self._generate_id()
+
+            self._db.execute(
+                """INSERT INTO react_reactions 
+                   (id, message_id, user_id, emoji, is_custom, custom_emoji_id, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    reaction_id,
+                    message_id,
+                    user_id,
+                    normalized_emoji,
+                    1 if is_custom else 0,
+                    custom_emoji_id,
+                    now,
+                ),
+            )
+            
+            self._db.execute("COMMIT")
+            
+        except ReactionLimitError:
+            self._db.execute("ROLLBACK")
+            raise
+        except ReactionExistsError:
+            self._db.execute("ROLLBACK")
+            raise
+        except Exception as e:
+            self._db.execute("ROLLBACK")
+            raise
 
         logger.debug(
             f"Reaction {reaction_id} added to message {message_id} by user {user_id}"
@@ -848,6 +961,25 @@ class ReactionManager(BaseManager):
                 f"Invalid format. Allowed: {', '.join(allowed_formats)}"
             )
 
+        # Validate file integrity using PIL (magic number verification)
+        try:
+            from io import BytesIO
+            from PIL import Image
+            
+            img = Image.open(BytesIO(image_data))
+            # Verify image can be opened and has dimensions
+            img.verify()
+            width_hint = img.width
+            height_hint = img.height
+            
+            # Sanity checks on dimensions (prevent huge images)
+            if width_hint > 1024 or height_hint > 1024:
+                raise InvalidEmojiFileError("Emoji image dimensions too large (max 1024x1024)")
+            
+        except Exception as e:
+            # PIL couldn't validate - reject the file
+            raise InvalidEmojiFileError(f"Invalid or corrupted image file: {str(e)}")
+
         # Detect if animated (GIF or animated WebP)
         animated = content_type.lower() == "image/gif"
         if content_type.lower() == "image/webp":
@@ -857,56 +989,78 @@ class ReactionManager(BaseManager):
         # Check limits
         self._check_emoji_limits(server_id, animated)
 
-        # Check name uniqueness
-        existing = self._db.fetch_one(
-            "SELECT 1 FROM react_custom_emoji WHERE server_id = ? AND name = ?",
-            (server_id, name),
-        )
-        if existing:
-            raise EmojiNameExistsError(
-                f"Emoji with name '{name}' already exists in this server"
+        # Check name uniqueness - use transaction to prevent race condition
+        try:
+            self._db.execute("BEGIN EXCLUSIVE")
+            
+            existing = self._db.fetch_one(
+                "SELECT 1 FROM react_custom_emoji WHERE server_id = ? AND name = ?",
+                (server_id, name),
             )
-
-        # Upload image via media module or store directly
-        url = ""
-        width = None
-        height = None
-
-        if self._media:
-            ext = "gif" if animated else content_type.split("/")[-1]
-            filename = f"emoji_{name}.{ext}"
-            try:
-                result = self._media.upload_file(
-                    user_id, image_data, filename, content_type
+            if existing:
+                self._db.execute("ROLLBACK")
+                raise EmojiNameExistsError(
+                    f"Emoji with name '{name}' already exists in this server"
                 )
-                url = result.url
-                if result.metadata:
-                    width = result.metadata.get("width")
-                    height = result.metadata.get("height")
-            except Exception as e:
-                logger.error(f"Failed to upload emoji image: {e}")
-                raise InvalidEmojiFileError(f"Failed to upload emoji: {str(e)}")
 
-        now = self._get_timestamp()
-        emoji_id = self._generate_id()
+            # Upload image via media module or store directly
+            url = ""
+            width = None
+            height = None
 
-        self._db.execute(
-            """INSERT INTO react_custom_emoji 
-               (id, server_id, name, animated, url, size, width, height, created_by, available, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)""",
-            (
-                emoji_id,
-                server_id,
-                name,
-                1 if animated else 0,
-                url,
-                len(image_data),
-                width,
-                height,
-                user_id,
-                now,
-            ),
-        )
+            if self._media:
+                ext = "gif" if animated else content_type.split("/")[-1]
+                filename = f"emoji_{name}.{ext}"
+                try:
+                    result = self._media.upload_file(
+                        user_id, image_data, filename, content_type
+                    )
+                    url = result.url
+                    if result.metadata:
+                        width = result.metadata.get("width")
+                        height = result.metadata.get("height")
+                except Exception as e:
+                    logger.error(f"Failed to upload emoji image: {e}")
+                    self._db.execute("ROLLBACK")
+                    raise InvalidEmojiFileError(f"Failed to upload emoji: {str(e)}")
+
+            now = self._get_timestamp()
+            emoji_id = self._generate_id()
+
+            self._db.execute(
+                """INSERT INTO react_custom_emoji 
+                   (id, server_id, name, animated, url, size, width, height, created_by, available, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)""",
+                (
+                    emoji_id,
+                    server_id,
+                    name,
+                    1 if animated else 0,
+                    url,
+                    len(image_data),
+                    width,
+                    height,
+                    user_id,
+                    now,
+                ),
+            )
+            
+            self._db.execute("COMMIT")
+            
+        except EmojiNameExistsError:
+            self._db.execute("ROLLBACK")
+            raise
+        except InvalidEmojiFileError:
+            self._db.execute("ROLLBACK")
+            raise
+        except Exception as e:
+            self._db.execute("ROLLBACK")
+            # Check if it's a UNIQUE constraint violation (might not have explicit EmojiNameExistsError)
+            if "UNIQUE" in str(e) or "unique" in str(e).lower():
+                raise EmojiNameExistsError(
+                    f"Emoji with name '{name}' already exists in this server"
+                )
+            raise
 
         logger.debug(f"Custom emoji {name} created for server {server_id}")
 
