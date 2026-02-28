@@ -10,6 +10,7 @@ from ..models import Member, Ban, Invite, ChannelType, AuditLogAction
 from ..exceptions import (
     ServerNotFoundError,
     MemberNotFoundError,
+    MemberExistsError,
     UserBannedError,
     CannotModifyOwnerError,
     RoleHierarchyError,
@@ -127,7 +128,7 @@ class MemberHandler:
 
         existing_member = self.get_member(server_id, user_id)
         if existing_member:
-            return existing_member
+            raise MemberExistsError("User is already a member of this server")
 
         server = self.db.fetch_one(
             "SELECT * FROM srv_servers WHERE id = ? AND deleted = 0", (server_id,)
@@ -302,7 +303,7 @@ class MemberHandler:
         reason: Optional[str] = None,
     ) -> bool:
         """Kick a member from a server."""
-        # Allow self-kick (leaving)
+        # Allow self-kick (leaving) without requiring kick permission
         if user_id == member_user_id:
             return self.manager.remove_member(user_id, server_id)
 
@@ -410,8 +411,11 @@ class MemberHandler:
 
         invite = self.manager._row_to_invite(row)
 
-        # Add member (returns existing if already joined)
-        member = self.add_member(invite.server_id, user_id, invite.inviter_id)
+        # Add member, or return existing if already joined
+        try:
+            member = self.add_member(invite.server_id, user_id, invite.inviter_id)
+        except MemberExistsError:
+            member = self.get_member(invite.server_id, user_id)
 
         self.db.execute(
             "UPDATE srv_invites SET uses = uses + 1 WHERE code = ?", (code,)
