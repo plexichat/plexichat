@@ -62,6 +62,11 @@ class NotificationManager(BaseManager):
         self._presence = presence_module
         self._config = self._load_config()
 
+        # Optimize notifications table with composite index
+        self._db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notif_user_created ON notif_notifications (user_id, created_at DESC)"
+        )
+
         logger.info("Notification module initialized")
 
     def _load_config(self) -> Dict[str, Any]:
@@ -459,34 +464,89 @@ class NotificationManager(BaseManager):
                                 users_to_notify.add(member_id)
                                 mention_types[member_id] = MentionType.HERE
 
-        notifications = []
         now = self._get_timestamp()
         preview = self._truncate_content(content)
 
-        for user_id in users_to_notify:
-            mention_type = mention_types.get(user_id)
-            if mention_type and self._should_notify_user(
-                user_id, author_id, server_id, channel_id, mention_type
-            ):
-                notif = self._create_notification(
-                    user_id=user_id,
-                    author_id=author_id,
-                    message_id=message_id,
-                    conversation_id=conversation_id,
-                    server_id=server_id,
-                    channel_id=channel_id,
-                    thread_id=thread_id,
-                    mention_type=mention_type,
-                    content_preview=preview,
-                    created_at=now,
-                )
-                if notif:
-                    notifications.append(notif)
-                    self._update_unread_count(
-                        user_id, conversation_id, server_id, channel_id, is_mention=True
-                    )
+        # SECURITY: Bulk fetch settings and overrides to avoid N+1 queries during fanout
+        user_ids_list = list(users_to_notify)
+        all_settings = self.get_notification_settings_bulk(user_ids_list, server_id)
+        all_overrides = {}
+        if channel_id:
+            all_overrides = self.get_channel_overrides_bulk(user_ids_list, channel_id)
 
-        return notifications
+        final_users_to_notify = []
+        for user_id in user_ids_list:
+            mention_type = mention_types.get(user_id)
+            if not mention_type:
+                continue
+                
+            # Optimized check using pre-fetched data
+            settings = all_settings.get(user_id)
+            override = all_overrides.get(user_id)
+            
+            if self._should_notify_user_optimized(
+                user_id, author_id, server_id, channel_id, mention_type, settings, override
+            ):
+                final_users_to_notify.append(user_id)
+
+        if final_users_to_notify:
+            return self.create_notifications_bulk(
+                user_ids=final_users_to_notify,
+                author_id=author_id,
+                message_id=message_id,
+                conversation_id=conversation_id,
+                server_id=server_id,
+                channel_id=channel_id,
+                thread_id=thread_id,
+                mention_types=mention_types,
+                content_preview=preview,
+                created_at=now,
+            )
+
+        return []
+
+    def _should_notify_user_optimized(
+        self,
+        user_id: SnowflakeID,
+        author_id: SnowflakeID,
+        server_id: Optional[SnowflakeID],
+        channel_id: Optional[SnowflakeID],
+        mention_type: MentionType,
+        settings: Optional[NotificationSettings],
+        override: Optional[ChannelNotificationOverride],
+    ) -> bool:
+        """Check if user should receive notification using pre-fetched data."""
+        # Suppress if user is currently focused on this channel/conversation
+        # Presence check remains per-user but usually fast (Redis)
+        if self._presence:
+            try:
+                presence = self._presence.get_presence(user_id)
+                focused_id = getattr(presence, "current_channel_id", None)
+                if focused_id and channel_id and int(focused_id) == int(channel_id):
+                    return False
+            except Exception:
+                pass
+
+        if override:
+            now = self._get_timestamp()
+            is_mute_active = override.muted_until is None or override.muted_until > now
+            if override.level == NotificationLevel.MUTED and is_mute_active:
+                return False
+            if override.level == NotificationLevel.NOTHING:
+                return False
+
+        if not settings or settings.level == NotificationLevel.NOTHING:
+            return False
+
+        if mention_type in (MentionType.EVERYONE, MentionType.HERE):
+            if settings.suppress_everyone:
+                return False
+
+        if mention_type == MentionType.ROLE:
+            if settings.suppress_roles:
+                return False
+
+        return True
 
     def _should_notify_user(
         self,
@@ -589,6 +649,74 @@ class NotificationManager(BaseManager):
 
         return notification
 
+    def create_notifications_bulk(
+        self,
+        user_ids: List[SnowflakeID],
+        author_id: SnowflakeID,
+        message_id: SnowflakeID,
+        conversation_id: SnowflakeID,
+        server_id: Optional[SnowflakeID],
+        channel_id: Optional[SnowflakeID],
+        thread_id: Optional[SnowflakeID],
+        mention_types: Dict[int, MentionType],
+        content_preview: str,
+        created_at: int,
+    ) -> List[Notification]:
+        """Create multiple notifications in a single batch."""
+        if not user_ids:
+            return []
+
+        notifications_to_insert = []
+        for uid in user_ids:
+            notif_id = self._generate_id()
+            mention_type = mention_types.get(uid, MentionType.USER)
+            notifications_to_insert.append((
+                notif_id, uid, author_id, message_id, conversation_id,
+                server_id, channel_id, thread_id, mention_type.value,
+                content_preview, 0, created_at
+            ))
+
+        # 1. Batch insert notifications
+        self._db.execute_many(
+            """INSERT INTO notif_notifications
+               (id, user_id, sender_id, message_id, conversation_id, server_id, channel_id, thread_id,
+                mention_type, content_preview, read, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            notifications_to_insert
+        )
+
+        # 2. Batch update unread counts
+        # This is more complex since it's an UPSERT pattern. 
+        # For simplicity and correctness, we'll iterate but we've already saved many roundtrips.
+        # Future optimization: Use a temporary table or specialized bulk UPSERT query.
+        for uid in user_ids:
+            self._update_unread_count(
+                uid, conversation_id, server_id, channel_id, is_mention=True
+            )
+
+        # 3. Fetch and dispatch
+        # For performance, we don't re-fetch every single one, but we'll return basic objects
+        results = []
+        from src.api.routes.notifications import _notif_to_response
+        
+        for data in notifications_to_insert:
+            notif = Notification(
+                id=data[0], user_id=data[1], author_id=data[2], message_id=data[3],
+                conversation_id=data[4], server_id=data[5], channel_id=data[6],
+                thread_id=data[7], mention_type=MentionType(data[8]),
+                content_preview=data[9], read=False, created_at=data[11]
+            )
+            results.append(notif)
+            
+            # Dispatch event
+            self._dispatch_notification_event(
+                notif.user_id,
+                EventType.NOTIFICATION_CREATE,
+                _notif_to_response(notif).model_dump(),
+            )
+
+        return results
+
     # === Notification Operations ===
 
     def get_notification(self, notification_id: SnowflakeID) -> Optional[Notification]:
@@ -611,7 +739,9 @@ class NotificationManager(BaseManager):
         max_per_page = self._config.get("max_notifications_per_page", 100)
         limit = min(limit, max_per_page)
 
-        query = "SELECT * FROM notif_notifications WHERE user_id = ?"
+        # Explicit columns for index-only scan potential
+        cols = "id, user_id, sender_id, message_id, conversation_id, server_id, channel_id, thread_id, mention_type, content_preview, read, created_at"
+        query = f"SELECT {cols} FROM notif_notifications WHERE user_id = ?"
         params = [user_id]
 
         if unread_only:
@@ -901,6 +1031,67 @@ class NotificationManager(BaseManager):
         )
 
     # === Settings Operations ===
+
+    def get_notification_settings_bulk(
+        self, user_ids: List[SnowflakeID], server_id: Optional[SnowflakeID] = None
+    ) -> Dict[int, NotificationSettings]:
+        """Get notification settings for multiple users efficiently."""
+        if not user_ids:
+            return {}
+
+        placeholders = ",".join(["?"] * len(user_ids))
+        if server_id:
+            rows = self._db.fetch_all(
+                f"SELECT * FROM notif_settings WHERE user_id IN ({placeholders}) AND server_id = ?",
+                (*user_ids, server_id),
+            )
+        else:
+            rows = self._db.fetch_all(
+                f"SELECT * FROM notif_settings WHERE user_id IN ({placeholders}) AND server_id IS NULL",
+                tuple(user_ids),
+            )
+
+        results = {row["user_id"]: self._row_to_settings(row) for row in rows}
+        
+        # Fill in defaults for missing users
+        for uid in user_ids:
+            if uid not in results:
+                results[uid] = NotificationSettings(
+                    user_id=uid,
+                    server_id=server_id,
+                    level=NotificationLevel.ALL_MESSAGES,
+                    dm_notifications=True,
+                    suppress_everyone=False,
+                    suppress_roles=False,
+                    mobile_push=True,
+                )
+        return results
+
+    def _row_to_override(self, row: Dict[str, Any]) -> ChannelNotificationOverride:
+        """Convert database row to ChannelNotificationOverride object."""
+        return ChannelNotificationOverride(
+            user_id=row["user_id"],
+            channel_id=row["channel_id"],
+            level=NotificationLevel(row["level"]),
+            muted_until=row["muted_until"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def get_channel_overrides_bulk(
+        self, user_ids: List[SnowflakeID], channel_id: SnowflakeID
+    ) -> Dict[int, ChannelNotificationOverride]:
+        """Get channel overrides for multiple users efficiently."""
+        if not user_ids:
+            return {}
+
+        placeholders = ",".join(["?"] * len(user_ids))
+        rows = self._db.fetch_all(
+            f"SELECT * FROM notif_channel_overrides WHERE channel_id = ? AND user_id IN ({placeholders})",
+            (channel_id, *user_ids),
+        )
+
+        return {row["user_id"]: self._row_to_override(row) for row in rows}
 
     def get_notification_settings(
         self, user_id: SnowflakeID, server_id: Optional[SnowflakeID] = None

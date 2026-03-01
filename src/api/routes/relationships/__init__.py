@@ -652,10 +652,16 @@ async def delete_relationship(
                 )
 
             status = getattr(rel, "status", None)
+            if status is None and isinstance(rel, dict):
+                status = rel.get("status")
             if status is not None and hasattr(status, "value"):
                 status = status.value
 
-            if status == "friend":
+            status_str = str(status).lower() if status is not None else ""
+            if "." in status_str:
+                status_str = status_str.split(".")[-1]
+
+            if status_str in ("friend", "friends"):
                 relationships.remove_friend(current_user.user_id, target_id)
                 # Notify both users that friendship is removed
                 await _dispatch_relationship_event(
@@ -674,7 +680,7 @@ async def delete_relationship(
                         "user_id": str(current_user.user_id),
                     },
                 )
-            elif status == "blocked":
+            elif status_str == "blocked":
                 relationships.unblock_user(current_user.user_id, target_id)
                 # Notify the unblocker
                 await _dispatch_relationship_event(
@@ -685,7 +691,7 @@ async def delete_relationship(
                         "user_id": str(target_id),
                     },
                 )
-            elif status == "pending_incoming":
+            elif status_str == "pending_incoming":
                 pending = relationships.get_pending_requests_incoming(
                     current_user.user_id
                 )
@@ -722,7 +728,7 @@ async def delete_relationship(
                             }
                         },
                     )
-            elif status == "pending_outgoing":
+            elif status_str == "pending_outgoing":
                 pending = relationships.get_pending_requests_outgoing(
                     current_user.user_id
                 )
@@ -760,12 +766,22 @@ async def delete_relationship(
                         },
                     )
             else:
-                raise HTTPException(
-                    status_code=404,
-                    detail={
-                        "error": {"code": 404, "message": "Relationship not found"}
-                    },
-                )
+                try:
+                    friends = relationships.get_friends(current_user.user_id)
+                    if any(int(getattr(f, "friend_id", 0)) == int(target_id) for f in friends):
+                        relationships.remove_friend(current_user.user_id, target_id)
+                    else:
+                        raise HTTPException(
+                            status_code=404,
+                            detail={
+                                "error": {
+                                    "code": 404,
+                                    "message": "Relationship not found",
+                                }
+                            },
+                        )
+                except HTTPException:
+                    raise
 
             # Invalidate cache for both users
             try:

@@ -162,8 +162,8 @@ class MessageStatusService(BaseService):
         # Invalidate unread counts cache
         try:
             # from src.core.database import invalidate_cached
-            self.get_unread_count.invalidate(user_id, conversation_id)  # type: ignore
-            self.get_unread_count.invalidate(user_id, None)  # type: ignore
+            self.get_unread_count.invalidate(self, user_id, conversation_id)  # type: ignore
+            self.get_unread_count.invalidate(self, user_id, None)  # type: ignore
         except Exception:
             pass
 
@@ -175,11 +175,12 @@ class MessageStatusService(BaseService):
     ) -> Dict[SnowflakeID, int]:
         """Get unread message counts (cached)."""
         if conversation_id:
-            if not self._participant_svc.is_participant(conversation_id, user_id):
-                if not self._participant_repo.get_by_conversation_and_user(
-                    conversation_id, user_id
-                ):
-                    return {}
+            # IMPORTANT: Use a direct DB-backed participation check here.
+            # ParticipantService.is_participant has an internal cache and also
+            # server-membership logic; both can cause false negatives for DMs in
+            # isolated test flows.
+            if not self._participant_repo.exists(conversation_id, user_id):
+                return {}
             count = self._repo.get_unread_count(user_id, conversation_id)
             return {conversation_id: count}
 
