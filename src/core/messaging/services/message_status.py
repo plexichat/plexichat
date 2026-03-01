@@ -187,17 +187,7 @@ class MessageStatusService(BaseService):
                 user_id_norm = user_id
 
             def participant_exists() -> bool:
-                if self._participant_repo.exists(conv_id_norm, user_id_norm):
-                    return True
-
-                # SQLite can be sensitive to binding types when IDs are stored as TEXT.
-                # Try string bindings as a fallback.
-                try:
-                    if self._participant_repo.exists(str(conversation_id), str(user_id)):
-                        return True
-                except Exception:
-                    pass
-                return False
+                return self._participant_repo.exists(conv_id_norm, user_id_norm)
 
             # IMPORTANT: Use a direct DB-backed participation check here.
             # ParticipantService.is_participant has an internal cache and also
