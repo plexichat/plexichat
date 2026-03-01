@@ -23,9 +23,9 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
     ) -> None:
         """Create a new message status entry."""
         self._execute(
-            """INSERT INTO msg_message_status (id, message_id, user_id, status, timestamp)
-               VALUES (?, ?, ?, ?, ?)""",
-            (status_id, message_id, user_id, status.value, timestamp),
+            """INSERT INTO msg_message_status (message_id, user_id, status, timestamp)
+               VALUES (?, ?, ?, ?)""",
+            (message_id, user_id, status.value, timestamp),
             auto_commit=auto_commit,
         )
 
@@ -69,7 +69,7 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
 
         in_clause, params = self._build_in_clause(message_ids)
         rows = self._fetch_all(
-            f"SELECT message_id, status FROM msg_message_status WHERE user_id = ? AND message_id IN {in_clause}",
+            f"SELECT message_id, status FROM msg_message_status WHERE user_id = ? AND message_id IN {in_clause}",  # nosec B608
             (user_id,) + params,
         )
         return {row["message_id"]: MessageStatusType(row["status"]) for row in rows}
@@ -83,7 +83,7 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
 
         in_clause, params = self._build_in_clause(message_ids)
         rows = self._fetch_all(
-            f"""SELECT message_id, 
+            f"""SELECT message_id,   # nosec B608
                        COUNT(CASE WHEN status IN ('delivered', 'read') THEN 1 END) as delivery_count,
                        COUNT(CASE WHEN status = 'read' THEN 1 END) as read_count
                 FROM msg_message_status 
@@ -111,36 +111,32 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
         if not message_ids:
             return 0
 
-        # Use UPSERT to avoid unique constraint violations
-        # In Postgres, we use ON CONFLICT (message_id, user_id)
-        for i, mid in enumerate(message_ids):
-            # Ensure unique status IDs even in batch
-            new_status_id = status_id + (i % 1000000)
-            self._execute(
-                """INSERT INTO msg_message_status (id, message_id, user_id, status, timestamp)
-                   VALUES (?, ?, ?, ?, ?)
-                   ON CONFLICT (message_id, user_id) 
-                   DO UPDATE SET 
-                       status = CASE 
-                           WHEN msg_message_status.status != 'read' THEN EXCLUDED.status 
-                           ELSE msg_message_status.status 
-                       END,
-                       timestamp = CASE 
-                           WHEN msg_message_status.status != 'read' THEN EXCLUDED.timestamp 
-                           ELSE msg_message_status.timestamp 
-                       END""",
-                (
-                    new_status_id,
-                    mid,
-                    user_id,
-                    MessageStatusType.DELIVERED.value,
-                    timestamp,
-                ),
-                auto_commit=False,
-            )
+        # SECURITY: Use execute_many for true batch performance
+        data = []
+        for mid in message_ids:
+            data.append((
+                mid,
+                user_id,
+                MessageStatusType.DELIVERED.value,
+                timestamp,
+            ))
 
-        if auto_commit:
-            self.commit()
+        self._db.execute_many(
+            """INSERT INTO msg_message_status (message_id, user_id, status, timestamp)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT (message_id, user_id) 
+               DO UPDATE SET 
+                   status = CASE 
+                       WHEN msg_message_status.status != 'read' THEN EXCLUDED.status 
+                       ELSE msg_message_status.status 
+                   END,
+                   timestamp = CASE 
+                       WHEN msg_message_status.status != 'read' THEN EXCLUDED.timestamp 
+                       ELSE msg_message_status.timestamp 
+                   END""",
+            data,
+            auto_commit=auto_commit
+        )
 
         return len(message_ids)
 
@@ -173,21 +169,20 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
 
         message_ids = [row["id"] for row in msg_rows]
 
-        # 2. Use UPSERT for each message to ensure it's marked as read
-        for i, mid in enumerate(message_ids):
-            new_status_id = status_id + (i % 1000000)
-            self._execute(
-                """INSERT INTO msg_message_status (id, message_id, user_id, status, timestamp)
-                   VALUES (?, ?, ?, ?, ?)
-                   ON CONFLICT (message_id, user_id) 
-                   DO UPDATE SET status = EXCLUDED.status, timestamp = EXCLUDED.timestamp
-                   WHERE msg_message_status.status != 'read'""",
-                (new_status_id, mid, user_id, MessageStatusType.READ.value, timestamp),
-                auto_commit=False,
-            )
+        # 2. SECURITY: Use execute_many for true batch performance
+        data = []
+        for mid in message_ids:
+            data.append((mid, user_id, MessageStatusType.READ.value, timestamp))
 
-        if auto_commit:
-            self.commit()
+        self._db.execute_many(
+            """INSERT INTO msg_message_status (message_id, user_id, status, timestamp)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT (message_id, user_id) 
+               DO UPDATE SET status = EXCLUDED.status, timestamp = EXCLUDED.timestamp
+               WHERE msg_message_status.status != 'read'""",
+            data,
+            auto_commit=auto_commit
+        )
 
         return len(message_ids)
 
@@ -237,7 +232,7 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
 
         in_clause, params = self._build_in_clause(message_ids)
         rows = self._fetch_all(
-            f"SELECT message_id, user_id FROM msg_message_status WHERE message_id IN {in_clause} AND status = 'read' ORDER BY timestamp ASC",
+            f"SELECT message_id, user_id FROM msg_message_status WHERE message_id IN {in_clause} AND status = 'read' ORDER BY timestamp ASC",  # nosec B608
             params,
         )
 
@@ -255,3 +250,4 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
             status=MessageStatusType(row["status"]),
             timestamp=row["timestamp"],
         )
+

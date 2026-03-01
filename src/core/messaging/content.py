@@ -116,14 +116,19 @@ class ContentProcessor:
 
         # Validate using common validator (SQL injection, XSS)
         validation_result = validator.validate(content)
-        if not validation_result.is_valid:
-            # Content contains potentially dangerous patterns
-            # For messages, we sanitize rather than reject
-            warnings.append(
-                "Content contained potentially unsafe patterns and was sanitized"
-            )
-
-        sanitized = validation_result.sanitized_value or content
+        sanitized = validation_result.sanitized_value
+        
+        if not validation_result.is_valid or sanitized is None:
+            # Content contains potentially dangerous patterns or sanitization failed
+            # If not already sanitized by the validator (e.g. auto_sanitize_html=False),
+            # we must escape it manually here to prevent stored XSS.
+            import html
+            sanitized = html.escape(content)
+            
+            if not validation_result.is_valid:
+                warnings.append(
+                    "Content contained potentially unsafe patterns and was sanitized"
+                )
 
         # Check for spoiler tags
         has_spoilers = bool(re.search(TextFormat.PATTERNS["spoiler"], sanitized))

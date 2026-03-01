@@ -4,6 +4,7 @@ Message routes - Message CRUD endpoints.
 
 from typing import Optional, List, Dict
 from fastapi import APIRouter, HTTPException, Depends, Query
+from starlette.concurrency import run_in_threadpool
 
 import src.api as api
 import utils.logger as logger
@@ -50,7 +51,7 @@ router = APIRouter(tags=["Messages"])
     },
 )
 @cached(ttl=10, prefix="messages_api")
-def get_channel_messages(
+async def get_channel_messages(
     channel_id: str,
     limit: int = Query(default=50, ge=1, le=100),
     before: Optional[SnowflakeID] = Query(default=None),
@@ -84,7 +85,9 @@ def get_channel_messages(
         # Try server channel first (more common)
         if servers_mod:
             try:
-                messages = servers_mod.get_channel_messages(
+                # Use run_in_threadpool for synchronous manager call
+                messages = await run_in_threadpool(
+                    servers_mod.get_channel_messages,
                     user_id=current_user.user_id,
                     channel_id=cid,
                     limit=limit,
@@ -98,13 +101,15 @@ def get_channel_messages(
         # Fallback to DM/Conversation
         if messages is None and messaging:
             try:
-                messages = messaging.get_messages(
+                messages = await run_in_threadpool(
+                    messaging.get_messages,
                     user_id=current_user.user_id,
                     conversation_id=cid,
                     limit=limit,
                     before_id=before_id,
                     after_id=after_id,
                 )
+
             except Exception as e:
                 exc_name = type(e).__name__
                 if "NotFound" in exc_name or "Access" in exc_name:
@@ -125,7 +130,7 @@ def get_channel_messages(
         author_cache = {}  # {str(user_id): {"username": str, "avatar_url": str, "badges": list}}
         if auth and author_ids:
             try:
-                users = auth.get_user_profiles_bulk(author_ids)
+                users = await run_in_threadpool(auth.get_user_profiles_bulk, author_ids)
                 # Ensure all keys in author_cache are strings for consistent lookup
                 author_cache = {
                     str(uid): {
@@ -137,6 +142,51 @@ def get_channel_messages(
                 }
             except Exception:
                 pass
+
+        # OPTIMIZATION: Pre-fetch file IDs for attachments to avoid N+1 in _message_to_response
+        media = api.get_media()
+        if media and messages:
+            filenames_to_fetch = set()
+            for msg in messages:
+                if msg.attachments:
+                    for att in msg.attachments:
+                        # Check if file_id is missing in metadata
+                        has_file_id = False
+                        if att.metadata:
+                            if isinstance(att.metadata, dict):
+                                has_file_id = "file_id" in att.metadata
+                            elif isinstance(att.metadata, str):
+                                import json
+                                try:
+                                    m = json.loads(att.metadata)
+                                    has_file_id = "file_id" in m
+                                except:
+                                    pass
+                        
+                        if not has_file_id and att.url:
+                            # Extract filename from URL
+                            parts = att.url.split("/")
+                            if parts:
+                                filenames_to_fetch.add(parts[-1])
+
+            if filenames_to_fetch:
+                try:
+                    file_map = await run_in_threadpool(
+                        media.get_files_by_filenames, list(filenames_to_fetch)
+                    )
+                    # Update attachment metadata in-memory
+                    for msg in messages:
+                        if msg.attachments:
+                            for att in msg.attachments:
+                                if att.url:
+                                    fname = att.url.split("/")[-1]
+                                    if fname in file_map:
+                                        if not att.metadata:
+                                            att.metadata = {}
+                                        if isinstance(att.metadata, dict):
+                                            att.metadata["file_id"] = file_map[fname].id
+                except Exception as e:
+                    logger.debug(f"Failed to bulk fetch media files: {e}")
 
         # Get media module for URL signing
         media_mod = api.get_media()
@@ -168,8 +218,10 @@ def get_channel_messages(
                         own_message_ids.append(mid)
 
                 if own_message_ids:
-                    reader_ids_map = messaging.get_batch_reader_ids(
-                        current_user.user_id, own_message_ids
+                    reader_ids_map = await run_in_threadpool(
+                        messaging.get_batch_reader_ids,
+                        current_user.user_id,
+                        own_message_ids,
                     )
 
                     # Collect all unique reader IDs to fetch usernames in bulk
@@ -178,7 +230,9 @@ def get_channel_messages(
                         all_reader_ids.update(r_ids)
 
                     if all_reader_ids:
-                        reader_users = auth.get_user_profiles_bulk(list(all_reader_ids))
+                        reader_users = await run_in_threadpool(
+                            auth.get_user_profiles_bulk, list(all_reader_ids)
+                        )
                         # Use string keys for robust lookup
                         reader_users_str = {
                             str(uid): u for uid, u in reader_users.items()
@@ -271,12 +325,22 @@ async def search_messages(
             try:
                 # messaging.search_messages handles both DMs and server channels
                 # as they are all backed by the same conversation system
-                messages = messaging.search_messages(
-                    user_id=current_user.user_id,
-                    conversation_id=cid,
-                    query=content,
-                    limit=limit,
-                )
+                def _search_messages_sync():
+                    import src.api as api_module
+
+                    db = api_module.get_db()
+                    try:
+                        return messaging.search_messages(
+                            user_id=current_user.user_id,
+                            conversation_id=cid,
+                            query=content,
+                            limit=limit,
+                        )
+                    finally:
+                        if db:
+                            db.close()
+
+                messages = await run_in_threadpool(_search_messages_sync)
             except Exception as e:
                 logger.debug(f"Messaging search failed: {e}")
 
@@ -285,7 +349,17 @@ async def search_messages(
         author_cache = {}
         if auth and author_ids:
             try:
-                users = auth.get_user_profiles_bulk(author_ids)
+                def _get_users_bulk_sync():
+                    import src.api as api_module
+
+                    db = api_module.get_db()
+                    try:
+                        return auth.get_user_profiles_bulk(author_ids)
+                    finally:
+                        if db:
+                            db.close()
+
+                users = await run_in_threadpool(_get_users_bulk_sync)
                 author_cache = {
                     str(uid): {
                         "username": u["username"],
@@ -432,7 +506,8 @@ async def send_channel_message(
 
                     # Send directly to messaging module using cached conversation_id
                     if conversation_id and messaging:
-                        msg = messaging.send_message(
+                        msg = await run_in_threadpool(
+                            messaging.send_message,
                             user_id=current_user.user_id,
                             conversation_id=conversation_id,
                             content=content_value,
@@ -448,7 +523,8 @@ async def send_channel_message(
                         # Fall back to trying the channel ID as conversation ID (backward compatibility)
                         if messaging:
                             try:
-                                msg = messaging.send_message(
+                                msg = await run_in_threadpool(
+                                    messaging.send_message,
                                     user_id=current_user.user_id,
                                     conversation_id=cid,
                                     content=content_value,
@@ -793,7 +869,7 @@ async def get_unread_count(
                 detail={"error": {"code": 400, "message": "Invalid channel ID"}},
             )
 
-        counts = messaging.get_unread_count(current_user.user_id, cid)
+        counts = await run_in_threadpool(messaging.get_unread_count, current_user.user_id, cid)
         return UnreadCountResponse(
             channel_id=SnowflakeID(channel_id), unread_count=counts.get(cid, 0)
         )
@@ -1130,7 +1206,7 @@ async def get_message(
                 detail={"error": {"code": 400, "message": "Invalid ID format"}},
             )
 
-        message = messaging.get_message(current_user.user_id, mid)
+        message = await run_in_threadpool(messaging.get_message, current_user.user_id, mid)
         if not message:
             raise HTTPException(
                 status_code=404,
@@ -1142,7 +1218,7 @@ async def get_message(
         auth = api.get_auth()
         if auth:
             try:
-                user = auth.get_user(message.author_id)
+                user = await run_in_threadpool(auth.get_user, message.author_id)
                 if user:
                     author_info["username"] = user.username
                     author_info["avatar_url"] = getattr(user, "avatar_url", None)
@@ -1253,7 +1329,7 @@ async def edit_message(
             except Exception as e:
                 # If we can't check server/channel permissions, let the messaging module handle it
                 # unless it was an explicit timeout check failure
-                if isinstance(e, HTTPException) and e.status_code == 403:
+                if isinstance(e, HTTPException) and getattr(e, "status_code", None) == 403:
                     raise
 
         msg = messaging.edit_message(current_user.user_id, mid, body.content)
@@ -1601,44 +1677,83 @@ async def get_pinned_messages(
 
         messages = []
 
-        # Try server channel first - get all messages and filter pinned
         if servers_mod:
             try:
-                all_messages = servers_mod.get_channel_messages(
-                    user_id=current_user.user_id, channel_id=cid, limit=500
-                )
-                if all_messages:
-                    messages = [m for m in all_messages if getattr(m, "pinned", False)]
+                def _get_channel_sync():
+                    import src.api as api_module
+
+                    db = api_module.get_db()
+                    try:
+                        return servers_mod.get_channel(cid, current_user.user_id)
+                    finally:
+                        if db:
+                            db.close()
+
+                channel = await run_in_threadpool(_get_channel_sync)
+                conversation_id = getattr(channel, "conversation_id", None) if channel else None
+                if conversation_id and messaging:
+                    def _get_pins_sync():
+                        import src.api as api_module
+
+                        db = api_module.get_db()
+                        try:
+                            return messaging.get_pinned_messages(
+                                current_user.user_id, conversation_id
+                            )
+                        finally:
+                            if db:
+                                db.close()
+
+                    messages = await run_in_threadpool(_get_pins_sync) or []
             except Exception:
                 pass
 
-        # If not a server channel, try DM conversation
         if not messages and messaging:
             try:
-                messages = (
-                    messaging.get_pinned_messages(current_user.user_id, cid) or []
-                )
+                def _get_pins_sync():
+                    import src.api as api_module
+
+                    db = api_module.get_db()
+                    try:
+                        return messaging.get_pinned_messages(
+                            current_user.user_id, cid
+                        )
+                    finally:
+                        if db:
+                            db.close()
+
+                messages = await run_in_threadpool(_get_pins_sync) or []
             except Exception:
                 pass
 
-        author_cache = {}  # {user_id: {"username": str, "avatar_url": str, "badges": list}}
+        author_cache = {}
+        author_ids = {m.author_id for m in messages}
+        if auth and author_ids:
+            try:
+                def _get_users_bulk_sync():
+                    import src.api as api_module
+
+                    db = api_module.get_db()
+                    try:
+                        return auth.get_user_profiles_bulk(list(author_ids))
+                    finally:
+                        if db:
+                            db.close()
+
+                users = await run_in_threadpool(_get_users_bulk_sync)
+                author_cache = {
+                    int(uid): {
+                        "username": u.get("username"),
+                        "avatar_url": u.get("avatar_url"),
+                        "badges": u.get("badges", []),
+                    }
+                    for uid, u in users.items()
+                }
+            except Exception:
+                author_cache = {}
         result = []
         for m in messages:
             author_id = m.author_id
-            if author_id not in author_cache:
-                author_info = {"username": None, "avatar_url": None, "badges": []}
-                if auth:
-                    try:
-                        user = auth.get_user(author_id)
-                        if user:
-                            author_info["username"] = user.username
-                            author_info["avatar_url"] = getattr(
-                                user, "avatar_url", None
-                            )
-                            author_info["badges"] = getattr(user, "badges", [])
-                    except Exception:
-                        pass
-                author_cache[author_id] = author_info
             info = author_cache.get(author_id, {})
             result.append(
                 _message_to_response(

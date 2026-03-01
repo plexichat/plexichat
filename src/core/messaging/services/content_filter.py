@@ -179,9 +179,8 @@ class ContentFilterService(BaseService):
         sanitized = content
 
         if not validation_result.is_valid:
-            warnings.append("Content contained potentially unsafe patterns")
-            # If the validator produced a sanitized value (not None), we use it
-            # but usually for messages we just want to warn or let AutoMod handle it
+            issues.append(validation_result.error_message or "Content contained potentially unsafe patterns")
+            # If the validator produced a sanitized value, we use it as a fallback
             if validation_result.sanitized_value:
                 sanitized = validation_result.sanitized_value
 

@@ -55,6 +55,12 @@ class MessageStatusService(BaseService):
                 msg_row["conversation_id"], user_id
             ):
                 continue
+            existing = self._repo.get_by_message_and_user(msg_id, user_id)
+            if existing and existing.get("status") in (
+                MessageStatusType.DELIVERED.value,
+                MessageStatusType.READ.value,
+            ):
+                continue
             valid_ids.append(msg_id)
 
         if not valid_ids:
@@ -170,7 +176,10 @@ class MessageStatusService(BaseService):
         """Get unread message counts (cached)."""
         if conversation_id:
             if not self._participant_svc.is_participant(conversation_id, user_id):
-                return {}
+                if not self._participant_repo.get_by_conversation_and_user(
+                    conversation_id, user_id
+                ):
+                    return {}
             count = self._repo.get_unread_count(user_id, conversation_id)
             return {conversation_id: count}
 

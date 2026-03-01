@@ -5,6 +5,7 @@ Channel routes - Channel management endpoints.
 import asyncio
 from typing import Dict, List
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Body
+from starlette.concurrency import run_in_threadpool
 
 import src.api as api
 import src.core.events as events_mod
@@ -43,7 +44,7 @@ router = APIRouter(tags=["Channels"])
     },
 )
 @cached(ttl=30, prefix="channel_api")
-def get_channel(
+async def get_channel(
     channel_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> ChannelResponse:
     """
@@ -70,12 +71,22 @@ def get_channel(
             )
 
         try:
-            channel = servers_mod.get_channel(cid, current_user.user_id)
-            if not channel:
-                # Fallback to messaging module for DMs
-                messaging_mod = api.get_messaging()
-                if messaging_mod:
-                    channel = messaging_mod.get_conversation(cid, current_user.user_id)
+            def _get_channel_sync():
+                import src.api as api_module
+                db = api_module.get_db()
+                try:
+                    ch = servers_mod.get_channel(cid, current_user.user_id)
+                    if not ch:
+                        # Fallback to messaging module for DMs
+                        messaging_mod = api_module.get_messaging()
+                        if messaging_mod:
+                            ch = messaging_mod.get_conversation(cid, current_user.user_id)
+                    return ch
+                finally:
+                    if db:
+                        db.close()
+
+            channel = await run_in_threadpool(_get_channel_sync)
 
             if not channel:
                 raise HTTPException(
@@ -161,9 +172,20 @@ async def update_channel(
 
         try:
             update_data = body.model_dump(exclude_unset=True)
-            channel = servers_mod.update_channel(
-                current_user.user_id, cid, **update_data
-            )
+
+            def _update_channel_sync():
+                import src.api as api_module
+
+                db = api_module.get_db()
+                try:
+                    return servers_mod.update_channel(
+                        current_user.user_id, cid, **update_data
+                    )
+                finally:
+                    if db:
+                        db.close()
+
+            channel = await run_in_threadpool(_update_channel_sync)
 
             response = _channel_to_response(channel, current_user.user_id)
             sid = channel.server_id
@@ -182,7 +204,18 @@ async def update_channel(
 
                     if ws_is_setup():
                         dispatcher = get_dispatcher()
-                        user_ids = servers_mod.get_member_user_ids(sid)
+
+                        def _get_member_ids_sync():
+                            import src.api as api_module
+
+                            db = api_module.get_db()
+                            try:
+                                return servers_mod.get_member_user_ids(sid)
+                            finally:
+                                if db:
+                                    db.close()
+
+                        user_ids = await run_in_threadpool(_get_member_ids_sync)
 
                         if user_ids:
                             event = Event(
@@ -317,6 +350,8 @@ async def delete_channel(
             asyncio.create_task(dispatch_channel_delete())
 
             return {"success": True}
+        except HTTPException:
+            raise
         except Exception as e:
             exc_name = type(e).__name__
             if "NotFound" in exc_name:
@@ -389,7 +424,9 @@ async def get_channel_webhooks(
             )
 
         try:
-            webhooks = webhooks_mod.get_channel_webhooks(current_user.user_id, cid)
+            webhooks = await run_in_threadpool(
+                webhooks_mod.get_channel_webhooks, current_user.user_id, cid
+            )
             return [
                 WebhookResponse(
                     id=SnowflakeID(w.id),
@@ -720,7 +757,7 @@ async def join_server_via_invite(
                     # 2. Dispatch GUILD_MEMBER_ADD to other members
                     user_data = None
                     if auth:
-                        user = auth.get_user(current_user.user_id)
+                        user = await run_in_threadpool(auth.get_user, current_user.user_id)
                         if user:
                             user_data = {
                                 "id": str(user.id),
@@ -940,27 +977,25 @@ async def upload_attachment(
 
         # Use the media module for upload (handles size limits, security, and storage)
         try:
-            from starlette.concurrency import run_in_threadpool
+            def _upload_with_cleanup():
+                import src.api as api_module
 
-            content = await file.read()
-
-            def _upload_with_cleanup(**kwargs):
-                import src.api as api
-
-                db = api.get_db()
+                db = api_module.get_db()
                 try:
-                    return media.upload_file(**kwargs)
+                    stream = file.file
+                    stream.seek(0)
+                    return media.upload_stream(
+                        user_id=current_user.user_id,
+                        stream=stream,
+                        filename=file.filename or "attachment",
+                        content_type=file.content_type or "application/octet-stream",
+                        size=file.size or 0,
+                    )
                 finally:
                     if db:
                         db.close()
 
-            result = await run_in_threadpool(
-                _upload_with_cleanup,
-                user_id=current_user.user_id,
-                file_data=content,
-                filename=file.filename or "attachment",
-                content_type=file.content_type,
-            )
+            result = await run_in_threadpool(_upload_with_cleanup)
 
             # Convert thumbnail keys from int to str for Pydantic schema
             thumbnails_str = (

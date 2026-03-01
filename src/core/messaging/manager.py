@@ -134,6 +134,9 @@ class MessagingManager(BaseManager):
 
         logger.info("Messaging module initialized (refactored)")
 
+    def _is_participant(self, conversation_id: SnowflakeID, user_id: SnowflakeID) -> bool:
+        return self.is_participant(conversation_id, user_id)
+
     # === Event Bus Access ===
 
     @property
@@ -261,7 +264,13 @@ class MessagingManager(BaseManager):
         if not conv:
             raise ConversationNotFoundError("Conversation not found")
 
-        if conv.conversation_type == ConversationType.DM:
+        conv_type = getattr(conv, "conversation_type", None)
+        if isinstance(conv_type, str):
+            conv_type = conv_type.lower()
+        else:
+            conv_type = getattr(conv_type, "value", conv_type)
+
+        if conv_type == ConversationType.DM.value:
             raise ConversationTypeError("Cannot add participants to DM")
 
         # Check permission
@@ -334,7 +343,13 @@ class MessagingManager(BaseManager):
         if not conv:
             raise ConversationNotFoundError("Conversation not found")
 
-        if conv.conversation_type == ConversationType.DM:
+        conv_type = getattr(conv, "conversation_type", None)
+        if isinstance(conv_type, str):
+            conv_type = conv_type.lower()
+        else:
+            conv_type = getattr(conv_type, "value", conv_type)
+
+        if conv_type == ConversationType.DM.value:
             raise ConversationTypeError("Cannot remove participants from DM")
 
         actor = self._participant_svc.get_participant(conversation_id, user_id)

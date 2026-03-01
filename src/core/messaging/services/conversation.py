@@ -335,7 +335,13 @@ class ConversationService(BaseService):
         if not conv:
             raise ConversationNotFoundError("Conversation not found")
 
-        if conv.conversation_type == ConversationType.DM:
+        conv_type = getattr(conv, "conversation_type", None)
+        if isinstance(conv_type, str):
+            conv_type = conv_type.lower()
+        else:
+            conv_type = getattr(conv_type, "value", conv_type)
+
+        if conv_type == ConversationType.DM.value:
             raise ConversationTypeError("Cannot update DM settings")
 
         # Check permission
@@ -372,7 +378,7 @@ class ConversationService(BaseService):
         )
 
         # Invalidate cache
-        invalidate_pattern(f"conv_data:{conversation_id}:*")
+        invalidate_pattern(f"conv_data:*int:{conversation_id}:*")
 
         conv = self.get_conversation(conversation_id, user_id)
         if conv is None:
@@ -389,8 +395,14 @@ class ConversationService(BaseService):
         if not conv:
             raise ConversationNotFoundError("Conversation not found")
 
+        conv_type = getattr(conv, "conversation_type", None)
+        if isinstance(conv_type, str):
+            conv_type = conv_type.lower()
+        else:
+            conv_type = getattr(conv_type, "value", conv_type)
+
         # For groups, only owner can delete
-        if conv.conversation_type == ConversationType.GROUP:
+        if conv_type == ConversationType.GROUP.value:
             if conv.owner_id != user_id:
                 raise ConversationAccessDeniedError("Only owner can delete group")
 
@@ -398,10 +410,10 @@ class ConversationService(BaseService):
         self._repo.soft_delete(conversation_id, now)
 
         # Invalidate cache
-        invalidate_pattern(f"conv_data:{conversation_id}:*")
+        invalidate_pattern(f"conv_data:*int:{conversation_id}:*")
 
         # For DMs, also remove the lookup entry
-        if conv.conversation_type == ConversationType.DM:
+        if conv_type == ConversationType.DM.value:
             self._repo.delete_dm_lookup(conversation_id)
             # Invalidate DM lookup cache
             if conv.metadata and "recipient_id" in conv.metadata:
@@ -420,7 +432,13 @@ class ConversationService(BaseService):
         if not conv:
             raise ConversationNotFoundError("Conversation not found")
 
-        if conv.conversation_type == ConversationType.DM:
+        conv_type = getattr(conv, "conversation_type", None)
+        if isinstance(conv_type, str):
+            conv_type = conv_type.lower()
+        else:
+            conv_type = getattr(conv_type, "value", conv_type)
+
+        if conv_type == ConversationType.DM.value:
             return self.delete_conversation(user_id, conversation_id)
 
         participant = self._participant_svc.get_participant(conversation_id, user_id)
@@ -443,6 +461,10 @@ class ConversationService(BaseService):
 
         # Remove participant
         self._participant_svc.remove_participant(conversation_id, user_id)
+
+        # If this was the last participant, delete the conversation.
+        if not self._participant_svc._repo.get_user_ids_by_conversation(conversation_id):
+            return self.delete_conversation(user_id, conversation_id)
 
         return True
 

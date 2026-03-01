@@ -91,6 +91,7 @@ def _message_to_response(
             if media_mod and url and url.startswith("/api/v1/media/attachments/"):
                 try:
                     file_id = get_attr(att, "file_id")
+                    stored_name = ""
                     if not file_id:
                         metadata = get_attr(att, "metadata")
                         if metadata:
@@ -113,7 +114,17 @@ def _message_to_response(
                                 file_id = media_file.id
 
                     if file_id:
-                        signed = media_mod.sign_url(int(file_id))
+                        stored_tail = stored_name
+                        if not stored_tail and att_url:
+                            parts = att_url.split("/")
+                            stored_tail = parts[-1] if parts else ""
+                        if not stored_tail:
+                            stored_tail = str(att_filename or "")
+                        signed = media_mod.sign_url(
+                            url=f"/api/v1/media/attachments/{stored_tail}",
+                            file_id=int(file_id),
+                            user_id=viewer_user_id
+                        )
                         url = signed.url
                 except Exception as e:
                     logger.debug(f"Failed to sign attachment URL: {e}")
