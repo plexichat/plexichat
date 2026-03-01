@@ -2,8 +2,9 @@
 PostgreSQL search indexer - Standard SQL search for Postgres.
 """
 
-from typing import Optional, Any, List
+from typing import Optional, Any, List, Tuple
 import json
+import base64
 
 import utils.logger as logger
 
@@ -73,8 +74,73 @@ class PostgresIndexer(BaseIndexer):
                 )
             """)
 
-            # Add GIN indexes for tsvector if we want full text,
-            # but for now let's just get it working with basic tables.
+            # Add GIN indexes for tsvector full-text search
+            self._db.execute("ALTER TABLE search_messages ADD COLUMN IF NOT EXISTS search_vector tsvector")
+            self._db.execute("CREATE INDEX IF NOT EXISTS idx_messages_search ON search_messages USING GIN(search_vector)")
+            
+            # Create a trigger to update search_vector on insert/update
+            self._db.execute("""
+                CREATE OR REPLACE FUNCTION messages_search_trigger() RETURNS trigger AS $$
+                begin
+                  new.search_vector := to_tsvector('english', coalesce(new.content,''));
+                  return new;
+                end
+                $$ LANGUAGE plpgsql
+            """)
+            self._db.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_messages_search') THEN
+                        CREATE TRIGGER trg_messages_search BEFORE INSERT OR UPDATE
+                        ON search_messages FOR EACH ROW EXECUTE FUNCTION messages_search_trigger();
+                    END IF;
+                END $$;
+            """)
+
+            # Same for users
+            self._db.execute("ALTER TABLE search_users ADD COLUMN IF NOT EXISTS search_vector tsvector")
+            self._db.execute("CREATE INDEX IF NOT EXISTS idx_users_search ON search_users USING GIN(search_vector)")
+            self._db.execute("""
+                CREATE OR REPLACE FUNCTION users_search_trigger() RETURNS trigger AS $$
+                begin
+                  new.search_vector := setweight(to_tsvector('english', coalesce(new.username,'')), 'A') || 
+                                       setweight(to_tsvector('english', coalesce(new.display_name,'')), 'B');
+                  return new;
+                end
+                $$ LANGUAGE plpgsql
+            """)
+            self._db.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_users_search') THEN
+                        CREATE TRIGGER trg_users_search BEFORE INSERT OR UPDATE
+                        ON search_users FOR EACH ROW EXECUTE FUNCTION users_search_trigger();
+                    END IF;
+                END $$;
+            """)
+
+            # Same for servers
+            self._db.execute("ALTER TABLE search_servers ADD COLUMN IF NOT EXISTS search_vector tsvector")
+            self._db.execute("CREATE INDEX IF NOT EXISTS idx_servers_search ON search_servers USING GIN(search_vector)")
+            self._db.execute("""
+                CREATE OR REPLACE FUNCTION servers_search_trigger() RETURNS trigger AS $$
+                begin
+                  new.search_vector := setweight(to_tsvector('english', coalesce(new.name,'')), 'A') || 
+                                       setweight(to_tsvector('english', coalesce(new.description,'')), 'B') ||
+                                       setweight(to_tsvector('english', coalesce(new.tags,'')), 'C');
+                  return new;
+                end
+                $$ LANGUAGE plpgsql
+            """)
+            self._db.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_servers_search') THEN
+                        CREATE TRIGGER trg_servers_search BEFORE INSERT OR UPDATE
+                        ON search_servers FOR EACH ROW EXECUTE FUNCTION servers_search_trigger();
+                    END IF;
+                END $$;
+            """)
 
             self._initialized = True
             logger.info("Postgres search indexer initialized")
@@ -173,8 +239,15 @@ class PostgresIndexer(BaseIndexer):
             if not query or not query.strip():
                 return []
 
-            sql = "SELECT * FROM search_messages WHERE content ILIKE ?"
-            params: List[Any] = [f"%{query}%"]
+            # Use Postgres full-text search with ranking
+            sql = """
+                SELECT message_id, content, author_id, conversation_id, server_id, channel_id, 
+                       created_at, has_attachments, is_pinned,
+                       ts_rank_cd(search_vector, query) as rank
+                FROM search_messages, websearch_to_tsquery('english', ?) query
+                WHERE (search_vector @@ query OR content ILIKE ?)
+            """
+            params: List[Any] = [query, f"%{query}%"]
 
             if conversation_ids:
                 sql += f" AND conversation_id IN ({','.join(['?'] * len(conversation_ids))})"
@@ -192,12 +265,14 @@ class PostgresIndexer(BaseIndexer):
                 sql += f" AND author_id IN ({','.join(['?'] * len(author_ids))})"
                 params.extend(author_ids)
 
-            sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
-            params.extend([limit, offset])
+            # Avoid OFFSET scans on large datasets; fetch a bounded window and slice in memory.
+            fetch_count = max(0, int(limit)) + max(0, int(offset))
+            sql += " ORDER BY rank DESC, created_at DESC LIMIT ?"
+            params.append(fetch_count)
 
             rows = self._db.fetch_all(sql, tuple(params))
             results = []
-            for row in rows:
+            for row in rows[offset : offset + limit]:
                 results.append(
                     MessageSearchResult(
                         id=row["message_id"],
@@ -210,13 +285,120 @@ class PostgresIndexer(BaseIndexer):
                         created_at=row["created_at"],
                         has_attachments=bool(row["has_attachments"]),
                         is_pinned=bool(row["is_pinned"]),
-                        score=1.0,
+                        score=row["rank"],
                     )
                 )
             return results
         except Exception as e:
             logger.error(f"Postgres search failed: {e}")
             return []
+
+    def _encode_cursor(self, payload: dict) -> str:
+        raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        return base64.urlsafe_b64encode(raw).decode("ascii")
+
+    def _decode_cursor(self, cursor: Optional[str]) -> Optional[dict]:
+        if not cursor:
+            return None
+        try:
+            raw = base64.urlsafe_b64decode(cursor.encode("ascii"))
+            val = json.loads(raw.decode("utf-8"))
+            return val if isinstance(val, dict) else None
+        except Exception:
+            return None
+
+    def search_messages_page(
+        self,
+        query: str,
+        conversation_ids=None,
+        server_ids=None,
+        channel_ids=None,
+        author_ids=None,
+        limit=25,
+        cursor: Optional[str] = None,
+    ) -> Tuple[List[MessageSearchResult], Optional[str]]:
+        try:
+            self._ensure_initialized()
+            if not query or not query.strip():
+                return [], None
+
+            sql = """
+                SELECT message_id, content, author_id, conversation_id, server_id, channel_id,
+                       created_at, has_attachments, is_pinned,
+                       ts_rank_cd(search_vector, query) as rank
+                FROM search_messages, websearch_to_tsquery('english', ?) query
+                WHERE (search_vector @@ query OR content ILIKE ?)
+            """
+            params: List[Any] = [query, f"%{query}%"]
+
+            if conversation_ids:
+                sql += f" AND conversation_id IN ({','.join(['?'] * len(conversation_ids))})"
+                params.extend(conversation_ids)
+            if server_ids:
+                sql += f" AND server_id IN ({','.join(['?'] * len(server_ids))})"
+                params.extend(server_ids)
+            if channel_ids:
+                sql += f" AND channel_id IN ({','.join(['?'] * len(channel_ids))})"
+                params.extend(channel_ids)
+            if author_ids:
+                sql += f" AND author_id IN ({','.join(['?'] * len(author_ids))})"
+                params.extend(author_ids)
+
+            decoded = self._decode_cursor(cursor)
+            if decoded and decoded.get("kind") == "msg":
+                sql += """
+                    AND (
+                        ts_rank_cd(search_vector, query) < ?
+                        OR (ts_rank_cd(search_vector, query) = ? AND created_at < ?)
+                        OR (ts_rank_cd(search_vector, query) = ? AND created_at = ? AND message_id < ?)
+                    )
+                """
+                params.extend(
+                    [
+                        float(decoded.get("rank", 0.0)),
+                        float(decoded.get("rank", 0.0)),
+                        int(decoded.get("created_at", 0)),
+                        float(decoded.get("rank", 0.0)),
+                        int(decoded.get("created_at", 0)),
+                        int(decoded.get("id", 0)),
+                    ]
+                )
+
+            sql += " ORDER BY rank DESC, created_at DESC, message_id DESC LIMIT ?"
+            params.append(max(1, int(limit)))
+            rows = self._db.fetch_all(sql, tuple(params))
+
+            results = [
+                MessageSearchResult(
+                    id=row["message_id"],
+                    message_id=row["message_id"],
+                    content=row["content"],
+                    author_id=row["author_id"],
+                    conversation_id=row["conversation_id"],
+                    server_id=row["server_id"],
+                    channel_id=row["channel_id"],
+                    created_at=row["created_at"],
+                    has_attachments=bool(row["has_attachments"]),
+                    is_pinned=bool(row["is_pinned"]),
+                    score=row["rank"],
+                )
+                for row in rows
+            ]
+            if not rows:
+                return results, None
+            tail = rows[-1]
+            next_cursor = self._encode_cursor(
+                {
+                    "kind": "msg",
+                    "rank": float(tail["rank"]),
+                    "created_at": int(tail["created_at"] or 0),
+                    "id": int(tail["message_id"]),
+                }
+            )
+            return results, next_cursor
+        except Exception as e:
+            logger.error(f"Postgres paged message search failed: {e}")
+            return [], None
 
     def update_message(self, message: IndexedMessage) -> bool:
         return self.index_message(message)
@@ -245,8 +427,15 @@ class PostgresIndexer(BaseIndexer):
     def search_users(self, query: str, limit=25, offset=0):
         try:
             self._ensure_initialized()
-            sql = "SELECT * FROM search_users WHERE username ILIKE ? OR display_name ILIKE ? LIMIT ? OFFSET ?"
-            rows = self._db.fetch_all(sql, (f"%{query}%", f"%{query}%", limit, offset))
+            fetch_count = max(0, int(limit)) + max(0, int(offset))
+            sql = """
+                SELECT user_id, username, display_name, is_bot,
+                       ts_rank_cd(search_vector, query) as rank
+                FROM search_users, websearch_to_tsquery('english', ?) query
+                WHERE (search_vector @@ query OR username ILIKE ? OR display_name ILIKE ?)
+                ORDER BY rank DESC LIMIT ?
+            """
+            rows = self._db.fetch_all(sql, (query, f"%{query}%", f"%{query}%", fetch_count))
             return [
                 UserSearchResult(
                     id=r["user_id"],
@@ -254,12 +443,69 @@ class PostgresIndexer(BaseIndexer):
                     username=r["username"],
                     display_name=r["display_name"],
                     is_bot=bool(r["is_bot"]),
-                    score=1.0,
+                    score=r["rank"],
                 )
-                for r in rows
+                for r in rows[offset : offset + limit]
             ]
         except Exception:
             return []
+
+    def search_users_page(
+        self,
+        query: str,
+        limit: int = 25,
+        cursor: Optional[str] = None,
+    ) -> Tuple[List[UserSearchResult], Optional[str]]:
+        try:
+            self._ensure_initialized()
+            if not query or not query.strip():
+                return [], None
+            sql = """
+                SELECT user_id, username, display_name, is_bot,
+                       ts_rank_cd(search_vector, query) as rank
+                FROM search_users, websearch_to_tsquery('english', ?) query
+                WHERE (search_vector @@ query OR username ILIKE ? OR display_name ILIKE ?)
+            """
+            params: List[Any] = [query, f"%{query}%", f"%{query}%"]
+            decoded = self._decode_cursor(cursor)
+            if decoded and decoded.get("kind") == "usr":
+                sql += """
+                    AND (
+                        ts_rank_cd(search_vector, query) < ?
+                        OR (ts_rank_cd(search_vector, query) = ? AND user_id < ?)
+                    )
+                """
+                params.extend(
+                    [
+                        float(decoded.get("rank", 0.0)),
+                        float(decoded.get("rank", 0.0)),
+                        int(decoded.get("id", 0)),
+                    ]
+                )
+            sql += " ORDER BY rank DESC, user_id DESC LIMIT ?"
+            params.append(max(1, int(limit)))
+            rows = self._db.fetch_all(sql, tuple(params))
+            results = [
+                UserSearchResult(
+                    id=r["user_id"],
+                    user_id=r["user_id"],
+                    username=r["username"],
+                    display_name=r["display_name"],
+                    is_bot=bool(r["is_bot"]),
+                    score=r["rank"],
+                )
+                for r in rows
+            ]
+            if not rows:
+                return results, None
+            tail = rows[-1]
+            next_cursor = self._encode_cursor(
+                {"kind": "usr", "rank": float(tail["rank"]), "id": int(tail["user_id"])}
+            )
+            return results, next_cursor
+        except Exception as e:
+            logger.error(f"Postgres paged user search failed: {e}")
+            return [], None
 
     def index_server(self, server: IndexedServer) -> bool:
         try:
@@ -305,15 +551,21 @@ class PostgresIndexer(BaseIndexer):
     ):
         try:
             self._ensure_initialized()
-            sql = "SELECT * FROM search_servers WHERE (name ILIKE ? OR description ILIKE ?)"
-            params: list[Any] = [f"%{query}%", f"%{query}%"]
+            sql = """
+                SELECT server_id, name, description, category, tags, member_count,
+                       ts_rank_cd(search_vector, query) as rank
+                FROM search_servers, websearch_to_tsquery('english', ?) query
+                WHERE (search_vector @@ query OR name ILIKE ? OR description ILIKE ?)
+            """
+            params: List[Any] = [query, f"%{query}%", f"%{query}%"]
             if public_only:
                 sql += " AND is_public = TRUE"
             if category:
                 sql += " AND category = ?"
                 params.append(category)
-            sql += " LIMIT ? OFFSET ?"
-            params.extend([limit, offset])
+            fetch_count = max(0, int(limit)) + max(0, int(offset))
+            sql += " ORDER BY rank DESC LIMIT ?"
+            params.append(fetch_count)
             rows = self._db.fetch_all(sql, tuple(params))
             return [
                 ServerSearchResult(
@@ -324,12 +576,78 @@ class PostgresIndexer(BaseIndexer):
                     category=r["category"],
                     tags=r["tags"].split() if r["tags"] else [],
                     member_count=r["member_count"],
-                    score=1.0,
+                    score=r["rank"],
                 )
-                for r in rows
+                for r in rows[offset : offset + limit]
             ]
         except Exception:
             return []
+
+    def search_servers_page(
+        self,
+        query: str,
+        category: Optional[str] = None,
+        public_only: bool = True,
+        limit: int = 25,
+        cursor: Optional[str] = None,
+    ) -> Tuple[List[ServerSearchResult], Optional[str]]:
+        try:
+            self._ensure_initialized()
+            if not query or not query.strip():
+                return [], None
+            sql = """
+                SELECT server_id, name, description, category, tags, member_count,
+                       ts_rank_cd(search_vector, query) as rank
+                FROM search_servers, websearch_to_tsquery('english', ?) query
+                WHERE (search_vector @@ query OR name ILIKE ? OR description ILIKE ?)
+            """
+            params: List[Any] = [query, f"%{query}%", f"%{query}%"]
+            if public_only:
+                sql += " AND is_public = TRUE"
+            if category:
+                sql += " AND category = ?"
+                params.append(category)
+            decoded = self._decode_cursor(cursor)
+            if decoded and decoded.get("kind") == "srv":
+                sql += """
+                    AND (
+                        ts_rank_cd(search_vector, query) < ?
+                        OR (ts_rank_cd(search_vector, query) = ? AND server_id < ?)
+                    )
+                """
+                params.extend(
+                    [
+                        float(decoded.get("rank", 0.0)),
+                        float(decoded.get("rank", 0.0)),
+                        int(decoded.get("id", 0)),
+                    ]
+                )
+            sql += " ORDER BY rank DESC, server_id DESC LIMIT ?"
+            params.append(max(1, int(limit)))
+            rows = self._db.fetch_all(sql, tuple(params))
+            results = [
+                ServerSearchResult(
+                    id=r["server_id"],
+                    server_id=r["server_id"],
+                    name=r["name"],
+                    description=r["description"],
+                    category=r["category"],
+                    tags=r["tags"].split() if r["tags"] else [],
+                    member_count=r["member_count"],
+                    score=r["rank"],
+                )
+                for r in rows
+            ]
+            if not rows:
+                return results, None
+            tail = rows[-1]
+            next_cursor = self._encode_cursor(
+                {"kind": "srv", "rank": float(tail["rank"]), "id": int(tail["server_id"])}
+            )
+            return results, next_cursor
+        except Exception as e:
+            logger.error(f"Postgres paged server search failed: {e}")
+            return [], None
 
     def get_stats(self):
         try:

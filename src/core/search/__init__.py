@@ -20,6 +20,9 @@ from .models import (
     MessageSearchResult,
     UserSearchResult,
     ServerSearchResult,
+    MessageSearchResultPage,
+    UserSearchResultPage,
+    ServerSearchResultPage,
     ParsedQuery,
     QueryFilter,
     FilterType,
@@ -71,13 +74,16 @@ __all__ = [
     "setup",
     # Message search
     "search_messages",
+    "search_messages_page",
     "index_message",
     "remove_from_index",
     "reindex_conversation",
     # User search
     "search_users",
+    "search_users_page",
     # Server search
     "search_servers",
+    "search_servers_page",
     # Discovery
     "list_public_servers",
     "get_server_categories",
@@ -162,6 +168,37 @@ def search_messages(
     )
 
 
+def search_messages_page(
+    user_id: int,
+    query: str,
+    conversation_id: Optional[int] = None,
+    server_id: Optional[int] = None,
+    channel_id: Optional[int] = None,
+    author_id: Optional[int] = None,
+    after_timestamp: Optional[int] = None,
+    has_attachments: Optional[bool] = None,
+    mentions_user: Optional[int] = None,
+    limit: int = 25,
+    cursor: Optional[str] = None,
+) -> MessageSearchResultPage:
+    """
+    Search messages with cursor-based pagination.
+    """
+    return _get_manager().search_messages_page(
+        user_id=user_id,
+        query=query,
+        conversation_id=conversation_id,
+        server_id=server_id,
+        channel_id=channel_id,
+        author_id=author_id,
+        after_timestamp=after_timestamp,
+        has_attachments=has_attachments,
+        mentions_user=mentions_user,
+        limit=limit,
+        cursor=cursor,
+    )
+
+
 def index_message(
     message_id: int, content: str, metadata: Optional[Dict[str, Any]] = None
 ):
@@ -228,6 +265,25 @@ def search_users(
     )
 
 
+def search_users_page(
+    user_id: int,
+    query: str,
+    server_id: Optional[int] = None,
+    limit: int = 25,
+    cursor: Optional[str] = None,
+) -> UserSearchResultPage:
+    """
+    Search users with cursor-based pagination.
+    """
+    return _get_manager().search_users_page(
+        user_id=user_id,
+        query=query,
+        server_id=server_id,
+        limit=limit,
+        cursor=cursor,
+    )
+
+
 # === Server Search ===
 
 
@@ -257,6 +313,25 @@ def search_servers(
         category=category,
         limit=limit,
         offset=offset,
+    )
+
+
+def search_servers_page(
+    user_id: int,
+    query: str,
+    category: Optional[str] = None,
+    limit: int = 25,
+    cursor: Optional[str] = None,
+) -> ServerSearchResultPage:
+    """
+    Search servers with cursor-based pagination.
+    """
+    return _get_manager().search_servers_page(
+        user_id=user_id,
+        query=query,
+        category=category,
+        limit=limit,
+        cursor=cursor,
     )
 
 

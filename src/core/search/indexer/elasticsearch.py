@@ -7,6 +7,7 @@ Optional backend for production deployments requiring advanced search features.
 import json
 import urllib.request
 import urllib.error
+from urllib.parse import urlparse
 from typing import List, Dict, Any, Optional
 
 import utils.logger as logger
@@ -69,16 +70,26 @@ class ElasticsearchIndexer(BaseIndexer):
         """Close the indexer."""
         self._initialized = False
 
+    @staticmethod
+    def _validate_http_url(url: str) -> str:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise SearchBackendError(
+                f"Invalid Elasticsearch URL: {url}",
+                backend="elasticsearch",
+            )
+        return url
+
     def _request(
         self,
         method: str,
         path: str,
         body: Optional[Dict] = None,
     ) -> Dict[str, Any]:
-        """Make HTTP request to Elasticsearch."""
+        """Make HTTP request to Elasticsearch."""  # nosec B310
         if self._http_client is None:
             try:
-                url = f"{self._hosts[0]}{path}"
+                url = self._validate_http_url(f"{self._hosts[0]}{path}")
                 data = json.dumps(body).encode() if body else None
                 headers = {"Content-Type": "application/json"}
 
@@ -262,10 +273,10 @@ class ElasticsearchIndexer(BaseIndexer):
                 )
 
             bulk_data = "\n".join(bulk_body) + "\n"
-
+  # nosec B310
             import urllib.request
 
-            url = f"{self._hosts[0]}/_bulk"
+            url = self._validate_http_url(f"{self._hosts[0]}/_bulk")
             req = urllib.request.Request(
                 url,
                 data=bulk_data.encode(),
@@ -549,3 +560,4 @@ class ElasticsearchIndexer(BaseIndexer):
                 "healthy": False,
                 "error": str(e),
             }
+

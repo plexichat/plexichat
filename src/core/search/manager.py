@@ -18,6 +18,9 @@ from .models import (
     MessageSearchResult,
     UserSearchResult,
     ServerSearchResult,
+    MessageSearchResultPage,
+    UserSearchResultPage,
+    ServerSearchResultPage,
     ServerListing,
     ServerCategory,
     VerificationLevel,
@@ -203,20 +206,7 @@ class SearchManager(BaseManager):
                 requested=limit,
             )
 
-        rate_limit = self._config.get("rate_limit_per_minute")
-        if rate_limit:
-            now = time.time() * 1000
-            window_start = self._search_rate_window_started_ms.get(user_id)
-            if window_start is None or now - window_start >= 60_000:
-                self._search_rate_window_started_ms[user_id] = now
-                self._search_rate_count[user_id] = 0
-            self._search_rate_count[user_id] = (
-                self._search_rate_count.get(user_id, 0) + 1
-            )
-            if self._search_rate_count[user_id] > int(rate_limit):
-                raise SearchRateLimitError(
-                    "Search rate limit exceeded", retry_after_seconds=60
-                )
+        self._check_rate_limit(user_id)
 
         parsed = self._query_parser.parse(query)
 
@@ -264,6 +254,78 @@ class SearchManager(BaseManager):
         )
 
         return results[:limit]
+
+    def search_messages_page(
+        self,
+        user_id: int,
+        query: str,
+        conversation_id: Optional[int] = None,
+        server_id: Optional[int] = None,
+        channel_id: Optional[int] = None,
+        author_id: Optional[int] = None,
+        after_timestamp: Optional[int] = None,
+        has_attachments: Optional[bool] = None,
+        mentions_user: Optional[int] = None,
+        limit: int = 25,
+        cursor: Optional[str] = None,
+    ) -> MessageSearchResultPage:
+        """
+        Search messages with cursor-based pagination.
+        """
+        max_limit = self._config.get("result_limit", 100)
+        if limit > max_limit:
+            raise SearchLimitError(
+                f"Limit exceeds maximum of {max_limit}",
+                max_allowed=max_limit,
+                requested=limit,
+            )
+
+        self._check_rate_limit(user_id)
+
+        parsed = self._query_parser.parse(query)
+        accessible_conversations = self._get_accessible_conversations(
+            user_id, conversation_id, server_id, channel_id
+        )
+
+        if not accessible_conversations:
+            return MessageSearchResultPage(results=[], next_cursor=None)
+
+        search_text = parsed.search_text if parsed.search_terms else query
+
+        # The indexer does the heavy lifting for cursors
+        results, next_cursor = self._indexer.search_messages_page(
+            query=search_text,
+            conversation_ids=accessible_conversations,
+            server_ids=[server_id] if server_id else None,
+            channel_ids=[channel_id] if channel_id else None,
+            author_ids=[author_id] if author_id is not None else None,
+            limit=limit,
+            cursor=cursor,
+        )
+
+        if after_timestamp is not None:
+            results = [
+                r for r in results if r.created_at and r.created_at > after_timestamp
+            ]
+
+        if has_attachments is not None:
+            results = [r for r in results if r.has_attachments == has_attachments]
+
+        if mentions_user is not None:
+            results = [
+                r
+                for r in results
+                if f"<@{mentions_user}>" in (r.content or "")
+                or f"<@!{mentions_user}>" in (r.content or "")
+            ]
+
+        results = self._filter_processor.apply_filters(results, parsed, user_id)
+        results = self._enrich_message_results(results, user_id)
+        results = self._ranking_engine.rank_message_results(
+            results, parsed, self._get_timestamp()
+        )
+
+        return MessageSearchResultPage(results=results, next_cursor=next_cursor)
 
     def clear_cache(self):
         self._search_rate_window_started_ms.clear()
@@ -430,6 +492,8 @@ class SearchManager(BaseManager):
                 requested=limit,
             )
 
+        self._check_rate_limit(user_id)
+
         results = self._indexer.search_users(query, limit * 2, offset)
 
         if server_id:
@@ -441,6 +505,38 @@ class SearchManager(BaseManager):
         results = self._ranking_engine.rank_user_results(results, query, user_id)
 
         return results[:limit]
+
+    def search_users_page(
+        self,
+        user_id: int,
+        query: str,
+        server_id: Optional[int] = None,
+        limit: int = 25,
+        cursor: Optional[str] = None,
+    ) -> UserSearchResultPage:
+        """
+        Search users with cursor-based pagination.
+        """
+        max_limit = self._config.get("result_limit", 100)
+        if limit > max_limit:
+            raise SearchLimitError(
+                f"Limit exceeds maximum of {max_limit}",
+                max_allowed=max_limit,
+                requested=limit,
+            )
+
+        self._check_rate_limit(user_id)
+
+        results, next_cursor = self._indexer.search_users_page(query, limit, cursor)
+
+        if server_id:
+            server_members = self._get_server_member_ids(server_id)
+            results = [r for r in results if r.user_id in server_members]
+
+        results = self._enrich_user_results(results, user_id)
+        results = self._ranking_engine.rank_user_results(results, query, user_id)
+
+        return UserSearchResultPage(results=results, next_cursor=next_cursor)
 
     def index_user(
         self,
@@ -499,6 +595,8 @@ class SearchManager(BaseManager):
                 requested=limit,
             )
 
+        self._check_rate_limit(user_id)
+
         results = self._indexer.search_servers(
             query=query,
             category=category,
@@ -512,6 +610,40 @@ class SearchManager(BaseManager):
         results = self._ranking_engine.rank_server_results(results, query)
 
         return results[:limit]
+
+    def search_servers_page(
+        self,
+        user_id: int,
+        query: str,
+        category: Optional[str] = None,
+        limit: int = 25,
+        cursor: Optional[str] = None,
+    ) -> ServerSearchResultPage:
+        """
+        Search servers with cursor-based pagination.
+        """
+        max_limit = self._config.get("result_limit", 100)
+        if limit > max_limit:
+            raise SearchLimitError(
+                f"Limit exceeds maximum of {max_limit}",
+                max_allowed=max_limit,
+                requested=limit,
+            )
+
+        self._check_rate_limit(user_id)
+
+        results, next_cursor = self._indexer.search_servers_page(
+            query=query,
+            category=category,
+            public_only=True,
+            limit=limit,
+            cursor=cursor,
+        )
+
+        results = self._enrich_server_results(results)
+        results = self._ranking_engine.rank_server_results(results, query)
+
+        return ServerSearchResultPage(results=results, next_cursor=next_cursor)
 
     def index_server(
         self,
@@ -616,6 +748,27 @@ class SearchManager(BaseManager):
         return suggestions[:limit]
 
     # === Helper Methods ===
+
+    def _check_rate_limit(self, user_id: int):
+        """Check search rate limit for a user."""
+        rate_limit = self._config.get("rate_limit_per_minute")
+        if not rate_limit:
+            return
+
+        now = time.time() * 1000
+        window_start = self._search_rate_window_started_ms.get(user_id)
+        if window_start is None or now - window_start >= 60_000:
+            self._search_rate_window_started_ms[user_id] = now
+            self._search_rate_count[user_id] = 0
+        
+        self._search_rate_count[user_id] = (
+            self._search_rate_count.get(user_id, 0) + 1
+        )
+        
+        if self._search_rate_count[user_id] > int(rate_limit):
+            raise SearchRateLimitError(
+                "Search rate limit exceeded", retry_after_seconds=60
+            )
 
     def _get_accessible_conversations(
         self,
@@ -755,8 +908,15 @@ class SearchManager(BaseManager):
         results: List[ServerSearchResult],
     ) -> List[ServerSearchResult]:
         """Enrich server results with additional data."""
+        server_ids = [r.server_id for r in results]
+        if not server_ids:
+            return results
+
+        # SECURITY: Bulk fetch listings to avoid N+1 queries
+        listings_map = self._discovery.get_listings_bulk(server_ids)
+        
         for result in results:
-            listing = self._discovery.get_listing(result.server_id)
+            listing = listings_map.get(result.server_id)
             if listing:
                 result.verification_level = listing.verification_level
                 result.is_verified = listing.is_verified
@@ -794,7 +954,7 @@ class SearchManager(BaseManager):
         if missing:
             placeholders = ",".join("?" for _ in missing)
             rows = self._db.fetch_all(
-                f"SELECT user_id, server_id FROM srv_members WHERE user_id IN ({placeholders})",
+                f"SELECT user_id, server_id FROM srv_members WHERE user_id IN ({placeholders})",  # nosec B608
                 tuple(missing),
             )
             for row in rows:
@@ -836,7 +996,7 @@ class SearchManager(BaseManager):
         if missing:
             placeholders = ",".join("?" for _ in missing)
             rows = self._db.fetch_all(
-                f"SELECT {id_col} as id, {name_col} as name FROM {table} WHERE {id_col} IN ({placeholders})",
+                f"SELECT {id_col} as id, {name_col} as name FROM {table} WHERE {id_col} IN ({placeholders})",  # nosec B608
                 tuple(missing),
             )
             for row in rows:
@@ -846,3 +1006,4 @@ class SearchManager(BaseManager):
                 if redis_available():
                     cache_set(f"{cache_prefix}:{i}", n, ttl=ttl)
         return cached
+

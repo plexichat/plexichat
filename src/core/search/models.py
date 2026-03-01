@@ -135,6 +135,31 @@ class SearchResponse:
     took_ms: int
     backend: SearchBackend
     next_offset: Optional[int] = None
+    next_cursor: Optional[str] = None
+
+
+@dataclass
+class MessageSearchResultPage:
+    """Paginated search results for messages."""
+
+    results: List[MessageSearchResult]
+    next_cursor: Optional[str] = None
+
+
+@dataclass
+class UserSearchResultPage:
+    """Paginated search results for users."""
+
+    results: List[UserSearchResult]
+    next_cursor: Optional[str] = None
+
+
+@dataclass
+class ServerSearchResultPage:
+    """Paginated search results for servers."""
+
+    results: List[ServerSearchResult]
+    next_cursor: Optional[str] = None
 
 
 @dataclass

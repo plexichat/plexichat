@@ -46,6 +46,7 @@ _avatars = None
 _reports = None
 _feedback = None
 _admin = None
+_search = None
 _events = None
 _polls = None
 _telemetry = None
@@ -73,6 +74,7 @@ def setup(
     reports_module: Optional[Any] = None,
     feedback_module: Optional[Any] = None,
     admin_module: Optional[Any] = None,
+    search_module: Optional[Any] = None,
     events_module: Optional[Any] = None,
     telemetry_module: Optional[Any] = None,
 ) -> None:
@@ -115,6 +117,7 @@ def setup(
         _reports, \
         _feedback, \
         _admin, \
+        _search, \
         _events, \
         _telemetry, \
         _setup_complete
@@ -138,6 +141,7 @@ def setup(
     _reports = reports_module
     _feedback = feedback_module
     _admin = admin_module
+    _search = search_module
     _events = events_module
     _telemetry = telemetry_module
     _setup_complete = True
@@ -194,6 +198,18 @@ def get_messaging() -> Optional[Any]:
         from src.core import messaging
 
         return messaging
+    except ImportError:
+        return None
+
+
+def get_search() -> Optional[Any]:
+    """Get search module."""
+    if _search:
+        return _search
+    try:
+        from src.core import search
+
+        return search
     except ImportError:
         return None
 

@@ -24,6 +24,20 @@ curl {{BASE_URL}}/users/@me \
   -H "Authorization: Bot YOUR_BOT_TOKEN"
 ```
 
+### API Access Token (Optional)
+
+Some servers may be configured to require an additional API access token header for all authenticated API requests.
+
+When required, include:
+
+```bash
+curl {{BASE_URL}}/users/@me \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+  -H "X-API-Access-Token: YOUR_API_ACCESS_TOKEN"
+```
+
+You can detect whether the server requires this by calling `GET /capabilities` and checking `access_token_required`.
+
 ## Endpoint Categories
 
 ### Health & Version

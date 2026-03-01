@@ -7,6 +7,7 @@ Optional backend for production deployments requiring fast, typo-tolerant search
 import json
 import urllib.request
 import urllib.error
+from urllib.parse import urlparse
 from typing import List, Dict, Any, Optional, Union
 
 import utils.logger as logger
@@ -67,6 +68,16 @@ class MeilisearchIndexer(BaseIndexer):
                 original_error=e,
             )
 
+    @staticmethod
+    def _validate_http_url(url: str) -> str:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise SearchBackendError(
+                f"Invalid Meilisearch URL: {url}",
+                backend="meilisearch",
+            )
+        return url
+
     def close(self):
         """Close the indexer."""
         self._initialized = False
@@ -80,9 +91,9 @@ class MeilisearchIndexer(BaseIndexer):
         """Make HTTP request to Meilisearch."""
         if self._http_client is not None:
             return self._http_client.request(method, path, body)
-
+  # nosec B310
         try:
-            url = f"{self._host}{path}"
+            url = self._validate_http_url(f"{self._host}{path}")
             data = json.dumps(body).encode() if body else None
             headers = {"Content-Type": "application/json"}
 
@@ -506,3 +517,4 @@ class MeilisearchIndexer(BaseIndexer):
                 "healthy": False,
                 "error": str(e),
             }
+

@@ -30,7 +30,8 @@ for path in [project_root, src_path, common_utils_path]:
 import utils.logger as logger  # noqa: E402
 import utils.config as config  # noqa: E402
 import utils.validator as validator  # noqa: E402
-validator.setup(auto_sanitize_html=False)
+
+validator.setup(auto_sanitize_html=True)
 import utils.version as version  # noqa: E402
 
 # Global Version Definition
@@ -53,6 +54,7 @@ class PlexichatServer:
     def get_default_config(self) -> Dict[str, Any]:
         """Get default configuration from external defaults module."""
         from src.config_defaults import get_default_config as fetch_default_config
+
         return fetch_default_config(version=VERSION)
 
     def setup_directories(self) -> None:
@@ -68,7 +70,7 @@ class PlexichatServer:
 
     def setup_config(self) -> str:
         """Setup configuration from file or defaults, with environment variable overrides.
-        
+
         Config file search order:
         1. Project config: ./config/config.yaml
         2. Home folder config: ~/.plexichat/config/config.yaml
@@ -76,7 +78,10 @@ class PlexichatServer:
         # Try project config first, then home folder config
         config_paths = [
             (os.path.join(project_root, "config", "config.yaml"), "project directory"),
-            (str(Path.home() / ".plexichat" / "config" / "config.yaml"), "home directory"),
+            (
+                str(Path.home() / ".plexichat" / "config" / "config.yaml"),
+                "home directory",
+            ),
         ]
 
         config_path = None
@@ -98,9 +103,9 @@ class PlexichatServer:
 
     def _apply_env_overrides(self) -> None:
         """Apply environment variable overrides to configuration.
-        
+
         Supports the following environment variables:
-        
+
         DATABASE CONFIGURATION:
         - DATABASE_URL: Full PostgreSQL or SQLite connection string
         - POSTGRES_HOST: PostgreSQL host (default: localhost)
@@ -109,7 +114,7 @@ class PlexichatServer:
         - POSTGRES_PASSWORD: PostgreSQL password (required for production)
         - POSTGRES_DBNAME: PostgreSQL database name (default: plexichat)
         - POSTGRES_SSLMODE: PostgreSQL SSL mode (default: prefer)
-        
+
         DATABASE CONNECTION POOL:
         - DB_POOL_MIN_CONNECTIONS: Minimum connections (default: 1)
         - DB_POOL_MAX_CONNECTIONS: Maximum connections (default: 10)
@@ -118,7 +123,7 @@ class PlexichatServer:
         - DB_POOL_VALIDATION_INTERVAL: Validation check interval in seconds (default: 60)
         - DB_POOL_ENABLE_VALIDATION: Enable connection validation (default: true)
         - DB_POOL_VALIDATION_QUERY: Query for validation (default: SELECT 1)
-        
+
         MONITORING:
         - MONITORING_ENABLED: Enable monitoring (default: true)
         - MONITORING_LOG_INTERVAL: Metrics log interval in seconds (default: 300)
@@ -131,14 +136,14 @@ class PlexichatServer:
         - MONITORING_ALERT_API_RESPONSE_TIME_MS: API response time alert (default: 2000)
         - MONITORING_ALERT_ERROR_RATE_PERCENT: Error rate alert % (default: 5)
         - MONITORING_ALERT_ACTIVE_CONNECTIONS: Connection count alert (default: 1000)
-        
+
         LOGGING:
         - LOG_LEVEL: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         """
         import urllib.parse
-        
+
         db_config = config.get("database", {})
-        
+
         # Handle DATABASE_URL (takes precedence over individual env vars)
         database_url = os.getenv("DATABASE_URL")
         if database_url:
@@ -168,43 +173,45 @@ class PlexichatServer:
             # Handle individual PostgreSQL environment variables
             if not db_config.get("postgres"):
                 db_config["postgres"] = {}
-            
+
             postgres_config = db_config["postgres"]
-            
+
             # PostgreSQL connection credentials
             postgres_host = os.getenv("POSTGRES_HOST")
             if postgres_host:
                 postgres_config["host"] = postgres_host
-            
+
             postgres_port = os.getenv("POSTGRES_PORT")
             if postgres_port:
                 try:
                     postgres_config["port"] = int(postgres_port)
                 except ValueError:
-                    logger.warning(f"Invalid POSTGRES_PORT value: {postgres_port}, using default")
-            
+                    logger.warning(
+                        f"Invalid POSTGRES_PORT value: {postgres_port}, using default"
+                    )
+
             postgres_user = os.getenv("POSTGRES_USER")
             if postgres_user:
                 postgres_config["user"] = postgres_user
-            
+
             postgres_password = os.getenv("POSTGRES_PASSWORD")
             if postgres_password:
                 postgres_config["password"] = postgres_password
-            
+
             postgres_dbname = os.getenv("POSTGRES_DBNAME")
             if postgres_dbname:
                 postgres_config["dbname"] = postgres_dbname
-            
+
             postgres_sslmode = os.getenv("POSTGRES_SSLMODE")
             if postgres_sslmode:
                 postgres_config["sslmode"] = postgres_sslmode
-        
+
         # Initialize connection pool config if not present
         if "connection_pool" not in db_config:
             db_config["connection_pool"] = {}
-        
+
         pool_config = db_config["connection_pool"]
-        
+
         # Connection pool environment variables
         db_pool_min = os.getenv("DB_POOL_MIN_CONNECTIONS")
         if db_pool_min:
@@ -212,128 +219,174 @@ class PlexichatServer:
                 pool_config["min_connections"] = int(db_pool_min)
             except ValueError:
                 logger.warning(f"Invalid DB_POOL_MIN_CONNECTIONS value: {db_pool_min}")
-        
+
         db_pool_max = os.getenv("DB_POOL_MAX_CONNECTIONS")
         if db_pool_max:
             try:
                 pool_config["max_connections"] = int(db_pool_max)
             except ValueError:
                 logger.warning(f"Invalid DB_POOL_MAX_CONNECTIONS value: {db_pool_max}")
-        
+
         db_pool_timeout = os.getenv("DB_POOL_CONNECT_TIMEOUT")
         if db_pool_timeout:
             try:
                 pool_config["connect_timeout"] = int(db_pool_timeout)
             except ValueError:
-                logger.warning(f"Invalid DB_POOL_CONNECT_TIMEOUT value: {db_pool_timeout}")
-        
+                logger.warning(
+                    f"Invalid DB_POOL_CONNECT_TIMEOUT value: {db_pool_timeout}"
+                )
+
         db_pool_idle = os.getenv("DB_POOL_MAX_IDLE_TIME")
         if db_pool_idle:
             try:
                 pool_config["max_idle_time"] = int(db_pool_idle)
             except ValueError:
                 logger.warning(f"Invalid DB_POOL_MAX_IDLE_TIME value: {db_pool_idle}")
-        
+
         db_pool_validation_interval = os.getenv("DB_POOL_VALIDATION_INTERVAL")
         if db_pool_validation_interval:
             try:
                 pool_config["validation_interval"] = int(db_pool_validation_interval)
             except ValueError:
-                logger.warning(f"Invalid DB_POOL_VALIDATION_INTERVAL value: {db_pool_validation_interval}")
-        
+                logger.warning(
+                    f"Invalid DB_POOL_VALIDATION_INTERVAL value: {db_pool_validation_interval}"
+                )
+
         db_pool_enable_validation = os.getenv("DB_POOL_ENABLE_VALIDATION")
         if db_pool_enable_validation:
-            pool_config["enable_validation"] = db_pool_enable_validation.lower() in ("true", "1", "yes")
-        
+            pool_config["enable_validation"] = db_pool_enable_validation.lower() in (
+                "true",
+                "1",
+                "yes",
+            )
+
         db_pool_validation_query = os.getenv("DB_POOL_VALIDATION_QUERY")
         if db_pool_validation_query:
-            pool_config["validation_query"] = db_pool_validation_query
-        
+            # SECURITY: Strictly validate the validation query to prevent SQL injection via config
+            allowed_queries = ["SELECT 1", "SELECT 1;", "SELECT version();"]
+            if db_pool_validation_query.strip().upper() in [
+                q.upper() for q in allowed_queries
+            ]:
+                pool_config["validation_query"] = db_pool_validation_query
+            else:
+                logger.warning(
+                    f"Blocked potentially unsafe DB_POOL_VALIDATION_QUERY: {db_pool_validation_query}"
+                )
+                pool_config["validation_query"] = "SELECT 1"
+
         config.set("database", db_config)
-        
+
         # Monitoring configuration environment variables
         monitoring_config = config.get("monitoring", {})
-        
+
         monitoring_enabled = os.getenv("MONITORING_ENABLED")
         if monitoring_enabled:
-            monitoring_config["enabled"] = monitoring_enabled.lower() in ("true", "1", "yes")
-        
+            monitoring_config["enabled"] = monitoring_enabled.lower() in (
+                "true",
+                "1",
+                "yes",
+            )
+
         monitoring_log_interval = os.getenv("MONITORING_LOG_INTERVAL")
         if monitoring_log_interval:
             try:
                 monitoring_config["log_interval"] = int(monitoring_log_interval)
             except ValueError:
-                logger.warning(f"Invalid MONITORING_LOG_INTERVAL value: {monitoring_log_interval}")
-        
+                logger.warning(
+                    f"Invalid MONITORING_LOG_INTERVAL value: {monitoring_log_interval}"
+                )
+
         monitoring_metrics = os.getenv("MONITORING_METRICS_ENABLED")
         if monitoring_metrics:
-            monitoring_config["metrics_enabled"] = monitoring_metrics.lower() in ("true", "1", "yes")
-        
+            monitoring_config["metrics_enabled"] = monitoring_metrics.lower() in (
+                "true",
+                "1",
+                "yes",
+            )
+
         # Initialize alert thresholds if not present
         if "alert_thresholds" not in monitoring_config:
             monitoring_config["alert_thresholds"] = {}
-        
+
         alert_thresholds = monitoring_config["alert_thresholds"]
-        
+
         # Individual alert threshold environment variables
         cpu_threshold = os.getenv("MONITORING_ALERT_CPU_THRESHOLD")
         if cpu_threshold:
             try:
                 alert_thresholds["cpu_percent"] = float(cpu_threshold)
             except ValueError:
-                logger.warning(f"Invalid MONITORING_ALERT_CPU_THRESHOLD value: {cpu_threshold}")
-        
+                logger.warning(
+                    f"Invalid MONITORING_ALERT_CPU_THRESHOLD value: {cpu_threshold}"
+                )
+
         memory_threshold = os.getenv("MONITORING_ALERT_MEMORY_THRESHOLD")
         if memory_threshold:
             try:
                 alert_thresholds["memory_percent"] = float(memory_threshold)
             except ValueError:
-                logger.warning(f"Invalid MONITORING_ALERT_MEMORY_THRESHOLD value: {memory_threshold}")
-        
+                logger.warning(
+                    f"Invalid MONITORING_ALERT_MEMORY_THRESHOLD value: {memory_threshold}"
+                )
+
         db_pool_threshold = os.getenv("MONITORING_ALERT_DB_POOL_THRESHOLD")
         if db_pool_threshold:
             try:
-                alert_thresholds["db_pool_saturation_percent"] = float(db_pool_threshold)
+                alert_thresholds["db_pool_saturation_percent"] = float(
+                    db_pool_threshold
+                )
             except ValueError:
-                logger.warning(f"Invalid MONITORING_ALERT_DB_POOL_THRESHOLD value: {db_pool_threshold}")
-        
+                logger.warning(
+                    f"Invalid MONITORING_ALERT_DB_POOL_THRESHOLD value: {db_pool_threshold}"
+                )
+
         query_time = os.getenv("MONITORING_ALERT_QUERY_TIME_MS")
         if query_time:
             try:
                 alert_thresholds["query_time_ms"] = int(query_time)
             except ValueError:
-                logger.warning(f"Invalid MONITORING_ALERT_QUERY_TIME_MS value: {query_time}")
-        
+                logger.warning(
+                    f"Invalid MONITORING_ALERT_QUERY_TIME_MS value: {query_time}"
+                )
+
         db_errors = os.getenv("MONITORING_ALERT_DB_ERRORS_PER_MINUTE")
         if db_errors:
             try:
                 alert_thresholds["db_errors_per_minute"] = int(db_errors)
             except ValueError:
-                logger.warning(f"Invalid MONITORING_ALERT_DB_ERRORS_PER_MINUTE value: {db_errors}")
-        
+                logger.warning(
+                    f"Invalid MONITORING_ALERT_DB_ERRORS_PER_MINUTE value: {db_errors}"
+                )
+
         api_response_time = os.getenv("MONITORING_ALERT_API_RESPONSE_TIME_MS")
         if api_response_time:
             try:
                 alert_thresholds["api_response_time_ms"] = int(api_response_time)
             except ValueError:
-                logger.warning(f"Invalid MONITORING_ALERT_API_RESPONSE_TIME_MS value: {api_response_time}")
-        
+                logger.warning(
+                    f"Invalid MONITORING_ALERT_API_RESPONSE_TIME_MS value: {api_response_time}"
+                )
+
         error_rate = os.getenv("MONITORING_ALERT_ERROR_RATE_PERCENT")
         if error_rate:
             try:
                 alert_thresholds["error_rate_percent"] = float(error_rate)
             except ValueError:
-                logger.warning(f"Invalid MONITORING_ALERT_ERROR_RATE_PERCENT value: {error_rate}")
-        
+                logger.warning(
+                    f"Invalid MONITORING_ALERT_ERROR_RATE_PERCENT value: {error_rate}"
+                )
+
         active_connections = os.getenv("MONITORING_ALERT_ACTIVE_CONNECTIONS")
         if active_connections:
             try:
                 alert_thresholds["active_connections"] = int(active_connections)
             except ValueError:
-                logger.warning(f"Invalid MONITORING_ALERT_ACTIVE_CONNECTIONS value: {active_connections}")
-        
+                logger.warning(
+                    f"Invalid MONITORING_ALERT_ACTIVE_CONNECTIONS value: {active_connections}"
+                )
+
         config.set("monitoring", monitoring_config)
-        
+
         # LOG_LEVEL override
         log_level = os.getenv("LOG_LEVEL")
         if log_level:
@@ -345,17 +398,17 @@ class PlexichatServer:
         """Validate current configuration against required keys and types."""
         defaults = self.get_default_config()
         current = config.get_all()
-        
+
         missing = []
         type_mismatches = []
-        
+
         def check_recursive(d_dict, c_dict, path=""):
             for k, v in d_dict.items():
                 current_path = f"{path}.{k}" if path else k
                 if k not in c_dict:
                     missing.append(current_path)
                     continue
-                
+
                 if isinstance(v, dict) and isinstance(c_dict[k], dict):
                     check_recursive(v, c_dict[k], current_path)
                 elif v is not None and c_dict[k] is not None:
@@ -363,14 +416,14 @@ class PlexichatServer:
                         type_mismatches.append(
                             f"{current_path}: expected {type(v).__name__}, got {type(c_dict[k]).__name__}"
                         )
-        
+
         check_recursive(defaults, current)
-        
+
         if missing:
             logger.warning(f"Missing configuration keys: {', '.join(missing)}")
-            # For some critical keys we might want to raise an error, 
+            # For some critical keys we might want to raise an error,
             # but for now we'll just log warnings as defaults are applied by the config util.
-            
+
         if type_mismatches:
             error_msg = f"Configuration type mismatches: {', '.join(type_mismatches)}"
             logger.error(error_msg)
@@ -383,7 +436,7 @@ class PlexichatServer:
 
         # Use home folder logs dir or fallback to project logs
         log_dir = media_config.get("logs_dir", os.path.join(project_root, "logs"))
-        
+
         # Expand ~ to home directory
         log_dir = os.path.expanduser(log_dir)
 
@@ -410,13 +463,15 @@ class PlexichatServer:
 
         # Initialize encryption with config values
         from src.utils import encryption
+
         encryption_config = config.get("encryption", {})
-        
+
         # SECURITY: Check for secure key source if configured
         auth_config = config.get("authentication", {})
         enc_security = auth_config.get("encryption", {})
         if enc_security.get("require_secure_source", False):
             from src.utils.encryption.vault import vault
+
             if not vault.is_using_secure_source():
                 error_msg = (
                     "CRITICAL SECURITY ERROR: Application is configured to require a secure "
@@ -427,13 +482,18 @@ class PlexichatServer:
                 )
                 logger.critical(error_msg)
                 raise RuntimeError(error_msg)
-        
+
         encryption.setup(
             worker_id=encryption_config.get("snowflake", {}).get("worker_id", 1) or 1,
-            datacenter_id=encryption_config.get("snowflake", {}).get("datacenter_id", 1) or 1,
+            datacenter_id=encryption_config.get("snowflake", {}).get("datacenter_id", 1)
+            or 1,
             argon2_time_cost=encryption_config.get("argon2", {}).get("time_cost", 2),
-            argon2_memory_cost=encryption_config.get("argon2", {}).get("memory_cost", 65536),
-            argon2_parallelism=encryption_config.get("argon2", {}).get("parallelism", 2),
+            argon2_memory_cost=encryption_config.get("argon2", {}).get(
+                "memory_cost", 65536
+            ),
+            argon2_parallelism=encryption_config.get("argon2", {}).get(
+                "parallelism", 2
+            ),
         )
 
     def initialize_modules(
@@ -455,6 +515,7 @@ class PlexichatServer:
             media,
             events,
             automod,
+            search,
         )
         from src.core import voice, notifications, threads
         from src.core.voice import signaling
@@ -489,7 +550,7 @@ class PlexichatServer:
 
         try:
             migration_result = run_migrations(self.db)
-            if migration_result['success']:
+            if migration_result["success"]:
                 logger.info(
                     f"Migrations applied successfully: "
                     f"{migration_result['applied_count']} applied, "
@@ -504,7 +565,7 @@ class PlexichatServer:
         except Exception as e:
             logger.error(f"Critical error during migrations: {e}")
             raise
-        
+
         self.db.connect()
 
         # Initialize Redis if enabled
@@ -537,7 +598,7 @@ class PlexichatServer:
         # Initialize core modules in parallel where possible
         startup_times = {}
         startup_lock = threading.Lock()
-        
+
         def timed_init(name: str, init_func):
             """Initialize a module and track how long it takes."""
             start = time.perf_counter()
@@ -559,29 +620,35 @@ class PlexichatServer:
         # Independent initialization group (Parallel)
         def init_independent():
             threads = []
-            
+
             # 1. Servers (Heavy DB)
             def init_servers():
                 timed_init("servers", lambda: servers.setup(self.db, auth, messaging))
                 self._modules["servers"] = servers
+
             threads.append(threading.Thread(target=init_servers, name="InitServers"))
 
             # 2. Relationships
             def init_rel():
-                timed_init("relationships", lambda: relationships.setup(self.db, auth, servers))
+                timed_init(
+                    "relationships", lambda: relationships.setup(self.db, auth, servers)
+                )
                 self._modules["relationships"] = relationships
+
             threads.append(threading.Thread(target=init_rel, name="InitRel"))
 
             # 3. Media
             def init_media():
                 timed_init("media", lambda: media.setup(self.db, messaging))
                 self._modules["media"] = media
+
             threads.append(threading.Thread(target=init_media, name="InitMedia"))
 
             # 4. Settings
             def init_settings():
                 timed_init("settings", lambda: settings.setup(self.db))
                 self._modules["settings"] = settings
+
             threads.append(threading.Thread(target=init_settings, name="InitSettings"))
 
             for t in threads:
@@ -595,17 +662,22 @@ class PlexichatServer:
         smtp_password = os.getenv("PLEXICHAT_SMTP_PASSWORD")
         if email_config.get("smtp_host") and smtp_password:
             from src.utils.email import SMTPEmailSender
+
             email_sender = SMTPEmailSender(
                 host=email_config["smtp_host"],
                 port=email_config.get("smtp_port", 587),
                 user=email_config.get("smtp_user", ""),
                 password=smtp_password,
                 from_email=email_config.get("from_email", "noreply@plexichat.internal"),
-                use_tls=email_config.get("use_tls", True)
+                use_tls=email_config.get("use_tls", True),
             )
-            logger.info(f"Email sender initialized via SMTP ({email_config['smtp_host']})")
+            logger.info(
+                f"Email sender initialized via SMTP ({email_config['smtp_host']})"
+            )
         else:
-            logger.info("Email sender not initialized (SMTP host or PLEXICHAT_SMTP_PASSWORD missing)")
+            logger.info(
+                "Email sender not initialized (SMTP host or PLEXICHAT_SMTP_PASSWORD missing)"
+            )
 
         # Core initialization group (Serial due to deep dependencies)
         timed_init("auth", lambda: auth.setup(self.db, email_sender=email_sender))
@@ -614,51 +686,74 @@ class PlexichatServer:
         timed_init("messaging", lambda: messaging.setup(self.db, auth))
         self._modules["messaging"] = messaging
 
+        timed_init(
+            "search", lambda: search.setup(self.db, auth, messaging, servers)
+        )
+        self._modules["search"] = search
+
         init_independent()
 
         # Dependent initialization group (Parallel)
         def init_dependent():
             threads = []
-            
+
             # 1. Presence
             def init_presence():
-                timed_init("presence", lambda: presence.setup(self.db, auth, relationships, servers))
+                timed_init(
+                    "presence",
+                    lambda: presence.setup(self.db, auth, relationships, servers),
+                )
                 self._modules["presence"] = presence
+
             threads.append(threading.Thread(target=init_presence, name="InitPresence"))
 
             # 2. Reactions
             def init_reactions():
-                timed_init("reactions", lambda: reactions.setup(self.db, messaging, servers, relationships))
+                timed_init(
+                    "reactions",
+                    lambda: reactions.setup(self.db, messaging, servers, relationships),
+                )
                 self._modules["reactions"] = reactions
-            threads.append(threading.Thread(target=init_reactions, name="InitReactions"))
+
+            threads.append(
+                threading.Thread(target=init_reactions, name="InitReactions")
+            )
 
             # 3. Embeds
             def init_embeds():
                 timed_init("embeds", lambda: embeds.setup(self.db, messaging, servers))
                 self._modules["embeds"] = embeds
+
             threads.append(threading.Thread(target=init_embeds, name="InitEmbeds"))
 
             # 4. Polls
             def init_polls():
                 timed_init("polls", lambda: polls.setup(self.db, messaging))
                 self._modules["polls"] = polls
+
             threads.append(threading.Thread(target=init_polls, name="InitPolls"))
 
             # 5. Notifications (Complex)
             def init_notifications():
                 try:
-                    timed_init("notifications", lambda: notifications.setup(
-                        self.db,
-                        auth_module=auth,
-                        messaging_module=messaging,
-                        servers_module=servers,
-                        relationships_module=relationships,
-                        presence_module=presence,
-                    ))
+                    timed_init(
+                        "notifications",
+                        lambda: notifications.setup(
+                            self.db,
+                            auth_module=auth,
+                            messaging_module=messaging,
+                            servers_module=servers,
+                            relationships_module=relationships,
+                            presence_module=presence,
+                        ),
+                    )
                     self._modules["notifications"] = notifications
                 except Exception as e:
                     logger.warning(f"Failed to initialize notifications module: {e}")
-            threads.append(threading.Thread(target=init_notifications, name="InitNotifications"))
+
+            threads.append(
+                threading.Thread(target=init_notifications, name="InitNotifications")
+            )
 
             for t in threads:
                 t.start()
@@ -668,33 +763,46 @@ class PlexichatServer:
         init_dependent()
 
         # Initialize AutoMod
-        timed_init("automod", lambda: automod.setup(
-            self.db,
-            servers_module=servers,
-            messaging_module=messaging,
-            notifications_module=self._modules.get("notifications"),
-        ))
+        timed_init(
+            "automod",
+            lambda: automod.setup(
+                self.db,
+                servers_module=servers,
+                messaging_module=messaging,
+                notifications_module=self._modules.get("notifications"),
+            ),
+        )
         self._modules["automod"] = automod
 
         # Ensure default rules for all servers
         try:
-            all_servers = self.db.fetch_all("SELECT id, owner_id FROM srv_servers WHERE deleted = 0")
+            all_servers = self.db.fetch_all(
+                "SELECT id, owner_id FROM srv_servers WHERE deleted = 0"
+            )
             for srv in all_servers:
                 automod.ensure_default_rules(srv["id"], srv["owner_id"])
             if all_servers:
-                logger.info(f"Ensured default automod rules for {len(all_servers)} servers")
+                logger.info(
+                    f"Ensured default automod rules for {len(all_servers)} servers"
+                )
         except Exception as e:
             logger.warning(f"Failed to ensure default rules for servers: {e}")
 
         # Final non-critical group
-        timed_init("events", lambda: events.setup(
-            relationships_module=relationships,
-            servers_module=servers,
-            messaging_module=messaging,
-        ))
+        timed_init(
+            "events",
+            lambda: events.setup(
+                relationships_module=relationships,
+                servers_module=servers,
+                messaging_module=messaging,
+            ),
+        )
         self._modules["events"] = events
 
-        timed_init("webhooks", lambda: webhooks.setup(self.db, auth, messaging, servers, embeds))
+        timed_init(
+            "webhooks",
+            lambda: webhooks.setup(self.db, auth, messaging, servers, embeds),
+        )
         self._modules["webhooks"] = webhooks
 
         try:
@@ -708,6 +816,7 @@ class PlexichatServer:
         features = None
         try:
             from src.core import features
+
             timed_init("features", lambda: features.setup(self.db))
             self._modules["features"] = features
         except Exception as e:
@@ -717,6 +826,7 @@ class PlexichatServer:
         # Initialize avatars module
         try:
             from src.core import avatars
+
             timed_init("avatars", lambda: avatars.setup(self.db))
             self._modules["avatars"] = avatars
         except Exception as e:
@@ -725,7 +835,10 @@ class PlexichatServer:
 
         # Initialize voice module
         try:
-            timed_init("voice", lambda: voice.setup(self.db, auth, servers, relationships, presence))
+            timed_init(
+                "voice",
+                lambda: voice.setup(self.db, auth, servers, relationships, presence),
+            )
             self._modules["voice"] = voice
         except Exception as e:
             logger.warning(f"Failed to initialize voice module: {e}")
@@ -736,6 +849,7 @@ class PlexichatServer:
         if voice_config.get("enabled", False):
             try:
                 sfu_backend = voice_config.get("sfu_backend", "mediasoup")
+
                 def init_signaling():
                     signaling.setup(
                         voice_module=voice,
@@ -760,6 +874,7 @@ class PlexichatServer:
                         turn_username=voice_config.get("turn_username", ""),
                         turn_credential=voice_config.get("turn_credential", ""),
                     )
+
                 timed_init("signaling", init_signaling)
                 self._modules["signaling"] = signaling
                 sfu_url = (
@@ -809,7 +924,9 @@ class PlexichatServer:
                         )
                     else:
                         storage = MemoryStorage()
-                        logger.info("Using in-memory storage for rate limiting (fallback)")
+                        logger.info(
+                            "Using in-memory storage for rate limiting (fallback)"
+                        )
 
                     ratelimit.setup(
                         storage_backend=storage,
@@ -819,6 +936,7 @@ class PlexichatServer:
                         ),
                         enable_global_limit=True,
                     )
+
                 timed_init("ratelimit", init_ratelimit)
                 self._modules["ratelimit"] = ratelimit
             except Exception as e:
@@ -830,6 +948,7 @@ class PlexichatServer:
         if telemetry_config.get("enabled", True):
             try:
                 from src.core import telemetry
+
                 timed_init("telemetry", lambda: telemetry.setup(self.db))
                 self._modules["telemetry"] = telemetry
             except Exception as e:
@@ -841,6 +960,7 @@ class PlexichatServer:
         if feedback_config.get("enabled", True):
             try:
                 from src.core import feedback
+
                 timed_init("feedback", lambda: feedback.setup(self.db))
                 self._modules["feedback"] = feedback
             except Exception as e:
@@ -852,6 +972,7 @@ class PlexichatServer:
         if reports_config.get("enabled", True):
             try:
                 from src.core import reports
+
                 timed_init("reports", lambda: reports.setup(self.db, messaging))
                 self._modules["reports"] = reports
             except Exception as e:
@@ -863,6 +984,7 @@ class PlexichatServer:
         if admin_config.get("enabled", True):
             try:
                 from src.core import admin
+
                 timed_init("admin", lambda: admin.setup(self.db, auth, features))
                 self._modules["admin"] = admin
                 logger.info(
@@ -882,7 +1004,7 @@ class PlexichatServer:
         logger.info("-" * 60)
         logger.info(f"  {'TOTAL':20s} {total_time:8.1f}ms")
         logger.info("=" * 60)
-        
+
         if failed_modules:
             logger.error(
                 f"Module initialization incomplete. Failed modules: {', '.join(failed_modules)}"
@@ -901,6 +1023,7 @@ class PlexichatServer:
             webhooks,
             settings,
             media,
+            search,
         )
 
     def create_application(
@@ -915,6 +1038,7 @@ class PlexichatServer:
         webhooks: Any,
         settings: Any,
         media: Any,
+        search: Any,
     ) -> Any:
         """Create and configure the FastAPI application."""
         from src.api import setup as api_setup, create_app
@@ -934,6 +1058,7 @@ class PlexichatServer:
             webhooks_module=webhooks,
             settings_module=settings,
             media_module=media,
+            search_module=search,
             features_module=self._modules.get("features"),
             avatars_module=self._modules.get("avatars"),
             reports_module=self._modules.get("reports"),
@@ -999,6 +1124,7 @@ class PlexichatServer:
         # Clean up WebSocket global state in Redis
         try:
             from src.api import websocket
+
             if websocket.is_setup():
                 manager = websocket.get_session_manager()
                 manager.clear_all_global_sessions()
@@ -1020,7 +1146,7 @@ class PlexichatServer:
         import uvicorn
 
         server_config = config.get("server", {})
-        host = host or server_config.get("host", "0.0.0.0")
+        host = host or server_config.get("host", "127.0.0.1")
         port = port or server_config.get("port", 8000)
 
         # Check TLS configuration
@@ -1071,14 +1197,16 @@ class PlexichatServer:
             }
             if hasattr(signal, "SIGTERM"):
                 signal_map[signal.SIGTERM] = "SIGTERM"
-                
+
             signal_name = signal_map.get(signum, f"signal {signum}")
-            
+
             # If we're already shutting down, force exit on second signal
             if self.shutdown_event.is_set():
-                logger.warning(f"Received second {signal_name}, forcing immediate exit...")
+                logger.warning(
+                    f"Received second {signal_name}, forcing immediate exit..."
+                )
                 os._exit(1)
-                
+
             logger.info(f"Received {signal_name}, initiating graceful shutdown...")
             self.shutdown_event.set()
 
@@ -1096,7 +1224,7 @@ class PlexichatServer:
                 # Tell uvicorn to exit
                 self.server.should_exit = True
                 # Also set force_exit to False to allow graceful shutdown first
-                # self.server.force_exit = False 
+                # self.server.force_exit = False
 
         # Register signal handlers
         signal.signal(signal.SIGINT, signal_handler)
@@ -1223,33 +1351,37 @@ Examples:
     # Priority: 1. --config arg, 2. PLEXICHAT_CONFIG env var, 3. auto-detect
     config_path = None
     config_source = None
-    
+
     if args.config:
         config_path = args.config
         config_source = "command line argument"
     elif os.environ.get("PLEXICHAT_CONFIG"):
         config_path = os.environ.get("PLEXICHAT_CONFIG")
         config_source = "PLEXICHAT_CONFIG environment variable"
-    
+
     if config_path:
         config.setup(
             config_path=config_path, default_config=server.get_default_config()
         )
-        early_logs.append(("info", f"Config loaded from {config_source}: {config_path}"))
+        early_logs.append(
+            ("info", f"Config loaded from {config_source}: {config_path}")
+        )
     else:
         config_path = server.setup_config()
-        early_logs.append(("info", f"Config loaded from auto-detected path: {config_path}"))
+        early_logs.append(
+            ("info", f"Config loaded from auto-detected path: {config_path}")
+        )
 
     # Setup logging - NOW we can use logger
     log_config = config.get("logging", {})
     media_config = config.get("media", {})
     log_dir = media_config.get("logs_dir", os.path.join(project_root, "logs"))
     log_dir = os.path.expanduser(log_dir)  # Expand ~ to home directory
-    
+
     early_logs.append(("info", "Initializing logger..."))
     early_logs.append(("info", f"  Log directory: {log_dir}"))
     early_logs.append(("info", f"  Log level: {log_config.get('level', 'INFO')}"))
-    
+
     server.setup_logging()
 
     # Replay buffered logs
@@ -1292,7 +1424,7 @@ Examples:
 
     # Get server settings
     host = args.host or os.getenv(
-        "HOST", config.get("server", {}).get("host", "0.0.0.0")
+        "HOST", config.get("server", {}).get("host", "127.0.0.1")
     )
     port = args.port or int(
         os.getenv("PORT", config.get("server", {}).get("port", 8000))
@@ -1416,4 +1548,3 @@ def _check_security_keys() -> None:
 
 if __name__ == "__main__":
     main()
-

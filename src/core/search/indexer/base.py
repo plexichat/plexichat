@@ -3,7 +3,7 @@ Base indexer - Abstract interface for search indexers.
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
 
 from ..models import (
@@ -13,6 +13,9 @@ from ..models import (
     MessageSearchResult,
     UserSearchResult,
     ServerSearchResult,
+    MessageSearchResultPage,
+    UserSearchResultPage,
+    ServerSearchResultPage,
 )
 
 
@@ -130,6 +133,34 @@ class BaseIndexer(ABC):
         pass
 
     @abstractmethod
+    def search_messages_page(
+        self,
+        query: str,
+        conversation_ids: Optional[List[int]] = None,
+        server_ids: Optional[List[int]] = None,
+        channel_ids: Optional[List[int]] = None,
+        author_ids: Optional[List[int]] = None,
+        limit: int = 25,
+        cursor: Optional[str] = None,
+    ) -> Tuple[List[MessageSearchResult], Optional[str]]:
+        """
+        Search messages with cursor pagination.
+
+        Args:
+            query: Search query
+            conversation_ids: Filter by conversations
+            server_ids: Filter by servers
+            channel_ids: Filter by channels
+            author_ids: Filter by authors
+            limit: Maximum results
+            cursor: Cursor for pagination
+
+        Returns:
+            Tuple of (results, next_cursor)
+        """
+        pass
+
+    @abstractmethod
     def index_user(self, user: IndexedUser) -> bool:
         """
         Index a user.
@@ -172,6 +203,26 @@ class BaseIndexer(ABC):
 
         Returns:
             List of user search results
+        """
+        pass
+
+    @abstractmethod
+    def search_users_page(
+        self,
+        query: str,
+        limit: int = 25,
+        cursor: Optional[str] = None,
+    ) -> Tuple[List[UserSearchResult], Optional[str]]:
+        """
+        Search users with cursor pagination.
+
+        Args:
+            query: Search query
+            limit: Maximum results
+            cursor: Cursor for pagination
+
+        Returns:
+            Tuple of (results, next_cursor)
         """
         pass
 
@@ -222,6 +273,30 @@ class BaseIndexer(ABC):
 
         Returns:
             List of server search results
+        """
+        pass
+
+    @abstractmethod
+    def search_servers_page(
+        self,
+        query: str,
+        category: Optional[str] = None,
+        public_only: bool = True,
+        limit: int = 25,
+        cursor: Optional[str] = None,
+    ) -> Tuple[List[ServerSearchResult], Optional[str]]:
+        """
+        Search servers with cursor pagination.
+
+        Args:
+            query: Search query
+            category: Filter by category
+            public_only: Only search public servers
+            limit: Maximum results
+            cursor: Cursor for pagination
+
+        Returns:
+            Tuple of (results, next_cursor)
         """
         pass
 
