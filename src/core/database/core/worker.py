@@ -3,6 +3,12 @@ from functools import wraps
 
 
 def with_db_worker(func):
+    """
+    Decorator that provides a database connection to the wrapped function.
+
+    Automatically acquires a connection from the pool and ensures it is closed
+    after the function completes, supporting both sync and async functions.
+    """
     if inspect.iscoroutinefunction(func):
 
         @wraps(func)

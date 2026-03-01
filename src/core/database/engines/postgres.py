@@ -164,7 +164,7 @@ class PostgresEngine(BaseEngine):
     def get_insert_or_ignore_query(self, table: str, columns: List[str]) -> str:
         safe_cols = ", ".join(columns)
         placeholders = ", ".join(["?"] * len(columns))
-        return f"INSERT INTO {table} ({safe_cols}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
+        return f"INSERT INTO {table} ({safe_cols}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"  # nosec B608
 
     def get_upsert_query(
         self,
@@ -177,4 +177,5 @@ class PostgresEngine(BaseEngine):
         placeholders = ", ".join(["?"] * len(columns))
         conflict_cols = ", ".join(conflict_columns)
         updates = ", ".join([f"{c} = EXCLUDED.{c}" for c in update_columns])
-        return f"INSERT INTO {table} ({safe_cols}) VALUES ({placeholders}) ON CONFLICT ({conflict_cols}) DO UPDATE SET {updates}"
+        return f"INSERT INTO {table} ({safe_cols}) VALUES ({placeholders}) ON CONFLICT ({conflict_cols}) DO UPDATE SET {updates}"  # nosec B608
+

@@ -101,7 +101,7 @@ class RateLimitManager:
 
     def _generate_bucket_id(self, key: str) -> str:
         """Generate a short bucket ID for headers."""
-        return hashlib.md5(key.encode()).hexdigest()[:16]
+        return hashlib.sha256(key.encode()).hexdigest()[:16]
 
     def _get_config_for_request(
         self,

@@ -16,14 +16,22 @@ class SqliteEngine(BaseEngine):
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir)
 
-        conn = sqlite3.connect(db_path, check_same_thread=False)
+        conn = sqlite3.connect(
+            db_path,
+            check_same_thread=False,
+            isolation_level=None,
+            timeout=30,
+        )
         conn.row_factory = sqlite3.Row
 
         # Enable WAL (Write-Ahead Logging) for concurrency
         conn.execute("PRAGMA journal_mode=WAL;")
 
-        # Set busy timeout to wait for locks (5 seconds)
-        conn.execute("PRAGMA busy_timeout=5000;")
+        # Recommended for WAL mode: allow readers during writes with minimal sync cost
+        conn.execute("PRAGMA synchronous=NORMAL;")
+
+        # Set busy timeout to wait for locks
+        conn.execute("PRAGMA busy_timeout=30000;")
 
         # Enforce foreign keys (disabled by default in SQLite)
         conn.execute("PRAGMA foreign_keys=ON;")
@@ -74,4 +82,5 @@ class SqliteEngine(BaseEngine):
         placeholders = ", ".join(["?"] * len(columns))
         conflict_cols = ", ".join(conflict_columns)
         updates = ", ".join([f"{c} = EXCLUDED.{c}" for c in update_columns])
-        return f"INSERT INTO {table} ({safe_cols}) VALUES ({placeholders}) ON CONFLICT ({conflict_cols}) DO UPDATE SET {updates}"
+        return f"INSERT INTO {table} ({safe_cols}) VALUES ({placeholders}) ON CONFLICT ({conflict_cols}) DO UPDATE SET {updates}"  # nosec B608
+

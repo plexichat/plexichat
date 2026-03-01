@@ -92,6 +92,7 @@ def _create_tables() -> None:
 
 
 def is_setup() -> bool:
+    """Check if the telemetry module is initialized."""
     return _setup_complete
 
 
@@ -152,6 +153,11 @@ def _normalize_endpoint(endpoint: str) -> str:
 def submit_response_times(
     entries: List[Dict[str, Any]], client_id: Optional[str] = None
 ) -> int:
+    """
+    Record multiple response time measurements in the database.
+
+    Automatically normalizes endpoints and generates unique IDs.
+    """
     db = _get_db()
     now = int(time.time() * 1000)
     batch_data = []
@@ -322,6 +328,11 @@ def get_endpoint_stats(
 def get_response_time_history(
     endpoint: str, method: str = "GET", hours: int = 24, bucket_minutes: int = 5
 ) -> List[Dict[str, Any]]:
+    """
+    Retrieve historical performance data for a specific endpoint.
+
+    Aggregates measurements into time-based buckets for trend visualization.
+    """
     db = _get_db()
     cutoff = int((time.time() - hours * 3600) * 1000)
     bucket_ms = bucket_minutes * 60 * 1000
@@ -361,12 +372,18 @@ def get_response_time_history(
 
 
 def reset_all_stats() -> int:
+    """
+    Delete all recorded telemetry data.
+    """
     db = _get_db()
     db.execute("DELETE FROM telemetry_response_times")
     return 0
 
 
 def cleanup_old_data(days: int = 30) -> int:
+    """
+    Remove telemetry measurements older than the specified number of days.
+    """
     db = _get_db()
     cutoff = int((time.time() - days * 86400) * 1000)
     cursor = db.execute(

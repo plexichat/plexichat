@@ -48,8 +48,10 @@ class Database(
         self._lock = threading.RLock()
 
         self._query_cache: Dict[str, Tuple[float, Any]] = {}
-        self._query_cache_ttl = 1.0
+        self._query_cache_ttl = 0.0
         self._query_cache_lock = threading.RLock()
+
+        self._in_transaction = False
 
         self.engine: BaseEngine
         if self.type == "postgres":
@@ -77,7 +79,8 @@ class Database(
         self._max_connection_age_seconds = max_age_hours * 3600
 
         logger.info(f"Database initialized with type: {self.type}")
-        self.start_pool_monitoring()
+        if self.type == "postgres":
+            self.start_pool_monitoring()
 
     @property
     def transaction_depth(self) -> int:
@@ -98,6 +101,7 @@ class Database(
     @in_transaction.setter
     def in_transaction(self, value: bool):
         self._local.in_transaction = value
+        self._in_transaction = value
 
     @property
     def connection(self) -> Optional[DbConnection]:

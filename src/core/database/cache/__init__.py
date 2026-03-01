@@ -78,7 +78,7 @@ if _DISKCACHE_AVAILABLE and diskcache is not None:
         if not os.path.exists(cache_dir):
             os.makedirs(cache_dir, exist_ok=True)
         _mem_cache: Union[_DiskCacheLike, Dict[str, Tuple[float, Any]]] = cast(
-            _DiskCacheLike, diskcache.Cache(cache_dir)
+            _DiskCacheLike, diskcache.Cache(cache_dir, disk=diskcache.JSONDisk)
         )
         _mem_cache_is_diskcache = True
         logger.info(f"Initialized DiskCache at {cache_dir}")
@@ -170,9 +170,8 @@ def _generate_cache_key(prefix: str, *args, **kwargs) -> str:
                 payload = json.dumps(val, sort_keys=True, default=str)
             except Exception:
                 payload = repr(val)
-            return (
-                f"{type(val).__name__}:{hashlib.md5(payload.encode()).hexdigest()[:8]}"
-            )
+            digest = hashlib.sha256(payload.encode()).hexdigest()[:12]
+            return f"{type(val).__name__}:{digest}"
         return f"{type(val).__name__}:{val}"
 
     for arg in args:

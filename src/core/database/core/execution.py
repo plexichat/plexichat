@@ -51,8 +51,60 @@ class _DatabaseExecutionProtocol(Protocol):
         self, table: str, columns: List[str], values: Tuple
     ) -> bool: ...
 
+    def _sanitize_sqlite_query(self, query: str) -> str: ...
+
 
 class DatabaseExecutionMixin:
+    def _sanitize_sqlite_query(self: _DatabaseExecutionProtocol, query: str) -> str:
+        if self.type != "sqlite" or "#" not in query:
+            return query
+
+        cleaned_lines: List[str] = []
+        for line in query.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("#"):
+                continue
+
+            # Strip inline "# comment" segments (SQLite doesn't support this comment style).
+            in_single = False
+            in_double = False
+            escaped = False
+            out_chars: List[str] = []
+
+            for ch in line:
+                if escaped:
+                    out_chars.append(ch)
+                    escaped = False
+                    continue
+
+                if ch == "\\":
+                    out_chars.append(ch)
+                    escaped = True
+                    continue
+
+                if ch == "'" and not in_double:
+                    in_single = not in_single
+                    out_chars.append(ch)
+                    continue
+
+                if ch == '"' and not in_single:
+                    in_double = not in_double
+                    out_chars.append(ch)
+                    continue
+
+                if ch == "#" and not in_single and not in_double:
+                    break
+
+                out_chars.append(ch)
+
+            sanitized_line = "".join(out_chars).rstrip()
+            if sanitized_line:
+                cleaned_lines.append(sanitized_line)
+
+        return "\n".join(cleaned_lines)
+
     def execute(
         self: _DatabaseExecutionProtocol,
         query: str,
@@ -78,7 +130,8 @@ class DatabaseExecutionMixin:
             with self._query_cache_lock:
                 self._query_cache.clear()
 
-        query_conv = dialect.convert_placeholders(query, self.type)
+        query_sanitized = self._sanitize_sqlite_query(query)
+        query_conv = dialect.convert_placeholders(query_sanitized, self.type)
 
         for attempt in range(3):
             try:
@@ -141,7 +194,8 @@ class DatabaseExecutionMixin:
         if self.transaction_depth > 0:
             self._validate_transaction_state()
 
-        query_conv = dialect.convert_placeholders(query, self.type)
+        query_sanitized = self._sanitize_sqlite_query(query)
+        query_conv = dialect.convert_placeholders(query_sanitized, self.type)
 
         for attempt in range(3):
             try:
