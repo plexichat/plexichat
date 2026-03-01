@@ -327,9 +327,9 @@ class GatewayDispatcher:
         Returns:
             Number of connections event was sent to
         """
-        exclude_set: set[int] = set(exclude_user_ids or [])
+        exclude_set:set[int] = set(exclude_user_ids or [])
         sent_count = 0
-        tasks: List[tuple[Connection, Dict[str, Any]]] = []
+        tasks = []
 
         with self._lock:
             for conn in self._session_manager._connections.values():
@@ -342,12 +342,11 @@ class GatewayDispatcher:
                     continue
 
                 payload = self._build_dispatch_payload(conn, event)
-                tasks.append((conn, payload))
+                tasks.append(self._send_to_connection(conn, payload))
 
-        for conn, payload in tasks:
-            success = await self._send_to_connection(conn, payload)
-            if success:
-                sent_count += 1
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            sent_count = sum(1 for r in results if r is True)
 
         return sent_count
 
@@ -371,6 +370,7 @@ class GatewayDispatcher:
             Number of connections notified
         """
         sent_count = 0
+        tasks = []
 
         with self._lock:
             connections = list(self._session_manager._connections.values())
@@ -381,9 +381,11 @@ class GatewayDispatcher:
                     "op": int(GatewayOpcode.SERVER_STATUS),
                     "d": status_data,
                 }
-                success = await self._send_to_connection(conn, payload)
-                if success:
-                    sent_count += 1
+                tasks.append(self._send_to_connection(conn, payload))
+
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            sent_count = sum(1 for r in results if r is True)
 
         logger.info(
             f"Broadcast server status '{status_data.get('state')}' to {sent_count} connections"
@@ -428,14 +430,24 @@ class GatewayDispatcher:
             await asyncio.sleep(grace_period_seconds)
 
         closed_count = 0
-        for conn in connections:
+        tasks = []
+
+        async def _close_conn(conn):
             try:
                 conn.set_disconnecting()
                 await conn.websocket.close(code=close_code, reason=reason)
                 conn.set_disconnected()
-                closed_count += 1
+                return True
             except Exception as e:
                 logger.debug(f"Error closing connection {conn.connection_id}: {e}")
+                return False
+
+        for conn in connections:
+            tasks.append(_close_conn(conn))
+
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            closed_count = sum(1 for r in results if r is True)
 
         logger.info(f"Closed {closed_count} WebSocket connections")
         return closed_count

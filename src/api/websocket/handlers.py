@@ -6,6 +6,7 @@ from typing import Optional, Dict, Any, Tuple, List, TYPE_CHECKING
 
 import utils.logger as logger
 import src.core.events as events_mod
+from starlette.concurrency import run_in_threadpool
 
 from .opcodes import GatewayOpcode, GatewayCloseCode
 from .connection import Connection, ConnectionState
@@ -232,14 +233,17 @@ class OpcodeHandler:
             status_enum = UserStatus(status)
             # connection.user_id is guaranteed non-None by is_authenticated check above
             assert connection.user_id is not None
-            self._presence.set_status(connection.user_id, status_enum)
+            await run_in_threadpool(
+                self._presence.set_status, connection.user_id, status_enum
+            )
 
             if activities:
                 activity = activities[0]
                 from src.core.presence import ActivityType
 
                 activity_type = ActivityType(activity.get("type", "custom"))
-                self._presence.set_activity(
+                await run_in_threadpool(
+                    self._presence.set_activity,
                     connection.user_id,
                     activity_type,
                     activity.get("name", ""),
@@ -492,7 +496,7 @@ class OpcodeHandler:
 
         # 1. Verify user is a member of the guild
         try:
-            member = self._servers.get_member(guild_id, user_id)
+            member = await run_in_threadpool(self._servers.get_member, guild_id, user_id)
             if not member:
                 return None, None, None
         except Exception:
@@ -500,20 +504,22 @@ class OpcodeHandler:
 
         # 2. Get members (for now, just get first 1000)
         try:
-            members = self._servers.get_members(user_id, guild_id, limit=1000)
+            members = await run_in_threadpool(
+                self._servers.get_members, user_id, guild_id, limit=1000
+            )
             if not members:
                 return None, None, None
 
             user_ids = [m.user_id for m in members]
 
             # Bulk fetch user data
-            users_map = self._auth.get_users_bulk(user_ids)
+            users_map = await run_in_threadpool(self._auth.get_users_bulk, user_ids)
 
             # Bulk fetch presence data
             presence_map = {}
             try:
-                presence_map = self._presence.get_visible_presences_bulk(
-                    user_id, user_ids
+                presence_map = await run_in_threadpool(
+                    self._presence.get_visible_presences_bulk, user_id, user_ids
                 )
             except Exception as e:
                 logger.warning(
@@ -598,7 +604,7 @@ class OpcodeHandler:
         username = None
         if self._auth:
             try:
-                user = self._auth.get_user(connection.user_id)
+                user = await run_in_threadpool(self._auth.get_user, connection.user_id)
                 if user:
                     username = user.username
             except Exception:
@@ -607,7 +613,9 @@ class OpcodeHandler:
         # Record typing in presence module
         if self._presence:
             try:
-                self._presence.start_typing(connection.user_id, channel_id)
+                await run_in_threadpool(
+                    self._presence.start_typing, connection.user_id, channel_id
+                )
             except Exception:
                 pass
 
@@ -644,7 +652,9 @@ class OpcodeHandler:
         # Clear typing in presence module
         if self._presence:
             try:
-                self._presence.stop_typing(connection.user_id, channel_id)
+                await run_in_threadpool(
+                    self._presence.stop_typing, connection.user_id, channel_id
+                )
             except Exception:
                 pass
 
@@ -679,12 +689,16 @@ class OpcodeHandler:
             # Try to get channel members from servers module
             if self._servers:
                 try:
-                    channel = self._servers.get_channel(channel_id, user_id)
+                    channel = await run_in_threadpool(
+                        self._servers.get_channel, channel_id, user_id
+                    )
                     if channel:
                         server_id = getattr(channel, "server_id", None)
                         if server_id:
-                            user_ids = self._servers.get_member_user_ids(
-                                server_id, exclude_user_id=user_id
+                            user_ids = await run_in_threadpool(
+                                self._servers.get_member_user_ids,
+                                server_id,
+                                exclude_user_id=user_id,
                             )
                 except Exception:
                     pass
@@ -694,7 +708,9 @@ class OpcodeHandler:
                 messaging = api.get_messaging()
                 if messaging:
                     try:
-                        participants = messaging.get_participants(user_id, channel_id)
+                        participants = await run_in_threadpool(
+                            messaging.get_participants, user_id, channel_id
+                        )
                         if participants:
                             user_ids = [
                                 p.user_id for p in participants if p.user_id != user_id
@@ -743,8 +759,12 @@ class OpcodeHandler:
             return None
 
         try:
-            token_info: TokenInfo = self._auth.verify_token(
-                token, ip_address, user_agent, is_selftest=is_selftest
+            token_info: TokenInfo = await run_in_threadpool(
+                self._auth.verify_token,
+                token,
+                ip_address,
+                user_agent,
+                is_selftest=is_selftest,
             )
             return token_info.user_id
         except Exception:
@@ -761,7 +781,7 @@ class OpcodeHandler:
 
         if self._auth:
             try:
-                user = self._auth.get_user(user_id)
+                user = await run_in_threadpool(self._auth.get_user, user_id)
                 if user:
                     user_data = {
                         "id": str(user_id),
@@ -775,7 +795,7 @@ class OpcodeHandler:
 
         if self._servers:
             try:
-                servers = self._servers.get_servers(user_id)
+                servers = await run_in_threadpool(self._servers.get_servers, user_id)
                 for server in servers or []:
                     guilds.append(
                         {
@@ -811,7 +831,9 @@ class OpcodeHandler:
             try:
                 from src.core.presence.models import UserStatus
 
-                self._presence.set_status(user_id, UserStatus.ONLINE)
+                await run_in_threadpool(
+                    self._presence.set_status, user_id, UserStatus.ONLINE
+                )
                 logger.debug(f"Set user {user_id} presence to ONLINE on connect")
             except Exception as e:
                 logger.warning(f"Failed to set online presence for user {user_id}: {e}")

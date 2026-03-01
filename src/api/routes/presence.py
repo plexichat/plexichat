@@ -39,7 +39,9 @@ def _presence_to_response(pres, user_id: int) -> PresenceResponse:
 async def _dispatch_presence_event(
     user_id: int, presence_data: dict, target_user_ids: list
 ):
-    """Helper to dispatch presence update events via WebSocket."""
+    """
+    Broadcast a presence update event to specific users via WebSocket.
+    """
     try:
         from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
         from src.core.events.models import Event
@@ -56,7 +58,11 @@ async def _dispatch_presence_event(
 
 @cached(ttl=15, prefix="presence_targets")
 def _get_presence_targets(user_id: int) -> list:
-    """Get all user IDs who should receive presence updates for a user (Optimized)."""
+    """
+    Identify all users who should receive presence notifications for a given user.
+
+    Includes friends and members of shared servers. Uses caching to minimize database load.
+    """
     target_user_ids = set()
 
     # 1. Add friends

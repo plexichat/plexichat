@@ -79,7 +79,8 @@ async def _dispatch_offline_presence(
                     from src.core.events.models import Event
                     from src.core.events.types import EventType
 
-                    # Dispatch TYPING_STOP for each channel
+                    # Dispatch TYPING_STOP for each channel in parallel
+                    tasks = []
                     for channel_id in typing_channels:
                         event = Event(
                             event_type=EventType.TYPING_STOP,
@@ -91,9 +92,12 @@ async def _dispatch_offline_presence(
                         )
                         # Dispatch to all potential viewers
                         if target_user_ids:
-                            await dispatcher.dispatch_event(
+                            tasks.append(dispatcher.dispatch_event(
                                 event, list(target_user_ids)
-                            )
+                            ))
+                    
+                    if tasks:
+                        await asyncio.gather(*tasks, return_exceptions=True)
                     logger.debug(
                         f"Cleared typing for user {user_id} in {len(typing_channels)} channels"
                     )
